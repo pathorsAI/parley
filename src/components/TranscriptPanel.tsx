@@ -46,7 +46,7 @@ export function TranscriptPanel() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="mx-auto max-w-3xl px-5 py-5 text-sm leading-8">
+      <div className="select-text mx-auto max-w-3xl px-5 py-5 text-sm leading-8">
         {runs.map((seg, i) => {
           const showBadge = i === 0 || speakerKey(seg) !== speakerKey(runs[i - 1]);
           return (

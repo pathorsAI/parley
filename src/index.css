@@ -52,6 +52,14 @@ body,
 body {
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+.select-text {
+  user-select: text;
 }
 
 /* Thin, unobtrusive scrollbars for panels */
