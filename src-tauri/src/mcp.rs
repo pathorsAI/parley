@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 use tokio::{net::TcpListener, sync::RwLock};
 
-use crate::commands::{session_path, templates_path};
+use crate::commands::{session_commands_path, session_path, templates_path};
 
 const DEFAULT_PORT: u16 = 3011;
 const MAX_PORT: u16 = 3020;
@@ -34,6 +34,7 @@ pub struct McpState {
 struct HttpState {
     templates_path: PathBuf,
     session_path: PathBuf,
+    commands_path: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -101,10 +102,16 @@ pub fn start(app: AppHandle) -> McpState {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join("session.json")
     });
+    let commands = session_commands_path(&app).unwrap_or_else(|_| {
+        app.path()
+            .app_config_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("session_commands.jsonl")
+    });
 
     let state = McpState { info: info.clone() };
     tauri::async_runtime::spawn(async move {
-        if let Err(err) = run_http_server(templates, session, info).await {
+        if let Err(err) = run_http_server(templates, session, commands, info).await {
             eprintln!("[parley-mcp] failed to start: {err}");
         }
     });
@@ -122,6 +129,7 @@ pub async fn get_mcp_server_info(
 async fn run_http_server(
     templates_path: PathBuf,
     session_path: PathBuf,
+    commands_path: PathBuf,
     info: Arc<RwLock<McpServerInfo>>,
 ) -> anyhow::Result<()> {
     let (listener, addr) = bind_listener().await?;
@@ -138,6 +146,7 @@ async fn run_http_server(
         .with_state(HttpState {
             templates_path,
             session_path,
+            commands_path,
         });
 
     eprintln!("[parley-mcp] ready at {endpoint}");
@@ -304,6 +313,52 @@ fn tools() -> Vec<Value> {
              { id, name, description, status, lastRunAt, result }.",
             json!({ "type": "object", "properties": {} }),
         ),
+        tool(
+            "add_todo",
+            "Add a live todo",
+            "Add a checklist item to the current meeting. Applied within ~1.5s.",
+            json!({ "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }),
+        ),
+        tool(
+            "check_todo",
+            "Check or uncheck a live todo",
+            "Mark a checklist item done (or not) by id. Get ids from list_todos.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "done": { "type": "boolean", "description": "true to check, false to uncheck (default true)" }
+                },
+                "required": ["id"]
+            }),
+        ),
+        tool(
+            "remove_todo",
+            "Remove a live todo",
+            "Remove a checklist item from the current meeting by id.",
+            json!({ "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }),
+        ),
+        tool(
+            "add_evaluation",
+            "Add a live evaluation",
+            "Add an evaluation to the current meeting so it runs on the transcript. \
+             Provide a short name, a description, and the prompt describing what to watch for.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "description": { "type": "string" },
+                    "prompt": { "type": "string" }
+                },
+                "required": ["name", "prompt"]
+            }),
+        ),
+        tool(
+            "remove_evaluation",
+            "Remove a live evaluation",
+            "Remove an evaluation from the current meeting by id. Get ids from list_evaluations.",
+            json!({ "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }),
+        ),
     ]
 }
 
@@ -359,6 +414,38 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             .get("evaluations")
             .cloned()
             .unwrap_or_else(|| json!([])),
+        "add_todo" => append_command(
+            &state.commands_path,
+            "add_todo",
+            json!({ "text": required_str(&args, "text")? }),
+        )?,
+        "check_todo" => append_command(
+            &state.commands_path,
+            "check_todo",
+            json!({
+                "id": required_str(&args, "id")?,
+                "done": args.get("done").and_then(Value::as_bool).unwrap_or(true)
+            }),
+        )?,
+        "remove_todo" => append_command(
+            &state.commands_path,
+            "remove_todo",
+            json!({ "id": required_str(&args, "id")? }),
+        )?,
+        "add_evaluation" => append_command(
+            &state.commands_path,
+            "add_evaluation",
+            json!({
+                "name": required_str(&args, "name")?,
+                "description": args.get("description").and_then(Value::as_str).unwrap_or(""),
+                "prompt": required_str(&args, "prompt")?
+            }),
+        )?,
+        "remove_evaluation" => append_command(
+            &state.commands_path,
+            "remove_evaluation",
+            json!({ "id": required_str(&args, "id")? }),
+        )?,
         _ => anyhow::bail!("unknown tool: {name}"),
     };
     Ok(json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&value)? }] }))
@@ -369,6 +456,22 @@ fn required_str<'a>(value: &'a Value, key: &str) -> anyhow::Result<&'a str> {
         .get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("missing string field: {key}"))
+}
+
+/// Append one mutation command for the frontend to apply. The frontend polls
+/// the file and applies new lines, so we only need to enqueue the intent.
+fn append_command(path: &PathBuf, action: &str, args: Value) -> anyhow::Result<Value> {
+    use std::io::Write;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let line = json!({ "action": action, "args": args }).to_string();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(file, "{line}")?;
+    Ok(json!({ "ok": true, "queued": action }))
 }
 
 /// Read the frontend-written session snapshot as opaque JSON (empty object if
