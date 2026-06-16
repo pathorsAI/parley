@@ -91,7 +91,7 @@ pub async fn run_session(
         enable_speaker_diarization: config.diarization,
     };
     write
-        .send(Message::Text(serde_json::to_string(&wire)?.into()))
+        .send(Message::Text(serde_json::to_string(&wire)?))
         .await?;
     eprintln!(
         "[soniox:{source}] connected, model={}, diarization={}",
@@ -120,19 +120,19 @@ pub async fn run_session(
                         next_log += TARGET_SAMPLE_RATE as u64;
                     }
                     let bytes = pcm_to_le_bytes(&chunk);
-                    if write.send(Message::Binary(bytes.into())).await.is_err() {
+                    if write.send(Message::Binary(bytes)).await.is_err() {
                         break;
                     }
                 }
                 _ = keepalive.tick() => {
-                    if write.send(Message::Text("{\"type\":\"keepalive\"}".to_string().into())).await.is_err() {
+                    if write.send(Message::Text("{\"type\":\"keepalive\"}".to_string())).await.is_err() {
                         break;
                     }
                 }
             }
         }
         let _ = write
-            .send(Message::Text("{\"type\":\"finalize\"}".to_string().into()))
+            .send(Message::Text("{\"type\":\"finalize\"}".to_string()))
             .await;
         let _ = write.close().await;
     };

@@ -63,7 +63,7 @@ pub async fn run_session(
             "turn_detection": { "type": "server_vad", "silence_duration_ms": 500 }
         }
     });
-    write.send(Message::Text(setup.to_string().into())).await?;
+    write.send(Message::Text(setup.to_string())).await?;
     eprintln!("[openai:{source}] connected, model={model} (diarization unsupported → speaker 0)");
 
     let mut meter = LevelMeter::new(app.clone(), source);
@@ -75,7 +75,7 @@ pub async fn run_session(
             let audio = b64.encode(&bytes);
             let msg = json!({ "type": "input_audio_buffer.append", "audio": audio });
             if write
-                .send(Message::Text(msg.to_string().into()))
+                .send(Message::Text(msg.to_string()))
                 .await
                 .is_err()
             {

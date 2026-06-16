@@ -69,7 +69,7 @@ pub async fn run_session(
             "inputAudioTranscription": {}
         }
     });
-    write.send(Message::Text(setup.to_string().into())).await?;
+    write.send(Message::Text(setup.to_string())).await?;
     eprintln!("[gemini:{source}] connected, model={model} (diarization unsupported → speaker 0)");
 
     let mime = format!("audio/pcm;rate={}", TARGET_SAMPLE_RATE);
@@ -84,7 +84,7 @@ pub async fn run_session(
                 "realtimeInput": { "mediaChunks": [ { "mimeType": mime, "data": data } ] }
             });
             if write
-                .send(Message::Text(msg.to_string().into()))
+                .send(Message::Text(msg.to_string()))
                 .await
                 .is_err()
             {
