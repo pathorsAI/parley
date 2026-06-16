@@ -197,6 +197,7 @@ export function Onboarding() {
                 onAction={async () => {
                   await invoke("start_mic_test", { inputDevice: settings.inputDevice }).catch(() => {});
                   await invoke("stop_mic_test").catch(() => {});
+                  await invoke("open_privacy_settings", { pane: "microphone" }).catch(() => {});
                   void recheck();
                 }}
               />
@@ -207,6 +208,7 @@ export function Onboarding() {
                 actionLabel={t("onboarding.perms.grant")}
                 onAction={async () => {
                   await invoke("request_screen_recording").catch(() => {});
+                  await invoke("open_privacy_settings", { pane: "screen" }).catch(() => {});
                   void recheck();
                 }}
               />

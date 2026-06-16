@@ -86,3 +86,21 @@ pub fn check_permissions() -> Permissions {
 pub fn request_screen_recording() -> bool {
     imp::request_screen_recording()
 }
+
+/// Open the relevant macOS Privacy settings pane so the user can grant access
+/// manually (the native prompts only fire once and need an app restart).
+#[tauri::command]
+pub fn open_privacy_settings(pane: String) {
+    #[cfg(target_os = "macos")]
+    {
+        let anchor = match pane.as_str() {
+            "screen" => "Privacy_ScreenCapture",
+            "microphone" => "Privacy_Microphone",
+            _ => "Privacy",
+        };
+        let url = format!("x-apple.systempreferences:com.apple.preference.security?{anchor}");
+        let _ = std::process::Command::new("open").arg(url).spawn();
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = pane;
+}
