@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Circle, Maximize2, Mic, Minus, Settings, Square, X } from "lucide-react";
 import { useStore } from "../lib/store";
+import { STT_BY_ID, sttApiKey } from "../lib/transcription/providers";
 import { startMockStream, stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
 import { openSettingsWindow } from "../lib/settingsSync";
@@ -16,13 +17,14 @@ import { LevelMeter } from "./LevelMeter";
 export function TitleBar() {
   const { t } = useI18n();
   const status = useStore((s) => s.meetingStatus);
-  const sonioxApiKey = useStore((s) => s.settings.sonioxApiKey);
+  const transcriptionProvider = useStore((s) => s.settings.transcriptionProvider);
+  const sttKey = useStore((s) => sttApiKey(s.settings, s.settings.transcriptionProvider));
   const inputDevice = useStore((s) => s.settings.inputDevice);
   const startMeeting = useStore((s) => s.startMeeting);
   const stopMeeting = useStore((s) => s.stopMeeting);
 
   const recording = status === "recording";
-  const useRealPipeline = isTauri() && !!sonioxApiKey.trim();
+  const useRealPipeline = isTauri() && !!sttKey.trim();
 
   async function toggle() {
     if (recording) {
@@ -41,7 +43,12 @@ export function TitleBar() {
     startMeeting();
     if (useRealPipeline) {
       try {
-        await invoke("start_meeting", { sonioxApiKey, inputDevice });
+        await invoke("start_meeting", {
+          provider: transcriptionProvider,
+          apiKey: sttKey,
+          diarization: STT_BY_ID[transcriptionProvider].diarization,
+          inputDevice,
+        });
       } catch (e) {
         console.error("start_meeting failed", e);
         stopMeeting();
