@@ -303,3 +303,21 @@ pub fn write_session(app: AppHandle, json: String) -> Result<(), String> {
     std::fs::write(&path, json).map_err(|e| e.to_string())?;
     Ok(())
 }
+
+/// Append-only queue of mutation commands the MCP server writes and the
+/// frontend applies (add/check/remove todo, add/remove evaluation).
+pub(crate) fn session_commands_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("session_commands.jsonl"))
+}
+
+/// Read the pending session-command queue (one JSON object per line). The
+/// frontend polls this and applies commands it hasn't seen yet.
+#[tauri::command]
+pub fn read_session_commands(app: AppHandle) -> Result<String, String> {
+    let path = session_commands_path(&app)?;
+    match std::fs::read_to_string(&path) {
+        Ok(s) => Ok(s),
+        Err(_) => Ok(String::new()),
+    }
+}

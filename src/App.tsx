@@ -14,6 +14,7 @@ import { listenForSettings } from "./lib/settingsSync";
 import { listenForSttUsage } from "./lib/usage/log";
 import { initTemplatesSync } from "./lib/templatesSync";
 import { initSessionSync } from "./lib/sessionSync";
+import { initSessionCommands } from "./lib/sessionCommands";
 import { useThemePreference } from "./lib/theme";
 import { useEvaluationEngine } from "./lib/evaluations/engine";
 
@@ -28,12 +29,14 @@ function App() {
     const unSettings = listenForSettings();
     const unTemplates = initTemplatesSync();
     const unSession = initSessionSync();
+    const unSessionCmds = initSessionCommands();
     const unSttUsage = listenForSttUsage();
     return () => {
       unTranscript.then((fn) => fn());
       unSettings.then((fn) => fn());
       unTemplates();
       unSession();
+      unSessionCmds();
       unSttUsage.then((fn) => fn());
     };
   }, []);
