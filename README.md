@@ -22,39 +22,57 @@ Parley is a native, real-time meeting copilot designed for interviews, negotiati
 
 ---
 
+## Table of Contents
+
+- [Features](#-features)
+- [Privacy & Data Flow](#-privacy--data-flow)
+- [Installation](#-installation)
+  - [Install](#install)
+  - [Build from source](#build-from-source)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+---
+
 ## 🎯 Features
 
-- **Dual-Source Capture** — Simultaneously captures your microphone and system audio (e.g. Zoom, Meet, Teams) and tags transcript lines as `me` or `them`.
-- **Soniox Real-Time Transcription** — Low-latency, streaming transcription with high-accuracy speaker diarization and editable speaker names.
-- **Switchable AI Providers** — Run live evaluations and Q&A using either **Anthropic Claude** or any model on **OpenRouter**.
-- **Live Q&A Sidebar** — Ask questions about the live transcript as the conversation happens and receive streamed answers.
-- **Configurable Evaluations** — Customize evaluation checklist cards that flag specific talking points, concerns, or milestones.
-- **Auto-check TODOs** — Track your agenda items; Parley automatically checks items off as the AI detects they have been addressed.
-- **Built-in MCP Server** — Exposes a local HTTP Model Context Protocol (MCP) endpoint while the app is open to manage templates and checklists from external clients.
-- **Traditional Chinese Translation** — Instant conversion of transcribed text to Traditional Chinese on-the-fly.
-- **Sleek, Native UI** — Features a clean custom window chrome built for macOS.
+- **Dual-source capture** — Both your mic and system audio, tagged `me` / `them`.
+- **Real-time transcription** — Live, diarized transcription with editable speaker names.
+- **Bring your own providers** — Pick your transcription vendor and LLM (Claude, OpenAI, Gemini, Groq, Ollama, OpenRouter, and more).
+- **Live Q&A** — Ask the transcript questions and get grounded, streamed answers.
+- **Configurable playbooks** — Evaluation cards for negotiation risk, sales qualification, follow-ups, or your own rubric.
+- **Auto-check TODOs** — Agenda items check off as the AI detects they're addressed.
+- **Built-in MCP server** — Manage templates from external MCP clients while the app is open.
+- **Traditional Chinese** — On-the-fly conversion of transcribed text.
+- **Native macOS UI** — Clean, custom window chrome.
 
 ---
 
 ## 🔒 Privacy & Data Flow
 
-Meeting content is highly sensitive. Parley is built to run directly from your client:
-* **Direct Cloud Connections:** All audio streams and transcriptions go directly from your local machine to the API endpoints (Soniox/Anthropic/OpenRouter). There are no intermediate proxy or middleware servers managed by Pathors AI.
-* **Local Storage:** Transcripts and template files (`templates.json`) are stored exclusively in your local application directory.
-* **No Telemetry:** We do not track, collect, or upload your transcripts, audio, or API usage statistics.
+Meeting content is sensitive. Parley runs straight from your machine:
+* **Direct connections** — Audio and transcripts go straight to the providers you configure — no Pathors AI proxy in between.
+* **Local storage** — Transcripts and templates stay in your local app directory.
+* **No telemetry** — Nothing tracked, collected, or uploaded.
 
 ---
 
-## 🚀 Getting Started
+## 📥 Installation
 
-### Prerequisites
+### Install
+
+Download the latest Universal macOS build from the [**Releases page**](https://github.com/pathorsAI/parley/releases/latest), open the `.dmg`, and drag **Parley** into your Applications folder.
+
+Parley is currently unsigned, so on first launch macOS Gatekeeper may block it. Right-click the app and choose **Open**, then confirm. Paste your API keys in the **Settings** panel inside the app.
+
+### Build from source
+
+**Prerequisites**
 
 - **Rust** (stable toolchain) — for the Tauri backend
 - **Bun** (or Node.js) — for building the frontend
-- A **Soniox API Key** — for live transcription
-- An **Anthropic** or **OpenRouter** API Key — for LLM capabilities
-
-### Setup & Run
+- A **transcription provider** API key (e.g. Soniox, Deepgram, AssemblyAI) — for live transcription
+- An **LLM provider** API key (Anthropic, OpenAI, OpenRouter, …) — for evaluations and Q&A
 
 1. Clone the repository and install dependencies:
    ```bash
@@ -72,41 +90,12 @@ Meeting content is highly sensitive. Parley is built to run directly from your c
 
 ---
 
-## 🔌 Built-in MCP Server
-
-Parley runs a local HTTP/SSE Model Context Protocol (MCP) server directly inside the desktop app. Connect any HTTP-capable MCP client (like Claude Desktop or Cursor) to the following endpoint:
-
-```text
-http://127.0.0.1:3011/mcp
-```
-
-This exposes tools to list, create, update, and delete evaluation/TODO templates synced with the application.
-
----
-
 ## 🤝 Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to report bugs, suggest features, and submit pull requests.
 
 ---
 
-## 📦 Release
-
-To build a release version locally and tag it:
-
-```bash
-bun run release patch --message "Release description"
-```
-This updates the versions in `package.json`, `tauri.conf.json`, and `Cargo.toml`, creates a release tag, and pushes it to GitHub where the release workflow builds the Universal macOS bundle.
-
----
-
 ## 📄 License
 
 Licensed under the [Apache License 2.0](LICENSE). Copyright 2026 Pathors AI.
-
----
-
-## 💡 Acknowledgements
-
-Built with [Claude Code](https://claude.com/claude-code).
