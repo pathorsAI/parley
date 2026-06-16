@@ -285,3 +285,21 @@ pub fn get_templates_path(app: AppHandle) -> Result<String, String> {
     let path = templates_path(&app)?;
     Ok(path.to_string_lossy().into_owned())
 }
+
+/// Path to the live session snapshot the built-in MCP server reads.
+pub(crate) fn session_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("session.json"))
+}
+
+/// Write the live session snapshot (meeting status, transcript, todos,
+/// evaluations) so MCP clients can read the current meeting state.
+#[tauri::command]
+pub fn write_session(app: AppHandle, json: String) -> Result<(), String> {
+    let path = session_path(&app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
