@@ -296,6 +296,7 @@ img { max-width: 100%; display: block; }
 }
 .chips { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 10px 12px; justify-content: center; }
 .chips li {
+  display: inline-flex; align-items: center; gap: 9px;
   padding: 9px 18px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -305,6 +306,15 @@ img { max-width: 100%; display: block; }
   transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
 }
 .chips li:hover { border-color: var(--line-2); background: var(--grad-soft); transform: translateY(-2px); }
+.chips .logo {
+  width: 17px; height: 17px; flex: none;
+  background: var(--muted);
+  -webkit-mask: var(--m) center / contain no-repeat;
+  mask: var(--m) center / contain no-repeat;
+  transition: background 0.15s ease;
+}
+.chips li:hover .logo { background: var(--text); }
+.chips li.more { color: var(--muted-2); font-family: var(--mono); font-size: 13px; }
 
 /* ---------- Sections ---------- */
 .section {
@@ -333,10 +343,13 @@ img { max-width: 100%; display: block; }
 /* ---------- Feature grid ---------- */
 .grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 18px;
+  align-items: stretch;
 }
 .card {
+  display: flex;
+  flex-direction: column;
   padding: 26px 24px;
   border-radius: var(--radius);
   border: 1px solid var(--line);
@@ -502,8 +515,11 @@ img { max-width: 100%; display: block; }
 .reveal.is-in { opacity: 1; transform: none; }
 
 /* ---------- Responsive ---------- */
+@media (max-width: 1100px) {
+  .grid { grid-template-columns: repeat(2, 1fr); }
+}
 @media (max-width: 900px) {
-  .grid, .steps, .stack-grid { grid-template-columns: repeat(2, 1fr); }
+  .grid, .stack-grid { grid-template-columns: repeat(2, 1fr); }
   .nav__links { display: none; }
   .nav__burger { display: flex; }
   .nav__actions .btn--ghost { display: none; }
