@@ -67,6 +67,7 @@ export function SettingsApp() {
   const [copiedConfig, setCopiedConfig] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [copiedCli, setCopiedCli] = useState(false);
   const info = PROVIDER_BY_ID[settings.provider];
   const providerLabel = info.label;
 
@@ -533,6 +534,41 @@ export function SettingsApp() {
                 </Button>
               </div>
             </Field>
+
+            <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold tracking-tight">{t("settings.mcp.claudeCodeInstructions")}</h3>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1"
+                  onClick={() => {
+                    const endpoint = mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp";
+                    navigator.clipboard.writeText(
+                      `claude mcp add --transport http parley-templates ${endpoint}`
+                    );
+                    setCopiedCli(true);
+                    setTimeout(() => setCopiedCli(false), 2000);
+                  }}
+                >
+                  {copiedCli ? (
+                    <>
+                      <Check className="size-3.5 text-emerald-500" />
+                      <span>{t("settings.mcp.copied")}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="size-3.5" />
+                      <span>{t("settings.mcp.copyCommand")}</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">{t("settings.mcp.claudeCodeHelp")}</p>
+              <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
+                {`claude mcp add --transport http parley-templates ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`}
+              </pre>
+            </div>
 
             <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4">
               <div className="flex items-center justify-between">
