@@ -39,6 +39,7 @@ const DEFAULT_SETTINGS: Settings = {
   language: "zh-TW",
   theme: "system",
   layout: "full",
+  onboarded: false,
   userName: "",
   userRole: "",
   userCompany: "",

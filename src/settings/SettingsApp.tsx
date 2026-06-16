@@ -229,6 +229,16 @@ export function SettingsApp() {
                 ))}
               </div>
             </Field>
+            <Field label={t("settings.basic.setup")}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 w-fit text-xs"
+                onClick={() => patch({ onboarded: false })}
+              >
+                {t("settings.basic.rerunSetup")}
+              </Button>
+            </Field>
           </Section>
         )}
 
