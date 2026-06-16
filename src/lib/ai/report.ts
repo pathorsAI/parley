@@ -1,6 +1,6 @@
 import { streamText } from "ai";
 import { getModel, getProviderOptions } from "./provider";
-import { transcriptAsText } from "../store";
+import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext } from "./profile";
 import type { Evaluation, Settings, TodoItem, TranscriptSegment } from "../types";
@@ -19,9 +19,9 @@ Objectives or evaluation criteria that were NOT met — each with a one-line pie
 Concrete, specific things ME could do better next time. No generic advice.
 
 ## Key moments
-2–4 pivotal points. For each: what happened, then the counterfactual — "when X happened, if ME had done Y, THEM could not have Z."
+2–4 pivotal points. Start each bullet with the moment's timestamp in [m:ss] form (copy it from the transcript line), then: what happened, then the counterfactual — "when X happened, if ME had done Y, THEM could not have Z."
 
-Ground everything in what was actually said. Skip filler and praise that isn't earned. If the transcript is too short to assess, say so plainly.`;
+Each transcript line is prefixed with its [m:ss] start time. Cite those timestamps verbatim whenever you point at a specific moment so the reader can jump back to it. Ground everything in what was actually said. Skip filler and praise that isn't earned. If the transcript is too short to assess, say so plainly.`;
 
 export async function generatePostMeetingReport(opts: {
   settings: Settings;
@@ -35,7 +35,7 @@ export async function generatePostMeetingReport(opts: {
 }): Promise<string> {
   const { settings, segments, evaluations, todos, names, meetingContext, onDelta, signal } = opts;
 
-  const transcript = transcriptAsText(segments, names);
+  const transcript = transcriptWithTimestamps(segments, names);
   const rubric = evaluations.map((e) => `- ${e.name}: ${e.prompt}`).join("\n");
   const checklist = todos.map((t) => `- [${t.done ? "x" : " "}] ${t.text}`).join("\n");
   const ctxLine = meetingContext?.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "";
