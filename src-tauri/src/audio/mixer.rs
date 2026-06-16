@@ -65,12 +65,13 @@ pub async fn mix_streams(
             }
         }
 
-        // Drift guard: if one side keeps producing while the other stalls,
-        // discard its oldest backlog so they don't drift unbounded.
-        if a.len() > MAX_BACKLOG {
+        // Drift guard: only trim a side that is still producing. A closed
+        // side's residual is real captured audio — leave it for the flush
+        // above rather than dropping it.
+        if a_open && a.len() > MAX_BACKLOG {
             a.drain(..a.len() - MAX_BACKLOG);
         }
-        if b.len() > MAX_BACKLOG {
+        if b_open && b.len() > MAX_BACKLOG {
             b.drain(..b.len() - MAX_BACKLOG);
         }
     }
