@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createServer } from "node:http";
 import { z } from "zod";
 import {
   TEMPLATES_PATH,
@@ -186,10 +188,47 @@ server.registerTool(
 );
 
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  // stderr is safe for logging; stdout is reserved for the MCP protocol.
-  console.error(`[parley-templates-mcp] ready. Shared file: ${TEMPLATES_PATH}`);
+  const isSse = process.argv.includes("--sse") || process.env.MCP_TRANSPORT === "sse";
+  const portIndex = process.argv.indexOf("--port");
+  const port = portIndex !== -1 ? parseInt(process.argv[portIndex + 1], 10) : 3011;
+
+  if (isSse) {
+    const transport = new StreamableHTTPServerTransport();
+    await server.connect(transport);
+
+    const httpServer = createServer((req, res) => {
+      // CORS headers
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      if (req.method === "OPTIONS") {
+        res.statusCode = 200;
+        res.end();
+        return;
+      }
+
+      if (req.url === "/sse" || req.url?.startsWith("/sse?")) {
+        transport.handleRequest(req, res).catch((err) => {
+          console.error("[parley-templates-mcp] request error:", err);
+          if (!res.headersSent) {
+            res.statusCode = 500;
+            res.end("Internal Server Error");
+          }
+        });
+      } else {
+        res.statusCode = 404;
+        res.end("Not Found");
+      }
+    });
+
+    httpServer.listen(port, "127.0.0.1", () => {
+      console.error(`[parley-templates-mcp] ready. SSE server listening on http://127.0.0.1:${port}/sse`);
+    });
+  } else {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error(`[parley-templates-mcp] ready. Shared file: ${TEMPLATES_PATH}`);
+  }
 }
 
 main().catch((err) => {
