@@ -36,38 +36,12 @@ Parley is a native, real-time meeting copilot designed for interviews, negotiati
 
 ---
 
-## 🏗️ Architecture
-
-Parley is designed to run with minimal latency by separating audio streaming, UI responsiveness, and LLM processing:
-
-```mermaid
-graph TD
-    SystemAudio[System Audio / CoreAudio Tap] -->|PCM 16kHz| TauriBackend[Tauri Rust Backend]
-    Microphone[Microphone Input / cpal] -->|PCM 16kHz| TauriBackend
-    TauriBackend -->|Realtime WebSocket| Soniox[Soniox STT API]
-    Soniox -->|Live Transcription Events| ReactFrontend[React Frontend UI]
-    ReactFrontend -->|Context + Templates| LLM[Anthropic Claude / OpenRouter]
-    TauriBackend -->|Local HTTP/SSE Server| ExternalMCP[External MCP Clients]
-```
-
----
-
 ## 🔒 Privacy & Data Flow
 
-Meeting content is highly sensitive. Parley is built with a **local-first** approach:
-* **No Middleware Servers:** All audio streams and transcriptions go directly from your local machine to the API endpoints (Soniox/Anthropic/OpenRouter).
+Meeting content is highly sensitive. Parley is built to run directly from your client:
+* **Direct Cloud Connections:** All audio streams and transcriptions go directly from your local machine to the API endpoints (Soniox/Anthropic/OpenRouter). There are no intermediate proxy or middleware servers managed by Pathors AI.
 * **Local Storage:** Transcripts and template files (`templates.json`) are stored exclusively in your local application directory.
 * **No Telemetry:** We do not track, collect, or upload your transcripts, audio, or API usage statistics.
-
----
-
-## ⚙️ Tech Stack
-
-- **Shell & Core:** [Tauri v2](https://v2.tauri.app/) (Rust) + React 19 + Vite + TypeScript + Tailwind CSS v4
-- **Audio Capture:** Core Audio process tap for macOS system audio, `cpal` for microphone input
-- **Transcription:** Soniox WebSocket API (dual concurrent sessions)
-- **AI Integrations:** Vercel AI SDK (Anthropic & OpenRouter adapters)
-- **State Management:** [Zustand](https://github.com/pmndrs/zustand)
 
 ---
 
@@ -110,25 +84,9 @@ This exposes tools to list, create, update, and delete evaluation/TODO templates
 
 ---
 
-## 🗺️ Roadmap
-
-- [ ] Support Windows system audio capture via WASAPI loopback.
-- [ ] Add support for local/offline Whisper transcription.
-- [ ] Add more LLM providers (Ollama, Gemini, OpenAI).
-- [ ] Rich export formats (PDF, Markdown with timestamps, Notion sync).
-
----
-
 ## 🤝 Contributing
 
-Contributions are welcome! If you'd like to help improve Parley:
-1. Fork the repository.
-2. Create a feature branch (`git checkout -b feature/amazing-feature`).
-3. Commit your changes (`git commit -m 'Add amazing feature'`).
-4. Push to the branch (`git push origin feature/amazing-feature`).
-5. Open a Pull Request.
-
-Please make sure to open an issue first to discuss any major changes or new features.
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to report bugs, suggest features, and submit pull requests.
 
 ---
 
