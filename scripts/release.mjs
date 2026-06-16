@@ -160,6 +160,7 @@ writeJson("src-tauri/tauri.conf.json", tauriConfig);
 replacePackageVersion("src-tauri/Cargo.toml", nextVersion);
 
 run("bun", ["install", "--lockfile-only"]);
+run("cargo", ["update", "-p", "parley", "--manifest-path", "src-tauri/Cargo.toml"]);
 
 const notesDir = path.join(root, ".github", "release-notes");
 if (!existsSync(notesDir)) {
@@ -167,7 +168,15 @@ if (!existsSync(notesDir)) {
 }
 writeFileSync(path.join(notesDir, `${tag}.md`), `${releaseNotes}\n`);
 
-run("git", ["add", "package.json", "bun.lock", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", path.join(".github", "release-notes", `${tag}.md`)]);
+run("git", [
+  "add",
+  "package.json",
+  "bun.lock",
+  "src-tauri/tauri.conf.json",
+  "src-tauri/Cargo.toml",
+  "src-tauri/Cargo.lock",
+  path.join(".github", "release-notes", `${tag}.md`),
+]);
 run("git", ["commit", "-m", `Release ${tag}`]);
 run("git", ["tag", "-a", tag, "-m", releaseNotes]);
 run("git", ["push", "origin", "HEAD"]);
