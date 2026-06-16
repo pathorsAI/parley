@@ -45,6 +45,17 @@ impl SttProvider {
         })
     }
 
+    /// Stable string id used by the frontend and the usage log.
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Soniox => "soniox",
+            Self::Deepgram => "deepgram",
+            Self::AssemblyAI => "assemblyai",
+            Self::OpenAI => "openai",
+            Self::Gemini => "gemini",
+        }
+    }
+
     /// Default realtime model id when the caller doesn't supply one.
     pub fn default_model(&self) -> &'static str {
         match self {

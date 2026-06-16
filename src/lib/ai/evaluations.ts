@@ -2,6 +2,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import { getModel, getProviderOptions } from "./provider";
 import { transcriptAsText, useStore } from "../store";
+import { recordLlmUsage } from "../usage/log";
 import type { EvalDef, EvalResult, Settings, TranscriptSegment } from "../types";
 
 // One result per evaluation, returned together from a single model call.
@@ -44,13 +45,14 @@ export async function runAllEvaluations(opts: {
     .map((e) => `### id: ${e.id}\nname: ${e.name}\nwatch for: ${e.prompt}`)
     .join("\n\n");
 
-  const { object } = await generateObject({
+  const { object, usage } = await generateObject({
     model: getModel(settings, "eval"),
     providerOptions: getProviderOptions(settings, "eval"),
     schema: batchSchema,
     system: SYSTEM,
     prompt: `${ctx}Evaluations (return one result per id):\n${list}\n\nTranscript so far:\n${transcript}`,
   });
+  void recordLlmUsage(settings, "eval", "eval", usage);
 
   const map: Record<string, EvalResult> = {};
   for (const r of object.results) {

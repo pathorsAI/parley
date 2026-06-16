@@ -2,6 +2,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import { getModel, getProviderOptions } from "./provider";
 import { transcriptAsText, useStore } from "../store";
+import { recordLlmUsage } from "../usage/log";
 import type { Settings, TodoItem, TranscriptSegment } from "../types";
 
 const schema = z.object({
@@ -31,7 +32,7 @@ export async function checkTodos(opts: {
   const mc = useStore.getState().meetingContext.trim();
   const ctx = mc ? `Meeting context: ${mc}\n\n` : "";
 
-  const { object } = await generateObject({
+  const { object, usage } = await generateObject({
     model: getModel(settings, "ask"),
     providerOptions: getProviderOptions(settings, "ask"),
     schema,
@@ -41,6 +42,7 @@ export async function checkTodos(opts: {
       "only mark an item done if the transcript clearly shows it was handled.",
     prompt: `${ctx}Checklist (id and text):\n${list}\n\nTranscript so far:\n${transcript}`,
   });
+  void recordLlmUsage(settings, "ask", "todo", usage);
 
   const validIds = new Set(open.map((t) => t.id));
   return object.done_ids.filter((id) => validIds.has(id));

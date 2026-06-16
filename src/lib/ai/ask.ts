@@ -1,6 +1,7 @@
 import { streamText } from "ai";
 import { getModel, getProviderOptions } from "./provider";
 import { transcriptAsText } from "../store";
+import { recordLlmUsage } from "../usage/log";
 import type { Settings, TranscriptSegment } from "../types";
 
 const SYSTEM = `You are Parley, a realtime meeting copilot assisting the user ("ME") during a live interview or negotiation against the other party ("THEM").
@@ -40,5 +41,13 @@ export async function askAboutMeeting(opts: {
     full += delta;
     onDelta(delta);
   }
+  // Usage resolves once the stream finishes; log it without blocking the return.
+  void (async () => {
+    try {
+      await recordLlmUsage(settings, "ask", "ask", await result.usage);
+    } catch {
+      /* best-effort logging */
+    }
+  })();
   return full;
 }
