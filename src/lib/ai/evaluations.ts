@@ -1,54 +1,60 @@
 import { generateObject } from "ai";
 import { z } from "zod";
-import { getModel } from "./provider";
-import { transcriptAsText } from "../store";
-import type { Evaluation, EvalResult, Settings, TranscriptSegment } from "../types";
+import { getModel, getProviderOptions } from "./provider";
+import { transcriptAsText, useStore } from "../store";
+import type { EvalDef, EvalResult, Settings, TranscriptSegment } from "../types";
 
-// Structured output contract shared by every evaluation. Mirrors EvalResult.
-const evalSchema = z.object({
-  flagged: z
-    .boolean()
-    .describe("True only if the situation is worth surfacing to the user right now."),
+// One result per evaluation, returned together from a single model call.
+const resultSchema = z.object({
+  id: z.string().describe("The evaluation id this result is for."),
+  flagged: z.boolean().describe("True only if worth surfacing to the user right now."),
   severity: z.enum(["info", "warn", "critical"]),
   summary: z.string().describe("One or two sentences the user can read at a glance."),
   evidence: z
     .array(
       z.object({
-        quote: z.string().describe("The exact words from the transcript."),
+        quote: z.string(),
         source: z.enum(["me", "them"]),
-        reason: z.string().describe("Why this quote matters for the finding."),
+        reason: z.string(),
       })
     )
-    .describe("Supporting quotes. Empty when nothing is flagged."),
+    .describe("Supporting quotes; empty when not flagged."),
 });
+const batchSchema = z.object({ results: z.array(resultSchema) });
 
-const SYSTEM = `You are an evaluation engine for Parley, a realtime meeting copilot. You monitor a live interview or negotiation transcript on behalf of the user ("ME"), watching the other party ("THEM").
+const SYSTEM = `You are the evaluation engine for Parley, a realtime meeting copilot. You monitor a live interview/negotiation transcript on behalf of the user ("ME"), watching the other party ("THEM").
 
-You will be given one specific thing to watch for, plus the transcript so far. Judge ONLY against what was actually said — never invent quotes or infer beyond the text. Flag only when you have concrete evidence; a clean transcript should return flagged=false with empty evidence. Keep the summary short and actionable.`;
+You are given SEVERAL evaluations at once, each with an id and what to look for. Run them ALL against the transcript and return exactly one result per id. Judge only against what was actually said — never invent quotes. Flag only with concrete evidence; an evaluation with nothing to report returns flagged=false and empty evidence. Keep summaries short and actionable.`;
 
 /**
- * Run a single evaluation over the current transcript and return its structured
- * result. Uses the stronger "eval" model via the active provider.
+ * Run every evaluation in a SINGLE model call and return results keyed by id.
+ * Cheaper and more coherent than one request per evaluation.
  */
-export async function runEvaluation(opts: {
+export async function runAllEvaluations(opts: {
   settings: Settings;
-  evaluation: Evaluation;
   segments: TranscriptSegment[];
+  evals: EvalDef[];
   names?: Record<string, string>;
-}): Promise<EvalResult> {
-  const { settings, evaluation, segments, names } = opts;
+}): Promise<Record<string, EvalResult>> {
+  const { settings, segments, evals, names } = opts;
   const transcript = transcriptAsText(segments, names);
-
-  const contextLine = settings.meetingContext.trim()
-    ? `Meeting context: ${settings.meetingContext.trim()}\n\n`
-    : "";
+  const meetingContext = useStore.getState().meetingContext;
+  const ctx = meetingContext.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "";
+  const list = evals
+    .map((e) => `### id: ${e.id}\nname: ${e.name}\nwatch for: ${e.prompt}`)
+    .join("\n\n");
 
   const { object } = await generateObject({
     model: getModel(settings, "eval"),
-    schema: evalSchema,
+    providerOptions: getProviderOptions(settings),
+    schema: batchSchema,
     system: SYSTEM,
-    prompt: `${contextLine}What to watch for: ${evaluation.prompt}\n\nTranscript so far:\n${transcript}`,
+    prompt: `${ctx}Evaluations (return one result per id):\n${list}\n\nTranscript so far:\n${transcript}`,
   });
 
-  return object;
+  const map: Record<string, EvalResult> = {};
+  for (const r of object.results) {
+    map[r.id] = { flagged: r.flagged, severity: r.severity, summary: r.summary, evidence: r.evidence };
+  }
+  return map;
 }

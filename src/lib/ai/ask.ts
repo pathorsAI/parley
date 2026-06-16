@@ -1,5 +1,5 @@
 import { streamText } from "ai";
-import { getModel } from "./provider";
+import { getModel, getProviderOptions } from "./provider";
 import { transcriptAsText } from "../store";
 import type { Settings, TranscriptSegment } from "../types";
 
@@ -29,6 +29,7 @@ export async function askAboutMeeting(opts: {
 
   const result = streamText({
     model: getModel(settings, "ask"),
+    providerOptions: getProviderOptions(settings),
     system: SYSTEM,
     abortSignal: signal,
     prompt: `${contextLine}Transcript so far:\n${transcript}\n\nQuestion: ${question}`,

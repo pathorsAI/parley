@@ -1,7 +1,7 @@
 import { generateObject } from "ai";
 import { z } from "zod";
-import { getModel } from "./provider";
-import { transcriptAsText } from "../store";
+import { getModel, getProviderOptions } from "./provider";
+import { transcriptAsText, useStore } from "../store";
 import type { Settings, TodoItem, TranscriptSegment } from "../types";
 
 const schema = z.object({
@@ -28,10 +28,12 @@ export async function checkTodos(opts: {
   if (!transcript.trim()) return [];
 
   const list = open.map((t) => `- [${t.id}] ${t.text}`).join("\n");
-  const ctx = settings.meetingContext.trim() ? `Meeting context: ${settings.meetingContext.trim()}\n\n` : "";
+  const mc = useStore.getState().meetingContext.trim();
+  const ctx = mc ? `Meeting context: ${mc}\n\n` : "";
 
   const { object } = await generateObject({
     model: getModel(settings, "ask"),
+    providerOptions: getProviderOptions(settings),
     schema,
     system:
       "You track a meeting checklist. Given the checklist items and the live transcript, " +

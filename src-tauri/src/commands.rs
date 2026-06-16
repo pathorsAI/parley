@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::audio::{microphone::Microphone, AudioSource};
 use crate::transcription::soniox;
 
-const DEFAULT_MODEL: &str = "stt-rt-v4";
+const DEFAULT_MODEL: &str = "stt-rt-v5";
 
 /// Shared meeting state held in Tauri's managed state. `running` gates all
 /// capture threads; clearing it tells them to release their devices and exit.
