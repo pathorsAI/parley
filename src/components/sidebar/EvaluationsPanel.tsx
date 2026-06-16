@@ -1,7 +1,10 @@
 import { useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { FileText, RefreshCw, X } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useStore } from "../../lib/store";
 import { runAllEvaluations } from "../../lib/evaluations/engine";
+import { generatePostMeetingReport } from "../../lib/ai/report";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { PROVIDER_BY_ID } from "../../lib/ai/providers";
 import { useI18n } from "../../i18n";
@@ -31,11 +34,35 @@ export function EvaluationsPanel() {
   const setAutoEvalSec = useStore((s) => s.setAutoEvalSec);
   const running = useStore((s) => s.evaluations.some((e) => e.status === "running"));
 
+  const [report, setReport] = useState("");
+  const [reportStatus, setReportStatus] = useState<"idle" | "generating" | "done">("idle");
+
   function applyTemplate(id: string) {
     const tpl = templates.find((t) => t.id === id);
     if (!tpl) return;
     updateSettings({ evaluations: tpl.evals.map((e) => ({ ...e })) });
     setSelectedTemplateId(id);
+  }
+
+  async function generateReport() {
+    const s = useStore.getState();
+    setReport("");
+    setReportStatus("generating");
+    try {
+      await generatePostMeetingReport({
+        settings: s.settings,
+        segments: s.segments,
+        evaluations: s.evaluations,
+        todos: s.todos,
+        names: s.speakerNames,
+        meetingContext: s.meetingContext,
+        onDelta: (chunk) => setReport((prev) => prev + chunk),
+      });
+    } catch (e) {
+      console.error("[report] failed", e);
+    } finally {
+      setReportStatus("done");
+    }
   }
 
   return (
@@ -67,6 +94,17 @@ export function EvaluationsPanel() {
           <RefreshCw className={`size-3 ${running ? "animate-spin" : ""}`} />
           {t("evaluations.runAll")}
         </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 px-2.5 text-[11px]"
+          disabled={reportStatus === "generating" || keyMissing}
+          onClick={() => void generateReport()}
+          title={t("evaluations.reportHint")}
+        >
+          <FileText className={`size-3 ${reportStatus === "generating" ? "animate-pulse" : ""}`} />
+          {t("evaluations.report")}
+        </Button>
         {/* Auto: re-run the whole set every N seconds while recording. */}
         <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
           <input
@@ -95,6 +133,31 @@ export function EvaluationsPanel() {
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-2 px-3 pb-3">
+          {reportStatus !== "idle" && (
+            <div className="rounded-lg border bg-muted/20 p-3">
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-xs font-semibold tracking-tight">
+                  {t("evaluations.report")}
+                  {reportStatus === "generating" && (
+                    <span className="ml-2 font-normal text-muted-foreground">{t("evaluations.reportGenerating")}</span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground"
+                  onClick={() => {
+                    setReportStatus("idle");
+                    setReport("");
+                  }}
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+              <div className="prose prose-invert prose-sm max-w-none select-text text-foreground prose-p:my-1.5 prose-headings:mb-1 prose-headings:mt-3 prose-ul:my-1.5 prose-li:my-0.5">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{report || "…"}</ReactMarkdown>
+              </div>
+            </div>
+          )}
           {evaluations.map((e) => (
             <EvaluationCard key={e.id} evaluation={e} />
           ))}
