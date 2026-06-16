@@ -28,6 +28,8 @@ tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 futures-util = "0.3"
 anyhow = "1"
+axum = "0.7"
+uuid = { version = "1", features = ["v4"] }
 # Audio framed as base64 JSON for OpenAI/Gemini realtime transcription adapters.
 base64 = "0.22"
 
@@ -35,4 +37,3 @@ base64 = "0.22"
 coreaudio-sys = "0.2"
 core-foundation = "0.10"
 objc = "0.2"
-
