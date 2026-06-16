@@ -17,27 +17,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { PROVIDERS, PROVIDER_BY_ID, isReasoningModel } from "../lib/ai/providers";
 import type { AppLanguage, EvalDef, LlmProvider, Settings } from "../lib/types";
 
 type Category = "basic" | "provider" | "transcription" | "evaluations" | "todos";
-
-// Curated model choices per provider (the current value is always included too).
-const MODEL_OPTIONS: Record<LlmProvider, string[]> = {
-  anthropic: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-7"],
-  openrouter: [
-    "anthropic/claude-sonnet-4.5",
-    "anthropic/claude-opus-4.1",
-    "openai/gpt-oss-120b",
-    "openai/gpt-4o-mini",
-    "google/gemini-2.0-flash-001",
-  ],
-  groq: [
-    "openai/gpt-oss-20b",
-    "openai/gpt-oss-120b",
-    "llama-3.3-70b-versatile",
-    "moonshotai/kimi-k2-instruct",
-  ],
-};
 
 const NAV: { id: Category; labelKey: TranslationKey }[] = [
   { id: "basic", labelKey: "settings.nav.basic" },
@@ -55,14 +38,8 @@ export function SettingsApp() {
   const [devices, setDevices] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
   const [newTplName, setNewTplName] = useState("");
-  const providerLabel =
-    settings.provider === "anthropic" ? "Claude" : settings.provider === "groq" ? "Groq" : "OpenRouter";
-  const providerKey =
-    settings.provider === "anthropic"
-      ? { value: settings.anthropicApiKey, set: (v: string) => patch({ anthropicApiKey: v }), ph: "sk-ant-…" }
-      : settings.provider === "groq"
-      ? { value: settings.groqApiKey, set: (v: string) => patch({ groqApiKey: v }), ph: "gsk_…" }
-      : { value: settings.openrouterApiKey, set: (v: string) => patch({ openrouterApiKey: v }), ph: "sk-or-…" };
+  const info = PROVIDER_BY_ID[settings.provider];
+  const providerLabel = info.label;
 
   function patch(p: Partial<Settings>) {
     updateSettings(p);
@@ -135,16 +112,31 @@ export function SettingsApp() {
               <Select value={settings.provider} onValueChange={(v) => patch({ provider: v as LlmProvider })}>
                 <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="anthropic">Claude (Anthropic 直連)</SelectItem>
-                  <SelectItem value="openrouter">OpenRouter</SelectItem>
-                  <SelectItem value="groq">Groq (最快 · gpt-oss)</SelectItem>
+                  {PROVIDERS.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      <span className="flex items-center gap-2">
+                        <img src={p.icon} alt="" className="size-4 rounded-sm" />
+                        {p.label}
+                        {p.note && <span className="text-[10px] text-muted-foreground">{p.note}</span>}
+                      </span>
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </Field>
             <Field label={t("settings.provider.apiKey", { provider: providerLabel })}>
-              <Input type="password" autoComplete="off" placeholder={providerKey.ph} className="max-w-sm" value={providerKey.value} onChange={(e) => providerKey.set(e.target.value)} />
+              <Input
+                type="password"
+                autoComplete="off"
+                placeholder={info.keyPlaceholder}
+                className="max-w-sm"
+                value={settings[info.apiKeyField]}
+                onChange={(e) => patch({ [info.apiKeyField]: e.target.value } as Partial<Settings>)}
+              />
             </Field>
-            {settings.provider === "groq" && (
+            {info.kind === "openai-compatible" &&
+              (isReasoningModel(settings.models[settings.provider].ask) ||
+                isReasoningModel(settings.models[settings.provider].eval)) && (
               <Field label={t("settings.provider.reasoning")}>
                 <Select value={settings.reasoningEffort} onValueChange={(v) => patch({ reasoningEffort: v as Settings["reasoningEffort"] })}>
                   <SelectTrigger className="w-full max-w-[180px]"><SelectValue /></SelectTrigger>
@@ -160,7 +152,7 @@ export function SettingsApp() {
               <p className="text-[11px] text-muted-foreground">
                 {t("settings.provider.models", {
                   provider: providerLabel,
-                  suffix: settings.provider === "anthropic" ? "" : t("settings.provider.slugSuffix"),
+                  suffix: info.kind === "anthropic" ? "" : t("settings.provider.slugSuffix"),
                 })}
               </p>
               <Field label={t("settings.provider.askModel")}>
@@ -375,7 +367,7 @@ function ModelSelect({
   onChange: (v: string) => void;
 }) {
   // Always include the current value so a custom/persisted id stays selectable.
-  const options = Array.from(new Set([...MODEL_OPTIONS[provider], value].filter(Boolean)));
+  const options = Array.from(new Set([...PROVIDER_BY_ID[provider].models, value].filter(Boolean)));
   return (
     <Select value={value} onValueChange={onChange}>
       <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
