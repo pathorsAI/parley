@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Parley — Your realtime meeting copilot for interviews & negotiations</title>
+    <meta
+      name="description"
+      content="Parley is a native macOS meeting copilot. It listens to both sides of the conversation, transcribes live with speaker diarization, and runs AI evaluations and a live Q&A sidebar — so you see what matters in the moment."
+    />
+    <meta property="og:title" content="Parley — Realtime meeting copilot" />
+    <meta
+      property="og:description"
+      content="Live transcription, AI evaluations, and a Q&A sidebar for interviews and negotiations. Native macOS. Open source."
+    />
+    <meta property="og:type" content="website" />
+    <link rel="icon" type="image/svg+xml" href="assets/logo.svg" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Ambient background -->
+    <div class="bg-aura" aria-hidden="true">
+      <div class="aura aura--1"></div>
+      <div class="aura aura--2"></div>
+      <div class="aura aura--3"></div>
+      <div class="grid-overlay"></div>
+    </div>
+
+    <!-- Nav -->
+    <header class="nav" id="nav">
+      <a class="nav__brand" href="#top" aria-label="Parley home">
+        <img src="assets/logo.svg" alt="" width="28" height="28" />
+        <span>Parley</span>
+      </a>
+      <nav class="nav__links" aria-label="Primary">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#showcase">Showcase</a>
+        <a href="#stack">Tech</a>
+      </nav>
+      <div class="nav__actions">
+        <a class="btn btn--ghost" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5Z"/></svg>
+          <span>GitHub</span>
+        </a>
+        <a class="btn btn--primary" href="#download">
+          <span>Get Parley</span>
+        </a>
+      </div>
+      <button class="nav__burger" id="burger" aria-label="Toggle menu" aria-expanded="false">
+        <span></span><span></span>
+      </button>
+    </header>
+
+    <main id="top">
+      <!-- Hero -->
+      <section class="hero">
+        <div class="hero__inner reveal">
+          <a class="pill" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">
+            <span class="pill__dot"></span>
+            Open source · Native macOS
+            <span class="pill__arrow">→</span>
+          </a>
+          <h1 class="hero__title">
+            Hear <span class="grad">both sides</span>.<br />
+            Know what matters <span class="grad">in the moment</span>.
+          </h1>
+          <p class="hero__sub">
+            Parley is a realtime meeting copilot for interviews and negotiations. It listens to you and
+            the other party, transcribes live with speaker diarization, and runs AI evaluations and a
+            live Q&amp;A sidebar — so you stay focused on the conversation, not your notes.
+          </p>
+          <div class="hero__cta">
+            <a class="btn btn--primary btn--lg" href="#download">Get Parley for macOS</a>
+            <a class="btn btn--ghost btn--lg" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">Star on GitHub</a>
+          </div>
+          <ul class="hero__meta">
+            <li><span class="dot dot--me"></span> Tags every line <strong>me</strong> / <strong>them</strong></li>
+            <li><span class="dot dot--live"></span> Low-latency streaming</li>
+            <li><span class="dot dot--ai"></span> Claude &amp; OpenRouter</li>
+          </ul>
+        </div>
+
+        <!-- Hero showcase: drop a hero GIF/screenshot at assets/showcase-hero.* -->
+        <figure class="window reveal" data-media="showcase-hero">
+          <div class="window__bar">
+            <span class="traffic"><i></i><i></i><i></i></span>
+            <span class="window__title">Parley — Meeting in progress</span>
+          </div>
+          <div class="media-slot media-slot--hero">
+            <div class="media-slot__hint">
+              <svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 5v14l11-7L8 5Z" stroke-linejoin="round"/></svg>
+              <p><strong>Add your hero showcase</strong></p>
+              <code>website/assets/showcase-hero.png</code>
+              <span>(or .gif / .mp4 — see website/README.md)</span>
+            </div>
+          </div>
+        </figure>
+      </section>
+
+      <!-- Logos / positioning strip -->
+      <section class="strip reveal">
+        <p>Built for the conversations that count</p>
+        <ul>
+          <li>Job interviews</li>
+          <li>Salary negotiations</li>
+          <li>Sales calls</li>
+          <li>Deal-making</li>
+          <li>Diligence calls</li>
+        </ul>
+      </section>
+
+      <!-- Features -->
+      <section class="section" id="features">
+        <div class="section__head reveal">
+          <span class="eyebrow">Features</span>
+          <h2>Everything you need, on a single live canvas</h2>
+          <p>No tab-switching, no recording-then-reviewing. Parley surfaces insight while the conversation is still happening.</p>
+        </div>
+
+        <div class="grid">
+          <article class="card reveal">
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v18M5 8v8M19 8v8M9 5v14M15 5v14" stroke-linecap="round"/></svg>
+            </div>
+            <h3>Dual-source capture</h3>
+            <p>Captures your microphone and system audio at the same time, so every line is tagged as <em>me</em> or <em>them</em>.</p>
+          </article>
+
+          <article class="card reveal">
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 12h3l2 5 4-13 2 8h5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>Realtime transcription</h3>
+            <p>Soniox streaming transcription with low latency, speaker diarization, and editable speaker names.</p>
+          </article>
+
+          <article class="card reveal">
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3a9 9 0 1 0 9 9M21 3l-9 9" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.5"/></svg>
+            </div>
+            <h3>Switchable AI provider</h3>
+            <p>Run analysis through Anthropic Claude or OpenRouter — pick whichever you prefer in Settings.</p>
+          </article>
+
+          <article class="card reveal">
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V8a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8Z" stroke-linejoin="round"/><path d="M11 9h.01M11 12v3" stroke-linecap="round"/></svg>
+            </div>
+            <h3>Live Q&amp;A sidebar</h3>
+            <p>Ask anything about the ongoing conversation and get streamed answers grounded in the live transcript.</p>
+          </article>
+
+          <article class="card reveal">
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 12h8M8 8h8M8 16h5" stroke-linecap="round"/></svg>
+            </div>
+            <h3>Configurable evaluations</h3>
+            <p>Preset and custom evaluation cards surface insights as the conversation unfolds — automatic or manual rerun.</p>
+          </article>
+
+          <article class="card reveal">
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="m8 12 3 3 5-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>TODO with AI auto-check</h3>
+            <p>Track what you want to cover; items check off automatically as the AI detects they've been addressed.</p>
+          </article>
+
+          <article class="card reveal">
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg>
+            </div>
+            <h3>Traditional Chinese</h3>
+            <p>On-the-fly conversion of transcribed text to Traditional Chinese, right in the transcript.</p>
+          </article>
+
+          <article class="card reveal">
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18" /><circle cx="6.5" cy="6.5" r=".6" fill="currentColor"/></svg>
+            </div>
+            <h3>Native, focused chrome</h3>
+            <p>A clean custom titlebar and native-feeling window — designed to sit quietly beside your call.</p>
+          </article>
+        </div>
+      </section>
+
+      <!-- How it works -->
+      <section class="section section--alt" id="how">
+        <div class="section__head reveal">
+          <span class="eyebrow">How it works</span>
+          <h2>From audio to insight in three steps</h2>
+        </div>
+        <ol class="steps">
+          <li class="step reveal">
+            <span class="step__n">01</span>
+            <h3>Capture both sides</h3>
+            <p>Parley taps your system audio via Core Audio and your mic via cpal — no virtual cables, no setup.</p>
+          </li>
+          <li class="step reveal">
+            <span class="step__n">02</span>
+            <h3>Transcribe live</h3>
+            <p>Two Soniox sessions stream transcription with diarization, labeling each line by speaker.</p>
+          </li>
+          <li class="step reveal">
+            <span class="step__n">03</span>
+            <h3>Evaluate &amp; answer</h3>
+            <p>AI evaluations and the Q&amp;A sidebar run continuously, surfacing what's missing and what matters.</p>
+          </li>
+        </ol>
+      </section>
+
+      <!-- Showcase: alternating media slots -->
+      <section class="section" id="showcase">
+        <div class="section__head reveal">
+          <span class="eyebrow">Showcase</span>
+          <h2>See it in motion</h2>
+          <p>Drop a short GIF or screenshot into each slot to bring these moments to life.</p>
+        </div>
+
+        <div class="feature-rows">
+          <div class="feature-row reveal">
+            <div class="feature-row__copy">
+              <span class="eyebrow eyebrow--sm">Live transcript</span>
+              <h3>Every word, attributed</h3>
+              <p>Watch the conversation stream in with <em>me</em> / <em>them</em> tags and editable speaker names. Convert to Traditional Chinese inline whenever you need it.</p>
+              <ul class="checklist">
+                <li>Low-latency streaming</li>
+                <li>Speaker diarization</li>
+                <li>Editable names</li>
+              </ul>
+            </div>
+            <figure class="media-slot media-slot--wide" data-media="showcase-transcript">
+              <div class="media-slot__hint">
+                <p><strong>showcase-transcript</strong></p>
+                <code>website/assets/showcase-transcript.gif</code>
+              </div>
+            </figure>
+          </div>
+
+          <div class="feature-row feature-row--rev reveal">
+            <div class="feature-row__copy">
+              <span class="eyebrow eyebrow--sm">Q&amp;A sidebar</span>
+              <h3>Ask mid-conversation</h3>
+              <p>Type a question and get a streamed answer grounded in everything said so far — without breaking eye contact.</p>
+              <ul class="checklist">
+                <li>Grounded in live transcript</li>
+                <li>Streamed responses</li>
+                <li>Claude or OpenRouter</li>
+              </ul>
+            </div>
+            <figure class="media-slot media-slot--wide" data-media="showcase-qa">
+              <div class="media-slot__hint">
+                <p><strong>showcase-qa</strong></p>
+                <code>website/assets/showcase-qa.gif</code>
+              </div>
+            </figure>
+          </div>
+
+          <div class="feature-row reveal">
+            <div class="feature-row__copy">
+              <span class="eyebrow eyebrow--sm">Evaluations &amp; TODOs</span>
+              <h3>Insight that keeps up</h3>
+              <p>Evaluation cards rerun as the conversation evolves, and your checklist ticks itself off as topics get covered.</p>
+              <ul class="checklist">
+                <li>Preset &amp; custom cards</li>
+                <li>Auto or manual rerun</li>
+                <li>AI auto-check TODOs</li>
+              </ul>
+            </div>
+            <figure class="media-slot media-slot--wide" data-media="showcase-eval">
+              <div class="media-slot__hint">
+                <p><strong>showcase-eval</strong></p>
+                <code>website/assets/showcase-eval.gif</code>
+              </div>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tech stack -->
+      <section class="section section--alt" id="stack">
+        <div class="section__head reveal">
+          <span class="eyebrow">Under the hood</span>
+          <h2>Built on a fast, native foundation</h2>
+          <p>A Rust + Tauri shell with a modern React frontend — small, quick, and genuinely native on macOS.</p>
+        </div>
+        <div class="stack-grid">
+          <div class="stack-card reveal"><span class="stack-card__k">Shell</span><span class="stack-card__v">Tauri v2 · Rust · React 19 · Vite · TS · Tailwind v4</span></div>
+          <div class="stack-card reveal"><span class="stack-card__k">Transcription</span><span class="stack-card__v">Soniox realtime websocket (mic + system audio)</span></div>
+          <div class="stack-card reveal"><span class="stack-card__k">Audio (macOS)</span><span class="stack-card__v">Core Audio process tap · cpal · AudioSource trait</span></div>
+          <div class="stack-card reveal"><span class="stack-card__k">AI</span><span class="stack-card__v">Vercel AI SDK · Anthropic Claude / OpenRouter</span></div>
+          <div class="stack-card reveal"><span class="stack-card__k">State</span><span class="stack-card__v">Zustand</span></div>
+          <div class="stack-card reveal"><span class="stack-card__k">License</span><span class="stack-card__v">Apache 2.0 · © Pathors AI</span></div>
+        </div>
+      </section>
+
+      <!-- Download / CTA -->
+      <section class="section cta-section" id="download">
+        <div class="cta reveal">
+          <div class="cta__glow" aria-hidden="true"></div>
+          <span class="eyebrow">Get started</span>
+          <h2>Run Parley in two commands</h2>
+          <p>Clone the repo, add your API keys in Settings, and you're listening. macOS only for now — the audio layer sits behind a trait, so other platforms are possible.</p>
+          <div class="codeblock">
+            <button class="copy" data-copy="bun install&#10;bun run tauri dev" aria-label="Copy commands">Copy</button>
+            <pre><code><span class="c-cmt"># from the repo root</span>
+bun install
+bun run tauri dev</code></pre>
+          </div>
+          <div class="cta__actions">
+            <a class="btn btn--primary btn--lg" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">View on GitHub</a>
+            <a class="btn btn--ghost btn--lg" href="https://github.com/pathorsAI/parley#setup--run" target="_blank" rel="noopener">Read the setup guide</a>
+          </div>
+          <p class="cta__note">Requires a Soniox key and an Anthropic or OpenRouter key — entered in-app, no env setup needed.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="footer__top">
+        <a class="nav__brand" href="#top">
+          <img src="assets/logo.svg" alt="" width="26" height="26" />
+          <span>Parley</span>
+        </a>
+        <nav class="footer__links" aria-label="Footer">
+          <a href="#features">Features</a>
+          <a href="#how">How it works</a>
+          <a href="#stack">Tech</a>
+          <a href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/pathorsAI/parley/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+        </nav>
+      </div>
+      <div class="footer__bottom">
+        <p>© 2026 Pathors AI · Apache 2.0</p>
+        <p>Built with <a href="https://claude.com/claude-code" target="_blank" rel="noopener">Claude Code</a></p>
+      </div>
+    </footer>
+
+    <script src="script.js"></script>
+  </body>
+</html>
