@@ -3,6 +3,7 @@ import { RefreshCw } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { runAllEvaluations } from "../../lib/evaluations/engine";
 import { hasProviderKey } from "../../lib/ai/settings";
+import { PROVIDER_BY_ID } from "../../lib/ai/providers";
 import { useI18n } from "../../i18n";
 import { EvaluationCard } from "./EvaluationCard";
 import { Button } from "@/components/ui/button";
@@ -15,8 +16,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
-const PROVIDER_LABEL = { anthropic: "Claude", openrouter: "OpenRouter", groq: "Groq" } as const;
 
 export function EvaluationsPanel() {
   const { t } = useI18n();
@@ -90,7 +89,7 @@ export function EvaluationsPanel() {
 
       {keyMissing && (
         <div className="mx-3 mb-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-300">
-          {t("evaluations.missingKey", { provider: PROVIDER_LABEL[provider] })}
+          {t("evaluations.missingKey", { provider: PROVIDER_BY_ID[provider]?.label ?? provider })}
         </div>
       )}
 
