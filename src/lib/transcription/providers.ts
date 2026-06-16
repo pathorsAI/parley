@@ -14,15 +14,17 @@ export interface SttProviderInfo {
   /** Settings field holding this provider's API key. */
   apiKeyField: keyof Settings;
   keyPlaceholder: string;
+  /** Brand icon in /public/providers. */
+  icon: string;
 }
 
 export const STT_PROVIDERS: SttProviderInfo[] = [
-  { id: "soniox", label: "Soniox", diarization: true, apiKeyField: "sonioxApiKey", keyPlaceholder: "…" },
-  { id: "deepgram", label: "Deepgram", diarization: true, apiKeyField: "deepgramApiKey", keyPlaceholder: "…" },
-  { id: "assemblyai", label: "AssemblyAI", diarization: false, apiKeyField: "assemblyaiApiKey", keyPlaceholder: "…" },
+  { id: "soniox", label: "Soniox", diarization: true, apiKeyField: "sonioxApiKey", keyPlaceholder: "…", icon: "/providers/soniox.png" },
+  { id: "deepgram", label: "Deepgram", diarization: true, apiKeyField: "deepgramApiKey", keyPlaceholder: "…", icon: "/providers/deepgram.png" },
+  { id: "assemblyai", label: "AssemblyAI", diarization: false, apiKeyField: "assemblyaiApiKey", keyPlaceholder: "…", icon: "/providers/assemblyai.png" },
   // OpenAI / Gemini transcription reuse the same key as their LLM provider.
-  { id: "openai", label: "OpenAI", diarization: false, apiKeyField: "openaiApiKey", keyPlaceholder: "sk-…" },
-  { id: "gemini", label: "Gemini", diarization: false, apiKeyField: "geminiApiKey", keyPlaceholder: "AIza…" },
+  { id: "openai", label: "OpenAI", diarization: false, apiKeyField: "openaiApiKey", keyPlaceholder: "sk-…", icon: "/providers/openai.png" },
+  { id: "gemini", label: "Gemini", diarization: false, apiKeyField: "geminiApiKey", keyPlaceholder: "AIza…", icon: "/providers/gemini.png" },
 ];
 
 export const STT_BY_ID = Object.fromEntries(STT_PROVIDERS.map((p) => [p.id, p])) as Record<
