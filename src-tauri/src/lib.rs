@@ -27,6 +27,7 @@ pub fn run() {
             commands::read_templates,
             commands::write_templates,
             commands::get_templates_path,
+            commands::write_session,
             usage::append_usage_event,
             usage::read_usage_events,
             mcp::get_mcp_server_info
