@@ -1,7 +1,5 @@
 import { useState } from "react";
-import { FileText, RefreshCw, X } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { FileText, Maximize2, RefreshCw, X } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { runAllEvaluations } from "../../lib/evaluations/engine";
 import { generatePostMeetingReport } from "../../lib/ai/report";
@@ -9,6 +7,7 @@ import { hasProviderKey } from "../../lib/ai/settings";
 import { PROVIDER_BY_ID } from "../../lib/ai/providers";
 import { useI18n } from "../../i18n";
 import { EvaluationCard } from "./EvaluationCard";
+import { ReportContent } from "./ReportContent";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -36,6 +35,7 @@ export function EvaluationsPanel() {
 
   const [report, setReport] = useState("");
   const [reportStatus, setReportStatus] = useState<"idle" | "generating" | "done">("idle");
+  const [expanded, setExpanded] = useState(false);
 
   function applyTemplate(id: string) {
     const tpl = templates.find((t) => t.id === id);
@@ -142,20 +142,28 @@ export function EvaluationsPanel() {
                     <span className="ml-2 font-normal text-muted-foreground">{t("evaluations.reportGenerating")}</span>
                   )}
                 </span>
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-foreground"
-                  onClick={() => {
-                    setReportStatus("idle");
-                    setReport("");
-                  }}
-                >
-                  <X className="size-3.5" />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground"
+                    title={t("evaluations.reportExpand")}
+                    onClick={() => setExpanded(true)}
+                  >
+                    <Maximize2 className="size-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground"
+                    onClick={() => {
+                      setReportStatus("idle");
+                      setReport("");
+                    }}
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
               </div>
-              <div className="prose prose-invert prose-sm max-w-none select-text text-foreground prose-p:my-1.5 prose-headings:mb-1 prose-headings:mt-3 prose-ul:my-1.5 prose-li:my-0.5">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{report || "…"}</ReactMarkdown>
-              </div>
+              <ReportContent markdown={report} />
             </div>
           )}
           {evaluations.map((e) => (
@@ -163,6 +171,39 @@ export function EvaluationsPanel() {
           ))}
         </div>
       </ScrollArea>
+
+      {expanded && reportStatus !== "idle" && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+          onClick={() => setExpanded(false)}
+        >
+          <div
+            className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl border bg-background shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b px-4 py-2.5">
+              <span className="text-sm font-semibold">
+                {t("evaluations.report")}
+                {reportStatus === "generating" && (
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    {t("evaluations.reportGenerating")}
+                  </span>
+                )}
+              </span>
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground"
+                onClick={() => setExpanded(false)}
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <div className="overflow-y-auto px-5 py-4">
+              <ReportContent markdown={report} onJump={() => setExpanded(false)} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

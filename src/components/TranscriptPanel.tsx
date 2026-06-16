@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useStore, speakerKey } from "../lib/store";
 import { speakerBadgeClass } from "../lib/speakerColors";
 import { useI18n } from "../i18n";
@@ -9,7 +9,11 @@ export function TranscriptPanel() {
   const segments = useStore((s) => s.segments);
   const status = useStore((s) => s.meetingStatus);
   const names = useStore((s) => s.speakerNames);
+  const highlightMs = useStore((s) => s.highlightMs);
+  const setHighlightMs = useStore((s) => s.setHighlightMs);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const runRefs = useRef<Record<string, HTMLElement | null>>({});
+  const [flashId, setFlashId] = useState<string | null>(null);
 
   // Time-ordered, non-empty runs across both audio sources.
   const runs = useMemo(
@@ -24,6 +28,22 @@ export function TranscriptPanel() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [runs]);
+
+  // Jump-to-timestamp from the debrief: scroll to the run covering that time
+  // (or the nearest) and flash it.
+  useEffect(() => {
+    if (highlightMs == null || runs.length === 0) return;
+    const target =
+      runs.find((r) => highlightMs >= r.startMs && highlightMs <= r.endMs) ??
+      runs.reduce((best, r) =>
+        Math.abs(r.startMs - highlightMs) < Math.abs(best.startMs - highlightMs) ? r : best
+      );
+    runRefs.current[target.id]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashId(target.id);
+    setHighlightMs(null); // consume the signal
+    const timer = setTimeout(() => setFlashId(null), 2500);
+    return () => clearTimeout(timer);
+  }, [highlightMs, runs, setHighlightMs]);
 
   function label(seg: (typeof runs)[number]) {
     const customName = names[speakerKey(seg)];
@@ -60,7 +80,14 @@ export function TranscriptPanel() {
                   {label(seg)}
                 </span>
               )}{" "}
-              <span className={seg.isFinal ? "text-foreground/90" : "text-muted-foreground"}>
+              <span
+                ref={(el) => {
+                  runRefs.current[seg.id] = el;
+                }}
+                className={`${seg.isFinal ? "text-foreground/90" : "text-muted-foreground"} ${
+                  flashId === seg.id ? "rounded bg-amber-400/30" : ""
+                }`}
+              >
                 {seg.text}
                 {!seg.isFinal && <span className="animate-pulse">▍</span>}
               </span>{" "}

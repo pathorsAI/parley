@@ -78,6 +78,14 @@ interface ParleyState {
   meetingContext: string;
   setMeetingContext: (text: string) => void;
 
+  /**
+   * A transcript time (ms) the UI should jump to and briefly highlight — set by
+   * clicking a timestamp in the debrief. Generic on purpose: a future recording
+   * player could consume the same signal. Consumers clear it after handling.
+   */
+  highlightMs: number | null;
+  setHighlightMs: (ms: number | null) => void;
+
   // todos
   addTodo: (text: string) => void;
   toggleTodo: (id: string) => void;
@@ -131,8 +139,10 @@ export const useStore = create<ParleyState>()(
       meetingContext: "",
       autoEval: false,
       autoEvalSec: 30,
+      highlightMs: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
+  setHighlightMs: (ms) => set({ highlightMs: ms }),
 
   addTodo: (text) =>
     set((state) => {
@@ -320,5 +330,24 @@ export function transcriptAsText(
     .filter((s) => s.isFinal && s.text.trim())
     .sort((a, b) => a.startMs - b.startMs)
     .map((s) => `[${speakerLabel(s, names)}] ${s.text.trim()}`)
+    .join("\n");
+}
+
+/** Format a meeting-relative millisecond offset as m:ss. */
+export function formatClock(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/** Like transcriptAsText but each line is prefixed with its [m:ss] start time,
+ *  so the model can cite moments the UI can jump back to. */
+export function transcriptWithTimestamps(
+  segments: TranscriptSegment[],
+  names?: Record<string, string>
+): string {
+  return [...segments]
+    .filter((s) => s.isFinal && s.text.trim())
+    .sort((a, b) => a.startMs - b.startMs)
+    .map((s) => `[${formatClock(s.startMs)}] [${speakerLabel(s, names)}] ${s.text.trim()}`)
     .join("\n");
 }
