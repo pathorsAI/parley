@@ -79,16 +79,21 @@ async function poll(): Promise<void> {
 /** Start polling the MCP command queue. Returns a teardown function. */
 export function initSessionCommands(): () => void {
   if (!isTauri()) return () => {};
-  // Skip the existing backlog, then apply only commands enqueued from now on.
+  let cancelled = false;
+  // Seed the cursor from the existing backlog, THEN start polling — so commands
+  // appended after this snapshot are applied and the backlog is skipped.
   invoke<string>("read_session_commands")
     .then((raw) => {
       cursor = lines(raw).length;
     })
     .catch(() => {
       cursor = 0;
+    })
+    .finally(() => {
+      if (!cancelled) timer = setInterval(poll, 1500);
     });
-  timer = setInterval(poll, 1500);
   return () => {
+    cancelled = true;
     if (timer) clearInterval(timer);
   };
 }

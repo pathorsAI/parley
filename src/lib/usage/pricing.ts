@@ -81,8 +81,11 @@ export interface LlmTokenBreakdown {
 export function llmCostUsd(provider: string, model: string, t: LlmTokenBreakdown): number {
   if (provider === "ollama") return 0;
   let rate = LLM_PRICING[model];
-  if (model === "gemini-2.5-pro" && t.totalInput > 200_000) rate = GEMINI_PRO_HIGH;
-  if (model === "gpt-5.5" && t.totalInput > 272_000) rate = GPT55_HIGH;
+  // Match context tiers on the base model id so aliased ids (e.g. OpenRouter's
+  // "openai/gpt-5.5") still get the high-context rate.
+  const baseModel = model.includes("/") ? model.slice(model.lastIndexOf("/") + 1) : model;
+  if (baseModel === "gemini-2.5-pro" && t.totalInput > 200_000) rate = GEMINI_PRO_HIGH;
+  if (baseModel === "gpt-5.5" && t.totalInput > 272_000) rate = GPT55_HIGH;
   if (!rate) return 0;
 
   const cacheReadRate = rate.cacheRead ?? rate.input;
