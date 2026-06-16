@@ -11,6 +11,7 @@ import type {
 } from "./types";
 import { PRESET_EVAL_DEFS, PRESET_EVAL_TEMPLATES, evalsFromDefs } from "./evaluations/presets";
 import { PRESET_TODO_TEMPLATES } from "./todoTemplates";
+import { DEFAULT_MODELS } from "./ai/providers";
 
 /**
  * Optional dev convenience: API keys from a gitignored `.env` (VITE_* vars).
@@ -35,13 +36,7 @@ const DEFAULT_SETTINGS: Settings = {
   openrouterApiKey: "",
   groqApiKey: "",
   reasoningEffort: "medium",
-  models: {
-    anthropic: { ask: "claude-sonnet-4-6", eval: "claude-opus-4-8" },
-    // OpenRouter slugs — editable in Settings; adjust if a slug 404s.
-    openrouter: { ask: "anthropic/claude-sonnet-4.5", eval: "anthropic/claude-opus-4.1" },
-    // Groq (fastest) — gpt-oss reasoning models.
-    groq: { ask: "openai/gpt-oss-20b", eval: "openai/gpt-oss-120b" },
-  },
+  models: DEFAULT_MODELS,
   sonioxApiKey: "",
   inputDevice: "",
   evaluations: PRESET_EVAL_DEFS,

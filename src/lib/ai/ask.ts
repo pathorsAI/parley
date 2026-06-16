@@ -29,7 +29,7 @@ export async function askAboutMeeting(opts: {
 
   const result = streamText({
     model: getModel(settings, "ask"),
-    providerOptions: getProviderOptions(settings),
+    providerOptions: getProviderOptions(settings, "ask"),
     system: SYSTEM,
     abortSignal: signal,
     prompt: `${contextLine}Transcript so far:\n${transcript}\n\nQuestion: ${question}`,

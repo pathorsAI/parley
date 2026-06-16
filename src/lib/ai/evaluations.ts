@@ -46,7 +46,7 @@ export async function runAllEvaluations(opts: {
 
   const { object } = await generateObject({
     model: getModel(settings, "eval"),
-    providerOptions: getProviderOptions(settings),
+    providerOptions: getProviderOptions(settings, "eval"),
     schema: batchSchema,
     system: SYSTEM,
     prompt: `${ctx}Evaluations (return one result per id):\n${list}\n\nTranscript so far:\n${transcript}`,
