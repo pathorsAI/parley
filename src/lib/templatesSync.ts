@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "./store";
 import { isTauri } from "./tauriEvents";
+import { reconcileTemplates } from "./templates";
+import { PRESET_EVAL_TEMPLATES } from "./evaluations/presets";
+import { PRESET_TODO_TEMPLATES } from "./todoTemplates";
 import type { EvalTemplate, TodoTemplate } from "./types";
 
 /**
@@ -26,14 +29,23 @@ async function loadFromFile(): Promise<void> {
       return;
     }
     const data = JSON.parse(raw) as TemplatesFile;
-    const patch: Partial<{ evalTemplates: EvalTemplate[]; todoTemplates: TodoTemplate[] }> = {};
-    if (Array.isArray(data.evalTemplates)) patch.evalTemplates = data.evalTemplates;
-    if (Array.isArray(data.todoTemplates)) patch.todoTemplates = data.todoTemplates;
-    if (Object.keys(patch).length) {
-      applyingFromFile = true;
-      useStore.getState().updateSettings(patch);
-      applyingFromFile = false;
-    }
+    // Always fold in the latest built-in templates (so new presets ship to
+    // existing users), keeping any custom templates from the file.
+    const patch = {
+      evalTemplates: reconcileTemplates(
+        PRESET_EVAL_TEMPLATES,
+        Array.isArray(data.evalTemplates) ? data.evalTemplates : []
+      ),
+      todoTemplates: reconcileTemplates(
+        PRESET_TODO_TEMPLATES,
+        Array.isArray(data.todoTemplates) ? data.todoTemplates : []
+      ),
+    };
+    applyingFromFile = true;
+    useStore.getState().updateSettings(patch);
+    applyingFromFile = false;
+    // Persist the reconciled set back so the file gains the new built-ins.
+    await saveToFile();
   } catch (e) {
     console.error("[templates] load failed", e);
   }

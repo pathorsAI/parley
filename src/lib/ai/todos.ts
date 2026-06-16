@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getModel, getProviderOptions } from "./provider";
 import { transcriptAsText, useStore } from "../store";
 import { recordLlmUsage } from "../usage/log";
+import { profileContext } from "./profile";
 import type { Settings, TodoItem, TranscriptSegment } from "../types";
 
 const schema = z.object({
@@ -30,7 +31,7 @@ export async function checkTodos(opts: {
 
   const list = open.map((t) => `- [${t.id}] ${t.text}`).join("\n");
   const mc = useStore.getState().meetingContext.trim();
-  const ctx = mc ? `Meeting context: ${mc}\n\n` : "";
+  const ctx = profileContext(settings) + (mc ? `Meeting context: ${mc}\n\n` : "");
 
   const { object, usage } = await generateObject({
     model: getModel(settings, "ask"),

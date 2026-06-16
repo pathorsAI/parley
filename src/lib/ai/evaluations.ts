@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getModel, getProviderOptions } from "./provider";
 import { transcriptAsText, useStore } from "../store";
 import { recordLlmUsage } from "../usage/log";
+import { profileContext } from "./profile";
 import type { EvalDef, EvalResult, Settings, TranscriptSegment } from "../types";
 
 // One result per evaluation, returned together from a single model call.
@@ -40,7 +41,8 @@ export async function runAllEvaluations(opts: {
   const { settings, segments, evals, names } = opts;
   const transcript = transcriptAsText(segments, names);
   const meetingContext = useStore.getState().meetingContext;
-  const ctx = meetingContext.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "";
+  const ctx =
+    profileContext(settings) + (meetingContext.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "");
   const list = evals
     .map((e) => `### id: ${e.id}\nname: ${e.name}\nwatch for: ${e.prompt}`)
     .join("\n\n");
