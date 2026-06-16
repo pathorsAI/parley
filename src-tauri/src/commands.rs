@@ -214,11 +214,41 @@ fn spawn_source<S: AudioSource>(
 
     let app_for_session = app.clone();
     tauri::async_runtime::spawn(async move {
+        // Interpose a sample counter between capture and the STT adapter so we
+        // can bill the audio duration that was actually streamed to the
+        // provider. The counter forwards every chunk untouched, then yields the
+        // total sample count once capture closes the channel.
+        let (count_tx, count_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        let counter = tauri::async_runtime::spawn(async move {
+            let mut rx = rx;
+            let mut samples: u64 = 0;
+            while let Some(chunk) = rx.recv().await {
+                samples += chunk.len() as u64;
+                if count_tx.send(chunk).is_err() {
+                    break;
+                }
+            }
+            samples
+        });
+
         if let Err(e) =
-            transcription::run_session(provider, app_for_session, config, label, rx).await
+            transcription::run_session(provider, app_for_session.clone(), config, label, count_rx)
+                .await
         {
             eprintln!("[stt:{label}] session ended: {e}");
         }
+
+        let samples = counter.await.unwrap_or(0);
+        let seconds = samples as f64 / crate::audio::TARGET_SAMPLE_RATE as f64;
+        // The frontend turns seconds into cost (it owns the pricing table).
+        let _ = app_for_session.emit(
+            "usage://stt",
+            serde_json::json!({
+                "provider": provider.id(),
+                "source": label,
+                "seconds": seconds,
+            }),
+        );
     });
 }
 
