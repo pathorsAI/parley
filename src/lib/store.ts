@@ -31,6 +31,8 @@ const ENV_KEYS: Partial<Settings> = Object.fromEntries(
 
 const DEFAULT_SETTINGS: Settings = {
   language: "zh-TW",
+  theme: "system",
+  layout: "full",
   provider: "anthropic",
   anthropicApiKey: "",
   openrouterApiKey: "",

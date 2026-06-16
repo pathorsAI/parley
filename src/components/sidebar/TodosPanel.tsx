@@ -28,6 +28,7 @@ export function TodosPanel() {
   const applyTodoTemplate = useStore((s) => s.applyTodoTemplate);
   const [input, setInput] = useState("");
   const [checking, setChecking] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
 
   const done = todos.filter((t) => t.done).length;
 
@@ -58,7 +59,15 @@ export function TodosPanel() {
         <span className="shrink-0">
           {todos.length > 0 ? t("todos.doneCount", { done, total: todos.length }) : t("todos.noItems")}
         </span>
-        <Select value="" onValueChange={(id) => { const t = templates.find((x) => x.id === id); if (t) applyTodoTemplate(t.items); }}>
+        <Select
+          value={templates.some((tpl) => tpl.id === selectedTemplateId) ? selectedTemplateId : ""}
+          onValueChange={(id) => {
+            const template = templates.find((x) => x.id === id);
+            if (!template) return;
+            applyTodoTemplate(template.items);
+            setSelectedTemplateId(id);
+          }}
+        >
           <SelectTrigger size="sm" className="ml-auto h-6 w-[140px] text-[11px]">
             <SelectValue placeholder={t("todos.applyTemplate")} />
           </SelectTrigger>
