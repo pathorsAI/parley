@@ -23,8 +23,13 @@ const ENV_KEYS: Partial<Settings> = Object.fromEntries(
     [
       ["sonioxApiKey", import.meta.env.VITE_SONIOX_API_KEY],
       ["anthropicApiKey", import.meta.env.VITE_ANTHROPIC_API_KEY],
+      ["openaiApiKey", import.meta.env.VITE_OPENAI_API_KEY],
+      ["geminiApiKey", import.meta.env.VITE_GEMINI_API_KEY],
       ["openrouterApiKey", import.meta.env.VITE_OPENROUTER_API_KEY],
       ["groqApiKey", import.meta.env.VITE_GROQ_API_KEY],
+      ["qwenApiKey", import.meta.env.VITE_QWEN_API_KEY],
+      ["kimiApiKey", import.meta.env.VITE_KIMI_API_KEY],
+      ["ollamaApiKey", import.meta.env.VITE_OLLAMA_API_KEY],
     ] as const
   ).filter(([, v]) => !!v)
 ) as Partial<Settings>;
@@ -35,9 +40,14 @@ const DEFAULT_SETTINGS: Settings = {
   layout: "full",
   provider: "anthropic",
   anthropicApiKey: "",
+  openaiApiKey: "",
+  geminiApiKey: "",
   openrouterApiKey: "",
   groqApiKey: "",
-  reasoningEffort: "medium",
+  qwenApiKey: "",
+  kimiApiKey: "",
+  ollamaApiKey: "",
+  reasoningEffort: { ask: "low", eval: "medium" },
   models: DEFAULT_MODELS,
   sonioxApiKey: "",
   inputDevice: "",
@@ -233,6 +243,12 @@ export const useStore = create<ParleyState>()(
         const validEvalTpls =
           Array.isArray(p.evalTemplates) &&
           p.evalTemplates.every((t) => t && typeof t === "object" && Array.isArray((t as { evals?: unknown }).evals));
+        const persistedReasoning = p.reasoningEffort;
+        const reasoningEffort =
+          typeof persistedReasoning === "string"
+            ? { ask: persistedReasoning, eval: persistedReasoning }
+            : { ...DEFAULT_SETTINGS.reasoningEffort, ...(persistedReasoning ?? {}) };
+
         return {
           ...current,
           settings: {
@@ -241,6 +257,7 @@ export const useStore = create<ParleyState>()(
             // Deep-merge models so a new provider (e.g. groq) isn't dropped by
             // older persisted state that only had anthropic/openrouter.
             models: { ...DEFAULT_SETTINGS.models, ...(p.models ?? {}) },
+            reasoningEffort,
             todoTemplates: validTodoTpls ? p.todoTemplates! : DEFAULT_SETTINGS.todoTemplates,
             evalTemplates: validEvalTpls ? p.evalTemplates! : DEFAULT_SETTINGS.evalTemplates,
             // Dev .env keys win over persisted-empty values (no-op in prod).

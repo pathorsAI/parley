@@ -6,11 +6,20 @@ import type { LlmProvider, ProviderModels } from "../types";
  * Settings UI all derive from this registry. Kept dependency-free (types only)
  * so it can be imported into light bundles like the Settings window.
  */
+/** Tone drives the badge color in the picker; label is the marketing pitch. */
+export type ProviderTagTone = "smart" | "fast" | "local" | "value" | "default";
+export interface ProviderTag {
+  label: string;
+  tone: ProviderTagTone;
+}
+
 export interface ProviderInfo {
   id: LlmProvider;
   label: string;
   /** Short tag shown next to the name in the picker. */
   note?: string;
+  /** A colored pitch badge (e.g. 最聰明 / 最快) shown in the picker. */
+  tag?: ProviderTag;
   /** Brand icon in /public/providers. */
   icon: string;
   /** How to talk to it: native Anthropic SDK vs an OpenAI-compatible endpoint. */
@@ -18,8 +27,18 @@ export interface ProviderInfo {
   /** Base URL for openai-compatible providers. */
   baseURL?: string;
   /** Which Settings field holds this provider's API key. */
-  apiKeyField: "anthropicApiKey" | "openrouterApiKey" | "groqApiKey";
+  apiKeyField:
+    | "anthropicApiKey"
+    | "openaiApiKey"
+    | "geminiApiKey"
+    | "groqApiKey"
+    | "qwenApiKey"
+    | "kimiApiKey"
+    | "ollamaApiKey"
+    | "openrouterApiKey";
   keyPlaceholder: string;
+  /** False for providers that run locally without an API key (Ollama). */
+  requiresKey?: boolean;
   /** Curated model choices (the current value is always shown too). */
   models: string[];
   defaults: ProviderModels;
@@ -30,6 +49,7 @@ export const PROVIDERS: ProviderInfo[] = [
     id: "anthropic",
     label: "Claude",
     note: "Anthropic 直連",
+    tag: { label: "最聰明", tone: "smart" },
     icon: "/providers/anthropic.png",
     kind: "anthropic",
     apiKeyField: "anthropicApiKey",
@@ -38,9 +58,35 @@ export const PROVIDERS: ProviderInfo[] = [
     defaults: { ask: "claude-sonnet-4-6", eval: "claude-opus-4-8" },
   },
   {
+    id: "openai",
+    label: "OpenAI",
+    note: "GPT 直連",
+    icon: "/providers/openai.png",
+    kind: "openai-compatible",
+    baseURL: "https://api.openai.com/v1",
+    apiKeyField: "openaiApiKey",
+    keyPlaceholder: "sk-…",
+    models: ["gpt-5.5", "gpt-4.1", "o4-mini"],
+    defaults: { ask: "gpt-4.1", eval: "gpt-5.5" },
+  },
+  {
+    id: "gemini",
+    label: "Gemini",
+    note: "Google",
+    tag: { label: "長脈絡", tone: "default" },
+    icon: "/providers/gemini.png",
+    kind: "openai-compatible",
+    baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    apiKeyField: "geminiApiKey",
+    keyPlaceholder: "AIza…",
+    models: ["gemini-2.5-pro", "gemini-2.5-flash"],
+    defaults: { ask: "gemini-2.5-flash", eval: "gemini-2.5-pro" },
+  },
+  {
     id: "groq",
     label: "Groq",
-    note: "最快 · gpt-oss",
+    note: "gpt-oss",
+    tag: { label: "最快", tone: "fast" },
     icon: "/providers/groq.png",
     kind: "openai-compatible",
     baseURL: "https://api.groq.com/openai/v1",
@@ -50,8 +96,49 @@ export const PROVIDERS: ProviderInfo[] = [
     defaults: { ask: "openai/gpt-oss-20b", eval: "openai/gpt-oss-120b" },
   },
   {
+    id: "qwen",
+    label: "Qwen",
+    note: "阿里 DashScope",
+    icon: "/providers/qwen.png",
+    kind: "openai-compatible",
+    baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    apiKeyField: "qwenApiKey",
+    keyPlaceholder: "sk-…",
+    models: ["qwen-max", "qwen-plus", "qwen3-235b-a22b"],
+    defaults: { ask: "qwen-plus", eval: "qwen-max" },
+  },
+  {
+    id: "kimi",
+    label: "Kimi",
+    note: "Moonshot",
+    tag: { label: "長脈絡", tone: "default" },
+    icon: "/providers/kimi.png",
+    kind: "openai-compatible",
+    baseURL: "https://api.moonshot.ai/v1",
+    apiKeyField: "kimiApiKey",
+    keyPlaceholder: "sk-…",
+    models: ["kimi-k2-0905-preview", "kimi-k2-turbo-preview", "moonshot-v1-128k"],
+    defaults: { ask: "kimi-k2-turbo-preview", eval: "kimi-k2-0905-preview" },
+  },
+  {
+    id: "ollama",
+    label: "Ollama",
+    note: "localhost:11434",
+    tag: { label: "本機", tone: "local" },
+    icon: "/providers/ollama.png",
+    kind: "openai-compatible",
+    baseURL: "http://localhost:11434/v1",
+    apiKeyField: "ollamaApiKey",
+    keyPlaceholder: "（本機免金鑰）",
+    requiresKey: false,
+    models: ["qwen3", "llama3.2", "gpt-oss:20b"],
+    defaults: { ask: "llama3.2", eval: "qwen3" },
+  },
+  {
     id: "openrouter",
     label: "OpenRouter",
+    note: "聚合多模型",
+    tag: { label: "多模型", tone: "value" },
     icon: "/providers/openrouter.png",
     kind: "openai-compatible",
     baseURL: "https://openrouter.ai/api/v1",
