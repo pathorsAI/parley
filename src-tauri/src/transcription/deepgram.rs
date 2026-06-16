@@ -77,9 +77,16 @@ pub async fn run_session(
         url.push_str(&format!("&language={lang}"));
     }
 
-    let ws = connect_with_headers(&url, &[("Authorization", format!("Token {}", config.api_key))]).await?;
+    let ws = connect_with_headers(
+        &url,
+        &[("Authorization", format!("Token {}", config.api_key))],
+    )
+    .await?;
     let (mut write, mut read) = ws.split();
-    eprintln!("[deepgram:{source}] connected, model={model}, diarization={}", config.diarization);
+    eprintln!(
+        "[deepgram:{source}] connected, model={model}, diarization={}",
+        config.diarization
+    );
 
     // Forward PCM as binary frames; keep alive; close cleanly.
     let mut meter = LevelMeter::new(app.clone(), source);
@@ -103,7 +110,11 @@ pub async fn run_session(
                 }
             }
         }
-        let _ = write.send(Message::Text("{\"type\":\"CloseStream\"}".to_string().into())).await;
+        let _ = write
+            .send(Message::Text(
+                "{\"type\":\"CloseStream\"}".to_string().into(),
+            ))
+            .await;
         let _ = write.close().await;
     };
 
@@ -163,8 +174,16 @@ pub async fn run_session(
                 builder.emit_tail("", builder.current_speaker(), builder.current_end());
             } else if !alt.transcript.trim().is_empty() {
                 // Interim hypothesis → tentative tail.
-                let speaker = alt.words.first().and_then(|w| w.speaker).unwrap_or(builder.current_speaker());
-                let start_ms = alt.words.first().map(|w| (w.start * 1000.0) as u64).unwrap_or(builder.current_end());
+                let speaker = alt
+                    .words
+                    .first()
+                    .and_then(|w| w.speaker)
+                    .unwrap_or(builder.current_speaker());
+                let start_ms = alt
+                    .words
+                    .first()
+                    .map(|w| (w.start * 1000.0) as u64)
+                    .unwrap_or(builder.current_end());
                 builder.emit_tail(&alt.transcript, speaker, start_ms);
             }
         }

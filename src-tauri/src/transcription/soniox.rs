@@ -173,7 +173,10 @@ pub async fn run_session(
             };
 
             if let Some(code) = resp.error_code {
-                eprintln!("[soniox:{source}] error {code}: {}", resp.error_message.unwrap_or_default());
+                eprintln!(
+                    "[soniox:{source}] error {code}: {}",
+                    resp.error_message.unwrap_or_default()
+                );
                 break;
             }
 

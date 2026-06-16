@@ -103,7 +103,8 @@ pub async fn connect_with_headers(
         .into_client_request()
         .map_err(|e| anyhow!("bad ws url: {e}"))?;
     for (k, v) in headers {
-        let name = HeaderName::from_bytes(k.as_bytes()).map_err(|e| anyhow!("bad header {k}: {e}"))?;
+        let name =
+            HeaderName::from_bytes(k.as_bytes()).map_err(|e| anyhow!("bad header {k}: {e}"))?;
         let val = HeaderValue::from_str(v).map_err(|e| anyhow!("bad header value: {e}"))?;
         req.headers_mut().insert(name, val);
     }
