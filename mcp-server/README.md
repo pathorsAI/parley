@@ -1,4 +1,11 @@
-# Parley Templates MCP Server
+# Parley Templates MCP Server (Legacy Dev Reference)
+
+Parley's production app now starts a built-in HTTP MCP endpoint from the Tauri
+backend. Open the app and check **Settings -> MCP Server** for the live endpoint.
+
+This package is kept as a development reference for the older standalone
+Node/stdio implementation. It is no longer the primary way users connect to
+Parley templates.
 
 A local [MCP](https://modelcontextprotocol.io) server that manages Parley's
 **evaluation** and **TODO** templates. It reads and writes the same on-disk JSON
@@ -70,7 +77,7 @@ bun run build      # tsc -> dist/index.js
 
 The entry point after building is `dist/index.js` (ESM, stdio transport).
 
-## Register in an MCP client
+## Register this legacy server in an MCP client
 
 The server speaks MCP over stdio. Run it with `node` against the built file.
 
