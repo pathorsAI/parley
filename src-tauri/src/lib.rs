@@ -34,6 +34,7 @@ pub fn run() {
             usage::read_usage_events,
             permissions::check_permissions,
             permissions::request_screen_recording,
+            permissions::open_privacy_settings,
             mcp::get_mcp_server_info
         ])
         .run(tauri::generate_context!())
