@@ -85,7 +85,7 @@ jobs:
           tagName: ${{ steps.release.outputs.tag }}
           releaseName: "Parley ${{ steps.release.outputs.tag }}"
           releaseBody: ${{ steps.release.outputs.body }}
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           tauriScript: bun run tauri
           args: --target universal-apple-darwin
