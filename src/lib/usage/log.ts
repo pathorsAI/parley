@@ -62,7 +62,10 @@ export async function recordLlmUsage(
   const model = settings.models[provider][kind];
 
   // Split input into non-cached / cache-read / cache-write, preferring the
-  // SDK's normalized detail fields and falling back to arithmetic.
+  // SDK's normalized detail fields. The arithmetic fallback assumes the SDK's
+  // top-level inputTokens INCLUDES cache tokens (true for Anthropic and all
+  // openai-compatible providers we wire); it's only used if noCacheTokens is
+  // ever absent.
   const totalInput = usage.inputTokens ?? 0;
   const output = usage.outputTokens ?? 0;
   const d = usage.inputTokenDetails;
