@@ -1,12 +1,8 @@
 import type { Settings } from "../types";
+import { PROVIDER_BY_ID } from "./providers";
 
 /** Whether the active provider has a usable API key configured. */
 export function hasProviderKey(settings: Settings): boolean {
-  const key =
-    settings.provider === "anthropic"
-      ? settings.anthropicApiKey
-      : settings.provider === "groq"
-      ? settings.groqApiKey
-      : settings.openrouterApiKey;
-  return !!key.trim();
+  const field = PROVIDER_BY_ID[settings.provider].apiKeyField;
+  return !!settings[field].trim();
 }

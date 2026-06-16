@@ -33,7 +33,7 @@ export async function checkTodos(opts: {
 
   const { object } = await generateObject({
     model: getModel(settings, "ask"),
-    providerOptions: getProviderOptions(settings),
+    providerOptions: getProviderOptions(settings, "ask"),
     schema,
     system:
       "You track a meeting checklist. Given the checklist items and the live transcript, " +
