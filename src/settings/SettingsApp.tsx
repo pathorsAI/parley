@@ -7,6 +7,7 @@ import { broadcastSettings } from "../lib/settingsSync";
 import { isTauri } from "../lib/tauriEvents";
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
+import { UsagePanel } from "./UsagePanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,7 +36,7 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
 };
 import type { AppLanguage, AppLayout, AppTheme, EvalDef, LlmProvider, ReasoningEffort, Settings } from "../lib/types";
 
-type Category = "basic" | "provider" | "transcription" | "evaluations" | "todos" | "mcp";
+type Category = "basic" | "provider" | "transcription" | "evaluations" | "todos" | "mcp" | "usage";
 
 interface McpServerInfo {
   running: boolean;
@@ -50,6 +51,7 @@ const NAV: { id: Category; labelKey: TranslationKey }[] = [
   { id: "evaluations", labelKey: "settings.nav.evaluations" },
   { id: "todos", labelKey: "settings.nav.todos" },
   { id: "mcp", labelKey: "settings.nav.mcp" },
+  { id: "usage", labelKey: "settings.nav.usage" },
 ];
 
 export function SettingsApp() {
@@ -621,6 +623,12 @@ export function SettingsApp() {
 }`}
               </pre>
             </div>
+          </Section>
+        )}
+
+        {cat === "usage" && (
+          <Section title={t("settings.usage.title")}>
+            <UsagePanel />
           </Section>
         )}
       </div>

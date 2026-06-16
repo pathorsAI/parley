@@ -11,6 +11,7 @@ import {
 import { useStore } from "./lib/store";
 import { listenForTranscript } from "./lib/tauriEvents";
 import { listenForSettings } from "./lib/settingsSync";
+import { listenForSttUsage } from "./lib/usage/log";
 import { initTemplatesSync } from "./lib/templatesSync";
 import { useThemePreference } from "./lib/theme";
 import { useEvaluationEngine } from "./lib/evaluations/engine";
@@ -25,10 +26,12 @@ function App() {
     const unTranscript = listenForTranscript();
     const unSettings = listenForSettings();
     const unTemplates = initTemplatesSync();
+    const unSttUsage = listenForSttUsage();
     return () => {
       unTranscript.then((fn) => fn());
       unSettings.then((fn) => fn());
       unTemplates();
+      unSttUsage.then((fn) => fn());
     };
   }, []);
 
