@@ -1,0 +1,94 @@
+import { invoke } from "@tauri-apps/api/core";
+import { useStore } from "./store";
+import { isTauri } from "./tauriEvents";
+import type { EvalDef } from "./types";
+
+/**
+ * Apply mutation commands the MCP server enqueues (add/check/remove todo,
+ * add/remove evaluation) so an MCP client can change the live meeting in real
+ * time. The queue file is append-only; we track a cursor of applied lines.
+ */
+interface SessionCommand {
+  action: string;
+  args: Record<string, unknown>;
+}
+
+// Until seeded with the existing backlog length, apply nothing (avoids
+// replaying commands left over from a previous launch).
+let cursor = Number.MAX_SAFE_INTEGER;
+let timer: ReturnType<typeof setInterval> | null = null;
+
+function lines(raw: string): string[] {
+  return raw.split("\n").map((l) => l.trim()).filter(Boolean);
+}
+
+function applyCommand(cmd: SessionCommand): void {
+  const s = useStore.getState();
+  const a = cmd.args ?? {};
+  switch (cmd.action) {
+    case "add_todo":
+      if (a.text) s.addTodo(String(a.text));
+      break;
+    case "remove_todo":
+      if (a.id) s.removeTodo(String(a.id));
+      break;
+    case "check_todo": {
+      const todo = s.todos.find((t) => t.id === a.id);
+      const target = a.done !== false;
+      if (todo && todo.done !== target) s.toggleTodo(todo.id);
+      break;
+    }
+    case "add_evaluation": {
+      if (a.name && a.prompt) {
+        const def: EvalDef = {
+          id: crypto.randomUUID(),
+          name: String(a.name),
+          description: String(a.description ?? ""),
+          prompt: String(a.prompt),
+        };
+        s.updateSettings({ evaluations: [...s.settings.evaluations, def] });
+      }
+      break;
+    }
+    case "remove_evaluation":
+      if (a.id) {
+        s.updateSettings({ evaluations: s.settings.evaluations.filter((e) => e.id !== a.id) });
+      }
+      break;
+  }
+}
+
+async function poll(): Promise<void> {
+  try {
+    const all = lines(await invoke<string>("read_session_commands"));
+    if (all.length <= cursor) return;
+    const fresh = all.slice(cursor);
+    cursor = all.length;
+    for (const line of fresh) {
+      try {
+        applyCommand(JSON.parse(line) as SessionCommand);
+      } catch {
+        /* skip a malformed line */
+      }
+    }
+  } catch {
+    /* read failed; try again next tick */
+  }
+}
+
+/** Start polling the MCP command queue. Returns a teardown function. */
+export function initSessionCommands(): () => void {
+  if (!isTauri()) return () => {};
+  // Skip the existing backlog, then apply only commands enqueued from now on.
+  invoke<string>("read_session_commands")
+    .then((raw) => {
+      cursor = lines(raw).length;
+    })
+    .catch(() => {
+      cursor = 0;
+    });
+  timer = setInterval(poll, 1500);
+  return () => {
+    if (timer) clearInterval(timer);
+  };
+}
