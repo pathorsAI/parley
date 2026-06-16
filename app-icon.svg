@@ -1,0 +1,29 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1b1f29"/>
+      <stop offset="1" stop-color="#0a0b0e"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="320" y1="240" x2="760" y2="800" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5eead4"/>
+      <stop offset="0.55" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#818cf8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- App tile -->
+  <rect width="1024" height="1024" rx="232" fill="url(#bg)"/>
+  <rect x="6" y="6" width="1012" height="1012" rx="226" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="2"/>
+
+  <!-- Monogram "P": a stem plus an open bowl. The bowl's gap reads as two
+       parties in dialogue meeting at a point. -->
+  <g stroke="url(#mark)" stroke-width="74" stroke-linecap="round" fill="none">
+    <!-- stem -->
+    <path d="M360 300 V724"/>
+    <!-- bowl, left open ~38° to form the dialogue gap -->
+    <path d="M360 300 H560 A150 150 0 0 1 560 600 H360"/>
+  </g>
+
+  <!-- The point of agreement -->
+  <circle cx="648" cy="724" r="40" fill="url(#mark)"/>
+</svg>
