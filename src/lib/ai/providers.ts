@@ -1,4 +1,5 @@
 import type { LlmProvider, ProviderModels } from "../types";
+import type { TranslationKey } from "../../i18n/messages";
 
 /**
  * Single source of truth for LLM providers. Adding a new provider is one entry
@@ -9,16 +10,17 @@ import type { LlmProvider, ProviderModels } from "../types";
 /** Tone drives the badge color in the picker; label is the marketing pitch. */
 export type ProviderTagTone = "smart" | "fast" | "local" | "value" | "default";
 export interface ProviderTag {
-  label: string;
+  /** i18n key for the marketing pitch (resolved with `t()` in the UI). */
+  label: TranslationKey;
   tone: ProviderTagTone;
 }
 
 export interface ProviderInfo {
   id: LlmProvider;
   label: string;
-  /** Short tag shown next to the name in the picker. */
-  note?: string;
-  /** A colored pitch badge (e.g. 最聰明 / 最快) shown in the picker. */
+  /** i18n key for the short note shown next to the name in the picker. */
+  note?: TranslationKey;
+  /** A colored pitch badge (e.g. "smartest" / "fastest") shown in the picker. */
   tag?: ProviderTag;
   /** Brand icon in /public/providers. */
   icon: string;
@@ -48,8 +50,8 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: "anthropic",
     label: "Claude",
-    note: "Anthropic 直連",
-    tag: { label: "最聰明", tone: "smart" },
+    note: "provider.note.anthropic",
+    tag: { label: "provider.tag.smartest", tone: "smart" },
     icon: "/providers/anthropic.png",
     kind: "anthropic",
     apiKeyField: "anthropicApiKey",
@@ -60,7 +62,7 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: "openai",
     label: "OpenAI",
-    note: "GPT 直連",
+    note: "provider.note.openai",
     icon: "/providers/openai.png",
     kind: "openai-compatible",
     baseURL: "https://api.openai.com/v1",
@@ -72,8 +74,8 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: "gemini",
     label: "Gemini",
-    note: "Google",
-    tag: { label: "長脈絡", tone: "default" },
+    note: "provider.note.gemini",
+    tag: { label: "provider.tag.longContext", tone: "default" },
     icon: "/providers/gemini.png",
     kind: "openai-compatible",
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -85,8 +87,8 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: "groq",
     label: "Groq",
-    note: "gpt-oss",
-    tag: { label: "最快", tone: "fast" },
+    note: "provider.note.groq",
+    tag: { label: "provider.tag.fastest", tone: "fast" },
     icon: "/providers/groq.png",
     kind: "openai-compatible",
     baseURL: "https://api.groq.com/openai/v1",
@@ -98,7 +100,7 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: "qwen",
     label: "Qwen",
-    note: "阿里 DashScope",
+    note: "provider.note.qwen",
     icon: "/providers/qwen.png",
     kind: "openai-compatible",
     baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
@@ -110,8 +112,8 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: "kimi",
     label: "Kimi",
-    note: "Moonshot",
-    tag: { label: "長脈絡", tone: "default" },
+    note: "provider.note.kimi",
+    tag: { label: "provider.tag.longContext", tone: "default" },
     icon: "/providers/kimi.png",
     kind: "openai-compatible",
     baseURL: "https://api.moonshot.ai/v1",
@@ -123,13 +125,13 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: "ollama",
     label: "Ollama",
-    note: "localhost:11434",
-    tag: { label: "本機", tone: "local" },
+    note: "provider.note.ollama",
+    tag: { label: "provider.tag.local", tone: "local" },
     icon: "/providers/ollama.png",
     kind: "openai-compatible",
     baseURL: "http://localhost:11434/v1",
     apiKeyField: "ollamaApiKey",
-    keyPlaceholder: "（本機免金鑰）",
+    keyPlaceholder: "",
     requiresKey: false,
     models: ["qwen3", "llama3.2", "gpt-oss:20b"],
     defaults: { ask: "llama3.2", eval: "qwen3" },
@@ -137,8 +139,8 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: "openrouter",
     label: "OpenRouter",
-    note: "聚合多模型",
-    tag: { label: "多模型", tone: "value" },
+    note: "provider.note.openrouter",
+    tag: { label: "provider.tag.multiModel", tone: "value" },
     icon: "/providers/openrouter.png",
     kind: "openai-compatible",
     baseURL: "https://openrouter.ai/api/v1",
