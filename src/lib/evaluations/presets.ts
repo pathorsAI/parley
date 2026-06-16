@@ -3,6 +3,10 @@ import type { EvalDef, EvalTemplate, Evaluation } from "../types";
 /**
  * Built-in evaluation definitions that ship with Parley. Used as the default
  * `settings.evaluations`; the user can edit/add/remove them in Settings.
+ *
+ * The built-in template library below maps onto the use-cases Parley markets:
+ * job interviews, salary negotiations, sales calls, deal-making, and diligence
+ * calls — plus a general-purpose set.
  */
 export const PRESET_EVAL_DEFS: EvalDef[] = [
   {
@@ -39,8 +43,8 @@ export const PRESET_EVAL_DEFS: EvalDef[] = [
     description: "依會議類型該問卻還沒問的項目",
     prompt:
       "Given the meeting context provided, identify important topics or questions that are standard for " +
-      "this kind of meeting (interview or negotiation) but have NOT yet been covered. Flag what's missing " +
-      "so I can raise it before the meeting ends.",
+      "this kind of meeting but have NOT yet been covered. Flag what's missing so I can raise it before " +
+      "the meeting ends.",
   },
   {
     id: "claims",
@@ -53,7 +57,7 @@ export const PRESET_EVAL_DEFS: EvalDef[] = [
   },
 ];
 
-// Interview-focused evaluations.
+// Job-interview evaluations.
 const INTERVIEW_DEFS: EvalDef[] = [
   {
     id: "iv-exaggeration",
@@ -90,8 +94,80 @@ const INTERVIEW_DEFS: EvalDef[] = [
   },
 ];
 
-// Negotiation / business-deal evaluations.
-const NEGOTIATION_DEFS: EvalDef[] = [
+// Sales-call evaluations (qualification-driven, MEDDICC-flavored).
+const SALES_DEFS: EvalDef[] = [
+  {
+    id: "sl-qualification",
+    name: "資格判定缺口 (MEDDICC)",
+    description: "Metrics / 決策者 / 決策標準 / 痛點 / 流程 / Champion 等尚未釐清的項目",
+    prompt:
+      "You are helping qualify a sales opportunity. Track the MEDDICC-style dimensions: quantified Metrics, " +
+      "Economic buyer, Decision criteria, Decision process, identified Pain, and a Champion. Flag which " +
+      "dimensions are still unknown or weak so I ('me') can ask about them before the call ends.",
+  },
+  {
+    id: "sl-pain",
+    name: "痛點深度與急迫性",
+    description: "對方痛點是否具體、可量化、有急迫性",
+    prompt:
+      "Assess the prospect's pain. Flag when their problem is stated vaguely, is not quantified (cost, time, " +
+      "risk), or lacks urgency / a compelling event. Suggest the specific question that would deepen or " +
+      "quantify the pain.",
+  },
+  {
+    id: "sl-objections",
+    name: "異議 / 顧慮",
+    description: "對方提出的反對意見或顧慮，標記尚未被處理的",
+    prompt:
+      "Detect objections or concerns the prospect ('them') raises — price, timing, fit, competitor, risk, " +
+      "authority. Flag each one, and especially any that I ('me') have NOT yet addressed. Quote the objection.",
+  },
+  {
+    id: "sl-nextstep",
+    name: "下一步承諾",
+    description: "是否約定明確、雙方同意的下一步",
+    prompt:
+      "Check whether a concrete, mutually-agreed next step has been established (a scheduled meeting, a trial, " +
+      "an intro to the economic buyer). Flag if the call is heading toward ending without a committed next step.",
+  },
+  PRESET_EVAL_DEFS[4], // claims to verify
+];
+
+// Salary-negotiation evaluations.
+const SALARY_DEFS: EvalDef[] = [
+  {
+    id: "sa-market",
+    name: "行情 / 薪酬主張",
+    description: "對方對市場行情、預算、薪酬結構的主張，標記待查證",
+    prompt:
+      "The other party ('them') is the employer/recruiter in a compensation discussion. Extract claims about " +
+      "market rate, internal bands, budget limits, or 'this is the most we can do' — these are negotiable " +
+      "positions, not facts. List each so I ('me') can verify or challenge it.",
+  },
+  {
+    id: "sa-components",
+    name: "薪酬組成追蹤",
+    description: "底薪 / 獎金 / 股票 / 簽約金 / 福利等各項與已談到的條件",
+    prompt:
+      "Track every compensation component discussed: base, bonus, equity (amount, vesting, strike), sign-on, " +
+      "benefits, title, start date, review timing. Summarize what has been offered vs. still open, and flag " +
+      "where I ('me') gave ground without getting something back.",
+  },
+  PRESET_EVAL_DEFS[1], // when to push back
+  {
+    id: "sa-pressure",
+    name: "錨定 / 施壓話術",
+    description: "錨定、人為期限、take-it-or-leave-it 等施壓手法",
+    prompt:
+      "Watch for negotiation pressure tactics from the employer: low anchoring, artificial deadlines, " +
+      "'exploding' offers, take-it-or-leave-it framing, or appeals to fairness/policy to shut down asks. " +
+      "Flag the tactic and suggest how I ('me') can hold my position.",
+  },
+  PRESET_EVAL_DEFS[2], // unanswered questions
+];
+
+// Deal-making / business-negotiation evaluations.
+const DEAL_DEFS: EvalDef[] = [
   PRESET_EVAL_DEFS[0], // deception / pressure tactics
   PRESET_EVAL_DEFS[1], // when to push back
   {
@@ -106,11 +182,47 @@ const NEGOTIATION_DEFS: EvalDef[] = [
   PRESET_EVAL_DEFS[4], // claims to verify
 ];
 
+// Diligence-call evaluations (verify claims, surface risk).
+const DILIGENCE_DEFS: EvalDef[] = [
+  {
+    id: "dd-claims",
+    name: "重點宣稱待查證",
+    description: "財務 / 客戶 / 成長 / 法務等可驗證主張，列為查證清單",
+    prompt:
+      "This is a due-diligence call. Extract every concrete, verifiable claim the other party ('them') makes " +
+      "about financials, revenue, growth, customers, churn, headcount, legal status, or IP. List each as a " +
+      "diligence item to verify against documents later, quoting the claim.",
+  },
+  {
+    id: "dd-risk",
+    name: "風險訊號",
+    description: "財務 / 法務 / 營運 / 團隊面的風險或不一致",
+    prompt:
+      "Surface risk signals: financial, legal, operational, customer-concentration, or team risks, and any " +
+      "numbers or statements that are internally inconsistent or seem too good. Flag each with the quote and " +
+      "why it warrants follow-up.",
+  },
+  PRESET_EVAL_DEFS[2], // unanswered questions
+  {
+    id: "dd-checklist",
+    name: "盡調項目遺漏",
+    description: "標準盡職調查面向中尚未觸及的部分",
+    prompt:
+      "Given a due-diligence context, identify standard areas that have NOT yet been covered — financials, " +
+      "customer concentration, churn/retention, unit economics, legal/compliance, cap table, key-person risk, " +
+      "tech debt/security. Flag the gaps so I ('me') can raise them before the call ends.",
+  },
+  PRESET_EVAL_DEFS[0], // deception / inconsistency
+];
+
 /** Built-in template library. The first is the default active set. */
 export const PRESET_EVAL_TEMPLATES: EvalTemplate[] = [
   { id: "tpl-general", name: "通用 / General", builtin: true, evals: PRESET_EVAL_DEFS },
-  { id: "tpl-interview", name: "面試 / Interview", builtin: true, evals: INTERVIEW_DEFS },
-  { id: "tpl-negotiation", name: "談判 / Negotiation", builtin: true, evals: NEGOTIATION_DEFS },
+  { id: "tpl-interview", name: "面試 / Job interview", builtin: true, evals: INTERVIEW_DEFS },
+  { id: "tpl-salary", name: "薪資談判 / Salary negotiation", builtin: true, evals: SALARY_DEFS },
+  { id: "tpl-sales", name: "銷售電話 / Sales call", builtin: true, evals: SALES_DEFS },
+  { id: "tpl-negotiation", name: "商務談判 / Deal-making", builtin: true, evals: DEAL_DEFS },
+  { id: "tpl-diligence", name: "盡職調查 / Diligence call", builtin: true, evals: DILIGENCE_DEFS },
 ];
 
 /** Build runtime evaluations from definitions, preserving runtime state by id. */

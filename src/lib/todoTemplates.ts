@@ -1,10 +1,45 @@
 import type { TodoTemplate } from "./types";
 
-/** Built-in TODO/agenda templates. The user can apply, edit, or add their own. */
+/**
+ * Built-in TODO/agenda templates. The first five mirror Parley's core
+ * use-cases (job interviews, salary negotiations, sales calls, deal-making,
+ * diligence calls); the rest are extra starting points. Users can apply,
+ * edit, or add their own.
+ */
 export const PRESET_TODO_TEMPLATES: TodoTemplate[] = [
   {
+    id: "todo-interview",
+    name: "面試候選人 / Job interview",
+    builtin: true,
+    items: [
+      "自我介紹與職缺說明",
+      "請候選人介紹背景與動機",
+      "深入追問一個代表性專案",
+      "驗證核心技術／能力",
+      "詢問過去的衝突與處理方式",
+      "保留候選人提問時間",
+      "確認薪資期待與可到職時間",
+      "說明後續流程與時程",
+    ],
+  },
+  {
+    id: "todo-salary",
+    name: "薪資談判 / Salary negotiation",
+    builtin: true,
+    items: [
+      "先讓對方提出數字／區間",
+      "確認薪酬全貌：底薪、獎金、股票、簽約金、福利",
+      "說明自身價值與市場行情依據",
+      "提出有依據的目標數字（錨定）",
+      "釐清股票條件（數量、估值、vesting）",
+      "確認升遷／調薪的時程與標準",
+      "處理對方的施壓或人為期限",
+      "爭取書面 offer 與考慮時間",
+    ],
+  },
+  {
     id: "todo-sales-discovery",
-    name: "Sales discovery",
+    name: "銷售電話 / Sales call",
     builtin: true,
     items: [
       "確認對方的角色與決策權",
@@ -16,6 +51,36 @@ export const PRESET_TODO_TEMPLATES: TodoTemplate[] = [
       "了解時程與急迫性",
       "詢問現有方案／競品",
       "約定明確的下一步",
+    ],
+  },
+  {
+    id: "todo-deal",
+    name: "商務談判 / Deal-making",
+    builtin: true,
+    items: [
+      "確認雙方目標與底線（BATNA）",
+      "釐清對方真正在意的優先順序",
+      "盤點價格／條款／時程等變數",
+      "先談整體框架再談細節",
+      "每次讓步都換回對等條件",
+      "記錄雙方已同意與待決事項",
+      "確認決策流程與簽約時程",
+      "總結共識並約定下一步",
+    ],
+  },
+  {
+    id: "todo-diligence",
+    name: "盡職調查 / Diligence call",
+    builtin: true,
+    items: [
+      "確認核心財務數據與成長趨勢",
+      "了解營收結構與客戶集中度",
+      "確認留存／churn 與單位經濟",
+      "釐清競爭與市場風險",
+      "確認團隊、關鍵人與股權結構",
+      "了解法務／合規／智財狀況",
+      "詢問技術債與資安現況",
+      "索取佐證文件並約定 follow-up",
     ],
   },
   {
@@ -31,21 +96,6 @@ export const PRESET_TODO_TEMPLATES: TodoTemplate[] = [
       "詢問值得認識的人／引薦",
       "請教推薦的資源或書",
       "約定下次 follow-up 的方式",
-    ],
-  },
-  {
-    id: "todo-interview",
-    name: "面試候選人",
-    builtin: true,
-    items: [
-      "自我介紹與職缺說明",
-      "請候選人介紹背景與動機",
-      "深入追問一個代表性專案",
-      "驗證核心技術／能力",
-      "詢問過去的衝突與處理方式",
-      "保留候選人提問時間",
-      "確認薪資期待與可到職時間",
-      "說明後續流程與時程",
     ],
   },
   {
