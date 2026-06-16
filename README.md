@@ -1,94 +1,154 @@
 # Parley
 
-Parley is a native realtime meeting copilot for interviews and negotiations. It listens to both your microphone (you) and your system audio (the other party), transcribes the conversation live with speaker diarization, and runs configurable AI evaluations and a live Q&A sidebar so you can see what matters in the moment — what hasn't been answered, what's been missed, and how the conversation is going — without breaking your focus.
+<p align="center">
+  <img src="src-tauri/icons/128x128.png" alt="Parley Logo" width="80" height="80" />
+</p>
 
-> ⚠️ **macOS only (for now).** Parley relies on Core Audio for system-audio capture. The audio layer sits behind an `AudioSource` trait, so other platforms are possible, but only macOS is supported today.
+<p align="center">
+  <strong>A native, local-first meeting copilot for real-time transcription, Q&A, and auto-checklists.</strong>
+</p>
 
-## Features
+<p align="center">
+  <a href="https://github.com/pathorsAI/parley/actions/workflows/release.yml"><img src="https://github.com/pathorsAI/parley/actions/workflows/release.yml/badge.svg" alt="Release Status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
+  <a href="https://tauri.app/"><img src="https://img.shields.io/badge/built%20with-Tauri-blue.svg?style=flat&logo=tauri" alt="Tauri"></a>
+  <img src="https://img.shields.io/badge/platform-macOS-lightgrey.svg" alt="Platform: macOS">
+</p>
 
-- **Dual-source capture** — captures your microphone and system audio simultaneously, so every line is tagged as `me` or `them`.
-- **Soniox realtime transcription** — low-latency streaming transcription with speaker diarization and editable speaker names.
-- **Switchable AI provider** — analysis runs through either Anthropic Claude or OpenRouter; pick whichever you prefer in Settings.
-- **Live Q&A sidebar** — ask questions about the ongoing conversation and get streamed answers grounded in the live transcript.
-- **Configurable evaluations** — preset and custom evaluation cards that surface insights about the conversation, with automatic or manual rerun.
-- **TODO checklist with AI auto-check** — track what you want to cover; items get checked off automatically as the AI detects they've been addressed.
-- **Built-in MCP endpoint** — when the app is open, Parley exposes a local HTTP MCP endpoint for managing evaluation and TODO templates from external MCP clients.
-- **Traditional Chinese conversion** — on-the-fly conversion of transcribed text to Traditional Chinese.
-- **Custom titlebar** — a clean, native-feeling custom window chrome.
+Parley is a native, real-time meeting copilot designed for interviews, negotiations, and discussions. It captures audio from both your microphone (you) and your system output (the other party), transcribes the conversation live with speaker diarization, and runs customizable AI evaluation checklists and a live Q&A sidebar—helping you stay focused on the conversation while getting instant insights in the background.
 
-## Tech stack
+> [!WARNING]
+> **macOS only (for now).** Parley relies on a Core Audio process tap for system-audio capture. The underlying audio pipeline is abstracted behind an `AudioSource` trait, making other platforms theoretically possible, but only macOS is officially supported today.
 
-- **Shell:** Tauri v2 (Rust) + React 19 + Vite + TypeScript + Tailwind v4
-- **Transcription:** Soniox realtime websocket (two sessions — mic + system audio)
-- **Audio capture (macOS):** Core Audio process tap for system output, `cpal` for the microphone (behind an `AudioSource` trait)
-- **AI:** Vercel AI SDK with a switchable provider (Anthropic Claude / OpenRouter)
-- **State:** Zustand
+---
 
-## Prerequisites
+## 🎯 Features
+
+- **Dual-Source Capture** — Simultaneously captures your microphone and system audio (e.g. Zoom, Meet, Teams) and tags transcript lines as `me` or `them`.
+- **Soniox Real-Time Transcription** — Low-latency, streaming transcription with high-accuracy speaker diarization and editable speaker names.
+- **Switchable AI Providers** — Run live evaluations and Q&A using either **Anthropic Claude** or any model on **OpenRouter**.
+- **Live Q&A Sidebar** — Ask questions about the live transcript as the conversation happens and receive streamed answers.
+- **Configurable Evaluations** — Customize evaluation checklist cards that flag specific talking points, concerns, or milestones.
+- **Auto-check TODOs** — Track your agenda items; Parley automatically checks items off as the AI detects they have been addressed.
+- **Built-in MCP Server** — Exposes a local HTTP Model Context Protocol (MCP) endpoint while the app is open to manage templates and checklists from external clients.
+- **Traditional Chinese Translation** — Instant conversion of transcribed text to Traditional Chinese on-the-fly.
+- **Sleek, Native UI** — Features a clean custom window chrome built for macOS.
+
+---
+
+## 🏗️ Architecture
+
+Parley is designed to run with minimal latency by separating audio streaming, UI responsiveness, and LLM processing:
+
+```mermaid
+graph TD
+    SystemAudio[System Audio / CoreAudio Tap] -->|PCM 16kHz| TauriBackend[Tauri Rust Backend]
+    Microphone[Microphone Input / cpal] -->|PCM 16kHz| TauriBackend
+    TauriBackend -->|Realtime WebSocket| Soniox[Soniox STT API]
+    Soniox -->|Live Transcription Events| ReactFrontend[React Frontend UI]
+    ReactFrontend -->|Context + Templates| LLM[Anthropic Claude / OpenRouter]
+    TauriBackend -->|Local HTTP/SSE Server| ExternalMCP[External MCP Clients]
+```
+
+---
+
+## 🔒 Privacy & Data Flow
+
+Meeting content is highly sensitive. Parley is built with a **local-first** approach:
+* **No Middleware Servers:** All audio streams and transcriptions go directly from your local machine to the API endpoints (Soniox/Anthropic/OpenRouter).
+* **Local Storage:** Transcripts and template files (`templates.json`) are stored exclusively in your local application directory.
+* **No Telemetry:** We do not track, collect, or upload your transcripts, audio, or API usage statistics.
+
+---
+
+## ⚙️ Tech Stack
+
+- **Shell & Core:** [Tauri v2](https://v2.tauri.app/) (Rust) + React 19 + Vite + TypeScript + Tailwind CSS v4
+- **Audio Capture:** Core Audio process tap for macOS system audio, `cpal` for microphone input
+- **Transcription:** Soniox WebSocket API (dual concurrent sessions)
+- **AI Integrations:** Vercel AI SDK (Anthropic & OpenRouter adapters)
+- **State Management:** [Zustand](https://github.com/pmndrs/zustand)
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
 
 - **Rust** (stable toolchain) — for the Tauri backend
-- **Bun** (or Node.js) — for the frontend toolchain
-- A **Soniox API key** — for realtime transcription
-- An **Anthropic** or **OpenRouter** API key — for AI analysis
+- **Bun** (or Node.js) — for building the frontend
+- A **Soniox API Key** — for live transcription
+- An **Anthropic** or **OpenRouter** API Key — for LLM capabilities
 
-See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for the platform tooling you'll need.
+### Setup & Run
 
-## Setup & run
+1. Clone the repository and install dependencies:
+   ```bash
+   git clone https://github.com/pathorsAI/parley.git
+   cd parley
+   bun install
+   ```
 
-```bash
-bun install
-bun run tauri dev      # runs Vite + the Tauri shell
-```
+2. Run the application in development mode:
+   ```bash
+   bun run tauri dev
+   ```
 
-## Release
+3. Paste your API keys in the **Settings** panel inside the app on first launch.
 
-Releases are built by GitHub Actions when a `vX.Y.Z` tag is pushed. The workflow builds the macOS Tauri bundle and uploads the installer assets to a GitHub Release.
+---
 
-From a clean worktree:
+## 🔌 Built-in MCP Server
 
-```bash
-bun run release patch --message "Describe what changed in this release"
-```
-
-You can also pass an explicit version or a notes file:
-
-```bash
-bun run release 0.2.0 --notes-file ./release-notes.md
-```
-
-The script updates `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`, writes `.github/release-notes/vX.Y.Z.md`, commits those changes, creates the tag, and pushes the branch and tag.
-
-## MCP
-
-Parley starts its template MCP service inside the desktop app. Open Parley, then connect an HTTP-capable MCP client to the endpoint shown in **Settings → MCP Server**. The default endpoint is:
+Parley runs a local HTTP/SSE Model Context Protocol (MCP) server directly inside the desktop app. Connect any HTTP-capable MCP client (like Claude Desktop or Cursor) to the following endpoint:
 
 ```text
 http://127.0.0.1:3011/mcp
 ```
 
-The endpoint reads and writes the same `templates.json` file used by the app, so evaluation and TODO templates stay synchronized.
+This exposes tools to list, create, update, and delete evaluation/TODO templates synced with the application.
 
-## Configuration
+---
 
-API keys are entered in the in-app **Settings** window — there's no need to set anything up before first launch. Open Settings, paste your Soniox key and your Anthropic or OpenRouter key, and choose your AI provider.
+## 🗺️ Roadmap
 
-For development you can optionally provide default keys via `VITE_*` environment variables; see [`.env.example`](.env.example). Note that Vite inlines `VITE_*` values into the frontend bundle, so never put a production secret there.
+- [ ] Support Windows system audio capture via WASAPI loopback.
+- [ ] Add support for local/offline Whisper transcription.
+- [ ] Add more LLM providers (Ollama, Gemini, OpenAI).
+- [ ] Rich export formats (PDF, Markdown with timestamps, Notion sync).
 
-## Project layout
+---
 
+## 🤝 Contributing
+
+Contributions are welcome! If you'd like to help improve Parley:
+1. Fork the repository.
+2. Create a feature branch (`git checkout -b feature/amazing-feature`).
+3. Commit your changes (`git commit -m 'Add amazing feature'`).
+4. Push to the branch (`git push origin feature/amazing-feature`).
+5. Open a Pull Request.
+
+Please make sure to open an issue first to discuss any major changes or new features.
+
+---
+
+## 📦 Release
+
+To build a release version locally and tag it:
+
+```bash
+bun run release patch --message "Release description"
 ```
-src/                  React frontend
-  components/          UI (TitleBar, MeetingView, sidebar: Ask + Evaluations + Todos)
-  lib/                 store (zustand), types, evaluation presets, AI layer
-src-tauri/            Rust backend
-  src/audio/           mic + system-audio capture (AudioSource trait)
-  src/transcription/   Soniox realtime client
-```
+This updates the versions in `package.json`, `tauri.conf.json`, and `Cargo.toml`, creates a release tag, and pushes it to GitHub where the release workflow builds the Universal macOS bundle.
 
-## Acknowledgements
+---
 
-Built with [Claude Code](https://claude.com/claude-code).
-
-## License
+## 📄 License
 
 Licensed under the [Apache License 2.0](LICENSE). Copyright 2026 Pathors AI.
+
+---
+
+## 💡 Acknowledgements
+
+Built with [Claude Code](https://claude.com/claude-code).
