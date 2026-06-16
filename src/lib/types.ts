@@ -52,9 +52,15 @@ export interface EvalDef {
   description: string;
   /** The instruction handed to the LLM, describing what to look for. */
   prompt: string;
-  mode: "auto" | "manual";
-  /** Rerun interval for `auto` evaluations, in seconds. */
-  autoEverySec?: number;
+}
+
+/** A named, reusable set of evaluation definitions you can apply to a meeting. */
+export interface EvalTemplate {
+  id: string;
+  name: string;
+  /** Built-in templates ship with the app and can't be deleted/renamed. */
+  builtin?: boolean;
+  evals: EvalDef[];
 }
 
 /** A definition plus its live runtime state, held in the store during a meeting. */
@@ -71,11 +77,25 @@ export interface TodoItem {
   done: boolean;
 }
 
+/** A named, reusable checklist you can apply to a meeting. */
+export interface TodoTemplate {
+  id: string;
+  name: string;
+  builtin?: boolean;
+  items: string[];
+}
+
 /** High-level meeting lifecycle state. */
 export type MeetingStatus = "idle" | "recording" | "stopped";
 
 /** Which LLM provider to route inference through. */
-export type LlmProvider = "anthropic" | "openrouter";
+export type LlmProvider = "anthropic" | "openrouter" | "groq";
+
+/** Reasoning depth for reasoning-capable models (e.g. Groq gpt-oss). */
+export type ReasoningEffort = "low" | "medium" | "high";
+
+/** UI language. */
+export type AppLanguage = "zh-TW" | "en";
 
 /** Model ids for one provider: a fast model for Q&A, a stronger one for evals. */
 export interface ProviderModels {
@@ -84,18 +104,22 @@ export interface ProviderModels {
 }
 
 export interface Settings {
+  language: AppLanguage;
   provider: LlmProvider;
   anthropicApiKey: string;
   openrouterApiKey: string;
+  groqApiKey: string;
+  /** Reasoning depth for reasoning-capable models (Groq gpt-oss). */
+  reasoningEffort: ReasoningEffort;
   /** Per-provider model ids (ids differ between Anthropic and OpenRouter). */
   models: Record<LlmProvider, ProviderModels>;
   sonioxApiKey: string;
   /** Microphone input device name; empty = system default. */
   inputDevice: string;
-  /** Context for evaluations: what kind of meeting this is (interview/negotiation/…). */
-  meetingContext: string;
-  /** Editable evaluation definitions (the runtime copy lives in the store). */
+  /** The active evaluation set used in meetings (the runtime copy lives in the store). */
   evaluations: EvalDef[];
-  /** TODO/agenda templates seeded into each meeting's checklist. */
-  todoTemplates: string[];
+  /** Library of evaluation templates (built-in + custom) you can apply. */
+  evalTemplates: EvalTemplate[];
+  /** Library of TODO/agenda templates (built-in + custom) you can apply. */
+  todoTemplates: TodoTemplate[];
 }

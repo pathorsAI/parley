@@ -25,10 +25,28 @@ export function getModel(settings: Settings, kind: "ask" | "eval"): LanguageMode
     return anthropic(modelId);
   }
 
+  if (settings.provider === "groq") {
+    const groq = createOpenAICompatible({
+      name: "groq",
+      baseURL: "https://api.groq.com/openai/v1",
+      apiKey: settings.groqApiKey,
+    });
+    return groq.chatModel(modelId);
+  }
+
   const openrouter = createOpenAICompatible({
     name: "openrouter",
     baseURL: "https://openrouter.ai/api/v1",
     apiKey: settings.openrouterApiKey,
   });
   return openrouter.chatModel(modelId);
+}
+
+/**
+ * Per-call provider options. For Groq's gpt-oss reasoning models this passes the
+ * selected `reasoning_effort`. Keyed by provider name, so it's a no-op for
+ * providers other than the active one — safe to spread into every call.
+ */
+export function getProviderOptions(settings: Settings) {
+  return { groq: { reasoningEffort: settings.reasoningEffort } };
 }

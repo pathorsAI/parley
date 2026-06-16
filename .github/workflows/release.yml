@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release, for example v0.2.0"
+        required: true
+        type: string
+      release_notes:
+        description: "Fallback release notes when .github/release-notes/<tag>.md is not present"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS app
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Prepare release metadata
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.tag }}"
+            fallback_notes="${{ inputs.release_notes }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+            fallback_notes=""
+          fi
+
+          notes_file=".github/release-notes/${tag}.md"
+          body_file="${RUNNER_TEMP}/release-body.md"
+
+          if [[ -f "${notes_file}" ]]; then
+            cp "${notes_file}" "${body_file}"
+          elif [[ -n "${fallback_notes}" ]]; then
+            printf '%s\n' "${fallback_notes}" > "${body_file}"
+          else
+            printf 'Release %s\n' "${tag}" > "${body_file}"
+          fi
+
+          {
+            echo "tag=${tag}"
+            echo "body<<EOF"
+            cat "${body_file}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build and upload Tauri bundles
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ steps.release.outputs.tag }}
+          releaseName: "Parley ${{ steps.release.outputs.tag }}"
+          releaseBody: ${{ steps.release.outputs.body }}
+          releaseDraft: true
+          prerelease: false
+          tauriScript: bun run tauri
+          args: --target universal-apple-darwin
+          releaseAssetNamePattern: "[name]-[version]-[platform]-[arch].[ext]"
