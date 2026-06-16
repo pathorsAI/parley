@@ -65,7 +65,9 @@ pub async fn run_session(
                 break;
             }
         }
-        let _ = write.send(Message::Text("{\"type\":\"Terminate\"}".to_string().into())).await;
+        let _ = write
+            .send(Message::Text("{\"type\":\"Terminate\"}".to_string().into()))
+            .await;
         let _ = write.close().await;
     };
 

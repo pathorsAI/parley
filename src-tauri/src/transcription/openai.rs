@@ -74,7 +74,11 @@ pub async fn run_session(
             let bytes = pcm_to_le_bytes(&chunk);
             let audio = b64.encode(&bytes);
             let msg = json!({ "type": "input_audio_buffer.append", "audio": audio });
-            if write.send(Message::Text(msg.to_string().into())).await.is_err() {
+            if write
+                .send(Message::Text(msg.to_string().into()))
+                .await
+                .is_err()
+            {
                 break;
             }
         }
@@ -113,7 +117,11 @@ pub async fn run_session(
                     builder.emit_tail(&interim, 0, 0);
                 }
                 "conversation.item.input_audio_transcription.completed" => {
-                    let text = if ev.transcript.is_empty() { interim.clone() } else { ev.transcript };
+                    let text = if ev.transcript.is_empty() {
+                        interim.clone()
+                    } else {
+                        ev.transcript
+                    };
                     if !text.trim().is_empty() {
                         builder.push_final(text.trim(), 0, 0, 0);
                         builder.emit_committed();
