@@ -5,7 +5,7 @@ use std::thread::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::audio::{microphone::Microphone, AudioSource};
-use crate::transcription::soniox;
+use crate::transcription::{self, SttProvider, TranscribeConfig};
 
 /// Path to the shared templates file (app config dir). The local MCP server
 /// reads/writes the same file so templates can be managed outside the app.
@@ -33,8 +33,6 @@ pub fn write_templates(app: AppHandle, json: String) -> Result<(), String> {
     }
     std::fs::write(&path, json).map_err(|e| e.to_string())
 }
-
-const DEFAULT_MODEL: &str = "stt-rt-v5";
 
 /// Shared meeting state held in Tauri's managed state. `running` gates all
 /// capture threads; clearing it tells them to release their devices and exit.
@@ -97,22 +95,38 @@ pub fn stop_mic_test(state: State<MeetingState>) {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn start_meeting(
     app: AppHandle,
     state: State<MeetingState>,
-    soniox_api_key: String,
+    provider: String,
+    api_key: String,
     model: Option<String>,
+    language_hints: Option<Vec<String>>,
+    diarization: Option<bool>,
     input_device: Option<String>,
 ) -> Result<(), String> {
-    if soniox_api_key.trim().is_empty() {
-        return Err("missing Soniox API key".into());
+    let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
+    if api_key.trim().is_empty() {
+        return Err("missing transcription API key".into());
     }
     // Ignore if already running.
     if state.running.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
     let running = state.running.clone();
-    let model = model.unwrap_or_else(|| DEFAULT_MODEL.to_string());
+    let model = model
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| provider.default_model().to_string());
+    // Honor the request only if the provider can actually diarize.
+    let diarization = diarization.unwrap_or(true) && provider.supports_diarization();
+    let language_hints = language_hints.unwrap_or_default();
+    let make_config = || TranscribeConfig {
+        api_key: api_key.clone(),
+        model: model.clone(),
+        language_hints: language_hints.clone(),
+        diarization,
+    };
 
     // Microphone source → "me".
     spawn_source(
@@ -120,8 +134,8 @@ pub fn start_meeting(
         &state,
         Microphone { device_name: input_device },
         running.clone(),
-        soniox_api_key.clone(),
-        model.clone(),
+        provider,
+        make_config(),
         "me",
     );
 
@@ -133,8 +147,8 @@ pub fn start_meeting(
         &state,
         crate::audio::system_macos::SystemAudio,
         running.clone(),
-        soniox_api_key.clone(),
-        model.clone(),
+        provider,
+        make_config(),
         "them",
     );
 
@@ -169,14 +183,14 @@ pub fn save_transcript(filename: String, contents: String) -> Result<String, Str
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Start one capture backend feeding a dedicated Soniox realtime session.
+/// Start one capture backend feeding a dedicated transcription session.
 fn spawn_source<S: AudioSource>(
     app: &AppHandle,
     state: &State<MeetingState>,
     source: S,
     running: Arc<AtomicBool>,
-    api_key: String,
-    model: String,
+    provider: SttProvider,
+    config: TranscribeConfig,
     label: &'static str,
 ) {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
@@ -190,8 +204,8 @@ fn spawn_source<S: AudioSource>(
 
     let app_for_session = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = soniox::run_session(app_for_session, api_key, model, label, rx).await {
-            eprintln!("[soniox:{label}] session ended: {e}");
+        if let Err(e) = transcription::run_session(provider, app_for_session, config, label, rx).await {
+            eprintln!("[stt:{label}] session ended: {e}");
         }
     });
 }
