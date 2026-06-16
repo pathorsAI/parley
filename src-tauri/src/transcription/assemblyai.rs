@@ -61,12 +61,12 @@ pub async fn run_session(
         while let Some(chunk) = pcm_rx.recv().await {
             meter.push(&chunk);
             let bytes = pcm_to_le_bytes(&chunk);
-            if write.send(Message::Binary(bytes.into())).await.is_err() {
+            if write.send(Message::Binary(bytes)).await.is_err() {
                 break;
             }
         }
         let _ = write
-            .send(Message::Text("{\"type\":\"Terminate\"}".to_string().into()))
+            .send(Message::Text("{\"type\":\"Terminate\"}".to_string()))
             .await;
         let _ = write.close().await;
     };

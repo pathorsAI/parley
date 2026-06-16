@@ -99,12 +99,12 @@ pub async fn run_session(
                     let Some(chunk) = maybe_chunk else { break };
                     meter.push(&chunk);
                     let bytes = pcm_to_le_bytes(&chunk);
-                    if write.send(Message::Binary(bytes.into())).await.is_err() {
+                    if write.send(Message::Binary(bytes)).await.is_err() {
                         break;
                     }
                 }
                 _ = keepalive.tick() => {
-                    if write.send(Message::Text("{\"type\":\"KeepAlive\"}".to_string().into())).await.is_err() {
+                    if write.send(Message::Text("{\"type\":\"KeepAlive\"}".to_string())).await.is_err() {
                         break;
                     }
                 }
@@ -112,7 +112,7 @@ pub async fn run_session(
         }
         let _ = write
             .send(Message::Text(
-                "{\"type\":\"CloseStream\"}".to_string().into(),
+                "{\"type\":\"CloseStream\"}".to_string(),
             ))
             .await;
         let _ = write.close().await;

@@ -189,11 +189,6 @@ impl SegmentBuilder {
         }
     }
 
-    /// True while there is an open (uncommitted) run.
-    pub fn has_open_run(&self) -> bool {
-        self.cur_speaker != -1
-    }
-
     /// The current open run's speaker (0 if none open) — useful for tail labels.
     pub fn current_speaker(&self) -> i64 {
         self.cur_speaker.max(0)
