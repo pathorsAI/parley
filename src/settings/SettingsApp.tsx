@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Monitor, Moon, Plus, Sun, Trash2 } from "lucide-react";
+import { Check, Copy, Monitor, Moon, PlugZap, Plus, Sun, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
@@ -35,7 +35,13 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
 };
 import type { AppLanguage, AppLayout, AppTheme, EvalDef, LlmProvider, ReasoningEffort, Settings } from "../lib/types";
 
-type Category = "basic" | "provider" | "transcription" | "evaluations" | "todos";
+type Category = "basic" | "provider" | "transcription" | "evaluations" | "todos" | "mcp";
+
+interface McpServerInfo {
+  running: boolean;
+  endpoint: string;
+  templates_path: string;
+}
 
 const NAV: { id: Category; labelKey: TranslationKey }[] = [
   { id: "basic", labelKey: "settings.nav.basic" },
@@ -43,6 +49,7 @@ const NAV: { id: Category; labelKey: TranslationKey }[] = [
   { id: "transcription", labelKey: "settings.nav.transcription" },
   { id: "evaluations", labelKey: "settings.nav.evaluations" },
   { id: "todos", labelKey: "settings.nav.todos" },
+  { id: "mcp", labelKey: "settings.nav.mcp" },
 ];
 
 export function SettingsApp() {
@@ -55,6 +62,11 @@ export function SettingsApp() {
   const [devices, setDevices] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
   const [newTplName, setNewTplName] = useState("");
+  const [templatesPath, setTemplatesPath] = useState("");
+  const [mcpInfo, setMcpInfo] = useState<McpServerInfo | null>(null);
+  const [copiedConfig, setCopiedConfig] = useState(false);
+  const [copiedPath, setCopiedPath] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState(false);
   const info = PROVIDER_BY_ID[settings.provider];
   const providerLabel = info.label;
 
@@ -66,10 +78,19 @@ export function SettingsApp() {
   useEffect(() => {
     if (!isTauri()) return;
     invoke<string[]>("list_input_devices").then(setDevices).catch(() => {});
+    invoke<string>("get_templates_path").then(setTemplatesPath).catch(() => {});
+    const refreshMcpInfo = () => {
+      invoke<McpServerInfo>("get_mcp_server_info").then(setMcpInfo).catch(() => {});
+    };
+    refreshMcpInfo();
+    const mcpTimer = window.setInterval(() => {
+      if (!mcpInfo?.running) refreshMcpInfo();
+    }, 1000);
     return () => {
+      window.clearInterval(mcpTimer);
       void invoke("stop_mic_test").catch(() => {});
     };
-  }, []);
+  }, [mcpInfo?.running]);
 
   async function toggleTest() {
     if (testing) {
@@ -427,6 +448,143 @@ export function SettingsApp() {
             >
               <Plus className="size-3.5" /> {t("settings.todos.addTemplate")}
             </Button>
+          </Section>
+        )}
+
+        {cat === "mcp" && (
+          <Section title={t("settings.mcp.title")}>
+            <p className="text-[11px] text-muted-foreground">
+              {t("settings.mcp.description")}
+            </p>
+
+            <div className="flex max-w-xl items-center gap-3 rounded-lg border bg-muted/20 p-4">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-secondary text-foreground">
+                <PlugZap className="size-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <span>{t("settings.mcp.status")}</span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      mcpInfo?.running
+                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                        : "bg-amber-500/15 text-amber-600 dark:text-amber-300"
+                    }`}
+                  >
+                    {mcpInfo?.running ? t("settings.mcp.running") : t("settings.mcp.starting")}
+                  </span>
+                </div>
+                <div className="mt-1 flex items-center gap-1">
+                  <p className="truncate font-mono text-[11px] text-muted-foreground">
+                    {mcpInfo?.endpoint || t("settings.mcp.endpointPending")}
+                  </p>
+                  {mcpInfo?.endpoint && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-6 shrink-0 text-muted-foreground"
+                      title={t("settings.mcp.copyUrl")}
+                      onClick={() => {
+                        navigator.clipboard.writeText(mcpInfo.endpoint);
+                        setCopiedUrl(true);
+                        setTimeout(() => setCopiedUrl(false), 2000);
+                      }}
+                    >
+                      {copiedUrl ? (
+                        <Check className="size-3 text-emerald-500" />
+                      ) : (
+                        <Copy className="size-3" />
+                      )}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <Field label={t("settings.mcp.sharedFile")}>
+              <div className="flex max-w-xl items-center gap-2">
+                <Input
+                  readOnly
+                  value={templatesPath || mcpInfo?.templates_path || "Loading..."}
+                  className="bg-muted/30 font-mono text-xs"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 shrink-0 gap-1"
+                  onClick={() => {
+                    navigator.clipboard.writeText(templatesPath || mcpInfo?.templates_path || "");
+                    setCopiedPath(true);
+                    setTimeout(() => setCopiedPath(false), 2000);
+                  }}
+                  disabled={!templatesPath && !mcpInfo?.templates_path}
+                >
+                  {copiedPath ? (
+                    <>
+                      <Check className="size-3.5 text-emerald-500" />
+                      <span>{t("settings.mcp.copied")}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="size-3.5" />
+                      <span>{t("settings.mcp.copyPath")}</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+            </Field>
+
+            <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold tracking-tight">{t("settings.mcp.configInstructions")}</h3>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1"
+                  onClick={() => {
+                    const endpoint = mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp";
+                    const configJson = JSON.stringify(
+                      {
+                        mcpServers: {
+                          "parley-templates": {
+                            type: "http",
+                            url: endpoint,
+                          },
+                        },
+                      },
+                      null,
+                      2
+                    );
+                    navigator.clipboard.writeText(configJson);
+                    setCopiedConfig(true);
+                    setTimeout(() => setCopiedConfig(false), 2000);
+                  }}
+                >
+                  {copiedConfig ? (
+                    <>
+                      <Check className="size-3.5 text-emerald-500" />
+                      <span>{t("settings.mcp.copied")}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="size-3.5" />
+                      <span>{t("settings.mcp.copyConfig")}</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">{t("settings.mcp.configHelp")}</p>
+              <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
+                {`{
+  "mcpServers": {
+    "parley-templates": {
+      "type": "http",
+      "url": "${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}"
+    }
+  }
+}`}
+              </pre>
+            </div>
           </Section>
         )}
       </div>
