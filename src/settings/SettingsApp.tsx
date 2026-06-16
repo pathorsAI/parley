@@ -18,8 +18,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PROVIDERS, PROVIDER_BY_ID, isReasoningModel } from "../lib/ai/providers";
-import type { AppLanguage, AppTheme, EvalDef, LlmProvider, Settings } from "../lib/types";
+import {
+  PROVIDERS,
+  PROVIDER_BY_ID,
+  isReasoningModel,
+  type ProviderTagTone,
+} from "../lib/ai/providers";
+
+/** Tailwind classes for each provider tag tone (dark + light). */
+const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
+  smart: "bg-violet-500/15 text-violet-600 dark:text-violet-300",
+  fast: "bg-amber-500/15 text-amber-600 dark:text-amber-300",
+  local: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
+  value: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
+  default: "bg-muted text-muted-foreground",
+};
+import type { AppLanguage, AppLayout, AppTheme, EvalDef, LlmProvider, ReasoningEffort, Settings } from "../lib/types";
 
 type Category = "basic" | "provider" | "transcription" | "evaluations" | "todos";
 
@@ -132,6 +146,38 @@ export function SettingsApp() {
                 ))}
               </div>
             </Field>
+            <Field label={t("settings.basic.layout")}>
+              <div className="grid max-w-md grid-cols-3 gap-2">
+                {(
+                  [
+                    ["full", t("settings.basic.layoutFull"), [t("meeting.transcript"), t("work.ask"), t("evaluations.title")]],
+                    ["assistant", t("settings.basic.layoutAssistant"), [t("work.ask"), t("evaluations.title")]],
+                    ["transcript", t("settings.basic.layoutTranscript"), [t("meeting.transcript"), t("work.ask")]],
+                  ] as const
+                ).map(([mode, label, cols]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => patch({ layout: mode as AppLayout })}
+                    className={`flex flex-col items-center gap-1.5 rounded-lg border p-2 transition-colors ${
+                      settings.layout === mode ? "border-primary bg-secondary" : "hover:bg-muted"
+                    }`}
+                  >
+                    <div className="flex h-9 w-full gap-0.5">
+                      {cols.map((c, i) => (
+                        <div
+                          key={i}
+                          className="flex min-w-0 flex-1 items-center justify-center truncate rounded-sm bg-muted-foreground/20 px-1 text-[8px] text-muted-foreground"
+                        >
+                          {c}
+                        </div>
+                      ))}
+                    </div>
+                    <span className="text-[11px]">{label}</span>
+                  </button>
+                ))}
+              </div>
+            </Field>
           </Section>
         )}
 
@@ -146,6 +192,13 @@ export function SettingsApp() {
                       <span className="flex items-center gap-2">
                         <img src={p.icon} alt="" className="size-4 rounded-sm" />
                         {p.label}
+                        {p.tag && (
+                          <span
+                            className={`rounded px-1.5 py-px text-[10px] font-medium ${PROVIDER_TAG_TONES[p.tag.tone]}`}
+                          >
+                            {p.tag.label}
+                          </span>
+                        )}
                         {p.note && <span className="text-[10px] text-muted-foreground">{p.note}</span>}
                       </span>
                     </SelectItem>
@@ -159,24 +212,11 @@ export function SettingsApp() {
                 autoComplete="off"
                 placeholder={info.keyPlaceholder}
                 className="max-w-sm"
+                disabled={info.requiresKey === false}
                 value={settings[info.apiKeyField]}
                 onChange={(e) => patch({ [info.apiKeyField]: e.target.value } as Partial<Settings>)}
               />
             </Field>
-            {info.kind === "openai-compatible" &&
-              (isReasoningModel(settings.models[settings.provider].ask) ||
-                isReasoningModel(settings.models[settings.provider].eval)) && (
-              <Field label={t("settings.provider.reasoning")}>
-                <Select value={settings.reasoningEffort} onValueChange={(v) => patch({ reasoningEffort: v as Settings["reasoningEffort"] })}>
-                  <SelectTrigger className="w-full max-w-[180px]"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">{t("settings.provider.low")}</SelectItem>
-                    <SelectItem value="medium">{t("settings.provider.medium")}</SelectItem>
-                    <SelectItem value="high">{t("settings.provider.high")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
             <div className="flex flex-col gap-3 border-t pt-4">
               <p className="text-[11px] text-muted-foreground">
                 {t("settings.provider.models", {
@@ -190,6 +230,15 @@ export function SettingsApp() {
                   value={settings.models[settings.provider].ask}
                   onChange={(v) => patchModel(patch, settings, settings.provider, "ask", v)}
                 />
+                {info.kind === "openai-compatible" && isReasoningModel(settings.models[settings.provider].ask) && (
+                  <ReasoningEffortSelect
+                    label={t("settings.provider.askReasoning")}
+                    value={settings.reasoningEffort.ask}
+                    onChange={(v) =>
+                      patch({ reasoningEffort: { ...settings.reasoningEffort, ask: v } })
+                    }
+                  />
+                )}
               </Field>
               <Field label={t("settings.provider.evalModel")}>
                 <ModelSelect
@@ -197,6 +246,15 @@ export function SettingsApp() {
                   value={settings.models[settings.provider].eval}
                   onChange={(v) => patchModel(patch, settings, settings.provider, "eval", v)}
                 />
+                {info.kind === "openai-compatible" && isReasoningModel(settings.models[settings.provider].eval) && (
+                  <ReasoningEffortSelect
+                    label={t("settings.provider.evalReasoning")}
+                    value={settings.reasoningEffort.eval}
+                    onChange={(v) =>
+                      patch({ reasoningEffort: { ...settings.reasoningEffort, eval: v } })
+                    }
+                  />
+                )}
               </Field>
             </div>
           </Section>
@@ -408,6 +466,34 @@ function ModelSelect({
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+function ReasoningEffortSelect({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: ReasoningEffort;
+  onChange: (value: ReasoningEffort) => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <div className="mt-2 flex max-w-sm items-center gap-2">
+      <span className="min-w-28 text-[11px] text-muted-foreground">{label}</span>
+      <Select value={value} onValueChange={(v) => onChange(v as ReasoningEffort)}>
+        <SelectTrigger className="h-7 flex-1 text-[11px]">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="low">{t("settings.provider.low")}</SelectItem>
+          <SelectItem value="medium">{t("settings.provider.medium")}</SelectItem>
+          <SelectItem value="high">{t("settings.provider.high")}</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
 

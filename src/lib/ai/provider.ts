@@ -31,7 +31,8 @@ export function getModel(settings: Settings, kind: "ask" | "eval"): LanguageMode
   const client = createOpenAICompatible({
     name: info.id,
     baseURL: info.baseURL!,
-    apiKey,
+    // Local Ollama needs no key, but the SDK wants a non-empty string.
+    apiKey: apiKey || (info.requiresKey === false ? "ollama" : apiKey),
   });
   return client.chatModel(modelId);
 }
@@ -44,7 +45,7 @@ export function getModel(settings: Settings, kind: "ask" | "eval"): LanguageMode
 export function getProviderOptions(settings: Settings, kind: "ask" | "eval") {
   const info = PROVIDER_BY_ID[settings.provider];
   if (info.kind === "openai-compatible" && isReasoningModel(settings.models[settings.provider][kind])) {
-    return { [info.id]: { reasoningEffort: settings.reasoningEffort } };
+    return { [info.id]: { reasoningEffort: settings.reasoningEffort[kind] } };
   }
   return {};
 }
