@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Plus, Trash2 } from "lucide-react";
+import { Monitor, Moon, Plus, Sun, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
 import { isTauri } from "../lib/tauriEvents";
+import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PROVIDERS, PROVIDER_BY_ID, isReasoningModel } from "../lib/ai/providers";
-import type { AppLanguage, EvalDef, LlmProvider, Settings } from "../lib/types";
+import type { AppLanguage, AppTheme, EvalDef, LlmProvider, Settings } from "../lib/types";
 
 type Category = "basic" | "provider" | "transcription" | "evaluations" | "todos";
 
@@ -32,6 +33,8 @@ const NAV: { id: Category; labelKey: TranslationKey }[] = [
 
 export function SettingsApp() {
   const { t } = useI18n();
+  useThemePreference();
+
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
   const [cat, setCat] = useState<Category>("basic");
@@ -102,6 +105,32 @@ export function SettingsApp() {
                 </SelectContent>
               </Select>
               <p className="max-w-sm text-[11px] text-muted-foreground">{t("settings.basic.languageHelp")}</p>
+            </Field>
+            <Field label={t("settings.basic.theme")}>
+              <div className="grid max-w-sm grid-cols-3 rounded-md bg-muted p-0.5">
+                {(
+                  [
+                    ["light", t("settings.basic.themeLight"), Sun],
+                    ["dark", t("settings.basic.themeDark"), Moon],
+                    ["system", t("settings.basic.themeSystem"), Monitor],
+                  ] as const
+                ).map(([theme, label, Icon]) => (
+                  <button
+                    key={theme}
+                    type="button"
+                    aria-pressed={settings.theme === theme}
+                    onClick={() => patch({ theme: theme as AppTheme })}
+                    className={`flex h-8 items-center justify-center gap-1.5 rounded-[5px] px-2 text-sm transition-colors ${
+                      settings.theme === theme
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Icon className="size-3.5" />
+                    {label}
+                  </button>
+                ))}
+              </div>
             </Field>
           </Section>
         )}

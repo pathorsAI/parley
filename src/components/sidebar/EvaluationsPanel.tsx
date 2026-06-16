@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { runAllEvaluations } from "../../lib/evaluations/engine";
@@ -19,6 +20,7 @@ const PROVIDER_LABEL = { anthropic: "Claude", openrouter: "OpenRouter", groq: "G
 
 export function EvaluationsPanel() {
   const { t } = useI18n();
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const evaluations = useStore((s) => s.evaluations);
   const templates = useStore((s) => s.settings.evalTemplates);
   const provider = useStore((s) => s.settings.provider);
@@ -32,14 +34,16 @@ export function EvaluationsPanel() {
 
   function applyTemplate(id: string) {
     const tpl = templates.find((t) => t.id === id);
-    if (tpl) updateSettings({ evaluations: tpl.evals.map((e) => ({ ...e })) });
+    if (!tpl) return;
+    updateSettings({ evaluations: tpl.evals.map((e) => ({ ...e })) });
+    setSelectedTemplateId(id);
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
         <span className="text-xs font-medium">{t("evaluations.title")}</span>
-        <Select value="" onValueChange={applyTemplate}>
+        <Select value={templates.some((tpl) => tpl.id === selectedTemplateId) ? selectedTemplateId : ""} onValueChange={applyTemplate}>
           <SelectTrigger size="sm" className="ml-auto h-7 w-[150px] text-[11px]">
             <SelectValue placeholder={t("evaluations.applyTemplate")} />
           </SelectTrigger>
