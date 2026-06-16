@@ -12,6 +12,7 @@ Parley is a native realtime meeting copilot for interviews and negotiations. It 
 - **Live Q&A sidebar** — ask questions about the ongoing conversation and get streamed answers grounded in the live transcript.
 - **Configurable evaluations** — preset and custom evaluation cards that surface insights about the conversation, with automatic or manual rerun.
 - **TODO checklist with AI auto-check** — track what you want to cover; items get checked off automatically as the AI detects they've been addressed.
+- **Built-in MCP endpoint** — when the app is open, Parley exposes a local HTTP MCP endpoint for managing evaluation and TODO templates from external MCP clients.
 - **Traditional Chinese conversion** — on-the-fly conversion of transcribed text to Traditional Chinese.
 - **Custom titlebar** — a clean, native-feeling custom window chrome.
 
@@ -41,7 +42,7 @@ bun run tauri dev      # runs Vite + the Tauri shell
 
 ## Release
 
-Releases are built by GitHub Actions when a `vX.Y.Z` tag is pushed. The workflow builds the macOS Tauri bundle and uploads the installer assets to a draft GitHub Release.
+Releases are built by GitHub Actions when a `vX.Y.Z` tag is pushed. The workflow builds the macOS Tauri bundle and uploads the installer assets to a GitHub Release.
 
 From a clean worktree:
 
@@ -55,7 +56,17 @@ You can also pass an explicit version or a notes file:
 bun run release 0.2.0 --notes-file ./release-notes.md
 ```
 
-The script updates `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`, writes `.github/release-notes/vX.Y.Z.md`, commits those changes, creates the tag, and pushes the branch and tag. The release is created as a draft so you can review the generated `.dmg` before publishing.
+The script updates `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`, writes `.github/release-notes/vX.Y.Z.md`, commits those changes, creates the tag, and pushes the branch and tag.
+
+## MCP
+
+Parley starts its template MCP service inside the desktop app. Open Parley, then connect an HTTP-capable MCP client to the endpoint shown in **Settings → MCP Server**. The default endpoint is:
+
+```text
+http://127.0.0.1:3011/mcp
+```
+
+The endpoint reads and writes the same `templates.json` file used by the app, so evaluation and TODO templates stay synchronized.
 
 ## Configuration
 
