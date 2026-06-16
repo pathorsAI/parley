@@ -9,7 +9,7 @@ use crate::transcription::{self, SttProvider, TranscribeConfig};
 
 /// Path to the shared templates file (app config dir). The local MCP server
 /// reads/writes the same file so templates can be managed outside the app.
-fn templates_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+pub(crate) fn templates_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     Ok(dir.join("templates.json"))
 }
@@ -64,9 +64,11 @@ pub fn start_mic_test(
     }
     let running = state.test_running.clone();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-    Microphone { device_name: input_device }
-        .start(tx, running)
-        .map_err(|e| e.to_string())?;
+    Microphone {
+        device_name: input_device,
+    }
+    .start(tx, running)
+    .map_err(|e| e.to_string())?;
 
     tauri::async_runtime::spawn(async move {
         let mut peak: i32 = 0;
@@ -78,13 +80,19 @@ pub fn start_mic_test(
             n += chunk.len() as u64;
             if n >= 1600 {
                 let level = (peak as f32 / 32767.0).clamp(0.0, 1.0);
-                let _ = app.emit("audio://level", serde_json::json!({ "source": "test", "level": level }));
+                let _ = app.emit(
+                    "audio://level",
+                    serde_json::json!({ "source": "test", "level": level }),
+                );
                 peak = 0;
                 n = 0;
             }
         }
         // Channel closed → mic stopped; signal zero so the meter resets.
-        let _ = app.emit("audio://level", serde_json::json!({ "source": "test", "level": 0.0 }));
+        let _ = app.emit(
+            "audio://level",
+            serde_json::json!({ "source": "test", "level": 0.0 }),
+        );
     });
     Ok(())
 }
@@ -132,7 +140,9 @@ pub fn start_meeting(
     spawn_source(
         &app,
         &state,
-        Microphone { device_name: input_device },
+        Microphone {
+            device_name: input_device,
+        },
         running.clone(),
         provider,
         make_config(),
@@ -204,8 +214,17 @@ fn spawn_source<S: AudioSource>(
 
     let app_for_session = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = transcription::run_session(provider, app_for_session, config, label, rx).await {
+        if let Err(e) =
+            transcription::run_session(provider, app_for_session, config, label, rx).await
+        {
             eprintln!("[stt:{label}] session ended: {e}");
         }
     });
+}
+
+/// Get the absolute path to the templates.json file.
+#[tauri::command]
+pub fn get_templates_path(app: AppHandle) -> Result<String, String> {
+    let path = templates_path(&app)?;
+    Ok(path.to_string_lossy().into_owned())
 }

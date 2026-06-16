@@ -1,6 +1,9 @@
 mod audio;
 mod commands;
+mod mcp;
 mod transcription;
+
+use tauri::Manager;
 
 use commands::MeetingState;
 
@@ -9,6 +12,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(MeetingState::default())
+        .setup(|app| {
+            app.manage(mcp::start(app.handle().clone()));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::start_meeting,
             commands::stop_meeting,
@@ -17,7 +24,9 @@ pub fn run() {
             commands::stop_mic_test,
             commands::save_transcript,
             commands::read_templates,
-            commands::write_templates
+            commands::write_templates,
+            commands::get_templates_path,
+            mcp::get_mcp_server_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
