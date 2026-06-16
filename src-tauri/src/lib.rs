@@ -1,6 +1,7 @@
 mod audio;
 mod commands;
 mod mcp;
+mod permissions;
 mod transcription;
 mod usage;
 
@@ -31,6 +32,8 @@ pub fn run() {
             commands::read_session_commands,
             usage::append_usage_event,
             usage::read_usage_events,
+            permissions::check_permissions,
+            permissions::request_screen_recording,
             mcp::get_mcp_server_info
         ])
         .run(tauri::generate_context!())
