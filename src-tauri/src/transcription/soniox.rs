@@ -1,26 +1,18 @@
+//! Soniox realtime adapter. Streams PCM over a WebSocket and parses Soniox's
+//! token stream (with speaker diarization) into transcript segments.
+
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
+use super::common::{ensure_crypto_provider, LevelMeter, SegmentBuilder, TranscribeConfig};
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
 
 const SONIOX_WS_URL: &str = "wss://stt-rt.soniox.com/transcribe-websocket";
-
-/// rustls 0.23 requires a process-wide default CryptoProvider before any TLS
-/// handshake; installing it lazily (once) avoids the panic in the ws task.
-fn ensure_crypto_provider() {
-    use std::sync::Once;
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    });
-}
-/// Event name the frontend listens on (see src/lib/tauriEvents.ts).
-const TRANSCRIPT_EVENT: &str = "transcript://segment";
 
 /// Soniox endpoint markers. `<end>` closes an utterance; `<fin>` is the final
 /// token emitted when the whole stream ends.
@@ -68,34 +60,12 @@ struct SonioxResponse {
     finished: bool,
 }
 
-/// Payload emitted to the frontend for each transcript update.
-#[derive(Clone, Serialize)]
-struct TranscriptEvent {
-    id: String,
-    source: String,
-    /// Diarized speaker number within this source (0 = unknown / single speaker).
-    speaker: i64,
-    text: String,
-    is_final: bool,
-    start_ms: u64,
-    end_ms: u64,
-}
-
-/// Live input level (0.0–1.0) emitted ~10×/s so the UI can show a meter.
-#[derive(Clone, Serialize)]
-struct LevelEvent {
-    source: String,
-    level: f32,
-}
-
 /// Run one Soniox realtime session: stream PCM from `pcm_rx`, parse the token
 /// stream, and emit `transcript://segment` events tagged with `source`
-/// ("me" for mic, "them" for system audio). Returns when the audio channel
-/// closes or the socket ends.
+/// ("me" for mic, "them" for system audio).
 pub async fn run_session(
     app: AppHandle,
-    api_key: String,
-    model: String,
+    config: TranscribeConfig,
     source: &'static str,
     mut pcm_rx: UnboundedReceiver<Vec<i16>>,
 ) -> Result<()> {
@@ -105,62 +75,48 @@ pub async fn run_session(
         .map_err(|e| anyhow!("connect failed: {e}"))?;
     let (mut write, mut read) = ws.split();
 
-    let config = SonioxConfig {
-        api_key: &api_key,
-        model: &model,
+    let language_hints = if config.language_hints.is_empty() {
+        None
+    } else {
+        Some(config.language_hints.clone())
+    };
+    let wire = SonioxConfig {
+        api_key: &config.api_key,
+        model: &config.model,
         audio_format: "pcm_s16le",
         sample_rate: TARGET_SAMPLE_RATE,
         num_channels: 1,
-        language_hints: None,
+        language_hints,
         enable_endpoint_detection: true,
-        enable_speaker_diarization: true,
+        enable_speaker_diarization: config.diarization,
     };
     write
-        .send(Message::Text(serde_json::to_string(&config)?.into()))
+        .send(Message::Text(serde_json::to_string(&wire)?.into()))
         .await?;
-    eprintln!("[soniox:{source}] connected, model={model}, diarization=on");
+    eprintln!(
+        "[soniox:{source}] connected, model={}, diarization={}",
+        config.model, config.diarization
+    );
 
-    // Forward captured PCM to Soniox, then signal end-of-audio with an empty
-    // text frame and close the socket.
-    let level_app = app.clone();
+    // Forward captured PCM, emit a level meter, keep the session alive, then
+    // finalize and close.
+    let mut meter = LevelMeter::new(app.clone(), source);
     let forward = async move {
-        let mut peak: i32 = 0;
-        let mut samples: u64 = 0;
         let mut total: u64 = 0;
-        let mut next_log: u64 = TARGET_SAMPLE_RATE as u64; // log once per second of audio
-        // ~10 Hz UI level updates (16 kHz / 1600 = 10 windows per second).
-        const WINDOW: u64 = TARGET_SAMPLE_RATE as u64 / 10;
-        // Soniox closes the session with a 408 "Request timeout" if it doesn't
-        // see traffic regularly (e.g. during cpal startup or silent stretches).
-        // Mirror the SDK and send keep-alives on an interval.
+        let mut next_log: u64 = TARGET_SAMPLE_RATE as u64;
+        // Soniox closes with a 408 if it doesn't see traffic regularly; mirror
+        // the SDK and send keep-alives on an interval.
         let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(2));
-        keepalive.tick().await; // consume the immediate first tick
+        keepalive.tick().await;
 
         loop {
             tokio::select! {
                 maybe_chunk = pcm_rx.recv() => {
                     let Some(chunk) = maybe_chunk else { break };
-                    for &s in &chunk {
-                        peak = peak.max((s as i32).abs());
-                    }
-                    samples += chunk.len() as u64;
+                    meter.push(&chunk);
                     total += chunk.len() as u64;
-                    if samples >= WINDOW {
-                        let level = (peak as f32 / 32767.0).clamp(0.0, 1.0);
-                        let _ = level_app.emit(
-                            "audio://level",
-                            LevelEvent { source: source.to_string(), level },
-                        );
-                        peak = 0;
-                        samples = 0;
-                    }
                     if total >= next_log {
-                        eprintln!(
-                            "[soniox:{source}] TX {}s audio sent ({} samples, {} bytes)",
-                            total / TARGET_SAMPLE_RATE as u64,
-                            total,
-                            total * 2
-                        );
+                        eprintln!("[soniox:{source}] TX {}s audio sent", total / TARGET_SAMPLE_RATE as u64);
                         next_log += TARGET_SAMPLE_RATE as u64;
                     }
                     let bytes = pcm_to_le_bytes(&chunk);
@@ -169,50 +125,22 @@ pub async fn run_session(
                     }
                 }
                 _ = keepalive.tick() => {
-                    if write
-                        .send(Message::Text("{\"type\":\"keepalive\"}".to_string().into()))
-                        .await
-                        .is_err()
-                    {
+                    if write.send(Message::Text("{\"type\":\"keepalive\"}".to_string().into())).await.is_err() {
                         break;
                     }
                 }
             }
         }
-        // Tell Soniox to finalize and flush remaining tokens before closing.
         let _ = write
             .send(Message::Text("{\"type\":\"finalize\"}".to_string().into()))
             .await;
         let _ = write.close().await;
     };
 
-    // Read tokens and turn them into speaker-runs. Consecutive final tokens with
-    // the same diarized speaker accumulate into one committed segment; a speaker
-    // change (or `<end>`) closes the run and starts the next. The current
-    // tentative tail is emitted under a stable `{source}-tail` id.
+    // Read tokens → speaker-runs via the shared SegmentBuilder.
     let read_loop = async move {
-        let emit = |id: String, speaker: i64, text: String, is_final: bool, start: u64, end: u64| {
-            let _ = app.emit(
-                TRANSCRIPT_EVENT,
-                TranscriptEvent {
-                    id,
-                    source: source.to_string(),
-                    speaker,
-                    text,
-                    is_final,
-                    start_ms: start,
-                    end_ms: end,
-                },
-            );
-        };
-
-        let mut seg_index: u64 = 0;
-        let mut logged_tokens = false;
+        let mut builder = SegmentBuilder::new(app.clone(), source);
         let mut msg_count: u64 = 0;
-        let mut cur_speaker: i64 = -1; // -1 = no open run
-        let mut cur_final = String::new();
-        let mut cur_start = 0u64;
-        let mut cur_end = 0u64;
 
         while let Some(msg) = read.next().await {
             let msg = match msg {
@@ -231,7 +159,6 @@ pub async fn run_session(
                 }
                 _ => continue,
             };
-            // Log the first few raw payloads in full to inspect the shape.
             msg_count += 1;
             if msg_count <= 3 {
                 eprintln!("[soniox:{source}] RX raw#{msg_count}: {payload}");
@@ -245,37 +172,14 @@ pub async fn run_session(
                 }
             };
 
-            // Per-response summary (when there's anything to report).
-            if !resp.tokens.is_empty() || resp.finished {
-                let joined: String = resp.tokens.iter().map(|t| t.text.as_str()).collect();
-                let finals = resp.tokens.iter().filter(|t| t.is_final).count();
-                eprintln!(
-                    "[soniox:{source}] RX {} tokens ({} final) finished={} text={joined:?}",
-                    resp.tokens.len(),
-                    finals,
-                    resp.finished
-                );
-            }
-
             if let Some(code) = resp.error_code {
-                eprintln!(
-                    "[soniox:{source}] error {code}: {}",
-                    resp.error_message.unwrap_or_default()
-                );
+                eprintln!("[soniox:{source}] error {code}: {}", resp.error_message.unwrap_or_default());
                 break;
             }
 
-            if !resp.tokens.is_empty() && !logged_tokens {
-                logged_tokens = true;
-                eprintln!(
-                    "[soniox:{source}] receiving tokens (first batch: {})",
-                    resp.tokens.iter().map(|t| t.text.as_str()).collect::<String>()
-                );
-            }
-
             let mut tail = String::new();
-            let mut tail_speaker = cur_speaker.max(0);
-            let mut tail_start = cur_end;
+            let mut tail_speaker = builder.current_speaker();
+            let mut tail_start = builder.current_end();
             let mut endpoint = false;
 
             for tok in &resp.tokens {
@@ -285,21 +189,7 @@ pub async fn run_session(
                 }
                 let spk: i64 = tok.speaker.parse().unwrap_or(0);
                 if tok.is_final {
-                    if cur_speaker == -1 {
-                        cur_speaker = spk;
-                        cur_start = tok.start_ms;
-                    } else if spk != cur_speaker {
-                        // Speaker changed: close the current run.
-                        if !cur_final.trim().is_empty() {
-                            emit(format!("{source}-{seg_index}"), cur_speaker, cur_final.clone(), true, cur_start, cur_end);
-                            seg_index += 1;
-                        }
-                        cur_speaker = spk;
-                        cur_final.clear();
-                        cur_start = tok.start_ms;
-                    }
-                    cur_final.push_str(&tok.text);
-                    cur_end = tok.end_ms;
+                    builder.push_final(&tok.text, spk, tok.start_ms, tok.end_ms);
                 } else {
                     if tail.is_empty() {
                         tail_speaker = spk;
@@ -309,20 +199,10 @@ pub async fn run_session(
                 }
             }
 
-            // The committed run is settled text — emit it solid (is_final=true).
-            if !cur_final.trim().is_empty() {
-                emit(format!("{source}-{seg_index}"), cur_speaker, cur_final.clone(), true, cur_start, cur_end);
-            }
-            // The tentative tail (empty text clears the previous tail in the UI).
-            emit(format!("{source}-tail"), tail_speaker, tail.clone(), false, tail_start, tail_start);
-
+            builder.emit_committed();
+            builder.emit_tail(&tail, tail_speaker, tail_start);
             if endpoint {
-                if !cur_final.trim().is_empty() {
-                    emit(format!("{source}-{seg_index}"), cur_speaker, cur_final.clone(), true, cur_start, cur_end);
-                    seg_index += 1;
-                }
-                cur_speaker = -1;
-                cur_final.clear();
+                builder.endpoint();
             }
             if resp.finished {
                 break;
