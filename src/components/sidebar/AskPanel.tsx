@@ -113,14 +113,14 @@ export function AskPanel() {
                 m.role === "user" ? (
                   <div
                     key={i}
-                    className="ml-auto max-w-[92%] whitespace-pre-wrap rounded-lg bg-primary px-3 py-2 text-sm leading-relaxed text-primary-foreground"
+                    className="select-text ml-auto max-w-[92%] whitespace-pre-wrap rounded-lg bg-primary px-3 py-2 text-sm leading-relaxed text-primary-foreground"
                   >
                     {m.content}
                   </div>
                 ) : (
                   <div
                     key={i}
-                    className="prose prose-invert prose-sm mr-auto max-w-[92%] rounded-lg bg-muted px-3 py-2 text-foreground prose-p:my-1.5 prose-pre:my-2 prose-pre:bg-neutral-900 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5"
+                    className="prose prose-invert prose-sm select-text mr-auto max-w-[92%] rounded-lg bg-muted px-3 py-2 text-foreground prose-p:my-1.5 prose-pre:my-2 prose-pre:bg-neutral-900 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5"
                   >
                     {m.content ? (
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
