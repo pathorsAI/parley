@@ -83,7 +83,11 @@ pub async fn run_session(
             let msg = json!({
                 "realtimeInput": { "mediaChunks": [ { "mimeType": mime, "data": data } ] }
             });
-            if write.send(Message::Text(msg.to_string().into())).await.is_err() {
+            if write
+                .send(Message::Text(msg.to_string().into()))
+                .await
+                .is_err()
+            {
                 break;
             }
         }

@@ -112,20 +112,38 @@ fn run(tx: UnboundedSender<Vec<i16>>, running: Arc<AtomicBool>) -> Result<()> {
 
         // 3. Wrap the tap in a private aggregate device we can run an IOProc on.
         let sub_tap = CFDictionary::from_CFType_pairs(&[
-            (CFString::new("uid").as_CFType(), CFString::new(&uid).as_CFType()),
-            (CFString::new("drift").as_CFType(), CFBoolean::true_value().as_CFType()),
+            (
+                CFString::new("uid").as_CFType(),
+                CFString::new(&uid).as_CFType(),
+            ),
+            (
+                CFString::new("drift").as_CFType(),
+                CFBoolean::true_value().as_CFType(),
+            ),
         ]);
         let tap_list = CFArray::from_CFTypes(&[sub_tap]);
         let agg_desc = CFDictionary::from_CFType_pairs(&[
-            (CFString::new("name").as_CFType(), CFString::new("Parley System Tap").as_CFType()),
+            (
+                CFString::new("name").as_CFType(),
+                CFString::new("Parley System Tap").as_CFType(),
+            ),
             (
                 CFString::new("uid").as_CFType(),
                 CFString::new(&format!("com.pathors.parley.agg.{uid}")).as_CFType(),
             ),
-            (CFString::new("private").as_CFType(), CFBoolean::true_value().as_CFType()),
-            (CFString::new("stacked").as_CFType(), CFBoolean::false_value().as_CFType()),
+            (
+                CFString::new("private").as_CFType(),
+                CFBoolean::true_value().as_CFType(),
+            ),
+            (
+                CFString::new("stacked").as_CFType(),
+                CFBoolean::false_value().as_CFType(),
+            ),
             (CFString::new("taps").as_CFType(), tap_list.as_CFType()),
-            (CFString::new("tapautostart").as_CFType(), CFBoolean::true_value().as_CFType()),
+            (
+                CFString::new("tapautostart").as_CFType(),
+                CFBoolean::true_value().as_CFType(),
+            ),
         ]);
 
         let mut agg_id: AudioObjectID = 0;
@@ -136,7 +154,9 @@ fn run(tx: UnboundedSender<Vec<i16>>, running: Arc<AtomicBool>) -> Result<()> {
         if status != 0 || agg_id == 0 {
             AudioHardwareDestroyProcessTap(tap_id);
             let _: () = msg_send![desc, release];
-            return Err(anyhow!("AudioHardwareCreateAggregateDevice failed: {status}"));
+            return Err(anyhow!(
+                "AudioHardwareCreateAggregateDevice failed: {status}"
+            ));
         }
 
         // 4. Read the tap's audio format to configure the resampler.
