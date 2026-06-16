@@ -57,6 +57,22 @@ export const PRESET_EVAL_DEFS: EvalDef[] = [
   },
 ];
 
+/**
+ * Forward-looking "what should I do next" evaluation. Beyond flagging issues,
+ * this proactively recommends my next move — the seed of Parley's coaching /
+ * next-step-recommendation direction.
+ */
+const NEXT_MOVE: EvalDef = {
+  id: "nextmove",
+  name: "下一步建議 / Next move",
+  description: "根據目前進展，建議我接下來該說 / 問 / 提出的條件",
+  prompt:
+    "Based on the conversation so far, recommend the single best next move for me ('me') to advance my goal — " +
+    "the specific question to ask, point to make, or term/number to propose right now. Make it concrete and " +
+    "say it in words I could use, plus one short line on why now. Only surface a new suggestion when the " +
+    "situation has meaningfully moved.",
+};
+
 // Job-interview evaluations.
 const INTERVIEW_DEFS: EvalDef[] = [
   {
@@ -131,6 +147,7 @@ const SALES_DEFS: EvalDef[] = [
       "an intro to the economic buyer). Flag if the call is heading toward ending without a committed next step.",
   },
   PRESET_EVAL_DEFS[4], // claims to verify
+  NEXT_MOVE, // recommend the next move
 ];
 
 // Salary-negotiation evaluations.
@@ -164,6 +181,7 @@ const SALARY_DEFS: EvalDef[] = [
       "Flag the tactic and suggest how I ('me') can hold my position.",
   },
   PRESET_EVAL_DEFS[2], // unanswered questions
+  NEXT_MOVE, // recommend the next move
 ];
 
 // Deal-making / business-negotiation evaluations.
@@ -180,6 +198,7 @@ const DEAL_DEFS: EvalDef[] = [
   },
   PRESET_EVAL_DEFS[2], // unanswered questions
   PRESET_EVAL_DEFS[4], // claims to verify
+  NEXT_MOVE, // recommend the next move
 ];
 
 // Diligence-call evaluations (verify claims, surface risk).
