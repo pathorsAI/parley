@@ -55,6 +55,17 @@ export const PRESET_EVAL_DEFS: EvalDef[] = [
       "credentials, references, commitments. These are things worth fact-checking later. List each claim. " +
       "Severity is informational unless a claim is central to the deal/decision.",
   },
+  {
+    id: "topic-shift",
+    name: "話題偏移 / 模糊焦點",
+    description: "對方突然轉移話題、答非所問、或用無關細節稀釋你提出的重點",
+    prompt:
+      "Watch for the other party ('them') steering away from the point: a sudden topic change, answering a " +
+      "different question than the one asked, retreating into vague generalities, or burying the issue under " +
+      "irrelevant detail — especially right after I ('me') raised something they'd rather avoid. When it " +
+      "happens, flag it, name the specific point they slid off, and suggest how I can steer back. This helps " +
+      "a less-experienced operator catch deflection in the moment.",
+  },
 ];
 
 /**
@@ -108,6 +119,7 @@ const INTERVIEW_DEFS: EvalDef[] = [
       "Identify claims or topics the candidate raised that deserve a deeper follow-up question and that I " +
       "('me') have not yet probed. Suggest the specific follow-up to ask.",
   },
+  PRESET_EVAL_DEFS[5], // topic shift / focus dilution (candidate dodging)
 ];
 
 // Sales-call evaluations (qualification-driven, MEDDICC-flavored).
@@ -147,6 +159,7 @@ const SALES_DEFS: EvalDef[] = [
       "an intro to the economic buyer). Flag if the call is heading toward ending without a committed next step.",
   },
   PRESET_EVAL_DEFS[4], // claims to verify
+  PRESET_EVAL_DEFS[5], // topic shift / focus dilution
   NEXT_MOVE, // recommend the next move
 ];
 
@@ -181,6 +194,7 @@ const SALARY_DEFS: EvalDef[] = [
       "Flag the tactic and suggest how I ('me') can hold my position.",
   },
   PRESET_EVAL_DEFS[2], // unanswered questions
+  PRESET_EVAL_DEFS[5], // topic shift / focus dilution
   NEXT_MOVE, // recommend the next move
 ];
 
@@ -198,6 +212,7 @@ const DEAL_DEFS: EvalDef[] = [
   },
   PRESET_EVAL_DEFS[2], // unanswered questions
   PRESET_EVAL_DEFS[4], // claims to verify
+  PRESET_EVAL_DEFS[5], // topic shift / focus dilution
   NEXT_MOVE, // recommend the next move
 ];
 
@@ -232,6 +247,7 @@ const DILIGENCE_DEFS: EvalDef[] = [
       "tech debt/security. Flag the gaps so I ('me') can raise them before the call ends.",
   },
   PRESET_EVAL_DEFS[0], // deception / inconsistency
+  PRESET_EVAL_DEFS[5], // topic shift / focus dilution
 ];
 
 /** Built-in template library. The first is the default active set. */
