@@ -3,6 +3,7 @@ import { TitleBar } from "./components/TitleBar";
 import { MeetingView } from "./components/MeetingView";
 import { WorkPanel } from "./components/WorkPanel";
 import { EvaluationsPanel } from "./components/sidebar/EvaluationsPanel";
+import { Onboarding } from "./components/Onboarding";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -21,6 +22,7 @@ import { useEvaluationEngine } from "./lib/evaluations/engine";
 function App() {
   useThemePreference();
   const layout = useStore((s) => s.settings.layout);
+  const onboarded = useStore((s) => s.settings.onboarded);
   const showTranscript = layout !== "assistant";
   const showEvals = layout !== "transcript";
 
@@ -46,6 +48,7 @@ function App() {
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
+      {!onboarded && <Onboarding />}
       <TitleBar />
       {/* key=layout remounts the group so panel sizes reset cleanly on change. */}
       <ResizablePanelGroup key={layout} orientation="horizontal" className="min-h-0 flex-1">

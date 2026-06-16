@@ -134,6 +134,8 @@ export interface Settings {
   language: AppLanguage;
   theme: AppTheme;
   layout: AppLayout;
+  /** False until the first-run onboarding wizard is completed or skipped. */
+  onboarded: boolean;
   /** Your name — helps the AI recognize when you're speaking or addressed. */
   userName: string;
   /** Your role / title — tailors the assistance to your seat at the table. */

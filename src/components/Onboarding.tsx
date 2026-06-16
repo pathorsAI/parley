@@ -1,0 +1,332 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { Check, ChevronLeft, ChevronRight, Mic, Monitor, X } from "lucide-react";
+import { useStore } from "../lib/store";
+import { isTauri } from "../lib/tauriEvents";
+import { PROVIDERS, PROVIDER_BY_ID } from "../lib/ai/providers";
+import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
+import { useI18n, LANGUAGE_OPTIONS } from "../i18n";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import type { AppLanguage, LlmProvider, Settings, SttProviderId } from "../lib/types";
+
+type Perms = { microphone: string; screenRecording: boolean };
+
+const STEP_COUNT = 7;
+
+export function Onboarding() {
+  const { t } = useI18n();
+  const settings = useStore((s) => s.settings);
+  const patch = useStore((s) => s.updateSettings);
+  const [step, setStep] = useState(0);
+  const [perms, setPerms] = useState<Perms | null>(null);
+
+  const llm = PROVIDER_BY_ID[settings.provider];
+  const stt = STT_BY_ID[settings.transcriptionProvider];
+
+  async function recheck() {
+    if (!isTauri()) return;
+    try {
+      setPerms(await invoke<Perms>("check_permissions"));
+    } catch {
+      /* non-macOS or unavailable */
+    }
+  }
+
+  useEffect(() => {
+    if (step === 4) void recheck();
+  }, [step]);
+
+  function finish() {
+    patch({ onboarded: true });
+  }
+
+  const micOk = perms?.microphone === "authorized";
+  const screenOk = perms?.screenRecording === true;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
+      <div className="flex max-h-[88vh] w-full max-w-lg flex-col rounded-xl border bg-background shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b px-5 py-3">
+          <span className="text-sm font-semibold">{t("onboarding.title")}</span>
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] text-muted-foreground">
+              {step + 1} / {STEP_COUNT}
+            </span>
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground"
+              title={t("onboarding.skip")}
+              onClick={finish}
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+          {step === 0 && (
+            <div className="flex flex-col gap-3">
+              <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.lang.title")}</h2>
+              <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.lang.body")}</p>
+              <div className="mt-1 grid gap-2">
+                {LANGUAGE_OPTIONS.map((lang) => (
+                  <button
+                    key={lang.value}
+                    type="button"
+                    onClick={() => patch({ language: lang.value as AppLanguage })}
+                    className={`flex items-center justify-between rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
+                      settings.language === lang.value
+                        ? "border-primary bg-primary/10"
+                        : "hover:bg-muted/50"
+                    }`}
+                  >
+                    <span>{lang.nativeLabel}</span>
+                    {settings.language === lang.value && <Check className="size-4 text-primary" />}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {step === 1 && (
+            <div className="flex flex-col gap-3">
+              <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.welcome.title")}</h2>
+              <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.welcome.body")}</p>
+              <ul className="mt-1 flex flex-col gap-1.5 text-sm text-muted-foreground">
+                <li>• {t("onboarding.welcome.point1")}</li>
+                <li>• {t("onboarding.welcome.point2")}</li>
+                <li>• {t("onboarding.welcome.point3")}</li>
+              </ul>
+            </div>
+          )}
+
+          {step === 2 && (
+            <StepKey
+              title={t("onboarding.llm.title")}
+              body={t("onboarding.llm.body")}
+              label={t("onboarding.llm.provider")}
+            >
+              <Select value={settings.provider} onValueChange={(v) => patch({ provider: v as LlmProvider })}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PROVIDERS.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      <span className="flex items-center gap-2">
+                        <img src={p.icon} alt="" className="size-4 rounded-sm" />
+                        {p.label}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {llm.requiresKey === false ? (
+                <p className="text-[11px] text-muted-foreground">{t("onboarding.llm.noKey")}</p>
+              ) : (
+                <Input
+                  type="password"
+                  autoComplete="off"
+                  placeholder={llm.keyPlaceholder}
+                  value={(settings[llm.apiKeyField] as string) ?? ""}
+                  onChange={(e) => patch({ [llm.apiKeyField]: e.target.value } as Partial<Settings>)}
+                />
+              )}
+            </StepKey>
+          )}
+
+          {step === 3 && (
+            <StepKey
+              title={t("onboarding.stt.title")}
+              body={t("onboarding.stt.body")}
+              label={t("onboarding.stt.provider")}
+            >
+              <Select
+                value={settings.transcriptionProvider}
+                onValueChange={(v) => patch({ transcriptionProvider: v as SttProviderId })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {STT_PROVIDERS.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      <span className="flex items-center gap-2">
+                        <img src={p.icon} alt="" className="size-4 rounded-sm" />
+                        {p.label}
+                        {!p.diarization && (
+                          <span className="rounded bg-amber-500/15 px-1.5 py-px text-[10px] text-amber-600 dark:text-amber-300">
+                            {t("settings.transcription.noDiarizationTag")}
+                          </span>
+                        )}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                type="password"
+                autoComplete="off"
+                placeholder={stt.keyPlaceholder}
+                value={(settings[stt.apiKeyField] as string) ?? ""}
+                onChange={(e) => patch({ [stt.apiKeyField]: e.target.value } as Partial<Settings>)}
+              />
+            </StepKey>
+          )}
+
+          {step === 4 && (
+            <div className="flex flex-col gap-3">
+              <h2 className="text-base font-semibold tracking-tight">{t("onboarding.perms.title")}</h2>
+              <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.perms.body")}</p>
+
+              <PermRow
+                icon={<Mic className="size-4" />}
+                label={t("onboarding.perms.mic")}
+                ok={micOk}
+                actionLabel={t("onboarding.perms.grant")}
+                onAction={async () => {
+                  await invoke("start_mic_test", { inputDevice: settings.inputDevice }).catch(() => {});
+                  await invoke("stop_mic_test").catch(() => {});
+                  void recheck();
+                }}
+              />
+              <PermRow
+                icon={<Monitor className="size-4" />}
+                label={t("onboarding.perms.screen")}
+                ok={screenOk}
+                actionLabel={t("onboarding.perms.grant")}
+                onAction={async () => {
+                  await invoke("request_screen_recording").catch(() => {});
+                  void recheck();
+                }}
+              />
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => void recheck()}>
+                  {t("onboarding.perms.recheck")}
+                </Button>
+                <span className="text-[11px] text-muted-foreground">{t("onboarding.perms.hint")}</span>
+              </div>
+            </div>
+          )}
+
+          {step === 5 && (
+            <div className="flex flex-col gap-3">
+              <h2 className="text-base font-semibold tracking-tight">{t("onboarding.profile.title")}</h2>
+              <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.profile.body")}</p>
+              <Input
+                placeholder={t("settings.basic.namePlaceholder")}
+                value={settings.userName}
+                onChange={(e) => patch({ userName: e.target.value })}
+              />
+              <Input
+                placeholder={t("settings.basic.rolePlaceholder")}
+                value={settings.userRole}
+                onChange={(e) => patch({ userRole: e.target.value })}
+              />
+              <Input
+                placeholder={t("settings.basic.companyPlaceholder")}
+                value={settings.userCompany}
+                onChange={(e) => patch({ userCompany: e.target.value })}
+              />
+            </div>
+          )}
+
+          {step === 6 && (
+            <div className="flex flex-col items-center gap-3 py-6 text-center">
+              <div className="flex size-12 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
+                <Check className="size-6" />
+              </div>
+              <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.done.title")}</h2>
+              <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">{t("onboarding.done.body")}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer nav */}
+        <div className="flex items-center justify-between border-t px-5 py-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs"
+            disabled={step === 0}
+            onClick={() => setStep((s) => Math.max(0, s - 1))}
+          >
+            <ChevronLeft className="size-3.5" />
+            {t("onboarding.back")}
+          </Button>
+          {step < STEP_COUNT - 1 ? (
+            <Button size="sm" className="h-8 text-xs" onClick={() => setStep((s) => s + 1)}>
+              {t("onboarding.next")}
+              <ChevronRight className="size-3.5" />
+            </Button>
+          ) : (
+            <Button size="sm" className="h-8 text-xs" onClick={finish}>
+              {t("onboarding.start")}
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StepKey({
+  title,
+  body,
+  label,
+  children,
+}: {
+  title: string;
+  body: string;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+      <p className="text-sm leading-relaxed text-muted-foreground">{body}</p>
+      <label className="mt-1 text-xs font-medium text-muted-foreground">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function PermRow({
+  icon,
+  label,
+  ok,
+  actionLabel,
+  onAction,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  ok: boolean;
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2.5">
+      <span className="text-muted-foreground">{icon}</span>
+      <span className="flex-1 text-sm">{label}</span>
+      {ok ? (
+        <span className="flex items-center gap-1 text-xs text-emerald-400">
+          <Check className="size-3.5" />
+        </span>
+      ) : (
+        <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={onAction}>
+          {actionLabel}
+        </Button>
+      )}
+    </div>
+  );
+}
