@@ -4,6 +4,8 @@ use std::thread::JoinHandle;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use tokio::sync::mpsc::UnboundedReceiver;
+
 use crate::audio::{microphone::Microphone, AudioSource};
 use crate::transcription::{self, SttProvider, TranscribeConfig};
 
@@ -136,31 +138,48 @@ pub fn start_meeting(
         diarization,
     };
 
-    // Microphone source → "me".
-    spawn_source(
-        &app,
-        &state,
-        Microphone {
-            device_name: input_device,
-        },
-        running.clone(),
-        provider,
-        make_config(),
-        "me",
-    );
-
-    // System-audio source → "them" (macOS Core Audio tap). On other platforms
-    // this is skipped until a loopback source is implemented.
+    // Diarizing providers separate speakers themselves, so mix mic + system
+    // into ONE session (1x cost) and let diarization label speakers. Providers
+    // without diarization keep two sessions so "me"/"them" stays deterministic.
     #[cfg(target_os = "macos")]
-    spawn_source(
-        &app,
-        &state,
-        crate::audio::system_macos::SystemAudio,
-        running.clone(),
-        provider,
-        make_config(),
-        "them",
-    );
+    {
+        let mic = Microphone {
+            device_name: input_device,
+        };
+        let sys = crate::audio::system_macos::SystemAudio;
+        if diarization {
+            let rx_me = spawn_capture(&state, mic, running.clone(), "me");
+            let rx_them = spawn_capture(&state, sys, running.clone(), "them");
+            match (rx_me, rx_them) {
+                (Some(a), Some(b)) => {
+                    let (tx_mix, rx_mix) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+                    tauri::async_runtime::spawn(crate::audio::mixer::mix_streams(a, b, tx_mix));
+                    run_metered_session(&app, provider, make_config(), "mix", rx_mix);
+                }
+                // If one capture failed, transcribe whichever started.
+                (Some(a), None) => run_metered_session(&app, provider, make_config(), "me", a),
+                (None, Some(b)) => run_metered_session(&app, provider, make_config(), "them", b),
+                (None, None) => {}
+            }
+        } else {
+            if let Some(rx) = spawn_capture(&state, mic, running.clone(), "me") {
+                run_metered_session(&app, provider, make_config(), "me", rx);
+            }
+            if let Some(rx) = spawn_capture(&state, sys, running.clone(), "them") {
+                run_metered_session(&app, provider, make_config(), "them", rx);
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let mic = Microphone {
+            device_name: input_device,
+        };
+        if let Some(rx) = spawn_capture(&state, mic, running.clone(), "me") {
+            run_metered_session(&app, provider, make_config(), "me", rx);
+        }
+    }
 
     let _ = app.emit("meeting://status", "recording");
     Ok(())
@@ -193,31 +212,41 @@ pub fn save_transcript(filename: String, contents: String) -> Result<String, Str
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Start one capture backend feeding a dedicated transcription session.
-fn spawn_source<S: AudioSource>(
-    app: &AppHandle,
+/// Start one capture backend on its own thread, returning the PCM receiver.
+/// Returns `None` if the device failed to start.
+fn spawn_capture<S: AudioSource>(
     state: &State<MeetingState>,
     source: S,
     running: Arc<AtomicBool>,
+    label: &'static str,
+) -> Option<UnboundedReceiver<Vec<i16>>> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+    match source.start(tx, running) {
+        Ok(handle) => {
+            state.threads.lock().unwrap().push(handle);
+            Some(rx)
+        }
+        Err(e) => {
+            eprintln!("[{label}] capture failed to start: {e}");
+            None
+        }
+    }
+}
+
+/// Run a transcription session over `rx`, counting the audio streamed so the
+/// frontend can bill it. Emits a `usage://stt` event when the session ends.
+fn run_metered_session(
+    app: &AppHandle,
     provider: SttProvider,
     config: TranscribeConfig,
     label: &'static str,
+    rx: UnboundedReceiver<Vec<i16>>,
 ) {
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-    match source.start(tx, running) {
-        Ok(handle) => state.threads.lock().unwrap().push(handle),
-        Err(e) => {
-            eprintln!("[{label}] capture failed to start: {e}");
-            return;
-        }
-    }
-
-    let app_for_session = app.clone();
+    let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        // Interpose a sample counter between capture and the STT adapter so we
-        // can bill the audio duration that was actually streamed to the
-        // provider. The counter forwards every chunk untouched, then yields the
-        // total sample count once capture closes the channel.
+        // Interpose a sample counter between capture and the STT adapter: it
+        // forwards every chunk untouched, then yields the total once the input
+        // closes so we can bill the audio duration actually streamed.
         let (count_tx, count_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
         let counter = tauri::async_runtime::spawn(async move {
             let mut rx = rx;
@@ -232,16 +261,14 @@ fn spawn_source<S: AudioSource>(
         });
 
         if let Err(e) =
-            transcription::run_session(provider, app_for_session.clone(), config, label, count_rx)
-                .await
+            transcription::run_session(provider, app.clone(), config, label, count_rx).await
         {
             eprintln!("[stt:{label}] session ended: {e}");
         }
 
         let samples = counter.await.unwrap_or(0);
         let seconds = samples as f64 / crate::audio::TARGET_SAMPLE_RATE as f64;
-        // The frontend turns seconds into cost (it owns the pricing table).
-        let _ = app_for_session.emit(
+        let _ = app.emit(
             "usage://stt",
             serde_json::json!({
                 "provider": provider.id(),

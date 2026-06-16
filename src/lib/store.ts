@@ -283,6 +283,8 @@ export function speakerKey(s: Pick<TranscriptSegment, "source" | "speaker">): st
 
 /** Default label (no custom name). The primary mic voice is "You". */
 export function defaultSpeakerLabel(s: Pick<TranscriptSegment, "source" | "speaker">): string {
+  // Mixed stream: no deterministic me/them — label purely by diarized speaker.
+  if (s.source === "mix") return `Speaker ${s.speaker || 1}`;
   if (s.source === "me") return (s.speaker || 1) <= 1 ? "You" : `Speaker ${s.speaker}`;
   return s.speaker > 0 ? `Remote ${s.speaker}` : "Them";
 }
