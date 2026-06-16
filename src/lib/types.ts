@@ -89,10 +89,24 @@ export interface TodoTemplate {
 export type MeetingStatus = "idle" | "recording" | "stopped";
 
 /** Which LLM provider to route inference through. */
-export type LlmProvider = "anthropic" | "openrouter" | "groq";
+export type LlmProvider =
+  | "anthropic"
+  | "openai"
+  | "gemini"
+  | "groq"
+  | "qwen"
+  | "kimi"
+  | "ollama"
+  | "openrouter";
 
 /** Reasoning depth for reasoning-capable models (e.g. Groq gpt-oss). */
 export type ReasoningEffort = "low" | "medium" | "high";
+
+/** Separate reasoning depths for the fast Q&A model and deeper eval model. */
+export interface ModelReasoningEfforts {
+  ask: ReasoningEffort;
+  eval: ReasoningEffort;
+}
 
 /** UI language. */
 export type AppLanguage = "zh-TW" | "en";
@@ -115,10 +129,16 @@ export interface Settings {
   layout: AppLayout;
   provider: LlmProvider;
   anthropicApiKey: string;
-  openrouterApiKey: string;
+  openaiApiKey: string;
+  geminiApiKey: string;
   groqApiKey: string;
-  /** Reasoning depth for reasoning-capable models (Groq gpt-oss). */
-  reasoningEffort: ReasoningEffort;
+  qwenApiKey: string;
+  kimiApiKey: string;
+  /** Optional — only needed for a remote/secured Ollama; local needs none. */
+  ollamaApiKey: string;
+  openrouterApiKey: string;
+  /** Reasoning depth per model role for reasoning-capable models. */
+  reasoningEffort: ModelReasoningEfforts;
   /** Per-provider model ids (ids differ between Anthropic and OpenRouter). */
   models: Record<LlmProvider, ProviderModels>;
   sonioxApiKey: string;
