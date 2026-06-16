@@ -8,6 +8,7 @@ import { isTauri } from "../lib/tauriEvents";
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
 import { UsagePanel } from "./UsagePanel";
+import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,7 +35,7 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
   value: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
   default: "bg-muted text-muted-foreground",
 };
-import type { AppLanguage, AppLayout, AppTheme, EvalDef, LlmProvider, ReasoningEffort, Settings } from "../lib/types";
+import type { AppLanguage, AppLayout, AppTheme, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 
 type Category = "basic" | "provider" | "transcription" | "evaluations" | "todos" | "mcp" | "usage";
 
@@ -72,6 +73,7 @@ export function SettingsApp() {
   const [copiedCli, setCopiedCli] = useState(false);
   const info = PROVIDER_BY_ID[settings.provider];
   const providerLabel = info.label;
+  const sttInfo = STT_BY_ID[settings.transcriptionProvider];
 
   function patch(p: Partial<Settings>) {
     updateSettings(p);
@@ -286,9 +288,43 @@ export function SettingsApp() {
 
         {cat === "transcription" && (
           <Section title={t("settings.transcription.title")}>
-            <Field label={t("settings.transcription.sonioxKey")}>
-              <Input type="password" autoComplete="off" placeholder="…" className="max-w-sm" value={settings.sonioxApiKey} onChange={(e) => patch({ sonioxApiKey: e.target.value })} />
+            <Field label={t("settings.transcription.provider")}>
+              <Select
+                value={settings.transcriptionProvider}
+                onValueChange={(v) => patch({ transcriptionProvider: v as SttProviderId })}
+              >
+                <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {STT_PROVIDERS.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      <span className="flex items-center gap-2">
+                        {p.label}
+                        {!p.diarization && (
+                          <span className="rounded bg-amber-500/15 px-1.5 py-px text-[10px] font-medium text-amber-600 dark:text-amber-300">
+                            {t("settings.transcription.noDiarizationTag")}
+                          </span>
+                        )}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Field>
+            <Field label={t("settings.transcription.apiKey", { provider: sttInfo.label })}>
+              <Input
+                type="password"
+                autoComplete="off"
+                placeholder={sttInfo.keyPlaceholder}
+                className="max-w-sm"
+                value={settings[sttInfo.apiKeyField] as string}
+                onChange={(e) => patch({ [sttInfo.apiKeyField]: e.target.value } as Partial<Settings>)}
+              />
+            </Field>
+            {!sttInfo.diarization && (
+              <p className="max-w-md rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+                {t("settings.transcription.noDiarizationWarning")}
+              </p>
+            )}
             <Field label={t("settings.transcription.microphone")}>
               <div className="flex max-w-sm flex-col gap-2">
                 <Select

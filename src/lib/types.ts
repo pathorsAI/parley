@@ -7,6 +7,9 @@
  */
 export type Source = "me" | "them" | "mix";
 
+/** Speech-to-text providers (mirrors the Rust `SttProvider` ids). */
+export type SttProviderId = "soniox" | "deepgram" | "assemblyai" | "openai" | "gemini";
+
 /**
  * A single transcript segment from a Soniox realtime session.
  * Non-final segments are mutated in place as new tokens arrive; once `isFinal`
@@ -145,7 +148,11 @@ export interface Settings {
   reasoningEffort: ModelReasoningEfforts;
   /** Per-provider model ids (ids differ between Anthropic and OpenRouter). */
   models: Record<LlmProvider, ProviderModels>;
+  /** Active speech-to-text provider. */
+  transcriptionProvider: SttProviderId;
   sonioxApiKey: string;
+  deepgramApiKey: string;
+  assemblyaiApiKey: string;
   /** Microphone input device name; empty = system default. */
   inputDevice: string;
   /** The active evaluation set used in meetings (the runtime copy lives in the store). */
