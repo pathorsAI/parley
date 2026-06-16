@@ -218,10 +218,10 @@ export function SettingsApp() {
                           <span
                             className={`rounded px-1.5 py-px text-[10px] font-medium ${PROVIDER_TAG_TONES[p.tag.tone]}`}
                           >
-                            {p.tag.label}
+                            {t(p.tag.label)}
                           </span>
                         )}
-                        {p.note && <span className="text-[10px] text-muted-foreground">{p.note}</span>}
+                        {p.note && <span className="text-[10px] text-muted-foreground">{t(p.note)}</span>}
                       </span>
                     </SelectItem>
                   ))}
@@ -232,7 +232,7 @@ export function SettingsApp() {
               <Input
                 type="password"
                 autoComplete="off"
-                placeholder={info.keyPlaceholder}
+                placeholder={info.requiresKey === false ? t("settings.provider.noKeyNeeded") : info.keyPlaceholder}
                 className="max-w-sm"
                 disabled={info.requiresKey === false}
                 value={settings[info.apiKeyField]}
