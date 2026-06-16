@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 use tokio::{net::TcpListener, sync::RwLock};
 
-use crate::commands::templates_path;
+use crate::commands::{session_path, templates_path};
 
 const DEFAULT_PORT: u16 = 3011;
 const MAX_PORT: u16 = 3020;
@@ -33,6 +33,7 @@ pub struct McpState {
 #[derive(Clone)]
 struct HttpState {
     templates_path: PathBuf,
+    session_path: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -94,9 +95,16 @@ pub fn start(app: AppHandle) -> McpState {
         templates_path: templates.to_string_lossy().into_owned(),
     }));
 
+    let session = session_path(&app).unwrap_or_else(|_| {
+        app.path()
+            .app_config_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("session.json")
+    });
+
     let state = McpState { info: info.clone() };
     tauri::async_runtime::spawn(async move {
-        if let Err(err) = run_http_server(templates, info).await {
+        if let Err(err) = run_http_server(templates, session, info).await {
             eprintln!("[parley-mcp] failed to start: {err}");
         }
     });
@@ -113,6 +121,7 @@ pub async fn get_mcp_server_info(
 
 async fn run_http_server(
     templates_path: PathBuf,
+    session_path: PathBuf,
     info: Arc<RwLock<McpServerInfo>>,
 ) -> anyhow::Result<()> {
     let (listener, addr) = bind_listener().await?;
@@ -126,7 +135,10 @@ async fn run_http_server(
     let app = Router::new()
         .route("/health", get(health))
         .route("/mcp", post(handle_rpc))
-        .with_state(HttpState { templates_path });
+        .with_state(HttpState {
+            templates_path,
+            session_path,
+        });
 
     eprintln!("[parley-mcp] ready at {endpoint}");
     axum::serve(listener, app).await?;
@@ -266,6 +278,32 @@ fn tools() -> Vec<Value> {
             "Delete a TODO template by id.",
             json!({ "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }),
         ),
+        tool(
+            "get_session_status",
+            "Get live session status",
+            "Get the current Parley meeting state: meetingStatus (idle/recording/stopped), \
+             when it was last updated, and counts of transcript segments, todos, and evaluations.",
+            json!({ "type": "object", "properties": {} }),
+        ),
+        tool(
+            "get_transcript",
+            "Get live transcript",
+            "Get the full transcript of the current meeting so far, labelled by speaker.",
+            json!({ "type": "object", "properties": {} }),
+        ),
+        tool(
+            "list_todos",
+            "List live todos",
+            "List the current meeting's checklist items as { id, text, done }.",
+            json!({ "type": "object", "properties": {} }),
+        ),
+        tool(
+            "list_evaluations",
+            "List live evaluations",
+            "List the current meeting's evaluations with their latest results: \
+             { id, name, description, status, lastRunAt, result }.",
+            json!({ "type": "object", "properties": {} }),
+        ),
     ]
 }
 
@@ -308,6 +346,19 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             &state.templates_path,
             required_str(&args, "id")?
         )?),
+        "get_session_status" => session_status(&state.session_path),
+        "get_transcript" => read_session(&state.session_path)
+            .get("transcript")
+            .cloned()
+            .unwrap_or_else(|| json!({ "text": "", "segmentCount": 0 })),
+        "list_todos" => read_session(&state.session_path)
+            .get("todos")
+            .cloned()
+            .unwrap_or_else(|| json!([])),
+        "list_evaluations" => read_session(&state.session_path)
+            .get("evaluations")
+            .cloned()
+            .unwrap_or_else(|| json!([])),
         _ => anyhow::bail!("unknown tool: {name}"),
     };
     Ok(json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&value)? }] }))
@@ -318,6 +369,28 @@ fn required_str<'a>(value: &'a Value, key: &str) -> anyhow::Result<&'a str> {
         .get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("missing string field: {key}"))
+}
+
+/// Read the frontend-written session snapshot as opaque JSON (empty object if
+/// no meeting has written one yet). The schema is owned by the frontend.
+fn read_session(path: &PathBuf) -> Value {
+    match std::fs::read_to_string(path) {
+        Ok(raw) if !raw.trim().is_empty() => serde_json::from_str(&raw).unwrap_or_else(|_| json!({})),
+        _ => json!({}),
+    }
+}
+
+/// Compact status summary derived from the session snapshot.
+fn session_status(path: &PathBuf) -> Value {
+    let s = read_session(path);
+    let count = |key: &str| s.get(key).and_then(Value::as_array).map_or(0, |a| a.len());
+    json!({
+        "meetingStatus": s.get("meetingStatus").cloned().unwrap_or_else(|| json!("idle")),
+        "updatedAt": s.get("updatedAt").cloned().unwrap_or(Value::Null),
+        "segmentCount": s.pointer("/transcript/segmentCount").cloned().unwrap_or_else(|| json!(0)),
+        "todoCount": count("todos"),
+        "evalCount": count("evaluations"),
+    })
 }
 
 fn read_templates(path: &PathBuf) -> anyhow::Result<TemplatesFile> {
