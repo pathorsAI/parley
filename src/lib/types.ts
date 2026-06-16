@@ -1,7 +1,11 @@
 // Core domain types for Parley.
 
-/** Who produced a given chunk of speech. */
-export type Source = "me" | "them";
+/**
+ * Who produced a given chunk of speech. "mix" is the combined mic+system stream
+ * used with diarizing providers, where speakers are told apart by diarization
+ * rather than by capture source.
+ */
+export type Source = "me" | "them" | "mix";
 
 /**
  * A single transcript segment from a Soniox realtime session.

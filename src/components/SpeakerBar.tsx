@@ -3,10 +3,11 @@ import { useStore, speakerKey } from "../lib/store";
 import { speakerDotClass } from "../lib/speakerColors";
 import { useI18n } from "../i18n";
 import { Input } from "@/components/ui/input";
+import type { Source } from "../lib/types";
 
 interface SpeakerEntry {
   key: string;
-  source: "me" | "them";
+  source: Source;
   speaker: number;
 }
 
@@ -25,6 +26,7 @@ export function SpeakerBar() {
   const setMeetingContext = useStore((s) => s.setMeetingContext);
 
   function defaultLabel(sp: Pick<SpeakerEntry, "source" | "speaker">) {
+    if (sp.source === "mix") return t("speaker.speaker", { number: sp.speaker || 1 });
     if (sp.source === "me") {
       return (sp.speaker || 1) <= 1 ? t("speaker.you") : t("speaker.speaker", { number: sp.speaker });
     }
