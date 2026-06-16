@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { LanguageModelUsage } from "ai";
 import { isTauri } from "../tauriEvents";
-import { llmCostUsd, sttCostUsd, type LlmUsageTokens } from "./pricing";
+import { llmCostUsd, sttCostUsd } from "./pricing";
 import type { Settings } from "../types";
 
 /**
@@ -22,8 +23,10 @@ export interface UsageEvent {
   // LLM usage:
   inputTokens?: number;
   outputTokens?: number;
-  /** Cached input tokens (a subset of inputTokens), billed at the cache rate. */
+  /** Cache-READ input tokens (a subset of inputTokens), billed at the cache rate. */
   cachedInputTokens?: number;
+  /** Cache-WRITE (cache-creation) input tokens, billed at the write rate. */
+  cacheWriteTokens?: number;
   // STT usage:
   /** Seconds of audio streamed to the provider. */
   seconds?: number;
@@ -52,20 +55,39 @@ export async function recordLlmUsage(
   settings: Settings,
   kind: "ask" | "eval",
   category: string,
-  usage: LlmUsageTokens | undefined
+  usage: LanguageModelUsage | undefined
 ): Promise<void> {
   if (!usage) return;
   const provider = settings.provider;
   const model = settings.models[provider][kind];
+
+  // Split input into non-cached / cache-read / cache-write, preferring the
+  // SDK's normalized detail fields and falling back to arithmetic.
+  const totalInput = usage.inputTokens ?? 0;
+  const output = usage.outputTokens ?? 0;
+  const d = usage.inputTokenDetails;
+  const cacheReadInput = d?.cacheReadTokens ?? usage.cachedInputTokens ?? 0;
+  const cacheWriteInput = d?.cacheWriteTokens ?? 0;
+  const noCacheInput = d?.noCacheTokens ?? Math.max(0, totalInput - cacheReadInput - cacheWriteInput);
+
+  const costUsd = llmCostUsd(provider, model, {
+    noCacheInput,
+    cacheReadInput,
+    cacheWriteInput,
+    output,
+    totalInput,
+  });
+
   await recordUsage({
     kind: "llm",
     category,
     provider,
     model,
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    cachedInputTokens: usage.cachedInputTokens,
-    costUsd: llmCostUsd(provider, model, usage),
+    inputTokens: totalInput,
+    outputTokens: output,
+    cachedInputTokens: cacheReadInput,
+    cacheWriteTokens: cacheWriteInput,
+    costUsd,
   });
 }
 

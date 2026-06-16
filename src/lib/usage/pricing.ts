@@ -11,12 +11,14 @@
 export const PRICING_AS_OF = "2026-06";
 
 interface LlmRate {
-  /** USD per 1M input tokens. */
+  /** USD per 1M (non-cached) input tokens. */
   input: number;
   /** USD per 1M output tokens. */
   output: number;
-  /** USD per 1M cached-input (prompt-cache read) tokens. Omit if no discount. */
+  /** USD per 1M cached-input (prompt-cache READ) tokens. Defaults to `input`. */
   cacheRead?: number;
+  /** USD per 1M cache-WRITE (cache-creation) tokens. Defaults to `input`. */
+  cacheWrite?: number;
 }
 
 /**
@@ -24,10 +26,10 @@ interface LlmRate {
  * shared ids (e.g. via OpenRouter) carry the same underlying price.
  */
 const LLM_PRICING: Record<string, LlmRate> = {
-  // Anthropic
-  "claude-opus-4-8": { input: 5, output: 25, cacheRead: 0.5 },
-  "claude-sonnet-4-6": { input: 3, output: 15, cacheRead: 0.3 },
-  "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1 },
+  // Anthropic (cacheWrite = 5-min cache creation = 1.25x input)
+  "claude-opus-4-8": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+  "claude-sonnet-4-6": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+  "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
   // OpenAI
   "gpt-5.5": { input: 5, output: 30, cacheRead: 0.5 },
   "gpt-4.1": { input: 2, output: 8, cacheRead: 0.5 },
@@ -55,30 +57,43 @@ const LLM_PRICING: Record<string, LlmRate> = {
 
 /** Gemini 2.5 Pro pricing above the 200k-token context tier. */
 const GEMINI_PRO_HIGH: LlmRate = { input: 2.5, output: 15, cacheRead: 0.25 };
+/** GPT-5.5 pricing above the 272k-token input tier (2x input / 1.5x output). */
+const GPT55_HIGH: LlmRate = { input: 10, output: 45, cacheRead: 1, cacheWrite: 10 };
 
-export interface LlmUsageTokens {
-  inputTokens?: number;
-  outputTokens?: number;
-  /** Cached input tokens (a subset of inputTokens). */
-  cachedInputTokens?: number;
+/** Input tokens split into the three billable buckets (from AI SDK usage). */
+export interface LlmTokenBreakdown {
+  /** Non-cached input tokens (billed at `input`). */
+  noCacheInput: number;
+  /** Cache-read input tokens (billed at `cacheRead`). */
+  cacheReadInput: number;
+  /** Cache-write / cache-creation input tokens (billed at `cacheWrite`). */
+  cacheWriteInput: number;
+  /** Output tokens. */
+  output: number;
+  /** Total input tokens — only used to pick the context-tier rate. */
+  totalInput: number;
 }
 
 /**
- * USD cost of one LLM call. Unknown models (and Ollama) cost 0 — we never guess
- * a price. Cached input tokens bill at the cache-read rate; the remaining input
- * at the standard rate.
+ * USD cost of one LLM call, billing each input bucket at its own rate. Unknown
+ * models (and Ollama) cost 0 — we never guess a price.
  */
-export function llmCostUsd(provider: string, model: string, u: LlmUsageTokens): number {
+export function llmCostUsd(provider: string, model: string, t: LlmTokenBreakdown): number {
   if (provider === "ollama") return 0;
   let rate = LLM_PRICING[model];
-  if (model === "gemini-2.5-pro" && (u.inputTokens ?? 0) > 200_000) rate = GEMINI_PRO_HIGH;
+  if (model === "gemini-2.5-pro" && t.totalInput > 200_000) rate = GEMINI_PRO_HIGH;
+  if (model === "gpt-5.5" && t.totalInput > 272_000) rate = GPT55_HIGH;
   if (!rate) return 0;
 
-  const cached = u.cachedInputTokens ?? 0;
-  const freshInput = Math.max(0, (u.inputTokens ?? 0) - cached);
-  const output = u.outputTokens ?? 0;
-  const cacheRate = rate.cacheRead ?? rate.input;
-  return (freshInput * rate.input + cached * cacheRate + output * rate.output) / 1_000_000;
+  const cacheReadRate = rate.cacheRead ?? rate.input;
+  const cacheWriteRate = rate.cacheWrite ?? rate.input;
+  return (
+    (t.noCacheInput * rate.input +
+      t.cacheReadInput * cacheReadRate +
+      t.cacheWriteInput * cacheWriteRate +
+      t.output * rate.output) /
+    1_000_000
+  );
 }
 
 /** Whether we have a price for this model (drives an "untracked" hint in the UI). */
