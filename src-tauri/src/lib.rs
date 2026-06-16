@@ -15,7 +15,9 @@ pub fn run() {
             commands::list_input_devices,
             commands::start_mic_test,
             commands::stop_mic_test,
-            commands::save_transcript
+            commands::save_transcript,
+            commands::read_templates,
+            commands::write_templates
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

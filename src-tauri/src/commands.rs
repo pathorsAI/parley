@@ -2,10 +2,37 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::audio::{microphone::Microphone, AudioSource};
 use crate::transcription::soniox;
+
+/// Path to the shared templates file (app config dir). The local MCP server
+/// reads/writes the same file so templates can be managed outside the app.
+fn templates_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("templates.json"))
+}
+
+/// Read the shared templates JSON (empty string if the file doesn't exist yet).
+#[tauri::command]
+pub fn read_templates(app: AppHandle) -> Result<String, String> {
+    let path = templates_path(&app)?;
+    match std::fs::read_to_string(&path) {
+        Ok(s) => Ok(s),
+        Err(_) => Ok(String::new()),
+    }
+}
+
+/// Write the shared templates JSON, creating the config dir if needed.
+#[tauri::command]
+pub fn write_templates(app: AppHandle, json: String) -> Result<(), String> {
+    let path = templates_path(&app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, json).map_err(|e| e.to_string())
+}
 
 const DEFAULT_MODEL: &str = "stt-rt-v5";
 

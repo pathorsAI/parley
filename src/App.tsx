@@ -8,19 +8,27 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
+import { useStore } from "./lib/store";
 import { listenForTranscript } from "./lib/tauriEvents";
 import { listenForSettings } from "./lib/settingsSync";
+import { initTemplatesSync } from "./lib/templatesSync";
+import { useThemePreference } from "./lib/theme";
 import { useEvaluationEngine } from "./lib/evaluations/engine";
 
 function App() {
-  // Subscribe to backend transcript events and settings updates from the
-  // settings window for the app's lifetime.
+  useThemePreference();
+  const layout = useStore((s) => s.settings.layout);
+  const showTranscript = layout !== "assistant";
+  const showEvals = layout !== "transcript";
+
   useEffect(() => {
     const unTranscript = listenForTranscript();
     const unSettings = listenForSettings();
+    const unTemplates = initTemplatesSync();
     return () => {
       unTranscript.then((fn) => fn());
       unSettings.then((fn) => fn());
+      unTemplates();
     };
   }, []);
 
@@ -30,21 +38,27 @@ function App() {
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       <TitleBar />
-      <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
-        {/* Left: transcript reference rail */}
-        <ResizablePanel defaultSize={24} minSize={15}>
-          <MeetingView />
-        </ResizablePanel>
-        <ResizableHandle withHandle />
-        {/* Center: primary interactive work (Ask / TODO) */}
-        <ResizablePanel defaultSize={48} minSize={30}>
+      {/* key=layout remounts the group so panel sizes reset cleanly on change. */}
+      <ResizablePanelGroup key={layout} orientation="horizontal" className="min-h-0 flex-1">
+        {showTranscript && (
+          <>
+            <ResizablePanel defaultSize={26} minSize={15}>
+              <MeetingView />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+          </>
+        )}
+        <ResizablePanel defaultSize={showTranscript && showEvals ? 46 : 60} minSize={30}>
           <WorkPanel />
         </ResizablePanel>
-        <ResizableHandle withHandle />
-        {/* Right: always-visible evaluation monitors */}
-        <ResizablePanel defaultSize={28} minSize={18}>
-          <EvaluationsPanel />
-        </ResizablePanel>
+        {showEvals && (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={28} minSize={18}>
+              <EvaluationsPanel />
+            </ResizablePanel>
+          </>
+        )}
       </ResizablePanelGroup>
     </div>
   );
