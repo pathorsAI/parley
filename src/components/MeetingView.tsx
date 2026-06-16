@@ -5,15 +5,16 @@ import { TranscriptPanel } from "./TranscriptPanel";
 import { SpeakerBar } from "./SpeakerBar";
 import { useStore, transcriptAsText } from "../lib/store";
 import { isTauri } from "../lib/tauriEvents";
+import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 
 /** Build a markdown record of the meeting: context, transcript, flagged evals. */
 function buildMarkdown(): string {
-  const { segments, evaluations, settings, speakerNames } = useStore.getState();
+  const { segments, evaluations, speakerNames, meetingContext } = useStore.getState();
   const now = new Date();
   const lines = [`# Parley meeting — ${now.toLocaleString()}`, ""];
-  if (settings.meetingContext.trim()) {
-    lines.push(`**Context:** ${settings.meetingContext.trim()}`, "");
+  if (meetingContext.trim()) {
+    lines.push(`**Context:** ${meetingContext.trim()}`, "");
   }
   const flagged = evaluations.filter((e) => e.status === "flag" && e.result);
   if (flagged.length) {
@@ -28,6 +29,7 @@ function buildMarkdown(): string {
 }
 
 export function MeetingView() {
+  const { t } = useI18n();
   const hasSegments = useStore((s) => s.segments.some((x) => x.isFinal && x.text.trim()));
   const [saved, setSaved] = useState<string | null>(null);
 
@@ -49,16 +51,16 @@ export function MeetingView() {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex h-10 shrink-0 items-center justify-between border-b px-5">
-        <span className="text-xs font-medium text-foreground">Transcript</span>
+        <span className="text-xs font-medium text-foreground">{t("meeting.transcript")}</span>
         <div className="flex items-center gap-2">
           {saved && (
             <span className="flex items-center gap-1 text-[11px] text-emerald-400">
-              <Check className="size-3" /> 已儲存
+              <Check className="size-3" /> {t("meeting.saved")}
             </span>
           )}
           <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" disabled={!hasSegments} onClick={save}>
             <Download className="size-3" />
-            Save
+            {t("meeting.save")}
           </Button>
         </div>
       </div>

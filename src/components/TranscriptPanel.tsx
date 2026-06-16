@@ -1,9 +1,11 @@
 import { Fragment, useEffect, useMemo, useRef } from "react";
-import { useStore, speakerKey, speakerLabel } from "../lib/store";
+import { useStore, speakerKey } from "../lib/store";
 import { speakerBadgeClass } from "../lib/speakerColors";
+import { useI18n } from "../i18n";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 export function TranscriptPanel() {
+  const { t } = useI18n();
   const segments = useStore((s) => s.segments);
   const status = useStore((s) => s.meetingStatus);
   const names = useStore((s) => s.speakerNames);
@@ -23,12 +25,21 @@ export function TranscriptPanel() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [runs]);
 
+  function label(seg: (typeof runs)[number]) {
+    const customName = names[speakerKey(seg)];
+    if (customName) return customName;
+    if (seg.source === "me") {
+      return (seg.speaker || 1) <= 1 ? t("speaker.you") : t("speaker.speaker", { number: seg.speaker });
+    }
+    return seg.speaker > 0 ? t("speaker.remote", { number: seg.speaker }) : t("speaker.them");
+  }
+
   if (runs.length === 0) {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
         {status === "recording"
-          ? "Listening…"
-          : "Press “Start meeting” to begin transcribing."}
+          ? t("meeting.listening")
+          : t("meeting.startPrompt")}
       </div>
     );
   }
@@ -46,7 +57,7 @@ export function TranscriptPanel() {
                     seg
                   )}`}
                 >
-                  {speakerLabel(seg, names)}
+                  {label(seg)}
                 </span>
               )}{" "}
               <span className={seg.isFinal ? "text-foreground/90" : "text-muted-foreground"}>

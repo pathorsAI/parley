@@ -1,7 +1,13 @@
 import { useEffect } from "react";
 import { TitleBar } from "./components/TitleBar";
 import { MeetingView } from "./components/MeetingView";
-import { Sidebar } from "./components/sidebar/Sidebar";
+import { WorkPanel } from "./components/WorkPanel";
+import { EvaluationsPanel } from "./components/sidebar/EvaluationsPanel";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/ui/resizable";
 import { listenForTranscript } from "./lib/tauriEvents";
 import { listenForSettings } from "./lib/settingsSync";
 import { useEvaluationEngine } from "./lib/evaluations/engine";
@@ -24,10 +30,22 @@ function App() {
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       <TitleBar />
-      <div className="grid min-h-0 flex-1 grid-cols-[1fr_380px] grid-rows-[minmax(0,1fr)] overflow-hidden">
-        <MeetingView />
-        <Sidebar />
-      </div>
+      <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
+        {/* Left: transcript reference rail */}
+        <ResizablePanel defaultSize={24} minSize={15}>
+          <MeetingView />
+        </ResizablePanel>
+        <ResizableHandle withHandle />
+        {/* Center: primary interactive work (Ask / TODO) */}
+        <ResizablePanel defaultSize={48} minSize={30}>
+          <WorkPanel />
+        </ResizablePanel>
+        <ResizableHandle withHandle />
+        {/* Right: always-visible evaluation monitors */}
+        <ResizablePanel defaultSize={28} minSize={18}>
+          <EvaluationsPanel />
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   );
 }

@@ -2,19 +2,30 @@ import { useState } from "react";
 import { Check, Square, X, Plus, Sparkles } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
+import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 /**
- * Meeting checklist. Items are seeded from the templates in Settings when a
- * meeting starts, and can be added/checked/removed ad-hoc during the meeting.
+ * Meeting checklist. Apply a template (from Settings) to load items, add/check/
+ * remove ad-hoc, and let the AI auto-check items that have been covered.
  */
 export function TodosPanel() {
+  const { t } = useI18n();
   const todos = useStore((s) => s.todos);
   const addTodo = useStore((s) => s.addTodo);
   const toggleTodo = useStore((s) => s.toggleTodo);
   const removeTodo = useStore((s) => s.removeTodo);
+  const templates = useStore((s) => s.settings.todoTemplates);
+  const applyTodoTemplate = useStore((s) => s.applyTodoTemplate);
   const [input, setInput] = useState("");
   const [checking, setChecking] = useState(false);
 
@@ -43,18 +54,30 @@ export function TodosPanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between px-3 py-2 text-[11px] text-muted-foreground">
-        <span>{todos.length > 0 ? `${done}/${todos.length} done` : "No items yet"}</span>
+      <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-muted-foreground">
+        <span className="shrink-0">
+          {todos.length > 0 ? t("todos.doneCount", { done, total: todos.length }) : t("todos.noItems")}
+        </span>
+        <Select value="" onValueChange={(id) => { const t = templates.find((x) => x.id === id); if (t) applyTodoTemplate(t.items); }}>
+          <SelectTrigger size="sm" className="ml-auto h-6 w-[140px] text-[11px]">
+            <SelectValue placeholder={t("todos.applyTemplate")} />
+          </SelectTrigger>
+          <SelectContent>
+            {templates.map((t) => (
+              <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Button
           variant="outline"
           size="sm"
-          className="h-6 px-2 text-[11px]"
+          className="h-6 shrink-0 px-2 text-[11px]"
           disabled={checking || todos.length === 0}
           onClick={aiUpdate}
-          title="讓 AI 依對話勾選已完成項目"
+          title={t("todos.aiTitle")}
         >
           <Sparkles className={`size-3 ${checking ? "animate-pulse" : ""}`} />
-          AI 更新
+          AI
         </Button>
       </div>
 
@@ -62,7 +85,7 @@ export function TodosPanel() {
         <div className="flex flex-col gap-1 px-3 pb-3">
           {todos.length === 0 ? (
             <p className="px-1 pt-6 text-center text-xs text-muted-foreground">
-              加入這場會議要確認的事項（也可在設定建立模板，開始會議時自動帶入）。
+              {t("todos.empty")}
             </p>
           ) : (
             todos.map((t) => (
@@ -89,7 +112,7 @@ export function TodosPanel() {
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="新增待辦…"
+          placeholder={t("todos.addPlaceholder")}
           className="h-8 text-sm"
         />
         <Button type="submit" size="icon" className="size-8 shrink-0" disabled={!input.trim()}>

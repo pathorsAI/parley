@@ -9,22 +9,45 @@ import type {
   TodoItem,
   TranscriptSegment,
 } from "./types";
-import { PRESET_EVAL_DEFS, evalsFromDefs } from "./evaluations/presets";
+import { PRESET_EVAL_DEFS, PRESET_EVAL_TEMPLATES, evalsFromDefs } from "./evaluations/presets";
+import { PRESET_TODO_TEMPLATES } from "./todoTemplates";
+
+/**
+ * Optional dev convenience: API keys from a gitignored `.env` (VITE_* vars).
+ * Empty/undefined in any published build (no .env), so nothing is baked in.
+ * Only defined keys are included, so they overlay without clobbering UI values.
+ */
+const ENV_KEYS: Partial<Settings> = Object.fromEntries(
+  (
+    [
+      ["sonioxApiKey", import.meta.env.VITE_SONIOX_API_KEY],
+      ["anthropicApiKey", import.meta.env.VITE_ANTHROPIC_API_KEY],
+      ["openrouterApiKey", import.meta.env.VITE_OPENROUTER_API_KEY],
+      ["groqApiKey", import.meta.env.VITE_GROQ_API_KEY],
+    ] as const
+  ).filter(([, v]) => !!v)
+) as Partial<Settings>;
 
 const DEFAULT_SETTINGS: Settings = {
+  language: "zh-TW",
   provider: "anthropic",
   anthropicApiKey: "",
   openrouterApiKey: "",
+  groqApiKey: "",
+  reasoningEffort: "medium",
   models: {
     anthropic: { ask: "claude-sonnet-4-6", eval: "claude-opus-4-8" },
     // OpenRouter slugs — editable in Settings; adjust if a slug 404s.
     openrouter: { ask: "anthropic/claude-sonnet-4.5", eval: "anthropic/claude-opus-4.1" },
+    // Groq (fastest) — gpt-oss reasoning models.
+    groq: { ask: "openai/gpt-oss-20b", eval: "openai/gpt-oss-120b" },
   },
   sonioxApiKey: "",
   inputDevice: "",
-  meetingContext: "",
   evaluations: PRESET_EVAL_DEFS,
-  todoTemplates: [],
+  evalTemplates: PRESET_EVAL_TEMPLATES,
+  todoTemplates: PRESET_TODO_TEMPLATES,
+  ...ENV_KEYS,
 };
 
 interface ParleyState {
@@ -37,6 +60,9 @@ interface ParleyState {
   speakerNames: Record<string, string>;
   /** Meeting to-do / agenda checklist. */
   todos: TodoItem[];
+  /** Per-meeting context/description (who's here, roles) — NOT a global setting. */
+  meetingContext: string;
+  setMeetingContext: (text: string) => void;
 
   // todos
   addTodo: (text: string) => void;
@@ -44,6 +70,8 @@ interface ParleyState {
   removeTodo: (id: string) => void;
   /** Mark the given todo ids as done (used by the AI auto-checker). */
   markTodosDone: (ids: string[]) => void;
+  /** Replace the checklist with a template's items (all unchecked). */
+  applyTodoTemplate: (items: string[]) => void;
 
   // meeting lifecycle
   startMeeting: () => void;
@@ -63,6 +91,12 @@ interface ParleyState {
   // evaluations
   setEvalStatus: (id: string, status: EvalStatus) => void;
   setEvalResult: (id: string, result: EvalResult) => void;
+  setAllEvalStatus: (status: EvalStatus) => void;
+  /** Whether to auto-rerun the whole evaluation set on an interval while recording. */
+  autoEval: boolean;
+  autoEvalSec: number;
+  setAutoEval: (on: boolean) => void;
+  setAutoEvalSec: (sec: number) => void;
 
   // settings
   updateSettings: (patch: Partial<Settings>) => void;
@@ -80,6 +114,11 @@ export const useStore = create<ParleyState>()(
       settings: DEFAULT_SETTINGS,
       speakerNames: {},
       todos: [],
+      meetingContext: "",
+      autoEval: false,
+      autoEvalSec: 30,
+
+  setMeetingContext: (text) => set({ meetingContext: text }),
 
   addTodo: (text) =>
     set((state) => {
@@ -101,20 +140,20 @@ export const useStore = create<ParleyState>()(
       return { todos: state.todos.map((t) => (set_.has(t.id) ? { ...t, done: true } : t)) };
     }),
 
+  applyTodoTemplate: (items) =>
+    set({
+      todos: items
+        .filter((t) => t.trim())
+        .map((t) => ({ id: crypto.randomUUID(), text: t.trim(), done: false })),
+    }),
+
   startMeeting: () =>
-    set((state) => ({
+    set({
       meetingStatus: "recording",
       meetingStartedAt: Date.now(),
       segments: [],
       speakerNames: {},
-      // Seed the checklist from templates (keep any todos the user pre-added).
-      todos: [
-        ...state.settings.todoTemplates
-          .filter((t) => t.trim())
-          .map((t) => ({ id: crypto.randomUUID(), text: t.trim(), done: false })),
-        ...state.todos,
-      ],
-    })),
+    }),
 
   setSpeakerName: (key, name) =>
     set((state) => {
@@ -160,6 +199,12 @@ export const useStore = create<ParleyState>()(
       ),
     })),
 
+  setAllEvalStatus: (status) =>
+    set((state) => ({ evaluations: state.evaluations.map((e) => ({ ...e, status })) })),
+
+  setAutoEval: (on) => set({ autoEval: on }),
+  setAutoEvalSec: (sec) => set({ autoEvalSec: Math.max(5, sec || 30) }),
+
   updateSettings: (patch) =>
     set((state) => {
       const settings = { ...state.settings, ...patch };
@@ -177,15 +222,33 @@ export const useStore = create<ParleyState>()(
     }),
     {
       name: "parley-settings",
-      version: 2,
+      version: 3,
       // Persist only settings — transcript and eval state are per-session.
       partialize: (state) => ({ settings: state.settings }),
       // Backfill any settings fields missing from older persisted state.
       merge: (persisted, current) => {
         const p = (persisted as { settings?: Partial<Settings> } | undefined)?.settings ?? {};
+        // Template shapes changed over time; fall back to defaults if the
+        // persisted value is an old shape (e.g. todoTemplates used to be string[]).
+        const validTodoTpls =
+          Array.isArray(p.todoTemplates) &&
+          p.todoTemplates.every((t) => t && typeof t === "object" && Array.isArray((t as { items?: unknown }).items));
+        const validEvalTpls =
+          Array.isArray(p.evalTemplates) &&
+          p.evalTemplates.every((t) => t && typeof t === "object" && Array.isArray((t as { evals?: unknown }).evals));
         return {
           ...current,
-          settings: { ...DEFAULT_SETTINGS, ...p },
+          settings: {
+            ...DEFAULT_SETTINGS,
+            ...p,
+            // Deep-merge models so a new provider (e.g. groq) isn't dropped by
+            // older persisted state that only had anthropic/openrouter.
+            models: { ...DEFAULT_SETTINGS.models, ...(p.models ?? {}) },
+            todoTemplates: validTodoTpls ? p.todoTemplates! : DEFAULT_SETTINGS.todoTemplates,
+            evalTemplates: validEvalTpls ? p.evalTemplates! : DEFAULT_SETTINGS.evalTemplates,
+            // Dev .env keys win over persisted-empty values (no-op in prod).
+            ...ENV_KEYS,
+          },
           evaluations: evalsFromDefs(
             (p.evaluations as Settings["evaluations"]) ?? DEFAULT_SETTINGS.evaluations
           ),

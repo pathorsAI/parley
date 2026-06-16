@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Plus, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
+import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
 import { isTauri } from "../lib/tauriEvents";
 import { LevelMeter } from "../components/LevelMeter";
@@ -16,25 +17,52 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { EvalDef, LlmProvider, Settings } from "../lib/types";
+import type { AppLanguage, EvalDef, LlmProvider, Settings } from "../lib/types";
 
-type Category = "provider" | "transcription" | "meeting" | "evaluations" | "todos";
+type Category = "basic" | "provider" | "transcription" | "evaluations" | "todos";
 
-const NAV: { id: Category; label: string }[] = [
-  { id: "provider", label: "LLM Provider" },
-  { id: "transcription", label: "Transcription" },
-  { id: "meeting", label: "Meeting" },
-  { id: "evaluations", label: "Evaluations" },
-  { id: "todos", label: "TODO templates" },
+// Curated model choices per provider (the current value is always included too).
+const MODEL_OPTIONS: Record<LlmProvider, string[]> = {
+  anthropic: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-7"],
+  openrouter: [
+    "anthropic/claude-sonnet-4.5",
+    "anthropic/claude-opus-4.1",
+    "openai/gpt-oss-120b",
+    "openai/gpt-4o-mini",
+    "google/gemini-2.0-flash-001",
+  ],
+  groq: [
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
+    "llama-3.3-70b-versatile",
+    "moonshotai/kimi-k2-instruct",
+  ],
+};
+
+const NAV: { id: Category; labelKey: TranslationKey }[] = [
+  { id: "basic", labelKey: "settings.nav.basic" },
+  { id: "provider", labelKey: "settings.nav.provider" },
+  { id: "transcription", labelKey: "settings.nav.transcription" },
+  { id: "evaluations", labelKey: "settings.nav.evaluations" },
+  { id: "todos", labelKey: "settings.nav.todos" },
 ];
 
 export function SettingsApp() {
+  const { t } = useI18n();
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
-  const [cat, setCat] = useState<Category>("provider");
+  const [cat, setCat] = useState<Category>("basic");
   const [devices, setDevices] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
-  const providerLabel = settings.provider === "anthropic" ? "Claude" : "OpenRouter";
+  const [newTplName, setNewTplName] = useState("");
+  const providerLabel =
+    settings.provider === "anthropic" ? "Claude" : settings.provider === "groq" ? "Groq" : "OpenRouter";
+  const providerKey =
+    settings.provider === "anthropic"
+      ? { value: settings.anthropicApiKey, set: (v: string) => patch({ anthropicApiKey: v }), ph: "sk-ant-…" }
+      : settings.provider === "groq"
+      ? { value: settings.groqApiKey, set: (v: string) => patch({ groqApiKey: v }), ph: "gsk_…" }
+      : { value: settings.openrouterApiKey, set: (v: string) => patch({ openrouterApiKey: v }), ph: "sk-or-…" };
 
   function patch(p: Partial<Settings>) {
     updateSettings(p);
@@ -63,7 +91,7 @@ export function SettingsApp() {
     <div className="flex h-screen bg-background text-foreground">
       {/* Left nav */}
       <nav className="flex w-48 shrink-0 flex-col gap-0.5 border-r bg-muted/30 p-2">
-        <div className="px-2 pb-2 pt-1 text-sm font-semibold tracking-tight">Settings</div>
+        <div className="px-2 pb-2 pt-1 text-sm font-semibold tracking-tight">{t("common.settings")}</div>
         {NAV.map((n) => (
           <button
             key={n.id}
@@ -72,51 +100,93 @@ export function SettingsApp() {
               cat === n.id ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
           >
-            {n.label}
+            {t(n.labelKey)}
           </button>
         ))}
       </nav>
 
       {/* Content */}
       <div className="min-w-0 flex-1 overflow-y-auto px-8 py-6">
-        <p className="mb-5 text-xs text-muted-foreground">變更會即時套用到主視窗並自動儲存。</p>
+        <p className="mb-5 text-xs text-muted-foreground">{t("settings.note")}</p>
+
+        {cat === "basic" && (
+          <Section title={t("settings.basic.title")}>
+            <Field label={t("settings.basic.language")}>
+              <Select value={settings.language} onValueChange={(v) => patch({ language: v as AppLanguage })}>
+                <SelectTrigger className="w-full max-w-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LANGUAGE_OPTIONS.map((language) => (
+                    <SelectItem key={language.value} value={language.value}>
+                      {language.nativeLabel}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="max-w-sm text-[11px] text-muted-foreground">{t("settings.basic.languageHelp")}</p>
+            </Field>
+          </Section>
+        )}
 
         {cat === "provider" && (
-          <Section title="LLM Provider">
-            <Field label="Provider">
+          <Section title={t("settings.provider.title")}>
+            <Field label={t("settings.provider.provider")}>
               <Select value={settings.provider} onValueChange={(v) => patch({ provider: v as LlmProvider })}>
                 <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="anthropic">Claude (Anthropic 直連)</SelectItem>
                   <SelectItem value="openrouter">OpenRouter</SelectItem>
+                  <SelectItem value="groq">Groq (最快 · gpt-oss)</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
-            <Field label={`${providerLabel} API key`}>
-              {settings.provider === "anthropic" ? (
-                <Input type="password" autoComplete="off" placeholder="sk-ant-…" className="max-w-sm" value={settings.anthropicApiKey} onChange={(e) => patch({ anthropicApiKey: e.target.value })} />
-              ) : (
-                <Input type="password" autoComplete="off" placeholder="sk-or-…" className="max-w-sm" value={settings.openrouterApiKey} onChange={(e) => patch({ openrouterApiKey: e.target.value })} />
-              )}
+            <Field label={t("settings.provider.apiKey", { provider: providerLabel })}>
+              <Input type="password" autoComplete="off" placeholder={providerKey.ph} className="max-w-sm" value={providerKey.value} onChange={(e) => providerKey.set(e.target.value)} />
             </Field>
-            <div className="flex flex-col gap-3 border-t pt-4">
-              <p className="text-[11px] text-muted-foreground">{providerLabel} models{settings.provider === "openrouter" ? "（slug）" : ""}</p>
-              <Field label="Q&A — fast model (sidebar Ask)">
-                <Input className="max-w-sm" value={settings.models[settings.provider].ask} onChange={(e) => patchModel(patch, settings, settings.provider, "ask", e.target.value)} />
+            {settings.provider === "groq" && (
+              <Field label={t("settings.provider.reasoning")}>
+                <Select value={settings.reasoningEffort} onValueChange={(v) => patch({ reasoningEffort: v as Settings["reasoningEffort"] })}>
+                  <SelectTrigger className="w-full max-w-[180px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">{t("settings.provider.low")}</SelectItem>
+                    <SelectItem value="medium">{t("settings.provider.medium")}</SelectItem>
+                    <SelectItem value="high">{t("settings.provider.high")}</SelectItem>
+                  </SelectContent>
+                </Select>
               </Field>
-              <Field label="Evaluations — deeper model">
-                <Input className="max-w-sm" value={settings.models[settings.provider].eval} onChange={(e) => patchModel(patch, settings, settings.provider, "eval", e.target.value)} />
+            )}
+            <div className="flex flex-col gap-3 border-t pt-4">
+              <p className="text-[11px] text-muted-foreground">
+                {t("settings.provider.models", {
+                  provider: providerLabel,
+                  suffix: settings.provider === "anthropic" ? "" : t("settings.provider.slugSuffix"),
+                })}
+              </p>
+              <Field label={t("settings.provider.askModel")}>
+                <ModelSelect
+                  provider={settings.provider}
+                  value={settings.models[settings.provider].ask}
+                  onChange={(v) => patchModel(patch, settings, settings.provider, "ask", v)}
+                />
+              </Field>
+              <Field label={t("settings.provider.evalModel")}>
+                <ModelSelect
+                  provider={settings.provider}
+                  value={settings.models[settings.provider].eval}
+                  onChange={(v) => patchModel(patch, settings, settings.provider, "eval", v)}
+                />
               </Field>
             </div>
           </Section>
         )}
 
         {cat === "transcription" && (
-          <Section title="Transcription">
-            <Field label="Soniox API key">
+          <Section title={t("settings.transcription.title")}>
+            <Field label={t("settings.transcription.sonioxKey")}>
               <Input type="password" autoComplete="off" placeholder="…" className="max-w-sm" value={settings.sonioxApiKey} onChange={(e) => patch({ sonioxApiKey: e.target.value })} />
             </Field>
-            <Field label="Microphone (input device)">
+            <Field label={t("settings.transcription.microphone")}>
               <div className="flex max-w-sm flex-col gap-2">
                 <Select
                   value={settings.inputDevice || "__default__"}
@@ -129,43 +199,96 @@ export function SettingsApp() {
                     }
                   }}
                 >
-                  <SelectTrigger className="w-full"><SelectValue placeholder="System default" /></SelectTrigger>
+                  <SelectTrigger className="w-full"><SelectValue placeholder={t("settings.transcription.systemDefault")} /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__default__">System default</SelectItem>
+                    <SelectItem value="__default__">{t("settings.transcription.systemDefault")}</SelectItem>
                     {devices.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <div className="flex items-center gap-2">
                   <Button variant={testing ? "destructive" : "outline"} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleTest}>
-                    {testing ? "Stop test" : "Test mic"}
+                    {testing ? t("settings.transcription.stopTest") : t("settings.transcription.testMic")}
                   </Button>
                   <LevelMeter source="test" className="h-2 flex-1" />
                 </div>
               </div>
             </Field>
             <p className="max-w-md text-[11px] text-muted-foreground">
-              若錄音沒有聲音，多半是抓錯麥克風 — 換一個並用 Test 確認音量。系統音訊（對方）目前用 Core Audio tap，需簽章與授權才會有聲音。
+              {t("settings.transcription.help")}
             </p>
           </Section>
         )}
 
-        {cat === "meeting" && (
-          <Section title="Meeting context">
-            <p className="text-[11px] text-muted-foreground">描述這場會議的性質與與會者角色，evaluation 與問答會用到。</p>
-            <Textarea
-              rows={6}
-              className="max-w-xl resize-none"
-              value={settings.meetingContext}
-              onChange={(e) => patch({ meetingContext: e.target.value })}
-              placeholder="例：A 輪募資談判。對方是投資人（重高），我是創辦人。重點：估值、董事席次、清算優先權…"
-            />
-          </Section>
-        )}
-
         {cat === "evaluations" && (
-          <Section title="Evaluations">
+          <Section title={t("settings.evaluations.title")}>
+            {/* Template library: apply a preset set, or save the current set. */}
+            <div className="flex flex-col gap-2 rounded-lg border p-3">
+              <p className="text-[11px] font-medium text-muted-foreground">{t("settings.evaluations.templateHelp")}</p>
+              <div className="flex flex-col gap-1.5">
+                {settings.evalTemplates.map((tpl) => (
+                  <div key={tpl.id} className="flex items-center gap-2">
+                    <span className="flex-1 truncate text-sm">
+                      {tpl.name}
+                      <span className="ml-1.5 text-[10px] text-muted-foreground">
+                        {t("settings.evaluations.templateMeta", {
+                          type: tpl.builtin ? t("common.builtin") : t("common.custom"),
+                          count: tpl.evals.length,
+                        })}
+                      </span>
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 text-[11px]"
+                      onClick={() =>
+                        patch({ evaluations: tpl.evals.map((e) => ({ ...e })) })
+                      }
+                    >
+                      {t("common.apply")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-7"
+                      onClick={() => patch({ evalTemplates: settings.evalTemplates.filter((t) => t.id !== tpl.id) })}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-1 flex items-center gap-2">
+                <Input
+                  value={newTplName}
+                  onChange={(e) => setNewTplName(e.target.value)}
+                  placeholder={t("settings.evaluations.newTemplateName")}
+                  className="h-7 text-xs"
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 shrink-0 px-2 text-[11px]"
+                  disabled={!newTplName.trim()}
+                  onClick={() => {
+                    const name = newTplName.trim();
+                    // Overwrite a custom template with the same name, else add new.
+                    const evals = settings.evaluations.map((e) => ({ ...e }));
+                    const exists = settings.evalTemplates.find((t) => !t.builtin && t.name === name);
+                    const next = exists
+                      ? settings.evalTemplates.map((t) => (t.id === exists.id ? { ...t, evals } : t))
+                      : [...settings.evalTemplates, { id: crypto.randomUUID(), name, evals }];
+                    patch({ evalTemplates: next });
+                    setNewTplName("");
+                  }}
+                >
+                  {t("settings.evaluations.saveTemplate")}
+                </Button>
+              </div>
+            </div>
+
+            {/* Active set used in meetings. */}
             <p className="text-[11px] text-muted-foreground">
-              會議中監測的項目。auto 會依間隔自動重跑；manual 只在你按重跑時執行。
+              {t("settings.evaluations.activeHelp")}
             </p>
             <div className="flex flex-col gap-4">
               {settings.evaluations.map((ev) => (
@@ -185,31 +308,45 @@ export function SettingsApp() {
                 patch({
                   evaluations: [
                     ...settings.evaluations,
-                    { id: crypto.randomUUID(), name: "新 evaluation", description: "", prompt: "", mode: "manual" },
+                    { id: crypto.randomUUID(), name: t("settings.evaluations.defaultNewName"), description: "", prompt: "" },
                   ],
                 })
               }
             >
-              <Plus className="size-3.5" /> 新增 evaluation
+              <Plus className="size-3.5" /> {t("settings.evaluations.newEvaluation")}
             </Button>
           </Section>
         )}
 
         {cat === "todos" && (
-          <Section title="TODO templates">
-            <p className="text-[11px] text-muted-foreground">開始會議時自動帶入 TODO 清單的項目。</p>
-            <div className="flex max-w-xl flex-col gap-2">
-              {settings.todoTemplates.map((t, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <Input value={t} onChange={(e) => patch({ todoTemplates: settings.todoTemplates.map((x, j) => (j === i ? e.target.value : x)) })} placeholder="待辦事項…" />
-                  <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => patch({ todoTemplates: settings.todoTemplates.filter((_, j) => j !== i) })}>
-                    <Trash2 className="size-4" />
-                  </Button>
-                </div>
+          <Section title={t("settings.todos.title")}>
+            <p className="text-[11px] text-muted-foreground">
+              {t("settings.todos.help")}
+            </p>
+            <div className="flex flex-col gap-4">
+              {settings.todoTemplates.map((tpl) => (
+                <TodoTemplateEditor
+                  key={tpl.id}
+                  tpl={tpl}
+                  onChange={(p) => patch({ todoTemplates: settings.todoTemplates.map((x) => (x.id === tpl.id ? { ...x, ...p } : x)) })}
+                  onDelete={() => patch({ todoTemplates: settings.todoTemplates.filter((x) => x.id !== tpl.id) })}
+                />
               ))}
             </div>
-            <Button variant="outline" size="sm" className="w-fit" onClick={() => patch({ todoTemplates: [...settings.todoTemplates, ""] })}>
-              <Plus className="size-3.5" /> 新增項目
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-fit"
+              onClick={() =>
+                patch({
+                  todoTemplates: [
+                    ...settings.todoTemplates,
+                    { id: crypto.randomUUID(), name: t("settings.todos.defaultNewName"), items: [""] },
+                  ],
+                })
+              }
+            >
+              <Plus className="size-3.5" /> {t("settings.todos.addTemplate")}
             </Button>
           </Section>
         )}
@@ -228,6 +365,31 @@ function patchModel(
   patch({ models: { ...settings.models, [provider]: { ...settings.models[provider], [kind]: value } } });
 }
 
+function ModelSelect({
+  provider,
+  value,
+  onChange,
+}: {
+  provider: LlmProvider;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  // Always include the current value so a custom/persisted id stays selectable.
+  const options = Array.from(new Set([...MODEL_OPTIONS[provider], value].filter(Boolean)));
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        {options.map((m) => (
+          <SelectItem key={m} value={m}>
+            {m}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 function EvalEditor({
   ev,
   onChange,
@@ -237,32 +399,60 @@ function EvalEditor({
   onChange: (p: Partial<EvalDef>) => void;
   onDelete: () => void;
 }) {
+  const { t } = useI18n();
+
   return (
     <div className="flex flex-col gap-2 rounded-lg border p-3">
       <div className="flex items-center gap-2">
-        <Input value={ev.name} onChange={(e) => onChange({ name: e.target.value })} placeholder="名稱" className="h-8 font-medium" />
-        <Select value={ev.mode} onValueChange={(v) => onChange({ mode: v as "auto" | "manual" })}>
-          <SelectTrigger size="sm" className="h-8 w-24 shrink-0"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="auto">auto</SelectItem>
-            <SelectItem value="manual">manual</SelectItem>
-          </SelectContent>
-        </Select>
-        {ev.mode === "auto" && (
-          <Input
-            type="number"
-            value={ev.autoEverySec ?? 60}
-            onChange={(e) => onChange({ autoEverySec: Number(e.target.value) || 60 })}
-            className="h-8 w-20 shrink-0"
-            title="每幾秒重跑"
-          />
-        )}
+        <Input value={ev.name} onChange={(e) => onChange({ name: e.target.value })} placeholder={t("settings.evaluations.namePlaceholder")} className="h-8 font-medium" />
         <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={onDelete}>
           <Trash2 className="size-4" />
         </Button>
       </div>
-      <Input value={ev.description} onChange={(e) => onChange({ description: e.target.value })} placeholder="一句話描述（顯示在卡片上）" className="h-8 text-xs" />
-      <Textarea value={ev.prompt} onChange={(e) => onChange({ prompt: e.target.value })} placeholder="要 LLM 偵測什麼…" rows={3} className="resize-none text-xs" />
+      <Input value={ev.description} onChange={(e) => onChange({ description: e.target.value })} placeholder={t("settings.evaluations.descriptionPlaceholder")} className="h-8 text-xs" />
+      <Textarea value={ev.prompt} onChange={(e) => onChange({ prompt: e.target.value })} placeholder={t("settings.evaluations.promptPlaceholder")} rows={3} className="resize-none text-xs" />
+    </div>
+  );
+}
+
+function TodoTemplateEditor({
+  tpl,
+  onChange,
+  onDelete,
+}: {
+  tpl: import("../lib/types").TodoTemplate;
+  onChange: (p: Partial<import("../lib/types").TodoTemplate>) => void;
+  onDelete: () => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border p-3">
+      <div className="flex items-center gap-2">
+        <Input value={tpl.name} onChange={(e) => onChange({ name: e.target.value })} placeholder={t("settings.todos.templateName")} className="h-8 font-medium" />
+        <span className="shrink-0 text-[10px] text-muted-foreground">{tpl.builtin ? t("common.builtin") : t("common.custom")}</span>
+        <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={onDelete}>
+          <Trash2 className="size-4" />
+        </Button>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {tpl.items.map((it, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <Input
+              value={it}
+              onChange={(e) => onChange({ items: tpl.items.map((x, j) => (j === i ? e.target.value : x)) })}
+              placeholder={t("settings.todos.itemPlaceholder")}
+              className="h-8 text-xs"
+            />
+            <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => onChange({ items: tpl.items.filter((_, j) => j !== i) })}>
+              <Trash2 className="size-3.5" />
+            </Button>
+          </div>
+        ))}
+      </div>
+      <Button variant="ghost" size="sm" className="w-fit text-[11px]" onClick={() => onChange({ items: [...tpl.items, ""] })}>
+        <Plus className="size-3.5" /> {t("settings.todos.addItem")}
+      </Button>
     </div>
   );
 }

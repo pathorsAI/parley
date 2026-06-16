@@ -39,6 +39,24 @@ bun install
 bun run tauri dev      # runs Vite + the Tauri shell
 ```
 
+## Release
+
+Releases are built by GitHub Actions when a `vX.Y.Z` tag is pushed. The workflow builds the macOS Tauri bundle and uploads the installer assets to a draft GitHub Release.
+
+From a clean worktree:
+
+```bash
+bun run release patch --message "Describe what changed in this release"
+```
+
+You can also pass an explicit version or a notes file:
+
+```bash
+bun run release 0.2.0 --notes-file ./release-notes.md
+```
+
+The script updates `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`, writes `.github/release-notes/vX.Y.Z.md`, commits those changes, creates the tag, and pushes the branch and tag. The release is created as a draft so you can review the generated `.dmg` before publishing.
+
 ## Configuration
 
 API keys are entered in the in-app **Settings** window — there's no need to set anything up before first launch. Open Settings, paste your Soniox key and your Anthropic or OpenRouter key, and choose your AI provider.
