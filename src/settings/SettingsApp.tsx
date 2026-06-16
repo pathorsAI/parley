@@ -131,6 +131,31 @@ export function SettingsApp() {
 
         {cat === "basic" && (
           <Section title={t("settings.basic.title")}>
+            <Field label={t("settings.basic.name")}>
+              <Input
+                className="max-w-sm"
+                placeholder={t("settings.basic.namePlaceholder")}
+                value={settings.userName}
+                onChange={(e) => patch({ userName: e.target.value })}
+              />
+            </Field>
+            <Field label={t("settings.basic.role")}>
+              <Input
+                className="max-w-sm"
+                placeholder={t("settings.basic.rolePlaceholder")}
+                value={settings.userRole}
+                onChange={(e) => patch({ userRole: e.target.value })}
+              />
+            </Field>
+            <Field label={t("settings.basic.company")}>
+              <Input
+                className="max-w-sm"
+                placeholder={t("settings.basic.companyPlaceholder")}
+                value={settings.userCompany}
+                onChange={(e) => patch({ userCompany: e.target.value })}
+              />
+              <p className="max-w-sm text-[11px] text-muted-foreground">{t("settings.basic.profileHelp")}</p>
+            </Field>
             <Field label={t("settings.basic.language")}>
               <Select value={settings.language} onValueChange={(v) => patch({ language: v as AppLanguage })}>
                 <SelectTrigger className="w-full max-w-sm">

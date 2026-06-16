@@ -10,6 +10,7 @@ import type {
   TranscriptSegment,
 } from "./types";
 import { PRESET_EVAL_DEFS, PRESET_EVAL_TEMPLATES, evalsFromDefs } from "./evaluations/presets";
+import { reconcileTemplates } from "./templates";
 import { PRESET_TODO_TEMPLATES } from "./todoTemplates";
 import { DEFAULT_MODELS } from "./ai/providers";
 
@@ -38,6 +39,9 @@ const DEFAULT_SETTINGS: Settings = {
   language: "zh-TW",
   theme: "system",
   layout: "full",
+  userName: "",
+  userRole: "",
+  userCompany: "",
   provider: "anthropic",
   anthropicApiKey: "",
   openaiApiKey: "",
@@ -261,8 +265,15 @@ export const useStore = create<ParleyState>()(
             // older persisted state that only had anthropic/openrouter.
             models: { ...DEFAULT_SETTINGS.models, ...(p.models ?? {}) },
             reasoningEffort,
-            todoTemplates: validTodoTpls ? p.todoTemplates! : DEFAULT_SETTINGS.todoTemplates,
-            evalTemplates: validEvalTpls ? p.evalTemplates! : DEFAULT_SETTINGS.evalTemplates,
+            // Fold latest built-in templates over persisted ones, keeping customs.
+            todoTemplates: reconcileTemplates(
+              PRESET_TODO_TEMPLATES,
+              validTodoTpls ? p.todoTemplates! : []
+            ),
+            evalTemplates: reconcileTemplates(
+              PRESET_EVAL_TEMPLATES,
+              validEvalTpls ? p.evalTemplates! : []
+            ),
             // Dev .env keys win over persisted-empty values (no-op in prod).
             ...ENV_KEYS,
           },

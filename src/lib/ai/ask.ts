@@ -2,6 +2,7 @@ import { streamText } from "ai";
 import { getModel, getProviderOptions } from "./provider";
 import { transcriptAsText } from "../store";
 import { recordLlmUsage } from "../usage/log";
+import { profileContext } from "./profile";
 import type { Settings, TranscriptSegment } from "../types";
 
 const SYSTEM = `You are Parley, a realtime meeting copilot assisting the user ("ME") during a live interview or negotiation against the other party ("THEM").
@@ -24,9 +25,9 @@ export async function askAboutMeeting(opts: {
   const { settings, segments, question, meetingContext, names, onDelta, signal } = opts;
 
   const transcript = transcriptAsText(segments, names) || "(no speech transcribed yet)";
-  const contextLine = meetingContext?.trim()
-    ? `Meeting context: ${meetingContext.trim()}\n\n`
-    : "";
+  const contextLine =
+    profileContext(settings) +
+    (meetingContext?.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "");
 
   const result = streamText({
     model: getModel(settings, "ask"),

@@ -134,6 +134,12 @@ export interface Settings {
   language: AppLanguage;
   theme: AppTheme;
   layout: AppLayout;
+  /** Your name — helps the AI recognize when you're speaking or addressed. */
+  userName: string;
+  /** Your role / title — tailors the assistance to your seat at the table. */
+  userRole: string;
+  /** Your company / org — optional extra context. */
+  userCompany: string;
   provider: LlmProvider;
   anthropicApiKey: string;
   openaiApiKey: string;
