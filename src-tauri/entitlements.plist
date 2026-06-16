@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Microphone capture (cpal) and the Core Audio system-audio process tap. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<!-- Allow the JIT/dynamic codegen the webview needs under hardened runtime. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+</dict>
+</plist>

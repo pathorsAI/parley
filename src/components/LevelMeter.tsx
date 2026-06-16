@@ -1,0 +1,46 @@
+import { useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { isTauri } from "../lib/tauriEvents";
+
+interface LevelPayload {
+  source: string;
+  level: number;
+}
+
+/**
+ * Live input-level meter fed by the backend `audio://level` event. Speech peaks
+ * are numerically small, so we map with sqrt for a perceptually useful bar.
+ */
+export function LevelMeter({ source, className }: { source: string; className?: string }) {
+  const [level, setLevel] = useState(0);
+  const decayRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | undefined;
+    listen<LevelPayload>("audio://level", (e) => {
+      if (e.payload.source === source) setLevel(e.payload.level);
+    }).then((fn) => (unlisten = fn));
+    return () => unlisten?.();
+  }, [source]);
+
+  // Smoothly decay toward 0 when events stop arriving.
+  useEffect(() => {
+    decayRef.current = setInterval(() => setLevel((l) => (l > 0.001 ? l * 0.6 : 0)), 120);
+    return () => {
+      if (decayRef.current) clearInterval(decayRef.current);
+    };
+  }, []);
+
+  const pct = Math.min(100, Math.round(Math.sqrt(level) * 100));
+  const color = pct > 75 ? "bg-amber-400" : pct > 3 ? "bg-emerald-500" : "bg-muted-foreground/30";
+
+  return (
+    <div className={`h-1.5 overflow-hidden rounded-full bg-muted ${className ?? "w-16"}`}>
+      <div
+        className={`h-full rounded-full transition-[width] duration-75 ${color}`}
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
