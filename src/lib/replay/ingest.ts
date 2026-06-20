@@ -11,6 +11,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { Settings, TranscriptSegment } from "../types";
 import type { ReplaySession } from "./types";
 import { toTraditional } from "../zhConvert";
+import { recordUsage } from "../usage/log";
+import { sttCostUsd } from "../usage/pricing";
 
 /** Coarse progress stages surfaced to the UI while a recording is ingested. */
 export type IngestStage = "decoding" | "uploading" | "transcribing";
@@ -49,6 +51,8 @@ interface RustSegment {
 interface RustTranscriptionResult {
   segments: RustSegment[];
   durationMs: number;
+  /** True when served from the on-disk cache (no Soniox call → don't bill it). */
+  cached: boolean;
 }
 
 /**
@@ -120,6 +124,21 @@ export async function ingestRecording(
   const durationMs =
     result.durationMs ||
     segments.reduce((max, s) => Math.max(max, s.endMs), 0);
+
+  // Bill the audio transcription — but only when it actually hit Soniox. A cache
+  // hit cost nothing, so recording it would over-count. (LLM costs for evals etc.
+  // are billed separately via recordLlmUsage.)
+  if (!result.cached && durationMs > 0) {
+    const seconds = durationMs / 1000;
+    void recordUsage({
+      kind: "stt",
+      category: "transcription",
+      provider: "soniox",
+      model: "",
+      seconds,
+      costUsd: sttCostUsd("soniox", seconds),
+    });
+  }
 
   return {
     id: crypto.randomUUID(),
