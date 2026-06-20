@@ -37,7 +37,8 @@ export async function runTimelineAnalysis(): Promise<void> {
     useStore.getState().setReplayTimelineStatus("done");
   } catch (err) {
     console.error("[timeline]", err);
-    useStore.getState().setReplayTimelineError(err instanceof Error ? err.message : String(err));
+    const { describeAiError } = await import("../../lib/ai/errors");
+    useStore.getState().setReplayTimelineError(describeAiError(err));
     useStore.getState().setReplayTimelineStatus("error");
   } finally {
     timelineBusy = false;

@@ -32,7 +32,8 @@ export async function runAllEvaluations(): Promise<void> {
     }
   } catch (err) {
     console.error("[evals]", err);
-    useStore.getState().setEvalError(err instanceof Error ? err.message : String(err));
+    const { describeAiError } = await import("../ai/errors");
+    useStore.getState().setEvalError(describeAiError(err));
     setAllEvalStatus("error");
   } finally {
     evalBusy = false;

@@ -59,8 +59,10 @@ export function WargamePanel() {
         setMessage(null);
       }
     } catch (err) {
+      console.error("[wargame] detect failed", err);
       setPhase("error");
-      setMessage(t("wargame.failed", { error: err instanceof Error ? err.message : String(err) }));
+      const { describeAiError } = await import("../../lib/ai/errors");
+      setMessage(t("wargame.failed", { error: describeAiError(err) }));
     }
   }
 
