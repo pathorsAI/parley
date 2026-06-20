@@ -1,10 +1,12 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type {
+  ActionItem,
   AppLanguage,
   Evaluation,
   EvalResult,
   EvalStatus,
+  FindingSolutionEntry,
   MeetingStatus,
   Settings,
   TimelineEvent,
@@ -137,6 +139,43 @@ interface ParleyState {
   setReplayTimelineStatus: (status: ParleyState["replayTimelineStatus"]) => void;
   setReplayTimelineError: (error: string | null) => void;
 
+  // ── Unified analysis (shared by LIVE + REPLAY) ──────────────────────────────
+  /**
+   * Time-anchored findings from an analysis pass (eval-matched or AI "extra").
+   * The timeline + findings list render these in both modes. LIVE re-analysis
+   * REPLACES the whole list (and clears selection + solutions); REPLAY runs once.
+   */
+  findings: TimelineEvent[];
+  analysisStatus: "idle" | "running" | "done" | "error";
+  analysisError: string | null;
+  setFindings: (events: TimelineEvent[]) => void;
+  setAnalysisStatus: (status: ParleyState["analysisStatus"]) => void;
+  setAnalysisError: (error: string | null) => void;
+
+  /** The finding whose "how it should have been done" drilldown is open. */
+  selectedFindingId: string | null;
+  setSelectedFinding: (id: string | null) => void;
+
+  /** Lazy per-finding solution cache, keyed by TimelineEvent.id. */
+  findingSolutions: Record<string, FindingSolutionEntry>;
+  setFindingSolution: (id: string, patch: Partial<FindingSolutionEntry>) => void;
+
+  /** Auto-run the analysis on an interval while recording (LIVE; default off). */
+  autoAnalyze: boolean;
+  autoAnalyzeSec: number;
+  setAutoAnalyze: (on: boolean) => void;
+  setAutoAnalyzeSec: (sec: number) => void;
+
+  // ── Action items (REPLAY post-meeting follow-ups) ───────────────────────────
+  /** Generated from the analysis findings + transcript; ephemeral, replay-only. */
+  actionItems: ActionItem[];
+  actionItemsStatus: "idle" | "running" | "done" | "error";
+  actionItemsError: string | null;
+  setActionItems: (items: ActionItem[]) => void;
+  setActionItemsStatus: (status: ParleyState["actionItemsStatus"]) => void;
+  setActionItemsError: (error: string | null) => void;
+  toggleActionItem: (id: string) => void;
+
   /**
    * Opponent-argument war-gaming, lifted into the store so it can be triggered
    * both from the War-game tab and from the replay "re-evaluate at this moment"
@@ -226,6 +265,16 @@ export const useStore = create<ParleyState>()(
       wargameArgs: [],
       wargameStatus: "idle",
       wargameMessage: null,
+      findings: [],
+      analysisStatus: "idle",
+      analysisError: null,
+      selectedFindingId: null,
+      findingSolutions: {},
+      autoAnalyze: false,
+      autoAnalyzeSec: 45,
+      actionItems: [],
+      actionItemsStatus: "idle",
+      actionItemsError: null,
       meetingStatus: "idle",
       meetingStartedAt: null,
       segments: [],
@@ -259,6 +308,14 @@ export const useStore = create<ParleyState>()(
       wargameArgs: [],
       wargameStatus: "idle",
       wargameMessage: null,
+      findings: [],
+      analysisStatus: "idle",
+      analysisError: null,
+      selectedFindingId: null,
+      findingSolutions: {},
+      actionItems: [],
+      actionItemsStatus: "idle",
+      actionItemsError: null,
     }),
 
   exitReplay: () =>
@@ -276,6 +333,14 @@ export const useStore = create<ParleyState>()(
       wargameArgs: [],
       wargameStatus: "idle",
       wargameMessage: null,
+      findings: [],
+      analysisStatus: "idle",
+      analysisError: null,
+      selectedFindingId: null,
+      findingSolutions: {},
+      actionItems: [],
+      actionItemsStatus: "idle",
+      actionItemsError: null,
     }),
 
   setReplayPlayhead: (ms) => set({ replayPlayheadMs: Math.max(0, ms) }),
@@ -284,6 +349,28 @@ export const useStore = create<ParleyState>()(
   setReplayTimelineStatus: (status) => set({ replayTimelineStatus: status }),
   setReplayTimelineError: (error) => set({ replayTimelineError: error }),
   setWargame: (patch) => set(patch),
+
+  // Replacing the findings list invalidates the selection + any cached solutions
+  // (the model mints fresh finding ids each pass, so old solutions are stale).
+  setFindings: (events) => set({ findings: events, selectedFindingId: null, findingSolutions: {} }),
+  setAnalysisStatus: (status) => set({ analysisStatus: status }),
+  setAnalysisError: (error) => set({ analysisError: error }),
+  setSelectedFinding: (id) => set({ selectedFindingId: id }),
+  setFindingSolution: (id, patch) =>
+    set((state) => {
+      const prev = state.findingSolutions[id] ?? { status: "idle", solution: null, error: null };
+      return { findingSolutions: { ...state.findingSolutions, [id]: { ...prev, ...patch } } };
+    }),
+  setAutoAnalyze: (on) => set({ autoAnalyze: on }),
+  setAutoAnalyzeSec: (sec) => set({ autoAnalyzeSec: Math.max(20, sec || 45) }),
+
+  setActionItems: (items) => set({ actionItems: items }),
+  setActionItemsStatus: (status) => set({ actionItemsStatus: status }),
+  setActionItemsError: (error) => set({ actionItemsError: error }),
+  toggleActionItem: (id) =>
+    set((state) => ({
+      actionItems: state.actionItems.map((a) => (a.id === id ? { ...a, done: !a.done } : a)),
+    })),
 
   addTodo: (text) =>
     set((state) => {
@@ -322,6 +409,11 @@ export const useStore = create<ParleyState>()(
       wargameStatus: "idle",
       wargameMessage: null,
       evalError: null,
+      findings: [],
+      analysisStatus: "idle",
+      analysisError: null,
+      selectedFindingId: null,
+      findingSolutions: {},
     }),
 
   setSpeakerName: (key, name) =>
