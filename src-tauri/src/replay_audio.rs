@@ -76,6 +76,24 @@ pub fn compress_for_upload(input: &Path) -> Result<PathBuf> {
     Ok(out_path)
 }
 
+/// Decode `input` to 16 kHz mono `f32` samples in [-1, 1] — the exact form the
+/// speaker-embedding pipeline (and any kaldi-fbank front-end) expects.
+///
+/// Reuses the upload path's decode + linear resampler, then maps the resampled
+/// `i16` PCM back to `f32` by dividing by 32768 (the same convention knf-rs's
+/// `convert_integer_to_float_audio` uses), so callers get a single contiguous
+/// buffer they can slice by timestamp. Decodes once; slicing is the caller's job.
+pub fn decode_to_16k_mono(input: &Path) -> Result<Vec<f32>> {
+    let decoded = decode_to_mono_f32(input)?;
+    if decoded.samples.is_empty() {
+        return Err(anyhow!("decoded audio was empty"));
+    }
+    let mut pcm16: Vec<i16> = Vec::new();
+    let mut resampler = LinearResampler::new(decoded.sample_rate, TARGET_RATE);
+    resampler.process(&decoded.samples, &mut pcm16);
+    Ok(pcm16.into_iter().map(|s| s as f32 / 32768.0).collect())
+}
+
 /// Decode the default audio track of `input` into interleaved-then-downmixed
 /// mono `f32` samples. Captures the source sample rate (channel count is folded
 /// away by the downmix).

@@ -1,5 +1,6 @@
 mod audio;
 mod commands;
+mod diarize;
 mod mcp;
 mod permissions;
 mod replay;
@@ -62,6 +63,7 @@ pub fn run() {
             permissions::request_screen_recording,
             permissions::open_privacy_settings,
             replay::transcribe_file,
+            diarize::diarize_audio,
             mcp::get_mcp_server_info
         ])
         .run(tauri::generate_context!())
