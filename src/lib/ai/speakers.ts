@@ -1,7 +1,6 @@
 import { generateObject } from "ai";
 import { z } from "zod";
 import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider";
-import { speakerLabel } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { log } from "../log";
 import { profileContext } from "./profile";
@@ -43,7 +42,7 @@ type ChunkRun = z.infer<typeof chunkSchema>["runs"][number];
  * expansion lives on the common path rather than only firing when the model
  * disobeys a "start at 0" instruction.
  */
-const SYSTEM = `You re-attribute speakers in a meeting transcript whose automatic speaker diarization was UNRELIABLE (it merged or split people wrongly). You are given a fixed set of ROLES and a WINDOW of transcript lines, each indexed from 0 within the window. Decide which role most likely said each line — using conversational flow, turn-taking, who asks vs. answers, self-references, names, and topic ownership. Adjacent lines are usually the SAME speaker; speaker changes typically happen at question/answer boundaries or topic shifts. Use ONLY the role numbers provided.
+const SYSTEM = `You re-attribute speakers in a meeting transcript whose automatic speaker diarization was UNRELIABLE (it merged or split people wrongly). You are given a fixed set of ROLES and a WINDOW of transcript lines, each indexed from 0 within the window. Decide which role most likely said each line — using conversational flow, turn-taking, who asks vs. answers, self-references, who they address by name, and side-specific phrasing (e.g. "我們崇高…" is the 崇高 side; asking a named teammate to add something means the speaker is on that teammate's side). The lines are given WITHOUT any pre-existing speaker labels ON PURPOSE — the original auto-diarization was wrong, so infer the speaker from the WORDS ALONE, never assume the lines alternate. Use ONLY the role numbers provided.
 
 Output SPEAKER RUNS, not one entry per line: emit a new run only where the speaker CHANGES. Each run is { start, role } where start is the window-local line index where that role begins speaking, and the run continues until the next run's start. Runs must be in ascending order of start. Most windows have only a few runs.
 
@@ -84,7 +83,7 @@ export async function reassignSpeakers(opts: {
   roles: SpeakerRole[];
   names?: Record<string, string>;
 }): Promise<Map<number, number>> {
-  const { settings, segments, roles, names } = opts;
+  const { settings, segments, roles } = opts;
   if (roles.length < 2 || segments.length === 0) return new Map();
 
   const maxRole = roles.length;
@@ -140,9 +139,10 @@ export async function reassignSpeakers(opts: {
           : "");
     }
 
-    const lines = window
-      .map((s, i) => `[${i}] (${speakerLabel(s, names)}) ${s.text.trim()}`)
-      .join("\n");
+    // No speaker labels are shown on purpose: the original diarization is what
+    // was wrong, and showing it just makes the model rubber-stamp it. Give it the
+    // bare text + index and force a fresh judgment from the words alone.
+    const lines = window.map((s, i) => `[${i}] ${s.text.trim()}`).join("\n");
 
     let runs: ChunkRun[];
     try {
