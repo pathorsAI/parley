@@ -9,10 +9,11 @@ import { EvaluationsPanel } from "../sidebar/EvaluationsPanel";
 import { useI18n } from "../../i18n";
 import { ReplayPlayerBar } from "./ReplayPlayerBar";
 import { ReplayTranscript } from "./ReplayTranscript";
+import { ReplaySpeakerTags } from "./ReplaySpeakerTags";
 import { TimelineMarkers } from "./TimelineMarkers";
 import { useReplayPlayer } from "./useReplayPlayer";
 import { useTimelineAnalysis } from "./useTimelineAnalysis";
-import { formatClock } from "../../lib/store";
+import { formatClock, useStore } from "../../lib/store";
 import type { TimelineEvent } from "../../lib/types";
 import {
   replayT,
@@ -45,7 +46,10 @@ export function ReplayView() {
   useTimelineAnalysis();
 
   const segments = session?.segments ?? [];
-  const speakerNames = session?.speakerNames ?? {};
+  // Read the store's speakerNames (seeded from the session on enterReplay) rather
+  // than the static session snapshot, so renaming a speaker re-renders the
+  // transcript and stays in sync with what evals / Ask / the timeline analysis see.
+  const speakerNames = useStore((s) => s.speakerNames);
 
   // Findings at or before the current playhead — "this moment's issues".
   const atMoment = useMemo(() => {
@@ -114,6 +118,11 @@ export function ReplayView() {
                 {t("replay.maskedCount", { count: visibleCount, total: totalCount })}
               </span>
             </div>
+            <ReplaySpeakerTags
+              segments={segments}
+              names={speakerNames}
+              label={t("meeting.speakers")}
+            />
             <div className="min-h-0 flex-1">
               <ReplayTranscript
                 segments={segments}
