@@ -10,6 +10,7 @@ import type {
   TimelineEvent,
   TodoItem,
   TranscriptSegment,
+  WargameArgument,
 } from "./types";
 import type { ReplaySession } from "./replay/types";
 import {
@@ -136,6 +137,19 @@ interface ParleyState {
   setReplayTimelineStatus: (status: ParleyState["replayTimelineStatus"]) => void;
   setReplayTimelineError: (error: string | null) => void;
 
+  /**
+   * Opponent-argument war-gaming, lifted into the store so it can be triggered
+   * both from the War-game tab and from the replay "re-evaluate at this moment"
+   * button (which runs evals + war-gaming together). `wargameMessage` is an
+   * already-localized info/error line; null when there's nothing to say.
+   */
+  wargameArgs: WargameArgument[];
+  wargameStatus: "idle" | "running" | "done" | "error";
+  wargameMessage: string | null;
+  setWargame: (
+    patch: Partial<Pick<ParleyState, "wargameArgs" | "wargameStatus" | "wargameMessage">>
+  ) => void;
+
   meetingStatus: MeetingStatus;
   meetingStartedAt: number | null;
   segments: TranscriptSegment[];
@@ -209,6 +223,9 @@ export const useStore = create<ParleyState>()(
       replayTimeline: [],
       replayTimelineStatus: "idle",
       replayTimelineError: null,
+      wargameArgs: [],
+      wargameStatus: "idle",
+      wargameMessage: null,
       meetingStatus: "idle",
       meetingStartedAt: null,
       segments: [],
@@ -239,6 +256,9 @@ export const useStore = create<ParleyState>()(
       replayTimeline: [],
       replayTimelineStatus: "idle",
       replayTimelineError: null,
+      wargameArgs: [],
+      wargameStatus: "idle",
+      wargameMessage: null,
     }),
 
   exitReplay: () =>
@@ -253,6 +273,9 @@ export const useStore = create<ParleyState>()(
       replayTimeline: [],
       replayTimelineStatus: "idle",
       replayTimelineError: null,
+      wargameArgs: [],
+      wargameStatus: "idle",
+      wargameMessage: null,
     }),
 
   setReplayPlayhead: (ms) => set({ replayPlayheadMs: Math.max(0, ms) }),
@@ -260,6 +283,7 @@ export const useStore = create<ParleyState>()(
   setReplayTimeline: (events) => set({ replayTimeline: events }),
   setReplayTimelineStatus: (status) => set({ replayTimelineStatus: status }),
   setReplayTimelineError: (error) => set({ replayTimelineError: error }),
+  setWargame: (patch) => set(patch),
 
   addTodo: (text) =>
     set((state) => {
@@ -294,6 +318,10 @@ export const useStore = create<ParleyState>()(
       meetingStartedAt: Date.now(),
       segments: [],
       speakerNames: {},
+      wargameArgs: [],
+      wargameStatus: "idle",
+      wargameMessage: null,
+      evalError: null,
     }),
 
   setSpeakerName: (key, name) =>
