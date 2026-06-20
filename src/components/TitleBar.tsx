@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Circle, FileAudio, Loader2, LogOut, Maximize2, Mic, Minus, Settings, Square, X } from "lucide-react";
 import { useStore } from "../lib/store";
+import { log } from "../lib/log";
 import { STT_BY_ID, sttApiKey } from "../lib/transcription/providers";
 import { startMockStream, stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
@@ -37,14 +38,24 @@ export function TitleBar() {
     if (ingestMsg) return;
     const { settings } = useStore.getState();
     setIngestMsg(t("replay.preparing"));
+    log.info("replay: upload started");
     try {
       const { ingestRecording } = await import("../lib/replay/ingest");
       const session = await ingestRecording(settings, {
         onProgress: (p) => setIngestMsg(t(`replay.stage.${p.stage}` as never)),
       });
-      if (session) enterReplay(session);
+      if (session) {
+        log.info("replay: ingest ok", {
+          name: session.name,
+          segments: session.segments.length,
+          durationMs: session.durationMs,
+        });
+        enterReplay(session);
+      } else {
+        log.debug("replay: upload cancelled");
+      }
     } catch (e) {
-      console.error("ingestRecording failed", e);
+      log.error("replay: ingest failed", { error: String(e) });
       setIngestMsg(null);
       window.alert(t("replay.failed", { error: e instanceof Error ? e.message : String(e) }));
       return;
@@ -54,12 +65,13 @@ export function TitleBar() {
 
   async function toggle() {
     if (recording) {
+      log.info("meeting: stop requested");
       stopMeeting();
       if (useRealPipeline) {
         try {
           await invoke("stop_meeting");
         } catch (e) {
-          console.error("stop_meeting failed", e);
+          log.error("meeting: stop failed", { error: String(e) });
         }
       } else {
         stopMockStream();
@@ -68,6 +80,13 @@ export function TitleBar() {
     }
     startMeeting();
     if (useRealPipeline) {
+      log.info("meeting: start requested", {
+        provider: transcriptionProvider,
+        model: STT_BY_ID[transcriptionProvider].label,
+        diarization: STT_BY_ID[transcriptionProvider].diarization,
+        inputDevice,
+        pipeline: "real",
+      });
       try {
         await invoke("start_meeting", {
           provider: transcriptionProvider,
@@ -76,10 +95,15 @@ export function TitleBar() {
           inputDevice,
         });
       } catch (e) {
-        console.error("start_meeting failed", e);
+        log.error("meeting: start failed", {
+          provider: transcriptionProvider,
+          inputDevice,
+          error: String(e),
+        });
         stopMeeting();
       }
     } else {
+      log.info("meeting: start (mock stream)");
       startMockStream();
     }
   }
@@ -92,7 +116,7 @@ export function TitleBar() {
       if (action === "minimize") await appWindow.minimize();
       if (action === "maximize") await appWindow.toggleMaximize();
     } catch (e) {
-      console.error(`window ${action} failed`, e);
+      log.warn("window: action failed", { action, error: String(e) });
     }
   }
 

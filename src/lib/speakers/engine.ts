@@ -1,4 +1,5 @@
 import { useStore, speakerKey } from "../store";
+import { log } from "../log";
 import type { SpeakerRole } from "../types";
 
 /**
@@ -13,7 +14,11 @@ export async function runSpeakerReassign(roles: SpeakerRole[]): Promise<{ assign
   const finalSegs = segments
     .filter((s) => s.isFinal && s.text.trim())
     .sort((a, b) => a.startMs - b.startMs);
-  if (finalSegs.length === 0) throw new Error("No transcript to re-attribute.");
+  log.info("speakers: reassign start", { roles: roles.length, finalSegs: finalSegs.length });
+  if (finalSegs.length === 0) {
+    log.warn("speakers: no transcript");
+    throw new Error("No transcript to re-attribute.");
+  }
 
   const { reassignSpeakers } = await import("../ai/speakers");
   const indexToRole = await reassignSpeakers({ settings, segments: finalSegs, roles, names: speakerNames });
@@ -41,6 +46,8 @@ export async function runSpeakerReassign(roles: SpeakerRole[]): Promise<{ assign
     segments: updated,
     speakerNames: { ...useStore.getState().speakerNames, ...newNames },
   });
+
+  log.info("speakers: reassign applied", { assigned: idToRole.size, total: finalSegs.length });
 
   return { assigned: idToRole.size, total: finalSegs.length };
 }

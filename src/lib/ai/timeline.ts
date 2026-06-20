@@ -4,6 +4,7 @@ import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider"
 import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext, outputLanguageInstruction } from "./profile";
+import { log } from "../log";
 import type { EvalDef, Settings, TimelineEvent, TranscriptSegment } from "../types";
 
 // One notable moment the model surfaced. `time` is the [m:ss]/m:ss it cites; we
@@ -104,13 +105,21 @@ export async function analyzeTimeline(opts: {
     ? evals.map((e) => `### id: ${e.id}\nname: ${e.name}\nwatch for: ${e.prompt}`).join("\n\n")
     : "(none configured)";
 
-  const { object, usage } = await generateObject({
+  const provider = settings.provider;
+  const model = settings.models[settings.provider].eval;
+  log.info("ai.timeline: start", { provider, model, segments: segments.length, evals: evals.length });
+
+  const generated = await generateObject({
     model: getModel(settings, "eval"),
     providerOptions: getProviderOptions(settings, "eval"),
     schema,
     system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: `${ctx}Active evaluations:\n${list}\n\nFull transcript:\n${transcript || "(no speech was captured)"}`,
+  }).catch((e) => {
+    log.error("ai.timeline: failed", { provider, model, error: String(e) });
+    throw e;
   });
+  const { object, usage } = generated;
   void recordLlmUsage(settings, "eval", "eval", usage);
 
   // Only treat evalId as valid if it actually matches a configured evaluation.
@@ -141,5 +150,6 @@ export async function analyzeTimeline(opts: {
   }
 
   events.sort((a, b) => a.atMs - b.atMs);
+  log.info("ai.timeline: ok", { raw: object.events.length, placed: events.length });
   return events;
 }

@@ -11,6 +11,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { Settings, TranscriptSegment } from "../types";
 import type { ReplaySession } from "./types";
 import { toTraditional } from "../zhConvert";
+import { log } from "../log";
 import { recordUsage } from "../usage/log";
 import { sttCostUsd } from "../usage/pricing";
 
@@ -67,6 +68,9 @@ export async function ingestRecording(
   opts: IngestOptions = {},
 ): Promise<ReplaySession | null> {
   if (settings.transcriptionProvider !== "soniox") {
+    log.warn("ingest: rejected, provider not soniox", {
+      provider: settings.transcriptionProvider,
+    });
     throw new Error(
       "Replay currently supports Soniox only — switch transcription provider to Soniox in Settings",
     );
@@ -74,6 +78,7 @@ export async function ingestRecording(
 
   const apiKey = settings.sonioxApiKey?.trim();
   if (!apiKey) {
+    log.warn("ingest: missing soniox key");
     throw new Error("Add your Soniox API key in Settings to transcribe recordings");
   }
 
@@ -89,22 +94,31 @@ export async function ingestRecording(
   const audioPath = Array.isArray(selected) ? selected[0] : selected;
   if (!audioPath) return null;
 
-  opts.onProgress?.({ stage: "decoding" });
+  const name = fileNameOf(audioPath);
+  log.info("ingest: file selected", { name });
+
+  reportStage(opts, { stage: "decoding" });
 
   // Language hints come from settings if present; empty lets Soniox auto-detect.
   const languageHints = languageHintsFromSettings(settings);
 
-  opts.onProgress?.({ stage: "uploading" });
+  reportStage(opts, { stage: "uploading" });
 
   // The Rust command uploads the file, creates the async job, polls to
   // completion, then fetches the diarized tokens. It owns the network + secrets.
-  opts.onProgress?.({ stage: "transcribing" });
+  reportStage(opts, { stage: "transcribing" });
+  log.info("ingest: transcribe invoke", { languageHints, diarization: true });
   const result = await invoke<RustTranscriptionResult>("transcribe_file", {
     path: audioPath,
     apiKey,
     model: null,
     languageHints,
     diarization: true,
+  });
+  log.info("ingest: transcription ok", {
+    segments: result.segments.length,
+    durationMs: result.durationMs,
+    cached: result.cached,
   });
 
   // Soniox returns Simplified for zh audio; convert to Traditional to match the
@@ -130,19 +144,23 @@ export async function ingestRecording(
   // are billed separately via recordLlmUsage.)
   if (!result.cached && durationMs > 0) {
     const seconds = durationMs / 1000;
+    const costUsd = sttCostUsd("soniox", seconds);
+    log.debug("ingest: stt usage recorded", { seconds, costUsd, cached: false });
     void recordUsage({
       kind: "stt",
       category: "transcription",
       provider: "soniox",
       model: "",
       seconds,
-      costUsd: sttCostUsd("soniox", seconds),
+      costUsd,
     });
+  } else {
+    log.debug("ingest: billing skipped (cached)");
   }
 
   return {
     id: crypto.randomUUID(),
-    name: fileNameOf(audioPath),
+    name,
     audioPath,
     // Asset protocol URL — supports HTTP range requests so the <audio> element
     // can seek/scrub. Enabled via tauri.conf.json app.security.assetProtocol.
@@ -152,6 +170,12 @@ export async function ingestRecording(
     segments,
     speakerNames: {},
   };
+}
+
+/** Surface a progress stage to both the UI callback and the log file. */
+function reportStage(opts: IngestOptions, p: IngestProgress): void {
+  log.debug("ingest: stage", { stage: p.stage });
+  opts.onProgress?.(p);
 }
 
 /** Derive BCP-47 language hints from settings; empty array = auto-detect. */

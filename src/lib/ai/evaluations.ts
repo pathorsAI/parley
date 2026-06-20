@@ -4,6 +4,7 @@ import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider"
 import { transcriptAsText, useStore } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext, outputLanguageInstruction } from "./profile";
+import { log } from "../log";
 import type { EvalDef, EvalResult, Settings, TranscriptSegment } from "../types";
 
 // One result per evaluation, returned together from a single model call.
@@ -47,6 +48,13 @@ export async function runAllEvaluations(opts: {
     .map((e) => `### id: ${e.id}\nname: ${e.name}\nwatch for: ${e.prompt}`)
     .join("\n\n");
 
+  log.info("ai.eval: start", {
+    provider: settings.provider,
+    model: settings.models[settings.provider].eval,
+    evals: evals.length,
+    segments: segments.length,
+  });
+
   const { object, usage } = await generateObject({
     model: getModel(settings, "eval"),
     providerOptions: getProviderOptions(settings, "eval"),
@@ -60,5 +68,6 @@ export async function runAllEvaluations(opts: {
   for (const r of object.results) {
     map[r.id] = { flagged: r.flagged, severity: r.severity, summary: r.summary, evidence: r.evidence };
   }
+  log.info("ai.eval: ok", { results: object.results.length });
   return map;
 }
