@@ -4,8 +4,6 @@ import type {
   ActionItem,
   AppLanguage,
   Evaluation,
-  EvalResult,
-  EvalStatus,
   FindingSolutionEntry,
   MeetingStatus,
   Settings,
@@ -113,30 +111,20 @@ interface ParleyState {
   /**
    * "live" = capturing mic/system audio now; "replay" = analyzing an uploaded
    * recording. In replay mode the uploaded transcript is loaded into `segments`,
-   * so every existing panel (transcript, evals, ask, report) works unchanged —
-   * the only twist is `visibleSegments` masks them to `replayPlayheadMs`.
+   * so every panel (transcript, findings, ask, report) works unchanged; the
+   * playhead is for navigation/viewing only (no masking).
    */
   appMode: AppMode;
   /** The uploaded recording under analysis (null in live mode). */
   replay: ReplaySession | null;
-  /** Scrub position (ms) in replay mode; transcript is masked to at/under this. */
+  /** Scrub position (ms) in replay mode — drives audio + transcript highlight. */
   replayPlayheadMs: number;
   /** Load an uploaded recording and switch into replay mode. */
   enterReplay: (session: ReplaySession) => void;
   /** Leave replay mode and return to a clean live/idle state. */
   exitReplay: () => void;
-  /** Move the replay playhead (drives both audio position and transcript mask). */
+  /** Move the replay playhead (drives both audio position and the transcript). */
   setReplayPlayhead: (ms: number) => void;
-
-  /** Time-anchored retro findings for the replay timeline (whole-recording). */
-  replayTimeline: TimelineEvent[];
-  /** Lifecycle of the whole-recording timeline analysis. */
-  replayTimelineStatus: "idle" | "running" | "done" | "error";
-  /** Error message from the last failed timeline analysis (null otherwise). */
-  replayTimelineError: string | null;
-  setReplayTimeline: (events: TimelineEvent[]) => void;
-  setReplayTimelineStatus: (status: ParleyState["replayTimelineStatus"]) => void;
-  setReplayTimelineError: (error: string | null) => void;
 
   // ── Unified analysis (shared by LIVE + REPLAY) ──────────────────────────────
   /**
@@ -220,19 +208,6 @@ interface ParleyState {
   upsertSegment: (segment: TranscriptSegment) => void;
   clearTranscript: () => void;
 
-  // evaluations
-  setEvalStatus: (id: string, status: EvalStatus) => void;
-  setEvalResult: (id: string, result: EvalResult) => void;
-  setAllEvalStatus: (status: EvalStatus) => void;
-  /** Error message from the last failed "Run all" evaluation (null otherwise). */
-  evalError: string | null;
-  setEvalError: (error: string | null) => void;
-  /** Whether to auto-rerun the whole evaluation set on an interval while recording. */
-  autoEval: boolean;
-  autoEvalSec: number;
-  setAutoEval: (on: boolean) => void;
-  setAutoEvalSec: (sec: number) => void;
-
   // settings
   updateSettings: (patch: Partial<Settings>) => void;
   /** Replace settings wholesale — used to sync from the settings window. */
@@ -245,9 +220,6 @@ export const useStore = create<ParleyState>()(
       appMode: "live",
       replay: null,
       replayPlayheadMs: 0,
-      replayTimeline: [],
-      replayTimelineStatus: "idle",
-      replayTimelineError: null,
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
@@ -266,10 +238,7 @@ export const useStore = create<ParleyState>()(
       speakerNames: {},
       todos: [],
       meetingContext: "",
-      autoEval: false,
-      autoEvalSec: 30,
       highlightMs: null,
-      evalError: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
@@ -278,16 +247,13 @@ export const useStore = create<ParleyState>()(
     set({
       appMode: "replay",
       replay: session,
-      // Default the playhead to the end so the full transcript shows; the user
-      // drags back to a moment to mask the future before re-evaluating.
-      replayPlayheadMs: session.durationMs,
+      // Start at the beginning of the recording (the full transcript always
+      // shows now — no masking); the playhead is just for playback/navigation.
+      replayPlayheadMs: 0,
       segments: session.segments,
       speakerNames: session.speakerNames,
       meetingStatus: "stopped",
       highlightMs: null,
-      replayTimeline: [],
-      replayTimelineStatus: "idle",
-      replayTimelineError: null,
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
@@ -307,9 +273,6 @@ export const useStore = create<ParleyState>()(
       speakerNames: {},
       meetingStatus: "idle",
       highlightMs: null,
-      replayTimeline: [],
-      replayTimelineStatus: "idle",
-      replayTimelineError: null,
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
@@ -321,10 +284,6 @@ export const useStore = create<ParleyState>()(
     }),
 
   setReplayPlayhead: (ms) => set({ replayPlayheadMs: Math.max(0, ms) }),
-
-  setReplayTimeline: (events) => set({ replayTimeline: events }),
-  setReplayTimelineStatus: (status) => set({ replayTimelineStatus: status }),
-  setReplayTimelineError: (error) => set({ replayTimelineError: error }),
 
   // Replacing the findings list invalidates the selection + any cached solutions
   // (the model mints fresh finding ids each pass, so old solutions are stale).
@@ -381,7 +340,6 @@ export const useStore = create<ParleyState>()(
       meetingStartedAt: Date.now(),
       segments: [],
       speakerNames: {},
-      evalError: null,
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
@@ -411,35 +369,6 @@ export const useStore = create<ParleyState>()(
     }),
 
   clearTranscript: () => set({ segments: [] }),
-
-  setEvalStatus: (id, status) =>
-    set((state) => ({
-      evaluations: state.evaluations.map((e) =>
-        e.id === id ? { ...e, status } : e
-      ),
-    })),
-
-  setEvalResult: (id, result) =>
-    set((state) => ({
-      evaluations: state.evaluations.map((e) =>
-        e.id === id
-          ? {
-              ...e,
-              result,
-              status: result.flagged ? "flag" : "ok",
-              lastRunAt: Date.now(),
-            }
-          : e
-      ),
-    })),
-
-  setAllEvalStatus: (status) =>
-    set((state) => ({ evaluations: state.evaluations.map((e) => ({ ...e, status })) })),
-
-  setEvalError: (error) => set({ evalError: error }),
-
-  setAutoEval: (on) => set({ autoEval: on }),
-  setAutoEvalSec: (sec) => set({ autoEvalSec: Math.max(5, sec || 30) }),
 
   updateSettings: (patch) =>
     set((state) => {
@@ -528,21 +457,6 @@ export const useStore = create<ParleyState>()(
     }
   )
 );
-
-/**
- * The transcript the AI is allowed to see right now. Identical to `segments` in
- * live mode; in replay mode it's masked to segments at/under the playhead, so an
- * evaluation re-run simulates "what was known at this moment" — the core of the
- * scrub-and-evaluate retro flow. Pass the store state (or the relevant slice).
- */
-export function visibleSegments(
-  state: Pick<ParleyState, "appMode" | "replayPlayheadMs" | "segments">
-): TranscriptSegment[] {
-  if (state.appMode === "replay") {
-    return state.segments.filter((s) => s.startMs <= state.replayPlayheadMs);
-  }
-  return state.segments;
-}
 
 /**
  * A stable key per distinct speaker. Includes the diarized speaker number on
