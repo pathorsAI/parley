@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useStore } from "../store";
+import { useStore, visibleSegments } from "../store";
 import { hasProviderKey } from "../ai/settings";
 
 let evalBusy = false;
@@ -10,8 +10,11 @@ let evalBusy = false;
  * Skips silently if there's no LLM key, no transcript, or a run is in flight.
  */
 export async function runAllEvaluations(): Promise<void> {
-  const { settings, segments, speakerNames, evaluations, setAllEvalStatus, setEvalResult, setEvalStatus } =
-    useStore.getState();
+  const state = useStore.getState();
+  const { settings, speakerNames, evaluations, setAllEvalStatus, setEvalResult, setEvalStatus } = state;
+  // In replay mode this masks the transcript to the current playhead, so a re-run
+  // judges only what had been said by that moment.
+  const segments = visibleSegments(state);
   if (evalBusy) return;
   if (!hasProviderKey(settings)) return;
   if (evaluations.length === 0) return;

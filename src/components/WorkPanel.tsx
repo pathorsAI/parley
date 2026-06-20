@@ -6,6 +6,9 @@ import { Badge } from "@/components/ui/badge";
 
 const AskPanel = lazy(() => import("./sidebar/AskPanel").then((m) => ({ default: m.AskPanel })));
 const TodosPanel = lazy(() => import("./sidebar/TodosPanel").then((m) => ({ default: m.TodosPanel })));
+const WargamePanel = lazy(() =>
+  import("./wargame/WargamePanel").then((m) => ({ default: m.WargamePanel }))
+);
 
 /** Center pane: the primary interactive surfaces — Ask and the TODO checklist. */
 export function WorkPanel() {
@@ -25,6 +28,7 @@ export function WorkPanel() {
               </Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="wargame">{t("work.wargame")}</TabsTrigger>
         </TabsList>
       </div>
       <TabsContent value="ask" className="min-h-0 flex-1 outline-none">
@@ -35,6 +39,11 @@ export function WorkPanel() {
       <TabsContent value="todos" className="min-h-0 flex-1 outline-none">
         <Suspense fallback={null}>
           <TodosPanel />
+        </Suspense>
+      </TabsContent>
+      <TabsContent value="wargame" className="min-h-0 flex-1 outline-none">
+        <Suspense fallback={null}>
+          <WargamePanel />
         </Suspense>
       </TabsContent>
     </Tabs>

@@ -2,6 +2,7 @@ mod audio;
 mod commands;
 mod mcp;
 mod permissions;
+mod replay;
 mod transcription;
 mod usage;
 
@@ -13,6 +14,7 @@ use commands::MeetingState;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(MeetingState::default())
         .setup(|app| {
             app.manage(mcp::start(app.handle().clone()));
@@ -35,6 +37,7 @@ pub fn run() {
             permissions::check_permissions,
             permissions::request_screen_recording,
             permissions::open_privacy_settings,
+            replay::transcribe_file,
             mcp::get_mcp_server_info
         ])
         .run(tauri::generate_context!())

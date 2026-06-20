@@ -1,10 +1,8 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { Download, Check } from "lucide-react";
+import { Copy, Check } from "lucide-react";
 import { TranscriptPanel } from "./TranscriptPanel";
 import { SpeakerBar } from "./SpeakerBar";
 import { useStore, transcriptAsText } from "../lib/store";
-import { isTauri } from "../lib/tauriEvents";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 
@@ -31,20 +29,15 @@ function buildMarkdown(): string {
 export function MeetingView() {
   const { t } = useI18n();
   const hasSegments = useStore((s) => s.segments.some((x) => x.isFinal && x.text.trim()));
-  const [saved, setSaved] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
-  async function save() {
-    if (!isTauri()) return;
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  async function copy() {
     try {
-      const path = await invoke<string>("save_transcript", {
-        filename: `parley-${stamp}.md`,
-        contents: buildMarkdown(),
-      });
-      setSaved(path);
-      setTimeout(() => setSaved(null), 4000);
+      await navigator.clipboard.writeText(buildMarkdown());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
     } catch (e) {
-      console.error("save_transcript failed", e);
+      console.error("copy transcript failed", e);
     }
   }
 
@@ -53,14 +46,9 @@ export function MeetingView() {
       <div className="flex h-10 shrink-0 items-center justify-between border-b px-5">
         <span className="text-xs font-medium text-foreground">{t("meeting.transcript")}</span>
         <div className="flex items-center gap-2">
-          {saved && (
-            <span className="flex items-center gap-1 text-[11px] text-emerald-400">
-              <Check className="size-3" /> {t("meeting.saved")}
-            </span>
-          )}
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" disabled={!hasSegments} onClick={save}>
-            <Download className="size-3" />
-            {t("meeting.save")}
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" disabled={!hasSegments} onClick={copy}>
+            {copied ? <Check className="size-3 text-emerald-400" /> : <Copy className="size-3" />}
+            {copied ? t("meeting.copied") : t("meeting.copy")}
           </Button>
         </div>
       </div>

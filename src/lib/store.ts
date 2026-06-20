@@ -9,6 +9,7 @@ import type {
   TodoItem,
   TranscriptSegment,
 } from "./types";
+import type { ReplaySession } from "./replay/types";
 import { PRESET_EVAL_DEFS, PRESET_EVAL_TEMPLATES, evalsFromDefs } from "./evaluations/presets";
 import { reconcileTemplates } from "./templates";
 import { PRESET_TODO_TEMPLATES } from "./todoTemplates";
@@ -65,7 +66,28 @@ const DEFAULT_SETTINGS: Settings = {
   ...ENV_KEYS,
 };
 
+/** Whether the app is capturing a live meeting or analyzing an uploaded one. */
+export type AppMode = "live" | "replay";
+
 interface ParleyState {
+  /**
+   * "live" = capturing mic/system audio now; "replay" = analyzing an uploaded
+   * recording. In replay mode the uploaded transcript is loaded into `segments`,
+   * so every existing panel (transcript, evals, ask, report) works unchanged —
+   * the only twist is `visibleSegments` masks them to `replayPlayheadMs`.
+   */
+  appMode: AppMode;
+  /** The uploaded recording under analysis (null in live mode). */
+  replay: ReplaySession | null;
+  /** Scrub position (ms) in replay mode; transcript is masked to at/under this. */
+  replayPlayheadMs: number;
+  /** Load an uploaded recording and switch into replay mode. */
+  enterReplay: (session: ReplaySession) => void;
+  /** Leave replay mode and return to a clean live/idle state. */
+  exitReplay: () => void;
+  /** Move the replay playhead (drives both audio position and transcript mask). */
+  setReplayPlayhead: (ms: number) => void;
+
   meetingStatus: MeetingStatus;
   meetingStartedAt: number | null;
   segments: TranscriptSegment[];
@@ -130,6 +152,9 @@ interface ParleyState {
 export const useStore = create<ParleyState>()(
   persist(
     (set) => ({
+      appMode: "live",
+      replay: null,
+      replayPlayheadMs: 0,
       meetingStatus: "idle",
       meetingStartedAt: null,
       segments: [],
@@ -144,6 +169,32 @@ export const useStore = create<ParleyState>()(
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
+
+  enterReplay: (session) =>
+    set({
+      appMode: "replay",
+      replay: session,
+      // Default the playhead to the end so the full transcript shows; the user
+      // drags back to a moment to mask the future before re-evaluating.
+      replayPlayheadMs: session.durationMs,
+      segments: session.segments,
+      speakerNames: session.speakerNames,
+      meetingStatus: "stopped",
+      highlightMs: null,
+    }),
+
+  exitReplay: () =>
+    set({
+      appMode: "live",
+      replay: null,
+      replayPlayheadMs: 0,
+      segments: [],
+      speakerNames: {},
+      meetingStatus: "idle",
+      highlightMs: null,
+    }),
+
+  setReplayPlayhead: (ms) => set({ replayPlayheadMs: Math.max(0, ms) }),
 
   addTodo: (text) =>
     set((state) => {
@@ -296,6 +347,21 @@ export const useStore = create<ParleyState>()(
     }
   )
 );
+
+/**
+ * The transcript the AI is allowed to see right now. Identical to `segments` in
+ * live mode; in replay mode it's masked to segments at/under the playhead, so an
+ * evaluation re-run simulates "what was known at this moment" — the core of the
+ * scrub-and-evaluate retro flow. Pass the store state (or the relevant slice).
+ */
+export function visibleSegments(
+  state: Pick<ParleyState, "appMode" | "replayPlayheadMs" | "segments">
+): TranscriptSegment[] {
+  if (state.appMode === "replay") {
+    return state.segments.filter((s) => s.startMs <= state.replayPlayheadMs);
+  }
+  return state.segments;
+}
 
 /**
  * A stable key per distinct speaker. Includes the diarized speaker number on
