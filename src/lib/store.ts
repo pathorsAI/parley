@@ -129,8 +129,11 @@ interface ParleyState {
   replayTimeline: TimelineEvent[];
   /** Lifecycle of the whole-recording timeline analysis. */
   replayTimelineStatus: "idle" | "running" | "done" | "error";
+  /** Error message from the last failed timeline analysis (null otherwise). */
+  replayTimelineError: string | null;
   setReplayTimeline: (events: TimelineEvent[]) => void;
   setReplayTimelineStatus: (status: ParleyState["replayTimelineStatus"]) => void;
+  setReplayTimelineError: (error: string | null) => void;
 
   meetingStatus: MeetingStatus;
   meetingStartedAt: number | null;
@@ -201,6 +204,7 @@ export const useStore = create<ParleyState>()(
       replayPlayheadMs: 0,
       replayTimeline: [],
       replayTimelineStatus: "idle",
+      replayTimelineError: null,
       meetingStatus: "idle",
       meetingStartedAt: null,
       segments: [],
@@ -229,6 +233,7 @@ export const useStore = create<ParleyState>()(
       highlightMs: null,
       replayTimeline: [],
       replayTimelineStatus: "idle",
+      replayTimelineError: null,
     }),
 
   exitReplay: () =>
@@ -242,12 +247,14 @@ export const useStore = create<ParleyState>()(
       highlightMs: null,
       replayTimeline: [],
       replayTimelineStatus: "idle",
+      replayTimelineError: null,
     }),
 
   setReplayPlayhead: (ms) => set({ replayPlayheadMs: Math.max(0, ms) }),
 
   setReplayTimeline: (events) => set({ replayTimeline: events }),
   setReplayTimelineStatus: (status) => set({ replayTimelineStatus: status }),
+  setReplayTimelineError: (error) => set({ replayTimelineError: error }),
 
   addTodo: (text) =>
     set((state) => {

@@ -7,6 +7,7 @@ import { useI18n } from "../../i18n";
 import {
   replayT,
   useReplayTimeline,
+  useReplayTimelineError,
   useReplayTimelineStatus,
 } from "./spine";
 import { reanalyzeTimeline } from "./useTimelineAnalysis";
@@ -40,6 +41,7 @@ export function TimelineMarkers({ durationMs, playheadMs, onSeek }: TimelineMark
 
   const events = useReplayTimeline();
   const status = useReplayTimelineStatus();
+  const error = useReplayTimelineError();
   const [hovered, setHovered] = useState<string | null>(null);
 
   const { them, me } = useMemo(
@@ -64,7 +66,12 @@ export function TimelineMarkers({ durationMs, playheadMs, onSeek }: TimelineMark
           )}
           {running && <span className="text-[10px] text-muted-foreground">{t("timeline.analyzing")}</span>}
           {status === "error" && (
-            <span className="text-[10px] text-orange-500">{t("timeline.failed", { error: "—" })}</span>
+            <span
+              className="max-w-[260px] truncate text-[10px] text-orange-500"
+              title={error ?? undefined}
+            >
+              {t("timeline.failed", { error: error ?? "—" })}
+            </span>
           )}
           <button
             type="button"
