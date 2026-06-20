@@ -1,8 +1,8 @@
-import { useState } from "react";
-import { Pause, Play, Scissors, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, Pause, Play, Scissors } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { formatClock } from "../../lib/store";
+import { formatClock, type ReplayTrim } from "../../lib/store";
 import { Scrubber } from "./Scrubber";
 import { TrimBar } from "./TrimBar";
 import { useReplayTrim, useSetReplayTrim } from "./spine";
@@ -12,7 +12,8 @@ interface ReplayPlayerBarProps {
   name: string;
   durationMs: number;
   player: ReplayPlayer;
-  onExit: () => void;
+  /** Commit a trim change: re-runs the whole-recording analysis on the new range. */
+  onApplyTrim: () => void;
   /** Localized strings (resolved by the parent via the replay i18n shim). */
   labels: {
     title: string;
@@ -20,6 +21,7 @@ interface ReplayPlayerBarProps {
     pause: string;
     playhead: string;
     trim: string;
+    trimApply: string;
     trimReset: string;
     /** Template with {start}/{end} placeholders. */
     trimKept: string;
@@ -29,43 +31,48 @@ interface ReplayPlayerBarProps {
   };
 }
 
-/**
- * The replay header: transport controls, a draggable timeline, the current
- * time/duration, and the trim (keep-window) controls. The playhead is for
- * navigation/viewing only — analysis runs once on load (no re-evaluation on
- * scrub); the trim narrows what every analysis sees.
- */
-export function ReplayPlayerBar({
-  name,
-  durationMs,
-  player,
-  onExit,
-  labels,
-}: ReplayPlayerBarProps) {
-  const [trimOpen, setTrimOpen] = useState(false);
-  const trim = useReplayTrim();
-  const setTrim = useSetReplayTrim();
+/** Two trim windows equal? (null = no trim). */
+function sameTrim(a: ReplayTrim | null, b: ReplayTrim | null): boolean {
+  return (a?.startMs ?? -1) === (b?.startMs ?? -1) && (a?.endMs ?? -1) === (b?.endMs ?? -1);
+}
 
-  const keptText = trim
-    ? labels.trimKept
-        .replace("{start}", formatClock(trim.startMs))
-        .replace("{end}", formatClock(trim.endMs))
-    : "";
+/**
+ * The replay header: transport controls, a draggable timeline, and the trim
+ * (keep-window) controls. Exit lives in the TitleBar. The playhead is for
+ * navigation/viewing only — analysis runs once on load (no re-evaluation on
+ * scrub). Trimming is a DRAFT until "Apply": dragging the handles previews the
+ * window on the bar, and Apply commits it and re-runs the analysis on the
+ * narrowed range (that's what actually performs the cut).
+ */
+export function ReplayPlayerBar({ name, durationMs, player, onApplyTrim, labels }: ReplayPlayerBarProps) {
+  const committed = useReplayTrim();
+  const setTrim = useSetReplayTrim();
+  const [trimOpen, setTrimOpen] = useState(false);
+  // Draft window the handles edit; committed to the store only on Apply.
+  const [draft, setDraft] = useState<ReplayTrim | null>(committed);
+  useEffect(() => setDraft(committed), [committed]);
+
+  const dirty = !sameTrim(draft, committed);
+  const keptText =
+    draft && labels.trimKept
+      ? labels.trimKept.replace("{start}", formatClock(draft.startMs)).replace("{end}", formatClock(draft.endMs))
+      : "";
+
+  function apply() {
+    setTrim(draft);
+    onApplyTrim();
+  }
+  function reset() {
+    setDraft(null);
+    setTrim(null);
+    onApplyTrim();
+  }
 
   return (
     <div className="shrink-0 border-b">
       <div className="flex h-10 items-center gap-2 px-4">
         <span className="truncate text-xs font-medium text-foreground">{labels.title}</span>
         <span className="truncate text-[11px] text-muted-foreground">· {name}</span>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="ml-auto text-muted-foreground hover:text-foreground"
-          onClick={onExit}
-          title={labels.title}
-        >
-          <X className="size-4" />
-        </Button>
       </div>
 
       <div className="px-4 pb-3">
@@ -100,16 +107,15 @@ export function ReplayPlayerBar({
             {formatClock(durationMs)}
           </span>
 
-          {/* Toggle the trim handles. Stays highlighted while a trim is active so
-              it's clear analysis is running on a clipped range. */}
+          {/* Toggle the trim handles. Stays highlighted while a trim is active. */}
           <Button
             variant="ghost"
             size="icon-sm"
             className={cn(
               "shrink-0 text-muted-foreground hover:text-foreground",
-              (trimOpen || trim) && "text-primary"
+              (trimOpen || committed) && "text-primary"
             )}
-            aria-pressed={trimOpen || !!trim}
+            aria-pressed={trimOpen || !!committed}
             onClick={() => setTrimOpen((o) => !o)}
             title={labels.trim}
           >
@@ -117,30 +123,40 @@ export function ReplayPlayerBar({
           </Button>
         </div>
 
-        {(trimOpen || trim) && (
+        {(trimOpen || committed) && (
           <>
             <div className="mt-2 flex items-center gap-3">
               <span className="w-10 shrink-0 text-right text-[10px] text-muted-foreground">{labels.trim}</span>
               <div className="min-w-0 flex-1">
                 <TrimBar
                   durationMs={durationMs}
-                  trim={trim}
-                  onChange={setTrim}
+                  trim={draft}
+                  onChange={setDraft}
                   startLabel={labels.trimStart}
                   endLabel={labels.trimEnd}
                 />
               </div>
+              <Button
+                size="sm"
+                className="h-7 shrink-0 gap-1 px-2 text-[11px]"
+                disabled={!dirty}
+                onClick={apply}
+                title={labels.trimApply}
+              >
+                <Check className="size-3" />
+                {labels.trimApply}
+              </Button>
               <button
                 type="button"
-                onClick={() => setTrim(null)}
-                disabled={!trim}
-                className="w-10 shrink-0 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-30"
+                onClick={reset}
+                disabled={!committed && !draft}
+                className="shrink-0 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-30"
               >
                 {labels.trimReset}
               </button>
             </div>
             <div className="mt-1 flex items-center gap-2 pl-[52px] text-[10px] text-muted-foreground/70">
-              {trim ? <span className="tabular-nums text-primary/80">{keptText}</span> : null}
+              {draft ? <span className="tabular-nums text-primary/80">{keptText}</span> : null}
               <span>{labels.trimNote}</span>
             </div>
           </>

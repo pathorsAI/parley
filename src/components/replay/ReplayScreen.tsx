@@ -17,7 +17,7 @@ import { ReplaySpeakerTags } from "./ReplaySpeakerTags";
 import { ActionItemsPanel } from "./ActionItemsPanel";
 import { useReplayPlayer } from "./useReplayPlayer";
 import { useReplayAnalysis } from "./useReplayAnalysis";
-import { useExitReplay, useReplayPlayheadMs, useReplaySession, useReplayTrim } from "./spine";
+import { useReplayPlayheadMs, useReplaySession, useReplayTrim } from "./spine";
 
 /**
  * The REPLAY screen: play an uploaded recording and review the whole-recording
@@ -32,7 +32,6 @@ export function ReplayScreen() {
 
   const session = useReplaySession();
   const playheadMs = useReplayPlayheadMs();
-  const exitReplay = useExitReplay();
   const player = useReplayPlayer(session?.durationMs ?? 0);
 
   // Run the whole-recording analysis once, then chain action items.
@@ -76,13 +75,14 @@ export function ReplayScreen() {
         name={session.name}
         durationMs={session.durationMs}
         player={player}
-        onExit={exitReplay}
+        onApplyTrim={() => void runAnalysis({ mode: "replay" })}
         labels={{
           title: t("replay.title"),
           play: t("replay.play"),
           pause: t("replay.pause"),
           playhead: t("replay.playhead"),
           trim: t("replay.trim"),
+          trimApply: t("replay.trimApply"),
           trimReset: t("replay.trimReset"),
           trimKept: t("replay.trimKept"),
           trimNote: t("replay.trimNote"),
