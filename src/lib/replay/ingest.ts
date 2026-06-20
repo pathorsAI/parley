@@ -10,6 +10,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 
 import type { Settings, TranscriptSegment } from "../types";
 import type { ReplaySession } from "./types";
+import { toTraditional } from "../zhConvert";
 
 /** Coarse progress stages surfaced to the UI while a recording is ingested. */
 export type IngestStage = "decoding" | "uploading" | "transcribing";
@@ -102,15 +103,19 @@ export async function ingestRecording(
     diarization: true,
   });
 
-  const segments: TranscriptSegment[] = result.segments.map((s) => ({
-    id: s.id,
-    source: "them",
-    speaker: s.speaker,
-    text: s.text,
-    isFinal: true,
-    startMs: s.startMs,
-    endMs: s.endMs,
-  }));
+  // Soniox returns Simplified for zh audio; convert to Traditional to match the
+  // live transcription path (tauriEvents.ts also runs OpenCC cn→tw on segments).
+  const segments: TranscriptSegment[] = await Promise.all(
+    result.segments.map(async (s) => ({
+      id: s.id,
+      source: "them" as const,
+      speaker: s.speaker,
+      text: await toTraditional(s.text),
+      isFinal: true,
+      startMs: s.startMs,
+      endMs: s.endMs,
+    }))
+  );
 
   const durationMs =
     result.durationMs ||
