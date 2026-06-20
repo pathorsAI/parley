@@ -1,7 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { Sparkles } from "lucide-react";
 import { useStore, speakerKey, defaultSpeakerLabel } from "../../lib/store";
 import { speakerDotClass } from "../../lib/speakerColors";
+import { useI18n } from "../../i18n";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { SpeakerReassignDialog } from "./SpeakerReassignDialog";
 import type { Source, TranscriptSegment } from "../../lib/types";
 
 interface SpeakerEntry {
@@ -27,7 +31,9 @@ interface ReplaySpeakerTagsProps {
  * one of that speaker's transcript lines and the analysis context at once.
  */
 export function ReplaySpeakerTags({ segments, names, label }: ReplaySpeakerTagsProps) {
+  const { t } = useI18n();
   const setSpeakerName = useStore((s) => s.setSpeakerName);
+  const [reassignOpen, setReassignOpen] = useState(false);
 
   // Distinct speakers in first-appearance order.
   const speakers = useMemo<SpeakerEntry[]>(() => {
@@ -59,6 +65,18 @@ export function ReplaySpeakerTags({ segments, names, label }: ReplaySpeakerTagsP
           />
         </div>
       ))}
+      {/* STT diarization is often wrong — let the LLM re-attribute by context. */}
+      <Button
+        variant="outline"
+        size="sm"
+        className="ml-auto h-7 gap-1.5 px-2 text-[11px]"
+        onClick={() => setReassignOpen(true)}
+        title={t("speakers.reassignTitle")}
+      >
+        <Sparkles className="size-3" />
+        {t("speakers.aiButton")}
+      </Button>
+      {reassignOpen && <SpeakerReassignDialog onClose={() => setReassignOpen(false)} />}
     </div>
   );
 }
