@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
-import { Sparkles } from "lucide-react";
+import { AudioLines, Sparkles } from "lucide-react";
 import { useStore, speakerKey, defaultSpeakerLabel } from "../../lib/store";
 import { speakerDotClass } from "../../lib/speakerColors";
 import { useI18n } from "../../i18n";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SpeakerReassignDialog } from "./SpeakerReassignDialog";
+import { VoiceDiarizeDialog } from "./VoiceDiarizeDialog";
 import type { Source, TranscriptSegment } from "../../lib/types";
 
 interface SpeakerEntry {
@@ -34,6 +35,7 @@ export function ReplaySpeakerTags({ segments, names, label }: ReplaySpeakerTagsP
   const { t } = useI18n();
   const setSpeakerName = useStore((s) => s.setSpeakerName);
   const [reassignOpen, setReassignOpen] = useState(false);
+  const [voiceOpen, setVoiceOpen] = useState(false);
 
   // Distinct speakers in first-appearance order.
   const speakers = useMemo<SpeakerEntry[]>(() => {
@@ -65,17 +67,29 @@ export function ReplaySpeakerTags({ segments, names, label }: ReplaySpeakerTagsP
           />
         </div>
       ))}
-      {/* STT diarization is often wrong — let the LLM re-attribute by context. */}
+      {/* STT diarization is often wrong. Two fixes: cluster by the actual VOICE
+          (most reliable, audio-based), or let the LLM re-attribute by context. */}
       <Button
         variant="outline"
         size="sm"
         className="ml-auto h-7 gap-1.5 px-2 text-[11px]"
+        onClick={() => setVoiceOpen(true)}
+        title={t("speakers.voiceTitle")}
+      >
+        <AudioLines className="size-3" />
+        {t("speakers.voiceButton")}
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-7 gap-1.5 px-2 text-[11px]"
         onClick={() => setReassignOpen(true)}
         title={t("speakers.reassignTitle")}
       >
         <Sparkles className="size-3" />
         {t("speakers.aiButton")}
       </Button>
+      {voiceOpen && <VoiceDiarizeDialog onClose={() => setVoiceOpen(false)} />}
       {reassignOpen && <SpeakerReassignDialog onClose={() => setReassignOpen(false)} />}
     </div>
   );
