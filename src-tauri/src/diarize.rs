@@ -18,6 +18,7 @@
 //! (MIT), ONNX Runtime (MIT), the 3D-Speaker CAM++ model (Apache-2.0).
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{anyhow, bail, Context, Result};
 use ndarray::Axis;
@@ -146,34 +147,81 @@ fn run_pipeline(
         bail!("decoded audio was empty");
     }
 
-    // One session for all slices. Single-threaded is plenty for short clips and
-    // avoids thread-pool spin-up per call.
-    let session = Session::builder()
-        .context("ort session builder")?
-        .with_optimization_level(GraphOptimizationLevel::Level3)
-        .context("ort optimization level")?
-        .with_intra_threads(1)
-        .context("ort intra threads")?
-        .commit_from_file(&model)
-        .with_context(|| format!("load speaker model {}", model.display()))?;
-
-    let mut session = session;
+    // Embedding is embarrassingly parallel — each slice is independent. ONNX
+    // Runtime's `Session::run` takes `&mut self`, so instead of sharing one
+    // session we give each worker thread its OWN single-threaded session and
+    // stripe the segments across workers (worker `tid` handles i ≡ tid mod W).
+    // W workers running 1-intra-thread sessions ≈ W cores busy, with no
+    // oversubscription. Capped to bound memory (each session holds the ~27 MB
+    // model) and skipped entirely for small jobs where the spin-up isn't worth it.
     let n = spans.len();
-    let step = (n / 100).max(1); // throttle to ~100 progress events over the loop
+    let step = (n / 100).max(1); // throttle to ~100 progress events total
+    let cores = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(1);
+    let workers = if n < 24 { 1 } else { cores.min(8).min(n).max(1) };
+    log::info!("diarize: embedding {n} slices across {workers} worker(s)");
+
+    let processed = AtomicUsize::new(0);
     let mut embeds: Vec<Option<Vec<f32>>> = vec![None; n];
-    for (i, sp) in spans.iter().enumerate() {
-        let start = (sp.start_ms as usize) * SAMPLES_PER_MS;
-        let end = ((sp.end_ms as usize) * SAMPLES_PER_MS).min(audio.len());
-        if end > start && end - start >= MIN_SLICE_SAMPLES {
-            match embed_slice(&mut session, &audio[start..end]) {
-                Ok(v) => embeds[i] = Some(v),
-                Err(e) => log::warn!("diarize: embed failed for segment {i}: {e:#}"),
+
+    let worker_results: Vec<Result<Vec<(usize, Vec<f32>)>>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|tid| {
+                let (spans, audio, model, processed, app) = (&spans, &audio, &model, &processed, &app);
+                scope.spawn(move || -> Result<Vec<(usize, Vec<f32>)>> {
+                    let mut session = build_session(model)?;
+                    let mut out: Vec<(usize, Vec<f32>)> = Vec::new();
+                    let mut i = tid;
+                    while i < spans.len() {
+                        let sp = &spans[i];
+                        let start = (sp.start_ms as usize) * SAMPLES_PER_MS;
+                        let end = ((sp.end_ms as usize) * SAMPLES_PER_MS).min(audio.len());
+                        if end > start && end - start >= MIN_SLICE_SAMPLES {
+                            match embed_slice(&mut session, &audio[start..end]) {
+                                Ok(v) => out.push((i, v)),
+                                Err(e) => log::warn!("diarize: embed failed for segment {i}: {e:#}"),
+                            }
+                        }
+                        // else: too short / out of range — filled from a neighbour later.
+                        let done = processed.fetch_add(1, Ordering::Relaxed) + 1;
+                        if done % step == 0 || done == n {
+                            let _ = app.emit(
+                                "diarize://progress",
+                                Progress { stage: "embedding", received: done as u64, total: n as u64 },
+                            );
+                        }
+                        i += workers;
+                    }
+                    Ok(out)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|_| Ok(Vec::new())))
+            .collect()
+    });
+
+    // Merge worker outputs. If every worker failed (e.g. the model can't load on
+    // any thread), surface that error instead of a misleading "no segments".
+    let mut any_ok = false;
+    let mut first_err: Option<anyhow::Error> = None;
+    for r in worker_results {
+        match r {
+            Ok(parts) => {
+                any_ok = true;
+                for (i, v) in parts {
+                    embeds[i] = Some(v);
+                }
+            }
+            Err(e) => {
+                first_err.get_or_insert(e);
             }
         }
-        // else: too short / out of range — filled from a neighbour later.
-        if i % step == 0 || i + 1 == n {
-            emit("embedding", (i + 1) as u64, n as u64);
-        }
+    }
+    if !any_ok {
+        return Err(first_err
+            .unwrap_or_else(|| anyhow!("embedding failed"))
+            .context("speaker embedding failed"));
     }
 
     // Indices that produced an embedding, and the matching embedding matrix.
@@ -249,6 +297,20 @@ fn run_pipeline(
             }
         })
         .collect())
+}
+
+/// Build a single-threaded ONNX session for the speaker model. One per worker
+/// thread — `with_intra_threads(1)` keeps each session to one core so W parallel
+/// workers don't oversubscribe.
+fn build_session(model: &Path) -> Result<Session> {
+    Session::builder()
+        .context("ort session builder")?
+        .with_optimization_level(GraphOptimizationLevel::Level3)
+        .context("ort optimization level")?
+        .with_intra_threads(1)
+        .context("ort intra threads")?
+        .commit_from_file(model)
+        .with_context(|| format!("load speaker model {}", model.display()))
 }
 
 /// fbank → ONNX embed → L2-normalize for one audio slice.
@@ -616,14 +678,7 @@ mod tests {
         }
         std::env::set_var("ORT_DYLIB_PATH", &dylib);
 
-        let mut session = Session::builder()
-            .unwrap()
-            .with_optimization_level(GraphOptimizationLevel::Level3)
-            .unwrap()
-            .with_intra_threads(1)
-            .unwrap()
-            .commit_from_file(&model)
-            .unwrap();
+        let mut session = build_session(&model).unwrap();
 
         let a = embed_slice(&mut session, &tone(180.0, 2.0)).unwrap();
         let a2 = embed_slice(&mut session, &tone(180.0, 2.0)).unwrap();
