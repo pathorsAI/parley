@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { TitleBar } from "./components/TitleBar";
 import { LiveScreen } from "./components/live/LiveScreen";
-import { ReplayView } from "./components/replay/ReplayView";
+import { ReplayScreen } from "./components/replay/ReplayScreen";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import { useStore } from "./lib/store";
@@ -44,7 +44,7 @@ function App() {
       {!onboarded && <Onboarding />}
       <AnalysisErrorDialog />
       <TitleBar />
-      {appMode === "replay" ? <ReplayView /> : <LiveScreen />}
+      {appMode === "replay" ? <ReplayScreen /> : <LiveScreen />}
     </div>
   );
 }
