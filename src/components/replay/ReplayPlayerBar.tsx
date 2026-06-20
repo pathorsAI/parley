@@ -1,10 +1,13 @@
 import { useState } from "react";
-import { Loader2, Pause, Play, Sparkles, X } from "lucide-react";
+import { Loader2, Pause, Play, Scissors, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { formatClock } from "../../lib/store";
 import { runAllEvaluations } from "../../lib/evaluations/engine";
 import { runWargameDetect } from "../../lib/wargame/engine";
 import { Scrubber } from "./Scrubber";
+import { TrimBar } from "./TrimBar";
+import { useReplayTrim, useSetReplayTrim } from "./spine";
 import type { ReplayPlayer } from "./useReplayPlayer";
 
 interface ReplayPlayerBarProps {
@@ -20,6 +23,13 @@ interface ReplayPlayerBarProps {
     playhead: string;
     evalHere: string;
     evaluating: string;
+    trim: string;
+    trimReset: string;
+    /** Template with {start}/{end} placeholders. */
+    trimKept: string;
+    trimNote: string;
+    trimStart: string;
+    trimEnd: string;
   };
 }
 
@@ -37,6 +47,15 @@ export function ReplayPlayerBar({
   labels,
 }: ReplayPlayerBarProps) {
   const [evaluating, setEvaluating] = useState(false);
+  const [trimOpen, setTrimOpen] = useState(false);
+  const trim = useReplayTrim();
+  const setTrim = useSetReplayTrim();
+
+  const keptText = trim
+    ? labels.trimKept
+        .replace("{start}", formatClock(trim.startMs))
+        .replace("{end}", formatClock(trim.endMs))
+    : "";
 
   async function reEvaluate() {
     setEvaluating(true);
@@ -75,36 +94,83 @@ export function ReplayPlayerBar({
         </Button>
       </div>
 
-      <div className="flex items-center gap-3 px-4 pb-3">
-        <Button
-          variant="outline"
-          size="icon-sm"
-          onClick={player.toggle}
-          aria-label={player.playing ? labels.pause : labels.play}
-          title={player.playing ? labels.pause : labels.play}
-        >
-          {player.playing ? <Pause className="size-4" /> : <Play className="size-4" />}
-        </Button>
+      <div className="px-4 pb-3">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            size="icon-sm"
+            onClick={player.toggle}
+            aria-label={player.playing ? labels.pause : labels.play}
+            title={player.playing ? labels.pause : labels.play}
+          >
+            {player.playing ? <Pause className="size-4" /> : <Play className="size-4" />}
+          </Button>
 
-        <span className="w-10 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
-          {formatClock(player.playheadMs)}
-        </span>
+          <span className="w-10 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
+            {formatClock(player.playheadMs)}
+          </span>
 
-        <div className="min-w-0 flex-1">
-          <Scrubber
-            valueMs={player.playheadMs}
-            durationMs={durationMs}
-            ariaLabel={labels.playhead}
-            onScrubStart={player.beginScrub}
-            onScrubEnd={player.endScrub}
-            onScrub={player.seek}
-            onCommit={player.seek}
-          />
+          <div className="min-w-0 flex-1">
+            <Scrubber
+              valueMs={player.playheadMs}
+              durationMs={durationMs}
+              ariaLabel={labels.playhead}
+              onScrubStart={player.beginScrub}
+              onScrubEnd={player.endScrub}
+              onScrub={player.seek}
+              onCommit={player.seek}
+            />
+          </div>
+
+          <span className="w-10 shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
+            {formatClock(durationMs)}
+          </span>
+
+          {/* Toggle the trim handles. Stays highlighted while a trim is active so
+              it's clear analysis is running on a clipped range. */}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className={cn(
+              "shrink-0 text-muted-foreground hover:text-foreground",
+              (trimOpen || trim) && "text-primary"
+            )}
+            aria-pressed={trimOpen || !!trim}
+            onClick={() => setTrimOpen((o) => !o)}
+            title={labels.trim}
+          >
+            <Scissors className="size-4" />
+          </Button>
         </div>
 
-        <span className="w-10 shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
-          {formatClock(durationMs)}
-        </span>
+        {(trimOpen || trim) && (
+          <>
+            <div className="mt-2 flex items-center gap-3">
+              <span className="w-10 shrink-0 text-right text-[10px] text-muted-foreground">{labels.trim}</span>
+              <div className="min-w-0 flex-1">
+                <TrimBar
+                  durationMs={durationMs}
+                  trim={trim}
+                  onChange={setTrim}
+                  startLabel={labels.trimStart}
+                  endLabel={labels.trimEnd}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setTrim(null)}
+                disabled={!trim}
+                className="w-10 shrink-0 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-30"
+              >
+                {labels.trimReset}
+              </button>
+            </div>
+            <div className="mt-1 flex items-center gap-2 pl-[52px] text-[10px] text-muted-foreground/70">
+              {trim ? <span className="tabular-nums text-primary/80">{keptText}</span> : null}
+              <span>{labels.trimNote}</span>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

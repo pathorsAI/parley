@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useStore } from "../store";
+import { useStore, isTrimmed } from "../store";
 import { log } from "../log";
 
 /** One segment's speaker assignment from the Rust `diarize_audio` command. */
@@ -27,14 +27,15 @@ interface RustSegSpeaker {
 export async function runVoiceDiarize(opts: {
   numSpeakers: number | null;
 }): Promise<{ assigned: number; total: number; speakers: number }> {
-  const { replay, segments } = useStore.getState();
+  const { replay, segments, replayTrim } = useStore.getState();
   if (!replay?.audioPath) {
     log.warn("diarize: no recording loaded");
     throw new Error("No recording loaded to diarize.");
   }
 
+  // Exclude trimmed (intro/post-meeting) audio so it can't spawn spurious speakers.
   const finalSegs = segments
-    .filter((s) => s.isFinal && s.text.trim())
+    .filter((s) => s.isFinal && s.text.trim() && !isTrimmed(s, replayTrim))
     .sort((a, b) => a.startMs - b.startMs);
   log.info("diarize: start", {
     segs: finalSegs.length,
