@@ -270,6 +270,82 @@ export const zhTW = {
   "replay.empty": "尚未載入錄音。按「上傳錄音」開始。",
   "replay.evaluating": "評估中…",
   "replay.jumpToMoment": "跳到這一刻",
+  // Built-in template content — eval definitions, eval template sets, and TODO
+  // templates. These are resolved into settings at seed/reconcile time (and when
+  // the language changes) so built-in templates follow the UI language.
+  "tpl.evalSet.tpl-general.name": "通用 / General",
+  "tpl.evalSet.tpl-interview.name": "面試 / Job interview",
+  "tpl.evalSet.tpl-salary.name": "薪資談判 / Salary negotiation",
+  "tpl.evalSet.tpl-sales.name": "銷售電話 / Sales call",
+  "tpl.evalSet.tpl-negotiation.name": "商務談判 / Deal-making",
+  "tpl.evalSet.tpl-diligence.name": "盡職調查 / Diligence call",
+
+  "tpl.eval.deception.name": "詐術 / 不一致偵測",
+  "tpl.eval.deception.desc": "對方說法前後矛盾、迴避、誇大或施壓話術",
+  "tpl.eval.pushback.name": "該 push back 的時機",
+  "tpl.eval.pushback.desc": "對方提出不合理條件或單方面有利的條款",
+  "tpl.eval.unanswered.name": "未回答的問題",
+  "tpl.eval.unanswered.desc": "我方提問但對方含糊帶過、沒正面回應",
+  "tpl.eval.checklist.name": "流程遺漏",
+  "tpl.eval.checklist.desc": "依會議類型該問卻還沒問的項目",
+  "tpl.eval.claims.name": "待查證宣稱",
+  "tpl.eval.claims.desc": "對方提出的可驗證事實主張，標記為之後查證",
+  "tpl.eval.topic-shift.name": "話題偏移 / 模糊焦點",
+  "tpl.eval.topic-shift.desc": "對方突然轉移話題、答非所問、或用無關細節稀釋你提出的重點",
+  "tpl.eval.nextmove.name": "下一步建議 / Next move",
+  "tpl.eval.nextmove.desc": "根據目前進展，建議我接下來該說 / 問 / 提出的條件",
+  "tpl.eval.iv-exaggeration.name": "誇大 / 灌水偵測",
+  "tpl.eval.iv-exaggeration.desc": "候選人對技能、年資、貢獻的誇大或含糊其詞",
+  "tpl.eval.iv-consistency.name": "經歷一致性",
+  "tpl.eval.iv-consistency.desc": "候選人前後說法 / 時間線 / 數字是否一致",
+  "tpl.eval.iv-redflags.name": "紅旗訊號",
+  "tpl.eval.iv-redflags.desc": "態度、責任歸屬、對前東家/同事的描述等警訊",
+  "tpl.eval.iv-followup.name": "值得追問",
+  "tpl.eval.iv-followup.desc": "候選人提到、但你還沒深入追問的點",
+  "tpl.eval.sl-qualification.name": "資格判定缺口 (MEDDICC)",
+  "tpl.eval.sl-qualification.desc": "Metrics / 決策者 / 決策標準 / 痛點 / 流程 / Champion 等尚未釐清的項目",
+  "tpl.eval.sl-pain.name": "痛點深度與急迫性",
+  "tpl.eval.sl-pain.desc": "對方痛點是否具體、可量化、有急迫性",
+  "tpl.eval.sl-objections.name": "異議 / 顧慮",
+  "tpl.eval.sl-objections.desc": "對方提出的反對意見或顧慮，標記尚未被處理的",
+  "tpl.eval.sl-nextstep.name": "下一步承諾",
+  "tpl.eval.sl-nextstep.desc": "是否約定明確、雙方同意的下一步",
+  "tpl.eval.sa-market.name": "行情 / 薪酬主張",
+  "tpl.eval.sa-market.desc": "對方對市場行情、預算、薪酬結構的主張，標記待查證",
+  "tpl.eval.sa-components.name": "薪酬組成追蹤",
+  "tpl.eval.sa-components.desc": "底薪 / 獎金 / 股票 / 簽約金 / 福利等各項與已談到的條件",
+  "tpl.eval.sa-pressure.name": "錨定 / 施壓話術",
+  "tpl.eval.sa-pressure.desc": "錨定、人為期限、take-it-or-leave-it 等施壓手法",
+  "tpl.eval.ng-concessions.name": "讓步追蹤",
+  "tpl.eval.ng-concessions.desc": "雙方已提出/已同意的讓步與條件",
+  "tpl.eval.dd-claims.name": "重點宣稱待查證",
+  "tpl.eval.dd-claims.desc": "財務 / 客戶 / 成長 / 法務等可驗證主張，列為查證清單",
+  "tpl.eval.dd-risk.name": "風險訊號",
+  "tpl.eval.dd-risk.desc": "財務 / 法務 / 營運 / 團隊面的風險或不一致",
+  "tpl.eval.dd-checklist.name": "盡調項目遺漏",
+  "tpl.eval.dd-checklist.desc": "標準盡職調查面向中尚未觸及的部分",
+
+  "tpl.todo.todo-interview.name": "面試候選人 / Job interview",
+  "tpl.todo.todo-interview.items":
+    "自我介紹與職缺說明\n請候選人介紹背景與動機\n深入追問一個代表性專案\n驗證核心技術／能力\n詢問過去的衝突與處理方式\n保留候選人提問時間\n確認薪資期待與可到職時間\n說明後續流程與時程",
+  "tpl.todo.todo-salary.name": "薪資談判 / Salary negotiation",
+  "tpl.todo.todo-salary.items":
+    "先讓對方提出數字／區間\n確認薪酬全貌：底薪、獎金、股票、簽約金、福利\n說明自身價值與市場行情依據\n提出有依據的目標數字（錨定）\n釐清股票條件（數量、估值、vesting）\n確認升遷／調薪的時程與標準\n處理對方的施壓或人為期限\n爭取書面 offer 與考慮時間",
+  "tpl.todo.todo-sales-discovery.name": "銷售電話 / Sales call",
+  "tpl.todo.todo-sales-discovery.items":
+    "確認對方的角色與決策權\n了解現況與目前做法\n挖掘核心痛點與其影響\n量化痛點的成本／損失\n確認預算範圍\n釐清決策流程與關鍵人\n了解時程與急迫性\n詢問現有方案／競品\n約定明確的下一步",
+  "tpl.todo.todo-deal.name": "商務談判 / Deal-making",
+  "tpl.todo.todo-deal.items":
+    "確認雙方目標與底線（BATNA）\n釐清對方真正在意的優先順序\n盤點價格／條款／時程等變數\n先談整體框架再談細節\n每次讓步都換回對等條件\n記錄雙方已同意與待決事項\n確認決策流程與簽約時程\n總結共識並約定下一步",
+  "tpl.todo.todo-diligence.name": "盡職調查 / Diligence call",
+  "tpl.todo.todo-diligence.items":
+    "確認核心財務數據與成長趨勢\n了解營收結構與客戶集中度\n確認留存／churn 與單位經濟\n釐清競爭與市場風險\n確認團隊、關鍵人與股權結構\n了解法務／合規／智財狀況\n詢問技術債與資安現況\n索取佐證文件並約定 follow-up",
+  "tpl.todo.todo-coffee-chat.name": "Coffee chat（創業前輩）",
+  "tpl.todo.todo-coffee-chat.items":
+    "簡短自我介紹與來意\n請教對方的創業歷程與關鍵轉折\n請教他們現階段最大的挑戰\n針對我目前的方向請教看法\n請教常見的坑與建議\n詢問值得認識的人／引薦\n請教推薦的資源或書\n約定下次 follow-up 的方式",
+  "tpl.todo.todo-fundraising.name": "投資人 pitch",
+  "tpl.todo.todo-fundraising.items":
+    "一句話講清楚在做什麼\n說明問題與市場規模\nDemo 產品\n商業模式與關鍵數據（traction）\n介紹團隊與為何是我們\n競爭與護城河\n募資金額與資金用途\n確認對方的投資範圍與決策流程",
 } as const satisfies Dict;
 
 export const en = {
@@ -535,6 +611,80 @@ export const en = {
   "replay.empty": "No recording loaded. Click \"Upload recording\" to start.",
   "replay.evaluating": "Evaluating…",
   "replay.jumpToMoment": "Jump to this moment",
+  // Built-in template content (see the zh-TW block above for notes).
+  "tpl.evalSet.tpl-general.name": "General",
+  "tpl.evalSet.tpl-interview.name": "Job interview",
+  "tpl.evalSet.tpl-salary.name": "Salary negotiation",
+  "tpl.evalSet.tpl-sales.name": "Sales call",
+  "tpl.evalSet.tpl-negotiation.name": "Deal-making",
+  "tpl.evalSet.tpl-diligence.name": "Diligence call",
+
+  "tpl.eval.deception.name": "Deception / inconsistency",
+  "tpl.eval.deception.desc": "Contradictions, evasion, exaggeration, or pressure tactics from the other party",
+  "tpl.eval.pushback.name": "When to push back",
+  "tpl.eval.pushback.desc": "Unreasonable demands or one-sided terms from the other party",
+  "tpl.eval.unanswered.name": "Unanswered questions",
+  "tpl.eval.unanswered.desc": "Questions I asked that they dodged or never answered directly",
+  "tpl.eval.checklist.name": "Process gaps",
+  "tpl.eval.checklist.desc": "Standard topics for this meeting type that haven't been covered yet",
+  "tpl.eval.claims.name": "Claims to verify",
+  "tpl.eval.claims.desc": "Verifiable factual claims by the other party, flagged to check later",
+  "tpl.eval.topic-shift.name": "Topic drift / blurred focus",
+  "tpl.eval.topic-shift.desc": "Them changing the subject, answering a different question, or burying your point in irrelevant detail",
+  "tpl.eval.nextmove.name": "Next move",
+  "tpl.eval.nextmove.desc": "Based on progress so far, what to say / ask / propose next",
+  "tpl.eval.iv-exaggeration.name": "Exaggeration / inflation",
+  "tpl.eval.iv-exaggeration.desc": "A candidate overstating or being vague about skills, tenure, or contributions",
+  "tpl.eval.iv-consistency.name": "Background consistency",
+  "tpl.eval.iv-consistency.desc": "Whether the candidate's statements, timelines, and numbers stay consistent",
+  "tpl.eval.iv-redflags.name": "Red flags",
+  "tpl.eval.iv-redflags.desc": "Warning signs in attitude, accountability, or how they describe past employers/colleagues",
+  "tpl.eval.iv-followup.name": "Worth following up",
+  "tpl.eval.iv-followup.desc": "Points the candidate raised that you haven't probed yet",
+  "tpl.eval.sl-qualification.name": "Qualification gaps (MEDDICC)",
+  "tpl.eval.sl-qualification.desc": "MEDDICC dimensions still unclear: Metrics, economic buyer, decision criteria, pain, process, Champion",
+  "tpl.eval.sl-pain.name": "Pain depth & urgency",
+  "tpl.eval.sl-pain.desc": "Whether their pain is specific, quantified, and urgent",
+  "tpl.eval.sl-objections.name": "Objections / concerns",
+  "tpl.eval.sl-objections.desc": "Objections or concerns they raise, flagging any not yet addressed",
+  "tpl.eval.sl-nextstep.name": "Next-step commitment",
+  "tpl.eval.sl-nextstep.desc": "Whether a concrete, mutually agreed next step has been set",
+  "tpl.eval.sa-market.name": "Market rate / comp claims",
+  "tpl.eval.sa-market.desc": "The employer's claims about market rate, budget, or comp structure, flagged to verify",
+  "tpl.eval.sa-components.name": "Compensation tracking",
+  "tpl.eval.sa-components.desc": "Tracking base, bonus, equity, sign-on, benefits, and the terms discussed",
+  "tpl.eval.sa-pressure.name": "Anchoring / pressure tactics",
+  "tpl.eval.sa-pressure.desc": "Anchoring, artificial deadlines, take-it-or-leave-it framing, and similar pressure",
+  "tpl.eval.ng-concessions.name": "Concession tracking",
+  "tpl.eval.ng-concessions.desc": "Concessions and terms each side has offered or agreed to",
+  "tpl.eval.dd-claims.name": "Key claims to verify",
+  "tpl.eval.dd-claims.desc": "Verifiable claims about financials, customers, growth, or legal — listed for diligence",
+  "tpl.eval.dd-risk.name": "Risk signals",
+  "tpl.eval.dd-risk.desc": "Financial, legal, operational, or team risks and inconsistencies",
+  "tpl.eval.dd-checklist.name": "Diligence gaps",
+  "tpl.eval.dd-checklist.desc": "Standard diligence areas not yet covered",
+
+  "tpl.todo.todo-interview.name": "Job interview",
+  "tpl.todo.todo-interview.items":
+    "Introduce yourself and the role\nAsk the candidate about their background and motivation\nDig into one representative project\nVerify core technical skills / abilities\nAsk about past conflicts and how they handled them\nLeave time for the candidate's questions\nConfirm salary expectations and start date\nExplain next steps and timeline",
+  "tpl.todo.todo-salary.name": "Salary negotiation",
+  "tpl.todo.todo-salary.items":
+    "Let them put out a number / range first\nCover the full package: base, bonus, equity, sign-on, benefits\nState your value with market-rate evidence\nPropose a justified target number (anchor)\nClarify equity terms (amount, valuation, vesting)\nConfirm promotion / raise timeline and criteria\nHandle pressure or artificial deadlines\nGet a written offer and time to consider",
+  "tpl.todo.todo-sales-discovery.name": "Sales call",
+  "tpl.todo.todo-sales-discovery.items":
+    "Confirm their role and decision authority\nUnderstand the current situation and approach\nUncover the core pain and its impact\nQuantify the cost / loss of the pain\nConfirm the budget range\nClarify the decision process and key people\nUnderstand timeline and urgency\nAsk about existing solutions / competitors\nAgree on a concrete next step",
+  "tpl.todo.todo-deal.name": "Deal-making",
+  "tpl.todo.todo-deal.items":
+    "Confirm both sides' goals and walk-away (BATNA)\nClarify what they truly prioritize\nMap out the variables: price, terms, timeline\nAgree on the overall framework before details\nTrade every concession for something of equal value\nRecord what's agreed and what's still open\nConfirm the decision process and signing timeline\nSummarize agreements and set the next step",
+  "tpl.todo.todo-diligence.name": "Diligence call",
+  "tpl.todo.todo-diligence.items":
+    "Confirm core financials and growth trends\nUnderstand revenue mix and customer concentration\nCheck retention / churn and unit economics\nClarify competitive and market risks\nConfirm the team, key people, and cap table\nReview legal / compliance / IP status\nAsk about tech debt and security posture\nRequest supporting documents and set a follow-up",
+  "tpl.todo.todo-coffee-chat.name": "Coffee chat (founder mentor)",
+  "tpl.todo.todo-coffee-chat.items":
+    "Briefly introduce yourself and why you're here\nAsk about their startup journey and key turning points\nAsk about their biggest current challenge\nGet their take on my current direction\nAsk about common pitfalls and advice\nAsk who's worth meeting / for intros\nAsk for recommended resources or books\nAgree on how to follow up next",
+  "tpl.todo.todo-fundraising.name": "Investor pitch",
+  "tpl.todo.todo-fundraising.items":
+    "Explain what you do in one sentence\nLay out the problem and market size\nDemo the product\nBusiness model and key metrics (traction)\nIntroduce the team and why it's us\nCompetition and moat\nRaise amount and use of funds\nConfirm their investment range and decision process",
 } as const satisfies Record<keyof typeof zhTW, string>;
 
 export const DICTS: Record<AppLanguage, Dict> = {
@@ -543,3 +693,18 @@ export const DICTS: Record<AppLanguage, Dict> = {
 };
 
 export type TranslationKey = keyof typeof zhTW;
+
+/**
+ * Pure translation lookup (no React/store dependency) so it can be used while
+ * seeding/reconciling built-in templates as well as from the `useI18n` hook.
+ * Falls back to zh-TW, then to the raw key.
+ */
+export function translate(
+  language: AppLanguage,
+  key: TranslationKey,
+  vars?: Record<string, string | number>
+): string {
+  const template = DICTS[language]?.[key] ?? zhTW[key] ?? key;
+  if (!vars) return template;
+  return template.replace(/\{(\w+)\}/g, (_, name: string) => String(vars[name] ?? ""));
+}
