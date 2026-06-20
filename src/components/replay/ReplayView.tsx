@@ -98,8 +98,6 @@ export function ReplayView() {
           play: t("replay.play"),
           pause: t("replay.pause"),
           playhead: t("replay.playhead"),
-          evalHere: t("replay.evalHere"),
-          evaluating: t("replay.evaluating"),
         }}
       />
 
