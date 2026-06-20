@@ -1,6 +1,6 @@
 import { generateObject } from "ai";
 import { z } from "zod";
-import { getModel, getProviderOptions } from "./provider";
+import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider";
 import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext } from "./profile";
@@ -103,7 +103,7 @@ export async function analyzeTimeline(opts: {
     model: getModel(settings, "eval"),
     providerOptions: getProviderOptions(settings, "eval"),
     schema,
-    system: SYSTEM,
+    system: SYSTEM + JSON_MODE_INSTRUCTION,
     prompt: `${ctx}Active evaluations:\n${list}\n\nFull transcript:\n${transcript || "(no speech was captured)"}`,
   });
   void recordLlmUsage(settings, "eval", "eval", usage);

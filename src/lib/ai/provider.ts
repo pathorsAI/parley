@@ -7,6 +7,17 @@ import { PROVIDER_BY_ID, isReasoningModel } from "./providers";
 export { isReasoningModel } from "./providers";
 
 /**
+ * Groq/OpenAI `json_object` response_format — which the AI SDK's `generateObject`
+ * uses on openai-compatible providers — REQUIRES the literal word "json" to
+ * appear somewhere in the messages, or the request 400s with
+ * "'messages' must contain the word 'json'…". Append this to the system prompt of
+ * every `generateObject` call. Harmless for providers that use tool mode (e.g.
+ * Anthropic), so it's safe to apply unconditionally.
+ */
+export const JSON_MODE_INSTRUCTION =
+  "\n\nReturn your answer strictly as a JSON object matching the provided schema.";
+
+/**
  * Resolve a Vercel AI SDK model for the active provider, driven by the provider
  * registry. `kind` selects the fast Q&A model ("ask") or the stronger
  * evaluation model ("eval").
