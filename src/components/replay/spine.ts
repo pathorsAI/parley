@@ -19,7 +19,7 @@
  */
 import { useStore, type useStore as UseStore } from "../../lib/store";
 import { translate, type TranslationKey } from "../../i18n";
-import type { AppLanguage } from "../../lib/types";
+import type { AppLanguage, TimelineEvent } from "../../lib/types";
 // Canonical contract published by the ingest module. Once a `ReplaySession`
 // also lands in `../../lib/types`, prefer that import; the shape is identical.
 import type { ReplaySession } from "../../lib/replay/types";
@@ -36,6 +36,10 @@ interface ReplaySpine {
   replayPlayheadMs: number;
   setReplayPlayhead: (ms: number) => void;
   exitReplay: () => void;
+  replayTimeline: TimelineEvent[];
+  replayTimelineStatus: "idle" | "running" | "done" | "error";
+  setReplayTimeline: (events: TimelineEvent[]) => void;
+  setReplayTimelineStatus: (status: "idle" | "running" | "done" | "error") => void;
 }
 
 type StoreState = ReturnType<typeof UseStore.getState>;
@@ -66,6 +70,16 @@ export function useSetReplayPlayhead(): (ms: number) => void {
 export function useExitReplay(): () => void {
   return useStore((s) => spine(s).exitReplay ?? noop);
 }
+
+export function useReplayTimeline(): TimelineEvent[] {
+  return useStore((s) => spine(s).replayTimeline ?? EMPTY_TIMELINE);
+}
+
+export function useReplayTimelineStatus(): "idle" | "running" | "done" | "error" {
+  return useStore((s) => spine(s).replayTimelineStatus ?? "idle");
+}
+
+const EMPTY_TIMELINE: TimelineEvent[] = [];
 
 function noop() {
   /* spine not wired yet */
