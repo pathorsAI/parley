@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Check, Copy, FileText, Maximize2, RefreshCw, X } from "lucide-react";
-import { useStore } from "../../lib/store";
+import { isTrimmed, useStore } from "../../lib/store";
 import { runAllEvaluations } from "../../lib/evaluations/engine";
 import { generatePostMeetingReport } from "../../lib/ai/report";
 import { hasProviderKey } from "../../lib/ai/settings";
@@ -62,7 +62,8 @@ export function EvaluationsPanel() {
     try {
       await generatePostMeetingReport({
         settings: s.settings,
-        segments: s.segments,
+        // Exclude trimmed (intro/post-meeting) lines from the debrief too.
+        segments: s.segments.filter((seg) => !isTrimmed(seg, s.replayTrim)),
         evaluations: s.evaluations,
         todos: s.todos,
         names: s.speakerNames,

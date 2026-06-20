@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { speakerBadgeClass } from "../../lib/speakerColors";
-import { speakerLabel, speakerKey, defaultSpeakerLabel, formatClock, useStore } from "../../lib/store";
+import { speakerLabel, speakerKey, defaultSpeakerLabel, formatClock, isTrimmed, useStore, type ReplayTrim } from "../../lib/store";
 import { cn } from "@/lib/utils";
 import type { TranscriptSegment } from "../../lib/types";
 
 interface ReplayTranscriptProps {
   segments: TranscriptSegment[];
   speakerNames: Record<string, string>;
+  /** Keep-window; lines outside it are greyed + struck (excluded from analysis). */
+  trim: ReplayTrim | null;
   playheadMs: number;
   /** True while audio is playing — gates auto-scroll so we don't fight the user. */
   playing: boolean;
@@ -31,6 +33,7 @@ interface ReplayTranscriptProps {
 export function ReplayTranscript({
   segments,
   speakerNames,
+  trim,
   playheadMs,
   playing,
   onSeek,
@@ -79,6 +82,7 @@ export function ReplayTranscript({
       <div className="mx-auto flex max-w-3xl flex-col gap-1 px-4 py-4">
         {rows.map((seg, i) => {
           const masked = seg.startMs > playheadMs;
+          const trimmed = isTrimmed(seg, trim);
           const active = seg.id === activeId;
           const showBadge = i === 0 || speakerLabel(seg, speakerNames) !== speakerLabel(rows[i - 1], speakerNames);
           const key = speakerKey(seg);
@@ -101,7 +105,8 @@ export function ReplayTranscript({
                 "group flex w-full cursor-pointer select-text gap-2.5 rounded-md px-2 py-1.5 text-left text-sm leading-6 transition-colors",
                 "hover:bg-muted/60",
                 active && "bg-primary/10 ring-1 ring-primary/30",
-                masked && "opacity-35"
+                masked && "opacity-35",
+                trimmed && "opacity-50"
               )}
             >
               <span className="mt-0.5 w-9 shrink-0 select-none text-right font-mono text-[10px] tabular-nums text-muted-foreground">
@@ -136,7 +141,9 @@ export function ReplayTranscript({
                       {speakerLabel(seg, speakerNames)}
                     </button>
                   ))}
-                <span className={active ? "text-foreground" : "text-foreground/90"}>{seg.text}</span>
+                <span className={cn(active ? "text-foreground" : "text-foreground/90", trimmed && "line-through")}>
+                  {seg.text}
+                </span>
               </span>
             </div>
           );

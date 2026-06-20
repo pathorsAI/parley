@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Check, Square, X, Plus, Sparkles } from "lucide-react";
-import { useStore } from "../../lib/store";
+import { useStore, visibleSegments } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
@@ -33,8 +33,12 @@ export function TodosPanel() {
   const done = todos.filter((t) => t.done).length;
 
   async function aiUpdate() {
-    const { settings, segments, todos: cur, speakerNames, markTodosDone } = useStore.getState();
+    const state = useStore.getState();
+    const { settings, todos: cur, speakerNames, markTodosDone } = state;
     if (!hasProviderKey(settings) || cur.length === 0) return;
+    // Same masked view the other panels use: respects the replay playhead AND the
+    // trim keep-window (no-op in live mode).
+    const segments = visibleSegments(state);
     setChecking(true);
     try {
       const { checkTodos } = await import("../../lib/ai/todos");

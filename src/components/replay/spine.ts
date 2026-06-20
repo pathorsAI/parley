@@ -17,7 +17,7 @@
  *
  * Nothing else in `replay/` should touch the store's replay fields directly.
  */
-import { useStore, type useStore as UseStore } from "../../lib/store";
+import { useStore, type useStore as UseStore, type ReplayTrim } from "../../lib/store";
 import { translate, type TranslationKey } from "../../i18n";
 import type { AppLanguage, TimelineEvent } from "../../lib/types";
 // Canonical contract published by the ingest module. Once a `ReplaySession`
@@ -35,6 +35,8 @@ interface ReplaySpine {
   replay: ReplaySession | null;
   replayPlayheadMs: number;
   setReplayPlayhead: (ms: number) => void;
+  replayTrim: ReplayTrim | null;
+  setReplayTrim: (trim: ReplayTrim | null) => void;
   exitReplay: () => void;
   replayTimeline: TimelineEvent[];
   replayTimelineStatus: "idle" | "running" | "done" | "error";
@@ -70,6 +72,14 @@ export function useSetReplayPlayhead(): (ms: number) => void {
 
 export function useExitReplay(): () => void {
   return useStore((s) => spine(s).exitReplay ?? noop);
+}
+
+export function useReplayTrim(): ReplayTrim | null {
+  return useStore((s) => spine(s).replayTrim ?? null);
+}
+
+export function useSetReplayTrim(): (trim: ReplayTrim | null) => void {
+  return useStore((s) => spine(s).setReplayTrim ?? noop);
 }
 
 export function useReplayTimeline(): TimelineEvent[] {
@@ -112,6 +122,12 @@ const FALLBACK: Record<AppLanguage, Record<string, string>> = {
     "replay.empty": "No transcript yet for this recording.",
     "replay.jumpToMoment": "Jump to this moment",
     "replay.playhead": "Playhead",
+    "replay.trim": "Trim",
+    "replay.trimReset": "Reset",
+    "replay.trimKept": "Keeping {start} – {end}",
+    "replay.trimNote": "Trimmed parts are excluded from the transcript and all analysis.",
+    "replay.trimStart": "Trim start",
+    "replay.trimEnd": "Trim end",
   },
   "zh-TW": {
     "replay.title": "重播",
@@ -125,6 +141,12 @@ const FALLBACK: Record<AppLanguage, Record<string, string>> = {
     "replay.empty": "此錄音尚無逐字稿。",
     "replay.jumpToMoment": "跳到此刻",
     "replay.playhead": "播放點",
+    "replay.trim": "修剪",
+    "replay.trimReset": "重設",
+    "replay.trimKept": "保留 {start} – {end}",
+    "replay.trimNote": "修剪掉的段落不會列入逐字稿與任何分析。",
+    "replay.trimStart": "修剪起點",
+    "replay.trimEnd": "修剪終點",
   },
 };
 

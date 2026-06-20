@@ -13,7 +13,7 @@ import { ReplaySpeakerTags } from "./ReplaySpeakerTags";
 import { TimelineMarkers } from "./TimelineMarkers";
 import { useReplayPlayer } from "./useReplayPlayer";
 import { useTimelineAnalysis } from "./useTimelineAnalysis";
-import { formatClock, useStore } from "../../lib/store";
+import { formatClock, isTrimmed, useStore } from "../../lib/store";
 import type { TimelineEvent } from "../../lib/types";
 import {
   replayT,
@@ -21,6 +21,7 @@ import {
   useReplayPlayheadMs,
   useReplaySession,
   useReplayTimeline,
+  useReplayTrim,
 } from "./spine";
 
 /**
@@ -38,6 +39,7 @@ export function ReplayView() {
 
   const session = useReplaySession();
   const playheadMs = useReplayPlayheadMs();
+  const trim = useReplayTrim();
   const exitReplay = useExitReplay();
   const player = useReplayPlayer(session?.durationMs ?? 0);
   const timeline = useReplayTimeline();
@@ -62,12 +64,12 @@ export function ReplayView() {
 
   // Masked-count: how many segments are at/before the playhead vs total.
   const { visibleCount, totalCount } = useMemo(() => {
-    const usable = segments.filter((s) => s.text.trim());
+    const usable = segments.filter((s) => s.text.trim() && !isTrimmed(s, trim));
     return {
       visibleCount: usable.filter((s) => s.startMs <= playheadMs).length,
       totalCount: usable.length,
     };
-  }, [segments, playheadMs]);
+  }, [segments, playheadMs, trim]);
 
   if (!session) {
     return (
@@ -103,6 +105,12 @@ export function ReplayView() {
           playhead: t("replay.playhead"),
           evalHere: t("replay.evalHere"),
           evaluating: t("replay.evaluating"),
+          trim: t("replay.trim"),
+          trimReset: t("replay.trimReset"),
+          trimKept: t("replay.trimKept"),
+          trimNote: t("replay.trimNote"),
+          trimStart: t("replay.trimStart"),
+          trimEnd: t("replay.trimEnd"),
         }}
       />
 
@@ -130,6 +138,7 @@ export function ReplayView() {
               <ReplayTranscript
                 segments={segments}
                 speakerNames={speakerNames}
+                trim={trim}
                 playheadMs={playheadMs}
                 playing={player.playing}
                 onSeek={player.seek}

@@ -109,6 +109,17 @@ const DEFAULT_SETTINGS: Settings = {
 /** Whether the app is capturing a live meeting or analyzing an uploaded one. */
 export type AppMode = "live" | "replay";
 
+/**
+ * Replay keep-window. Segments that fall entirely OUTSIDE [startMs, endMs] are
+ * trimmed: greyed in the transcript and excluded from every analysis (evals,
+ * Ask, timeline, war-gaming, voice diarization). `null` = keep the whole thing.
+ * Non-destructive — clearing it restores everything.
+ */
+export interface ReplayTrim {
+  startMs: number;
+  endMs: number;
+}
+
 interface ParleyState {
   /**
    * "live" = capturing mic/system audio now; "replay" = analyzing an uploaded
@@ -127,6 +138,11 @@ interface ParleyState {
   exitReplay: () => void;
   /** Move the replay playhead (drives both audio position and transcript mask). */
   setReplayPlayhead: (ms: number) => void;
+
+  /** Keep-window: segments outside it are excluded from the view + all analysis.
+   *  null = no trim. See {@link ReplayTrim} and {@link isTrimmed}. */
+  replayTrim: ReplayTrim | null;
+  setReplayTrim: (trim: ReplayTrim | null) => void;
 
   /** Time-anchored retro findings for the replay timeline (whole-recording). */
   replayTimeline: TimelineEvent[];
@@ -221,6 +237,7 @@ export const useStore = create<ParleyState>()(
       appMode: "live",
       replay: null,
       replayPlayheadMs: 0,
+      replayTrim: null,
       replayTimeline: [],
       replayTimelineStatus: "idle",
       replayTimelineError: null,
@@ -255,6 +272,7 @@ export const useStore = create<ParleyState>()(
       // Default the playhead to the end so the full transcript shows; the user
       // drags back to a moment to mask the future before re-evaluating.
       replayPlayheadMs: session.durationMs,
+      replayTrim: null,
       segments: session.segments,
       speakerNames: session.speakerNames,
       meetingStatus: "stopped",
@@ -274,6 +292,7 @@ export const useStore = create<ParleyState>()(
       appMode: "live",
       replay: null,
       replayPlayheadMs: 0,
+      replayTrim: null,
       segments: [],
       speakerNames: {},
       meetingStatus: "idle",
@@ -288,6 +307,8 @@ export const useStore = create<ParleyState>()(
   },
 
   setReplayPlayhead: (ms) => set({ replayPlayheadMs: Math.max(0, ms) }),
+
+  setReplayTrim: (trim) => set({ replayTrim: trim }),
 
   setReplayTimeline: (events) => set({ replayTimeline: events }),
   setReplayTimelineStatus: (status) => set({ replayTimelineStatus: status }),
@@ -485,12 +506,27 @@ export const useStore = create<ParleyState>()(
  * scrub-and-evaluate retro flow. Pass the store state (or the relevant slice).
  */
 export function visibleSegments(
-  state: Pick<ParleyState, "appMode" | "replayPlayheadMs" | "segments">
+  state: Pick<ParleyState, "appMode" | "replayPlayheadMs" | "segments" | "replayTrim">
 ): TranscriptSegment[] {
   if (state.appMode === "replay") {
-    return state.segments.filter((s) => s.startMs <= state.replayPlayheadMs);
+    return state.segments.filter(
+      (s) => s.startMs <= state.replayPlayheadMs && !isTrimmed(s, state.replayTrim)
+    );
   }
   return state.segments;
+}
+
+/**
+ * Is this segment outside the replay keep-window (i.e. trimmed away)? A segment
+ * is KEPT when it overlaps [startMs, endMs] at all, so a turn straddling a trim
+ * boundary stays. `null` trim means nothing is trimmed.
+ */
+export function isTrimmed(
+  s: Pick<TranscriptSegment, "startMs" | "endMs">,
+  trim: ReplayTrim | null
+): boolean {
+  if (!trim) return false;
+  return s.endMs < trim.startMs || s.startMs > trim.endMs;
 }
 
 /**

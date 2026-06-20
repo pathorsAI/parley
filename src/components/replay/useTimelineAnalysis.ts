@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useStore } from "../../lib/store";
+import { isTrimmed, useStore } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { analyzeTimeline } from "../../lib/ai/timeline";
 import { useReplaySession, useReplayTimelineStatus } from "./spine";
@@ -14,7 +14,7 @@ let timelineBusy = false;
  */
 export async function runTimelineAnalysis(): Promise<void> {
   const state = useStore.getState();
-  const { settings, segments, speakerNames, meetingContext } = state;
+  const { settings, segments, speakerNames, meetingContext, replayTrim } = state;
   const setStatus = state.setReplayTimelineStatus;
 
   if (timelineBusy) return;
@@ -27,8 +27,9 @@ export async function runTimelineAnalysis(): Promise<void> {
   try {
     const events = await analyzeTimeline({
       settings,
-      // Whole-recording overview — intentionally NOT masked to the playhead.
-      segments,
+      // Whole-recording overview — intentionally NOT masked to the playhead, but
+      // trimmed (post-meeting/intro) segments are excluded like everywhere else.
+      segments: segments.filter((s) => !isTrimmed(s, replayTrim)),
       evals: settings.evaluations,
       meetingContext,
       names: speakerNames,
