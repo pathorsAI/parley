@@ -1,13 +1,14 @@
 import { useState } from "react";
-import { Check, Copy, FileText, Maximize2, RefreshCw, X } from "lucide-react";
+import { Check, Copy, FileText, Maximize2, Sparkles, X } from "lucide-react";
 import { isTrimmed, useStore } from "../../lib/store";
-import { runAllEvaluations } from "../../lib/evaluations/engine";
+import { runAnalysis } from "../../lib/analysis/engine";
 import { generatePostMeetingReport } from "../../lib/ai/report";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { PROVIDER_BY_ID } from "../../lib/ai/providers";
 import { useI18n } from "../../i18n";
-import { EvaluationCard } from "./EvaluationCard";
-import { ReportContent } from "./ReportContent";
+import { FindingRow } from "./FindingRow";
+import { selectAndSeek } from "./useAnalysis";
+import { ReportContent } from "../sidebar/ReportContent";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -19,19 +20,34 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-export function EvaluationsPanel() {
+/**
+ * The right-hand analysis pane, shared by both modes. Renders the findings list
+ * (each row drills into "how it should have been done"), the post-meeting
+ * debrief, and the eval-template selector. In LIVE it also surfaces the primary
+ * "Analyze" action (+ an optional auto-interval); in REPLAY the analysis runs
+ * once on load, so it just shows status.
+ */
+export function FindingsPanel({
+  mode,
+  onSeek,
+}: {
+  mode: "live" | "replay";
+  onSeek: (ms: number) => void;
+}) {
   const { t } = useI18n();
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
-  const evaluations = useStore((s) => s.evaluations);
+  const findings = useStore((s) => s.findings);
+  const selectedId = useStore((s) => s.selectedFindingId);
+  const analysisStatus = useStore((s) => s.analysisStatus);
   const templates = useStore((s) => s.settings.evalTemplates);
   const provider = useStore((s) => s.settings.provider);
   const keyMissing = useStore((s) => !hasProviderKey(s.settings));
   const updateSettings = useStore((s) => s.updateSettings);
-  const autoEval = useStore((s) => s.autoEval);
-  const autoEvalSec = useStore((s) => s.autoEvalSec);
-  const setAutoEval = useStore((s) => s.setAutoEval);
-  const setAutoEvalSec = useStore((s) => s.setAutoEvalSec);
-  const running = useStore((s) => s.evaluations.some((e) => e.status === "running"));
+  const autoAnalyze = useStore((s) => s.autoAnalyze);
+  const autoAnalyzeSec = useStore((s) => s.autoAnalyzeSec);
+  const setAutoAnalyze = useStore((s) => s.setAutoAnalyze);
+  const setAutoAnalyzeSec = useStore((s) => s.setAutoAnalyzeSec);
+  const running = analysisStatus === "running";
 
   const [report, setReport] = useState("");
   const [reportStatus, setReportStatus] = useState<"idle" | "generating" | "done">("idle");
@@ -49,7 +65,7 @@ export function EvaluationsPanel() {
   }
 
   function applyTemplate(id: string) {
-    const tpl = templates.find((t) => t.id === id);
+    const tpl = templates.find((x) => x.id === id);
     if (!tpl) return;
     updateSettings({ evaluations: tpl.evals.map((e) => ({ ...e })) });
     setSelectedTemplateId(id);
@@ -65,7 +81,8 @@ export function EvaluationsPanel() {
         // Exclude trimmed (intro/post-meeting) lines from the debrief too.
         segments: s.segments.filter((seg) => !isTrimmed(seg, s.replayTrim)),
         evaluations: s.evaluations,
-        todos: s.todos,
+        // Replay has its own action-items surface; don't fold (stale) live todos in.
+        todos: mode === "replay" ? [] : s.todos,
         names: s.speakerNames,
         meetingContext: s.meetingContext,
         onDelta: (chunk) => setReport((prev) => prev + chunk),
@@ -80,32 +97,38 @@ export function EvaluationsPanel() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
-        <span className="text-xs font-medium">{t("evaluations.title")}</span>
-        <Select value={templates.some((tpl) => tpl.id === selectedTemplateId) ? selectedTemplateId : ""} onValueChange={applyTemplate}>
+        <span className="text-xs font-medium">{t("timeline.title")}</span>
+        <Select
+          value={templates.some((tpl) => tpl.id === selectedTemplateId) ? selectedTemplateId : ""}
+          onValueChange={applyTemplate}
+        >
           <SelectTrigger size="sm" className="ml-auto h-7 w-[150px] text-[11px]">
             <SelectValue placeholder={t("evaluations.applyTemplate")} />
           </SelectTrigger>
           <SelectContent>
-            {templates.map((t) => (
-              <SelectItem key={t.id} value={t.id}>
-                {t.name}
+            {templates.map((tpl) => (
+              <SelectItem key={tpl.id} value={tpl.id}>
+                {tpl.name}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
 
-      <div className="flex items-center gap-2 px-3 py-2">
-        <Button
-          variant="default"
-          size="sm"
-          className="h-7 px-2.5 text-[11px]"
-          disabled={running}
-          onClick={() => void runAllEvaluations()}
-        >
-          <RefreshCw className={`size-3 ${running ? "animate-spin" : ""}`} />
-          {t("evaluations.runAll")}
-        </Button>
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+        {mode === "live" && (
+          <Button
+            variant="default"
+            size="sm"
+            className="h-7 px-2.5 text-[11px]"
+            disabled={running}
+            onClick={() => void runAnalysis({ mode: "live" })}
+            title={t("analysis.hint")}
+          >
+            <Sparkles className={`size-3 ${running ? "animate-pulse" : ""}`} />
+            {running ? t("analysis.analyzing") : t("analysis.run")}
+          </Button>
+        )}
         <Button
           variant="outline"
           size="sm"
@@ -117,24 +140,25 @@ export function EvaluationsPanel() {
           <FileText className={`size-3 ${reportStatus === "generating" ? "animate-pulse" : ""}`} />
           {t("evaluations.report")}
         </Button>
-        {/* Auto: re-run the whole set every N seconds while recording. */}
-        <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={autoEval}
-            onChange={(e) => setAutoEval(e.target.checked)}
-            className="size-3.5 accent-primary"
-          />
-          {t("evaluations.autoEvery")}
-          <Input
-            type="number"
-            value={autoEvalSec}
-            onChange={(e) => setAutoEvalSec(Number(e.target.value))}
-            className="h-6 w-12 px-1 text-center text-[11px]"
-            disabled={!autoEval}
-          />
-          {t("evaluations.autoSeconds")}
-        </label>
+        {mode === "live" && (
+          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={autoAnalyze}
+              onChange={(e) => setAutoAnalyze(e.target.checked)}
+              className="size-3.5 accent-primary"
+            />
+            {t("evaluations.autoEvery")}
+            <Input
+              type="number"
+              value={autoAnalyzeSec}
+              onChange={(e) => setAutoAnalyzeSec(Number(e.target.value))}
+              className="h-6 w-12 px-1 text-center text-[11px]"
+              disabled={!autoAnalyze}
+            />
+            {t("evaluations.autoSeconds")}
+          </label>
+        )}
       </div>
 
       {keyMissing && (
@@ -151,7 +175,9 @@ export function EvaluationsPanel() {
                 <span className="text-xs font-semibold tracking-tight">
                   {t("evaluations.report")}
                   {reportStatus === "generating" && (
-                    <span className="ml-2 font-normal text-muted-foreground">{t("evaluations.reportGenerating")}</span>
+                    <span className="ml-2 font-normal text-muted-foreground">
+                      {t("evaluations.reportGenerating")}
+                    </span>
                   )}
                 </span>
                 <div className="flex items-center gap-1">
@@ -175,7 +201,6 @@ export function EvaluationsPanel() {
                   </button>
                 </div>
               </div>
-              {/* Inline preview is clamped + faded; the full debrief lives in the dialog. */}
               <div className="relative max-h-36 overflow-hidden">
                 <ReportContent markdown={report} />
                 <button
@@ -189,9 +214,23 @@ export function EvaluationsPanel() {
               </div>
             </div>
           )}
-          {evaluations.map((e) => (
-            <EvaluationCard key={e.id} evaluation={e} />
-          ))}
+
+          {findings.length === 0 && analysisStatus !== "running" ? (
+            <p className="px-1 pt-6 text-center text-xs text-muted-foreground">
+              {mode === "live" ? t("analysis.emptyLive") : t("timeline.empty")}
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-1.5">
+              {findings.map((f) => (
+                <FindingRow
+                  key={f.id}
+                  event={f}
+                  selected={selectedId === f.id}
+                  onSelect={(e) => selectAndSeek(e, onSeek)}
+                />
+              ))}
+            </ul>
+          )}
         </div>
       </ScrollArea>
 

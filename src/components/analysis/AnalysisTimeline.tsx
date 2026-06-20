@@ -4,13 +4,6 @@ import { formatClock } from "../../lib/store";
 import { cn } from "@/lib/utils";
 import type { TimelineEvent } from "../../lib/types";
 import { useI18n } from "../../i18n";
-import {
-  replayT,
-  useReplayTimeline,
-  useReplayTimelineError,
-  useReplayTimelineStatus,
-} from "./spine";
-import { reanalyzeTimeline } from "./useTimelineAnalysis";
 
 /** Severity → dot fill. Mirrors the info/warn/critical conventions used elsewhere. */
 const SEVERITY_DOT: Record<TimelineEvent["severity"], string> = {
@@ -19,72 +12,80 @@ const SEVERITY_DOT: Record<TimelineEvent["severity"], string> = {
   critical: "bg-red-500",
 };
 
-interface TimelineMarkersProps {
-  durationMs: number;
-  /** Current playhead — used to highlight at/near markers. */
-  playheadMs: number;
-  /** Seek the playhead (same path transcript clicks use). */
-  onSeek: (ms: number) => void;
-}
-
 /** A marker is "near" the playhead within this window (ms). */
 const NEAR_MS = 4000;
 
-/**
- * Two-lane band of time-anchored retro findings, aligned to the scrubber's
- * 0..durationMs width. Top lane = THEM (對方提的), bottom lane = ME (我的問題).
- * Click a dot to scrub to that moment; the masked re-eval + Ask then take over.
- */
-export function TimelineMarkers({ durationMs, playheadMs, onSeek }: TimelineMarkersProps) {
-  const { language } = useI18n();
-  const t = (key: string, vars?: Record<string, string | number>) => replayT(language, key, vars);
+interface AnalysisTimelineProps {
+  findings: TimelineEvent[];
+  status: "idle" | "running" | "done" | "error";
+  error?: string | null;
+  /** Axis width in ms — session.durationMs (replay) or the growing elapsed time (live). */
+  axisMaxMs: number;
+  /** Current playhead/elapsed marker, for near/at highlighting (optional). */
+  playheadMs?: number;
+  /** The finding whose drilldown is open — rendered with a persistent ring. */
+  selectedId?: string | null;
+  onSelect: (event: TimelineEvent) => void;
+  /** Shown as a recovery action on error (and not at all when omitted). */
+  onReanalyze?: () => void;
+}
 
-  const events = useReplayTimeline();
-  const status = useReplayTimelineStatus();
-  const error = useReplayTimelineError();
+/**
+ * Two-lane band of time-anchored findings, aligned to a 0..axisMaxMs width.
+ * Top lane = THEM (對方提的), bottom lane = ME (我的問題). Click a dot to select
+ * the finding (seek + open its solution). Shared by LIVE (growing elapsed axis)
+ * and REPLAY (fixed recording duration) — purely props-driven.
+ */
+export function AnalysisTimeline({
+  findings,
+  status,
+  error,
+  axisMaxMs,
+  playheadMs,
+  selectedId,
+  onSelect,
+  onReanalyze,
+}: AnalysisTimelineProps) {
+  const { t } = useI18n();
   const [hovered, setHovered] = useState<string | null>(null);
 
   const { them, me } = useMemo(
     () => ({
-      them: events.filter((e) => e.side === "them"),
-      me: events.filter((e) => e.side === "me"),
+      them: findings.filter((e) => e.side === "them"),
+      me: findings.filter((e) => e.side === "me"),
     }),
-    [events]
+    [findings]
   );
-
-  const running = status === "running";
 
   return (
     <div className="shrink-0 border-b px-4 py-2">
       <div className="mb-1.5 flex items-center justify-between gap-2">
         <span className="text-[11px] font-medium text-foreground">{t("timeline.title")}</span>
         <div className="flex items-center gap-2">
-          {status === "done" && events.length > 0 && (
+          {status === "done" && findings.length > 0 && (
             <span className="text-[10px] tabular-nums text-muted-foreground/70">
-              {t("timeline.count", { count: events.length })}
+              {t("timeline.count", { count: findings.length })}
             </span>
           )}
-          {running && <span className="text-[10px] text-muted-foreground">{t("timeline.analyzing")}</span>}
-          {/* Re-analysis only appears on failure (recovery). The whole-recording
-              analysis otherwise auto-runs once; the per-moment re-evaluation lives
-              on the player bar, so there's a single primary action. */}
+          {status === "running" && (
+            <span className="text-[10px] text-muted-foreground">{t("timeline.analyzing")}</span>
+          )}
           {status === "error" && (
             <>
-              <span
-                className="max-w-[200px] truncate text-[10px] text-orange-500"
-                title={error ?? undefined}
-              >
+              <span className="max-w-[200px] truncate text-[10px] text-orange-500" title={error ?? undefined}>
                 {t("timeline.failed", { error: error ?? "—" })}
               </span>
-              <button
-                type="button"
-                onClick={() => reanalyzeTimeline()}
-                className="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
-                title={t("timeline.reanalyze")}
-              >
-                <RefreshCw className="size-3" />
-                {t("timeline.reanalyze")}
-              </button>
+              {onReanalyze && (
+                <button
+                  type="button"
+                  onClick={onReanalyze}
+                  className="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+                  title={t("timeline.reanalyze")}
+                >
+                  <RefreshCw className="size-3" />
+                  {t("timeline.reanalyze")}
+                </button>
+              )}
             </>
           )}
         </div>
@@ -94,30 +95,30 @@ export function TimelineMarkers({ durationMs, playheadMs, onSeek }: TimelineMark
         <Lane
           label={t("timeline.laneThem")}
           events={them}
-          durationMs={durationMs}
+          axisMaxMs={axisMaxMs}
           playheadMs={playheadMs}
+          selectedId={selectedId}
           hovered={hovered}
           setHovered={setHovered}
-          onSeek={onSeek}
-          formatClock={formatClock}
+          onSelect={onSelect}
           extraLabel={t("timeline.extra")}
           tooltipTime={t("timeline.atMoment")}
         />
         <Lane
           label={t("timeline.laneMe")}
           events={me}
-          durationMs={durationMs}
+          axisMaxMs={axisMaxMs}
           playheadMs={playheadMs}
+          selectedId={selectedId}
           hovered={hovered}
           setHovered={setHovered}
-          onSeek={onSeek}
-          formatClock={formatClock}
+          onSelect={onSelect}
           extraLabel={t("timeline.extra")}
           tooltipTime={t("timeline.atMoment")}
         />
       </div>
 
-      {status === "done" && events.length === 0 && (
+      {status === "done" && findings.length === 0 && (
         <div className="mt-1 text-[10px] text-muted-foreground/70">{t("timeline.empty")}</div>
       )}
     </div>
@@ -127,12 +128,12 @@ export function TimelineMarkers({ durationMs, playheadMs, onSeek }: TimelineMark
 interface LaneProps {
   label: string;
   events: TimelineEvent[];
-  durationMs: number;
-  playheadMs: number;
+  axisMaxMs: number;
+  playheadMs?: number;
+  selectedId?: string | null;
   hovered: string | null;
   setHovered: (id: string | null) => void;
-  onSeek: (ms: number) => void;
-  formatClock: (ms: number) => string;
+  onSelect: (event: TimelineEvent) => void;
   extraLabel: string;
   tooltipTime: string;
 }
@@ -140,12 +141,12 @@ interface LaneProps {
 function Lane({
   label,
   events,
-  durationMs,
+  axisMaxMs,
   playheadMs,
+  selectedId,
   hovered,
   setHovered,
-  onSeek,
-  formatClock,
+  onSelect,
   extraLabel,
   tooltipTime,
 }: LaneProps) {
@@ -154,34 +155,30 @@ function Lane({
       <span className="w-16 shrink-0 truncate text-right text-[10px] text-muted-foreground">{label}</span>
       <div className="relative h-5 min-w-0 flex-1 rounded bg-muted/40">
         {events.map((e) => {
-          const pct = durationMs > 0 ? Math.max(0, Math.min(1, e.atMs / durationMs)) : 0;
-          const near = Math.abs(e.atMs - playheadMs) <= NEAR_MS;
+          const pct = axisMaxMs > 0 ? Math.max(0, Math.min(1, e.atMs / axisMaxMs)) : 0;
+          const near = playheadMs !== undefined && Math.abs(e.atMs - playheadMs) <= NEAR_MS;
           const isHovered = hovered === e.id;
+          const isSelected = selectedId === e.id;
           return (
             <button
               key={e.id}
               type="button"
-              onClick={() => onSeek(e.atMs)}
+              onClick={() => onSelect(e)}
               onMouseEnter={() => setHovered(e.id)}
               onMouseLeave={() => setHovered(null)}
               className={cn(
                 "absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full transition-transform hover:scale-125",
                 SEVERITY_DOT[e.severity],
-                // AI "extra" findings get a distinct ring outline.
                 e.source === "extra" && "ring-2 ring-foreground/40 ring-offset-1 ring-offset-background",
                 near && "scale-125",
-                isHovered && "z-20"
+                isSelected && "scale-150 ring-2 ring-primary ring-offset-1 ring-offset-background",
+                (isHovered || isSelected) && "z-20"
               )}
               style={{ left: `${pct * 100}%` }}
               aria-label={`${formatClock(e.atMs)} ${e.title}`}
             >
               {isHovered && (
-                <span
-                  className={cn(
-                    "pointer-events-none absolute bottom-full left-1/2 z-30 mb-1.5 w-56 -translate-x-1/2 rounded-md border bg-popover px-2 py-1.5 text-left shadow-md",
-                    "text-[11px] leading-snug text-popover-foreground"
-                  )}
-                >
+                <span className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1.5 w-56 -translate-x-1/2 rounded-md border bg-popover px-2 py-1.5 text-left text-[11px] leading-snug text-popover-foreground shadow-md">
                   <span className="flex items-center gap-1.5">
                     <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
                       {tooltipTime} {formatClock(e.atMs)}

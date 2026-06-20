@@ -78,48 +78,51 @@ export interface Evaluation extends EvalDef {
 }
 
 /**
- * War-gaming the opponent's arguments.
- *
- * One detected argument made by THEM, decomposed into the premises it smuggles
- * in, the single premise that looks acceptable but should NOT be conceded
- * (the "trap"), and a spread of response angles — each with a predicted reaction.
+ * War-game move taxonomy. Reused by the per-finding solution engine (FindingMove)
+ * and the interactive opponent-reply branch (WargameBranch).
  */
 export type WargameStrategyKind = "rebut" | "reframe" | "trade" | "concede_redirect";
 
-/** One way to respond to THEM's argument, plus how they'll likely react. */
-export interface WargameStrategy {
-  kind: WargameStrategyKind;
-  /** A concrete move the user can actually make at the table. */
-  approach: string;
-  /** Realistic prediction of how the opponent counters this angle. */
-  predictedReaction: string;
-}
-
-/** The premise that looks fair but quietly hands the opponent the win. */
-export interface WargameTrap {
-  premise: string;
-  why: string;
-}
-
-/** A key argument THEM made, decomposed for war-gaming. */
-export interface WargameArgument {
-  id: string;
-  /** THEM's claim, in their own framing. */
-  claim: string;
-  /** The actual quote it's grounded in, when one exists. */
-  sourceQuote?: string;
-  /** Hidden premises the claim relies on. */
-  premises: string[];
-  /** The premise the user should refuse to concede — or null if none stands out. */
-  trap?: WargameTrap | null;
-  /** Response angles, ideally spanning all four kinds where sensible. */
-  strategies: WargameStrategy[];
-}
-
-/** One turn in an on-demand war-game branch simulation. */
+/** One turn in an on-demand opponent-reply branch simulation. */
 export interface WargameBranchTurn {
   role: "me" | "them";
   text: string;
+}
+
+/**
+ * A per-finding "how it should have been done" solution. The opponent war-gaming
+ * engine, repurposed from a standalone tab into a lazy drilldown on a single
+ * timeline finding: given one notable moment, what ME should have said/done.
+ */
+
+/** One concrete corrective move ME could have made, with its likely fallout. */
+export interface FindingMove {
+  /** Reuses the war-game angle taxonomy so accent colors + i18n labels carry over. */
+  kind: WargameStrategyKind;
+  /** A concrete move ME could make/say at the table. */
+  approach: string;
+  /** One sentence on why this is the better move — the teaching value. */
+  why: string;
+  /** Realistic prediction of how THEM would react to this move. */
+  predictedReaction: string;
+}
+
+/** The full solution for one finding: a headline plus 1-3 moves. */
+export interface FindingSolution {
+  findingId: string;
+  /** One-line "what went wrong / what to do instead". */
+  summary: string;
+  /** 1-3 concrete corrective moves, ideally spanning kinds where sensible. */
+  moves: FindingMove[];
+  /** For ME-side findings: a verbatim line ME could have said instead (or null). */
+  suggestedLine?: string | null;
+}
+
+/** Lazy per-finding solution cache entry, keyed by TimelineEvent.id in the store. */
+export interface FindingSolutionEntry {
+  status: "idle" | "running" | "done" | "error";
+  solution: FindingSolution | null;
+  error: string | null;
 }
 
 /**
@@ -151,6 +154,27 @@ export interface TodoItem {
   id: string;
   text: string;
   done: boolean;
+}
+
+/**
+ * A post-meeting action item generated from the replay analysis — a concrete
+ * next step / follow-up, optionally linked back to the finding that motivated it.
+ * Deliberately distinct from TodoItem (a pre-meeting agenda checkbox): action
+ * items are generated, carry a rationale, and link to a moment on the recording.
+ */
+export interface ActionItem {
+  id: string;
+  /** The concrete next step / follow-up. */
+  text: string;
+  /** Why it matters — e.g. "because at 12:30 you conceded the price floor". */
+  rationale: string;
+  done: boolean;
+  /** The TimelineEvent it derives from, or null for a general item. */
+  linkedEventId: string | null;
+  /** Seek target on the recording (from the linked event/cited time), or null. */
+  atMs: number | null;
+  /** Carried from the linked finding, for the chip color. */
+  severity?: Severity;
 }
 
 /** A named, reusable checklist you can apply to a meeting. */

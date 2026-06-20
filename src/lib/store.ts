@@ -1,16 +1,15 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type {
+  ActionItem,
   AppLanguage,
   Evaluation,
-  EvalResult,
-  EvalStatus,
+  FindingSolutionEntry,
   MeetingStatus,
   Settings,
   TimelineEvent,
   TodoItem,
   TranscriptSegment,
-  WargameArgument,
 } from "./types";
 import type { ReplaySession } from "./replay/types";
 import {
@@ -124,19 +123,19 @@ interface ParleyState {
   /**
    * "live" = capturing mic/system audio now; "replay" = analyzing an uploaded
    * recording. In replay mode the uploaded transcript is loaded into `segments`,
-   * so every existing panel (transcript, evals, ask, report) works unchanged —
-   * the only twist is `visibleSegments` masks them to `replayPlayheadMs`.
+   * so every panel (transcript, findings, ask, report) works unchanged; the
+   * playhead is for navigation/viewing only (no masking).
    */
   appMode: AppMode;
   /** The uploaded recording under analysis (null in live mode). */
   replay: ReplaySession | null;
-  /** Scrub position (ms) in replay mode; transcript is masked to at/under this. */
+  /** Scrub position (ms) in replay mode — drives audio + transcript highlight. */
   replayPlayheadMs: number;
   /** Load an uploaded recording and switch into replay mode. */
   enterReplay: (session: ReplaySession) => void;
   /** Leave replay mode and return to a clean live/idle state. */
   exitReplay: () => void;
-  /** Move the replay playhead (drives both audio position and transcript mask). */
+  /** Move the replay playhead (drives both audio position and the transcript). */
   setReplayPlayhead: (ms: number) => void;
 
   /** Keep-window: segments outside it are excluded from the view + all analysis.
@@ -144,28 +143,42 @@ interface ParleyState {
   replayTrim: ReplayTrim | null;
   setReplayTrim: (trim: ReplayTrim | null) => void;
 
-  /** Time-anchored retro findings for the replay timeline (whole-recording). */
-  replayTimeline: TimelineEvent[];
-  /** Lifecycle of the whole-recording timeline analysis. */
-  replayTimelineStatus: "idle" | "running" | "done" | "error";
-  /** Error message from the last failed timeline analysis (null otherwise). */
-  replayTimelineError: string | null;
-  setReplayTimeline: (events: TimelineEvent[]) => void;
-  setReplayTimelineStatus: (status: ParleyState["replayTimelineStatus"]) => void;
-  setReplayTimelineError: (error: string | null) => void;
-
+  // ── Unified analysis (shared by LIVE + REPLAY) ──────────────────────────────
   /**
-   * Opponent-argument war-gaming, lifted into the store so it can be triggered
-   * both from the War-game tab and from the replay "re-evaluate at this moment"
-   * button (which runs evals + war-gaming together). `wargameMessage` is an
-   * already-localized info/error line; null when there's nothing to say.
+   * Time-anchored findings from an analysis pass (eval-matched or AI "extra").
+   * The timeline + findings list render these in both modes. LIVE re-analysis
+   * REPLACES the whole list (and clears selection + solutions); REPLAY runs once.
    */
-  wargameArgs: WargameArgument[];
-  wargameStatus: "idle" | "running" | "done" | "error";
-  wargameMessage: string | null;
-  setWargame: (
-    patch: Partial<Pick<ParleyState, "wargameArgs" | "wargameStatus" | "wargameMessage">>
-  ) => void;
+  findings: TimelineEvent[];
+  analysisStatus: "idle" | "running" | "done" | "error";
+  analysisError: string | null;
+  setFindings: (events: TimelineEvent[]) => void;
+  setAnalysisStatus: (status: ParleyState["analysisStatus"]) => void;
+  setAnalysisError: (error: string | null) => void;
+
+  /** The finding whose "how it should have been done" drilldown is open. */
+  selectedFindingId: string | null;
+  setSelectedFinding: (id: string | null) => void;
+
+  /** Lazy per-finding solution cache, keyed by TimelineEvent.id. */
+  findingSolutions: Record<string, FindingSolutionEntry>;
+  setFindingSolution: (id: string, patch: Partial<FindingSolutionEntry>) => void;
+
+  /** Auto-run the analysis on an interval while recording (LIVE; default off). */
+  autoAnalyze: boolean;
+  autoAnalyzeSec: number;
+  setAutoAnalyze: (on: boolean) => void;
+  setAutoAnalyzeSec: (sec: number) => void;
+
+  // ── Action items (REPLAY post-meeting follow-ups) ───────────────────────────
+  /** Generated from the analysis findings + transcript; ephemeral, replay-only. */
+  actionItems: ActionItem[];
+  actionItemsStatus: "idle" | "running" | "done" | "error";
+  actionItemsError: string | null;
+  setActionItems: (items: ActionItem[]) => void;
+  setActionItemsStatus: (status: ParleyState["actionItemsStatus"]) => void;
+  setActionItemsError: (error: string | null) => void;
+  toggleActionItem: (id: string) => void;
 
   meetingStatus: MeetingStatus;
   meetingStartedAt: number | null;
@@ -212,19 +225,6 @@ interface ParleyState {
   upsertSegment: (segment: TranscriptSegment) => void;
   clearTranscript: () => void;
 
-  // evaluations
-  setEvalStatus: (id: string, status: EvalStatus) => void;
-  setEvalResult: (id: string, result: EvalResult) => void;
-  setAllEvalStatus: (status: EvalStatus) => void;
-  /** Error message from the last failed "Run all" evaluation (null otherwise). */
-  evalError: string | null;
-  setEvalError: (error: string | null) => void;
-  /** Whether to auto-rerun the whole evaluation set on an interval while recording. */
-  autoEval: boolean;
-  autoEvalSec: number;
-  setAutoEval: (on: boolean) => void;
-  setAutoEvalSec: (sec: number) => void;
-
   // settings
   updateSettings: (patch: Partial<Settings>) => void;
   /** Replace settings wholesale — used to sync from the settings window. */
@@ -238,12 +238,16 @@ export const useStore = create<ParleyState>()(
       replay: null,
       replayPlayheadMs: 0,
       replayTrim: null,
-      replayTimeline: [],
-      replayTimelineStatus: "idle",
-      replayTimelineError: null,
-      wargameArgs: [],
-      wargameStatus: "idle",
-      wargameMessage: null,
+      findings: [],
+      analysisStatus: "idle",
+      analysisError: null,
+      selectedFindingId: null,
+      findingSolutions: {},
+      autoAnalyze: false,
+      autoAnalyzeSec: 45,
+      actionItems: [],
+      actionItemsStatus: "idle",
+      actionItemsError: null,
       meetingStatus: "idle",
       meetingStartedAt: null,
       segments: [],
@@ -252,10 +256,7 @@ export const useStore = create<ParleyState>()(
       speakerNames: {},
       todos: [],
       meetingContext: "",
-      autoEval: false,
-      autoEvalSec: 30,
       highlightMs: null,
-      evalError: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
@@ -269,20 +270,22 @@ export const useStore = create<ParleyState>()(
     set({
       appMode: "replay",
       replay: session,
-      // Default the playhead to the end so the full transcript shows; the user
-      // drags back to a moment to mask the future before re-evaluating.
-      replayPlayheadMs: session.durationMs,
+      // Start at the beginning of the recording (the full transcript always
+      // shows now — no masking); the playhead is just for playback/navigation.
+      replayPlayheadMs: 0,
       replayTrim: null,
       segments: session.segments,
       speakerNames: session.speakerNames,
       meetingStatus: "stopped",
       highlightMs: null,
-      replayTimeline: [],
-      replayTimelineStatus: "idle",
-      replayTimelineError: null,
-      wargameArgs: [],
-      wargameStatus: "idle",
-      wargameMessage: null,
+      findings: [],
+      analysisStatus: "idle",
+      analysisError: null,
+      selectedFindingId: null,
+      findingSolutions: {},
+      actionItems: [],
+      actionItemsStatus: "idle",
+      actionItemsError: null,
     });
   },
 
@@ -297,12 +300,14 @@ export const useStore = create<ParleyState>()(
       speakerNames: {},
       meetingStatus: "idle",
       highlightMs: null,
-      replayTimeline: [],
-      replayTimelineStatus: "idle",
-      replayTimelineError: null,
-      wargameArgs: [],
-      wargameStatus: "idle",
-      wargameMessage: null,
+      findings: [],
+      analysisStatus: "idle",
+      analysisError: null,
+      selectedFindingId: null,
+      findingSolutions: {},
+      actionItems: [],
+      actionItemsStatus: "idle",
+      actionItemsError: null,
     });
   },
 
@@ -310,10 +315,27 @@ export const useStore = create<ParleyState>()(
 
   setReplayTrim: (trim) => set({ replayTrim: trim }),
 
-  setReplayTimeline: (events) => set({ replayTimeline: events }),
-  setReplayTimelineStatus: (status) => set({ replayTimelineStatus: status }),
-  setReplayTimelineError: (error) => set({ replayTimelineError: error }),
-  setWargame: (patch) => set(patch),
+  // Replacing the findings list invalidates the selection + any cached solutions
+  // (the model mints fresh finding ids each pass, so old solutions are stale).
+  setFindings: (events) => set({ findings: events, selectedFindingId: null, findingSolutions: {} }),
+  setAnalysisStatus: (status) => set({ analysisStatus: status }),
+  setAnalysisError: (error) => set({ analysisError: error }),
+  setSelectedFinding: (id) => set({ selectedFindingId: id }),
+  setFindingSolution: (id, patch) =>
+    set((state) => {
+      const prev = state.findingSolutions[id] ?? { status: "idle", solution: null, error: null };
+      return { findingSolutions: { ...state.findingSolutions, [id]: { ...prev, ...patch } } };
+    }),
+  setAutoAnalyze: (on) => set({ autoAnalyze: on }),
+  setAutoAnalyzeSec: (sec) => set({ autoAnalyzeSec: Math.max(20, sec || 45) }),
+
+  setActionItems: (items) => set({ actionItems: items }),
+  setActionItemsStatus: (status) => set({ actionItemsStatus: status }),
+  setActionItemsError: (error) => set({ actionItemsError: error }),
+  toggleActionItem: (id) =>
+    set((state) => ({
+      actionItems: state.actionItems.map((a) => (a.id === id ? { ...a, done: !a.done } : a)),
+    })),
 
   addTodo: (text) =>
     set((state) => {
@@ -349,10 +371,11 @@ export const useStore = create<ParleyState>()(
       meetingStartedAt: Date.now(),
       segments: [],
       speakerNames: {},
-      wargameArgs: [],
-      wargameStatus: "idle",
-      wargameMessage: null,
-      evalError: null,
+      findings: [],
+      analysisStatus: "idle",
+      analysisError: null,
+      selectedFindingId: null,
+      findingSolutions: {},
     });
   },
 
@@ -381,35 +404,6 @@ export const useStore = create<ParleyState>()(
     }),
 
   clearTranscript: () => set({ segments: [] }),
-
-  setEvalStatus: (id, status) =>
-    set((state) => ({
-      evaluations: state.evaluations.map((e) =>
-        e.id === id ? { ...e, status } : e
-      ),
-    })),
-
-  setEvalResult: (id, result) =>
-    set((state) => ({
-      evaluations: state.evaluations.map((e) =>
-        e.id === id
-          ? {
-              ...e,
-              result,
-              status: result.flagged ? "flag" : "ok",
-              lastRunAt: Date.now(),
-            }
-          : e
-      ),
-    })),
-
-  setAllEvalStatus: (status) =>
-    set((state) => ({ evaluations: state.evaluations.map((e) => ({ ...e, status })) })),
-
-  setEvalError: (error) => set({ evalError: error }),
-
-  setAutoEval: (on) => set({ autoEval: on }),
-  setAutoEvalSec: (sec) => set({ autoEvalSec: Math.max(5, sec || 30) }),
 
   updateSettings: (patch) =>
     set((state) => {
@@ -500,26 +494,10 @@ export const useStore = create<ParleyState>()(
 );
 
 /**
- * The transcript the AI is allowed to see right now. Identical to `segments` in
- * live mode; in replay mode it's masked to segments at/under the playhead, so an
- * evaluation re-run simulates "what was known at this moment" — the core of the
- * scrub-and-evaluate retro flow. Pass the store state (or the relevant slice).
- */
-export function visibleSegments(
-  state: Pick<ParleyState, "appMode" | "replayPlayheadMs" | "segments" | "replayTrim">
-): TranscriptSegment[] {
-  if (state.appMode === "replay") {
-    return state.segments.filter(
-      (s) => s.startMs <= state.replayPlayheadMs && !isTrimmed(s, state.replayTrim)
-    );
-  }
-  return state.segments;
-}
-
-/**
  * Is this segment outside the replay keep-window (i.e. trimmed away)? A segment
  * is KEPT when it overlaps [startMs, endMs] at all, so a turn straddling a trim
- * boundary stays. `null` trim means nothing is trimmed.
+ * boundary stays. `null` trim means nothing is trimmed. Used to grey trimmed
+ * lines in the transcript and to exclude them from every replay analysis.
  */
 export function isTrimmed(
   s: Pick<TranscriptSegment, "startMs" | "endMs">,

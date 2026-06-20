@@ -31,8 +31,8 @@ export interface ReplayPlayer {
 /**
  * Keeps an <audio> element and the store playhead in sync, both directions:
  * audio playback advances the store (throttled), and seeks/scrubs drive the
- * audio. The store `replayPlayheadMs` is the single source of truth the rest of
- * the app (eval engine, Ask) reads through `visibleSegments`.
+ * audio. The store `replayPlayheadMs` is the single source of truth for playback
+ * position and which transcript line is highlighted (navigation only).
  */
 export function useReplayPlayer(durationMs: number): ReplayPlayer {
   const audioRef = useRef<HTMLAudioElement | null>(null);

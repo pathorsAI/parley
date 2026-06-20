@@ -1,10 +1,8 @@
 import { useState } from "react";
-import { Loader2, Pause, Play, Scissors, Sparkles, X } from "lucide-react";
+import { Pause, Play, Scissors, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatClock } from "../../lib/store";
-import { runAllEvaluations } from "../../lib/evaluations/engine";
-import { runWargameDetect } from "../../lib/wargame/engine";
 import { Scrubber } from "./Scrubber";
 import { TrimBar } from "./TrimBar";
 import { useReplayTrim, useSetReplayTrim } from "./spine";
@@ -21,8 +19,6 @@ interface ReplayPlayerBarProps {
     play: string;
     pause: string;
     playhead: string;
-    evalHere: string;
-    evaluating: string;
     trim: string;
     trimReset: string;
     /** Template with {start}/{end} placeholders. */
@@ -35,9 +31,9 @@ interface ReplayPlayerBarProps {
 
 /**
  * The replay header: transport controls, a draggable timeline, the current
- * time/duration, and the prominent "re-evaluate at this moment" action. All
- * seeking funnels through `player.seek`, which keeps audio + store playhead in
- * lockstep so masked evals/Ask run against exactly this moment.
+ * time/duration, and the trim (keep-window) controls. The playhead is for
+ * navigation/viewing only — analysis runs once on load (no re-evaluation on
+ * scrub); the trim narrows what every analysis sees.
  */
 export function ReplayPlayerBar({
   name,
@@ -46,7 +42,6 @@ export function ReplayPlayerBar({
   onExit,
   labels,
 }: ReplayPlayerBarProps) {
-  const [evaluating, setEvaluating] = useState(false);
   const [trimOpen, setTrimOpen] = useState(false);
   const trim = useReplayTrim();
   const setTrim = useSetReplayTrim();
@@ -57,36 +52,15 @@ export function ReplayPlayerBar({
         .replace("{end}", formatClock(trim.endMs))
     : "";
 
-  async function reEvaluate() {
-    setEvaluating(true);
-    try {
-      // Analyze THIS moment from both angles at once: my evaluation problems AND
-      // the opponent's arguments to counter (both masked to the playhead).
-      await Promise.all([runAllEvaluations(), runWargameDetect()]);
-    } finally {
-      setEvaluating(false);
-    }
-  }
-
   return (
     <div className="shrink-0 border-b">
       <div className="flex h-10 items-center gap-2 px-4">
         <span className="truncate text-xs font-medium text-foreground">{labels.title}</span>
         <span className="truncate text-[11px] text-muted-foreground">· {name}</span>
         <Button
-          variant="default"
-          size="sm"
-          className="ml-auto h-7 px-2.5 text-[11px]"
-          disabled={evaluating}
-          onClick={() => void reEvaluate()}
-        >
-          {evaluating ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
-          {evaluating ? labels.evaluating : labels.evalHere}
-        </Button>
-        <Button
           variant="ghost"
           size="icon-sm"
-          className="text-muted-foreground hover:text-foreground"
+          className="ml-auto text-muted-foreground hover:text-foreground"
           onClick={onExit}
           title={labels.title}
         >
