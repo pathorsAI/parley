@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pause, Play, Sparkles, X } from "lucide-react";
+import { Loader2, Pause, Play, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatClock } from "../../lib/store";
 import { runAllEvaluations } from "../../lib/evaluations/engine";
@@ -58,7 +58,7 @@ export function ReplayPlayerBar({
           disabled={evaluating}
           onClick={() => void reEvaluate()}
         >
-          <Sparkles className={`size-3 ${evaluating ? "animate-pulse" : ""}`} />
+          {evaluating ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
           {evaluating ? labels.evaluating : labels.evalHere}
         </Button>
         <Button

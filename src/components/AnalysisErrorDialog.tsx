@@ -1,8 +1,10 @@
-import { AlertTriangle, Settings, X } from "lucide-react";
+import { AlertTriangle, RefreshCw, Settings, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { hasProviderKey } from "../lib/ai/settings";
 import { PROVIDER_BY_ID } from "../lib/ai/providers";
 import { openSettingsWindow } from "../lib/settingsSync";
+import { runAllEvaluations } from "../lib/evaluations/engine";
+import { reanalyzeTimeline } from "./replay/useTimelineAnalysis";
 import { useI18n } from "../i18n";
 
 /**
@@ -53,8 +55,8 @@ const HINTS: Record<"zh-TW" | "en", Record<Kind, string>> = {
 };
 
 const LABELS = {
-  "zh-TW": { title: "分析失敗", provider: "供應商", model: "評估模型", openSettings: "開啟設定", dismiss: "關閉" },
-  en: { title: "Analysis failed", provider: "Provider", model: "Eval model", openSettings: "Open Settings", dismiss: "Dismiss" },
+  "zh-TW": { title: "分析失敗", provider: "供應商", model: "評估模型", openSettings: "開啟設定", dismiss: "關閉", retry: "重試" },
+  en: { title: "Analysis failed", provider: "Provider", model: "Eval model", openSettings: "Open Settings", dismiss: "Dismiss", retry: "Retry" },
 } as const;
 
 export function AnalysisErrorDialog() {
@@ -81,6 +83,14 @@ export function AnalysisErrorDialog() {
   function dismiss() {
     setEvalError(null);
     setReplayTimelineError(null);
+  }
+
+  /** Re-run whichever analysis failed, then close. */
+  function retry() {
+    const wasEval = evalError != null;
+    dismiss();
+    if (wasEval) void runAllEvaluations();
+    else reanalyzeTimeline();
   }
 
   return (
@@ -120,6 +130,14 @@ export function AnalysisErrorDialog() {
               className="rounded-md border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
             >
               {L.dismiss}
+            </button>
+            <button
+              type="button"
+              onClick={retry}
+              className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-foreground hover:bg-muted"
+            >
+              <RefreshCw className="size-3.5" />
+              {L.retry}
             </button>
             <button
               type="button"

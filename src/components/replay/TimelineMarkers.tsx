@@ -65,24 +65,28 @@ export function TimelineMarkers({ durationMs, playheadMs, onSeek }: TimelineMark
             </span>
           )}
           {running && <span className="text-[10px] text-muted-foreground">{t("timeline.analyzing")}</span>}
+          {/* Re-analysis only appears on failure (recovery). The whole-recording
+              analysis otherwise auto-runs once; the per-moment re-evaluation lives
+              on the player bar, so there's a single primary action. */}
           {status === "error" && (
-            <span
-              className="max-w-[260px] truncate text-[10px] text-orange-500"
-              title={error ?? undefined}
-            >
-              {t("timeline.failed", { error: error ?? "—" })}
-            </span>
+            <>
+              <span
+                className="max-w-[200px] truncate text-[10px] text-orange-500"
+                title={error ?? undefined}
+              >
+                {t("timeline.failed", { error: error ?? "—" })}
+              </span>
+              <button
+                type="button"
+                onClick={() => reanalyzeTimeline()}
+                className="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+                title={t("timeline.reanalyze")}
+              >
+                <RefreshCw className="size-3" />
+                {t("timeline.reanalyze")}
+              </button>
+            </>
           )}
-          <button
-            type="button"
-            onClick={() => reanalyzeTimeline()}
-            disabled={running}
-            className="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50"
-            title={t("timeline.reanalyze")}
-          >
-            <RefreshCw className={cn("size-3", running && "animate-spin")} />
-            {t("timeline.reanalyze")}
-          </button>
         </div>
       </div>
 
