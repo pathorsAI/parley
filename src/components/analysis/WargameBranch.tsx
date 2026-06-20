@@ -6,20 +6,23 @@ import { useStore } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import type { WargameArgument, WargameBranchTurn, WargameStrategy } from "../../lib/types";
+import type { FindingMove, WargameBranchTurn } from "../../lib/types";
 
 /**
- * An inline, chat-like war-game of one chosen strategy branch. Mirrors the
- * AskPanel bubble styling: ME on the right (primary), THEM on the left (muted).
- * The first opponent turn is fetched on mount; "Continue branch" advances it.
+ * An inline, chat-like roleplay of one chosen corrective move: ME plays the move,
+ * THEM (the opponent) reacts, and ME can keep replying to pressure-test it.
+ * Mirrors the AskPanel bubble styling: ME on the right (primary), THEM on the
+ * left (muted). The first opponent turn is fetched on mount.
  */
 export function WargameBranch({
-  argument,
-  strategy,
+  situation,
+  sourceQuote,
+  move,
   onCollapse,
 }: {
-  argument: WargameArgument;
-  strategy: WargameStrategy;
+  situation: string;
+  sourceQuote?: string;
+  move: FindingMove;
   onCollapse: () => void;
 }) {
   const { t } = useI18n();
@@ -39,8 +42,9 @@ export function WargameBranch({
       const { simulateBranch } = await import("../../lib/ai/wargame");
       const newTurns = await simulateBranch({
         settings,
-        argument,
-        strategy,
+        situation,
+        sourceQuote,
+        move,
         history: turns,
         userReply,
         meetingContext,
@@ -77,7 +81,7 @@ export function WargameBranch({
     <div className="mt-2 rounded-lg border bg-background/60 p-2.5">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-[11px] font-medium text-muted-foreground">
-          {t(`wargame.kind.${strategy.kind}` as const)}
+          {t(`wargame.kind.${move.kind}` as const)}
         </span>
         <button
           type="button"

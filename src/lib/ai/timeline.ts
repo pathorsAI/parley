@@ -35,9 +35,13 @@ const eventSchema = z.object({
 });
 const schema = z.object({ events: z.array(eventSchema) });
 
-const SYSTEM = `You are doing a post-hoc RETRO of a finished negotiation/interview transcript for the user ("ME") against the other party ("THEM"). The conversation is OVER and you can see the whole thing.
+const SYSTEM_INTRO_REPLAY = `You are doing a post-hoc RETRO of a finished negotiation/interview transcript for the user ("ME") against the other party ("THEM"). The conversation is OVER and you can see the whole thing.`;
 
-You are given the user's ACTIVE EVALUATIONS (each with an id, a name, and what to look for) and the FULL timestamped transcript (every line is prefixed with its [m:ss] start time). Produce a chronological list of genuinely NOTABLE moments worth reviewing in a retro.
+const SYSTEM_INTRO_LIVE = `You are analyzing an ONGOING negotiation/interview for the user ("ME") against the other party ("THEM"). The meeting is STILL IN PROGRESS — you see only what has been said SO FAR. Surface the notable moments up to now so ME can course-correct in real time.`;
+
+const SYSTEM_BODY = `
+
+You are given the user's ACTIVE EVALUATIONS (each with an id, a name, and what to look for) and the timestamped transcript (every line is prefixed with its [m:ss] start time). Produce a chronological list of genuinely NOTABLE moments worth reviewing.
 
 For EACH moment provide:
 - time: the [m:ss] it occurred — copy a real timestamp from the transcript so the user can jump back to it.
@@ -48,10 +52,10 @@ For EACH moment provide:
 - detail: one or two sentences.
 - quote: a VERBATIM quote from the transcript (never invent one — omit it if you have nothing exact).
 
-Cover BOTH things the evaluations target AND important moments they DON'T (the "extra" ones the user didn't think to configure but should see in a retro). Be selective — surface the moments that genuinely matter, not every line. Ground everything in what was actually said; never fabricate quotes or timestamps.`;
+Cover BOTH things the evaluations target AND important moments they DON'T (the "extra" ones the user didn't think to configure but should see). Be selective — surface the moments that genuinely matter, not every line. Ground everything in what was actually said; never fabricate quotes or timestamps.`;
 
 /** Parse a model-supplied "[m:ss]" / "m:ss" / "h:mm:ss" time into milliseconds. */
-function parseClockMs(raw: string | undefined): number | null {
+export function parseClockMs(raw: string | undefined): number | null {
   if (!raw) return null;
   const m = raw.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
   if (!m) return null;
@@ -94,8 +98,10 @@ export async function analyzeTimeline(opts: {
   evals: EvalDef[];
   meetingContext?: string;
   names?: Record<string, string>;
+  /** "replay" (default) frames the analysis as a finished retro; "live" as in-progress. */
+  mode?: "live" | "replay";
 }): Promise<TimelineEvent[]> {
-  const { settings, segments, evals, meetingContext, names } = opts;
+  const { settings, segments, evals, meetingContext, names, mode = "replay" } = opts;
 
   const transcript = transcriptWithTimestamps(segments, names);
   const ctx =
@@ -104,6 +110,8 @@ export async function analyzeTimeline(opts: {
   const list = evals.length
     ? evals.map((e) => `### id: ${e.id}\nname: ${e.name}\nwatch for: ${e.prompt}`).join("\n\n")
     : "(none configured)";
+  const system = (mode === "live" ? SYSTEM_INTRO_LIVE : SYSTEM_INTRO_REPLAY) + SYSTEM_BODY;
+  const transcriptLabel = mode === "live" ? "Transcript so far" : "Full transcript";
 
   const provider = settings.provider;
   const model = settings.models[settings.provider].eval;
@@ -113,8 +121,8 @@ export async function analyzeTimeline(opts: {
     model: getModel(settings, "eval"),
     providerOptions: getProviderOptions(settings, "eval"),
     schema,
-    system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
-    prompt: `${ctx}Active evaluations:\n${list}\n\nFull transcript:\n${transcript || "(no speech was captured)"}`,
+    system: system + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
+    prompt: `${ctx}Active evaluations:\n${list}\n\n${transcriptLabel}:\n${transcript || "(no speech was captured)"}`,
   }).catch((e) => {
     log.error("ai.timeline: failed", { provider, model, error: String(e) });
     throw e;
