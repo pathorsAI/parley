@@ -3,17 +3,16 @@ import { useStore } from "../lib/store";
 import { hasProviderKey } from "../lib/ai/settings";
 import { PROVIDER_BY_ID } from "../lib/ai/providers";
 import { openSettingsWindow } from "../lib/settingsSync";
-import { runAllEvaluations } from "../lib/evaluations/engine";
-import { reanalyzeTimeline } from "./replay/useTimelineAnalysis";
+import { runAnalysis } from "../lib/analysis/engine";
 import { useI18n } from "../i18n";
 
 /**
- * A modal that surfaces a FAILED AI analysis (the "Run all" evaluations or the
- * replay timeline) with the real error and an actionable hint — so a failure
- * isn't a silent "—". Both analyses route through the eval model, so a key/model
- * problem there breaks both while Ask (a different model, no structured output)
- * still works. Strings are kept local (bilingual) so this component is
- * self-contained.
+ * A modal that surfaces a FAILED AI analysis (the unified timeline/findings
+ * analysis, used by both LIVE and REPLAY) with the real error and an actionable
+ * hint — so a failure isn't a silent "—". The analysis routes through the eval
+ * model, so a key/model problem there breaks it while Ask (a different model, no
+ * structured output) still works. Strings are kept local (bilingual) so this
+ * component is self-contained.
  */
 
 type Kind = "missingKey" | "auth" | "model" | "rate" | "structured" | "generic";
@@ -63,17 +62,14 @@ export function AnalysisErrorDialog() {
   const { language } = useI18n();
   const lang = language === "en" ? "en" : "zh-TW";
 
-  const evalError = useStore((s) => s.evalError);
-  const timelineError = useStore((s) => s.replayTimelineError);
-  const timelineStatus = useStore((s) => s.replayTimelineStatus);
+  const analysisError = useStore((s) => s.analysisError);
+  const analysisStatus = useStore((s) => s.analysisStatus);
   const provider = useStore((s) => s.settings.provider);
   const evalModel = useStore((s) => s.settings.models[s.settings.provider].eval);
   const keyConfigured = useStore((s) => hasProviderKey(s.settings));
-  const setEvalError = useStore((s) => s.setEvalError);
-  const setReplayTimelineError = useStore((s) => s.setReplayTimelineError);
+  const setAnalysisError = useStore((s) => s.setAnalysisError);
 
-  // Prefer the eval error, then a failed timeline run.
-  const message = evalError ?? (timelineStatus === "error" ? timelineError : null);
+  const message = analysisStatus === "error" ? analysisError : null;
   if (!message) return null;
 
   const L = LABELS[lang];
@@ -81,16 +77,13 @@ export function AnalysisErrorDialog() {
   const hint = HINTS[lang][kind];
 
   function dismiss() {
-    setEvalError(null);
-    setReplayTimelineError(null);
+    setAnalysisError(null);
   }
 
-  /** Re-run whichever analysis failed, then close. */
+  /** Re-run the analysis (mode-aware), then close. */
   function retry() {
-    const wasEval = evalError != null;
     dismiss();
-    if (wasEval) void runAllEvaluations();
-    else reanalyzeTimeline();
+    void runAnalysis();
   }
 
   return (
