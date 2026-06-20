@@ -1,24 +1,26 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Copy, Check } from "lucide-react";
 import { TranscriptPanel } from "./TranscriptPanel";
 import { SpeakerBar } from "./SpeakerBar";
-import { useStore, transcriptAsText } from "../lib/store";
+import { AnalysisTimeline } from "./analysis/AnalysisTimeline";
+import { selectAndSeek } from "./analysis/useAnalysis";
+import { runAnalysis } from "../lib/analysis/engine";
+import { useStore, transcriptAsText, formatClock } from "../lib/store";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 
-/** Build a markdown record of the meeting: context, transcript, flagged evals. */
+/** Build a markdown record of the meeting: context, transcript, analysis findings. */
 function buildMarkdown(): string {
-  const { segments, evaluations, speakerNames, meetingContext } = useStore.getState();
+  const { segments, findings, speakerNames, meetingContext } = useStore.getState();
   const now = new Date();
   const lines = [`# Parley meeting — ${now.toLocaleString()}`, ""];
   if (meetingContext.trim()) {
     lines.push(`**Context:** ${meetingContext.trim()}`, "");
   }
-  const flagged = evaluations.filter((e) => e.status === "flag" && e.result);
-  if (flagged.length) {
-    lines.push("## Flags", "");
-    for (const e of flagged) {
-      lines.push(`- **${e.name}** (${e.result!.severity}): ${e.result!.summary}`);
+  if (findings.length) {
+    lines.push("## Findings", "");
+    for (const f of findings) {
+      lines.push(`- [${formatClock(f.atMs)}] **${f.title}** (${f.side}, ${f.severity}): ${f.detail}`);
     }
     lines.push("");
   }
@@ -30,6 +32,29 @@ export function MeetingView() {
   const { t } = useI18n();
   const hasSegments = useStore((s) => s.segments.some((x) => x.isFinal && x.text.trim()));
   const [copied, setCopied] = useState(false);
+
+  // Shared analysis state — the live timeline band aligned to elapsed meeting time.
+  const findings = useStore((s) => s.findings);
+  const analysisStatus = useStore((s) => s.analysisStatus);
+  const analysisError = useStore((s) => s.analysisError);
+  const selectedId = useStore((s) => s.selectedFindingId);
+  const highlightMs = useStore((s) => s.highlightMs);
+  const setHighlightMs = useStore((s) => s.setHighlightMs);
+  const meetingStartedAt = useStore((s) => s.meetingStartedAt);
+  const recording = useStore((s) => s.meetingStatus === "recording");
+  const maxEndMs = useStore((s) => s.segments.reduce((m, x) => Math.max(m, x.endMs), 0));
+
+  // Tick once a second so the axis right-edge advances while recording.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!recording) return;
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [recording]);
+
+  const elapsedMs = recording && meetingStartedAt ? nowMs - meetingStartedAt : maxEndMs;
+  const axisMaxMs = Math.max(elapsedMs, maxEndMs, 1);
+  const showTimeline = findings.length > 0 || analysisStatus === "running" || analysisStatus === "error";
 
   async function copy() {
     try {
@@ -52,6 +77,18 @@ export function MeetingView() {
           </Button>
         </div>
       </div>
+      {showTimeline && (
+        <AnalysisTimeline
+          findings={findings}
+          status={analysisStatus}
+          error={analysisError}
+          axisMaxMs={axisMaxMs}
+          playheadMs={highlightMs ?? elapsedMs}
+          selectedId={selectedId}
+          onSelect={(e) => selectAndSeek(e, setHighlightMs)}
+          onReanalyze={() => void runAnalysis({ mode: "live" })}
+        />
+      )}
       <SpeakerBar />
       <div className="min-h-0 flex-1">
         <TranscriptPanel />
