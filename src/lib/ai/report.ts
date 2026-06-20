@@ -2,7 +2,7 @@ import { streamText } from "ai";
 import { getModel, getProviderOptions } from "./provider";
 import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
-import { profileContext } from "./profile";
+import { profileContext, outputLanguageInstruction } from "./profile";
 import type { Evaluation, Settings, TodoItem, TranscriptSegment } from "../types";
 
 const SYSTEM = `You are writing a POST-MEETING debrief for ME after a live interview, negotiation, sales, or diligence call. The meeting is OVER and you can see the full transcript, so judge the whole conversation, not the moment.
@@ -50,7 +50,7 @@ export async function generatePostMeetingReport(opts: {
   const result = streamText({
     model: getModel(settings, "ask"),
     providerOptions: getProviderOptions(settings, "ask"),
-    system: SYSTEM,
+    system: SYSTEM + outputLanguageInstruction(settings),
     abortSignal: signal,
     prompt,
   });

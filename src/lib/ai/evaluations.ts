@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider";
 import { transcriptAsText, useStore } from "../store";
 import { recordLlmUsage } from "../usage/log";
-import { profileContext } from "./profile";
+import { profileContext, outputLanguageInstruction } from "./profile";
 import type { EvalDef, EvalResult, Settings, TranscriptSegment } from "../types";
 
 // One result per evaluation, returned together from a single model call.
@@ -51,7 +51,7 @@ export async function runAllEvaluations(opts: {
     model: getModel(settings, "eval"),
     providerOptions: getProviderOptions(settings, "eval"),
     schema: batchSchema,
-    system: SYSTEM + JSON_MODE_INSTRUCTION,
+    system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: `${ctx}Evaluations (return one result per id):\n${list}\n\nTranscript so far:\n${transcript}`,
   });
   void recordLlmUsage(settings, "eval", "eval", usage);
