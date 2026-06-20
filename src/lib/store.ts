@@ -12,7 +12,6 @@ import type {
   TimelineEvent,
   TodoItem,
   TranscriptSegment,
-  WargameArgument,
 } from "./types";
 import type { ReplaySession } from "./replay/types";
 import {
@@ -176,19 +175,6 @@ interface ParleyState {
   setActionItemsError: (error: string | null) => void;
   toggleActionItem: (id: string) => void;
 
-  /**
-   * Opponent-argument war-gaming, lifted into the store so it can be triggered
-   * both from the War-game tab and from the replay "re-evaluate at this moment"
-   * button (which runs evals + war-gaming together). `wargameMessage` is an
-   * already-localized info/error line; null when there's nothing to say.
-   */
-  wargameArgs: WargameArgument[];
-  wargameStatus: "idle" | "running" | "done" | "error";
-  wargameMessage: string | null;
-  setWargame: (
-    patch: Partial<Pick<ParleyState, "wargameArgs" | "wargameStatus" | "wargameMessage">>
-  ) => void;
-
   meetingStatus: MeetingStatus;
   meetingStartedAt: number | null;
   segments: TranscriptSegment[];
@@ -262,9 +248,6 @@ export const useStore = create<ParleyState>()(
       replayTimeline: [],
       replayTimelineStatus: "idle",
       replayTimelineError: null,
-      wargameArgs: [],
-      wargameStatus: "idle",
-      wargameMessage: null,
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
@@ -305,9 +288,6 @@ export const useStore = create<ParleyState>()(
       replayTimeline: [],
       replayTimelineStatus: "idle",
       replayTimelineError: null,
-      wargameArgs: [],
-      wargameStatus: "idle",
-      wargameMessage: null,
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
@@ -330,9 +310,6 @@ export const useStore = create<ParleyState>()(
       replayTimeline: [],
       replayTimelineStatus: "idle",
       replayTimelineError: null,
-      wargameArgs: [],
-      wargameStatus: "idle",
-      wargameMessage: null,
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
@@ -348,7 +325,6 @@ export const useStore = create<ParleyState>()(
   setReplayTimeline: (events) => set({ replayTimeline: events }),
   setReplayTimelineStatus: (status) => set({ replayTimelineStatus: status }),
   setReplayTimelineError: (error) => set({ replayTimelineError: error }),
-  setWargame: (patch) => set(patch),
 
   // Replacing the findings list invalidates the selection + any cached solutions
   // (the model mints fresh finding ids each pass, so old solutions are stale).
@@ -405,9 +381,6 @@ export const useStore = create<ParleyState>()(
       meetingStartedAt: Date.now(),
       segments: [],
       speakerNames: {},
-      wargameArgs: [],
-      wargameStatus: "idle",
-      wargameMessage: null,
       evalError: null,
       findings: [],
       analysisStatus: "idle",

@@ -90,45 +90,12 @@ export interface SpeakerRole {
 }
 
 /**
- * War-gaming the opponent's arguments.
- *
- * One detected argument made by THEM, decomposed into the premises it smuggles
- * in, the single premise that looks acceptable but should NOT be conceded
- * (the "trap"), and a spread of response angles — each with a predicted reaction.
+ * War-game move taxonomy. Reused by the per-finding solution engine (FindingMove)
+ * and the interactive opponent-reply branch (WargameBranch).
  */
 export type WargameStrategyKind = "rebut" | "reframe" | "trade" | "concede_redirect";
 
-/** One way to respond to THEM's argument, plus how they'll likely react. */
-export interface WargameStrategy {
-  kind: WargameStrategyKind;
-  /** A concrete move the user can actually make at the table. */
-  approach: string;
-  /** Realistic prediction of how the opponent counters this angle. */
-  predictedReaction: string;
-}
-
-/** The premise that looks fair but quietly hands the opponent the win. */
-export interface WargameTrap {
-  premise: string;
-  why: string;
-}
-
-/** A key argument THEM made, decomposed for war-gaming. */
-export interface WargameArgument {
-  id: string;
-  /** THEM's claim, in their own framing. */
-  claim: string;
-  /** The actual quote it's grounded in, when one exists. */
-  sourceQuote?: string;
-  /** Hidden premises the claim relies on. */
-  premises: string[];
-  /** The premise the user should refuse to concede — or null if none stands out. */
-  trap?: WargameTrap | null;
-  /** Response angles, ideally spanning all four kinds where sensible. */
-  strategies: WargameStrategy[];
-}
-
-/** One turn in an on-demand war-game branch simulation. */
+/** One turn in an on-demand opponent-reply branch simulation. */
 export interface WargameBranchTurn {
   role: "me" | "them";
   text: string;
