@@ -9,7 +9,7 @@
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::transcription::common::ensure_crypto_provider;
 
@@ -22,8 +22,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(1500);
 const MAX_POLLS: u32 = 800;
 
 /// A finished, diarized transcript segment handed to the frontend. Serializes to
-/// camelCase so it matches the TS `TranscriptSegment` shape directly.
-#[derive(Serialize)]
+/// camelCase so it matches the TS `TranscriptSegment` shape directly. Also
+/// Deserialize so it can be read back from the on-disk transcription cache.
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReplaySegment {
     id: String,
@@ -34,12 +35,24 @@ struct ReplaySegment {
     end_ms: u64,
 }
 
-/// Result of `transcribe_file` — segments plus the overall duration.
+/// Cache payload persisted per uploaded file (keyed by name+size). Holds the
+/// successful transcription so an identical re-upload skips Soniox (and billing).
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CachedTranscription {
+    segments: Vec<ReplaySegment>,
+    duration_ms: u64,
+}
+
+/// Result of `transcribe_file` — segments plus the overall duration. `cached` is
+/// true when this came from the on-disk cache (no Soniox call, so the frontend
+/// must NOT record STT usage for it).
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptionResult {
     segments: Vec<ReplaySegment>,
     duration_ms: u64,
+    cached: bool,
 }
 
 // --- Soniox wire types --------------------------------------------------------
@@ -111,7 +124,7 @@ struct TranscriptResponse {
 /// and never leaves the Rust side beyond the Soniox request.
 #[tauri::command]
 pub async fn transcribe_file(
-    _app: AppHandle,
+    app: AppHandle,
     path: String,
     api_key: String,
     model: Option<String>,
@@ -122,6 +135,21 @@ pub async fn transcribe_file(
 
     if api_key.trim().is_empty() {
         return Err("Missing Soniox API key".to_string());
+    }
+
+    // Cache: an identical re-upload (same file name + byte size) reuses the prior
+    // SUCCESSFUL transcription — no compression, no Soniox call, no billing.
+    // Failures are never cached, so a previously-failed file re-transcribes.
+    let cache_path = cache_file_path(&app, &path);
+    if let Some(cp) = &cache_path {
+        if let Some(cached) = try_read_cache(cp).await {
+            eprintln!("[replay] cache hit ({} segments): {}", cached.segments.len(), cp.display());
+            return Ok(TranscriptionResult {
+                segments: cached.segments,
+                duration_ms: cached.duration_ms,
+                cached: true,
+            });
+        }
     }
 
     let model = model.unwrap_or_else(|| DEFAULT_ASYNC_MODEL.to_string());
@@ -169,7 +197,63 @@ pub async fn transcribe_file(
         let _ = tokio::fs::remove_file(&temp).await;
     }
 
+    // Cache a successful transcription so an identical re-upload is free next time.
+    if let (Ok(r), Some(cp)) = (&result, &cache_path) {
+        write_cache(cp, r).await;
+    }
+
     result
+}
+
+/// Cache file path for an uploaded recording, keyed by file name + byte size (per
+/// the user's "same name, same size" rule). Lives in the app cache dir. `None` if
+/// the file can't be stat'd or there's no cache dir.
+fn cache_file_path(app: &AppHandle, path: &str) -> Option<std::path::PathBuf> {
+    let size = std::fs::metadata(path).ok()?.len();
+    let name = std::path::Path::new(path).file_name()?.to_string_lossy().into_owned();
+    // Sanitize the name to a safe single filename component.
+    let safe: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+        .collect();
+    let dir = app.path().app_cache_dir().ok()?.join("transcriptions");
+    Some(dir.join(format!("{safe}-{size}.json")))
+}
+
+/// Read a cached transcription if present and parseable; otherwise `None`.
+async fn try_read_cache(path: &std::path::Path) -> Option<CachedTranscription> {
+    let bytes = tokio::fs::read(path).await.ok()?;
+    serde_json::from_slice::<CachedTranscription>(&bytes).ok()
+}
+
+/// Persist a successful transcription to the cache. Best-effort: a failure here
+/// is logged and ignored (never breaks the transcription that already succeeded).
+async fn write_cache(path: &std::path::Path, result: &TranscriptionResult) {
+    // Borrowing writer so we don't need to clone the segments.
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CacheWrite<'a> {
+        segments: &'a [ReplaySegment],
+        duration_ms: u64,
+    }
+    let payload = CacheWrite {
+        segments: &result.segments,
+        duration_ms: result.duration_ms,
+    };
+    let json = match serde_json::to_vec_pretty(&payload) {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("[replay] failed to serialize transcription cache: {e}");
+            return;
+        }
+    };
+    if let Some(parent) = path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    match tokio::fs::write(path, json).await {
+        Ok(()) => eprintln!("[replay] cached transcription: {}", path.display()),
+        Err(e) => eprintln!("[replay] failed to write transcription cache: {e}"),
+    }
 }
 
 /// Run `compress_for_upload` off the async runtime (it does blocking file IO +
@@ -319,6 +403,7 @@ async fn run_upload_and_transcribe(
     Ok(TranscriptionResult {
         segments,
         duration_ms,
+        cached: false,
     })
 }
 
