@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FileText, Maximize2, RefreshCw, X } from "lucide-react";
+import { Check, Copy, FileText, Maximize2, RefreshCw, X } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { runAllEvaluations } from "../../lib/evaluations/engine";
 import { generatePostMeetingReport } from "../../lib/ai/report";
@@ -36,6 +36,17 @@ export function EvaluationsPanel() {
   const [report, setReport] = useState("");
   const [reportStatus, setReportStatus] = useState<"idle" | "generating" | "done">("idle");
   const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function copyReport() {
+    try {
+      await navigator.clipboard.writeText(report);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (e) {
+      console.error("[report] copy failed", e);
+    }
+  }
 
   function applyTemplate(id: string) {
     const tpl = templates.find((t) => t.id === id);
@@ -163,7 +174,18 @@ export function EvaluationsPanel() {
                   </button>
                 </div>
               </div>
-              <ReportContent markdown={report} />
+              {/* Inline preview is clamped + faded; the full debrief lives in the dialog. */}
+              <div className="relative max-h-36 overflow-hidden">
+                <ReportContent markdown={report} />
+                <button
+                  type="button"
+                  onClick={() => setExpanded(true)}
+                  className="absolute inset-x-0 bottom-0 flex items-end justify-center gap-1 bg-gradient-to-t from-background via-background/90 to-transparent pb-1 pt-10 text-[11px] font-medium text-sky-300 hover:text-sky-200"
+                >
+                  <Maximize2 className="size-3" />
+                  {t("evaluations.expandFull")}
+                </button>
+              </div>
             </div>
           )}
           {evaluations.map((e) => (
@@ -190,13 +212,23 @@ export function EvaluationsPanel() {
                   </span>
                 )}
               </span>
-              <button
-                type="button"
-                className="text-muted-foreground hover:text-foreground"
-                onClick={() => setExpanded(false)}
-              >
-                <X className="size-4" />
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                  onClick={() => void copyReport()}
+                >
+                  {copied ? <Check className="size-3.5 text-emerald-400" /> : <Copy className="size-3.5" />}
+                  {copied ? t("meeting.copied") : t("meeting.copy")}
+                </button>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground"
+                  onClick={() => setExpanded(false)}
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
             </div>
             <div className="overflow-y-auto px-5 py-4">
               <ReportContent markdown={report} onJump={() => setExpanded(false)} />

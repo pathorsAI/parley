@@ -219,6 +219,8 @@ export const zhTW = {
   "evaluations.autoSeconds": "秒自動",
   "evaluations.missingKey": "尚未設定 {provider} 金鑰，評估無法執行（右上角 ⚙ 設定）。",
   "evaluations.notRun": "尚未執行",
+  "evaluations.howToRun": "按上方「全部執行」立刻跑一次，或勾選「自動」讓它在會議中依間隔自動評估。",
+  "evaluations.expandFull": "展開全文",
   "evaluations.secondsAgo": "{count} 秒前",
   "evaluations.minutesAgo": "{count} 分鐘前",
 
@@ -572,6 +574,8 @@ export const en = {
   "evaluations.autoSeconds": "sec auto",
   "evaluations.missingKey": "{provider} key is not configured, so evaluations cannot run (top-right ⚙ Settings).",
   "evaluations.notRun": "not run",
+  "evaluations.howToRun": "Click \"Run all\" above to run it now, or tick \"auto\" to evaluate on an interval during the meeting.",
+  "evaluations.expandFull": "Expand",
   "evaluations.secondsAgo": "{count}s ago",
   "evaluations.minutesAgo": "{count}m ago",
 

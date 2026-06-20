@@ -3,6 +3,7 @@ import { ChevronRight } from "lucide-react";
 import type { Evaluation } from "../../lib/types";
 import { useI18n } from "../../i18n";
 import { Card } from "@/components/ui/card";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 const STATUS_DOT: Record<Evaluation["status"], string> = {
   idle: "bg-muted-foreground/40",
@@ -41,7 +42,23 @@ export function EvaluationCard({ evaluation }: { evaluation: Evaluation }) {
           <div className="text-sm font-medium leading-tight">{evaluation.name}</div>
           <div className="mt-0.5 text-[11px] text-muted-foreground">{evaluation.description}</div>
         </div>
-        <span className="shrink-0 text-[10px] text-muted-foreground/70">{timeAgo(evaluation.lastRunAt, t)}</span>
+        {evaluation.lastRunAt ? (
+          <span className="shrink-0 text-[10px] text-muted-foreground/70">{timeAgo(evaluation.lastRunAt, t)}</span>
+        ) : (
+          // Not run yet — explain HOW to run it on hover, so the status isn't a dead end.
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="shrink-0 cursor-help text-[10px] text-muted-foreground/70 underline decoration-dotted underline-offset-2">
+                  {t("evaluations.notRun")}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="left" className="max-w-[220px] text-wrap">
+                {t("evaluations.howToRun")}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
       </div>
 
       {result && (
