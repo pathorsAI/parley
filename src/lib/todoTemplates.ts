@@ -1,116 +1,62 @@
 import type { TodoTemplate } from "./types";
+import type { TranslationKey } from "../i18n/messages";
+
+/** A translate function bound to the current language: `(key) => string`. */
+type T = (key: TranslationKey) => string;
 
 /**
  * Built-in TODO/agenda templates. The first five mirror Parley's core
  * use-cases (job interviews, salary negotiations, sales calls, deal-making,
  * diligence calls); the rest are extra starting points. Users can apply,
  * edit, or add their own.
+ *
+ * Names and items are looked up through i18n (items are stored as a single
+ * newline-joined string per template) so built-in templates follow the UI
+ * language.
  */
-export const PRESET_TODO_TEMPLATES: TodoTemplate[] = [
-  {
-    id: "todo-interview",
-    name: "面試候選人 / Job interview",
-    builtin: true,
-    items: [
-      "自我介紹與職缺說明",
-      "請候選人介紹背景與動機",
-      "深入追問一個代表性專案",
-      "驗證核心技術／能力",
-      "詢問過去的衝突與處理方式",
-      "保留候選人提問時間",
-      "確認薪資期待與可到職時間",
-      "說明後續流程與時程",
-    ],
-  },
-  {
-    id: "todo-salary",
-    name: "薪資談判 / Salary negotiation",
-    builtin: true,
-    items: [
-      "先讓對方提出數字／區間",
-      "確認薪酬全貌：底薪、獎金、股票、簽約金、福利",
-      "說明自身價值與市場行情依據",
-      "提出有依據的目標數字（錨定）",
-      "釐清股票條件（數量、估值、vesting）",
-      "確認升遷／調薪的時程與標準",
-      "處理對方的施壓或人為期限",
-      "爭取書面 offer 與考慮時間",
-    ],
-  },
-  {
-    id: "todo-sales-discovery",
-    name: "銷售電話 / Sales call",
-    builtin: true,
-    items: [
-      "確認對方的角色與決策權",
-      "了解現況與目前做法",
-      "挖掘核心痛點與其影響",
-      "量化痛點的成本／損失",
-      "確認預算範圍",
-      "釐清決策流程與關鍵人",
-      "了解時程與急迫性",
-      "詢問現有方案／競品",
-      "約定明確的下一步",
-    ],
-  },
-  {
-    id: "todo-deal",
-    name: "商務談判 / Deal-making",
-    builtin: true,
-    items: [
-      "確認雙方目標與底線（BATNA）",
-      "釐清對方真正在意的優先順序",
-      "盤點價格／條款／時程等變數",
-      "先談整體框架再談細節",
-      "每次讓步都換回對等條件",
-      "記錄雙方已同意與待決事項",
-      "確認決策流程與簽約時程",
-      "總結共識並約定下一步",
-    ],
-  },
-  {
-    id: "todo-diligence",
-    name: "盡職調查 / Diligence call",
-    builtin: true,
-    items: [
-      "確認核心財務數據與成長趨勢",
-      "了解營收結構與客戶集中度",
-      "確認留存／churn 與單位經濟",
-      "釐清競爭與市場風險",
-      "確認團隊、關鍵人與股權結構",
-      "了解法務／合規／智財狀況",
-      "詢問技術債與資安現況",
-      "索取佐證文件並約定 follow-up",
-    ],
-  },
-  {
-    id: "todo-coffee-chat",
-    name: "Coffee chat（創業前輩）",
-    builtin: true,
-    items: [
-      "簡短自我介紹與來意",
-      "請教對方的創業歷程與關鍵轉折",
-      "請教他們現階段最大的挑戰",
-      "針對我目前的方向請教看法",
-      "請教常見的坑與建議",
-      "詢問值得認識的人／引薦",
-      "請教推薦的資源或書",
-      "約定下次 follow-up 的方式",
-    ],
-  },
-  {
-    id: "todo-fundraising",
-    name: "投資人 pitch",
-    builtin: true,
-    items: [
-      "一句話講清楚在做什麼",
-      "說明問題與市場規模",
-      "Demo 產品",
-      "商業模式與關鍵數據（traction）",
-      "介紹團隊與為何是我們",
-      "競爭與護城河",
-      "募資金額與資金用途",
-      "確認對方的投資範圍與決策流程",
-    ],
-  },
-];
+export function buildPresetTodoTemplates(t: T): TodoTemplate[] {
+  return [
+    {
+      id: "todo-interview",
+      name: t("tpl.todo.todo-interview.name"),
+      builtin: true,
+      items: t("tpl.todo.todo-interview.items").split("\n"),
+    },
+    {
+      id: "todo-salary",
+      name: t("tpl.todo.todo-salary.name"),
+      builtin: true,
+      items: t("tpl.todo.todo-salary.items").split("\n"),
+    },
+    {
+      id: "todo-sales-discovery",
+      name: t("tpl.todo.todo-sales-discovery.name"),
+      builtin: true,
+      items: t("tpl.todo.todo-sales-discovery.items").split("\n"),
+    },
+    {
+      id: "todo-deal",
+      name: t("tpl.todo.todo-deal.name"),
+      builtin: true,
+      items: t("tpl.todo.todo-deal.items").split("\n"),
+    },
+    {
+      id: "todo-diligence",
+      name: t("tpl.todo.todo-diligence.name"),
+      builtin: true,
+      items: t("tpl.todo.todo-diligence.items").split("\n"),
+    },
+    {
+      id: "todo-coffee-chat",
+      name: t("tpl.todo.todo-coffee-chat.name"),
+      builtin: true,
+      items: t("tpl.todo.todo-coffee-chat.items").split("\n"),
+    },
+    {
+      id: "todo-fundraising",
+      name: t("tpl.todo.todo-fundraising.name"),
+      builtin: true,
+      items: t("tpl.todo.todo-fundraising.items").split("\n"),
+    },
+  ];
+}
