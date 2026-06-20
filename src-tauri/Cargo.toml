@@ -49,6 +49,9 @@ ort = { version = "=2.0.0-rc.10", default-features = false, features = ["load-dy
 ndarray = "0.16"
 knf-rs = "0.3.2"
 sha2 = "0.10"
+# Pure-Rust symmetric eigendecomposition for NME spectral-clustering diarization
+# (no LAPACK/BLAS — keeps the no-native-deps posture of the load-dynamic ort setup).
+nalgebra = "0.35"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-sys = "0.2"

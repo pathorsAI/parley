@@ -21,6 +21,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{anyhow, bail, Context, Result};
+use nalgebra::linalg::SymmetricEigen;
+use nalgebra::DMatrix;
 use ndarray::Axis;
 use ort::session::{builder::GraphOptimizationLevel, Session};
 use ort::value::Tensor;
@@ -53,8 +55,16 @@ const KMAX: usize = 8;
 /// Auto-K stops merging once the best average-linkage cosine drops below this.
 /// Tuned for CAM++ 192-dim embeddings; same-speaker pairs sit well above it.
 const MERGE_THRESHOLD: f32 = 0.5;
-/// Spherical k-means iteration cap (converges far sooner in practice).
+/// k-means iteration cap (converges far sooner in practice).
 const KMEANS_ITERS: usize = 25;
+
+/// NME spectral clustering is used for this segment-count range. Below the floor
+/// the eigengap is too noisy (fall back to k-means/agglomerative); above the
+/// ceiling the O(P·N³) eigendecompositions get expensive (agglomerative instead).
+const NME_MIN_SEGMENTS: usize = 16;
+const NME_MAX_SEGMENTS: usize = 800;
+/// At most this many `p` (neighbour-count) candidates evaluated in the search.
+const NME_MAX_P_CANDIDATES: usize = 16;
 
 /// One transcript segment's id + time span (ms). Mirrors the JS `{id,startMs,endMs}`.
 #[derive(Debug, Deserialize)]
@@ -234,17 +244,25 @@ fn run_pipeline(
         .map(|&i| embeds[i].take().unwrap())
         .collect();
 
-    // Cluster: explicit K → spherical k-means; otherwise auto via agglomerative.
+    // Cluster. NME spectral clustering is the primary method (auto-picks the
+    // affinity pruning AND, when unknown, the speaker count via the eigengap).
+    // It needs enough segments to be stable, so small/huge jobs fall back to the
+    // simpler methods: spherical k-means (known count) / agglomerative (auto).
     emit("clustering", 0, 0);
+    let len = matrix.len();
+    let use_nme = (NME_MIN_SEGMENTS..=NME_MAX_SEGMENTS).contains(&len);
     let labels = match num_speakers.filter(|&k| k >= 1) {
         Some(k) => {
-            let k = k.min(matrix.len());
+            let k = k.min(len);
             if k <= 1 {
-                vec![0usize; matrix.len()]
+                vec![0usize; len]
+            } else if use_nme {
+                nme_spectral(&matrix, Some(k))
             } else {
                 spherical_kmeans(&matrix, k)
             }
         }
+        None if use_nme => nme_spectral(&matrix, None),
         None => agglomerative(&matrix),
     };
     let k_final = labels.iter().copied().max().map(|m| m + 1).unwrap_or(1);
@@ -527,6 +545,275 @@ fn agglomerative(matrix: &[Vec<f32>]) -> Vec<usize> {
 }
 
 // ---------------------------------------------------------------------------
+// NME spectral clustering (Auto-Tuning Spectral Clustering, normalized max
+// eigengap — Park/Han/Kumar/Narayanan). Auto-selects both the affinity pruning
+// and (when unknown) the speaker count, which removes the hand-set cosine
+// threshold + speaker cap that the agglomerative path relies on.
+// ---------------------------------------------------------------------------
+
+/// Cluster L2-normalized embeddings with NME-SC. `known_k = Some(k)` forces k
+/// clusters; `None` estimates the count from the eigengap. Returns a dense label
+/// per row. Intended for `matrix.len()` within [NME_MIN, NME_MAX] (the caller
+/// gates this; outside that range the eigengap is noisy or the eig too costly).
+fn nme_spectral(matrix: &[Vec<f32>], known_k: Option<usize>) -> Vec<usize> {
+    let n = matrix.len();
+    if n < 2 {
+        return vec![0usize; n];
+    }
+    let aff = cosine_affinity(matrix);
+    let max_k = KMAX.min(n - 1).max(1);
+
+    // Search the neighbour count p: keep the p whose pruned affinity yields the
+    // cleanest spectrum, scored r(p) = p / g(p) with g the normalized max eigengap.
+    // Each p is an independent eigendecomposition → evaluate them in parallel.
+    let p_max = (n / 4).clamp(2, n - 1);
+    let cands = p_candidates(p_max, NME_MAX_P_CANDIDATES);
+    let workers = num_workers(cands.len());
+    let chunk = cands.len().div_ceil(workers).max(1);
+
+    let scored: Vec<(usize, f32, usize)> = std::thread::scope(|scope| {
+        let aff = &aff;
+        let handles: Vec<_> = cands
+            .chunks(chunk)
+            .map(|c| c.to_vec())
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk
+                        .into_iter()
+                        .map(|p| {
+                            let lap = pruned_laplacian(aff, p);
+                            let mut evals: Vec<f64> =
+                                lap.symmetric_eigenvalues().iter().copied().collect();
+                            evals.sort_by(|a, b| a.total_cmp(b));
+                            let (g, k_est) = nme_and_count(&evals, max_k);
+                            let r = if g > 0.0 { p as f32 / g as f32 } else { f32::INFINITY };
+                            (p, r, k_est)
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap_or_default())
+            .collect()
+    });
+
+    let (best_p, _, k_est) = scored
+        .into_iter()
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .unwrap_or((1, f32::INFINITY, known_k.unwrap_or(2)));
+
+    let k = known_k.unwrap_or(k_est).clamp(1, n);
+    if k <= 1 {
+        return vec![0usize; n];
+    }
+
+    // Final decomposition at the chosen p → NJW spectral embedding (k smallest
+    // eigenvectors, row-normalized) → k-means.
+    let lap = pruned_laplacian(&aff, best_p);
+    let se = SymmetricEigen::new(lap);
+    let spec = spectral_embedding(&se, k);
+    kmeans_euclidean(&spec, k)
+}
+
+/// N×N cosine affinity (embeddings are L2-normalized, so this is a dot product),
+/// diagonal 1.
+fn cosine_affinity(matrix: &[Vec<f32>]) -> Vec<Vec<f32>> {
+    let n = matrix.len();
+    let mut aff = vec![vec![0f32; n]; n];
+    for i in 0..n {
+        aff[i][i] = 1.0;
+        for j in (i + 1)..n {
+            let s = dot(&matrix[i], &matrix[j]);
+            aff[i][j] = s;
+            aff[j][i] = s;
+        }
+    }
+    aff
+}
+
+/// p-neighbour binarized + symmetrized affinity → symmetric NORMALIZED Laplacian
+/// L_sym = I − D^{-1/2} A D^{-1/2}. Each row keeps its p strongest off-diagonal
+/// neighbours (=1, others 0); the average-symmetrization denoises spurious
+/// cross-speaker links — the mechanism that lets NME-SC beat a fixed threshold on
+/// short noisy turns. The normalized Laplacian (eigenvalues in [0, 2]) gives a far
+/// cleaner eigengap for count estimation than the unnormalized D − A.
+fn pruned_laplacian(aff: &[Vec<f32>], p: usize) -> DMatrix<f64> {
+    let n = aff.len();
+    let mut bin = vec![vec![0f32; n]; n];
+    let mut idx: Vec<usize> = Vec::with_capacity(n);
+    for i in 0..n {
+        idx.clear();
+        idx.extend((0..n).filter(|&j| j != i));
+        idx.sort_by(|&a, &b| aff[i][b].total_cmp(&aff[i][a]));
+        for &j in idx.iter().take(p) {
+            bin[i][j] = 1.0;
+        }
+    }
+    // Symmetrized affinity A and degrees.
+    let mut sym = vec![vec![0f64; n]; n];
+    for i in 0..n {
+        for j in 0..n {
+            sym[i][j] = (0.5 * (bin[i][j] + bin[j][i])) as f64;
+        }
+    }
+    let deg: Vec<f64> = (0..n).map(|i| sym[i].iter().sum()).collect();
+    DMatrix::from_fn(n, n, |i, j| {
+        if i == j {
+            if deg[i] > 0.0 {
+                1.0
+            } else {
+                0.0
+            }
+        } else if deg[i] > 0.0 && deg[j] > 0.0 {
+            -sym[i][j] / (deg[i] * deg[j]).sqrt()
+        } else {
+            0.0
+        }
+    })
+}
+
+/// Normalized maximum eigengap g and the speaker count it implies. `evals` is
+/// ascending. g = (largest gap among the first `max_k`) / (largest eigenvalue);
+/// count = the position of that gap (# eigenvalues below it).
+fn nme_and_count(evals: &[f64], max_k: usize) -> (f64, usize) {
+    let n = evals.len();
+    if n < 2 {
+        return (0.0, 1);
+    }
+    let lambda_max = evals[n - 1].max(1e-12);
+    let upper = max_k.min(n - 1).max(1);
+    let mut best_gap = f64::MIN;
+    let mut best_k = 1;
+    for k in 1..=upper {
+        let gap = evals[k] - evals[k - 1];
+        if gap > best_gap {
+            best_gap = gap;
+            best_k = k;
+        }
+    }
+    ((best_gap / lambda_max).max(0.0), best_k)
+}
+
+/// NJW spectral embedding: the `k` eigenvectors with smallest eigenvalues, one
+/// row per node, each row L2-normalized.
+fn spectral_embedding(se: &SymmetricEigen<f64, nalgebra::Dyn>, k: usize) -> Vec<Vec<f32>> {
+    let n = se.eigenvalues.len();
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| se.eigenvalues[a].total_cmp(&se.eigenvalues[b]));
+    let cols = &order[..k.min(n)];
+    (0..n)
+        .map(|i| {
+            let mut row: Vec<f32> = cols.iter().map(|&c| se.eigenvectors[(i, c)] as f32).collect();
+            let norm = dot(&row, &row).sqrt();
+            if norm > f32::EPSILON {
+                for v in &mut row {
+                    *v /= norm;
+                }
+            }
+            row
+        })
+        .collect()
+}
+
+/// Euclidean k-means with deterministic farthest-first init (`k >= 2`).
+fn kmeans_euclidean(points: &[Vec<f32>], k: usize) -> Vec<usize> {
+    let n = points.len();
+    let dim = points.first().map(|p| p.len()).unwrap_or(0);
+
+    let mut centroids: Vec<Vec<f32>> = vec![points[0].clone()];
+    while centroids.len() < k {
+        let mut best_i = 0;
+        let mut best_d = f32::MIN;
+        for (i, pt) in points.iter().enumerate() {
+            let d = centroids.iter().map(|c| sqdist(pt, c)).fold(f32::INFINITY, f32::min);
+            if d > best_d {
+                best_d = d;
+                best_i = i;
+            }
+        }
+        centroids.push(points[best_i].clone());
+    }
+
+    let mut labels = vec![0usize; n];
+    for _ in 0..KMEANS_ITERS {
+        let mut changed = false;
+        for (i, pt) in points.iter().enumerate() {
+            let lab = (0..k)
+                .min_by(|&a, &b| sqdist(pt, &centroids[a]).total_cmp(&sqdist(pt, &centroids[b])))
+                .unwrap_or(0);
+            if lab != labels[i] {
+                changed = true;
+                labels[i] = lab;
+            }
+        }
+        for c in 0..k {
+            let members: Vec<&Vec<f32>> = points
+                .iter()
+                .zip(&labels)
+                .filter(|(_, &l)| l == c)
+                .map(|(p, _)| p)
+                .collect();
+            if members.is_empty() {
+                drop(members);
+                if let Some(worst) = (0..n).max_by(|&a, &b| {
+                    sqdist(&points[a], &centroids[labels[a]])
+                        .total_cmp(&sqdist(&points[b], &centroids[labels[b]]))
+                }) {
+                    labels[worst] = c;
+                    centroids[c] = points[worst].clone();
+                }
+            } else {
+                let mut mean = vec![0f32; dim];
+                for m in &members {
+                    for (a, x) in mean.iter_mut().zip(m.iter()) {
+                        *a += x;
+                    }
+                }
+                for a in &mut mean {
+                    *a /= members.len() as f32;
+                }
+                centroids[c] = mean;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    labels
+}
+
+fn sqdist(a: &[f32], b: &[f32]) -> f32 {
+    a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum()
+}
+
+/// Up to `cap` distinct neighbour-count candidates spread over [1, p_max].
+fn p_candidates(p_max: usize, cap: usize) -> Vec<usize> {
+    if p_max <= cap {
+        return (1..=p_max).collect();
+    }
+    let mut out: Vec<usize> = Vec::with_capacity(cap);
+    for i in 0..cap {
+        let p = 1 + (i * (p_max - 1)) / (cap - 1);
+        if out.last() != Some(&p) {
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// Worker count for the small parallel p-search, bounded by cores and items.
+fn num_workers(items: usize) -> usize {
+    std::thread::available_parallelism()
+        .map(|c| c.get())
+        .unwrap_or(1)
+        .min(8)
+        .min(items)
+        .max(1)
+}
+
+// ---------------------------------------------------------------------------
 // Runtime + model acquisition
 // ---------------------------------------------------------------------------
 
@@ -634,6 +921,57 @@ fn to_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// NME-SC on two well-separated speaker-like blobs (realistic within-speaker
+    /// spread, not degenerate near-identical points) must auto-detect 2 speakers
+    /// and split them, and respect a forced count. Pure clustering (no model/dylib)
+    /// so it runs in normal `cargo test`. Deterministic LCG noise → reproducible.
+    fn blob(center: &[f32], rng: &mut u64, noise: f32) -> Vec<f32> {
+        let mut v: Vec<f32> = center
+            .iter()
+            .map(|&c| {
+                *rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let u = ((*rng >> 40) as f32 / (1u64 << 23) as f32) - 1.0; // ~[-1,1)
+                c + noise * u
+            })
+            .collect();
+        let norm = dot(&v, &v).sqrt();
+        for x in &mut v {
+            *x /= norm;
+        }
+        v
+    }
+
+    #[test]
+    fn nme_spectral_separates_two_blobs() {
+        let dim = 32;
+        let mut ca = vec![0f32; dim];
+        let mut cb = vec![0f32; dim];
+        for d in 0..16 {
+            ca[d] = 1.0; // speaker A lives in the first-16 subspace
+            cb[d + 16] = 1.0; // speaker B in the last-16 subspace
+        }
+        let mut rng: u64 = 0x0123_4567_89ab_cdef;
+        let mut matrix: Vec<Vec<f32>> = Vec::new();
+        for _ in 0..20 {
+            matrix.push(blob(&ca, &mut rng, 0.35));
+        }
+        for _ in 0..20 {
+            matrix.push(blob(&cb, &mut rng, 0.35));
+        }
+
+        let labels = nme_spectral(&matrix, None);
+        let k = labels.iter().copied().max().unwrap() + 1;
+        assert_eq!(k, 2, "should auto-detect 2 speakers, got {k}");
+        assert!(labels[..20].iter().all(|&l| l == labels[0]), "blob A should be one cluster");
+        assert!(labels[20..].iter().all(|&l| l == labels[20]), "blob B should be one cluster");
+        assert_ne!(labels[0], labels[20], "the two blobs must differ");
+
+        let forced = nme_spectral(&matrix, Some(2));
+        assert!(forced[..20].iter().all(|&l| l == forced[0]));
+        assert!(forced[20..].iter().all(|&l| l == forced[20]));
+        assert_ne!(forced[0], forced[20]);
+    }
 
     fn dev_dylib() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("onnxruntime/libonnxruntime.dylib")
