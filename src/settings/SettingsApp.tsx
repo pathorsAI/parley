@@ -67,10 +67,6 @@ export function SettingsApp() {
   const [newTplName, setNewTplName] = useState("");
   const [templatesPath, setTemplatesPath] = useState("");
   const [mcpInfo, setMcpInfo] = useState<McpServerInfo | null>(null);
-  const [copiedConfig, setCopiedConfig] = useState(false);
-  const [copiedPath, setCopiedPath] = useState(false);
-  const [copiedUrl, setCopiedUrl] = useState(false);
-  const [copiedCli, setCopiedCli] = useState(false);
   const info = PROVIDER_BY_ID[settings.provider];
   const providerLabel = info.label;
   const sttInfo = STT_BY_ID[settings.transcriptionProvider];
@@ -554,23 +550,12 @@ export function SettingsApp() {
                     {mcpInfo?.endpoint || t("settings.mcp.endpointPending")}
                   </p>
                   {mcpInfo?.endpoint && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-6 shrink-0 text-muted-foreground"
+                    <CopyButton
+                      iconOnly
+                      value={mcpInfo.endpoint}
                       title={t("settings.mcp.copyUrl")}
-                      onClick={() => {
-                        navigator.clipboard.writeText(mcpInfo.endpoint);
-                        setCopiedUrl(true);
-                        setTimeout(() => setCopiedUrl(false), 2000);
-                      }}
-                    >
-                      {copiedUrl ? (
-                        <Check className="size-3 text-emerald-500" />
-                      ) : (
-                        <Copy className="size-3" />
-                      )}
-                    </Button>
+                      className="size-6 shrink-0 text-muted-foreground"
+                    />
                   )}
                 </div>
               </div>
@@ -583,60 +568,25 @@ export function SettingsApp() {
                   value={templatesPath || mcpInfo?.templates_path || "Loading..."}
                   className="bg-muted/30 font-mono text-xs"
                 />
-                <Button
-                  variant="outline"
-                  size="sm"
+                <CopyButton
                   className="h-9 shrink-0 gap-1"
-                  onClick={() => {
-                    navigator.clipboard.writeText(templatesPath || mcpInfo?.templates_path || "");
-                    setCopiedPath(true);
-                    setTimeout(() => setCopiedPath(false), 2000);
-                  }}
+                  value={templatesPath || mcpInfo?.templates_path || ""}
+                  label={t("settings.mcp.copyPath")}
                   disabled={!templatesPath && !mcpInfo?.templates_path}
-                >
-                  {copiedPath ? (
-                    <>
-                      <Check className="size-3.5 text-emerald-500" />
-                      <span>{t("settings.mcp.copied")}</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="size-3.5" />
-                      <span>{t("settings.mcp.copyPath")}</span>
-                    </>
-                  )}
-                </Button>
+                />
               </div>
             </Field>
 
             <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-semibold tracking-tight">{t("settings.mcp.claudeCodeInstructions")}</h3>
-                <Button
-                  variant="outline"
-                  size="sm"
+                <CopyButton
                   className="h-8 gap-1"
-                  onClick={() => {
-                    const endpoint = mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp";
-                    navigator.clipboard.writeText(
-                      `claude mcp add --transport http parley-templates ${endpoint}`
-                    );
-                    setCopiedCli(true);
-                    setTimeout(() => setCopiedCli(false), 2000);
-                  }}
-                >
-                  {copiedCli ? (
-                    <>
-                      <Check className="size-3.5 text-emerald-500" />
-                      <span>{t("settings.mcp.copied")}</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="size-3.5" />
-                      <span>{t("settings.mcp.copyCommand")}</span>
-                    </>
-                  )}
-                </Button>
+                  value={() =>
+                    `claude mcp add --transport http parley-templates ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`
+                  }
+                  label={t("settings.mcp.copyCommand")}
+                />
               </div>
               <p className="text-[11px] text-muted-foreground">{t("settings.mcp.claudeCodeHelp")}</p>
               <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
@@ -647,41 +597,24 @@ export function SettingsApp() {
             <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-semibold tracking-tight">{t("settings.mcp.configInstructions")}</h3>
-                <Button
-                  variant="outline"
-                  size="sm"
+                <CopyButton
                   className="h-8 gap-1"
-                  onClick={() => {
-                    const endpoint = mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp";
-                    const configJson = JSON.stringify(
+                  value={() =>
+                    JSON.stringify(
                       {
                         mcpServers: {
                           "parley-templates": {
                             type: "http",
-                            url: endpoint,
+                            url: mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp",
                           },
                         },
                       },
                       null,
                       2
-                    );
-                    navigator.clipboard.writeText(configJson);
-                    setCopiedConfig(true);
-                    setTimeout(() => setCopiedConfig(false), 2000);
-                  }}
-                >
-                  {copiedConfig ? (
-                    <>
-                      <Check className="size-3.5 text-emerald-500" />
-                      <span>{t("settings.mcp.copied")}</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="size-3.5" />
-                      <span>{t("settings.mcp.copyConfig")}</span>
-                    </>
-                  )}
-                </Button>
+                    )
+                  }
+                  label={t("settings.mcp.copyConfig")}
+                />
               </div>
               <p className="text-[11px] text-muted-foreground">{t("settings.mcp.configHelp")}</p>
               <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
@@ -705,6 +638,54 @@ export function SettingsApp() {
         )}
       </div>
     </div>
+  );
+}
+
+/** Copy-to-clipboard button with a 2s "copied" confirmation. */
+function CopyButton({
+  value,
+  label,
+  title,
+  className,
+  iconOnly,
+  disabled,
+}: {
+  /** Text to copy, or a thunk evaluated at click time for computed values. */
+  value: string | (() => string);
+  label?: string;
+  title?: string;
+  className?: string;
+  iconOnly?: boolean;
+  disabled?: boolean;
+}) {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(typeof value === "function" ? value() : value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  if (iconOnly) {
+    return (
+      <Button variant="ghost" size="icon" className={className} title={title} disabled={disabled} onClick={copy}>
+        {copied ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+      </Button>
+    );
+  }
+  return (
+    <Button variant="outline" size="sm" className={className} title={title} disabled={disabled} onClick={copy}>
+      {copied ? (
+        <>
+          <Check className="size-3.5 text-emerald-500" />
+          <span>{t("settings.mcp.copied")}</span>
+        </>
+      ) : (
+        <>
+          <Copy className="size-3.5" />
+          <span>{label}</span>
+        </>
+      )}
+    </Button>
   );
 }
 
