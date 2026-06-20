@@ -110,15 +110,12 @@ pub async fn diarize_audio(
     locate_and_set_dylib(&app).map_err(|e| format!("{e:#}"))?;
     let model = ensure_model(&app).await.map_err(|e| format!("{e:#}"))?;
 
-    let _ = app.emit(
-        "diarize://progress",
-        Progress { stage: "embedding", received: 0, total: 0 },
-    );
-
     // Decode + fbank + ONNX + clustering are CPU-bound and synchronous — run them
-    // off the async runtime so the UI thread stays responsive.
+    // off the async runtime so the UI thread stays responsive. The handle lets the
+    // pipeline emit staged progress (decoding → embedding i/n → clustering).
+    let app_for_pipeline = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        run_pipeline(model, &audio_path, segments, num_speakers)
+        run_pipeline(app_for_pipeline, model, audio_path, segments, num_speakers)
     })
     .await
     .map_err(|e| format!("diarize task failed: {e}"))?
@@ -131,13 +128,20 @@ pub async fn diarize_audio(
 /// Decode → embed every long-enough slice → cluster → assign one speaker per
 /// segment. Synchronous; intended for `spawn_blocking`.
 fn run_pipeline(
+    app: AppHandle,
     model: PathBuf,
-    audio_path: &str,
+    audio_path: String,
     spans: Vec<SegSpan>,
     num_speakers: Option<usize>,
 ) -> Result<Vec<SegSpeaker>> {
+    // Staged progress for the UI. `total == 0` means an indeterminate stage.
+    let emit = |stage: &'static str, received: u64, total: u64| {
+        let _ = app.emit("diarize://progress", Progress { stage, received, total });
+    };
+
     // Decode the whole file once to 16 kHz mono f32 [-1,1]; slice in memory.
-    let audio = decode_to_16k_mono(Path::new(audio_path)).context("decode audio")?;
+    emit("decoding", 0, 0);
+    let audio = decode_to_16k_mono(Path::new(&audio_path)).context("decode audio")?;
     if audio.is_empty() {
         bail!("decoded audio was empty");
     }
@@ -155,16 +159,20 @@ fn run_pipeline(
 
     let mut session = session;
     let n = spans.len();
+    let step = (n / 100).max(1); // throttle to ~100 progress events over the loop
     let mut embeds: Vec<Option<Vec<f32>>> = vec![None; n];
     for (i, sp) in spans.iter().enumerate() {
         let start = (sp.start_ms as usize) * SAMPLES_PER_MS;
         let end = ((sp.end_ms as usize) * SAMPLES_PER_MS).min(audio.len());
-        if end <= start || end - start < MIN_SLICE_SAMPLES {
-            continue; // too short / out of range — filled from a neighbour later
+        if end > start && end - start >= MIN_SLICE_SAMPLES {
+            match embed_slice(&mut session, &audio[start..end]) {
+                Ok(v) => embeds[i] = Some(v),
+                Err(e) => log::warn!("diarize: embed failed for segment {i}: {e:#}"),
+            }
         }
-        match embed_slice(&mut session, &audio[start..end]) {
-            Ok(v) => embeds[i] = Some(v),
-            Err(e) => log::warn!("diarize: embed failed for segment {i}: {e:#}"),
+        // else: too short / out of range — filled from a neighbour later.
+        if i % step == 0 || i + 1 == n {
+            emit("embedding", (i + 1) as u64, n as u64);
         }
     }
 
@@ -179,6 +187,7 @@ fn run_pipeline(
         .collect();
 
     // Cluster: explicit K → spherical k-means; otherwise auto via agglomerative.
+    emit("clustering", 0, 0);
     let labels = match num_speakers.filter(|&k| k >= 1) {
         Some(k) => {
             let k = k.min(matrix.len());
