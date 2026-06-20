@@ -17,7 +17,7 @@ import { ReplaySpeakerTags } from "./ReplaySpeakerTags";
 import { ActionItemsPanel } from "./ActionItemsPanel";
 import { useReplayPlayer } from "./useReplayPlayer";
 import { useReplayAnalysis } from "./useReplayAnalysis";
-import { replayT, useExitReplay, useReplayPlayheadMs, useReplaySession } from "./spine";
+import { useExitReplay, useReplayPlayheadMs, useReplaySession } from "./spine";
 
 /**
  * The REPLAY screen: play an uploaded recording and review the whole-recording
@@ -28,8 +28,7 @@ import { replayT, useExitReplay, useReplayPlayheadMs, useReplaySession } from ".
  * done" drilldown. The center pane is Ask + post-meeting Action items.
  */
 export function ReplayScreen() {
-  const { language } = useI18n();
-  const t = (key: string, vars?: Record<string, string | number>) => replayT(language, key, vars);
+  const { t } = useI18n();
 
   const session = useReplaySession();
   const playheadMs = useReplayPlayheadMs();
