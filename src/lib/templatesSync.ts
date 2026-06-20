@@ -2,8 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "./store";
 import { isTauri } from "./tauriEvents";
 import { reconcileTemplates } from "./templates";
-import { PRESET_EVAL_TEMPLATES } from "./evaluations/presets";
-import { PRESET_TODO_TEMPLATES } from "./todoTemplates";
+import { buildPresetEvalTemplates } from "./evaluations/presets";
+import { buildPresetTodoTemplates } from "./todoTemplates";
+import { translate, type TranslationKey } from "../i18n/messages";
 import type { EvalTemplate, TodoTemplate } from "./types";
 
 /**
@@ -30,14 +31,16 @@ async function loadFromFile(): Promise<void> {
     }
     const data = JSON.parse(raw) as TemplatesFile;
     // Always fold in the latest built-in templates (so new presets ship to
-    // existing users), keeping any custom templates from the file.
+    // existing users), keeping any custom templates from the file. Built-ins are
+    // resolved into the current UI language.
+    const t = (key: TranslationKey) => translate(useStore.getState().settings.language, key);
     const patch = {
       evalTemplates: reconcileTemplates(
-        PRESET_EVAL_TEMPLATES,
+        buildPresetEvalTemplates(t),
         Array.isArray(data.evalTemplates) ? data.evalTemplates : []
       ),
       todoTemplates: reconcileTemplates(
-        PRESET_TODO_TEMPLATES,
+        buildPresetTodoTemplates(t),
         Array.isArray(data.todoTemplates) ? data.todoTemplates : []
       ),
     };
