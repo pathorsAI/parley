@@ -44,6 +44,9 @@ export function getModel(settings: Settings, kind: "ask" | "eval"): LanguageMode
     baseURL: info.baseURL!,
     // Local Ollama needs no key, but the SDK wants a non-empty string.
     apiKey: apiKey || (info.requiresKey === false ? "ollama" : apiKey),
+    // true → response_format json_schema (schema ENFORCED); false → json_object
+    // (valid JSON only). Off for Ollama, whose /v1 ignores the json_schema shape.
+    supportsStructuredOutputs: info.supportsStructuredOutputs ?? false,
   });
   return client.chatModel(modelId);
 }
@@ -55,8 +58,18 @@ export function getModel(settings: Settings, kind: "ask" | "eval"): LanguageMode
  */
 export function getProviderOptions(settings: Settings, kind: "ask" | "eval") {
   const info = PROVIDER_BY_ID[settings.provider];
-  if (info.kind === "openai-compatible" && isReasoningModel(settings.models[settings.provider][kind])) {
-    return { [info.id]: { reasoningEffort: settings.reasoningEffort[kind] } };
+  if (info.kind !== "openai-compatible") return {};
+
+  const opts: Record<string, string | { require_parameters: boolean }> = {};
+  if (isReasoningModel(settings.models[settings.provider][kind])) {
+    opts.reasoningEffort = settings.reasoningEffort[kind];
   }
-  return {};
+  // OpenRouter fans one model id out to many upstreams; some ignore
+  // response_format, which silently dropped our enforced schema (→ "did not
+  // match schema"). Force it to only route to backends that honor the schema.
+  if (info.id === "openrouter") {
+    opts.provider = { require_parameters: true };
+  }
+
+  return Object.keys(opts).length ? { [info.id]: opts } : {};
 }
