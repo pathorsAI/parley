@@ -81,7 +81,8 @@ const DEFAULT_SETTINGS: Settings = {
   userName: "",
   userRole: "",
   userCompany: "",
-  provider: "anthropic",
+  // Default to Groq's gpt-oss (fast + cheap); users can switch in Settings.
+  provider: "groq",
   anthropicApiKey: "",
   openaiApiKey: "",
   geminiApiKey: "",
@@ -184,6 +185,9 @@ interface ParleyState {
   setEvalStatus: (id: string, status: EvalStatus) => void;
   setEvalResult: (id: string, result: EvalResult) => void;
   setAllEvalStatus: (status: EvalStatus) => void;
+  /** Error message from the last failed "Run all" evaluation (null otherwise). */
+  evalError: string | null;
+  setEvalError: (error: string | null) => void;
   /** Whether to auto-rerun the whole evaluation set on an interval while recording. */
   autoEval: boolean;
   autoEvalSec: number;
@@ -216,6 +220,7 @@ export const useStore = create<ParleyState>()(
       autoEval: false,
       autoEvalSec: 30,
       highlightMs: null,
+      evalError: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
@@ -337,6 +342,8 @@ export const useStore = create<ParleyState>()(
 
   setAllEvalStatus: (status) =>
     set((state) => ({ evaluations: state.evaluations.map((e) => ({ ...e, status })) })),
+
+  setEvalError: (error) => set({ evalError: error }),
 
   setAutoEval: (on) => set({ autoEval: on }),
   setAutoEvalSec: (sec) => set({ autoEvalSec: Math.max(5, sec || 30) }),
