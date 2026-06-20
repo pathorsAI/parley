@@ -21,6 +21,7 @@ export async function runAllEvaluations(): Promise<void> {
   if (!segments.some((s) => s.isFinal && s.text.trim())) return;
 
   evalBusy = true;
+  state.setEvalError(null);
   setAllEvalStatus("running");
   try {
     const { runAllEvaluations: run } = await import("../ai/evaluations");
@@ -31,6 +32,7 @@ export async function runAllEvaluations(): Promise<void> {
     }
   } catch (err) {
     console.error("[evals]", err);
+    useStore.getState().setEvalError(err instanceof Error ? err.message : String(err));
     setAllEvalStatus("error");
   } finally {
     evalBusy = false;

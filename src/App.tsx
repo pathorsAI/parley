@@ -5,6 +5,7 @@ import { ReplayView } from "./components/replay/ReplayView";
 import { WorkPanel } from "./components/WorkPanel";
 import { EvaluationsPanel } from "./components/sidebar/EvaluationsPanel";
 import { Onboarding } from "./components/Onboarding";
+import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -51,6 +52,7 @@ function App() {
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       {!onboarded && <Onboarding />}
+      <AnalysisErrorDialog />
       <TitleBar />
       {appMode === "replay" ? (
         <ReplayView />
