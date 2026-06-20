@@ -170,7 +170,8 @@ pub struct SegmentBuilder {
     app: AppHandle,
     source: &'static str,
     seg_index: u64,
-    cur_speaker: i64, // -1 = no open run
+    /// Speaker of the open run, or `None` when no run is open.
+    cur_speaker: Option<i64>,
     cur_final: String,
     cur_start: u64,
     cur_end: u64,
@@ -182,7 +183,7 @@ impl SegmentBuilder {
             app,
             source,
             seg_index: 0,
-            cur_speaker: -1,
+            cur_speaker: None,
             cur_final: String::new(),
             cur_start: 0,
             cur_end: 0,
@@ -191,7 +192,7 @@ impl SegmentBuilder {
 
     /// The current open run's speaker (0 if none open) — useful for tail labels.
     pub fn current_speaker(&self) -> i64 {
-        self.cur_speaker.max(0)
+        self.cur_speaker.unwrap_or(0)
     }
 
     /// The end timestamp of the current open run — useful as a tail start.
@@ -203,16 +204,20 @@ impl SegmentBuilder {
     /// (emitting it solid) and starts a new one. Whitespace is preserved as the
     /// adapter supplies it.
     pub fn push_final(&mut self, text: &str, speaker: i64, start_ms: u64, end_ms: u64) {
-        if self.cur_speaker == -1 {
-            self.cur_speaker = speaker;
-            self.cur_start = start_ms;
-        } else if speaker != self.cur_speaker {
-            if !self.cur_final.trim().is_empty() {
-                self.commit();
+        match self.cur_speaker {
+            None => {
+                self.cur_speaker = Some(speaker);
+                self.cur_start = start_ms;
             }
-            self.cur_speaker = speaker;
-            self.cur_final.clear();
-            self.cur_start = start_ms;
+            Some(cur) if speaker != cur => {
+                if !self.cur_final.trim().is_empty() {
+                    self.commit();
+                }
+                self.cur_speaker = Some(speaker);
+                self.cur_final.clear();
+                self.cur_start = start_ms;
+            }
+            Some(_) => {}
         }
         self.cur_final.push_str(text);
         self.cur_end = end_ms;
@@ -224,7 +229,7 @@ impl SegmentBuilder {
             &self.app,
             self.source,
             format!("{}-{}", self.source, self.seg_index),
-            self.cur_speaker,
+            self.current_speaker(),
             self.cur_final.clone(),
             true,
             self.cur_start,
@@ -241,7 +246,7 @@ impl SegmentBuilder {
                 &self.app,
                 self.source,
                 format!("{}-{}", self.source, self.seg_index),
-                self.cur_speaker,
+                self.current_speaker(),
                 self.cur_final.clone(),
                 true,
                 self.cur_start,
@@ -270,7 +275,7 @@ impl SegmentBuilder {
         if !self.cur_final.trim().is_empty() {
             self.commit();
         }
-        self.cur_speaker = -1;
+        self.cur_speaker = None;
         self.cur_final.clear();
     }
 }
