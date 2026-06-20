@@ -29,3 +29,6 @@ src-tauri/gen/schemas
 *.njsproj
 *.sln
 *.sw?
+
+# ONNX Runtime dylib (fetched at build time, not committed — see src-tauri/scripts/fetch-onnxruntime.sh)
+src-tauri/onnxruntime/*.dylib

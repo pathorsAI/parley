@@ -32,6 +32,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": ["onnxruntime/libonnxruntime.dylib"],
     "macOS": {
       "entitlements": "entitlements.plist"
     },
