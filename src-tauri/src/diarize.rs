@@ -159,29 +159,37 @@ fn run_pipeline(
 
     // Embedding is embarrassingly parallel — each slice is independent. ONNX
     // Runtime's `Session::run` takes `&mut self`, so instead of sharing one
-    // session we give each worker thread its OWN single-threaded session and
-    // stripe the segments across workers (worker `tid` handles i ≡ tid mod W).
-    // W workers running 1-intra-thread sessions ≈ W cores busy, with no
-    // oversubscription. Capped to bound memory (each session holds the ~27 MB
-    // model) and skipped entirely for small jobs where the spin-up isn't worth it.
+    // session we give each worker thread its OWN single-threaded session and feed
+    // them from a shared ROLLING WORK QUEUE: a worker claims the next unclaimed
+    // segment (one atomic fetch_add) the instant it's free, so a slow long segment
+    // never makes the others idle — no batch barrier, naturally load-balanced.
+    // W workers running 1-intra-thread sessions ≈ W cores busy, no oversubscription.
+    // Capped to bound memory (each session holds the ~27 MB model) and skipped for
+    // small jobs where the spin-up isn't worth it.
     let n = spans.len();
     let step = (n / 100).max(1); // throttle to ~100 progress events total
     let cores = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(1);
     let workers = if n < 24 { 1 } else { cores.min(8).min(n).max(1) };
     log::info!("diarize: embedding {n} slices across {workers} worker(s)");
 
-    let processed = AtomicUsize::new(0);
+    let next = AtomicUsize::new(0); // shared work cursor — the rolling queue
+    let processed = AtomicUsize::new(0); // completed count, for progress only
     let mut embeds: Vec<Option<Vec<f32>>> = vec![None; n];
 
     let worker_results: Vec<Result<Vec<(usize, Vec<f32>)>>> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..workers)
-            .map(|tid| {
-                let (spans, audio, model, processed, app) = (&spans, &audio, &model, &processed, &app);
+            .map(|_| {
+                let (spans, audio, model, next, processed, app) =
+                    (&spans, &audio, &model, &next, &processed, &app);
                 scope.spawn(move || -> Result<Vec<(usize, Vec<f32>)>> {
                     let mut session = build_session(model)?;
                     let mut out: Vec<(usize, Vec<f32>)> = Vec::new();
-                    let mut i = tid;
-                    while i < spans.len() {
+                    loop {
+                        // Claim the next segment; stop when the queue is drained.
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        if i >= spans.len() {
+                            break;
+                        }
                         let sp = &spans[i];
                         let start = (sp.start_ms as usize) * SAMPLES_PER_MS;
                         let end = ((sp.end_ms as usize) * SAMPLES_PER_MS).min(audio.len());
@@ -199,7 +207,6 @@ fn run_pipeline(
                                 Progress { stage: "embedding", received: done as u64, total: n as u64 },
                             );
                         }
-                        i += workers;
                     }
                     Ok(out)
                 })
@@ -565,31 +572,35 @@ fn nme_spectral(matrix: &[Vec<f32>], known_k: Option<usize>) -> Vec<usize> {
 
     // Search the neighbour count p: keep the p whose pruned affinity yields the
     // cleanest spectrum, scored r(p) = p / g(p) with g the normalized max eigengap.
-    // Each p is an independent eigendecomposition → evaluate them in parallel.
+    // Each p is an independent eigendecomposition → workers pull from a shared
+    // rolling queue (claim next p when free), same load-balanced pattern as the
+    // embedding loop — no fixed chunk that could leave a worker idle.
     let p_max = (n / 4).clamp(2, n - 1);
     let cands = p_candidates(p_max, NME_MAX_P_CANDIDATES);
     let workers = num_workers(cands.len());
-    let chunk = cands.len().div_ceil(workers).max(1);
+    let cursor = AtomicUsize::new(0);
 
     let scored: Vec<(usize, f32, usize)> = std::thread::scope(|scope| {
-        let aff = &aff;
-        let handles: Vec<_> = cands
-            .chunks(chunk)
-            .map(|c| c.to_vec())
-            .map(|chunk| {
+        let (aff, cands, cursor) = (&aff, &cands, &cursor);
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
                 scope.spawn(move || {
-                    chunk
-                        .into_iter()
-                        .map(|p| {
-                            let lap = pruned_laplacian(aff, p);
-                            let mut evals: Vec<f64> =
-                                lap.symmetric_eigenvalues().iter().copied().collect();
-                            evals.sort_by(|a, b| a.total_cmp(b));
-                            let (g, k_est) = nme_and_count(&evals, max_k);
-                            let r = if g > 0.0 { p as f32 / g as f32 } else { f32::INFINITY };
-                            (p, r, k_est)
-                        })
-                        .collect::<Vec<_>>()
+                    let mut local: Vec<(usize, f32, usize)> = Vec::new();
+                    loop {
+                        let idx = cursor.fetch_add(1, Ordering::Relaxed);
+                        if idx >= cands.len() {
+                            break;
+                        }
+                        let p = cands[idx];
+                        let lap = pruned_laplacian(aff, p);
+                        let mut evals: Vec<f64> =
+                            lap.symmetric_eigenvalues().iter().copied().collect();
+                        evals.sort_by(|a, b| a.total_cmp(b));
+                        let (g, k_est) = nme_and_count(&evals, max_k);
+                        let r = if g > 0.0 { p as f32 / g as f32 } else { f32::INFINITY };
+                        local.push((p, r, k_est));
+                    }
+                    local
                 })
             })
             .collect();
