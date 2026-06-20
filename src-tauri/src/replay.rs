@@ -202,7 +202,9 @@ async fn run_upload_and_transcribe(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "recording".to_string());
-    let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name);
+    // Clone for the multipart part so `file_name` stays available for the
+    // diagnostic log written after transcription.
+    let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name.clone());
     let form = reqwest::multipart::Form::new().part("file", part);
 
     let upload_resp = client
@@ -216,10 +218,12 @@ async fn run_upload_and_transcribe(
     let file_id = upload.id;
 
     // 2. Create the async transcription job → transcription id.
+    // Clone for the request body so the original `language_hints` stays available
+    // for the diagnostic log written after the transcript is fetched.
     let hints = if language_hints.is_empty() {
         None
     } else {
-        Some(language_hints)
+        Some(language_hints.clone())
     };
     let create_body = CreateTranscriptionRequest {
         file_id: &file_id,
@@ -240,7 +244,10 @@ async fn run_upload_and_transcribe(
     // 3. Poll until completed or error.
     let audio_duration_ms = loop_poll(client, api_key, &transcription_id).await?;
 
-    // 4. Fetch the transcript tokens.
+    // 4. Fetch the transcript tokens. We capture the RAW response body text (not
+    // just the parsed struct) so we can write it verbatim to a diagnostic log
+    // below — this lets the user inspect exactly what Soniox returned (per-token
+    // speaker labels, distinct speaker count, …) when diarization looks wrong.
     let transcript_resp = client
         .get(format!(
             "{SONIOX_BASE}/transcriptions/{transcription_id}/transcript"
@@ -249,12 +256,13 @@ async fn run_upload_and_transcribe(
         .send()
         .await
         .map_err(|e| format!("Fetch transcript failed: {e}"))?;
-    let transcript: TranscriptResponse = read_json(transcript_resp, "fetch transcript").await?;
+    let (raw_transcript, transcript): (String, TranscriptResponse) =
+        read_json_with_raw(transcript_resp, "fetch transcript").await?;
 
     // Diagnostics: surface how well Soniox actually diarized, so a real
     // diarization problem (few/empty distinct speakers) can be told apart from a
     // grouping/labeling one on our side.
-    {
+    let (token_count, tokens_with_speaker, distinct_speakers) = {
         let toks = &transcript.tokens;
         let with_spk = toks.iter().filter(|t| t.speaker.is_some()).count();
         let mut speakers: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
@@ -269,7 +277,22 @@ async fn run_upload_and_transcribe(
             with_spk,
             speakers
         );
-    }
+        (toks.len(), with_spk, speakers)
+    };
+
+    // Persist a reviewable log of the raw Soniox response + request context.
+    // Best-effort: never let a logging failure abort the transcription.
+    write_soniox_log(SonioxLogContext {
+        model,
+        enable_speaker_diarization: diarization,
+        language_hints: &language_hints,
+        file_name: &file_name,
+        audio_duration_ms,
+        token_count,
+        tokens_with_speaker,
+        distinct_speakers: &distinct_speakers,
+        raw_transcript: &raw_transcript,
+    });
 
     // 5. Best-effort cleanup of the uploaded file + transcription on Soniox.
     let _ = client
@@ -408,4 +431,107 @@ async fn read_json<T: serde::de::DeserializeOwned>(
         return Err(format!("{ctx}: HTTP {status}: {text}"));
     }
     serde_json::from_str(&text).map_err(|e| format!("{ctx}: bad response JSON: {e} — {text}"))
+}
+
+/// Like `read_json`, but also returns the RAW response body text alongside the
+/// parsed struct. Used for the transcript fetch so the exact bytes Soniox sent
+/// can be written to a diagnostic log. Error handling matches `read_json`: HTTP
+/// status + body are surfaced on failure.
+async fn read_json_with_raw<T: serde::de::DeserializeOwned>(
+    resp: reqwest::Response,
+    ctx: &str,
+) -> Result<(String, T), String> {
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("{ctx}: failed to read response: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("{ctx}: HTTP {status}: {text}"));
+    }
+    let parsed = serde_json::from_str(&text)
+        .map_err(|e| format!("{ctx}: bad response JSON: {e} — {text}"))?;
+    Ok((text, parsed))
+}
+
+/// Inputs for the Soniox diagnostic log. Bundled into one struct so the call
+/// site stays readable and the writer can stay best-effort.
+struct SonioxLogContext<'a> {
+    model: &'a str,
+    enable_speaker_diarization: bool,
+    language_hints: &'a [String],
+    file_name: &'a str,
+    audio_duration_ms: u64,
+    token_count: usize,
+    tokens_with_speaker: usize,
+    distinct_speakers: &'a std::collections::BTreeSet<i64>,
+    /// The full, verbatim transcript JSON body returned by Soniox.
+    raw_transcript: &'a str,
+}
+
+/// Write a reviewable JSON log of the raw Soniox transcript response plus the
+/// request context to `~/Documents/Parley/logs/soniox-<timestamp>.json`.
+///
+/// Best-effort: any failure (no HOME, IO error, …) is reported via `eprintln!`
+/// and swallowed — logging must NEVER fail the transcription.
+fn write_soniox_log(ctx: SonioxLogContext) {
+    if let Err(e) = try_write_soniox_log(&ctx) {
+        eprintln!("[replay] failed to write Soniox response log: {e}");
+    }
+}
+
+/// Fallible inner half of `write_soniox_log`. Returns the absolute path written.
+fn try_write_soniox_log(ctx: &SonioxLogContext) -> Result<(), String> {
+    // Mirror commands.rs::save_transcript's ~/Documents/Parley layout, under a
+    // dedicated `logs/` subdirectory.
+    let home = std::env::var("HOME").map_err(|_| "no HOME dir".to_string())?;
+    let dir = std::path::Path::new(&home)
+        .join("Documents")
+        .join("Parley")
+        .join("logs");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    // Unique, human-readable file name: a UTC timestamp (seconds since the Unix
+    // epoch — no wall-clock formatting dependency) plus a short uuid suffix so
+    // two uploads in the same second never collide.
+    let unix_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let suffix = &suffix[..8];
+    let path = dir.join(format!("soniox-{unix_secs}-{suffix}.json"));
+
+    // Embed the raw transcript as parsed JSON when it parses, else keep it as a
+    // string so nothing is ever lost.
+    let raw_value: serde_json::Value = serde_json::from_str(ctx.raw_transcript)
+        .unwrap_or_else(|_| serde_json::Value::String(ctx.raw_transcript.to_string()));
+
+    let distinct: Vec<i64> = ctx.distinct_speakers.iter().copied().collect();
+    let log = serde_json::json!({
+        "request": {
+            "model": ctx.model,
+            "enable_speaker_diarization": ctx.enable_speaker_diarization,
+            "language_hints": ctx.language_hints,
+            "file_name": ctx.file_name,
+        },
+        "audio_duration_ms": ctx.audio_duration_ms,
+        "diarization_summary": {
+            "token_count": ctx.token_count,
+            "tokens_with_speaker": ctx.tokens_with_speaker,
+            "distinct_speakers": distinct,
+            "distinct_speaker_count": distinct.len(),
+        },
+        "raw_transcript": raw_value,
+    });
+
+    let pretty = serde_json::to_string_pretty(&log).map_err(|e| e.to_string())?;
+    std::fs::write(&path, pretty).map_err(|e| e.to_string())?;
+
+    // Surface the absolute path in the dev log so the user can find the file.
+    eprintln!(
+        "[replay] saved Soniox response log: {}",
+        path.to_string_lossy()
+    );
+    Ok(())
 }
