@@ -3,6 +3,7 @@ mod commands;
 mod mcp;
 mod permissions;
 mod replay;
+mod replay_audio;
 mod transcription;
 mod usage;
 

@@ -127,11 +127,78 @@ pub async fn transcribe_file(
     let model = model.unwrap_or_else(|| DEFAULT_ASYNC_MODEL.to_string());
     let client = reqwest::Client::new();
 
+    // 0. Try to compress the recording to a much smaller Opus/Ogg file before
+    // uploading. This is best-effort: any failure (unsupported codec, encode
+    // error, …) falls back to uploading the original file so it never blocks an
+    // upload. `compressed_temp` is set only when we produced a temp file, so we
+    // can delete it afterward (even on error).
+    let original_size = tokio::fs::metadata(&path).await.map(|m| m.len()).ok();
+    let mut compressed_temp: Option<std::path::PathBuf> = None;
+    let upload_path: String = match compress_for_upload_blocking(path.clone()).await {
+        Ok(temp) => {
+            let compressed_size = tokio::fs::metadata(&temp).await.map(|m| m.len()).ok();
+            match (original_size, compressed_size) {
+                (Some(orig), Some(comp)) => eprintln!(
+                    "[replay] compressed audio: {orig} bytes -> {comp} bytes ({:.1}% of original)",
+                    if orig > 0 { comp as f64 / orig as f64 * 100.0 } else { 0.0 }
+                ),
+                _ => eprintln!("[replay] compressed audio (sizes unavailable)"),
+            }
+            let p = temp.to_string_lossy().into_owned();
+            compressed_temp = Some(temp);
+            p
+        }
+        Err(e) => {
+            eprintln!("[replay] audio compression failed, uploading original: {e}");
+            path.clone()
+        }
+    };
+
+    // Run the rest of the flow, ensuring the temp file is cleaned up afterward.
+    let result = run_upload_and_transcribe(
+        &client,
+        &api_key,
+        &upload_path,
+        &model,
+        language_hints,
+        diarization,
+    )
+    .await;
+
+    if let Some(temp) = compressed_temp.take() {
+        let _ = tokio::fs::remove_file(&temp).await;
+    }
+
+    result
+}
+
+/// Run `compress_for_upload` off the async runtime (it does blocking file IO +
+/// CPU-bound decode/encode). Returns the temp output path on success.
+async fn compress_for_upload_blocking(path: String) -> Result<std::path::PathBuf, String> {
+    tokio::task::spawn_blocking(move || {
+        crate::replay_audio::compress_for_upload(std::path::Path::new(&path))
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("compression task panicked: {e}"))?
+}
+
+/// Upload `upload_path` to Soniox, create + poll the transcription job, fetch the
+/// transcript, and group it into segments. Split out from `transcribe_file` so
+/// the caller can guarantee temp-file cleanup regardless of outcome.
+async fn run_upload_and_transcribe(
+    client: &reqwest::Client,
+    api_key: &str,
+    upload_path: &str,
+    model: &str,
+    language_hints: Vec<String>,
+    diarization: bool,
+) -> Result<TranscriptionResult, String> {
     // 1. Upload the file → file id.
-    let bytes = tokio::fs::read(&path)
+    let bytes = tokio::fs::read(upload_path)
         .await
         .map_err(|e| format!("Failed to read file: {e}"))?;
-    let file_name = std::path::Path::new(&path)
+    let file_name = std::path::Path::new(upload_path)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "recording".to_string());
@@ -140,7 +207,7 @@ pub async fn transcribe_file(
 
     let upload_resp = client
         .post(format!("{SONIOX_BASE}/files"))
-        .bearer_auth(&api_key)
+        .bearer_auth(api_key)
         .multipart(form)
         .send()
         .await
@@ -156,13 +223,13 @@ pub async fn transcribe_file(
     };
     let create_body = CreateTranscriptionRequest {
         file_id: &file_id,
-        model: &model,
+        model,
         language_hints: hints,
         enable_speaker_diarization: diarization,
     };
     let create_resp = client
         .post(format!("{SONIOX_BASE}/transcriptions"))
-        .bearer_auth(&api_key)
+        .bearer_auth(api_key)
         .json(&create_body)
         .send()
         .await
@@ -171,14 +238,14 @@ pub async fn transcribe_file(
     let transcription_id = created.id;
 
     // 3. Poll until completed or error.
-    let audio_duration_ms = loop_poll(&client, &api_key, &transcription_id).await?;
+    let audio_duration_ms = loop_poll(client, api_key, &transcription_id).await?;
 
     // 4. Fetch the transcript tokens.
     let transcript_resp = client
         .get(format!(
             "{SONIOX_BASE}/transcriptions/{transcription_id}/transcript"
         ))
-        .bearer_auth(&api_key)
+        .bearer_auth(api_key)
         .send()
         .await
         .map_err(|e| format!("Fetch transcript failed: {e}"))?;
@@ -187,12 +254,12 @@ pub async fn transcribe_file(
     // 5. Best-effort cleanup of the uploaded file + transcription on Soniox.
     let _ = client
         .delete(format!("{SONIOX_BASE}/transcriptions/{transcription_id}"))
-        .bearer_auth(&api_key)
+        .bearer_auth(api_key)
         .send()
         .await;
     let _ = client
         .delete(format!("{SONIOX_BASE}/files/{file_id}"))
-        .bearer_auth(&api_key)
+        .bearer_auth(api_key)
         .send()
         .await;
 
