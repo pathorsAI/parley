@@ -1,6 +1,6 @@
 import { generateObject } from "ai";
 import { z } from "zod";
-import { getModel, getProviderOptions } from "./provider";
+import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider";
 import { transcriptAsText, useStore } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext } from "./profile";
@@ -51,7 +51,7 @@ export async function runAllEvaluations(opts: {
     model: getModel(settings, "eval"),
     providerOptions: getProviderOptions(settings, "eval"),
     schema: batchSchema,
-    system: SYSTEM,
+    system: SYSTEM + JSON_MODE_INSTRUCTION,
     prompt: `${ctx}Evaluations (return one result per id):\n${list}\n\nTranscript so far:\n${transcript}`,
   });
   void recordLlmUsage(settings, "eval", "eval", usage);

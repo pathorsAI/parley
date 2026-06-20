@@ -1,6 +1,6 @@
 import { generateObject, generateText } from "ai";
 import { z } from "zod";
-import { getModel, getProviderOptions } from "./provider";
+import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider";
 import { transcriptAsText } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext } from "./profile";
@@ -97,7 +97,7 @@ export async function detectArguments(opts: {
     model: getModel(settings, "eval"),
     providerOptions: getProviderOptions(settings, "eval"),
     schema: detectSchema,
-    system: DETECT_SYSTEM,
+    system: DETECT_SYSTEM + JSON_MODE_INSTRUCTION,
     prompt: `${ctx}Transcript so far:\n${transcript}\n\nDetect THEM's key arguments and war-game each.`,
   });
   void recordLlmUsage(settings, "eval", "eval", usage);
