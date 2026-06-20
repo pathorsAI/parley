@@ -8,6 +8,13 @@ import { runAnalysis } from "../lib/analysis/engine";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ReplayTranscript } from "./replay/ReplayTranscript";
 import type { Source } from "../lib/types";
 
@@ -55,8 +62,11 @@ export function IngestWizard() {
   const setSpeakerName = useStore((s) => s.setSpeakerName);
   const analysisStatus = useStore((s) => s.analysisStatus);
   const analysisError = useStore((s) => s.analysisError);
+  const evalTemplates = useStore((s) => s.settings.evalTemplates);
+  const updateSettings = useStore((s) => s.updateSettings);
 
   const [numSpeakers, setNumSpeakers] = useState<number | null>(null);
+  const [templateId, setTemplateId] = useState("");
   const [txStage, setTxStage] = useState<string | null>(null);
   const [dz, setDz] = useState<DiarizeProgress | null>(null);
   const startedRef = useRef<string | null>(null);
@@ -146,6 +156,14 @@ export function IngestWizard() {
     }
   }
 
+  function applyTemplate(id: string) {
+    const tpl = evalTemplates.find((x) => x.id === id);
+    if (!tpl) return;
+    // Set the active evaluations for THIS analysis (same path the live panel uses).
+    updateSettings({ evaluations: tpl.evals.map((e) => ({ ...e })) });
+    setTemplateId(id);
+  }
+
   function confirmReview() {
     // No LLM key → skip analysis, just land on the (diarized) results page.
     if (!hasProviderKey(useStore.getState().settings)) {
@@ -176,7 +194,14 @@ export function IngestWizard() {
   function cancel() {
     startedRef.current = null;
     failedRef.current = null;
-    exitReplay(); // resets the gate + leaves replay if we'd entered it
+    // Only tear down replay if we actually entered it (transcription step done).
+    // On count/transcribing the app is still LIVE — exitReplay would wipe a
+    // stopped live meeting's transcript/findings. Just disarm the gate instead.
+    if (useStore.getState().appMode === "replay") {
+      exitReplay();
+    } else {
+      useStore.setState({ analysisGate: "open" });
+    }
     close();
   }
 
@@ -246,6 +271,21 @@ export function IngestWizard() {
               <p className="text-[12px] leading-relaxed text-muted-foreground">
                 {t("ingest.reviewIntro", { speakers: speakers.length })}
               </p>
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[11px] text-muted-foreground">{t("ingest.template")}</span>
+                <Select value={templateId} onValueChange={applyTemplate}>
+                  <SelectTrigger size="sm" className="h-8 text-xs">
+                    <SelectValue placeholder={t("evaluations.applyTemplate")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {evalTemplates.map((tpl) => (
+                      <SelectItem key={tpl.id} value={tpl.id}>
+                        {tpl.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="flex flex-col gap-2">
                 {speakers.map((sp) => (
                   <div key={sp.key} className="flex items-start gap-2">

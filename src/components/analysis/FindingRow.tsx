@@ -3,7 +3,6 @@ import { cn } from "@/lib/utils";
 import { formatClock } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import type { TimelineEvent } from "../../lib/types";
-import { FindingSolutionCard } from "./FindingSolutionCard";
 
 const SEVERITY_DOT: Record<TimelineEvent["severity"], string> = {
   info: "bg-sky-400",
@@ -54,16 +53,11 @@ export function FindingRow({
             </span>
           )}
           <span className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium text-primary">
-            <ChevronRight className={cn("size-3 transition-transform", selected && "rotate-90")} />
+            <ChevronRight className="size-3" />
             {t("solution.show")}
           </span>
         </span>
       </button>
-      {selected && (
-        <div className="px-2.5 pb-2.5">
-          <FindingSolutionCard finding={event} />
-        </div>
-      )}
     </li>
   );
 }

@@ -173,6 +173,9 @@ interface ParleyState {
   setFindings: (events: TimelineEvent[]) => void;
   setAnalysisStatus: (status: ParleyState["analysisStatus"]) => void;
   setAnalysisError: (error: string | null) => void;
+  /** Drop findings + action items outside the replay keep-window. Applied when a
+   *  trim is committed — clears over-time results without re-running the analysis. */
+  dropFindingsOutsideTrim: () => void;
 
   /** The finding whose "how it should have been done" drilldown is open. */
   selectedFindingId: string | null;
@@ -359,6 +362,19 @@ export const useStore = create<ParleyState>()(
   // Replacing the findings list invalidates the selection + any cached solutions
   // (the model mints fresh finding ids each pass, so old solutions are stale).
   setFindings: (events) => set({ findings: events, selectedFindingId: null, findingSolutions: {} }),
+
+  dropFindingsOutsideTrim: () =>
+    set((s) => {
+      const trim = s.replayTrim;
+      if (!trim) return {}; // no trim → nothing to clear
+      const inWin = (atMs: number) => atMs >= trim.startMs && atMs <= trim.endMs;
+      const keepSel = s.findings.some((f) => f.id === s.selectedFindingId && inWin(f.atMs));
+      return {
+        findings: s.findings.filter((f) => inWin(f.atMs)),
+        actionItems: s.actionItems.filter((a) => a.atMs == null || inWin(a.atMs)),
+        selectedFindingId: keepSel ? s.selectedFindingId : null,
+      };
+    }),
   setAnalysisStatus: (status) => set({ analysisStatus: status }),
   setAnalysisError: (error) => set({ analysisError: error }),
   setSelectedFinding: (id) => set({ selectedFindingId: id }),

@@ -5,6 +5,7 @@ import { ReplayScreen } from "./components/replay/ReplayScreen";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import { IngestWizard } from "./components/IngestWizard";
+import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWindow";
 import { useStore } from "./lib/store";
 import { listenForTranscript } from "./lib/tauriEvents";
 import { listenForSettings } from "./lib/settingsSync";
@@ -45,6 +46,7 @@ function App() {
       {!onboarded && <Onboarding />}
       <AnalysisErrorDialog />
       <IngestWizard />
+      <FindingSolutionWindow />
       <TitleBar />
       {appMode === "replay" ? <ReplayScreen /> : <LiveScreen />}
     </div>

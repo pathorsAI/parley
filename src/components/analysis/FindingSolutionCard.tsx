@@ -1,11 +1,9 @@
-import { useEffect, useState } from "react";
-import { RefreshCw, Swords } from "lucide-react";
+import { useEffect } from "react";
+import { RefreshCw } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { runFindingSolution } from "../../lib/analysis/solution";
 import { useI18n } from "../../i18n";
-import { Button } from "@/components/ui/button";
-import { WargameBranch } from "./WargameBranch";
 import type { TimelineEvent, WargameStrategyKind } from "../../lib/types";
 
 /** Move kind → accent color (mirrors the old war-game card grammar). */
@@ -26,9 +24,6 @@ export function FindingSolutionCard({ finding }: { finding: TimelineEvent }) {
   const entry = useStore((s) => s.findingSolutions[finding.id]);
   const keyMissing = useStore((s) => !hasProviderKey(s.settings));
   const status = entry?.status ?? "idle";
-  // Which move's interactive roleplay branch is open (by index), if any.
-  const [openBranch, setOpenBranch] = useState<number | null>(null);
-  const situation = `${finding.title}: ${finding.detail}`;
 
   // Generate on first open and whenever the open finding changes.
   useEffect(() => {
@@ -88,28 +83,6 @@ export function FindingSolutionCard({ finding }: { finding: TimelineEvent }) {
             <span className="font-medium text-muted-foreground/90">{t("wargame.predictedReaction")}:</span>{" "}
             {m.predictedReaction}
           </div>
-
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="mt-2 h-7 gap-1.5 text-[11px]"
-            onClick={() => setOpenBranch((cur) => (cur === i ? null : i))}
-          >
-            <Swords className="size-3" />
-            {t("wargame.simulate")}
-          </Button>
-
-          {openBranch === i && (
-            <WargameBranch
-              // Remount the branch when reopening so each session starts fresh.
-              key={`branch-${i}`}
-              situation={situation}
-              sourceQuote={finding.quote}
-              move={m}
-              onCollapse={() => setOpenBranch(null)}
-            />
-          )}
         </div>
       ))}
     </div>

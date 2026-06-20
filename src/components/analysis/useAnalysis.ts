@@ -24,12 +24,13 @@ export function selectFinding(id: string | null) {
 }
 
 /**
- * Toggle a finding's drilldown open/closed and seek to its moment. Shared by the
- * timeline dots and the findings list so both behave identically. `onSeek` is
- * mode-specific: live jumps the transcript (setHighlightMs); replay seeks audio.
+ * Select a finding (opening its solution window) and seek to its moment. Shared
+ * by the timeline dots and the findings list. Always SELECTS (never toggles off):
+ * the solution window is closed via its own control, and clicking another finding
+ * just switches/refocuses the window. `onSeek` is mode-specific: live jumps the
+ * transcript (setHighlightMs); replay seeks audio.
  */
 export function selectAndSeek(event: TimelineEvent, onSeek: (ms: number) => void) {
-  const { selectedFindingId, setSelectedFinding } = useStore.getState();
-  setSelectedFinding(selectedFindingId === event.id ? null : event.id);
+  useStore.getState().setSelectedFinding(event.id);
   onSeek(event.atMs);
 }
