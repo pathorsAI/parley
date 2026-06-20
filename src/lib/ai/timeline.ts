@@ -19,13 +19,18 @@ const eventSchema = z.object({
   source: z
     .enum(["eval", "extra"])
     .describe('"eval" when this matches one of the configured evaluations (set evalId too); "extra" otherwise.'),
+  // .nullable() (not .optional()): strict json_schema structured outputs require
+  // every property to be present in `required`. Downstream code is null-safe.
   evalId: z
     .string()
-    .optional()
-    .describe("The id of the matching evaluation when source is \"eval\"."),
+    .nullable()
+    .describe("The id of the matching evaluation when source is \"eval\", else null."),
   title: z.string().describe("A short label for the moment."),
   detail: z.string().describe("One or two sentences explaining what happened and why it matters."),
-  quote: z.string().optional().describe("A verbatim quote from the transcript supporting this moment."),
+  quote: z
+    .string()
+    .nullable()
+    .describe("A verbatim quote from the transcript supporting this moment, or null."),
 });
 const schema = z.object({ events: z.array(eventSchema) });
 
@@ -64,7 +69,7 @@ function norm(s: string): string {
 }
 
 /** Find the segment whose text contains the quote (fuzzy). Returns its startMs. */
-function startMsForQuote(quote: string | undefined, segments: TranscriptSegment[]): number | null {
+function startMsForQuote(quote: string | null | undefined, segments: TranscriptSegment[]): number | null {
   if (!quote) return null;
   const q = norm(quote);
   if (q.length < 4) return null;
@@ -128,7 +133,7 @@ export async function analyzeTimeline(opts: {
       side: e.side,
       severity: e.severity,
       source: hasEval ? "eval" : "extra",
-      evalId: hasEval ? e.evalId : undefined,
+      evalId: hasEval ? e.evalId ?? undefined : undefined,
       title: e.title,
       detail: e.detail,
       quote: e.quote?.trim() || undefined,
