@@ -251,6 +251,26 @@ async fn run_upload_and_transcribe(
         .map_err(|e| format!("Fetch transcript failed: {e}"))?;
     let transcript: TranscriptResponse = read_json(transcript_resp, "fetch transcript").await?;
 
+    // Diagnostics: surface how well Soniox actually diarized, so a real
+    // diarization problem (few/empty distinct speakers) can be told apart from a
+    // grouping/labeling one on our side.
+    {
+        let toks = &transcript.tokens;
+        let with_spk = toks.iter().filter(|t| t.speaker.is_some()).count();
+        let mut speakers: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
+        for t in toks {
+            if let Some(s) = t.speaker.as_ref() {
+                speakers.insert(s.to_i64());
+            }
+        }
+        eprintln!(
+            "[replay] diarization: {} tokens, {} with speaker, distinct speakers={:?}",
+            toks.len(),
+            with_spk,
+            speakers
+        );
+    }
+
     // 5. Best-effort cleanup of the uploaded file + transcription on Soniox.
     let _ = client
         .delete(format!("{SONIOX_BASE}/transcriptions/{transcription_id}"))
@@ -329,7 +349,14 @@ fn group_tokens(tokens: &[Token]) -> Vec<ReplaySegment> {
         if tok.text == "<end>" || tok.text == "<fin>" {
             continue;
         }
-        let spk = tok.speaker.as_ref().map(|s| s.to_i64()).unwrap_or(0);
+        // Tokens without a speaker (e.g. some punctuation/spacing tokens) should
+        // stay in the CURRENT speaker's run — snapping them to speaker 0 would
+        // close the run and fragment the transcript into spurious extra speakers.
+        let spk = match tok.speaker.as_ref() {
+            Some(s) => s.to_i64(),
+            None if cur_speaker >= 0 => cur_speaker,
+            None => 0,
+        };
 
         if cur_speaker == -1 {
             cur_speaker = spk;
