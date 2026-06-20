@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { ArrowUp } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useStore } from "../../lib/store";
+import { useStore, visibleSegments } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { useI18n, type TranslationKey } from "../../i18n";
 import { Button } from "@/components/ui/button";
@@ -41,7 +41,11 @@ export function AskPanel() {
     setInput("");
     setMessages((m) => [...m, { role: "user", content: q }]);
 
-    const { settings, segments, speakerNames, meetingContext } = useStore.getState();
+    const state = useStore.getState();
+    const { settings, speakerNames, meetingContext } = state;
+    // Replay-aware: in replay mode the question is answered only from what was
+    // said up to the playhead.
+    const segments = visibleSegments(state);
     if (!hasProviderKey(settings)) {
       setMessages((m) => [
         ...m,
