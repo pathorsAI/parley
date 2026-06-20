@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider";
 import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
-import { profileContext } from "./profile";
+import { profileContext, outputLanguageInstruction } from "./profile";
 import type { EvalDef, Settings, TimelineEvent, TranscriptSegment } from "../types";
 
 // One notable moment the model surfaced. `time` is the [m:ss]/m:ss it cites; we
@@ -108,7 +108,7 @@ export async function analyzeTimeline(opts: {
     model: getModel(settings, "eval"),
     providerOptions: getProviderOptions(settings, "eval"),
     schema,
-    system: SYSTEM + JSON_MODE_INSTRUCTION,
+    system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: `${ctx}Active evaluations:\n${list}\n\nFull transcript:\n${transcript || "(no speech was captured)"}`,
   });
   void recordLlmUsage(settings, "eval", "eval", usage);
