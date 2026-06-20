@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type {
+  AppLanguage,
   Evaluation,
   EvalResult,
   EvalStatus,
@@ -9,10 +10,40 @@ import type {
   TodoItem,
   TranscriptSegment,
 } from "./types";
-import { PRESET_EVAL_DEFS, PRESET_EVAL_TEMPLATES, evalsFromDefs } from "./evaluations/presets";
+import {
+  buildBuiltinEvalLabels,
+  buildPresetEvalDefs,
+  buildPresetEvalTemplates,
+  evalsFromDefs,
+} from "./evaluations/presets";
 import { reconcileTemplates } from "./templates";
-import { PRESET_TODO_TEMPLATES } from "./todoTemplates";
+import { buildPresetTodoTemplates } from "./todoTemplates";
+import { translate, type TranslationKey } from "../i18n/messages";
 import { DEFAULT_MODELS } from "./ai/providers";
+
+/** A translate function bound to a language, for resolving built-in templates. */
+const tFor = (language: AppLanguage) => (key: TranslationKey) => translate(language, key);
+
+/**
+ * Re-resolve all built-in template content (eval templates, TODO templates, and
+ * the labels of any active built-in evaluations) into `settings.language`,
+ * keeping the user's own custom templates. Called whenever the language changes
+ * so built-in content follows the UI language. Custom templates and custom
+ * evaluations (ids not in the built-in set) are left untouched.
+ */
+function relocalizeBuiltins(settings: Settings): Settings {
+  const t = tFor(settings.language);
+  const labels = buildBuiltinEvalLabels(t);
+  return {
+    ...settings,
+    evalTemplates: reconcileTemplates(buildPresetEvalTemplates(t), settings.evalTemplates),
+    todoTemplates: reconcileTemplates(buildPresetTodoTemplates(t), settings.todoTemplates),
+    evaluations: settings.evaluations.map((e) => {
+      const label = labels.get(e.id);
+      return label ? { ...e, name: label.name, description: label.description } : e;
+    }),
+  };
+}
 
 /**
  * Optional dev convenience: API keys from a gitignored `.env` (VITE_* vars).
@@ -34,6 +65,11 @@ const ENV_KEYS: Partial<Settings> = Object.fromEntries(
     ] as const
   ).filter(([, v]) => !!v)
 ) as Partial<Settings>;
+
+// Built-in templates are seeded in the default language; the persist `merge`
+// (rehydrate) and `relocalizeBuiltins` (on language change) re-resolve them to
+// the active language afterward.
+const tDefault = tFor("zh-TW");
 
 const DEFAULT_SETTINGS: Settings = {
   language: "zh-TW",
@@ -59,9 +95,9 @@ const DEFAULT_SETTINGS: Settings = {
   deepgramApiKey: "",
   assemblyaiApiKey: "",
   inputDevice: "",
-  evaluations: PRESET_EVAL_DEFS,
-  evalTemplates: PRESET_EVAL_TEMPLATES,
-  todoTemplates: PRESET_TODO_TEMPLATES,
+  evaluations: buildPresetEvalDefs(tDefault),
+  evalTemplates: buildPresetEvalTemplates(tDefault),
+  todoTemplates: buildPresetTodoTemplates(tDefault),
   ...ENV_KEYS,
 };
 
@@ -232,7 +268,12 @@ export const useStore = create<ParleyState>()(
 
   updateSettings: (patch) =>
     set((state) => {
-      const settings = { ...state.settings, ...patch };
+      let settings = { ...state.settings, ...patch };
+      // When the UI language changes, re-resolve built-in templates so they
+      // follow the new language (this is the onboarding language-switch path).
+      if (patch.language && patch.language !== state.settings.language) {
+        settings = relocalizeBuiltins(settings);
+      }
       return {
         settings,
         evaluations: evalsFromDefs(settings.evaluations, state.evaluations),
@@ -241,6 +282,9 @@ export const useStore = create<ParleyState>()(
 
   applySettings: (settings) =>
     set((state) => ({
+      // Trust the incoming settings: the broadcasting window already re-resolves
+      // built-in templates whenever its language changes, so they arrive in the
+      // right language (and any user edits are preserved).
       settings,
       evaluations: evalsFromDefs(settings.evaluations, state.evaluations),
     })),
@@ -267,6 +311,21 @@ export const useStore = create<ParleyState>()(
             ? { ask: persistedReasoning, eval: persistedReasoning }
             : { ...DEFAULT_SETTINGS.reasoningEffort, ...(persistedReasoning ?? {}) };
 
+        // Resolve built-in templates into the persisted language so they match
+        // the UI on rehydrate.
+        const language = (p.language as AppLanguage) ?? DEFAULT_SETTINGS.language;
+        const t = tFor(language);
+
+        // Relabel built-in active evaluations to the persisted language too,
+        // keeping any custom (non-built-in id) evaluations as saved.
+        const builtinLabels = buildBuiltinEvalLabels(t);
+        const persistedEvals =
+          (p.evaluations as Settings["evaluations"]) ?? buildPresetEvalDefs(t);
+        const relabeledEvals = persistedEvals.map((e) => {
+          const label = builtinLabels.get(e.id);
+          return label ? { ...e, name: label.name, description: label.description } : e;
+        });
+
         return {
           ...current,
           settings: {
@@ -278,19 +337,17 @@ export const useStore = create<ParleyState>()(
             reasoningEffort,
             // Fold latest built-in templates over persisted ones, keeping customs.
             todoTemplates: reconcileTemplates(
-              PRESET_TODO_TEMPLATES,
+              buildPresetTodoTemplates(t),
               validTodoTpls ? p.todoTemplates! : []
             ),
             evalTemplates: reconcileTemplates(
-              PRESET_EVAL_TEMPLATES,
+              buildPresetEvalTemplates(t),
               validEvalTpls ? p.evalTemplates! : []
             ),
             // Dev .env keys win over persisted-empty values (no-op in prod).
             ...ENV_KEYS,
           },
-          evaluations: evalsFromDefs(
-            (p.evaluations as Settings["evaluations"]) ?? DEFAULT_SETTINGS.evaluations
-          ),
+          evaluations: evalsFromDefs(relabeledEvals),
         };
       },
     }
