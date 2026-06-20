@@ -78,6 +78,18 @@ export interface Evaluation extends EvalDef {
 }
 
 /**
+ * A role the user defines for LLM-based speaker re-attribution, used when STT
+ * diarization is unreliable. The LLM assigns every transcript line to one of
+ * these roles using conversational context.
+ */
+export interface SpeakerRole {
+  /** Display name shown on the transcript (e.g. "我", "客戶"). */
+  name: string;
+  /** Optional hint to help the LLM tell this role apart (e.g. "asks about price"). */
+  hint?: string;
+}
+
+/**
  * War-gaming the opponent's arguments.
  *
  * One detected argument made by THEM, decomposed into the premises it smuggles
