@@ -17,6 +17,7 @@
     "@tailwindcss/typography": "^0.5.20",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-log": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "ai": "^6.0.0",
     "class-variance-authority": "^0.7.1",
