@@ -7,6 +7,7 @@ import type {
   EvalStatus,
   MeetingStatus,
   Settings,
+  TimelineEvent,
   TodoItem,
   TranscriptSegment,
 } from "./types";
@@ -124,6 +125,13 @@ interface ParleyState {
   /** Move the replay playhead (drives both audio position and transcript mask). */
   setReplayPlayhead: (ms: number) => void;
 
+  /** Time-anchored retro findings for the replay timeline (whole-recording). */
+  replayTimeline: TimelineEvent[];
+  /** Lifecycle of the whole-recording timeline analysis. */
+  replayTimelineStatus: "idle" | "running" | "done" | "error";
+  setReplayTimeline: (events: TimelineEvent[]) => void;
+  setReplayTimelineStatus: (status: ParleyState["replayTimelineStatus"]) => void;
+
   meetingStatus: MeetingStatus;
   meetingStartedAt: number | null;
   segments: TranscriptSegment[];
@@ -191,6 +199,8 @@ export const useStore = create<ParleyState>()(
       appMode: "live",
       replay: null,
       replayPlayheadMs: 0,
+      replayTimeline: [],
+      replayTimelineStatus: "idle",
       meetingStatus: "idle",
       meetingStartedAt: null,
       segments: [],
@@ -217,6 +227,8 @@ export const useStore = create<ParleyState>()(
       speakerNames: session.speakerNames,
       meetingStatus: "stopped",
       highlightMs: null,
+      replayTimeline: [],
+      replayTimelineStatus: "idle",
     }),
 
   exitReplay: () =>
@@ -228,9 +240,14 @@ export const useStore = create<ParleyState>()(
       speakerNames: {},
       meetingStatus: "idle",
       highlightMs: null,
+      replayTimeline: [],
+      replayTimelineStatus: "idle",
     }),
 
   setReplayPlayhead: (ms) => set({ replayPlayheadMs: Math.max(0, ms) }),
+
+  setReplayTimeline: (events) => set({ replayTimeline: events }),
+  setReplayTimelineStatus: (status) => set({ replayTimelineStatus: status }),
 
   addTodo: (text) =>
     set((state) => {

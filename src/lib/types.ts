@@ -122,6 +122,30 @@ export interface WargameBranchTurn {
   text: string;
 }
 
+/**
+ * One time-anchored finding from the whole-recording retro analysis, rendered as
+ * a marker on the replay timeline. Two lanes (`side`): "them" = a point/argument/
+ * pressure the other party raised; "me" = a problem/mistake/missed move by ME.
+ */
+export interface TimelineEvent {
+  id: string;
+  /** Moment on the recording timeline (ms). */
+  atMs: number;
+  /** My problem vs their move → which lane the marker sits in. */
+  side: "me" | "them";
+  severity: "info" | "warn" | "critical";
+  /** From a configured evaluation, or an AI-caught "extra" moment. */
+  source: "eval" | "extra";
+  /** Present when source === "eval" — the evaluation it corresponds to. */
+  evalId?: string;
+  /** Short label (eval name, or the AI's label). */
+  title: string;
+  /** One or two sentences explaining the moment. */
+  detail: string;
+  /** Supporting verbatim transcript quote, if any. */
+  quote?: string;
+}
+
 /** A meeting to-do / agenda item to make sure gets covered. */
 export interface TodoItem {
   id: string;

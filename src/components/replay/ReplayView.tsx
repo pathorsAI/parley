@@ -9,12 +9,17 @@ import { EvaluationsPanel } from "../sidebar/EvaluationsPanel";
 import { useI18n } from "../../i18n";
 import { ReplayPlayerBar } from "./ReplayPlayerBar";
 import { ReplayTranscript } from "./ReplayTranscript";
+import { TimelineMarkers } from "./TimelineMarkers";
 import { useReplayPlayer } from "./useReplayPlayer";
+import { useTimelineAnalysis } from "./useTimelineAnalysis";
+import { formatClock } from "../../lib/store";
+import type { TimelineEvent } from "../../lib/types";
 import {
   replayT,
   useExitReplay,
   useReplayPlayheadMs,
   useReplaySession,
+  useReplayTimeline,
 } from "./spine";
 
 /**
@@ -34,9 +39,19 @@ export function ReplayView() {
   const playheadMs = useReplayPlayheadMs();
   const exitReplay = useExitReplay();
   const player = useReplayPlayer(session?.durationMs ?? 0);
+  const timeline = useReplayTimeline();
+
+  // Auto-run the whole-recording retro analysis once the session is loaded.
+  useTimelineAnalysis();
 
   const segments = session?.segments ?? [];
   const speakerNames = session?.speakerNames ?? {};
+
+  // Findings at or before the current playhead — "this moment's issues".
+  const atMoment = useMemo(() => {
+    const past = timeline.filter((e) => e.atMs <= playheadMs + 1500);
+    return past.slice(-3).reverse();
+  }, [timeline, playheadMs]);
 
   // Masked-count: how many segments are at/before the playhead vs total.
   const { visibleCount, totalCount } = useMemo(() => {
@@ -84,6 +99,12 @@ export function ReplayView() {
         }}
       />
 
+      <TimelineMarkers
+        durationMs={session.durationMs}
+        playheadMs={playheadMs}
+        onSeek={player.seek}
+      />
+
       <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
         <ResizablePanel defaultSize={42} minSize={24}>
           <div className="flex h-full min-h-0 flex-col">
@@ -103,6 +124,18 @@ export function ReplayView() {
                 emptyLabel={t("replay.empty")}
               />
             </div>
+            {atMoment.length > 0 && (
+              <div className="shrink-0 border-t px-4 py-2">
+                <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                  {t("timeline.atMoment")}
+                </div>
+                <ul className="flex flex-col gap-1">
+                  {atMoment.map((e) => (
+                    <MomentRow key={e.id} event={e} onSeek={player.seek} extraLabel={t("timeline.extra")} />
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="shrink-0 border-t px-4 py-1.5 text-[11px] leading-snug text-muted-foreground">
               {t("replay.maskedNote")}
             </div>
@@ -122,5 +155,48 @@ export function ReplayView() {
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>
+  );
+}
+
+const MOMENT_DOT: Record<TimelineEvent["severity"], string> = {
+  info: "bg-sky-400",
+  warn: "bg-amber-500",
+  critical: "bg-red-500",
+};
+
+/** One compact "this moment" finding row; clicking it re-seeks to the moment. */
+function MomentRow({
+  event,
+  onSeek,
+  extraLabel,
+}: {
+  event: TimelineEvent;
+  onSeek: (ms: number) => void;
+  extraLabel: string;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onSeek(event.atMs)}
+        className="flex w-full items-start gap-1.5 rounded px-1 py-0.5 text-left hover:bg-muted/60"
+      >
+        <span className={`mt-1 size-2 shrink-0 rounded-full ${MOMENT_DOT[event.severity]}`} />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5">
+            <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+              {formatClock(event.atMs)}
+            </span>
+            <span className={`text-[11px] font-medium ${event.side === "me" ? "text-sky-400" : "text-amber-400"}`}>
+              {event.title}
+            </span>
+            {event.source === "extra" && (
+              <span className="rounded bg-muted px-1 text-[9px] text-muted-foreground">{extraLabel}</span>
+            )}
+          </span>
+          <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{event.detail}</span>
+        </span>
+      </button>
+    </li>
   );
 }

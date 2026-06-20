@@ -270,6 +270,18 @@ export const zhTW = {
   "replay.empty": "尚未載入錄音。按「上傳錄音」開始。",
   "replay.evaluating": "評估中…",
   "replay.jumpToMoment": "跳到這一刻",
+  // Time-anchored retro timeline (whole-recording analysis → markers).
+  "timeline.title": "時間軸分析",
+  "timeline.analyzing": "分析整段中…",
+  "timeline.laneThem": "對方提的",
+  "timeline.laneMe": "我的問題",
+  "timeline.empty": "尚無分析結果",
+  "timeline.failed": "（分析失敗：{error}）",
+  "timeline.reanalyze": "重新分析",
+  "timeline.extra": "AI 額外發現",
+  "timeline.atMoment": "此刻",
+  "timeline.noKey": "設定 AI 金鑰後可分析整段錄音。",
+  "timeline.count": "{count} 個發現",
   // Built-in template content — eval definitions, eval template sets, and TODO
   // templates. These are resolved into settings at seed/reconcile time (and when
   // the language changes) so built-in templates follow the UI language.
@@ -611,6 +623,18 @@ export const en = {
   "replay.empty": "No recording loaded. Click \"Upload recording\" to start.",
   "replay.evaluating": "Evaluating…",
   "replay.jumpToMoment": "Jump to this moment",
+  // Time-anchored retro timeline (whole-recording analysis → markers).
+  "timeline.title": "Timeline analysis",
+  "timeline.analyzing": "Analyzing recording…",
+  "timeline.laneThem": "They raised",
+  "timeline.laneMe": "My issues",
+  "timeline.empty": "No findings yet",
+  "timeline.failed": "(Analysis failed: {error})",
+  "timeline.reanalyze": "Re-analyze",
+  "timeline.extra": "AI extra",
+  "timeline.atMoment": "This moment",
+  "timeline.noKey": "Add an AI key to analyze the whole recording.",
+  "timeline.count": "{count} findings",
   // Built-in template content (see the zh-TW block above for notes).
   "tpl.evalSet.tpl-general.name": "General",
   "tpl.evalSet.tpl-interview.name": "Job interview",
