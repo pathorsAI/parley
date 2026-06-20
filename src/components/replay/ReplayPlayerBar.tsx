@@ -3,6 +3,7 @@ import { Loader2, Pause, Play, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatClock } from "../../lib/store";
 import { runAllEvaluations } from "../../lib/evaluations/engine";
+import { runWargameDetect } from "../../lib/wargame/engine";
 import { Scrubber } from "./Scrubber";
 import type { ReplayPlayer } from "./useReplayPlayer";
 
@@ -40,7 +41,9 @@ export function ReplayPlayerBar({
   async function reEvaluate() {
     setEvaluating(true);
     try {
-      await runAllEvaluations();
+      // Analyze THIS moment from both angles at once: my evaluation problems AND
+      // the opponent's arguments to counter (both masked to the playhead).
+      await Promise.all([runAllEvaluations(), runWargameDetect()]);
     } finally {
       setEvaluating(false);
     }
