@@ -45,10 +45,13 @@ export function ReplayView() {
   // Auto-run the whole-recording retro analysis once the session is loaded.
   useTimelineAnalysis();
 
-  const segments = session?.segments ?? [];
-  // Read the store's speakerNames (seeded from the session on enterReplay) rather
-  // than the static session snapshot, so renaming a speaker re-renders the
-  // transcript and stays in sync with what evals / Ask / the timeline analysis see.
+  // The live working transcript lives in the store (seeded from the session on
+  // enterReplay, then rewritten by voice diarization / edits). Read it here — NOT
+  // the static session snapshot — so re-diarized speaker assignments actually show
+  // and it stays consistent with what visibleSegments() / evals / Ask operate on.
+  const segments = useStore((s) => s.segments);
+  // Likewise read the store's speakerNames (seeded on enterReplay), so renaming a
+  // speaker re-renders the transcript and matches what evals / Ask / timeline see.
   const speakerNames = useStore((s) => s.speakerNames);
 
   // Findings at or before the current playhead — "this moment's issues".
