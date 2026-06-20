@@ -1,4 +1,5 @@
 import type { Settings, SttProviderId } from "../types";
+import { PROVIDER_BY_ID } from "../ai/providers";
 
 /**
  * Single source of truth for speech-to-text providers, mirroring the Rust
@@ -18,13 +19,22 @@ export interface SttProviderInfo {
   icon: string;
 }
 
+/**
+ * OpenAI / Gemini transcription share everything but diarization with their LLM
+ * provider (same brand, same API key), so borrow their identity from the single
+ * LLM registry instead of duplicating it here.
+ */
+function fromLlm(id: "openai" | "gemini"): Omit<SttProviderInfo, "diarization"> {
+  const p = PROVIDER_BY_ID[id];
+  return { id, label: p.label, apiKeyField: p.apiKeyField, keyPlaceholder: p.keyPlaceholder, icon: p.icon };
+}
+
 export const STT_PROVIDERS: SttProviderInfo[] = [
   { id: "soniox", label: "Soniox", diarization: true, apiKeyField: "sonioxApiKey", keyPlaceholder: "…", icon: "/providers/soniox.png" },
   { id: "deepgram", label: "Deepgram", diarization: true, apiKeyField: "deepgramApiKey", keyPlaceholder: "…", icon: "/providers/deepgram.png" },
   { id: "assemblyai", label: "AssemblyAI", diarization: false, apiKeyField: "assemblyaiApiKey", keyPlaceholder: "…", icon: "/providers/assemblyai.png" },
-  // OpenAI / Gemini transcription reuse the same key as their LLM provider.
-  { id: "openai", label: "OpenAI", diarization: false, apiKeyField: "openaiApiKey", keyPlaceholder: "sk-…", icon: "/providers/openai.png" },
-  { id: "gemini", label: "Gemini", diarization: false, apiKeyField: "geminiApiKey", keyPlaceholder: "AIza…", icon: "/providers/gemini.png" },
+  { ...fromLlm("openai"), diarization: false },
+  { ...fromLlm("gemini"), diarization: false },
 ];
 
 export const STT_BY_ID = Object.fromEntries(STT_PROVIDERS.map((p) => [p.id, p])) as Record<

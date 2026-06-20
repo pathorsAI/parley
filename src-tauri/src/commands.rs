@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::audio::{microphone::Microphone, AudioSource};
+use crate::transcription::common::{LevelMeter, LEVEL_EVENT};
 use crate::transcription::{self, SttProvider, TranscribeConfig};
 
 /// Path to the shared templates file (app config dir). The local MCP server
@@ -73,26 +74,14 @@ pub fn start_mic_test(
     .map_err(|e| e.to_string())?;
 
     tauri::async_runtime::spawn(async move {
-        let mut peak: i32 = 0;
-        let mut n: u64 = 0;
+        // Reuse the shared metering primitive so peak/window logic lives in one place.
+        let mut meter = LevelMeter::new(app.clone(), "test");
         while let Some(chunk) = rx.recv().await {
-            for &s in &chunk {
-                peak = peak.max((s as i32).abs());
-            }
-            n += chunk.len() as u64;
-            if n >= 1600 {
-                let level = (peak as f32 / 32767.0).clamp(0.0, 1.0);
-                let _ = app.emit(
-                    "audio://level",
-                    serde_json::json!({ "source": "test", "level": level }),
-                );
-                peak = 0;
-                n = 0;
-            }
+            meter.push(&chunk);
         }
         // Channel closed → mic stopped; signal zero so the meter resets.
         let _ = app.emit(
-            "audio://level",
+            LEVEL_EVENT,
             serde_json::json!({ "source": "test", "level": 0.0 }),
         );
     });
