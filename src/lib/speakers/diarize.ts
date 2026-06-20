@@ -68,7 +68,11 @@ export async function runVoiceDiarize(opts: {
     const sp = idToSpeaker.get(s.id);
     return sp ? { ...s, speaker: sp } : s;
   });
-  useStore.setState({ segments: updated });
+  // Clustering reshuffles speaker NUMBERS, so any prior speaker→name mapping (an
+  // earlier run, or inline renames) no longer matches these voices. Reset names
+  // so the naming step starts clean — otherwise a stale name labels the wrong
+  // speaker. Names typed in the post-run naming step are applied after this.
+  useStore.setState({ segments: updated, speakerNames: {} });
 
   log.info("diarize: applied", { assigned: idToSpeaker.size, speakers });
   return { assigned: idToSpeaker.size, total: finalSegs.length, speakers };
