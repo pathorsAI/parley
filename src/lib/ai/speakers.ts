@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider";
 import { speakerLabel } from "../store";
 import { recordLlmUsage } from "../usage/log";
+import { log } from "../log";
 import { profileContext } from "./profile";
 import type { Settings, SpeakerRole, TranscriptSegment } from "../types";
 
@@ -98,9 +99,19 @@ export async function reassignSpeakers(opts: {
 
   const map = new Map<number, number>();
 
+  log.info("ai.speakers: start", {
+    provider: settings.provider,
+    model: settings.models[settings.provider].eval,
+    roles: roles.length,
+    segments: segments.length,
+    chunk: CHUNK,
+  });
+
   for (let base = 0; base < segments.length; base += CHUNK) {
     await attributeWindow(segments.slice(base, base + CHUNK), base);
   }
+
+  log.info("ai.speakers: done", { assigned: map.size, total: segments.length });
 
   return map;
 
@@ -153,11 +164,13 @@ export async function reassignSpeakers(opts: {
       // Truncated/empty body (the original failure) or any API error: split the
       // window and retry the halves before giving up. The seam carries via `map`.
       if (len > MIN_CHUNK) {
+        log.warn("ai.speakers: window failed, splitting", { base, len, error: String(err) });
         const mid = Math.floor(len / 2);
         await attributeWindow(window.slice(0, mid), base);
         await attributeWindow(window.slice(mid), base + mid);
         return;
       }
+      log.error("ai.speakers: window failed, giving up", { base, len, error: String(err) });
       // Preserve the original error as `cause` so the dialog's describeAiError
       // surfaces the real provider message (set after construction — the 2-arg
       // Error(message, { cause }) form isn't in this project's TS lib target).

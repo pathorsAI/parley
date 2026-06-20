@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider";
 import { transcriptAsText } from "../store";
 import { recordLlmUsage } from "../usage/log";
+import { log } from "../log";
 import { profileContext } from "./profile";
 import type {
   Settings,
@@ -93,6 +94,12 @@ export async function detectArguments(opts: {
     profileContext(settings) +
     (meetingContext?.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "");
 
+  log.info("ai.wargame.detect: start", {
+    provider: settings.provider,
+    model: settings.models[settings.provider].eval,
+    segments: segments.length,
+  });
+
   const { object, usage } = await generateObject({
     model: getModel(settings, "eval"),
     providerOptions: getProviderOptions(settings, "eval"),
@@ -101,6 +108,8 @@ export async function detectArguments(opts: {
     prompt: `${ctx}Transcript so far:\n${transcript}\n\nDetect THEM's key arguments and war-game each.`,
   });
   void recordLlmUsage(settings, "eval", "eval", usage);
+
+  log.info("ai.wargame.detect: ok", { arguments: object.arguments.length });
 
   return object.arguments.map((a) => ({
     id: a.id?.trim() || crypto.randomUUID(),
@@ -167,6 +176,12 @@ export async function simulateBranch(opts: {
     ? "Continue as THEM: give your next single line in reply."
     : "Open as THEM: react in character to ME's counter-strategy with your next single line.";
 
+  log.info("ai.wargame.sim: start", {
+    provider: settings.provider,
+    model: settings.models[settings.provider].ask,
+    historyTurns: history.length,
+  });
+
   const { text, usage } = await generateText({
     model: getModel(settings, "ask"),
     providerOptions: getProviderOptions(settings, "ask"),
@@ -174,6 +189,8 @@ export async function simulateBranch(opts: {
     prompt: `${setup}${pending}${instruction}`,
   });
   void recordLlmUsage(settings, "ask", "ask", usage);
+
+  log.info("ai.wargame.sim: ok", { chars: text.trim().length });
 
   newTurns.push({ role: "them", text: text.trim() });
   return newTurns;

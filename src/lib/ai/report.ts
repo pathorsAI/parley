@@ -3,6 +3,7 @@ import { getModel, getProviderOptions } from "./provider";
 import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext, outputLanguageInstruction } from "./profile";
+import { log } from "../log";
 import type { Evaluation, Settings, TodoItem, TranscriptSegment } from "../types";
 
 const SYSTEM = `You are writing a POST-MEETING debrief for ME after a live interview, negotiation, sales, or diligence call. The meeting is OVER and you can see the full transcript, so judge the whole conversation, not the moment.
@@ -47,25 +48,35 @@ export async function generatePostMeetingReport(opts: {
     (checklist ? `Agenda / checklist:\n${checklist}\n\n` : "") +
     `Full transcript:\n${transcript || "(no speech was captured)"}`;
 
-  const result = streamText({
-    model: getModel(settings, "ask"),
-    providerOptions: getProviderOptions(settings, "ask"),
-    system: SYSTEM + outputLanguageInstruction(settings),
-    abortSignal: signal,
-    prompt,
-  });
+  const provider = settings.provider;
+  const model = settings.models[settings.provider].ask;
+  log.info("ai.report: start", { provider, model, segments: segments.length });
 
   let full = "";
-  for await (const delta of result.textStream) {
-    full += delta;
-    onDelta(delta);
-  }
-  void (async () => {
-    try {
-      await recordLlmUsage(settings, "ask", "report", await result.usage);
-    } catch {
-      /* best-effort usage logging */
+  try {
+    const result = streamText({
+      model: getModel(settings, "ask"),
+      providerOptions: getProviderOptions(settings, "ask"),
+      system: SYSTEM + outputLanguageInstruction(settings),
+      abortSignal: signal,
+      prompt,
+    });
+
+    for await (const delta of result.textStream) {
+      full += delta;
+      onDelta(delta);
     }
-  })();
+    void (async () => {
+      try {
+        await recordLlmUsage(settings, "ask", "report", await result.usage);
+      } catch {
+        /* best-effort usage logging */
+      }
+    })();
+  } catch (e) {
+    log.error("ai.report: failed", { provider, model, error: String(e) });
+    throw e;
+  }
+  log.info("ai.report: ok", { chars: full.length });
   return full;
 }

@@ -23,6 +23,7 @@ import { reconcileTemplates } from "./templates";
 import { buildPresetTodoTemplates } from "./todoTemplates";
 import { translate, type TranslationKey } from "../i18n/messages";
 import { DEFAULT_MODELS } from "./ai/providers";
+import { log } from "./log";
 
 /** A translate function bound to a language, for resolving built-in templates. */
 const tFor = (language: AppLanguage) => (key: TranslationKey) => translate(language, key);
@@ -242,7 +243,12 @@ export const useStore = create<ParleyState>()(
   setMeetingContext: (text) => set({ meetingContext: text }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
 
-  enterReplay: (session) =>
+  enterReplay: (session) => {
+    log.info("store: enter replay", {
+      name: session.name,
+      segments: session.segments.length,
+      durationMs: session.durationMs,
+    });
     set({
       appMode: "replay",
       replay: session,
@@ -259,9 +265,11 @@ export const useStore = create<ParleyState>()(
       wargameArgs: [],
       wargameStatus: "idle",
       wargameMessage: null,
-    }),
+    });
+  },
 
-  exitReplay: () =>
+  exitReplay: () => {
+    log.info("store: exit replay");
     set({
       appMode: "live",
       replay: null,
@@ -276,7 +284,8 @@ export const useStore = create<ParleyState>()(
       wargameArgs: [],
       wargameStatus: "idle",
       wargameMessage: null,
-    }),
+    });
+  },
 
   setReplayPlayhead: (ms) => set({ replayPlayheadMs: Math.max(0, ms) }),
 
@@ -312,7 +321,8 @@ export const useStore = create<ParleyState>()(
         .map((t) => ({ id: crypto.randomUUID(), text: t.trim(), done: false })),
     }),
 
-  startMeeting: () =>
+  startMeeting: () => {
+    log.info("store: meeting started");
     set({
       meetingStatus: "recording",
       meetingStartedAt: Date.now(),
@@ -322,7 +332,8 @@ export const useStore = create<ParleyState>()(
       wargameStatus: "idle",
       wargameMessage: null,
       evalError: null,
-    }),
+    });
+  },
 
   setSpeakerName: (key, name) =>
     set((state) => {
@@ -332,7 +343,10 @@ export const useStore = create<ParleyState>()(
       return { speakerNames: next };
     }),
 
-  stopMeeting: () => set({ meetingStatus: "stopped" }),
+  stopMeeting: () => {
+    log.info("store: meeting stopped");
+    set({ meetingStatus: "stopped" });
+  },
 
   upsertSegment: (segment) =>
     set((state) => {

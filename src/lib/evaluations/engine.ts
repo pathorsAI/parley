@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useStore, visibleSegments } from "../store";
 import { hasProviderKey } from "../ai/settings";
+import { log } from "../log";
 
 let evalBusy = false;
 
@@ -15,23 +16,26 @@ export async function runAllEvaluations(): Promise<void> {
   // In replay mode this masks the transcript to the current playhead, so a re-run
   // judges only what had been said by that moment.
   const segments = visibleSegments(state);
-  if (evalBusy) return;
-  if (!hasProviderKey(settings)) return;
+  if (evalBusy) return log.debug("evals: skipped", { reason: "busy" });
+  if (!hasProviderKey(settings)) return log.debug("evals: skipped", { reason: "no key" });
   if (evaluations.length === 0) return;
-  if (!segments.some((s) => s.isFinal && s.text.trim())) return;
+  if (!segments.some((s) => s.isFinal && s.text.trim()))
+    return log.debug("evals: skipped", { reason: "no transcript" });
 
   evalBusy = true;
   state.setEvalError(null);
   setAllEvalStatus("running");
   try {
+    log.info("evals: run all", { evals: evaluations.length, segments: segments.length });
     const { runAllEvaluations: run } = await import("../ai/evaluations");
     const map = await run({ settings, segments, evals: evaluations, names: speakerNames });
     for (const e of useStore.getState().evaluations) {
       if (map[e.id]) setEvalResult(e.id, map[e.id]);
       else setEvalStatus(e.id, "ok");
     }
+    log.info("evals: run all ok", { evals: evaluations.length });
   } catch (err) {
-    console.error("[evals]", err);
+    log.error("evals: run all failed", { error: String(err) });
     const { describeAiError } = await import("../ai/errors");
     useStore.getState().setEvalError(describeAiError(err));
     setAllEvalStatus("error");
@@ -71,10 +75,16 @@ export function useEvaluationEngine() {
       ) {
         lastRun.current.todos = now;
         todoBusy.current = true;
+        log.debug("todos: auto-check");
         import("../ai/todos")
           .then(({ checkTodos }) => checkTodos({ settings, segments, todos, names: speakerNames }))
-          .then((ids) => ids.length && markTodosDone(ids))
-          .catch((e) => console.error("[todos]", e))
+          .then((ids) => {
+            if (ids.length) {
+              markTodosDone(ids);
+              log.info("todos: marked done", { count: ids.length });
+            }
+          })
+          .catch((e) => log.error("todos: auto-check failed", { error: String(e) }))
           .finally(() => {
             todoBusy.current = false;
           });

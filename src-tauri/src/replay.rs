@@ -134,6 +134,7 @@ pub async fn transcribe_file(
     ensure_crypto_provider();
 
     if api_key.trim().is_empty() {
+        log::warn!("replay: missing soniox api key");
         return Err("Missing Soniox API key".to_string());
     }
 
@@ -143,7 +144,11 @@ pub async fn transcribe_file(
     let cache_path = cache_file_path(&app, &path);
     if let Some(cp) = &cache_path {
         if let Some(cached) = try_read_cache(cp).await {
-            eprintln!("[replay] cache hit ({} segments): {}", cached.segments.len(), cp.display());
+            log::info!(
+                "replay: cache hit segments={} path={}",
+                cached.segments.len(),
+                cp.display()
+            );
             return Ok(TranscriptionResult {
                 segments: cached.segments,
                 duration_ms: cached.duration_ms,
@@ -166,18 +171,20 @@ pub async fn transcribe_file(
         Ok(temp) => {
             let compressed_size = tokio::fs::metadata(&temp).await.map(|m| m.len()).ok();
             match (original_size, compressed_size) {
-                (Some(orig), Some(comp)) => eprintln!(
-                    "[replay] compressed audio: {orig} bytes -> {comp} bytes ({:.1}% of original)",
+                (Some(orig), Some(comp)) => log::info!(
+                    "replay: compressed audio origBytes={} compBytes={} pct={:.1}",
+                    orig,
+                    comp,
                     if orig > 0 { comp as f64 / orig as f64 * 100.0 } else { 0.0 }
                 ),
-                _ => eprintln!("[replay] compressed audio (sizes unavailable)"),
+                _ => log::info!("replay: compressed audio (sizes unavailable)"),
             }
             let p = temp.to_string_lossy().into_owned();
             compressed_temp = Some(temp);
             p
         }
         Err(e) => {
-            eprintln!("[replay] audio compression failed, uploading original: {e}");
+            log::warn!("replay: compression failed, uploading original error={}", e);
             path.clone()
         }
     };
@@ -243,7 +250,7 @@ async fn write_cache(path: &std::path::Path, result: &TranscriptionResult) {
     let json = match serde_json::to_vec_pretty(&payload) {
         Ok(j) => j,
         Err(e) => {
-            eprintln!("[replay] failed to serialize transcription cache: {e}");
+            log::warn!("replay: failed to serialize transcription cache error={}", e);
             return;
         }
     };
@@ -251,8 +258,8 @@ async fn write_cache(path: &std::path::Path, result: &TranscriptionResult) {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
     match tokio::fs::write(path, json).await {
-        Ok(()) => eprintln!("[replay] cached transcription: {}", path.display()),
-        Err(e) => eprintln!("[replay] failed to write transcription cache: {e}"),
+        Ok(()) => log::debug!("replay: cached transcription path={}", path.display()),
+        Err(e) => log::warn!("replay: failed to write transcription cache error={}", e),
     }
 }
 
@@ -286,6 +293,11 @@ async fn run_upload_and_transcribe(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "recording".to_string());
+    log::info!(
+        "replay: uploading to soniox fileName={} bytes={}",
+        file_name,
+        bytes.len()
+    );
     // Clone for the multipart part so `file_name` stays available for the
     // diagnostic log written after transcription.
     let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name.clone());
@@ -300,6 +312,7 @@ async fn run_upload_and_transcribe(
         .map_err(|e| format!("Upload request failed: {e}"))?;
     let upload: IdResponse = read_json(upload_resp, "file upload").await?;
     let file_id = upload.id;
+    log::debug!("replay: upload ok fileId={}", file_id);
 
     // 2. Create the async transcription job → transcription id.
     // Clone for the request body so the original `language_hints` stays available
@@ -324,6 +337,12 @@ async fn run_upload_and_transcribe(
         .map_err(|e| format!("Create transcription failed: {e}"))?;
     let created: IdResponse = read_json(create_resp, "create transcription").await?;
     let transcription_id = created.id;
+    log::info!(
+        "replay: transcription job created transcriptionId={} model={} diarization={}",
+        transcription_id,
+        model,
+        diarization
+    );
 
     // 3. Poll until completed or error.
     let audio_duration_ms = loop_poll(client, api_key, &transcription_id).await?;
@@ -355,8 +374,8 @@ async fn run_upload_and_transcribe(
                 speakers.insert(s.to_i64());
             }
         }
-        eprintln!(
-            "[replay] diarization: {} tokens, {} with speaker, distinct speakers={:?}",
+        log::info!(
+            "replay: diarization tokens={} tokensWithSpeaker={} distinctSpeakers={:?}",
             toks.len(),
             with_spk,
             speakers
@@ -414,7 +433,7 @@ async fn loop_poll(
     api_key: &str,
     transcription_id: &str,
 ) -> Result<u64, String> {
-    for _ in 0..MAX_POLLS {
+    for poll in 1..=MAX_POLLS {
         tokio::time::sleep(POLL_INTERVAL).await;
 
         let status_resp = client
@@ -426,17 +445,25 @@ async fn loop_poll(
         let status: TranscriptionStatus = read_json(status_resp, "poll status").await?;
 
         match status.status.as_str() {
-            "completed" => return Ok(status.audio_duration_ms.unwrap_or(0)),
+            "completed" => {
+                let audio_duration_ms = status.audio_duration_ms.unwrap_or(0);
+                log::info!(
+                    "replay: transcription completed audioDurationMs={} polls={}",
+                    audio_duration_ms,
+                    poll
+                );
+                return Ok(audio_duration_ms);
+            }
             "error" => {
-                return Err(format!(
-                    "Transcription failed: {}",
-                    status.error_message.unwrap_or_else(|| "unknown error".into())
-                ));
+                let msg = status.error_message.unwrap_or_else(|| "unknown error".into());
+                log::error!("replay: transcription job error errorMessage={}", msg);
+                return Err(format!("Transcription failed: {msg}"));
             }
             // "queued" | "processing" | anything else → keep polling.
             _ => continue,
         }
     }
+    log::error!("replay: transcription timed out maxPolls={}", MAX_POLLS);
     Err("Transcription timed out".to_string())
 }
 
@@ -513,6 +540,7 @@ async fn read_json<T: serde::de::DeserializeOwned>(
         .await
         .map_err(|e| format!("{ctx}: failed to read response: {e}"))?;
     if !status.is_success() {
+        log::error!("replay: {} http error status={}", ctx, status);
         return Err(format!("{ctx}: HTTP {status}: {text}"));
     }
     serde_json::from_str(&text).map_err(|e| format!("{ctx}: bad response JSON: {e} — {text}"))
@@ -532,6 +560,7 @@ async fn read_json_with_raw<T: serde::de::DeserializeOwned>(
         .await
         .map_err(|e| format!("{ctx}: failed to read response: {e}"))?;
     if !status.is_success() {
+        log::error!("replay: {} http error status={}", ctx, status);
         return Err(format!("{ctx}: HTTP {status}: {text}"));
     }
     let parsed = serde_json::from_str(&text)
@@ -557,11 +586,11 @@ struct SonioxLogContext<'a> {
 /// Write a reviewable JSON log of the raw Soniox transcript response plus the
 /// request context to `~/Documents/Parley/logs/soniox-<timestamp>.json`.
 ///
-/// Best-effort: any failure (no HOME, IO error, …) is reported via `eprintln!`
+/// Best-effort: any failure (no HOME, IO error, …) is reported via `log::warn!`
 /// and swallowed — logging must NEVER fail the transcription.
 fn write_soniox_log(ctx: SonioxLogContext) {
     if let Err(e) = try_write_soniox_log(&ctx) {
-        eprintln!("[replay] failed to write Soniox response log: {e}");
+        log::warn!("replay: failed to write soniox response log error={}", e);
     }
 }
 
@@ -614,9 +643,6 @@ fn try_write_soniox_log(ctx: &SonioxLogContext) -> Result<(), String> {
     std::fs::write(&path, pretty).map_err(|e| e.to_string())?;
 
     // Surface the absolute path in the dev log so the user can find the file.
-    eprintln!(
-        "[replay] saved Soniox response log: {}",
-        path.to_string_lossy()
-    );
+    log::info!("replay: saved soniox log path={}", path.to_string_lossy());
     Ok(())
 }

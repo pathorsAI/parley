@@ -1,6 +1,7 @@
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useStore } from "./store";
 import { isTauri } from "./tauriEvents";
+import { log } from "./log";
 import type { Settings } from "./types";
 
 const SETTINGS_EVENT = "settings://updated";
@@ -17,6 +18,7 @@ export async function openSettingsWindow(): Promise<void> {
   }
   const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
   const existing = await WebviewWindow.getByLabel("settings");
+  log.info("settings: open window", { existing: !!existing });
   if (existing) {
     await existing.setFocus();
     return;
@@ -30,7 +32,7 @@ export async function openSettingsWindow(): Promise<void> {
     minHeight: 520,
     resizable: true,
   });
-  win.once("tauri://error", (e) => console.error("settings window error", e));
+  win.once("tauri://error", (e) => log.error("settings: window error", { error: String(e) }));
 }
 
 /** Broadcast updated settings so the main window can apply them live. */
@@ -69,7 +71,14 @@ export async function listenForSettings(): Promise<UnlistenFn> {
   const onStorage = (e: StorageEvent) => {
     if (e.key !== PERSIST_KEY) return;
     const settings = settingsFromPersist(e.newValue);
-    if (settings) useStore.getState().applySettings(settings);
+    if (settings) {
+      log.info("settings: applied (storage event)", {
+        provider: settings.provider,
+        language: settings.language,
+        transcriptionProvider: settings.transcriptionProvider,
+      });
+      useStore.getState().applySettings(settings);
+    }
   };
   window.addEventListener("storage", onStorage);
 
@@ -77,6 +86,10 @@ export async function listenForSettings(): Promise<UnlistenFn> {
 
   // Channel 1: the Tauri broadcast (fast path).
   const unlisten = await listen<Settings>(SETTINGS_EVENT, (e) => {
+    log.info("settings: applied (tauri event)", {
+      provider: e.payload.provider,
+      language: e.payload.language,
+    });
     useStore.getState().applySettings(e.payload);
   });
   return () => {
