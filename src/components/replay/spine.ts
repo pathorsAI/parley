@@ -38,6 +38,7 @@ interface ReplaySpine {
   exitReplay: () => void;
   replayTimeline: TimelineEvent[];
   replayTimelineStatus: "idle" | "running" | "done" | "error";
+  replayTimelineError: string | null;
   setReplayTimeline: (events: TimelineEvent[]) => void;
   setReplayTimelineStatus: (status: "idle" | "running" | "done" | "error") => void;
 }
@@ -77,6 +78,10 @@ export function useReplayTimeline(): TimelineEvent[] {
 
 export function useReplayTimelineStatus(): "idle" | "running" | "done" | "error" {
   return useStore((s) => spine(s).replayTimelineStatus ?? "idle");
+}
+
+export function useReplayTimelineError(): string | null {
+  return useStore((s) => spine(s).replayTimelineError ?? null);
 }
 
 const EMPTY_TIMELINE: TimelineEvent[] = [];

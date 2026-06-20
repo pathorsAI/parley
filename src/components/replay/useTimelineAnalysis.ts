@@ -22,6 +22,7 @@ export async function runTimelineAnalysis(): Promise<void> {
   if (!segments.some((s) => s.isFinal && s.text.trim())) return;
 
   timelineBusy = true;
+  state.setReplayTimelineError(null);
   setStatus("running");
   try {
     const events = await analyzeTimeline({
@@ -36,6 +37,7 @@ export async function runTimelineAnalysis(): Promise<void> {
     useStore.getState().setReplayTimelineStatus("done");
   } catch (err) {
     console.error("[timeline]", err);
+    useStore.getState().setReplayTimelineError(err instanceof Error ? err.message : String(err));
     useStore.getState().setReplayTimelineStatus("error");
   } finally {
     timelineBusy = false;
