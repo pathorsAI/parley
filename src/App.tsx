@@ -4,6 +4,7 @@ import { LiveScreen } from "./components/live/LiveScreen";
 import { ReplayScreen } from "./components/replay/ReplayScreen";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
+import { IngestWizard } from "./components/IngestWizard";
 import { useStore } from "./lib/store";
 import { listenForTranscript } from "./lib/tauriEvents";
 import { listenForSettings } from "./lib/settingsSync";
@@ -43,6 +44,7 @@ function App() {
     <div className="flex h-screen flex-col bg-background text-foreground">
       {!onboarded && <Onboarding />}
       <AnalysisErrorDialog />
+      <IngestWizard />
       <TitleBar />
       {appMode === "replay" ? <ReplayScreen /> : <LiveScreen />}
     </div>

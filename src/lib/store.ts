@@ -143,6 +143,24 @@ interface ParleyState {
   replayTrim: ReplayTrim | null;
   setReplayTrim: (trim: ReplayTrim | null) => void;
 
+  // ── Upload ingest wizard (count → transcribe → diarize → review → analyze) ──
+  /** Whether the guided upload pipeline dialog is open. */
+  ingestWizardOpen: boolean;
+  ingestWizardStep: "count" | "transcribing" | "diarizing" | "review" | "analyzing" | "error";
+  ingestWizardError: string | null;
+  /** Absolute path of the picked recording, set when the wizard opens. */
+  ingestAudioPath: string | null;
+  openIngestWizard: (audioPath: string) => void;
+  setIngestWizardStep: (step: ParleyState["ingestWizardStep"], error?: string | null) => void;
+  closeIngestWizard: () => void;
+  /**
+   * Analysis runs only after the wizard's review-confirm releases this gate.
+   * Default "open" so LIVE and any direct re-analysis are never gated; the wizard
+   * arms it to "deferred" on open and releases it at Confirm.
+   */
+  analysisGate: "deferred" | "open";
+  releaseAnalysisGate: () => void;
+
   // ── Unified analysis (shared by LIVE + REPLAY) ──────────────────────────────
   /**
    * Time-anchored findings from an analysis pass (eval-matched or AI "extra").
@@ -238,6 +256,11 @@ export const useStore = create<ParleyState>()(
       replay: null,
       replayPlayheadMs: 0,
       replayTrim: null,
+      ingestWizardOpen: false,
+      ingestWizardStep: "count",
+      ingestWizardError: null,
+      ingestAudioPath: null,
+      analysisGate: "open",
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
@@ -296,6 +319,9 @@ export const useStore = create<ParleyState>()(
       replay: null,
       replayPlayheadMs: 0,
       replayTrim: null,
+      ingestWizardOpen: false,
+      ingestAudioPath: null,
+      analysisGate: "open",
       segments: [],
       speakerNames: {},
       meetingStatus: "idle",
@@ -314,6 +340,21 @@ export const useStore = create<ParleyState>()(
   setReplayPlayhead: (ms) => set({ replayPlayheadMs: Math.max(0, ms) }),
 
   setReplayTrim: (trim) => set({ replayTrim: trim }),
+
+  // Ingest wizard. Opening ARMS the analysis gate ("deferred") so loading the
+  // session behind the dialog doesn't auto-analyze; the review-confirm releases it.
+  openIngestWizard: (audioPath) =>
+    set({
+      ingestWizardOpen: true,
+      ingestWizardStep: "count",
+      ingestWizardError: null,
+      ingestAudioPath: audioPath,
+      analysisGate: "deferred",
+    }),
+  setIngestWizardStep: (step, error = null) =>
+    set({ ingestWizardStep: step, ingestWizardError: error }),
+  closeIngestWizard: () => set({ ingestWizardOpen: false, ingestAudioPath: null }),
+  releaseAnalysisGate: () => set({ analysisGate: "open" }),
 
   // Replacing the findings list invalidates the selection + any cached solutions
   // (the model mints fresh finding ids each pass, so old solutions are stale).

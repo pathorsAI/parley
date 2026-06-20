@@ -63,21 +63,20 @@ interface RustTranscriptionResult {
  * Every segment is tagged `source: "them"` (single mixed file — speakers are
  * told apart by diarization) and `isFinal: true`.
  */
-export async function ingestRecording(
-  settings: Settings,
-  opts: IngestOptions = {},
-): Promise<ReplaySession | null> {
+/**
+ * Validate the provider + open the native file picker. Returns the chosen audio
+ * path, or `null` if the user cancelled. Throws if Soniox isn't configured. Split
+ * out from transcription so the ingest wizard can ask the speaker count BEFORE
+ * the (slow) transcription runs.
+ */
+export async function pickRecordingFile(settings: Settings): Promise<string | null> {
   if (settings.transcriptionProvider !== "soniox") {
-    log.warn("ingest: rejected, provider not soniox", {
-      provider: settings.transcriptionProvider,
-    });
+    log.warn("ingest: rejected, provider not soniox", { provider: settings.transcriptionProvider });
     throw new Error(
       "Replay currently supports Soniox only — switch transcription provider to Soniox in Settings",
     );
   }
-
-  const apiKey = settings.sonioxApiKey?.trim();
-  if (!apiKey) {
+  if (!settings.sonioxApiKey?.trim()) {
     log.warn("ingest: missing soniox key");
     throw new Error("Add your Soniox API key in Settings to transcribe recordings");
   }
@@ -88,11 +87,24 @@ export async function ingestRecording(
     title: "Choose a recording",
     filters: [{ name: "Audio", extensions: AUDIO_EXTENSIONS }],
   });
-
-  // User cancelled the dialog.
-  if (selected === null) return null;
+  if (selected === null) return null; // user cancelled
   const audioPath = Array.isArray(selected) ? selected[0] : selected;
-  if (!audioPath) return null;
+  return audioPath || null;
+}
+
+/**
+ * Transcribe an already-picked recording into a `ReplaySession` (diarized batch
+ * transcription via Soniox). Reports decoding/uploading/transcribing stages.
+ */
+export async function transcribeRecording(
+  settings: Settings,
+  audioPath: string,
+  opts: IngestOptions = {},
+): Promise<ReplaySession> {
+  const apiKey = settings.sonioxApiKey?.trim();
+  if (!apiKey) {
+    throw new Error("Add your Soniox API key in Settings to transcribe recordings");
+  }
 
   const name = fileNameOf(audioPath);
   log.info("ingest: file selected", { name });
@@ -170,6 +182,16 @@ export async function ingestRecording(
     segments,
     speakerNames: {},
   };
+}
+
+/** Pick a recording then transcribe it — the original one-shot ingest. */
+export async function ingestRecording(
+  settings: Settings,
+  opts: IngestOptions = {},
+): Promise<ReplaySession | null> {
+  const audioPath = await pickRecordingFile(settings);
+  if (!audioPath) return null;
+  return transcribeRecording(settings, audioPath, opts);
 }
 
 /** Surface a progress stage to both the UI callback and the log file. */

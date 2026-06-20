@@ -14,15 +14,18 @@ export function useReplayAnalysis(): void {
   const replayId = useStore((s) => s.replay?.id ?? null);
   const analysisStatus = useStore((s) => s.analysisStatus);
   const actionItemsStatus = useStore((s) => s.actionItemsStatus);
+  const analysisGate = useStore((s) => s.analysisGate);
   const analysisStartedFor = useRef<string | null>(null);
   const actionsStartedFor = useRef<string | null>(null);
 
-  // 1) Analyze the whole recording once.
+  // 1) Analyze the whole recording once — but only after the ingest wizard's
+  //    review-confirm releases the gate (it arms "deferred" on open).
   useEffect(() => {
     if (!replayId) {
       analysisStartedFor.current = null;
       return;
     }
+    if (analysisGate !== "open") return;
     if (analysisStatus !== "idle") return;
     if (analysisStartedFor.current === replayId) return;
 
@@ -32,7 +35,7 @@ export function useReplayAnalysis(): void {
 
     analysisStartedFor.current = replayId;
     void runAnalysis({ mode: "replay" });
-  }, [replayId, analysisStatus]);
+  }, [replayId, analysisStatus, analysisGate]);
 
   // 2) Chain action items off the finished analysis.
   useEffect(() => {

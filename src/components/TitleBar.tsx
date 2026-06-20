@@ -26,7 +26,6 @@ export function TitleBar() {
   const stopMeeting = useStore((s) => s.stopMeeting);
   const appMode = useStore((s) => s.appMode);
   const replayName = useStore((s) => s.replay?.name ?? "");
-  const enterReplay = useStore((s) => s.enterReplay);
   const exitReplay = useStore((s) => s.exitReplay);
   const [ingestMsg, setIngestMsg] = useState<string | null>(null);
 
@@ -36,31 +35,26 @@ export function TitleBar() {
 
   async function uploadRecording() {
     if (ingestMsg) return;
-    const { settings } = useStore.getState();
+    const { settings, openIngestWizard } = useStore.getState();
     setIngestMsg(t("replay.preparing"));
     log.info("replay: upload started");
     try {
-      const { ingestRecording } = await import("../lib/replay/ingest");
-      const session = await ingestRecording(settings, {
-        onProgress: (p) => setIngestMsg(t(`replay.stage.${p.stage}` as never)),
-      });
-      if (session) {
-        log.info("replay: ingest ok", {
-          name: session.name,
-          segments: session.segments.length,
-          durationMs: session.durationMs,
-        });
-        enterReplay(session);
+      // Only pick the file here — the ingest wizard then asks the speaker count
+      // and runs transcription → diarization → review → analysis as one pipeline.
+      const { pickRecordingFile } = await import("../lib/replay/ingest");
+      const audioPath = await pickRecordingFile(settings);
+      if (audioPath) {
+        log.info("replay: file picked, opening ingest wizard");
+        openIngestWizard(audioPath);
       } else {
         log.debug("replay: upload cancelled");
       }
     } catch (e) {
-      log.error("replay: ingest failed", { error: String(e) });
-      setIngestMsg(null);
+      log.error("replay: pick failed", { error: String(e) });
       window.alert(t("replay.failed", { error: e instanceof Error ? e.message : String(e) }));
-      return;
+    } finally {
+      setIngestMsg(null);
     }
-    setIngestMsg(null);
   }
 
   async function toggle() {
