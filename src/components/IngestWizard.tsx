@@ -8,13 +8,6 @@ import { runAnalysis } from "../lib/analysis/engine";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { ReplayTranscript } from "./replay/ReplayTranscript";
 import type { Source } from "../lib/types";
 
@@ -164,7 +157,7 @@ export function IngestWizard() {
     setTemplateId(id);
   }
 
-  function confirmReview() {
+  function confirmAnalyze() {
     // No LLM key → skip analysis, just land on the (diarized) results page.
     if (!hasProviderKey(useStore.getState().settings)) {
       close();
@@ -271,42 +264,29 @@ export function IngestWizard() {
               <p className="text-[12px] leading-relaxed text-muted-foreground">
                 {t("ingest.reviewIntro", { speakers: speakers.length })}
               </p>
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] text-muted-foreground">{t("ingest.template")}</span>
-                <Select value={templateId} onValueChange={applyTemplate}>
-                  <SelectTrigger size="sm" className="h-8 text-xs">
-                    <SelectValue placeholder={t("evaluations.applyTemplate")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {evalTemplates.map((tpl) => (
-                      <SelectItem key={tpl.id} value={tpl.id}>
-                        {tpl.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-col gap-2">
+              {/* Compact one-line rows: dot + name + the speaker's longest line. */}
+              <div className="flex flex-col gap-1">
                 {speakers.map((sp) => (
-                  <div key={sp.key} className="flex items-start gap-2">
-                    <span className={`mt-2.5 size-2 shrink-0 rounded-full ${speakerDotClass(sp)}`} />
-                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <Input
-                        value={speakerNames[sp.key] ?? ""}
-                        onChange={(e) => setSpeakerName(sp.key, e.target.value)}
-                        placeholder={defaultSpeakerLabel(sp)}
-                        className="h-8 text-sm"
-                      />
-                      <span className="truncate text-[11px] text-muted-foreground" title={sp.sample}>
-                        “{sp.sample}”
-                      </span>
-                    </div>
+                  <div key={sp.key} className="flex items-center gap-2">
+                    <span className={`size-2 shrink-0 rounded-full ${speakerDotClass(sp)}`} />
+                    <Input
+                      value={speakerNames[sp.key] ?? ""}
+                      onChange={(e) => setSpeakerName(sp.key, e.target.value)}
+                      placeholder={defaultSpeakerLabel(sp)}
+                      className="h-7 w-32 shrink-0 text-xs"
+                    />
+                    <span
+                      className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground"
+                      title={sp.sample}
+                    >
+                      “{sp.sample}”
+                    </span>
                   </div>
                 ))}
               </div>
-              <div className="mt-1 flex flex-col gap-1">
+              <div className="mt-1 flex min-h-0 flex-col gap-1">
                 <span className="text-[11px] text-muted-foreground">{t("ingest.transcriptPreview")}</span>
-                <div className="h-64 overflow-hidden rounded-md border">
+                <div className="h-56 overflow-hidden rounded-md border">
                   <ReplayTranscript
                     segments={segments}
                     speakerNames={speakerNames}
@@ -317,6 +297,34 @@ export function IngestWizard() {
                     emptyLabel={t("replay.empty")}
                   />
                 </div>
+              </div>
+            </>
+          )}
+
+          {step === "template" && (
+            <>
+              <p className="text-[12px] leading-relaxed text-muted-foreground">{t("ingest.templateIntro")}</p>
+              <div className="flex flex-col gap-1.5">
+                {evalTemplates.map((tpl) => {
+                  const selected = templateId === tpl.id;
+                  return (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      onClick={() => applyTemplate(tpl.id)}
+                      className={`flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors ${
+                        selected
+                          ? "border-emerald-500/60 bg-emerald-500/15 text-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <span className="font-medium">{tpl.name}</span>
+                      <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                        {t("ingest.templateEvals", { count: tpl.evals.length })}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </>
           )}
@@ -352,7 +360,12 @@ export function IngestWizard() {
             </Button>
           )}
           {step === "review" && (
-            <Button size="sm" className="h-8 gap-1.5" onClick={confirmReview}>
+            <Button size="sm" className="h-8 gap-1.5" onClick={() => setStep("template")}>
+              {t("ingest.next")}
+            </Button>
+          )}
+          {step === "template" && (
+            <Button size="sm" className="h-8 gap-1.5" onClick={confirmAnalyze}>
               <Check className="size-3.5" />
               {t("ingest.confirm")}
             </Button>
@@ -401,7 +414,7 @@ function Stage({
 
 /** Tiny step progress dots (count → transcribe → diarize → review → analyze). */
 function StepDots({ step }: { step: string }) {
-  const order = ["count", "transcribing", "diarizing", "review", "analyzing"];
+  const order = ["count", "transcribing", "diarizing", "review", "template", "analyzing"];
   const idx = order.indexOf(step);
   return (
     <div className="ml-auto flex items-center gap-1">

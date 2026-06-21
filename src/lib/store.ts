@@ -146,7 +146,7 @@ interface ParleyState {
   // ── Upload ingest wizard (count → transcribe → diarize → review → analyze) ──
   /** Whether the guided upload pipeline dialog is open. */
   ingestWizardOpen: boolean;
-  ingestWizardStep: "count" | "transcribing" | "diarizing" | "review" | "analyzing" | "error";
+  ingestWizardStep: "count" | "transcribing" | "diarizing" | "review" | "template" | "analyzing" | "error";
   ingestWizardError: string | null;
   /** Absolute path of the picked recording, set when the wizard opens. */
   ingestAudioPath: string | null;
