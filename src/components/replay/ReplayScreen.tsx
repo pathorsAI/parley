@@ -82,6 +82,7 @@ export function ReplayScreen() {
           playhead: t("replay.playhead"),
           trim: t("replay.trim"),
           trimApply: t("replay.trimApply"),
+          trimming: t("replay.trimming"),
           trimReset: t("replay.trimReset"),
           trimKept: t("replay.trimKept"),
           trimNote: t("replay.trimNote"),

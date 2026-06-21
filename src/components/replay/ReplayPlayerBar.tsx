@@ -19,6 +19,7 @@ interface ReplayPlayerBarProps {
     playhead: string;
     trim: string;
     trimApply: string;
+    trimming: string;
     trimReset: string;
     /** Template with {start}/{end} placeholders. */
     trimKept: string;
@@ -50,14 +51,18 @@ export function ReplayPlayerBar({ name, durationMs, player, labels }: ReplayPlay
 
   async function apply() {
     if (!draft || trimming) return;
+    const d = draft;
+    // Leave editing mode immediately; show a spinner in the header while the
+    // audio re-encodes. Reopen only if the trim fails (draft preserved).
+    setTrimOpen(false);
     setTrimming(true);
     try {
       const { trimRecording } = await import("../../lib/replay/trim");
-      await trimRecording(draft);
+      await trimRecording(d);
       setDraft(null);
-      setTrimOpen(false);
     } catch (e) {
       console.error("[trim]", e);
+      setTrimOpen(true);
     } finally {
       setTrimming(false);
     }
@@ -68,6 +73,12 @@ export function ReplayPlayerBar({ name, durationMs, player, labels }: ReplayPlay
       <div className="flex h-10 items-center gap-2 px-4">
         <span className="truncate text-xs font-medium text-foreground">{labels.title}</span>
         <span className="truncate text-[11px] text-muted-foreground">· {name}</span>
+        {trimming && (
+          <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" />
+            {labels.trimming}
+          </span>
+        )}
       </div>
 
       <div className="px-4 pb-3">
