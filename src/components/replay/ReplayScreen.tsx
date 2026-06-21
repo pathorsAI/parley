@@ -6,8 +6,8 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useI18n } from "../../i18n";
 import { useStore } from "../../lib/store";
-import { runAnalysis } from "../../lib/analysis/engine";
 import { AnalysisTimeline } from "../analysis/AnalysisTimeline";
+import { AnalyzeMenu } from "../analysis/AnalyzeMenu";
 import { FindingsPanel } from "../analysis/FindingsPanel";
 import { selectAndSeek } from "../analysis/useAnalysis";
 import { AskPanel } from "../sidebar/AskPanel";
@@ -75,6 +75,7 @@ export function ReplayScreen() {
         name={session.name}
         durationMs={session.durationMs}
         player={player}
+        rightSlot={<AnalyzeMenu />}
         labels={{
           title: t("replay.title"),
           play: t("replay.play"),
@@ -99,7 +100,6 @@ export function ReplayScreen() {
         playheadMs={playheadMs}
         selectedId={selectedId}
         onSelect={(e) => selectAndSeek(e, player.seek)}
-        onReanalyze={() => void runAnalysis({ mode: "replay" })}
       />
 
       <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">

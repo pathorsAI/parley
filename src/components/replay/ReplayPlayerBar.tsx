@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Check, Loader2, Pause, Play, Scissors } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -11,6 +11,8 @@ interface ReplayPlayerBarProps {
   name: string;
   durationMs: number;
   player: ReplayPlayer;
+  /** Rendered top-right of the header (REPLAY mounts the Analyze menu here). */
+  rightSlot?: ReactNode;
   /** Localized strings (resolved by the parent via the replay i18n shim). */
   labels: {
     title: string;
@@ -39,7 +41,7 @@ interface ReplayPlayerBarProps {
  * outside is removed. Re-uploading the original restores it (cached). The draft
  * lives locally until Apply, so nothing happens until you confirm.
  */
-export function ReplayPlayerBar({ name, durationMs, player, labels }: ReplayPlayerBarProps) {
+export function ReplayPlayerBar({ name, durationMs, player, rightSlot, labels }: ReplayPlayerBarProps) {
   const [trimOpen, setTrimOpen] = useState(false);
   const [draft, setDraft] = useState<ReplayTrim | null>(null);
   const [trimming, setTrimming] = useState(false);
@@ -79,6 +81,7 @@ export function ReplayPlayerBar({ name, durationMs, player, labels }: ReplayPlay
             {labels.trimming}
           </span>
         )}
+        {rightSlot && <div className="ml-auto shrink-0">{rightSlot}</div>}
       </div>
 
       <div className="px-4 pb-3">

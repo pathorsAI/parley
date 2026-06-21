@@ -1,9 +1,7 @@
-import { RefreshCw } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useStore, formatClock } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
-import { regenerateActionItems } from "../../lib/analysis/actionItems";
 import { useI18n } from "../../i18n";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { Severity } from "../../lib/types";
@@ -17,8 +15,9 @@ const SEVERITY_DOT: Record<Severity, string> = {
 /**
  * REPLAY post-meeting action items: AI-generated follow-ups, each linked back to
  * the moment that motivated it. Auto-generated once analysis finishes (see
- * useReplayAnalysis); read-only with a done-toggle + a Regenerate button. `onSeek`
- * jumps the audio to a linked moment.
+ * useReplayAnalysis); read-only with a done-toggle. Regenerating is driven from
+ * the player's Analyze menu, not a per-panel button. `onSeek` jumps the audio to
+ * a linked moment.
  */
 export function ActionItemsPanel({ onSeek }: { onSeek: (ms: number) => void }) {
   const { t } = useI18n();
@@ -31,26 +30,16 @@ export function ActionItemsPanel({ onSeek }: { onSeek: (ms: number) => void }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 border-b p-2.5">
-        <Button
-          onClick={() => regenerateActionItems()}
-          disabled={running || keyMissing}
-          size="sm"
-          className="gap-1.5"
-        >
-          <RefreshCw className={cn("size-3.5", running && "animate-spin")} />
-          {running
-            ? t("actionItems.generating")
-            : items.length
-              ? t("actionItems.regenerate")
-              : t("actionItems.generate")}
-        </Button>
-      </div>
-
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-2 px-3 py-3">
           {keyMissing && (
             <p className="px-1 pt-4 text-center text-xs text-muted-foreground">{t("actionItems.noKey")}</p>
+          )}
+          {!keyMissing && running && (
+            <p className="flex items-center justify-center gap-1.5 px-1 pt-4 text-center text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" />
+              {t("actionItems.generating")}
+            </p>
           )}
           {!keyMissing && status === "error" && (
             <p className="px-1 text-xs text-orange-500">{t("actionItems.failed", { error: error ?? "—" })}</p>
