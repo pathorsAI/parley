@@ -41,7 +41,8 @@ export function AskPanel() {
     setInput("");
     setMessages((m) => [...m, { role: "user", content: q }]);
 
-    const { settings, segments, speakerNames, meetingContext } = useStore.getState();
+    const state = useStore.getState();
+    const { settings, speakerNames, meetingContext, segments } = state;
     if (!hasProviderKey(settings)) {
       setMessages((m) => [
         ...m,

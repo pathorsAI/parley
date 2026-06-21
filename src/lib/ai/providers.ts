@@ -41,6 +41,13 @@ export interface ProviderInfo {
   keyPlaceholder: string;
   /** False for providers that run locally without an API key (Ollama). */
   requiresKey?: boolean;
+  /**
+   * Send `response_format: { type: "json_schema", strict }` (OpenAI structured
+   * outputs — the schema is ENFORCED) instead of `json_object` (valid JSON only,
+   * schema not transmitted). Enable for endpoints that accept the OpenAI
+   * json_schema shape; leave off for Ollama (its /v1 ignores/rejects it).
+   */
+  supportsStructuredOutputs?: boolean;
   /** Curated model choices (the current value is always shown too). */
   models: string[];
   defaults: ProviderModels;
@@ -68,6 +75,7 @@ export const PROVIDERS: ProviderInfo[] = [
     baseURL: "https://api.openai.com/v1",
     apiKeyField: "openaiApiKey",
     keyPlaceholder: "sk-…",
+    supportsStructuredOutputs: true,
     models: ["gpt-5.5", "gpt-4.1", "o4-mini"],
     defaults: { ask: "gpt-4.1", eval: "gpt-5.5" },
   },
@@ -81,6 +89,7 @@ export const PROVIDERS: ProviderInfo[] = [
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
     apiKeyField: "geminiApiKey",
     keyPlaceholder: "AIza…",
+    supportsStructuredOutputs: true,
     models: ["gemini-2.5-pro", "gemini-2.5-flash"],
     defaults: { ask: "gemini-2.5-flash", eval: "gemini-2.5-pro" },
   },
@@ -94,6 +103,7 @@ export const PROVIDERS: ProviderInfo[] = [
     baseURL: "https://api.groq.com/openai/v1",
     apiKeyField: "groqApiKey",
     keyPlaceholder: "gsk_…",
+    supportsStructuredOutputs: true,
     models: ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "meta-llama/llama-4-maverick-17b-128e-instruct"],
     defaults: { ask: "openai/gpt-oss-20b", eval: "openai/gpt-oss-120b" },
   },
@@ -146,6 +156,7 @@ export const PROVIDERS: ProviderInfo[] = [
     baseURL: "https://openrouter.ai/api/v1",
     apiKeyField: "openrouterApiKey",
     keyPlaceholder: "sk-or-…",
+    supportsStructuredOutputs: true,
     models: ["openai/gpt-5.5", "openai/gpt-4.1", "anthropic/claude-sonnet-4.5", "openai/gpt-oss-120b"],
     defaults: { ask: "openai/gpt-4.1", eval: "openai/gpt-5.5" },
   },

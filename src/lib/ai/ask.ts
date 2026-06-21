@@ -3,6 +3,7 @@ import { getModel, getProviderOptions } from "./provider";
 import { transcriptAsText } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext } from "./profile";
+import { log } from "../log";
 import type { Settings, TranscriptSegment } from "../types";
 
 const SYSTEM = `You are Parley, a realtime meeting copilot assisting the user ("ME") during a live interview or negotiation against the other party ("THEM").
@@ -29,26 +30,41 @@ export async function askAboutMeeting(opts: {
     profileContext(settings) +
     (meetingContext?.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "");
 
-  const result = streamText({
-    model: getModel(settings, "ask"),
-    providerOptions: getProviderOptions(settings, "ask"),
-    system: SYSTEM,
-    abortSignal: signal,
-    prompt: `${contextLine}Transcript so far:\n${transcript}\n\nQuestion: ${question}`,
+  const provider = settings.provider;
+  const model = settings.models[settings.provider].ask;
+  log.info("ai.ask: start", {
+    provider,
+    model,
+    segments: segments.length,
+    questionChars: question.length,
   });
 
   let full = "";
-  for await (const delta of result.textStream) {
-    full += delta;
-    onDelta(delta);
-  }
-  // Usage resolves once the stream finishes; log it without blocking the return.
-  void (async () => {
-    try {
-      await recordLlmUsage(settings, "ask", "ask", await result.usage);
-    } catch {
-      /* best-effort logging */
+  try {
+    const result = streamText({
+      model: getModel(settings, "ask"),
+      providerOptions: getProviderOptions(settings, "ask"),
+      system: SYSTEM,
+      abortSignal: signal,
+      prompt: `${contextLine}Transcript so far:\n${transcript}\n\nQuestion: ${question}`,
+    });
+
+    for await (const delta of result.textStream) {
+      full += delta;
+      onDelta(delta);
     }
-  })();
+    // Usage resolves once the stream finishes; log it without blocking the return.
+    void (async () => {
+      try {
+        await recordLlmUsage(settings, "ask", "ask", await result.usage);
+      } catch {
+        /* best-effort logging */
+      }
+    })();
+  } catch (e) {
+    log.error("ai.ask: failed", { provider, model, error: String(e) });
+    throw e;
+  }
+  log.info("ai.ask: ok", { chars: full.length });
   return full;
 }

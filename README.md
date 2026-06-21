@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>A native, local-first meeting copilot for real-time transcription, Q&A, and auto-checklists.</strong>
+  <strong>A local-first AI coach for sales &amp; negotiation — a real-time copilot during the call, and deep retro, analysis &amp; opponent war-gaming after.</strong>
 </p>
 
 <p align="center">
@@ -15,7 +15,12 @@
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey.svg" alt="Platform: macOS">
 </p>
 
-Parley is a native, real-time meeting copilot designed for interviews, negotiations, and discussions. It captures audio from both your microphone (you) and your system output (the other party), transcribes the conversation live with speaker diarization, and runs customizable AI evaluation checklists and a live Q&A sidebar—helping you stay focused on the conversation while getting instant insights in the background.
+Parley is a native, local-first **AI coach for high-stakes conversations** — built first for **sales calls and negotiations**, though it works just as well for interviews, diligence calls, or any conversation you want to walk into prepared and walk out of having learned from. It's for the person in the seat: a rep, a founder, anyone closing a deal.
+
+It runs in two complementary modes:
+
+- **Live — during the call.** Captures your mic and the other party's audio, transcribes with speaker labels in real time, and runs your evaluation playbooks plus a grounded Q&A sidebar — so you get insight in the moment without losing the thread.
+- **Retro — after the call.** Upload a recording and replay it: scrub to any moment and re-run the analysis *as of that point*, see a time-anchored timeline of what happened, war-game the other side's arguments, and get a candid debrief on what to do better next time.
 
 > [!WARNING]
 > **macOS only (for now).** Parley relies on a Core Audio process tap for system-audio capture. The underlying audio pipeline is abstracted behind an `AudioSource` trait, making other platforms theoretically possible, but only macOS is officially supported today.
@@ -36,21 +41,36 @@ Parley is a native, real-time meeting copilot designed for interviews, negotiati
 
 ## 🎯 Features
 
-- **Dual-source capture** — Both your mic and system audio, tagged `me` / `them`.
-- **Real-time transcription** — Live, diarized transcription with editable speaker names.
-- **Bring your own providers** — Pick your transcription vendor and LLM (Claude, OpenAI, Gemini, Groq, Ollama, OpenRouter, and more).
-- **Live Q&A** — Ask the transcript questions and get grounded, streamed answers.
-- **Configurable playbooks** — Evaluation cards for negotiation risk, sales qualification, follow-ups, or your own rubric.
-- **Auto-check TODOs** — Agenda items check off as the AI detects they're addressed.
-- **Built-in MCP server** — Manage templates from external MCP clients while the app is open.
-- **Traditional Chinese** — On-the-fly conversion of transcribed text.
-- **Native macOS UI** — Clean, custom window chrome.
+### 🎙️ Live — during the call
+
+- **Dual-source capture** — both your mic and the other party's system audio, tagged `me` / `them`.
+- **Real-time transcription** — live, diarized transcription with editable speaker names.
+- **Evaluation playbooks** — AI cards that watch for negotiation risk, sales qualification gaps, red flags, unanswered questions, or your own rubric — auto-rerun as the call unfolds.
+- **Live Q&A** — ask the transcript questions and get grounded, streamed answers.
+- **Auto-checked agenda** — checklist items tick off as the AI detects they're covered.
+
+### 🔁 Retro — after the call
+
+- **Upload &amp; replay a recording** — batch-transcribe a recorded call, then play it back with a draggable timeline.
+- **Scrub &amp; re-evaluate at any moment** — the transcript is masked to the playhead, so you can simulate *"what should I have done right here?"* and re-run the analysis as of that point.
+- **Time-anchored retro timeline** — markers across the recording for the other side's moves and your own missed moments; click to jump.
+- **Opponent war-gaming** — auto-detect the other party's key arguments, surface the premise you shouldn't concede, and get multiple response angles with their predicted reactions — then war-game a branch on demand.
+- **Post-call debrief** — outcome, what fell short, how to improve, and key-moment counterfactuals.
+- **LLM speaker re-attribution** — re-tag who said each line by conversational context when audio diarization gets it wrong.
+
+### 🧩 Yours, and private
+
+- **Bring your own providers** — pick your transcription vendor and LLM (Claude, OpenAI, Gemini, Groq, Ollama, OpenRouter, and more).
+- **Local-first** — audio and transcripts go straight to the providers you configure; no Pathors AI proxy in between.
+- **Built-in MCP server** — manage evaluation/agenda templates from external MCP clients while the app is open.
+- **Traditional Chinese** — on-the-fly conversion of transcribed text.
+- **Native macOS UI** — clean, custom window chrome.
 
 ---
 
 ## 🔒 Privacy & Data Flow
 
-Meeting content is sensitive. Parley runs straight from your machine:
+Conversation content is sensitive. Parley runs straight from your machine:
 * **Direct connections** — Audio and transcripts go straight to the providers you configure — no Pathors AI proxy in between.
 * **Local storage** — Transcripts and templates stay in your local app directory.
 * **No telemetry** — Nothing tracked, collected, or uploaded.
@@ -71,8 +91,8 @@ Parley is currently unsigned, so on first launch macOS Gatekeeper may block it. 
 
 - **Rust** (stable toolchain) — for the Tauri backend
 - **Bun** (or Node.js) — for building the frontend
-- A **transcription provider** API key (e.g. Soniox, Deepgram, AssemblyAI) — for live transcription
-- An **LLM provider** API key (Anthropic, OpenAI, OpenRouter, …) — for evaluations and Q&A
+- A **transcription provider** API key (e.g. Soniox, Deepgram, AssemblyAI) — for transcription (live and uploaded recordings)
+- An **LLM provider** API key (Anthropic, OpenAI, OpenRouter, …) — for evaluations, Q&A, retro analysis, and war-gaming
 
 1. Clone the repository and install dependencies:
    ```bash

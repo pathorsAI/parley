@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 const AskPanel = lazy(() => import("./sidebar/AskPanel").then((m) => ({ default: m.AskPanel })));
 const TodosPanel = lazy(() => import("./sidebar/TodosPanel").then((m) => ({ default: m.TodosPanel })));
 
-/** Center pane: the primary interactive surfaces — Ask and the TODO checklist. */
+/** LIVE center pane: the primary interactive surfaces — Ask and the TODO agenda. */
 export function WorkPanel() {
   const { t } = useI18n();
   const todoOpen = useStore((s) => s.todos.filter((t) => !t.done).length);

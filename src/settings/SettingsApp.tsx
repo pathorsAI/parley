@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { appLogDir, join } from "@tauri-apps/api/path";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { log } from "../lib/log";
 import { Check, Copy, Monitor, Moon, PlugZap, Plus, Sun, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
@@ -67,6 +70,7 @@ export function SettingsApp() {
   const [newTplName, setNewTplName] = useState("");
   const [templatesPath, setTemplatesPath] = useState("");
   const [mcpInfo, setMcpInfo] = useState<McpServerInfo | null>(null);
+  const [logPath, setLogPath] = useState("");
   const info = PROVIDER_BY_ID[settings.provider];
   const providerLabel = info.label;
   const sttInfo = STT_BY_ID[settings.transcriptionProvider];
@@ -80,6 +84,7 @@ export function SettingsApp() {
     if (!isTauri()) return;
     invoke<string[]>("list_input_devices").then(setDevices).catch(() => {});
     invoke<string>("get_templates_path").then(setTemplatesPath).catch(() => {});
+    appLogDir().then((d) => join(d, "parley.log")).then(setLogPath).catch(() => {});
     const refreshMcpInfo = () => {
       invoke<McpServerInfo>("get_mcp_server_info").then(setMcpInfo).catch(() => {});
     };
@@ -151,6 +156,16 @@ export function SettingsApp() {
                 onChange={(e) => patch({ userCompany: e.target.value })}
               />
               <p className="max-w-sm text-[11px] text-muted-foreground">{t("settings.basic.profileHelp")}</p>
+            </Field>
+            <Field label={t("settings.basic.background")}>
+              <Textarea
+                className="max-w-sm"
+                rows={4}
+                placeholder={t("settings.basic.backgroundPlaceholder")}
+                value={settings.userBackground}
+                onChange={(e) => patch({ userBackground: e.target.value })}
+              />
+              <p className="max-w-sm text-[11px] text-muted-foreground">{t("settings.basic.backgroundHelp")}</p>
             </Field>
             <Field label={t("settings.basic.language")}>
               <Select value={settings.language} onValueChange={(v) => patch({ language: v as AppLanguage })}>
@@ -627,6 +642,37 @@ export function SettingsApp() {
   }
 }`}
               </pre>
+            </div>
+          </Section>
+        )}
+
+        {cat === "mcp" && (
+          <Section title={t("settings.logs.title")}>
+            <p className="text-[11px] text-muted-foreground">{t("settings.logs.help")}</p>
+            {logPath && (
+              <pre className="overflow-x-auto rounded border bg-muted p-2.5 font-mono text-xs text-foreground">
+                {logPath}
+              </pre>
+            )}
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!isTauri()}
+                onClick={async () => {
+                  try {
+                    const dir = await appLogDir();
+                    const file = await join(dir, "parley.log");
+                    log.info("logs: reveal requested");
+                    await revealItemInDir(file);
+                  } catch (e) {
+                    log.error("logs: reveal failed", { error: String(e) });
+                  }
+                }}
+              >
+                {t("settings.logs.reveal")}
+              </Button>
+              {logPath && <CopyButton value={logPath} label={t("settings.logs.copyPath")} />}
             </div>
           </Section>
         )}
