@@ -6,9 +6,11 @@ import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import { IngestWizard } from "./components/IngestWizard";
 import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWindow";
+import { useFindingSolutionHost } from "./components/analysis/useFindingSolutionHost";
 import { useStore } from "./lib/store";
-import { listenForTranscript } from "./lib/tauriEvents";
+import { isTauri, listenForTranscript } from "./lib/tauriEvents";
 import { listenForSettings } from "./lib/settingsSync";
+import { listenForViewLogsMenu } from "./lib/diagnostics";
 import { listenForSttUsage } from "./lib/usage/log";
 import { initTemplatesSync } from "./lib/templatesSync";
 import { initSessionSync } from "./lib/sessionSync";
@@ -31,6 +33,7 @@ function App() {
     const unSttUsage = listenForSttUsage();
     const unCacheClear = listenForCacheClear();
     const unSpeakerCacheClear = listenForSpeakerCacheClear();
+    const unViewLogs = listenForViewLogsMenu();
     return () => {
       unTranscript.then((fn) => fn());
       unSettings.then((fn) => fn());
@@ -40,18 +43,25 @@ function App() {
       unSttUsage.then((fn) => fn());
       unCacheClear.then((fn) => fn());
       unSpeakerCacheClear.then((fn) => fn());
+      unViewLogs.then((fn) => fn());
     };
   }, []);
 
   // LIVE background engine: optional auto-analyze interval + TODO agenda auto-check.
   useAnalysisEngine();
 
+  // Drive the standalone "how to reply" window (Tauri); no-op in browser dev.
+  useFindingSolutionHost();
+
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       {!onboarded && <Onboarding />}
       <AnalysisErrorDialog />
       <IngestWizard />
-      <FindingSolutionWindow />
+      {/* In the Tauri app the drilldown is its own OS window (see
+          useFindingSolutionHost); in plain browser dev we fall back to the
+          in-app overlay so the feature still works without multi-window. */}
+      {!isTauri() && <FindingSolutionWindow />}
       <TitleBar />
       {appMode === "replay" ? <ReplayScreen /> : <LiveScreen />}
     </div>

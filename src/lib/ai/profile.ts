@@ -16,10 +16,12 @@ export function profileContext(settings: Settings): string {
   if (facts.length === 0) return "";
   return (
     `ABOUT ME / US (the side you are advising):\n${facts.join("\n")}\n\n` +
-    `In the transcript, the speaker matching the name/role/company above is ME / US (my side); ` +
-    `everyone else is the OTHER PARTY ("them"). Attribute every statement, question, concession, ` +
-    `and demand to the correct side — never mistake the other party's words for mine. If it is ` +
-    `genuinely unclear which side a speaker is on, say so rather than guessing.\n\n`
+    `FIRST work out which named speaker in the transcript is ME / US: match the name/role/company/` +
+    `background above, the meeting context, and HOW each speaker talks (which side's interests, asks, ` +
+    `and concerns they voice). Everyone else is the OTHER PARTY ("them"). Then attribute every ` +
+    `statement, question, concession, and demand to the correct side — never mistake the other party's ` +
+    `words for mine, and never advise from THEIR side. If it is genuinely unclear who is who, infer the ` +
+    `most likely ME from the context rather than defaulting to the wrong side.\n\n`
   );
 }
 

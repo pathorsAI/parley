@@ -29,6 +29,11 @@ export function useSetReplayPlayhead(): (ms: number) => void {
   return useStore((s) => s.setReplayPlayhead);
 }
 
+/** Signal an explicit seek (scrubber/timeline/row) so the transcript scrolls to it. */
+export function useBumpReplaySeek(): () => void {
+  return useStore((s) => s.bumpReplaySeek);
+}
+
 export function useExitReplay(): () => void {
   return useStore((s) => s.exitReplay);
 }

@@ -65,6 +65,47 @@ describe("llmCostUsd", () => {
     expect(llmCostUsd("openrouter", "openai/gpt-5.5", hi)).toBeCloseTo(10, 10);
   });
 
+  it("prices OpenRouter Anthropic aliases identically to their native model", () => {
+    // OpenRouter ids are pass-through aliases → same rate as the native model.
+    const t = tokens({
+      noCacheInput: 1_000_000,
+      cacheReadInput: 1_000_000,
+      output: 1_000_000,
+      totalInput: 2_000_000,
+    });
+    expect(llmCostUsd("openrouter", "anthropic/claude-sonnet-4.6", t)).toBeCloseTo(
+      llmCostUsd("anthropic", "claude-sonnet-4-6", t),
+      10
+    );
+    expect(llmCostUsd("openrouter", "anthropic/claude-opus-4.8", t)).toBeCloseTo(
+      llmCostUsd("anthropic", "claude-opus-4-8", t),
+      10
+    );
+  });
+
+  it("prices z-ai/glm-5.2 at the z.ai published rate", () => {
+    const t = tokens({
+      noCacheInput: 1_000_000,
+      cacheReadInput: 1_000_000,
+      output: 1_000_000,
+      totalInput: 2_000_000,
+    });
+    // input 1.4 + cacheRead 0.26 + output 4.4 = 6.06
+    expect(llmCostUsd("openrouter", "z-ai/glm-5.2", t)).toBeCloseTo(6.06, 10);
+  });
+
+  it("prices kimi-k2-thinking (native + OpenRouter alias) at the K2-base rate", () => {
+    const t = tokens({
+      noCacheInput: 1_000_000,
+      cacheReadInput: 1_000_000,
+      output: 1_000_000,
+      totalInput: 2_000_000,
+    });
+    // input 0.6 + cacheRead 0.15 + output 2.5 = 3.25
+    expect(llmCostUsd("kimi", "kimi-k2-thinking", t)).toBeCloseTo(3.25, 10);
+    expect(llmCostUsd("openrouter", "moonshotai/kimi-k2-thinking", t)).toBeCloseTo(3.25, 10);
+  });
+
   it("returns 0 for Ollama (local, free) regardless of tokens", () => {
     const t = tokens({ noCacheInput: 5_000_000, output: 5_000_000, totalInput: 5_000_000 });
     expect(llmCostUsd("ollama", "anything", t)).toBe(0);
@@ -81,6 +122,18 @@ describe("hasLlmPrice", () => {
     expect(hasLlmPrice("anthropic", "claude-opus-4-8")).toBe(true);
     expect(hasLlmPrice("ollama", "whatever")).toBe(true);
     expect(hasLlmPrice("openai", "made-up")).toBe(false);
+  });
+
+  it("prices every default model id (no $0/untracked default out of the box)", async () => {
+    // Guards against adding a provider default without a matching pricing row
+    // (a fresh install would otherwise silently report $0 for its default model).
+    const { PROVIDERS } = await import("../ai/providers");
+    for (const p of PROVIDERS) {
+      if (p.requiresKey === false) continue; // local Ollama is intentionally free
+      for (const id of [p.defaults.ask, p.defaults.eval]) {
+        expect(hasLlmPrice(p.id, id), `${p.id} default "${id}" must be priced`).toBe(true);
+      }
+    }
   });
 });
 

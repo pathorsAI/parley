@@ -6,19 +6,19 @@ import { useI18n } from "../../i18n";
 import { FindingSolutionCard } from "./FindingSolutionCard";
 
 /**
- * Floating "how it should have been done" window for the selected finding. Driven
- * by the shared `selectedFindingId`: clicking a finding (timeline dot or list row)
- * opens/switches it; closing here clears the selection; clicking a finding again
- * re-opens it. Non-modal — the page (timeline, transcript) stays interactive
- * behind it, and it floats above everything else so it reads as "in front".
+ * Floating "how to reply" window (browser-dev fallback for the standalone OS
+ * window). Driven by `solutionFindingId`, which is set ONLY by the explicit
+ * "how to reply" action — a plain finding click just selects/seeks and never
+ * opens this. Closing here clears it; it stays closed until "how to reply" is
+ * pressed again. Non-modal — the page stays interactive behind it.
  *
- * The solution itself (summary + the corrective moves) is generated lazily by
- * FindingSolutionCard, remounted per finding so switching refreshes its content.
+ * The reply options are generated lazily by FindingSolutionCard, remounted per
+ * finding so switching refreshes its content.
  */
 export function FindingSolutionWindow() {
   const { t } = useI18n();
-  const finding = useStore((s) => s.findings.find((f) => f.id === s.selectedFindingId) ?? null);
-  const setSelectedFinding = useStore((s) => s.setSelectedFinding);
+  const finding = useStore((s) => s.findings.find((f) => f.id === s.solutionFindingId) ?? null);
+  const setSolutionFinding = useStore((s) => s.setSolutionFinding);
 
   if (!finding) return null;
 
@@ -46,7 +46,7 @@ export function FindingSolutionWindow() {
         </div>
         <button
           type="button"
-          onClick={() => setSelectedFinding(null)}
+          onClick={() => setSolutionFinding(null)}
           className="mt-0.5 shrink-0 text-muted-foreground hover:text-foreground"
           title={t("solution.close")}
           aria-label={t("solution.close")}

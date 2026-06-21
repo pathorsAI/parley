@@ -46,13 +46,19 @@ const LLM_PRICING: Record<string, LlmRate> = {
   "qwen-plus": { input: 0.4, output: 1.2 },
   "qwen3-235b-a22b": { input: 0.7, output: 2.8 },
   // Moonshot Kimi
+  "kimi-k2-thinking": { input: 0.6, output: 2.5, cacheRead: 0.15 },
   "kimi-k2-0905-preview": { input: 0.6, output: 2.5, cacheRead: 0.15 },
   "kimi-k2-turbo-preview": { input: 1.2, output: 5, cacheRead: 0.3 },
   "moonshot-v1-128k": { input: 2, output: 5 },
-  // OpenRouter (pass-through to the underlying model)
+  // OpenRouter (pass-through → same rate as the underlying native model).
   "openai/gpt-5.5": { input: 5, output: 30, cacheRead: 0.5 },
   "openai/gpt-4.1": { input: 2, output: 8, cacheRead: 0.5 },
+  "anthropic/claude-opus-4.8": { input: 5, output: 25, cacheRead: 0.5 },
+  "anthropic/claude-sonnet-4.6": { input: 3, output: 15, cacheRead: 0.3 },
   "anthropic/claude-sonnet-4.5": { input: 3, output: 15, cacheRead: 0.3 },
+  "moonshotai/kimi-k2-thinking": { input: 0.6, output: 2.5, cacheRead: 0.15 },
+  // GLM-5.2 (Z.ai published rate, 2026-06).
+  "z-ai/glm-5.2": { input: 1.4, output: 4.4, cacheRead: 0.26 },
 };
 
 /** Gemini 2.5 Pro pricing above the 200k-token context tier. */
