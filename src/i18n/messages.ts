@@ -294,7 +294,7 @@ export const zhTW = {
   "replay.trimApply": "確認修剪",
   "replay.trimReset": "重設",
   "replay.trimKept": "保留 {start} – {end}",
-  "replay.trimNote": "修剪掉的段落不會列入逐字稿與任何分析。",
+  "replay.trimNote": "套用後會裁掉此範圍外的音訊、逐字稿與分析（重新上傳即可還原）。",
   "replay.trimStart": "修剪起點",
   "replay.trimEnd": "修剪終點",
   // Time-anchored retro timeline (whole-recording analysis → markers).
@@ -699,7 +699,7 @@ export const en = {
   "replay.trimApply": "Apply",
   "replay.trimReset": "Reset",
   "replay.trimKept": "Keeping {start} – {end}",
-  "replay.trimNote": "Trimmed parts are excluded from the transcript and all analysis.",
+  "replay.trimNote": "Apply cuts the audio, transcript & analysis to this range (re-upload to restore).",
   "replay.trimStart": "Trim start",
   "replay.trimEnd": "Trim end",
   // Time-anchored retro timeline (whole-recording analysis → markers).

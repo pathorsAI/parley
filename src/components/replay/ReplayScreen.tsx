@@ -33,7 +33,6 @@ export function ReplayScreen() {
   const session = useReplaySession();
   const playheadMs = useReplayPlayheadMs();
   const player = useReplayPlayer(session?.durationMs ?? 0);
-  const dropFindingsOutsideTrim = useStore((s) => s.dropFindingsOutsideTrim);
 
   // Run the whole-recording analysis once, then chain action items.
   useReplayAnalysis();
@@ -76,7 +75,6 @@ export function ReplayScreen() {
         name={session.name}
         durationMs={session.durationMs}
         player={player}
-        onApplyTrim={dropFindingsOutsideTrim}
         labels={{
           title: t("replay.title"),
           play: t("replay.play"),

@@ -1,19 +1,16 @@
-import { useEffect, useState } from "react";
-import { Check, Pause, Play, Scissors } from "lucide-react";
+import { useState } from "react";
+import { Check, Loader2, Pause, Play, Scissors } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatClock, type ReplayTrim } from "../../lib/store";
 import { Scrubber } from "./Scrubber";
 import { TrimBar } from "./TrimBar";
-import { useReplayTrim, useSetReplayTrim } from "./spine";
 import type { ReplayPlayer } from "./useReplayPlayer";
 
 interface ReplayPlayerBarProps {
   name: string;
   durationMs: number;
   player: ReplayPlayer;
-  /** Commit a trim change: re-runs the whole-recording analysis on the new range. */
-  onApplyTrim: () => void;
   /** Localized strings (resolved by the parent via the replay i18n shim). */
   labels: {
     title: string;
@@ -31,41 +28,39 @@ interface ReplayPlayerBarProps {
   };
 }
 
-/** Two trim windows equal? (null = no trim). */
-function sameTrim(a: ReplayTrim | null, b: ReplayTrim | null): boolean {
-  return (a?.startMs ?? -1) === (b?.startMs ?? -1) && (a?.endMs ?? -1) === (b?.endMs ?? -1);
-}
-
 /**
  * The replay header: transport controls, a draggable timeline, and the trim
- * (keep-window) controls. Exit lives in the TitleBar. The playhead is for
- * navigation/viewing only — analysis runs once on load (no re-evaluation on
- * scrub). Trimming is a DRAFT until "Apply": dragging the handles previews the
- * window on the bar, and Apply commits it and re-runs the analysis on the
- * narrowed range (that's what actually performs the cut).
+ * controls. Exit lives in the TitleBar; the playhead is for navigation only.
+ *
+ * Trim is a DESTRUCTIVE cut: drag the two handles to mark the range to KEEP, then
+ * Apply — the kept audio is re-encoded to a new (shorter) file and the transcript,
+ * findings, and action items are rebased onto its 0-based timeline; everything
+ * outside is removed. Re-uploading the original restores it (cached). The draft
+ * lives locally until Apply, so nothing happens until you confirm.
  */
-export function ReplayPlayerBar({ name, durationMs, player, onApplyTrim, labels }: ReplayPlayerBarProps) {
-  const committed = useReplayTrim();
-  const setTrim = useSetReplayTrim();
+export function ReplayPlayerBar({ name, durationMs, player, labels }: ReplayPlayerBarProps) {
   const [trimOpen, setTrimOpen] = useState(false);
-  // Draft window the handles edit; committed to the store only on Apply.
-  const [draft, setDraft] = useState<ReplayTrim | null>(committed);
-  useEffect(() => setDraft(committed), [committed]);
+  const [draft, setDraft] = useState<ReplayTrim | null>(null);
+  const [trimming, setTrimming] = useState(false);
 
-  const dirty = !sameTrim(draft, committed);
   const keptText =
     draft && labels.trimKept
       ? labels.trimKept.replace("{start}", formatClock(draft.startMs)).replace("{end}", formatClock(draft.endMs))
       : "";
 
-  function apply() {
-    setTrim(draft);
-    onApplyTrim();
-  }
-  function reset() {
-    setDraft(null);
-    setTrim(null);
-    onApplyTrim();
+  async function apply() {
+    if (!draft || trimming) return;
+    setTrimming(true);
+    try {
+      const { trimRecording } = await import("../../lib/replay/trim");
+      await trimRecording(draft);
+      setDraft(null);
+      setTrimOpen(false);
+    } catch (e) {
+      console.error("[trim]", e);
+    } finally {
+      setTrimming(false);
+    }
   }
 
   return (
@@ -107,15 +102,12 @@ export function ReplayPlayerBar({ name, durationMs, player, onApplyTrim, labels 
             {formatClock(durationMs)}
           </span>
 
-          {/* Toggle the trim handles. Stays highlighted while a trim is active. */}
+          {/* Toggle the trim handles. */}
           <Button
             variant="ghost"
             size="icon-sm"
-            className={cn(
-              "shrink-0 text-muted-foreground hover:text-foreground",
-              (trimOpen || committed) && "text-primary"
-            )}
-            aria-pressed={trimOpen || !!committed}
+            className={cn("shrink-0 text-muted-foreground hover:text-foreground", trimOpen && "text-primary")}
+            aria-pressed={trimOpen}
             onClick={() => setTrimOpen((o) => !o)}
             title={labels.trim}
           >
@@ -123,7 +115,7 @@ export function ReplayPlayerBar({ name, durationMs, player, onApplyTrim, labels 
           </Button>
         </div>
 
-        {(trimOpen || committed) && (
+        {trimOpen && (
           <>
             <div className="mt-2 flex items-center gap-3">
               <span className="w-10 shrink-0 text-right text-[10px] text-muted-foreground">{labels.trim}</span>
@@ -139,17 +131,17 @@ export function ReplayPlayerBar({ name, durationMs, player, onApplyTrim, labels 
               <Button
                 size="sm"
                 className="h-7 shrink-0 gap-1 px-2 text-[11px]"
-                disabled={!dirty}
+                disabled={!draft || trimming}
                 onClick={apply}
                 title={labels.trimApply}
               >
-                <Check className="size-3" />
+                {trimming ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
                 {labels.trimApply}
               </Button>
               <button
                 type="button"
-                onClick={reset}
-                disabled={!committed && !draft}
+                onClick={() => setDraft(null)}
+                disabled={!draft || trimming}
                 className="shrink-0 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-30"
               >
                 {labels.trimReset}

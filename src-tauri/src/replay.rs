@@ -646,3 +646,37 @@ fn try_write_soniox_log(ctx: &SonioxLogContext) -> Result<(), String> {
     log::info!("replay: saved soniox log path={}", path.to_string_lossy());
     Ok(())
 }
+
+/// Result of [`trim_recording`]: the new trimmed audio file + its duration (ms).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrimResult {
+    audio_path: String,
+    duration_ms: u64,
+}
+
+/// Destructively trim an uploaded recording to `[start_ms, end_ms]`: re-encode the
+/// kept range to a fresh 16 kHz Opus/Ogg file and return it. The frontend rebases
+/// the transcript/findings to this new 0-based file. Re-uploading the original
+/// restores the full recording (it's cached), so this is recoverable.
+#[tauri::command]
+pub async fn trim_recording(
+    audio_path: String,
+    start_ms: u64,
+    end_ms: u64,
+) -> Result<TrimResult, String> {
+    if end_ms <= start_ms {
+        return Err("Invalid trim range".into());
+    }
+    log::info!("replay: trim recording [{start_ms}..{end_ms}] of {audio_path}");
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        crate::replay_audio::trim_to_opus(std::path::Path::new(&audio_path), start_ms, end_ms)
+    })
+    .await
+    .map_err(|e| format!("trim task failed: {e}"))?
+    .map_err(|e| format!("{e:#}"))?;
+    Ok(TrimResult {
+        audio_path: out.to_string_lossy().into_owned(),
+        duration_ms: end_ms - start_ms,
+    })
+}
