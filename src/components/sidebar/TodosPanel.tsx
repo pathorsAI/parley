@@ -33,8 +33,11 @@ export function TodosPanel() {
   const done = todos.filter((t) => t.done).length;
 
   async function aiUpdate() {
-    const { settings, segments, todos: cur, speakerNames, markTodosDone } = useStore.getState();
+    const state = useStore.getState();
+    const { settings, todos: cur, speakerNames, markTodosDone } = state;
     if (!hasProviderKey(settings) || cur.length === 0) return;
+    // TODO agenda auto-check is LIVE-only — use the full live transcript.
+    const { segments } = state;
     setChecking(true);
     try {
       const { checkTodos } = await import("../../lib/ai/todos");

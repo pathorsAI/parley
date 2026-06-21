@@ -18,8 +18,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-log = "2"
+log = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 cpal = "0.15"
@@ -32,6 +36,22 @@ axum = "0.7"
 uuid = { version = "1", features = ["v4"] }
 # Audio framed as base64 JSON for OpenAI/Gemini realtime transcription adapters.
 base64 = "0.22"
+audiopus = "0.2.0"
+ogg = "0.9.2"
+symphonia = { version = "0.5.4", features = ["mp3", "aac", "isomp4", "flac", "pcm", "wav", "ogg", "vorbis", "alac"] }
+# Audio speaker diarization: voice-embedding clustering for uploaded recordings.
+# `load-dynamic` keeps ONNX Runtime OUT of link time — we ship a universal2
+# `libonnxruntime.dylib` and point ORT_DYLIB_PATH at it (the only clean path for
+# a `universal-apple-darwin` build). knf-rs computes kaldi fbank features (pure
+# Rust C-lib, builds for both arches); ndarray 0.16 matches ort's tensor type.
+# Pinned exactly: rc.11+ fail to compile their VitisAI EP against ort-sys.
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["load-dynamic", "ndarray", "std"] }
+ndarray = "0.16"
+knf-rs = "0.3.2"
+sha2 = "0.10"
+# Pure-Rust symmetric eigendecomposition for NME spectral-clustering diarization
+# (no LAPACK/BLAS — keeps the no-native-deps posture of the load-dynamic ort setup).
+nalgebra = "0.35"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-sys = "0.2"
