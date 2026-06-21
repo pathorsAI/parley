@@ -16,8 +16,9 @@ interface ReplayTranscriptProps {
   /** Seek to a segment's start when its row is clicked. */
   onSeek: (ms: number) => void;
   emptyLabel: string;
-  /** Static preview (e.g. the ingest wizard): no playhead dimming or active ring —
-   *  every line renders fully "lit". */
+  /** Preview (the ingest wizard): no playhead dimming — every line renders fully
+   *  "lit". The active line still highlights while audio is playing (playheadMs>0)
+   *  so the trim step's transcript follows playback. */
   preview?: boolean;
 }
 
@@ -87,7 +88,9 @@ export function ReplayTranscript({
         {rows.map((seg, i) => {
           const masked = !preview && seg.startMs > playheadMs;
           const trimmed = isTrimmed(seg, trim);
-          const active = !preview && seg.id === activeId;
+          // Highlight the playing line even in preview (the wizard trim step plays
+          // audio) — but not when there's no playback (review step: playheadMs=0).
+          const active = seg.id === activeId && (!preview || playheadMs > 0);
           const showBadge = i === 0 || speakerLabel(seg, speakerNames) !== speakerLabel(rows[i - 1], speakerNames);
           const key = speakerKey(seg);
           return (

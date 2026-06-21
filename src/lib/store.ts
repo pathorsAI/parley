@@ -143,10 +143,18 @@ interface ParleyState {
   replayTrim: ReplayTrim | null;
   setReplayTrim: (trim: ReplayTrim | null) => void;
 
-  // ── Upload ingest wizard (count → transcribe → diarize → review → analyze) ──
+  // ── Upload ingest wizard (count → transcribe → trim → diarize → review → analyze) ──
   /** Whether the guided upload pipeline dialog is open. */
   ingestWizardOpen: boolean;
-  ingestWizardStep: "count" | "transcribing" | "diarizing" | "review" | "template" | "analyzing" | "error";
+  ingestWizardStep:
+    | "count"
+    | "transcribing"
+    | "trim"
+    | "diarizing"
+    | "review"
+    | "template"
+    | "analyzing"
+    | "error";
   ingestWizardError: string | null;
   /** Absolute path of the picked recording, set when the wizard opens. */
   ingestAudioPath: string | null;

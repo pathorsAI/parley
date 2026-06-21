@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AudioLines, Check, Loader2, Mic } from "lucide-react";
+import { AudioLines, Check, Loader2, Mic, Pause, Play, Scissors } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import { useStore, speakerKey, defaultSpeakerLabel } from "../lib/store";
+import { useStore, speakerKey, defaultSpeakerLabel, formatClock, type ReplayTrim } from "../lib/store";
 import { speakerDotClass } from "../lib/speakerColors";
 import { hasProviderKey } from "../lib/ai/settings";
 import { runAnalysis } from "../lib/analysis/engine";
@@ -9,6 +9,10 @@ import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ReplayTranscript } from "./replay/ReplayTranscript";
+import { Scrubber } from "./replay/Scrubber";
+import { TrimBar } from "./replay/TrimBar";
+import { useReplayPlayer } from "./replay/useReplayPlayer";
+import { useReplaySession } from "./replay/spine";
 import type { Source } from "../lib/types";
 
 /** Speaker-count presets: `null` = auto-detect, then 2–8. */
@@ -58,10 +62,17 @@ export function IngestWizard() {
   const evalTemplates = useStore((s) => s.settings.evalTemplates);
   const updateSettings = useStore((s) => s.updateSettings);
 
+  // Player for the pre-diarize trim step (drives a local <audio>). Store-backed,
+  // so it shares the playhead with the (idle, behind-the-modal) replay screen.
+  const session = useReplaySession();
+  const player = useReplayPlayer(session?.durationMs ?? 0);
+
   const [numSpeakers, setNumSpeakers] = useState<number | null>(null);
   const [templateId, setTemplateId] = useState("");
   const [txStage, setTxStage] = useState<string | null>(null);
   const [dz, setDz] = useState<DiarizeProgress | null>(null);
+  const [trimDraft, setTrimDraft] = useState<ReplayTrim | null>(null);
+  const [trimming, setTrimming] = useState(false);
   const startedRef = useRef<string | null>(null);
   const failedRef = useRef<"transcribing" | "diarizing" | "analyzing" | null>(null);
 
@@ -130,10 +141,30 @@ export function IngestWizard() {
       });
       // Load the session behind the dialog (analysis stays gated until Confirm).
       enterReplay(session);
-      setStep("diarizing");
+      // Preview + optional first trim BEFORE diarization, so cut intro/tail audio
+      // never spawns spurious speakers or skews the analysis.
+      setTrimDraft(null);
+      setStep("trim");
     } catch (e) {
       failedRef.current = "transcribing";
       setStep("error", errMsg(e));
+    }
+  }
+
+  // Destructively cut the recording to the drafted keep-window, then stay on the
+  // trim step (the now-shorter recording can be trimmed again before diarizing).
+  async function applyTrim() {
+    if (!trimDraft || trimming) return;
+    const d = trimDraft;
+    setTrimming(true);
+    try {
+      const { trimRecording } = await import("../lib/replay/trim");
+      await trimRecording(d);
+      setTrimDraft(null);
+    } catch (e) {
+      console.error("[trim]", e);
+    } finally {
+      setTrimming(false);
     }
   }
 
@@ -198,7 +229,7 @@ export function IngestWizard() {
     close();
   }
 
-  const wide = step === "review";
+  const wide = step === "review" || step === "trim";
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-6">
@@ -248,6 +279,113 @@ export function IngestWizard() {
               label={t(`replay.stage.${txStage ?? "decoding"}` as never)}
               sub={t("ingest.transcribingSub")}
             />
+          )}
+
+          {step === "trim" && session && (
+            <>
+              <p className="text-[12px] leading-relaxed text-muted-foreground">{t("ingest.trimIntro")}</p>
+              {/* Local audio for the preview; the player hook drives + observes it. */}
+              <audio
+                ref={player.audioRef}
+                src={session.audioSrc}
+                preload="metadata"
+                onTimeUpdate={player.onTimeUpdate}
+                onPlay={player.onPlay}
+                onPause={player.onPause}
+                onEnded={player.onEnded}
+                className="hidden"
+              />
+              {/* Transport + scrubber: listen to find the cut points. */}
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  className="size-7 shrink-0"
+                  onClick={player.toggle}
+                  aria-label={player.playing ? t("replay.pause") : t("replay.play")}
+                >
+                  {player.playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
+                </Button>
+                <span className="w-9 shrink-0 text-right font-mono text-[10px] tabular-nums text-muted-foreground">
+                  {formatClock(player.playheadMs)}
+                </span>
+                <Scrubber
+                  valueMs={player.playheadMs}
+                  durationMs={session.durationMs}
+                  onScrub={player.seek}
+                  onCommit={player.seek}
+                  onScrubStart={player.beginScrub}
+                  onScrubEnd={player.endScrub}
+                  ariaLabel={t("replay.playhead")}
+                />
+                <span className="w-9 shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+                  {formatClock(session.durationMs)}
+                </span>
+              </div>
+              {/* Trim handles + apply (destructive cut). */}
+              <div className="flex flex-col gap-2 rounded-md border px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <Scissors className="size-3 shrink-0" />
+                    <span className="truncate">
+                      {trimDraft
+                        ? t("replay.trimKept", {
+                            start: formatClock(trimDraft.startMs),
+                            end: formatClock(trimDraft.endMs),
+                          })
+                        : t("ingest.trimNone")}
+                    </span>
+                  </span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {trimDraft && (
+                      <button
+                        type="button"
+                        onClick={() => setTrimDraft(null)}
+                        disabled={trimming}
+                        className="text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-50"
+                      >
+                        {t("replay.trimReset")}
+                      </button>
+                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-6 gap-1 px-2 text-[11px]"
+                      disabled={!trimDraft || trimming}
+                      onClick={applyTrim}
+                    >
+                      {trimming ? <Loader2 className="size-3 animate-spin" /> : <Scissors className="size-3" />}
+                      {t("replay.trimApply")}
+                    </Button>
+                  </div>
+                </div>
+                <TrimBar
+                  durationMs={session.durationMs}
+                  trim={trimDraft}
+                  onChange={setTrimDraft}
+                  startLabel={t("replay.trimStart")}
+                  endLabel={t("replay.trimEnd")}
+                />
+              </div>
+              {/* Full transcript preview (lit); drafted cuts show struck-through. */}
+              <div className="mt-1 flex min-h-0 flex-col gap-1">
+                <span className="text-[11px] text-muted-foreground">{t("ingest.transcriptPreview")}</span>
+                <div className="h-56 overflow-hidden rounded-md border">
+                  <ReplayTranscript
+                    segments={segments}
+                    speakerNames={speakerNames}
+                    trim={trimDraft}
+                    playheadMs={player.playheadMs}
+                    playing={player.playing}
+                    onSeek={player.seek}
+                    emptyLabel={t("replay.empty")}
+                    preview
+                  />
+                </div>
+              </div>
+            </>
           )}
 
           {step === "diarizing" && (
@@ -360,6 +498,11 @@ export function IngestWizard() {
               {t("ingest.start")}
             </Button>
           )}
+          {step === "trim" && (
+            <Button size="sm" className="h-8 gap-1.5" disabled={trimming} onClick={() => setStep("diarizing")}>
+              {t("ingest.trimNext")}
+            </Button>
+          )}
           {step === "review" && (
             <Button size="sm" className="h-8 gap-1.5" onClick={() => setStep("template")}>
               {t("ingest.next")}
@@ -422,7 +565,7 @@ function Stage({
 
 /** Tiny step progress dots (count → transcribe → diarize → review → analyze). */
 function StepDots({ step }: { step: string }) {
-  const order = ["count", "transcribing", "diarizing", "review", "template", "analyzing"];
+  const order = ["count", "transcribing", "trim", "diarizing", "review", "template", "analyzing"];
   const idx = order.indexOf(step);
   return (
     <div className="ml-auto flex items-center gap-1">
