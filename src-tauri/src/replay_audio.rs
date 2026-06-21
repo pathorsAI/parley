@@ -144,27 +144,6 @@ fn decode_ogg_opus_16k_mono(input: &Path) -> Result<Vec<f32>> {
     Ok(samples)
 }
 
-/// Trim a recording to the `[start_ms, end_ms]` window and re-encode the kept
-/// range as a fresh 16 kHz mono Opus/Ogg file (speech-quality), returning its
-/// path. Used by the destructive "trim" action: the kept audio becomes a new
-/// 0-based file the player loads, with the transcript/findings rebased to match.
-pub fn trim_to_opus(input: &Path, start_ms: u64, end_ms: u64) -> Result<PathBuf> {
-    let audio = decode_to_16k_mono(input)?;
-    let per_ms = TARGET_RATE as usize / 1000; // 16 samples per ms at 16 kHz
-    let start = (start_ms as usize).saturating_mul(per_ms).min(audio.len());
-    let end = (end_ms as usize).saturating_mul(per_ms).min(audio.len());
-    if end <= start {
-        return Err(anyhow!("empty trim range"));
-    }
-    let pcm16: Vec<i16> = audio[start..end]
-        .iter()
-        .map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
-        .collect();
-    let out = unique_temp_path();
-    encode_opus_ogg(&pcm16, &out).context("Opus/Ogg encode (trim) failed")?;
-    Ok(out)
-}
-
 /// Decode the default audio track of `input` into interleaved-then-downmixed
 /// mono `f32` samples. Captures the source sample rate (channel count is folded
 /// away by the downmix).

@@ -67,7 +67,6 @@ pub fn run() {
             permissions::request_screen_recording,
             permissions::open_privacy_settings,
             replay::transcribe_file,
-            replay::trim_recording,
             diarize::diarize_audio,
             mcp::get_mcp_server_info
         ])
