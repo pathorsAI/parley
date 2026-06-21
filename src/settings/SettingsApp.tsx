@@ -157,6 +157,16 @@ export function SettingsApp() {
               />
               <p className="max-w-sm text-[11px] text-muted-foreground">{t("settings.basic.profileHelp")}</p>
             </Field>
+            <Field label={t("settings.basic.background")}>
+              <Textarea
+                className="max-w-sm"
+                rows={4}
+                placeholder={t("settings.basic.backgroundPlaceholder")}
+                value={settings.userBackground}
+                onChange={(e) => patch({ userBackground: e.target.value })}
+              />
+              <p className="max-w-sm text-[11px] text-muted-foreground">{t("settings.basic.backgroundHelp")}</p>
+            </Field>
             <Field label={t("settings.basic.language")}>
               <Select value={settings.language} onValueChange={(v) => patch({ language: v as AppLanguage })}>
                 <SelectTrigger className="w-full max-w-sm">

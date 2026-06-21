@@ -1,20 +1,25 @@
 import type { Settings } from "../types";
 
 /**
- * A short preamble describing who "ME" is, injected into every meeting prompt
- * (ask / evaluations / todos). Helps the model recognize when the user is
- * speaking or addressed by name — especially under diarization, where speakers
- * arrive as numbers — and tailor guidance to their role.
+ * A preamble describing who "ME / US" is, injected into every meeting prompt
+ * (ask / evaluations / todos / timeline / action items / solutions). Beyond
+ * tailoring advice, it pins down WHICH SIDE the user is on so the model stops
+ * attributing the other party's words, concessions, or demands to the user —
+ * especially under diarization, where speakers arrive as bare numbers.
  */
 export function profileContext(settings: Settings): string {
-  const parts: string[] = [];
-  if (settings.userName.trim()) parts.push(`name: ${settings.userName.trim()}`);
-  if (settings.userRole.trim()) parts.push(`role: ${settings.userRole.trim()}`);
-  if (settings.userCompany.trim()) parts.push(`company: ${settings.userCompany.trim()}`);
-  if (parts.length === 0) return "";
+  const facts: string[] = [];
+  if (settings.userName.trim()) facts.push(`- Name: ${settings.userName.trim()}`);
+  if (settings.userRole.trim()) facts.push(`- Role: ${settings.userRole.trim()}`);
+  if (settings.userCompany.trim()) facts.push(`- Company / side: ${settings.userCompany.trim()}`);
+  if (settings.userBackground?.trim()) facts.push(`- Background: ${settings.userBackground.trim()}`);
+  if (facts.length === 0) return "";
   return (
-    `About ME (the person you assist) — ${parts.join(", ")}. ` +
-    `Use this to spot when ME is the one speaking or being addressed, and tailor advice to their role.\n\n`
+    `ABOUT ME / US (the side you are advising):\n${facts.join("\n")}\n\n` +
+    `In the transcript, the speaker matching the name/role/company above is ME / US (my side); ` +
+    `everyone else is the OTHER PARTY ("them"). Attribute every statement, question, concession, ` +
+    `and demand to the correct side — never mistake the other party's words for mine. If it is ` +
+    `genuinely unclear which side a speaker is on, say so rather than guessing.\n\n`
   );
 }
 

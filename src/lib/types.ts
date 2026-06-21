@@ -235,6 +235,9 @@ export interface Settings {
   userRole: string;
   /** Your company / org — optional extra context. */
   userCompany: string;
+  /** Free-text background on you / your side — product, goals, the deal, etc.
+   *  Injected into every analysis prompt so the model knows which side is "us". */
+  userBackground: string;
   provider: LlmProvider;
   anthropicApiKey: string;
   openaiApiKey: string;

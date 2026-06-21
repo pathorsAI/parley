@@ -82,6 +82,7 @@ const DEFAULT_SETTINGS: Settings = {
   userName: "",
   userRole: "",
   userCompany: "",
+  userBackground: "",
   // Default to Groq's gpt-oss (fast + cheap); users can switch in Settings.
   provider: "groq",
   anthropicApiKey: "",
