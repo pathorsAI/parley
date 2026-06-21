@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useStore, isTrimmed, type AppMode } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { analyzeTimeline } from "../ai/timeline";
+import { evalSignature } from "../evaluations/presets";
 import { isTauri } from "../tauriEvents";
 import type { EvalDef, Settings, TimelineEvent, TranscriptSegment } from "../types";
 
@@ -38,7 +39,7 @@ function analysisCacheKey(
     .filter((s) => s.isFinal && s.text.trim())
     .map((s) => `${s.id}|${s.speaker}|${s.startMs}|${s.endMs}|${s.text}`)
     .join("\n");
-  const evalSig = evals.map((e) => `${e.id}|${e.name}|${e.prompt}`).join("\n");
+  const evalSig = evalSignature(evals);
   // The self-profile feeds the prompt (who is "us" vs "them"), so a change
   // to it must invalidate the cache and re-analyze.
   const profile = `${settings.userName}|${settings.userRole}|${settings.userCompany}|${settings.userBackground}`;
@@ -123,11 +124,15 @@ export async function runAnalysis(opts?: { mode?: AppMode; force?: boolean }): P
     mode === "replay"
       ? analysisCacheKey(settings, segments, settings.evaluations, meetingContext, speakerNames)
       : null;
+  // Remember which eval set these findings reflect, so the UI can flag them as
+  // stale when the template / evals change before the next re-analysis.
+  const evalSig = evalSignature(settings.evaluations);
   if (cacheKey && !opts?.force) {
     const cached = readAnalysisCache(cacheKey);
     if (cached) {
       state.setFindings(cached);
       state.setAnalysisStatus("done");
+      useStore.setState({ analyzedEvalSig: evalSig });
       return;
     }
   }
@@ -147,6 +152,7 @@ export async function runAnalysis(opts?: { mode?: AppMode; force?: boolean }): P
     if (cacheKey) writeAnalysisCache(cacheKey, events);
     useStore.getState().setFindings(events);
     useStore.getState().setAnalysisStatus("done");
+    useStore.setState({ analyzedEvalSig: evalSig });
   } catch (err) {
     console.error("[analysis]", err);
     const { describeAiError } = await import("../ai/errors");

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check, Copy, FileText, Maximize2, Sparkles, X } from "lucide-react";
 import { isTrimmed, useStore } from "../../lib/store";
+import { findActiveTemplate } from "../../lib/evaluations/presets";
 import { runAnalysis } from "../../lib/analysis/engine";
 import { generatePostMeetingReport } from "../../lib/ai/report";
 import { hasProviderKey } from "../../lib/ai/settings";
@@ -35,11 +36,11 @@ export function FindingsPanel({
   onSeek: (ms: number) => void;
 }) {
   const { t } = useI18n();
-  const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const findings = useStore((s) => s.findings);
   const selectedId = useStore((s) => s.selectedFindingId);
   const analysisStatus = useStore((s) => s.analysisStatus);
   const templates = useStore((s) => s.settings.evalTemplates);
+  const evaluations = useStore((s) => s.settings.evaluations);
   const provider = useStore((s) => s.settings.provider);
   const keyMissing = useStore((s) => !hasProviderKey(s.settings));
   const updateSettings = useStore((s) => s.updateSettings);
@@ -67,8 +68,9 @@ export function FindingsPanel({
   function applyTemplate(id: string) {
     const tpl = templates.find((x) => x.id === id);
     if (!tpl) return;
+    // Apply the set; the picker's value re-derives from it. Findings don't re-run
+    // here — the user re-analyzes from the player's Analyze menu (stale banner).
     updateSettings({ evaluations: tpl.evals.map((e) => ({ ...e })) });
-    setSelectedTemplateId(id);
   }
 
   async function generateReport() {
@@ -99,7 +101,7 @@ export function FindingsPanel({
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
         <span className="text-xs font-medium">{t("timeline.title")}</span>
         <Select
-          value={templates.some((tpl) => tpl.id === selectedTemplateId) ? selectedTemplateId : ""}
+          value={findActiveTemplate(templates, evaluations)?.id ?? ""}
           onValueChange={applyTemplate}
         >
           <SelectTrigger size="sm" className="ml-auto h-7 w-[150px] text-[11px]">

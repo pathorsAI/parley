@@ -179,6 +179,9 @@ interface ParleyState {
   findings: TimelineEvent[];
   analysisStatus: "idle" | "running" | "done" | "error";
   analysisError: string | null;
+  /** Signature of the eval set the current `findings` reflect (set by runAnalysis).
+   *  When it differs from the active eval set, the findings are stale → re-analyze. */
+  analyzedEvalSig: string;
   setFindings: (events: TimelineEvent[]) => void;
   setAnalysisStatus: (status: ParleyState["analysisStatus"]) => void;
   setAnalysisError: (error: string | null) => void;
@@ -276,6 +279,7 @@ export const useStore = create<ParleyState>()(
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
+      analyzedEvalSig: "",
       selectedFindingId: null,
       findingSolutions: {},
       autoAnalyze: false,
@@ -316,6 +320,7 @@ export const useStore = create<ParleyState>()(
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
+      analyzedEvalSig: "",
       selectedFindingId: null,
       findingSolutions: {},
       actionItems: [],
@@ -341,6 +346,7 @@ export const useStore = create<ParleyState>()(
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
+      analyzedEvalSig: "",
       selectedFindingId: null,
       findingSolutions: {},
       actionItems: [],
@@ -440,6 +446,7 @@ export const useStore = create<ParleyState>()(
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
+      analyzedEvalSig: "",
       selectedFindingId: null,
       findingSolutions: {},
     });

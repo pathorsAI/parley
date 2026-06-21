@@ -283,6 +283,29 @@ export function buildBuiltinEvalLabels(t: T): Map<string, { name: string; descri
   return labels;
 }
 
+/**
+ * Order-sensitive signature of an evaluation set (id|name|prompt per item). Used
+ * as the analysis cache key's eval component, to detect when the set changed
+ * since the last analysis (stale findings), and to match a live set back to the
+ * template it came from. Accepts both EvalDef[] and the runtime Evaluation[].
+ */
+export function evalSignature(evals: { id: string; name: string; prompt: string }[]): string {
+  return evals.map((e) => `${e.id}|${e.name}|${e.prompt}`).join("\n");
+}
+
+/**
+ * The template whose evals exactly match the current set, or null when the set
+ * has been hand-edited into a custom one. Drives the "current template" label in
+ * the timeline + the template picker's selected value.
+ */
+export function findActiveTemplate(
+  templates: EvalTemplate[],
+  evaluations: { id: string; name: string; prompt: string }[]
+): EvalTemplate | null {
+  const sig = evalSignature(evaluations);
+  return templates.find((tpl) => evalSignature(tpl.evals) === sig) ?? null;
+}
+
 /** Build runtime evaluations from definitions, preserving runtime state by id. */
 export function evalsFromDefs(defs: EvalDef[], prev: Evaluation[] = []): Evaluation[] {
   return defs.map((d) => {

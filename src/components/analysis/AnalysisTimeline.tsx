@@ -28,6 +28,11 @@ interface AnalysisTimelineProps {
   onSelect: (event: TimelineEvent) => void;
   /** Shown as a recovery action on error (and not at all when omitted). */
   onReanalyze?: () => void;
+  /** Active eval-template name, shown as a chip next to the title (omit to hide). */
+  templateName?: string;
+  /** True when the eval set changed since these findings were computed — prompts
+   *  the user to re-analyze (via the player's Analyze menu). */
+  stale?: boolean;
 }
 
 /**
@@ -45,6 +50,8 @@ export function AnalysisTimeline({
   selectedId,
   onSelect,
   onReanalyze,
+  templateName,
+  stale,
 }: AnalysisTimelineProps) {
   const { t } = useI18n();
   const [hovered, setHovered] = useState<string | null>(null);
@@ -60,8 +67,24 @@ export function AnalysisTimeline({
   return (
     <div className="shrink-0 border-b px-4 py-2">
       <div className="mb-1.5 flex items-center justify-between gap-2">
-        <span className="text-[11px] font-medium text-foreground">{t("timeline.title")}</span>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="shrink-0 text-[11px] font-medium text-foreground">{t("timeline.title")}</span>
+          {templateName && (
+            <span
+              className="truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+              title={`${t("timeline.templateLabel")}: ${templateName}`}
+            >
+              {t("timeline.templateLabel")}: {templateName}
+            </span>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {stale && (
+            <span className="flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-500">
+              <RefreshCw className="size-3" />
+              {t("timeline.stale")}
+            </span>
+          )}
           {status === "done" && findings.length > 0 && (
             <span className="text-[10px] tabular-nums text-muted-foreground/70">
               {t("timeline.count", { count: findings.length })}

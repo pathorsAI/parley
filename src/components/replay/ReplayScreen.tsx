@@ -6,6 +6,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useI18n } from "../../i18n";
 import { useStore } from "../../lib/store";
+import { evalSignature, findActiveTemplate } from "../../lib/evaluations/presets";
 import { AnalysisTimeline } from "../analysis/AnalysisTimeline";
 import { AnalyzeMenu } from "../analysis/AnalyzeMenu";
 import { FindingsPanel } from "../analysis/FindingsPanel";
@@ -48,6 +49,9 @@ export function ReplayScreen() {
   const analysisStatus = useStore((s) => s.analysisStatus);
   const analysisError = useStore((s) => s.analysisError);
   const selectedId = useStore((s) => s.selectedFindingId);
+  const evalTemplates = useStore((s) => s.settings.evalTemplates);
+  const evaluations = useStore((s) => s.settings.evaluations);
+  const analyzedEvalSig = useStore((s) => s.analyzedEvalSig);
 
   if (!session) {
     return (
@@ -56,6 +60,11 @@ export function ReplayScreen() {
       </div>
     );
   }
+
+  // Which eval template is active, and whether the findings predate an eval change.
+  const activeTemplate = findActiveTemplate(evalTemplates, evaluations);
+  const templateStale =
+    findings.length > 0 && analysisStatus === "done" && evalSignature(evaluations) !== analyzedEvalSig;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -100,6 +109,8 @@ export function ReplayScreen() {
         playheadMs={playheadMs}
         selectedId={selectedId}
         onSelect={(e) => selectAndSeek(e, player.seek)}
+        templateName={activeTemplate ? activeTemplate.name : t("timeline.templateCustom")}
+        stale={templateStale}
       />
 
       <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
