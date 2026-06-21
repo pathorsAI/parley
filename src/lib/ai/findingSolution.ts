@@ -16,7 +16,9 @@ const replySchema = z.object({
     ),
   reply: z
     .string()
-    .describe("A VERBATIM line ME can say right now at this moment — ready to use, no stage directions."),
+    .describe(
+      "A VERBATIM line MY SIDE (ME) says next at this moment — MY words, ready to use, no stage directions. NEVER a line THEM would say."
+    ),
   consideration: z
     .string()
     .describe(
@@ -31,6 +33,8 @@ const schema = z.object({
 });
 
 const SYSTEM = `You are the reply coach for Parley. The user ("ME") is in a negotiation/interview against the other party ("THEM"). You are given ONE notable moment plus the FULL conversation transcript.
+
+WHOSE REPLY — CRITICAL: every "reply" is the next line MY SIDE ("ME") says, in MY voice and serving MY interest. You are coaching ME, NOT THEM — NEVER write what THEM would say, and NEVER continue, defend, or strengthen THEM's argument. The self-profile and meeting context tell you which speaker is ME; everyone else is THEM. If the moment's side is "them", ME is RESPONDING TO / countering what THEM did there; if the side is "me", ME is fixing MY OWN misstep — what ME should have said instead. If it's ever unclear who is who, infer ME from the profile + meeting context (and which side each speaker argues for) and ALWAYS reply from MY side.
 
 Think about the WHOLE negotiation — the overall stakes, leverage, and where the deal is heading — not just this one local exchange. A reply that wins this point but weakens ME's position in the bigger picture is a bad reply. Then hand ME ready-to-use ways to reply at this moment.
 
@@ -76,7 +80,7 @@ export async function generateFindingSolution(opts: {
     kind: "eval",
     schema,
     system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
-    prompt: `${ctx}${moment}\n\nFull transcript:\n${fullTranscript || "(no transcript)"}\n\nWeigh the whole negotiation, then give ME the reply options.`,
+    prompt: `${ctx}${moment}\n\nFull transcript:\n${fullTranscript || "(no transcript)"}\n\nWeigh the whole negotiation, then give ME the reply options — each a line MY side would say next, never THEM's.`,
   });
   void recordLlmUsage(settings, "eval", "eval", usage);
 

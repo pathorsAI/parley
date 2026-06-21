@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatClock, useStore } from "../lib/store";
+import { log } from "../lib/log";
 import { useThemePreference } from "../lib/theme";
 import { useI18n } from "../i18n";
 import { hasProviderKey } from "../lib/ai/settings";
@@ -47,6 +48,16 @@ export function FindingSolutionApp() {
     return () => un?.();
   }, []);
 
+  // Esc closes the window too.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") void dismiss();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Ask the main window to generate once we have a finding but no solution yet.
   useEffect(() => {
     if (!finding || keyMissing) return;
@@ -54,13 +65,23 @@ export function FindingSolutionApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finding?.id, entry?.status, keyMissing]);
 
-  // Await the FS_CLOSE emit BEFORE destroying the webview — otherwise the IPC
-  // message can be dropped as the process tears down, leaving the main window's
-  // selection stuck on this finding (so re-clicking it wouldn't reopen).
+  // Close the window. Await the FS_CLOSE emit FIRST (so the main window clears its
+  // selection and the same finding can be reopened later — the emit must reach the
+  // backend before we tear the webview down), then DESTROY the window. destroy()
+  // is a hard close that bypasses the close-request flow, which `close()` did not
+  // reliably complete from inside the window. Failures are logged, not swallowed.
   async function dismiss() {
-    await closeFindingSolution();
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().close();
+    try {
+      await closeFindingSolution();
+    } catch (e) {
+      log.warn("finding-solution: close-emit failed", { error: String(e) });
+    }
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().destroy();
+    } catch (e) {
+      log.error("finding-solution: window destroy failed", { error: String(e) });
+    }
   }
 
   if (!finding) {

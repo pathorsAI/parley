@@ -22,7 +22,10 @@ const itemSchema = z.object({
     .nullable()
     .describe("The [m:ss] moment this relates to, copied from the transcript, or null."),
 });
-const schema = z.object({ items: z.array(itemSchema) });
+// Key is "actions" to match the prompt's vocabulary — in json_object mode (Groq)
+// the key isn't server-enforced, so a mismatch makes the model emit its own and
+// the parse fails. Keep schema key + prompt aligned (cf. timeline's "moments").
+const schema = z.object({ actions: z.array(itemSchema) });
 
 const SYSTEM = `You are writing the POST-MEETING ACTION ITEMS for the user ("ME") after a finished negotiation/interview against the other party ("THEM"). The meeting is OVER.
 
@@ -103,7 +106,7 @@ export async function generateActionItems(opts: {
     prompt: `${ctx}Findings:\n${findingsList}\n\nFull transcript:\n${transcript}`,
     onPartial: (p) => {
       if (!onPartial) return;
-      const placed = placeItems((p as { items?: (RawItem | undefined)[] }).items);
+      const placed = placeItems((p as { actions?: (RawItem | undefined)[] }).actions);
       if (placed.length === emittedCount) return;
       emittedCount = placed.length;
       onPartial(placed);
@@ -111,5 +114,5 @@ export async function generateActionItems(opts: {
   });
   void recordLlmUsage(settings, "eval", "eval", usage);
 
-  return placeItems(object.items);
+  return placeItems(object.actions);
 }
