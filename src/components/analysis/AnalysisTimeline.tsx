@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Sparkles } from "lucide-react";
 import { formatClock } from "../../lib/store";
 import { cn } from "@/lib/utils";
 import type { TimelineEvent } from "../../lib/types";
@@ -66,6 +66,19 @@ export function AnalysisTimeline({
             <span className="text-[10px] tabular-nums text-muted-foreground/70">
               {t("timeline.count", { count: findings.length })}
             </span>
+          )}
+          {/* Idle (e.g. analysis was skipped in the ingest wizard) → let the user
+              run it now. */}
+          {status === "idle" && onReanalyze && (
+            <button
+              type="button"
+              onClick={onReanalyze}
+              className="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+              title={t("timeline.analyze")}
+            >
+              <Sparkles className="size-3" />
+              {t("timeline.analyze")}
+            </button>
           )}
           {status === "running" && (
             <span className="text-[10px] text-muted-foreground">{t("timeline.analyzing")}</span>

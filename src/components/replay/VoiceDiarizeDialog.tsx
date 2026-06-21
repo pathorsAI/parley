@@ -9,8 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { Source } from "../../lib/types";
 
-/** Speaker-count presets: `null` = auto-detect, then 2–6. */
-const COUNT_OPTIONS: (number | null)[] = [null, 2, 3, 4, 5, 6];
+/** Speaker-count presets: `null` = auto-detect, then 2–8. */
+const COUNT_OPTIONS: (number | null)[] = [null, 2, 3, 4, 5, 6, 7, 8];
 
 /** Payload of the Rust `diarize://progress` event. */
 interface DiarizeProgress {

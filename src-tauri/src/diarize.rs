@@ -57,6 +57,12 @@ const KMAX: usize = 8;
 const MERGE_THRESHOLD: f32 = 0.5;
 /// k-means iteration cap (converges far sooner in practice).
 const KMEANS_ITERS: usize = 25;
+/// Sub-window averaging: a (long) segment is embedded as several overlapping
+/// windows whose L2-normalized vectors are averaged into one cleaner, more
+/// discriminative embedding — sharper than a single embedding over the whole turn,
+/// which improves speaker separation. Segments shorter than a window embed whole.
+const EMBED_WIN_SAMPLES: usize = SAMPLES_PER_MS * 3000; // 3.0 s
+const EMBED_STEP_SAMPLES: usize = SAMPLES_PER_MS * 1500; // 1.5 s overlap
 
 /// NME spectral clustering is used for this segment-count range. Below the floor
 /// the eigengap is too noisy (fall back to k-means/agglomerative); above the
@@ -87,9 +93,9 @@ pub struct SegSpeaker {
     confidence: f32,
 }
 
-/// Cache identity bump — change when the model or clustering algorithm changes so
-/// stale cached diarizations are recomputed.
-const CACHE_VERSION: &str = "campplus-nmesc-1";
+/// Cache identity bump — change when the model, clustering, or embedding changes
+/// so stale cached diarizations are recomputed.
+const CACHE_VERSION: &str = "campplus-nmesc-subwin-2";
 
 /// Progress event payload (`diarize://progress`).
 #[derive(Clone, Serialize)]
@@ -250,7 +256,7 @@ fn run_pipeline(
                         let start = (sp.start_ms as usize) * SAMPLES_PER_MS;
                         let end = ((sp.end_ms as usize) * SAMPLES_PER_MS).min(audio.len());
                         if end > start && end - start >= MIN_SLICE_SAMPLES {
-                            match embed_slice(&mut session, &audio[start..end]) {
+                            match embed_segment(&mut session, &audio[start..end]) {
                                 Ok(v) => out.push((i, v)),
                                 Err(e) => log::warn!("diarize: embed failed for segment {i}: {e:#}"),
                             }
@@ -394,7 +400,41 @@ fn build_session(model: &Path) -> Result<Session> {
         .with_context(|| format!("load speaker model {}", model.display()))
 }
 
-/// fbank → ONNX embed → L2-normalize for one audio slice.
+/// Embed a whole segment via sub-window averaging. For a slice longer than one
+/// window, embed overlapping windows and average their L2-normalized vectors, then
+/// re-normalize — a cleaner, more discriminative embedding than one pass over the
+/// whole (often long) turn, which reduces distinct speakers being merged. Short
+/// slices fall back to a single embedding.
+fn embed_segment(session: &mut Session, slice: &[f32]) -> Result<Vec<f32>> {
+    if slice.len() <= EMBED_WIN_SAMPLES {
+        return embed_slice(session, slice);
+    }
+    let mut acc: Vec<f32> = Vec::new();
+    let mut count = 0usize;
+    let mut start = 0;
+    while start + EMBED_WIN_SAMPLES <= slice.len() {
+        match embed_slice(session, &slice[start..start + EMBED_WIN_SAMPLES]) {
+            Ok(v) => {
+                if acc.is_empty() {
+                    acc = vec![0.0; v.len()];
+                }
+                for (a, x) in acc.iter_mut().zip(&v) {
+                    *a += x;
+                }
+                count += 1;
+            }
+            Err(e) => log::warn!("diarize: sub-window embed failed: {e:#}"),
+        }
+        start += EMBED_STEP_SAMPLES;
+    }
+    if count == 0 {
+        return embed_slice(session, slice);
+    }
+    // Averaging then L2-normalizing == the normalized mean direction of the windows.
+    Ok(l2_normalize(&acc))
+}
+
+/// fbank → ONNX embed → L2-normalize for one audio slice (one window).
 fn embed_slice(session: &mut Session, slice: &[f32]) -> Result<Vec<f32>> {
     // knf-rs computes 80-dim kaldi fbank and already subtracts the per-utterance
     // mean over time (the model's `global-mean` normalization).

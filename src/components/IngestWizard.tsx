@@ -11,8 +11,8 @@ import { Input } from "@/components/ui/input";
 import { ReplayTranscript } from "./replay/ReplayTranscript";
 import type { Source } from "../lib/types";
 
-/** Speaker-count presets: `null` = auto-detect, then 2–6. */
-const COUNT_OPTIONS: (number | null)[] = [null, 2, 3, 4, 5, 6];
+/** Speaker-count presets: `null` = auto-detect, then 2–8. */
+const COUNT_OPTIONS: (number | null)[] = [null, 2, 3, 4, 5, 6, 7, 8];
 
 interface DiarizeProgress {
   stage: string;
@@ -364,12 +364,19 @@ export function IngestWizard() {
               {t("ingest.next")}
             </Button>
           )}
-          {step === "template" && (
-            <Button size="sm" className="h-8 gap-1.5" onClick={confirmAnalyze}>
-              <Check className="size-3.5" />
-              {t("ingest.confirm")}
-            </Button>
-          )}
+          {step === "template" &&
+            (templateId ? (
+              <Button size="sm" className="h-8 gap-1.5" onClick={confirmAnalyze}>
+                <Check className="size-3.5" />
+                {t("ingest.confirm")}
+              </Button>
+            ) : (
+              // No template picked → don't force analysis; land on the results
+              // page and let them analyze later from the timeline.
+              <Button size="sm" variant="outline" className="h-8" onClick={() => close()}>
+                {t("ingest.skipAnalysis")}
+              </Button>
+            ))}
           {step === "error" && (
             <Button size="sm" className="h-8" onClick={retry}>
               {t("ingest.retry")}

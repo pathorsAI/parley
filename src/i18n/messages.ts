@@ -272,6 +272,7 @@ export const zhTW = {
   "ingest.next": "下一步",
   "ingest.transcriptPreview": "逐字稿預覽",
   "ingest.confirm": "確認並分析",
+  "ingest.skipAnalysis": "稍後分析",
   "ingest.analyzing": "分析整體中…",
   "ingest.analyzingSub": "產生時間軸、發現與行動項目…",
   "ingest.cancel": "取消",
@@ -298,6 +299,7 @@ export const zhTW = {
   "replay.trimEnd": "修剪終點",
   // Time-anchored retro timeline (whole-recording analysis → markers).
   "timeline.title": "時間軸分析",
+  "timeline.analyze": "分析",
   "timeline.analyzing": "分析整段中…",
   "timeline.laneThem": "對方提的",
   "timeline.laneMe": "我的問題",
@@ -675,6 +677,7 @@ export const en = {
   "ingest.next": "Next",
   "ingest.transcriptPreview": "Transcript preview",
   "ingest.confirm": "Confirm & analyze",
+  "ingest.skipAnalysis": "Analyze later",
   "ingest.analyzing": "Analyzing the recording…",
   "ingest.analyzingSub": "Building the timeline, findings and action items…",
   "ingest.cancel": "Cancel",
@@ -701,6 +704,7 @@ export const en = {
   "replay.trimEnd": "Trim end",
   // Time-anchored retro timeline (whole-recording analysis → markers).
   "timeline.title": "Timeline analysis",
+  "timeline.analyze": "Analyze",
   "timeline.analyzing": "Analyzing recording…",
   "timeline.laneThem": "They raised",
   "timeline.laneMe": "My issues",
