@@ -46,6 +46,9 @@ export function ReplayTranscript({
 }: ReplayTranscriptProps) {
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const setSpeakerName = useStore((s) => s.setSpeakerName);
+  // Bumped on every explicit seek (scrubber, timeline finding, action item) so we
+  // scroll to the jumped-to line even while paused.
+  const seekNonce = useStore((s) => s.replaySeekNonce);
   // Which speaker key is being edited inline (null = none).
   const [editingKey, setEditingKey] = useState<string | null>(null);
 
@@ -68,11 +71,21 @@ export function ReplayTranscript({
     return id;
   }, [rows, playheadMs]);
 
-  // Keep the active row visible while playing only.
+  // Keep the active row visible while playing.
   useEffect(() => {
     if (!playing || !activeId) return;
     rowRefs.current[activeId]?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [activeId, playing]);
+
+  // On an explicit seek (scrubber / timeline / action item), scroll to the
+  // jumped-to line even while paused — so audio ⇄ timeline ⇄ transcript stay in
+  // sync in every direction. Manual transcript scrolling doesn't bump the nonce,
+  // so it's never hijacked.
+  useEffect(() => {
+    if (!activeId) return;
+    rowRefs.current[activeId]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seekNonce]);
 
   if (rows.length === 0) {
     return (

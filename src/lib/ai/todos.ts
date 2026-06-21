@@ -1,7 +1,7 @@
-import { generateObject } from "ai";
 import { z } from "zod";
-import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider";
-import { transcriptAsText, useStore } from "../store";
+import { JSON_MODE_INSTRUCTION } from "./provider";
+import { generateObjectResilient } from "./generate";
+import { transcriptAsText, useStore, meetingBriefText } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext } from "./profile";
 import type { Settings, TodoItem, TranscriptSegment } from "../types";
@@ -30,12 +30,12 @@ export async function checkTodos(opts: {
   if (!transcript.trim()) return [];
 
   const list = open.map((t) => `- [${t.id}] ${t.text}`).join("\n");
-  const mc = useStore.getState().meetingContext.trim();
+  const mc = meetingBriefText(useStore.getState()).trim();
   const ctx = profileContext(settings) + (mc ? `Meeting context: ${mc}\n\n` : "");
 
-  const { object, usage } = await generateObject({
-    model: getModel(settings, "ask"),
-    providerOptions: getProviderOptions(settings, "ask"),
+  const { object, usage } = await generateObjectResilient({
+    settings,
+    kind: "ask",
     schema,
     system:
       "You track a meeting checklist. Given the checklist items and the live transcript, " +

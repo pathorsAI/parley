@@ -1,5 +1,7 @@
-//! Native (macOS menu-bar) diagnostics menu: open the log folder, and clear the
-//! caches. Built on top of the platform default menu so the standard items
+//! Native (macOS menu-bar) diagnostics menu: open the Field Log window, and clear
+//! the caches. "View Logs" emits `menu://view-logs`, which the frontend turns into
+//! a standalone, movable log-viewer window (like Settings).
+//! Built on top of the platform default menu so the standard items
 //! (Quit, Edit, Window, …) stay intact. The on-disk caches (transcription,
 //! diarization) are cleared directly. The webview-side caches live in
 //! localStorage, so those are cleared via events the frontend listens for: the
@@ -9,7 +11,6 @@
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_dialog::DialogExt;
-use tauri_plugin_opener::OpenerExt;
 
 /// Build the app menu: platform default + a "Diagnostics" submenu.
 pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -45,7 +46,12 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 /// Handle a click on one of our menu items (ignores the default ones).
 pub fn on_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
     match id {
-        "view_logs" => open_logs(app),
+        // Open the standalone, movable Field Log window (the frontend listens for
+        // this and opens/focuses the diagnostics webview). The window itself has a
+        // "reveal in Finder" affordance for the on-disk rotating log folder.
+        "view_logs" => {
+            let _ = app.emit("menu://view-logs", ());
+        }
         "clear_cache_transcription" => {
             clear_cache_dir(app, "transcriptions");
             notify(app, "Transcription cache cleared.");
@@ -69,19 +75,6 @@ pub fn on_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
             notify(app, "All caches cleared.");
         }
         _ => {}
-    }
-}
-
-/// Reveal the rotating log folder in the file manager.
-fn open_logs<R: Runtime>(app: &AppHandle<R>) {
-    match app.path().app_log_dir() {
-        Ok(dir) => {
-            let _ = std::fs::create_dir_all(&dir);
-            if let Err(e) = app.opener().open_path(dir.to_string_lossy().into_owned(), None::<&str>) {
-                log::warn!("menu: open logs failed: {e}");
-            }
-        }
-        Err(e) => log::warn!("menu: app_log_dir unavailable: {e}"),
     }
 }
 

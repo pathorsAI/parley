@@ -1,4 +1,4 @@
-import { useStore } from "../store";
+import { useStore, meetingBriefText } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { generateFindingSolution } from "../ai/findingSolution";
 
@@ -11,8 +11,8 @@ import { generateFindingSolution } from "../ai/findingSolution";
  */
 export async function runFindingSolution(findingId: string): Promise<void> {
   const state = useStore.getState();
-  const { settings, segments, speakerNames, meetingContext, findings, findingSolutions, setFindingSolution } =
-    state;
+  const { settings, segments, speakerNames, findings, findingSolutions, setFindingSolution } = state;
+  const meetingContext = meetingBriefText(state);
 
   const entry = findingSolutions[findingId];
   if (entry && (entry.status === "running" || entry.status === "done")) return;

@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { ArrowUp } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useStore } from "../../lib/store";
+import { useStore, meetingBriefText } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { useI18n, type TranslationKey } from "../../i18n";
 import { Button } from "@/components/ui/button";
@@ -42,7 +42,8 @@ export function AskPanel() {
     setMessages((m) => [...m, { role: "user", content: q }]);
 
     const state = useStore.getState();
-    const { settings, speakerNames, meetingContext, segments } = state;
+    const { settings, speakerNames, segments } = state;
+    const meetingContext = meetingBriefText(state);
     if (!hasProviderKey(settings)) {
       setMessages((m) => [
         ...m,

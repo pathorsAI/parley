@@ -15,7 +15,8 @@ export { isReasoningModel } from "./providers";
  * Anthropic), so it's safe to apply unconditionally.
  */
 export const JSON_MODE_INSTRUCTION =
-  "\n\nReturn your answer strictly as a JSON object matching the provided schema.";
+  "\n\nReturn your answer strictly as a single JSON object matching the provided schema. " +
+  "Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.";
 
 /**
  * Resolve a Vercel AI SDK model for the active provider, driven by the provider
@@ -26,7 +27,20 @@ export const JSON_MODE_INSTRUCTION =
  * `anthropic-dangerous-direct-browser-access` header to satisfy CORS — fine for
  * a local desktop app where the key lives in app settings, not a public site.
  */
-export function getModel(settings: Settings, kind: "ask" | "eval"): LanguageModel {
+export function getModel(
+  settings: Settings,
+  kind: "ask" | "eval",
+  opts?: {
+    /**
+     * Force `json_object` mode even for providers that advertise json_schema.
+     * Some models (notably Groq's gpt-oss family) intermittently 400 with
+     * `json_validate_failed` under strict json_schema; the resilient wrapper
+     * retries with this so the schema is parsed client-side instead. See
+     * {@link generateObjectResilient}.
+     */
+    forceJsonObject?: boolean;
+  }
+): LanguageModel {
   const info = PROVIDER_BY_ID[settings.provider];
   const modelId = settings.models[settings.provider][kind];
   const apiKey = settings[info.apiKeyField];
@@ -46,7 +60,7 @@ export function getModel(settings: Settings, kind: "ask" | "eval"): LanguageMode
     apiKey: apiKey || (info.requiresKey === false ? "ollama" : apiKey),
     // true → response_format json_schema (schema ENFORCED); false → json_object
     // (valid JSON only). Off for Ollama, whose /v1 ignores the json_schema shape.
-    supportsStructuredOutputs: info.supportsStructuredOutputs ?? false,
+    supportsStructuredOutputs: opts?.forceJsonObject ? false : info.supportsStructuredOutputs ?? false,
   });
   return client.chatModel(modelId);
 }

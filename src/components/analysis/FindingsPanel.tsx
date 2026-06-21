@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Check, Copy, FileText, Maximize2, Sparkles, X } from "lucide-react";
-import { isTrimmed, useStore } from "../../lib/store";
+import { isTrimmed, meetingBriefText, useStore } from "../../lib/store";
 import { findActiveTemplate } from "../../lib/evaluations/presets";
 import { runAnalysis } from "../../lib/analysis/engine";
 import { generatePostMeetingReport } from "../../lib/ai/report";
@@ -8,7 +8,7 @@ import { hasProviderKey } from "../../lib/ai/settings";
 import { PROVIDER_BY_ID } from "../../lib/ai/providers";
 import { useI18n } from "../../i18n";
 import { FindingRow } from "./FindingRow";
-import { selectAndSeek } from "./useAnalysis";
+import { openSolution, selectAndSeek } from "./useAnalysis";
 import { ReportContent } from "../sidebar/ReportContent";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -86,7 +86,7 @@ export function FindingsPanel({
         // Replay has its own action-items surface; don't fold (stale) live todos in.
         todos: mode === "replay" ? [] : s.todos,
         names: s.speakerNames,
-        meetingContext: s.meetingContext,
+        meetingContext: meetingBriefText(s),
         onDelta: (chunk) => setReport((prev) => prev + chunk),
       });
     } catch (e) {
@@ -229,6 +229,7 @@ export function FindingsPanel({
                   event={f}
                   selected={selectedId === f.id}
                   onSelect={(e) => selectAndSeek(e, onSeek)}
+                  onOpenSolution={(e) => openSolution(e, onSeek)}
                 />
               ))}
             </ul>

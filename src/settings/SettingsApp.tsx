@@ -745,6 +745,9 @@ function patchModel(
   patch({ models: { ...settings.models, [provider]: { ...settings.models[provider], [kind]: value } } });
 }
 
+/** Sentinel option that switches the picker into free-text "custom model" mode. */
+const CUSTOM_MODEL = "__custom__";
+
 function ModelSelect({
   provider,
   value,
@@ -754,10 +757,53 @@ function ModelSelect({
   value: string;
   onChange: (v: string) => void;
 }) {
-  // Always include the current value so a custom/persisted id stays selectable.
-  const options = Array.from(new Set([...PROVIDER_BY_ID[provider].models, value].filter(Boolean)));
+  const { t } = useI18n();
+  const presets = PROVIDER_BY_ID[provider].models;
+  // Custom (free-text) mode: on by default when the saved id isn't a listed
+  // preset (e.g. a brand-new model the user typed in before).
+  const [custom, setCustom] = useState(() => !!value && !presets.includes(value));
+  // Re-infer when the provider changes (different presets + value).
+  useEffect(() => {
+    setCustom(!!value && !presets.includes(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider]);
+
+  if (custom) {
+    return (
+      <div className="flex max-w-sm flex-col gap-1.5">
+        <Input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={t("settings.provider.customModelPlaceholder")}
+          className="font-mono text-xs"
+        />
+        <button
+          type="button"
+          onClick={() => {
+            setCustom(false);
+            onChange(presets[0] ?? "");
+          }}
+          className="w-fit text-[11px] text-muted-foreground hover:text-foreground"
+        >
+          {t("settings.provider.usePreset")}
+        </button>
+      </div>
+    );
+  }
+
+  // Always include the current value so a persisted id stays selectable.
+  const options = Array.from(new Set([...presets, value].filter(Boolean)));
   return (
-    <Select value={value} onValueChange={onChange}>
+    <Select
+      value={value}
+      onValueChange={(v) => {
+        if (v === CUSTOM_MODEL) {
+          setCustom(true);
+          return;
+        }
+        onChange(v);
+      }}
+    >
       <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
       <SelectContent>
         {options.map((m) => (
@@ -765,6 +811,7 @@ function ModelSelect({
             {m}
           </SelectItem>
         ))}
+        <SelectItem value={CUSTOM_MODEL}>{t("settings.provider.customModel")}</SelectItem>
       </SelectContent>
     </Select>
   );
