@@ -2,6 +2,7 @@ mod audio;
 mod commands;
 mod diarize;
 mod mcp;
+mod menu;
 mod permissions;
 mod replay;
 mod replay_audio;
@@ -40,6 +41,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(MeetingState::default())
+        // Native menu-bar "Diagnostics" submenu (View Logs + Clear Cache).
+        .menu(|handle| menu::build(handle))
+        .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
         .setup(|app| {
             app.manage(mcp::start(app.handle().clone()));
             log::info!("app: starting up (parley {})", env!("CARGO_PKG_VERSION"));

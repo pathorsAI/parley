@@ -14,7 +14,7 @@ import { initTemplatesSync } from "./lib/templatesSync";
 import { initSessionSync } from "./lib/sessionSync";
 import { initSessionCommands } from "./lib/sessionCommands";
 import { useThemePreference } from "./lib/theme";
-import { useAnalysisEngine } from "./lib/analysis/engine";
+import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 
 function App() {
   useThemePreference();
@@ -28,6 +28,7 @@ function App() {
     const unSession = initSessionSync();
     const unSessionCmds = initSessionCommands();
     const unSttUsage = listenForSttUsage();
+    const unCacheClear = listenForCacheClear();
     return () => {
       unTranscript.then((fn) => fn());
       unSettings.then((fn) => fn());
@@ -35,6 +36,7 @@ function App() {
       unSession();
       unSessionCmds();
       unSttUsage.then((fn) => fn());
+      unCacheClear.then((fn) => fn());
     };
   }, []);
 
