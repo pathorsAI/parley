@@ -295,6 +295,7 @@ export function IngestWizard() {
                     playing={false}
                     onSeek={() => {}}
                     emptyLabel={t("replay.empty")}
+                    preview
                   />
                 </div>
               </div>

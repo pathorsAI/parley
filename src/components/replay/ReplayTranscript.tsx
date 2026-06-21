@@ -16,6 +16,9 @@ interface ReplayTranscriptProps {
   /** Seek to a segment's start when its row is clicked. */
   onSeek: (ms: number) => void;
   emptyLabel: string;
+  /** Static preview (e.g. the ingest wizard): no playhead dimming or active ring —
+   *  every line renders fully "lit". */
+  preview?: boolean;
 }
 
 /**
@@ -38,6 +41,7 @@ export function ReplayTranscript({
   playing,
   onSeek,
   emptyLabel,
+  preview = false,
 }: ReplayTranscriptProps) {
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const setSpeakerName = useStore((s) => s.setSpeakerName);
@@ -81,9 +85,9 @@ export function ReplayTranscript({
     <ScrollArea className="h-full">
       <div className="mx-auto flex max-w-3xl flex-col gap-1 px-4 py-4">
         {rows.map((seg, i) => {
-          const masked = seg.startMs > playheadMs;
+          const masked = !preview && seg.startMs > playheadMs;
           const trimmed = isTrimmed(seg, trim);
-          const active = seg.id === activeId;
+          const active = !preview && seg.id === activeId;
           const showBadge = i === 0 || speakerLabel(seg, speakerNames) !== speakerLabel(rows[i - 1], speakerNames);
           const key = speakerKey(seg);
           return (
