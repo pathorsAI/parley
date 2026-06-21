@@ -33,6 +33,20 @@ const eventSchema = z.object({
       "Verbatim quote(s) anchoring this moment — usually one, but include MULTIPLE when they belong together " +
         "(e.g. BOTH sides of a contradiction, or a promise and its walk-back). [] if you have nothing exact."
     ),
+  // Whether ME later took this moment on. Always present (false by default) so
+  // strict json_schema and json_object (Groq) both keep the key.
+  resolved: z
+    .boolean()
+    .describe(
+      "true when, LATER in the conversation, ME actually responded to / addressed this moment — answered the " +
+        "question, countered the pressure, corrected the misstep, or defused the risk. (Whether ME did it WELL is " +
+        "judged elsewhere; here only whether ME took it on.) false if it was left unaddressed or you are unsure."
+    ),
+  resolution: z
+    .string()
+    .describe(
+      'When resolved, ONE short line on HOW ME handled it — name MY actual move and quote/paraphrase MY key words. "" when not resolved.'
+    ),
 });
 // The wrapper key is "moments" to match the prompt's vocabulary ("notable
 // moments") — in json_object mode (Groq) the key isn't server-enforced, so a
@@ -58,12 +72,16 @@ For EACH moment provide:
 - title: a short label for the dynamic (not a quote).
 - detail: 1-2 sentences on the STRATEGIC substance — what is really going on (the underlying interest, leverage, risk, or move) and why it matters — so ME knows how to think about and negotiate it, not merely what was said.
 - quotes: the verbatim line(s) that anchor it — usually one, but cite MULTIPLE when they belong together (e.g. BOTH sides of a contradiction, or a promise and its later walk-back). [] if you have nothing exact.
+- resolved: true ONLY when, LATER in the transcript, ME actually responded to / addressed this moment — answered the question, countered the pressure, corrected MY own misstep, or defused the risk. false if it was left hanging, ignored, or you are unsure. (Mainly a "them" pressure/objection/risk that ME took on, but also a "me" misstep ME later fixed.)
+- resolution: when resolved, ONE short line naming MY actual move and quoting/paraphrasing MY key words; "" when not resolved.
 
 INTERPRET IN FULL CONTEXT — accuracy matters more than coverage:
 - A neutral QUESTION or request from either side is NOT a claim, assertion, or pressure; never label it as one. Asking is not claiming.
 - Do NOT mislabel a legitimate CONSTRAINT, concern, or honest disclosure as deception or inconsistency. Someone explaining a genuine conflict (e.g. "if I sign this as-is I'd breach a prior commitment") or changing approach for a stated reason is raising something to SOLVE — flag deception/inconsistency ONLY when the transcript genuinely shows a contradiction or misrepresentation in context.
 - When THEM makes a strong point or a good proposal, surface it as a "them" moment so ME can think about how to respond — even if no eval targets it.
 - If MY negotiation setup (BATNA / target / bottom line) is provided in the context, USE it: judge leverage and the ZOPA (zone of possible agreement) against it, separate interests from positions, prefer objective criteria over pressure, and flag when ME is being pushed toward MY bottom line.
+
+RESOLVED MOMENTS: a problem ME already took on is not an open problem. When ME later answers, counters, corrects, or defuses a moment, set resolved + resolution so ME sees what was already handled (it is shown in GREEN). Be honest — mark resolved ONLY when the transcript really shows ME addressing it — but do NOT require the response to be perfect: mark it resolved if ME took it on at all; whether the response was strong enough is judged separately. A moment ME ignored or never came back to stays unresolved.
 
 Be selective and ACCURATE. A short list of well-judged, strategic findings is far better than many literal ones. Ground everything in what was actually said; never fabricate quotes or timestamps.`;
 
@@ -109,6 +127,8 @@ type RawEvent = {
   title?: string | null;
   detail?: string | null;
   quotes?: (string | null)[] | null;
+  resolved?: boolean | null;
+  resolution?: string | null;
 };
 
 /** Keep only non-empty trimmed strings from a (possibly partial) array. */
@@ -141,6 +161,11 @@ function mapTimelineEvent(
   // Keep only eval ids that match a configured evaluation.
   const matchedEvalIds = cleanStrings(e.evalIds).filter((x) => validEvalIds.has(x));
   const isEval = e.source === "eval" && matchedEvalIds.length > 0;
+  // Only treat as resolved when ME actually has a "how" to show — a resolved flag
+  // with no resolution text is useless (and ambiguous), so fall back to the
+  // severity state in that case.
+  const resolution = typeof e.resolution === "string" ? e.resolution.trim() : "";
+  const resolved = e.resolved === true && resolution.length > 0;
   return {
     id,
     atMs: Math.max(0, atMs),
@@ -151,6 +176,8 @@ function mapTimelineEvent(
     title: e.title,
     detail: e.detail,
     quotes: quotes.length ? quotes : undefined,
+    resolved: resolved || undefined,
+    resolution: resolved ? resolution : undefined,
   };
 }
 

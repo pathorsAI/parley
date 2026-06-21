@@ -9,7 +9,7 @@ import type { EvalDef, Settings, TimelineEvent, TranscriptSegment } from "../typ
 let analysisBusy = false;
 
 /** Bump when the analysis prompt/output shape changes, to invalidate caches. */
-const ANALYSIS_CACHE_VERSION = "5";
+const ANALYSIS_CACHE_VERSION = "6";
 
 /** Deterministic 32-bit FNV-1a hash → hex; good enough for a content cache key. */
 function fnv1a(s: string): string {
