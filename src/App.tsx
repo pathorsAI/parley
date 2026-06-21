@@ -1,14 +1,11 @@
 import { useEffect } from "react";
 import { TitleBar } from "./components/TitleBar";
-import { MeetingView } from "./components/MeetingView";
-import { WorkPanel } from "./components/WorkPanel";
-import { EvaluationsPanel } from "./components/sidebar/EvaluationsPanel";
+import { LiveScreen } from "./components/live/LiveScreen";
+import { ReplayScreen } from "./components/replay/ReplayScreen";
 import { Onboarding } from "./components/Onboarding";
-import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle,
-} from "@/components/ui/resizable";
+import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
+import { IngestWizard } from "./components/IngestWizard";
+import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWindow";
 import { useStore } from "./lib/store";
 import { listenForTranscript } from "./lib/tauriEvents";
 import { listenForSettings } from "./lib/settingsSync";
@@ -17,14 +14,13 @@ import { initTemplatesSync } from "./lib/templatesSync";
 import { initSessionSync } from "./lib/sessionSync";
 import { initSessionCommands } from "./lib/sessionCommands";
 import { useThemePreference } from "./lib/theme";
-import { useEvaluationEngine } from "./lib/evaluations/engine";
+import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
+import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 
 function App() {
   useThemePreference();
-  const layout = useStore((s) => s.settings.layout);
+  const appMode = useStore((s) => s.appMode);
   const onboarded = useStore((s) => s.settings.onboarded);
-  const showTranscript = layout !== "assistant";
-  const showEvals = layout !== "transcript";
 
   useEffect(() => {
     const unTranscript = listenForTranscript();
@@ -33,6 +29,8 @@ function App() {
     const unSession = initSessionSync();
     const unSessionCmds = initSessionCommands();
     const unSttUsage = listenForSttUsage();
+    const unCacheClear = listenForCacheClear();
+    const unSpeakerCacheClear = listenForSpeakerCacheClear();
     return () => {
       unTranscript.then((fn) => fn());
       unSettings.then((fn) => fn());
@@ -40,38 +38,22 @@ function App() {
       unSession();
       unSessionCmds();
       unSttUsage.then((fn) => fn());
+      unCacheClear.then((fn) => fn());
+      unSpeakerCacheClear.then((fn) => fn());
     };
   }, []);
 
-  // Auto-rerun evaluations on their intervals while recording.
-  useEvaluationEngine();
+  // LIVE background engine: optional auto-analyze interval + TODO agenda auto-check.
+  useAnalysisEngine();
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       {!onboarded && <Onboarding />}
+      <AnalysisErrorDialog />
+      <IngestWizard />
+      <FindingSolutionWindow />
       <TitleBar />
-      {/* key=layout remounts the group so panel sizes reset cleanly on change. */}
-      <ResizablePanelGroup key={layout} orientation="horizontal" className="min-h-0 flex-1">
-        {showTranscript && (
-          <>
-            <ResizablePanel defaultSize={26} minSize={15}>
-              <MeetingView />
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-          </>
-        )}
-        <ResizablePanel defaultSize={showTranscript && showEvals ? 46 : 60} minSize={30}>
-          <WorkPanel />
-        </ResizablePanel>
-        {showEvals && (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={28} minSize={18}>
-              <EvaluationsPanel />
-            </ResizablePanel>
-          </>
-        )}
-      </ResizablePanelGroup>
+      {appMode === "replay" ? <ReplayScreen /> : <LiveScreen />}
     </div>
   );
 }

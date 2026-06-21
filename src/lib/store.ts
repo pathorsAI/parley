@@ -1,15 +1,17 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type {
+  ActionItem,
   AppLanguage,
   Evaluation,
-  EvalResult,
-  EvalStatus,
+  FindingSolutionEntry,
   MeetingStatus,
   Settings,
+  TimelineEvent,
   TodoItem,
   TranscriptSegment,
 } from "./types";
+import type { ReplaySession } from "./replay/types";
 import {
   buildBuiltinEvalLabels,
   buildPresetEvalDefs,
@@ -20,6 +22,7 @@ import { reconcileTemplates } from "./templates";
 import { buildPresetTodoTemplates } from "./todoTemplates";
 import { translate, type TranslationKey } from "../i18n/messages";
 import { DEFAULT_MODELS } from "./ai/providers";
+import { log } from "./log";
 
 /** A translate function bound to a language, for resolving built-in templates. */
 const tFor = (language: AppLanguage) => (key: TranslationKey) => translate(language, key);
@@ -79,7 +82,9 @@ const DEFAULT_SETTINGS: Settings = {
   userName: "",
   userRole: "",
   userCompany: "",
-  provider: "anthropic",
+  userBackground: "",
+  // Default to Groq's gpt-oss (fast + cheap); users can switch in Settings.
+  provider: "groq",
   anthropicApiKey: "",
   openaiApiKey: "",
   geminiApiKey: "",
@@ -101,7 +106,113 @@ const DEFAULT_SETTINGS: Settings = {
   ...ENV_KEYS,
 };
 
+/** Whether the app is capturing a live meeting or analyzing an uploaded one. */
+export type AppMode = "live" | "replay";
+
+/**
+ * Replay keep-window. Segments that fall entirely OUTSIDE [startMs, endMs] are
+ * trimmed: greyed in the transcript and excluded from every analysis (evals,
+ * Ask, timeline, war-gaming, voice diarization). `null` = keep the whole thing.
+ * Non-destructive — clearing it restores everything.
+ */
+export interface ReplayTrim {
+  startMs: number;
+  endMs: number;
+}
+
 interface ParleyState {
+  /**
+   * "live" = capturing mic/system audio now; "replay" = analyzing an uploaded
+   * recording. In replay mode the uploaded transcript is loaded into `segments`,
+   * so every panel (transcript, findings, ask, report) works unchanged; the
+   * playhead is for navigation/viewing only (no masking).
+   */
+  appMode: AppMode;
+  /** The uploaded recording under analysis (null in live mode). */
+  replay: ReplaySession | null;
+  /** Scrub position (ms) in replay mode — drives audio + transcript highlight. */
+  replayPlayheadMs: number;
+  /** Load an uploaded recording and switch into replay mode. */
+  enterReplay: (session: ReplaySession) => void;
+  /** Leave replay mode and return to a clean live/idle state. */
+  exitReplay: () => void;
+  /** Move the replay playhead (drives both audio position and the transcript). */
+  setReplayPlayhead: (ms: number) => void;
+
+  /** Keep-window: segments outside it are excluded from the view + all analysis.
+   *  null = no trim. See {@link ReplayTrim} and {@link isTrimmed}. */
+  replayTrim: ReplayTrim | null;
+  setReplayTrim: (trim: ReplayTrim | null) => void;
+
+  // ── Upload ingest wizard (count → transcribe → trim → diarize → review → analyze) ──
+  /** Whether the guided upload pipeline dialog is open. */
+  ingestWizardOpen: boolean;
+  ingestWizardStep:
+    | "count"
+    | "transcribing"
+    | "trim"
+    | "diarizing"
+    | "review"
+    | "template"
+    | "analyzing"
+    | "error";
+  ingestWizardError: string | null;
+  /** Absolute path of the picked recording, set when the wizard opens. */
+  ingestAudioPath: string | null;
+  openIngestWizard: (audioPath: string) => void;
+  setIngestWizardStep: (step: ParleyState["ingestWizardStep"], error?: string | null) => void;
+  closeIngestWizard: () => void;
+  /**
+   * Analysis runs only after the wizard's review-confirm releases this gate.
+   * Default "open" so LIVE and any direct re-analysis are never gated; the wizard
+   * arms it to "deferred" on open and releases it at Confirm.
+   */
+  analysisGate: "deferred" | "open";
+  releaseAnalysisGate: () => void;
+
+  // ── Unified analysis (shared by LIVE + REPLAY) ──────────────────────────────
+  /**
+   * Time-anchored findings from an analysis pass (eval-matched or AI "extra").
+   * The timeline + findings list render these in both modes. LIVE re-analysis
+   * REPLACES the whole list (and clears selection + solutions); REPLAY runs once.
+   */
+  findings: TimelineEvent[];
+  analysisStatus: "idle" | "running" | "done" | "error";
+  analysisError: string | null;
+  /** Signature of the eval set the current `findings` reflect (set by runAnalysis).
+   *  When it differs from the active eval set, the findings are stale → re-analyze. */
+  analyzedEvalSig: string;
+  setFindings: (events: TimelineEvent[]) => void;
+  setAnalysisStatus: (status: ParleyState["analysisStatus"]) => void;
+  setAnalysisError: (error: string | null) => void;
+  /** Drop findings + action items outside the replay keep-window. Applied when a
+   *  trim is committed — clears over-time results without re-running the analysis. */
+  dropFindingsOutsideTrim: () => void;
+
+  /** The finding whose "how it should have been done" drilldown is open. */
+  selectedFindingId: string | null;
+  setSelectedFinding: (id: string | null) => void;
+
+  /** Lazy per-finding solution cache, keyed by TimelineEvent.id. */
+  findingSolutions: Record<string, FindingSolutionEntry>;
+  setFindingSolution: (id: string, patch: Partial<FindingSolutionEntry>) => void;
+
+  /** Auto-run the analysis on an interval while recording (LIVE; default off). */
+  autoAnalyze: boolean;
+  autoAnalyzeSec: number;
+  setAutoAnalyze: (on: boolean) => void;
+  setAutoAnalyzeSec: (sec: number) => void;
+
+  // ── Action items (REPLAY post-meeting follow-ups) ───────────────────────────
+  /** Generated from the analysis findings + transcript; ephemeral, replay-only. */
+  actionItems: ActionItem[];
+  actionItemsStatus: "idle" | "running" | "done" | "error";
+  actionItemsError: string | null;
+  setActionItems: (items: ActionItem[]) => void;
+  setActionItemsStatus: (status: ParleyState["actionItemsStatus"]) => void;
+  setActionItemsError: (error: string | null) => void;
+  toggleActionItem: (id: string) => void;
+
   meetingStatus: MeetingStatus;
   meetingStartedAt: number | null;
   segments: TranscriptSegment[];
@@ -147,16 +258,6 @@ interface ParleyState {
   upsertSegment: (segment: TranscriptSegment) => void;
   clearTranscript: () => void;
 
-  // evaluations
-  setEvalStatus: (id: string, status: EvalStatus) => void;
-  setEvalResult: (id: string, result: EvalResult) => void;
-  setAllEvalStatus: (status: EvalStatus) => void;
-  /** Whether to auto-rerun the whole evaluation set on an interval while recording. */
-  autoEval: boolean;
-  autoEvalSec: number;
-  setAutoEval: (on: boolean) => void;
-  setAutoEvalSec: (sec: number) => void;
-
   // settings
   updateSettings: (patch: Partial<Settings>) => void;
   /** Replace settings wholesale — used to sync from the settings window. */
@@ -166,6 +267,26 @@ interface ParleyState {
 export const useStore = create<ParleyState>()(
   persist(
     (set) => ({
+      appMode: "live",
+      replay: null,
+      replayPlayheadMs: 0,
+      replayTrim: null,
+      ingestWizardOpen: false,
+      ingestWizardStep: "count",
+      ingestWizardError: null,
+      ingestAudioPath: null,
+      analysisGate: "open",
+      findings: [],
+      analysisStatus: "idle",
+      analysisError: null,
+      analyzedEvalSig: "",
+      selectedFindingId: null,
+      findingSolutions: {},
+      autoAnalyze: false,
+      autoAnalyzeSec: 45,
+      actionItems: [],
+      actionItemsStatus: "idle",
+      actionItemsError: null,
       meetingStatus: "idle",
       meetingStartedAt: null,
       segments: [],
@@ -174,12 +295,119 @@ export const useStore = create<ParleyState>()(
       speakerNames: {},
       todos: [],
       meetingContext: "",
-      autoEval: false,
-      autoEvalSec: 30,
       highlightMs: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
+
+  enterReplay: (session) => {
+    log.info("store: enter replay", {
+      name: session.name,
+      segments: session.segments.length,
+      durationMs: session.durationMs,
+    });
+    set({
+      appMode: "replay",
+      replay: session,
+      // Start at the beginning of the recording (the full transcript always
+      // shows now — no masking); the playhead is just for playback/navigation.
+      replayPlayheadMs: 0,
+      replayTrim: null,
+      segments: session.segments,
+      speakerNames: session.speakerNames,
+      meetingStatus: "stopped",
+      highlightMs: null,
+      findings: [],
+      analysisStatus: "idle",
+      analysisError: null,
+      analyzedEvalSig: "",
+      selectedFindingId: null,
+      findingSolutions: {},
+      actionItems: [],
+      actionItemsStatus: "idle",
+      actionItemsError: null,
+    });
+  },
+
+  exitReplay: () => {
+    log.info("store: exit replay");
+    set({
+      appMode: "live",
+      replay: null,
+      replayPlayheadMs: 0,
+      replayTrim: null,
+      ingestWizardOpen: false,
+      ingestAudioPath: null,
+      analysisGate: "open",
+      segments: [],
+      speakerNames: {},
+      meetingStatus: "idle",
+      highlightMs: null,
+      findings: [],
+      analysisStatus: "idle",
+      analysisError: null,
+      analyzedEvalSig: "",
+      selectedFindingId: null,
+      findingSolutions: {},
+      actionItems: [],
+      actionItemsStatus: "idle",
+      actionItemsError: null,
+    });
+  },
+
+  setReplayPlayhead: (ms) => set({ replayPlayheadMs: Math.max(0, ms) }),
+
+  setReplayTrim: (trim) => set({ replayTrim: trim }),
+
+  // Ingest wizard. Opening ARMS the analysis gate ("deferred") so loading the
+  // session behind the dialog doesn't auto-analyze; the review-confirm releases it.
+  openIngestWizard: (audioPath) =>
+    set({
+      ingestWizardOpen: true,
+      ingestWizardStep: "count",
+      ingestWizardError: null,
+      ingestAudioPath: audioPath,
+      analysisGate: "deferred",
+    }),
+  setIngestWizardStep: (step, error = null) =>
+    set({ ingestWizardStep: step, ingestWizardError: error }),
+  closeIngestWizard: () => set({ ingestWizardOpen: false, ingestAudioPath: null }),
+  releaseAnalysisGate: () => set({ analysisGate: "open" }),
+
+  // Replacing the findings list invalidates the selection + any cached solutions
+  // (the model mints fresh finding ids each pass, so old solutions are stale).
+  setFindings: (events) => set({ findings: events, selectedFindingId: null, findingSolutions: {} }),
+
+  dropFindingsOutsideTrim: () =>
+    set((s) => {
+      const trim = s.replayTrim;
+      if (!trim) return {}; // no trim → nothing to clear
+      const inWin = (atMs: number) => atMs >= trim.startMs && atMs <= trim.endMs;
+      const keepSel = s.findings.some((f) => f.id === s.selectedFindingId && inWin(f.atMs));
+      return {
+        findings: s.findings.filter((f) => inWin(f.atMs)),
+        actionItems: s.actionItems.filter((a) => a.atMs == null || inWin(a.atMs)),
+        selectedFindingId: keepSel ? s.selectedFindingId : null,
+      };
+    }),
+  setAnalysisStatus: (status) => set({ analysisStatus: status }),
+  setAnalysisError: (error) => set({ analysisError: error }),
+  setSelectedFinding: (id) => set({ selectedFindingId: id }),
+  setFindingSolution: (id, patch) =>
+    set((state) => {
+      const prev = state.findingSolutions[id] ?? { status: "idle", solution: null, error: null };
+      return { findingSolutions: { ...state.findingSolutions, [id]: { ...prev, ...patch } } };
+    }),
+  setAutoAnalyze: (on) => set({ autoAnalyze: on }),
+  setAutoAnalyzeSec: (sec) => set({ autoAnalyzeSec: Math.max(20, sec || 45) }),
+
+  setActionItems: (items) => set({ actionItems: items }),
+  setActionItemsStatus: (status) => set({ actionItemsStatus: status }),
+  setActionItemsError: (error) => set({ actionItemsError: error }),
+  toggleActionItem: (id) =>
+    set((state) => ({
+      actionItems: state.actionItems.map((a) => (a.id === id ? { ...a, done: !a.done } : a)),
+    })),
 
   addTodo: (text) =>
     set((state) => {
@@ -208,23 +436,41 @@ export const useStore = create<ParleyState>()(
         .map((t) => ({ id: crypto.randomUUID(), text: t.trim(), done: false })),
     }),
 
-  startMeeting: () =>
+  startMeeting: () => {
+    log.info("store: meeting started");
     set({
       meetingStatus: "recording",
       meetingStartedAt: Date.now(),
       segments: [],
       speakerNames: {},
-    }),
+      findings: [],
+      analysisStatus: "idle",
+      analysisError: null,
+      analyzedEvalSig: "",
+      selectedFindingId: null,
+      findingSolutions: {},
+    });
+  },
 
   setSpeakerName: (key, name) =>
     set((state) => {
       const next = { ...state.speakerNames };
       if (name.trim()) next[key] = name.trim();
       else delete next[key];
+      // Persist names per uploaded recording so re-uploading restores them. Replay
+      // only — a live meeting has no stable on-disk recording to key against.
+      if (state.replay?.audioPath) {
+        void import("./speakers/namesCache").then(({ writeSpeakerNames, speakerCountOf }) =>
+          writeSpeakerNames(state.replay!.audioPath, speakerCountOf(state.segments), next)
+        );
+      }
       return { speakerNames: next };
     }),
 
-  stopMeeting: () => set({ meetingStatus: "stopped" }),
+  stopMeeting: () => {
+    log.info("store: meeting stopped");
+    set({ meetingStatus: "stopped" });
+  },
 
   upsertSegment: (segment) =>
     set((state) => {
@@ -238,33 +484,6 @@ export const useStore = create<ParleyState>()(
     }),
 
   clearTranscript: () => set({ segments: [] }),
-
-  setEvalStatus: (id, status) =>
-    set((state) => ({
-      evaluations: state.evaluations.map((e) =>
-        e.id === id ? { ...e, status } : e
-      ),
-    })),
-
-  setEvalResult: (id, result) =>
-    set((state) => ({
-      evaluations: state.evaluations.map((e) =>
-        e.id === id
-          ? {
-              ...e,
-              result,
-              status: result.flagged ? "flag" : "ok",
-              lastRunAt: Date.now(),
-            }
-          : e
-      ),
-    })),
-
-  setAllEvalStatus: (status) =>
-    set((state) => ({ evaluations: state.evaluations.map((e) => ({ ...e, status })) })),
-
-  setAutoEval: (on) => set({ autoEval: on }),
-  setAutoEvalSec: (sec) => set({ autoEvalSec: Math.max(5, sec || 30) }),
 
   updateSettings: (patch) =>
     set((state) => {
@@ -353,6 +572,20 @@ export const useStore = create<ParleyState>()(
     }
   )
 );
+
+/**
+ * Is this segment outside the replay keep-window (i.e. trimmed away)? A segment
+ * is KEPT when it overlaps [startMs, endMs] at all, so a turn straddling a trim
+ * boundary stays. `null` trim means nothing is trimmed. Used to grey trimmed
+ * lines in the transcript and to exclude them from every replay analysis.
+ */
+export function isTrimmed(
+  s: Pick<TranscriptSegment, "startMs" | "endMs">,
+  trim: ReplayTrim | null
+): boolean {
+  if (!trim) return false;
+  return s.endMs < trim.startMs || s.startMs > trim.endMs;
+}
 
 /**
  * A stable key per distinct speaker. Includes the diarized speaker number on

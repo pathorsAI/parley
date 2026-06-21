@@ -1,6 +1,6 @@
 import { generateObject } from "ai";
 import { z } from "zod";
-import { getModel, getProviderOptions } from "./provider";
+import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider";
 import { transcriptAsText, useStore } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext } from "./profile";
@@ -40,7 +40,8 @@ export async function checkTodos(opts: {
     system:
       "You track a meeting checklist. Given the checklist items and the live transcript, " +
       "return the ids of items that have genuinely been addressed or covered. Be conservative — " +
-      "only mark an item done if the transcript clearly shows it was handled.",
+      "only mark an item done if the transcript clearly shows it was handled." +
+      JSON_MODE_INSTRUCTION,
     prompt: `${ctx}Checklist (id and text):\n${list}\n\nTranscript so far:\n${transcript}`,
   });
   void recordLlmUsage(settings, "ask", "todo", usage);

@@ -7,6 +7,17 @@ import { PROVIDER_BY_ID, isReasoningModel } from "./providers";
 export { isReasoningModel } from "./providers";
 
 /**
+ * Groq/OpenAI `json_object` response_format — which the AI SDK's `generateObject`
+ * uses on openai-compatible providers — REQUIRES the literal word "json" to
+ * appear somewhere in the messages, or the request 400s with
+ * "'messages' must contain the word 'json'…". Append this to the system prompt of
+ * every `generateObject` call. Harmless for providers that use tool mode (e.g.
+ * Anthropic), so it's safe to apply unconditionally.
+ */
+export const JSON_MODE_INSTRUCTION =
+  "\n\nReturn your answer strictly as a JSON object matching the provided schema.";
+
+/**
  * Resolve a Vercel AI SDK model for the active provider, driven by the provider
  * registry. `kind` selects the fast Q&A model ("ask") or the stronger
  * evaluation model ("eval").
@@ -33,6 +44,9 @@ export function getModel(settings: Settings, kind: "ask" | "eval"): LanguageMode
     baseURL: info.baseURL!,
     // Local Ollama needs no key, but the SDK wants a non-empty string.
     apiKey: apiKey || (info.requiresKey === false ? "ollama" : apiKey),
+    // true → response_format json_schema (schema ENFORCED); false → json_object
+    // (valid JSON only). Off for Ollama, whose /v1 ignores the json_schema shape.
+    supportsStructuredOutputs: info.supportsStructuredOutputs ?? false,
   });
   return client.chatModel(modelId);
 }
@@ -44,8 +58,18 @@ export function getModel(settings: Settings, kind: "ask" | "eval"): LanguageMode
  */
 export function getProviderOptions(settings: Settings, kind: "ask" | "eval") {
   const info = PROVIDER_BY_ID[settings.provider];
-  if (info.kind === "openai-compatible" && isReasoningModel(settings.models[settings.provider][kind])) {
-    return { [info.id]: { reasoningEffort: settings.reasoningEffort[kind] } };
+  if (info.kind !== "openai-compatible") return {};
+
+  const opts: Record<string, string | { require_parameters: boolean }> = {};
+  if (isReasoningModel(settings.models[settings.provider][kind])) {
+    opts.reasoningEffort = settings.reasoningEffort[kind];
   }
-  return {};
+  // OpenRouter fans one model id out to many upstreams; some ignore
+  // response_format, which silently dropped our enforced schema (→ "did not
+  // match schema"). Force it to only route to backends that honor the schema.
+  if (info.id === "openrouter") {
+    opts.provider = { require_parameters: true };
+  }
+
+  return Object.keys(opts).length ? { [info.id]: opts } : {};
 }

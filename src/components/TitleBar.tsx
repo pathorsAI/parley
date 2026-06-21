@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Circle, Maximize2, Mic, Minus, Settings, Square, X } from "lucide-react";
+import { Circle, FileAudio, Loader2, LogOut, Maximize2, Mic, Minus, Settings, Square, X } from "lucide-react";
 import { useStore } from "../lib/store";
+import { log } from "../lib/log";
 import { STT_BY_ID, sttApiKey } from "../lib/transcription/providers";
 import { startMockStream, stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
@@ -22,18 +24,48 @@ export function TitleBar() {
   const inputDevice = useStore((s) => s.settings.inputDevice);
   const startMeeting = useStore((s) => s.startMeeting);
   const stopMeeting = useStore((s) => s.stopMeeting);
+  const appMode = useStore((s) => s.appMode);
+  const replayName = useStore((s) => s.replay?.name ?? "");
+  const exitReplay = useStore((s) => s.exitReplay);
+  const [ingestMsg, setIngestMsg] = useState<string | null>(null);
 
   const recording = status === "recording";
+  const replayMode = appMode === "replay";
   const useRealPipeline = isTauri() && !!sttKey.trim();
+
+  async function uploadRecording() {
+    if (ingestMsg) return;
+    const { settings, openIngestWizard } = useStore.getState();
+    setIngestMsg(t("replay.preparing"));
+    log.info("replay: upload started");
+    try {
+      // Only pick the file here — the ingest wizard then asks the speaker count
+      // and runs transcription → diarization → review → analysis as one pipeline.
+      const { pickRecordingFile } = await import("../lib/replay/ingest");
+      const audioPath = await pickRecordingFile(settings);
+      if (audioPath) {
+        log.info("replay: file picked, opening ingest wizard");
+        openIngestWizard(audioPath);
+      } else {
+        log.debug("replay: upload cancelled");
+      }
+    } catch (e) {
+      log.error("replay: pick failed", { error: String(e) });
+      window.alert(t("replay.failed", { error: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setIngestMsg(null);
+    }
+  }
 
   async function toggle() {
     if (recording) {
+      log.info("meeting: stop requested");
       stopMeeting();
       if (useRealPipeline) {
         try {
           await invoke("stop_meeting");
         } catch (e) {
-          console.error("stop_meeting failed", e);
+          log.error("meeting: stop failed", { error: String(e) });
         }
       } else {
         stopMockStream();
@@ -42,6 +74,13 @@ export function TitleBar() {
     }
     startMeeting();
     if (useRealPipeline) {
+      log.info("meeting: start requested", {
+        provider: transcriptionProvider,
+        model: STT_BY_ID[transcriptionProvider].label,
+        diarization: STT_BY_ID[transcriptionProvider].diarization,
+        inputDevice,
+        pipeline: "real",
+      });
       try {
         await invoke("start_meeting", {
           provider: transcriptionProvider,
@@ -50,10 +89,15 @@ export function TitleBar() {
           inputDevice,
         });
       } catch (e) {
-        console.error("start_meeting failed", e);
+        log.error("meeting: start failed", {
+          provider: transcriptionProvider,
+          inputDevice,
+          error: String(e),
+        });
         stopMeeting();
       }
     } else {
+      log.info("meeting: start (mock stream)");
       startMockStream();
     }
   }
@@ -66,7 +110,7 @@ export function TitleBar() {
       if (action === "minimize") await appWindow.minimize();
       if (action === "maximize") await appWindow.toggleMaximize();
     } catch (e) {
-      console.error(`window ${action} failed`, e);
+      log.warn("window: action failed", { action, error: String(e) });
     }
   }
 
@@ -111,29 +155,58 @@ export function TitleBar() {
       </div>
 
       <div className="flex items-center gap-2">
-        <div className="mr-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Circle
-            className={`h-2 w-2 ${
-              recording ? "animate-pulse fill-red-500 text-red-500" : "fill-muted-foreground/40 text-muted-foreground/40"
-            }`}
-          />
-          {recording
-            ? t("titlebar.status.recording")
-            : status === "stopped"
-            ? t("titlebar.status.stopped")
-            : t("titlebar.status.idle")}
-        </div>
-        {recording && <LevelMeter source="me" className="h-1.5 w-14" />}
+        {replayMode ? (
+          <>
+            <div className="mr-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <FileAudio className="size-3.5 text-foreground/70" />
+              <span className="max-w-[220px] truncate">{replayName}</span>
+            </div>
+            <Button size="sm" variant="outline" onClick={exitReplay} className="h-8">
+              <LogOut className="size-3.5" />
+              {t("replay.exit")}
+            </Button>
+          </>
+        ) : (
+          <>
+            <div className="mr-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Circle
+                className={`h-2 w-2 ${
+                  recording ? "animate-pulse fill-red-500 text-red-500" : "fill-muted-foreground/40 text-muted-foreground/40"
+                }`}
+              />
+              {recording
+                ? t("titlebar.status.recording")
+                : status === "stopped"
+                ? t("titlebar.status.stopped")
+                : t("titlebar.status.idle")}
+            </div>
+            {recording && <LevelMeter source="me" className="h-1.5 w-14" />}
 
-        <Button
-          size="sm"
-          variant={recording ? "destructive" : "default"}
-          onClick={toggle}
-          className="h-8"
-        >
-          {recording ? <Square className="size-3.5" /> : <Mic className="size-3.5" />}
-          {recording ? t("titlebar.stop") : t("titlebar.startMeeting")}
-        </Button>
+            {!recording && isTauri() && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void uploadRecording()}
+                disabled={!!ingestMsg}
+                className="h-8"
+              >
+                {ingestMsg ? <Loader2 className="size-3.5 animate-spin" /> : <FileAudio className="size-3.5" />}
+                {ingestMsg ?? t("replay.upload")}
+              </Button>
+            )}
+
+            <Button
+              size="sm"
+              variant={recording ? "destructive" : "default"}
+              onClick={toggle}
+              disabled={!!ingestMsg}
+              className="h-8"
+            >
+              {recording ? <Square className="size-3.5" /> : <Mic className="size-3.5" />}
+              {recording ? t("titlebar.stop") : t("titlebar.startMeeting")}
+            </Button>
+          </>
+        )}
 
         <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => void openSettingsWindow()}>
           <Settings className="size-4" />

@@ -1,26 +1,27 @@
-import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { Download, Check } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Copy, Check } from "lucide-react";
 import { TranscriptPanel } from "./TranscriptPanel";
 import { SpeakerBar } from "./SpeakerBar";
-import { useStore, transcriptAsText } from "../lib/store";
-import { isTauri } from "../lib/tauriEvents";
+import { AnalysisTimeline } from "./analysis/AnalysisTimeline";
+import { selectAndSeek } from "./analysis/useAnalysis";
+import { runAnalysis } from "../lib/analysis/engine";
+import { findActiveTemplate } from "../lib/evaluations/presets";
+import { useStore, transcriptAsText, formatClock } from "../lib/store";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 
-/** Build a markdown record of the meeting: context, transcript, flagged evals. */
+/** Build a markdown record of the meeting: context, transcript, analysis findings. */
 function buildMarkdown(): string {
-  const { segments, evaluations, speakerNames, meetingContext } = useStore.getState();
+  const { segments, findings, speakerNames, meetingContext } = useStore.getState();
   const now = new Date();
   const lines = [`# Parley meeting — ${now.toLocaleString()}`, ""];
   if (meetingContext.trim()) {
     lines.push(`**Context:** ${meetingContext.trim()}`, "");
   }
-  const flagged = evaluations.filter((e) => e.status === "flag" && e.result);
-  if (flagged.length) {
-    lines.push("## Flags", "");
-    for (const e of flagged) {
-      lines.push(`- **${e.name}** (${e.result!.severity}): ${e.result!.summary}`);
+  if (findings.length) {
+    lines.push("## Findings", "");
+    for (const f of findings) {
+      lines.push(`- [${formatClock(f.atMs)}] **${f.title}** (${f.side}, ${f.severity}): ${f.detail}`);
     }
     lines.push("");
   }
@@ -31,20 +32,41 @@ function buildMarkdown(): string {
 export function MeetingView() {
   const { t } = useI18n();
   const hasSegments = useStore((s) => s.segments.some((x) => x.isFinal && x.text.trim()));
-  const [saved, setSaved] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
-  async function save() {
-    if (!isTauri()) return;
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  // Shared analysis state — the live timeline band aligned to elapsed meeting time.
+  const findings = useStore((s) => s.findings);
+  const analysisStatus = useStore((s) => s.analysisStatus);
+  const analysisError = useStore((s) => s.analysisError);
+  const selectedId = useStore((s) => s.selectedFindingId);
+  const highlightMs = useStore((s) => s.highlightMs);
+  const setHighlightMs = useStore((s) => s.setHighlightMs);
+  const meetingStartedAt = useStore((s) => s.meetingStartedAt);
+  const recording = useStore((s) => s.meetingStatus === "recording");
+  const maxEndMs = useStore((s) => s.segments.reduce((m, x) => Math.max(m, x.endMs), 0));
+  const evalTemplates = useStore((s) => s.settings.evalTemplates);
+  const evaluations = useStore((s) => s.settings.evaluations);
+  const activeTemplate = findActiveTemplate(evalTemplates, evaluations);
+
+  // Tick once a second so the axis right-edge advances while recording.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!recording) return;
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [recording]);
+
+  const elapsedMs = recording && meetingStartedAt ? nowMs - meetingStartedAt : maxEndMs;
+  const axisMaxMs = Math.max(elapsedMs, maxEndMs, 1);
+  const showTimeline = findings.length > 0 || analysisStatus === "running" || analysisStatus === "error";
+
+  async function copy() {
     try {
-      const path = await invoke<string>("save_transcript", {
-        filename: `parley-${stamp}.md`,
-        contents: buildMarkdown(),
-      });
-      setSaved(path);
-      setTimeout(() => setSaved(null), 4000);
+      await navigator.clipboard.writeText(buildMarkdown());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
     } catch (e) {
-      console.error("save_transcript failed", e);
+      console.error("copy transcript failed", e);
     }
   }
 
@@ -53,17 +75,25 @@ export function MeetingView() {
       <div className="flex h-10 shrink-0 items-center justify-between border-b px-5">
         <span className="text-xs font-medium text-foreground">{t("meeting.transcript")}</span>
         <div className="flex items-center gap-2">
-          {saved && (
-            <span className="flex items-center gap-1 text-[11px] text-emerald-400">
-              <Check className="size-3" /> {t("meeting.saved")}
-            </span>
-          )}
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" disabled={!hasSegments} onClick={save}>
-            <Download className="size-3" />
-            {t("meeting.save")}
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" disabled={!hasSegments} onClick={copy}>
+            {copied ? <Check className="size-3 text-emerald-400" /> : <Copy className="size-3" />}
+            {copied ? t("meeting.copied") : t("meeting.copy")}
           </Button>
         </div>
       </div>
+      {showTimeline && (
+        <AnalysisTimeline
+          findings={findings}
+          status={analysisStatus}
+          error={analysisError}
+          axisMaxMs={axisMaxMs}
+          playheadMs={highlightMs ?? elapsedMs}
+          selectedId={selectedId}
+          onSelect={(e) => selectAndSeek(e, setHighlightMs)}
+          onReanalyze={() => void runAnalysis({ mode: "live" })}
+          templateName={activeTemplate ? activeTemplate.name : t("timeline.templateCustom")}
+        />
+      )}
       <SpeakerBar />
       <div className="min-h-0 flex-1">
         <TranscriptPanel />

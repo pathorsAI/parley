@@ -77,11 +77,104 @@ export interface Evaluation extends EvalDef {
   result?: EvalResult;
 }
 
+/**
+ * War-game move taxonomy. Reused by the per-finding solution engine (FindingMove)
+ * and the interactive opponent-reply branch (WargameBranch).
+ */
+export type WargameStrategyKind = "rebut" | "reframe" | "trade" | "concede_redirect";
+
+/** One turn in an on-demand opponent-reply branch simulation. */
+export interface WargameBranchTurn {
+  role: "me" | "them";
+  text: string;
+}
+
+/**
+ * A per-finding "how it should have been done" solution. The opponent war-gaming
+ * engine, repurposed from a standalone tab into a lazy drilldown on a single
+ * timeline finding: given one notable moment, what ME should have said/done.
+ */
+
+/** One concrete corrective move ME could have made, with its likely fallout. */
+export interface FindingMove {
+  /** Reuses the war-game angle taxonomy so accent colors + i18n labels carry over. */
+  kind: WargameStrategyKind;
+  /** A concrete move ME could make/say at the table. */
+  approach: string;
+  /** One sentence on why this is the better move — the teaching value. */
+  why: string;
+  /** Realistic prediction of how THEM would react to this move. */
+  predictedReaction: string;
+}
+
+/** The full solution for one finding: a headline plus 1-3 moves. */
+export interface FindingSolution {
+  findingId: string;
+  /** One-line "what went wrong / what to do instead". */
+  summary: string;
+  /** 1-3 concrete corrective moves, ideally spanning kinds where sensible. */
+  moves: FindingMove[];
+  /** For ME-side findings: a verbatim line ME could have said instead (or null). */
+  suggestedLine?: string | null;
+}
+
+/** Lazy per-finding solution cache entry, keyed by TimelineEvent.id in the store. */
+export interface FindingSolutionEntry {
+  status: "idle" | "running" | "done" | "error";
+  solution: FindingSolution | null;
+  error: string | null;
+}
+
+/**
+ * One time-anchored finding from the whole-recording retro analysis, rendered as
+ * a marker on the replay timeline. Two lanes (`side`): "them" = a point/argument/
+ * pressure the other party raised; "me" = a problem/mistake/missed move by ME.
+ */
+export interface TimelineEvent {
+  id: string;
+  /** Moment on the recording timeline (ms). */
+  atMs: number;
+  /** My problem vs their move → which lane the marker sits in. */
+  side: "me" | "them";
+  severity: "info" | "warn" | "critical";
+  /** From a configured evaluation, or an AI-caught "extra" moment. */
+  source: "eval" | "extra";
+  /** Present when source === "eval" — the evaluation it corresponds to. */
+  evalId?: string;
+  /** Short label (eval name, or the AI's label). */
+  title: string;
+  /** One or two sentences explaining the moment. */
+  detail: string;
+  /** Supporting verbatim transcript quote, if any. */
+  quote?: string;
+}
+
 /** A meeting to-do / agenda item to make sure gets covered. */
 export interface TodoItem {
   id: string;
   text: string;
   done: boolean;
+}
+
+/**
+ * A post-meeting action item generated from the replay analysis — a concrete
+ * next step / follow-up, optionally linked back to the finding that motivated it.
+ * Deliberately distinct from TodoItem (a pre-meeting agenda checkbox): action
+ * items are generated, carry a rationale, and link to a moment on the recording.
+ */
+export interface ActionItem {
+  id: string;
+  /** The concrete next step / follow-up. */
+  text: string;
+  /** Why it matters — e.g. "because at 12:30 you conceded the price floor". */
+  rationale: string;
+  done: boolean;
+  /** The TimelineEvent it derives from, or null for a general item. */
+  linkedEventId: string | null;
+  /** Seek target on the recording (from the linked event/cited time), or null. */
+  atMs: number | null;
+  /** Carried from the linked finding, for the chip color. */
+  severity?: Severity;
 }
 
 /** A named, reusable checklist you can apply to a meeting. */
@@ -142,6 +235,9 @@ export interface Settings {
   userRole: string;
   /** Your company / org — optional extra context. */
   userCompany: string;
+  /** Free-text background on you / your side — product, goals, the deal, etc.
+   *  Injected into every analysis prompt so the model knows which side is "us". */
+  userBackground: string;
   provider: LlmProvider;
   anthropicApiKey: string;
   openaiApiKey: string;

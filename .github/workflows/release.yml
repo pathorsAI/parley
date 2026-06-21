@@ -77,6 +77,11 @@ jobs:
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: Fetch ONNX Runtime (universal2) for speaker diarization
+        # Downloads libonnxruntime.dylib into src-tauri/onnxruntime/ so tauri.conf
+        # bundles + codesigns it. Loaded at runtime via ORT_DYLIB_PATH (not linked).
+        run: bash src-tauri/scripts/fetch-onnxruntime.sh
+
       - name: Build and upload Tauri bundles
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
