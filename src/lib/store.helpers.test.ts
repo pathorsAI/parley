@@ -91,7 +91,8 @@ describe("speakerLabel (prefers a user-assigned name)", () => {
 
   it("falls back to the default label when no name is mapped", () => {
     const names = { "them-2": "Bob" };
-    expect(speakerLabel({ source: "them", speaker: 1 }, names)).toBe("Them");
+    // them-1 has no custom name → default label for a diarized remote speaker.
+    expect(speakerLabel({ source: "them", speaker: 1 }, names)).toBe("Remote 1");
   });
 
   it("falls back to the default label when names is omitted", () => {
@@ -120,7 +121,7 @@ describe("transcriptAsText", () => {
       seg({ id: "p", source: "them", speaker: 1, text: "partial", startMs: 3000, isFinal: false }),
       seg({ id: "e", source: "them", speaker: 1, text: "   ", startMs: 4000 }),
     ];
-    expect(transcriptAsText(segs)).toBe("[You] first\n[Them] second");
+    expect(transcriptAsText(segs)).toBe("[You] first\n[Remote 1] second");
   });
 
   it("applies custom speaker names", () => {
@@ -135,6 +136,6 @@ describe("transcriptWithTimestamps", () => {
       seg({ id: "a", source: "me", speaker: 1, text: "hello", startMs: 5_000 }),
       seg({ id: "b", source: "them", speaker: 1, text: "world", startMs: 65_000 }),
     ];
-    expect(transcriptWithTimestamps(segs)).toBe("[0:05] [You] hello\n[1:05] [Them] world");
+    expect(transcriptWithTimestamps(segs)).toBe("[0:05] [You] hello\n[1:05] [Remote 1] world");
   });
 });
