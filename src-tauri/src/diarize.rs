@@ -78,13 +78,18 @@ pub struct SegSpan {
 /// Speaker assignment for one segment. `speaker` is 1-based (cluster + 1);
 /// `confidence` is the cosine margin to the next-nearest cluster centroid (0 for
 /// segments that were too short to embed and inherited a neighbour's speaker).
-#[derive(Debug, Serialize)]
+/// Deserialize too, so a cached result can be read back from disk.
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SegSpeaker {
     id: String,
     speaker: usize,
     confidence: f32,
 }
+
+/// Cache identity bump — change when the model or clustering algorithm changes so
+/// stale cached diarizations are recomputed.
+const CACHE_VERSION: &str = "campplus-nmesc-1";
 
 /// Progress event payload (`diarize://progress`).
 #[derive(Clone, Serialize)]
@@ -116,6 +121,19 @@ pub async fn diarize_audio(
         return Err("No segments to diarize".into());
     }
 
+    // Cache: a re-run on the same audio + same spans + same speaker count returns
+    // instantly — skipping the model download AND the whole embed/cluster pass.
+    let cache_path = cache_key(&audio_path, &segments, num_speakers)
+        .and_then(|key| diarize_cache_path(&app, &key));
+    if let Some(cp) = &cache_path {
+        if let Ok(bytes) = std::fs::read(cp) {
+            if let Ok(cached) = serde_json::from_slice::<Vec<SegSpeaker>>(&bytes) {
+                log::info!("diarize: cache hit ({} assignments)", cached.len());
+                return Ok(cached);
+            }
+        }
+    }
+
     // The dylib must be located + ORT_DYLIB_PATH set before any ort session, and
     // the model present, both before we hand off to the blocking pipeline.
     locate_and_set_dylib(&app).map_err(|e| format!("{e:#}"))?;
@@ -132,8 +150,46 @@ pub async fn diarize_audio(
     .map_err(|e| format!("diarize task failed: {e}"))?
     .map_err(|e| format!("{e:#}"))?;
 
+    // Cache the result so an identical re-run is free next time.
+    if let Some(cp) = &cache_path {
+        if let Some(dir) = cp.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(json) = serde_json::to_vec(&result) {
+            let _ = std::fs::write(cp, json);
+        }
+    }
+
     log::info!("diarize: done assignments={}", result.len());
     Ok(result)
+}
+
+/// Cache key for a diarization run: audio identity (name + byte size) + the exact
+/// spans + the requested speaker count + the model/algo version. Any real change
+/// to those inputs yields a different key (so it recomputes); identical inputs
+/// reuse the cached assignment. `None` if the file can't be stat'd.
+fn cache_key(audio_path: &str, spans: &[SegSpan], num_speakers: Option<usize>) -> Option<String> {
+    let size = std::fs::metadata(audio_path).ok()?.len();
+    let name = Path::new(audio_path).file_name()?.to_string_lossy().into_owned();
+    let mut hasher = Sha256::new();
+    hasher.update(CACHE_VERSION.as_bytes());
+    hasher.update(format!("\0{name}\0{size}\0{num_speakers:?}\0").as_bytes());
+    for sp in spans {
+        hasher.update(format!("{}:{}:{};", sp.id, sp.start_ms, sp.end_ms).as_bytes());
+    }
+    Some(to_hex(&hasher.finalize()))
+}
+
+/// Path of the cached diarization for `key`, in the OS app-cache dir. `None` if
+/// there's no cache dir.
+fn diarize_cache_path(app: &AppHandle, key: &str) -> Option<PathBuf> {
+    Some(
+        app.path()
+            .app_cache_dir()
+            .ok()?
+            .join("diarizations")
+            .join(format!("{key}.json")),
+    )
 }
 
 /// Decode → embed every long-enough slice → cluster → assign one speaker per
