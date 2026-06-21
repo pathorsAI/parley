@@ -197,9 +197,16 @@ interface ParleyState {
    *  trim is committed — clears over-time results without re-running the analysis. */
   dropFindingsOutsideTrim: () => void;
 
-  /** The finding whose "how it should have been done" drilldown is open. */
+  /** The finding highlighted + seeked by clicking a timeline dot or list row.
+   *  Selection alone does NOT open the reply window or spend a generation. */
   selectedFindingId: string | null;
   setSelectedFinding: (id: string | null) => void;
+
+  /** The finding whose standalone "how to reply" window is open — set only by the
+   *  explicit "how to reply" action, kept separate from `selectedFindingId` so a
+   *  plain click never opens the window or triggers a solution generation. */
+  solutionFindingId: string | null;
+  setSolutionFinding: (id: string | null) => void;
 
   /** Lazy per-finding solution cache, keyed by TimelineEvent.id. */
   findingSolutions: Record<string, FindingSolutionEntry>;
@@ -233,6 +240,12 @@ interface ParleyState {
   /** Per-meeting context/description (who's here, roles) — NOT a global setting. */
   meetingContext: string;
   setMeetingContext: (text: string) => void;
+  /** Principled-negotiation setup for THIS deal (per-meeting, not global). Feeds
+   *  BATNA / ZOPA / walk-away reasoning in the analysis. */
+  meetingBatna: string;
+  meetingTarget: string;
+  meetingFloor: string;
+  setNegotiationField: (field: "meetingBatna" | "meetingTarget" | "meetingFloor", value: string) => void;
 
   /**
    * A transcript time (ms) the UI should jump to and briefly highlight — set by
@@ -290,6 +303,7 @@ export const useStore = create<ParleyState>()(
       analysisError: null,
       analyzedEvalSig: "",
       selectedFindingId: null,
+      solutionFindingId: null,
       findingSolutions: {},
       autoAnalyze: false,
       autoAnalyzeSec: 45,
@@ -304,9 +318,13 @@ export const useStore = create<ParleyState>()(
       speakerNames: {},
       todos: [],
       meetingContext: "",
+      meetingBatna: "",
+      meetingTarget: "",
+      meetingFloor: "",
       highlightMs: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
+  setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
 
   enterReplay: (session) => {
@@ -331,6 +349,7 @@ export const useStore = create<ParleyState>()(
       analysisError: null,
       analyzedEvalSig: "",
       selectedFindingId: null,
+      solutionFindingId: null,
       findingSolutions: {},
       actionItems: [],
       actionItemsStatus: "idle",
@@ -357,6 +376,7 @@ export const useStore = create<ParleyState>()(
       analysisError: null,
       analyzedEvalSig: "",
       selectedFindingId: null,
+      solutionFindingId: null,
       findingSolutions: {},
       actionItems: [],
       actionItemsStatus: "idle",
@@ -393,12 +413,14 @@ export const useStore = create<ParleyState>()(
     set((s) => {
       const ids = new Set(events.map((e) => e.id));
       const keepSel = !!s.selectedFindingId && ids.has(s.selectedFindingId);
+      const keepSol = !!s.solutionFindingId && ids.has(s.solutionFindingId);
       const findingSolutions = Object.fromEntries(
         Object.entries(s.findingSolutions).filter(([id]) => ids.has(id))
       );
       return {
         findings: events,
         selectedFindingId: keepSel ? s.selectedFindingId : null,
+        solutionFindingId: keepSol ? s.solutionFindingId : null,
         findingSolutions,
       };
     }),
@@ -409,15 +431,18 @@ export const useStore = create<ParleyState>()(
       if (!trim) return {}; // no trim → nothing to clear
       const inWin = (atMs: number) => atMs >= trim.startMs && atMs <= trim.endMs;
       const keepSel = s.findings.some((f) => f.id === s.selectedFindingId && inWin(f.atMs));
+      const keepSol = s.findings.some((f) => f.id === s.solutionFindingId && inWin(f.atMs));
       return {
         findings: s.findings.filter((f) => inWin(f.atMs)),
         actionItems: s.actionItems.filter((a) => a.atMs == null || inWin(a.atMs)),
         selectedFindingId: keepSel ? s.selectedFindingId : null,
+        solutionFindingId: keepSol ? s.solutionFindingId : null,
       };
     }),
   setAnalysisStatus: (status) => set({ analysisStatus: status }),
   setAnalysisError: (error) => set({ analysisError: error }),
   setSelectedFinding: (id) => set({ selectedFindingId: id }),
+  setSolutionFinding: (id) => set({ solutionFindingId: id }),
   setFindingSolution: (id, patch) =>
     set((state) => {
       const prev = state.findingSolutions[id] ?? { status: "idle", solution: null, error: null };
@@ -473,6 +498,7 @@ export const useStore = create<ParleyState>()(
       analysisError: null,
       analyzedEvalSig: "",
       selectedFindingId: null,
+      solutionFindingId: null,
       findingSolutions: {},
     });
   },
@@ -647,6 +673,28 @@ export function transcriptAsText(
     .sort((a, b) => a.startMs - b.startMs)
     .map((s) => `[${speakerLabel(s, names)}] ${s.text.trim()}`)
     .join("\n");
+}
+
+/**
+ * The per-meeting context handed to every analysis prompt: the free-text context
+ * plus the principled-negotiation setup (BATNA / target / bottom line), each
+ * clearly labelled so the model can reason about leverage, the ZOPA, and how close
+ * ME is to walking away. Empty when nothing has been entered.
+ */
+export function meetingBriefText(s: {
+  meetingContext: string;
+  meetingBatna: string;
+  meetingTarget: string;
+  meetingFloor: string;
+}): string {
+  const parts: string[] = [];
+  if (s.meetingContext.trim()) parts.push(s.meetingContext.trim());
+  const setup: string[] = [];
+  if (s.meetingBatna.trim()) setup.push(`My BATNA (best alternative if no deal): ${s.meetingBatna.trim()}`);
+  if (s.meetingTarget.trim()) setup.push(`My target (what I'm aiming for): ${s.meetingTarget.trim()}`);
+  if (s.meetingFloor.trim()) setup.push(`My bottom line / walk-away point: ${s.meetingFloor.trim()}`);
+  if (setup.length) parts.push(`My negotiation setup —\n${setup.join("\n")}`);
+  return parts.join("\n\n");
 }
 
 /** Format a meeting-relative millisecond offset as m:ss. */

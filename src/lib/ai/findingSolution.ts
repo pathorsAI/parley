@@ -34,6 +34,8 @@ const SYSTEM = `You are the reply coach for Parley. The user ("ME") is in a nego
 
 Think about the WHOLE negotiation — the overall stakes, leverage, and where the deal is heading — not just this one local exchange. A reply that wins this point but weakens ME's position in the bigger picture is a bad reply. Then hand ME ready-to-use ways to reply at this moment.
 
+Ground the replies in PRINCIPLED NEGOTIATION: focus on INTERESTS not positions, appeal to OBJECTIVE CRITERIA rather than raw pressure, look for OPTIONS that create mutual gain, and account for MY BATNA / target / bottom line (given in the context, if any) and the ZOPA. Never invent facts, numbers, or a BATNA that wasn't given.
+
 Output ONLY:
 - 2-3 distinct "reply" options, each a VERBATIM line ME can say right now. Span different strategic angles where it helps (rebut / reframe / trade / concede_redirect) — don't force angles that don't fit.
 - For each, ONE short "consideration": the key trade-off, or what the reply does for ME's position in the overall negotiation.
@@ -63,10 +65,11 @@ export async function generateFindingSolution(opts: {
     profileContext(settings) +
     (meetingContext?.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "");
 
+  const quotes = finding.quotes ?? [];
   const moment =
     `The moment to reply to (at ${formatClock(finding.atMs)}, side = ${finding.side}):\n` +
     `- ${finding.title}: ${finding.detail}` +
-    (finding.quote ? `\n- Quote: "${finding.quote}"` : "");
+    (quotes.length ? `\n- Quote(s):\n${quotes.map((q) => `  - "${q}"`).join("\n")}` : "");
 
   const { object, usage } = await generateObjectResilient({
     settings,

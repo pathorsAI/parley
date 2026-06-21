@@ -8,6 +8,7 @@ import { runAnalysis } from "../lib/analysis/engine";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MeetingContextField } from "./MeetingContextField";
 import { ReplayTranscript } from "./replay/ReplayTranscript";
 import { Scrubber } from "./replay/Scrubber";
 import { TrimBar } from "./replay/TrimBar";
@@ -465,6 +466,10 @@ export function IngestWizard() {
                     </button>
                   );
                 })}
+              </div>
+              {/* Last chance to add background before the analysis runs. */}
+              <div className="border-t pt-3">
+                <MeetingContextField />
               </div>
             </>
           )}

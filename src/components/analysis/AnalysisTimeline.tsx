@@ -260,9 +260,10 @@ function Lane({
                       <span className={cn("size-1.5 rounded-full", SEVERITY_DOT[e.severity])} />
                       {t(`timeline.sev.${e.severity}` as const)}
                     </span>
-                    {e.source === "eval" && evalNames.get(e.evalId ?? "") && (
+                    {e.source === "eval" && (e.evalIds?.length ?? 0) > 0 && (
                       <span>
-                        {t("timeline.evalLabel")}: {evalNames.get(e.evalId ?? "")}
+                        {t("timeline.evalLabel")}:{" "}
+                        {(e.evalIds ?? []).map((id) => evalNames.get(id) ?? id).join(", ")}
                       </span>
                     )}
                   </span>

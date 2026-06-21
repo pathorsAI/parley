@@ -12,29 +12,43 @@ const SEVERITY_DOT: Record<TimelineEvent["severity"], string> = {
 };
 
 /**
- * One finding in the right-hand list. Clicking it selects the finding (seek +
- * open). Pinpointing the problem is secondary — the row leads with the primary
- * "how it should have been done" affordance, and expands the solution inline
- * when selected.
+ * One finding in the right-hand list. Clicking the row HIGHLIGHTS the finding and
+ * seeks to its moment — it does NOT open the reply window (that would spend a
+ * generation on every click). The "how to reply" button is the explicit, separate
+ * affordance that opens the standalone window.
  */
 export function FindingRow({
   event,
   selected,
   onSelect,
+  onOpenSolution,
 }: {
   event: TimelineEvent;
   selected: boolean;
+  /** Row click: highlight + seek (no window). */
   onSelect: (event: TimelineEvent) => void;
+  /** "how to reply" button: open the reply window (the only generation trigger). */
+  onOpenSolution: (event: TimelineEvent) => void;
 }) {
   const { t } = useI18n();
   const evalNames = useEvalNames();
-  const evalName = event.source === "eval" ? evalNames.get(event.evalId ?? "") : undefined;
+  const evalLabels =
+    event.source === "eval"
+      ? (event.evalIds ?? []).map((id) => evalNames.get(id)).filter((n): n is string => !!n)
+      : [];
   return (
     <li className={cn("rounded-lg border", selected ? "border-primary/50 bg-muted/30" : "border-border")}>
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => onSelect(event)}
-        className="flex w-full items-start gap-2 px-2.5 py-2 text-left"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSelect(event);
+          }
+        }}
+        className="flex w-full cursor-pointer items-start gap-2 rounded-lg px-2.5 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         <span className={cn("mt-1 size-2 shrink-0 rounded-full", SEVERITY_DOT[event.severity])} />
         <span className="min-w-0 flex-1">
@@ -48,27 +62,39 @@ export function FindingRow({
             {event.source === "extra" && (
               <span className="rounded bg-muted px-1 text-[9px] text-muted-foreground">{t("timeline.extra")}</span>
             )}
-            {evalName && (
+            {evalLabels.map((name, i) => (
               <span
+                key={i}
                 className="truncate rounded bg-muted px-1 text-[9px] text-muted-foreground"
-                title={`${t("timeline.evalLabel")}: ${evalName}`}
+                title={`${t("timeline.evalLabel")}: ${name}`}
               >
-                {evalName}
+                {name}
               </span>
-            )}
+            ))}
           </span>
           <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{event.detail}</span>
-          {event.quote && (
-            <span className="mt-1 block border-l-2 border-border pl-2 text-[11px] italic text-muted-foreground/80">
-              “{event.quote}”
+          {event.quotes?.map((q, i) => (
+            <span
+              key={i}
+              className="mt-1 block border-l-2 border-border pl-2 text-[11px] italic text-muted-foreground/80"
+            >
+              “{q}”
             </span>
-          )}
-          <span className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium text-primary">
+          ))}
+          <button
+            type="button"
+            onClick={(e) => {
+              // Don't let the open also fire the row's select/seek.
+              e.stopPropagation();
+              onOpenSolution(event);
+            }}
+            className="mt-1.5 inline-flex items-center gap-1 rounded text-[11px] font-medium text-primary hover:underline"
+          >
             <ChevronRight className="size-3" />
             {t("solution.show")}
-          </span>
+          </button>
         </span>
-      </button>
+      </div>
     </li>
   );
 }

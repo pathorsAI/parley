@@ -129,14 +129,16 @@ export interface TimelineEvent {
   severity: "info" | "warn" | "critical";
   /** From a configured evaluation, or an AI-caught "extra" moment. */
   source: "eval" | "extra";
-  /** Present when source === "eval" — the evaluation it corresponds to. */
-  evalId?: string;
+  /** The evaluations this moment matches — a single moment can match several;
+   *  absent/empty for an "extra" moment. */
+  evalIds?: string[];
   /** Short label (eval name, or the AI's label). */
   title: string;
   /** One or two sentences explaining the moment. */
   detail: string;
-  /** Supporting verbatim transcript quote, if any. */
-  quote?: string;
+  /** Supporting verbatim quotes — several when they belong together (e.g. BOTH
+   *  sides of a contradiction, or a promise and its walk-back). */
+  quotes?: string[];
 }
 
 /** A meeting to-do / agenda item to make sure gets covered. */

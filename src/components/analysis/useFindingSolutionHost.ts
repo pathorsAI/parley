@@ -9,10 +9,10 @@ import {
   type FindingSolutionState,
 } from "../../lib/findingSolutionSync";
 
-/** Derive the window's view (selected finding + its solution entry) from the store. */
+/** Derive the window's view (the how-to-reply finding + its solution entry). */
 function currentState(): FindingSolutionState {
   const s = useStore.getState();
-  const finding = s.findings.find((f) => f.id === s.selectedFindingId) ?? null;
+  const finding = s.findings.find((f) => f.id === s.solutionFindingId) ?? null;
   const entry = finding ? s.findingSolutions[finding.id] ?? null : null;
   return { finding, entry };
 }
@@ -26,10 +26,10 @@ function currentState(): FindingSolutionState {
  * the in-app overlay is rendered instead.
  */
 export function useFindingSolutionHost() {
-  const selectedFindingId = useStore((s) => s.selectedFindingId);
-  // Re-broadcast when the selected finding's solution transitions (running → done).
+  const solutionFindingId = useStore((s) => s.solutionFindingId);
+  // Re-broadcast when the open finding's solution transitions (running → done).
   const entry = useStore((s) =>
-    s.selectedFindingId ? s.findingSolutions[s.selectedFindingId] ?? null : null
+    s.solutionFindingId ? s.findingSolutions[s.solutionFindingId] ?? null : null
   );
 
   // Answer the window's requests. Registered once.
@@ -38,22 +38,22 @@ export function useFindingSolutionHost() {
     const un = listenForFindingSolutionRequests({
       onHello: () => void broadcastFindingSolution(currentState()),
       onGenerate: (id) => void runFindingSolution(id),
-      onClose: () => useStore.getState().setSelectedFinding(null),
+      onClose: () => useStore.getState().setSolutionFinding(null),
     });
     return () => void un.then((fn) => fn());
   }, []);
 
-  // On selection change: open/focus + kick generation, then push state. On clear,
-  // the push tells the window to show its placeholder.
+  // When the how-to-reply window finding changes: open/focus + kick generation,
+  // then push state. On clear, the push tells the window to show its placeholder.
   useEffect(() => {
     if (!isTauri()) return;
-    if (selectedFindingId) {
+    if (solutionFindingId) {
       void openFindingSolutionWindow();
-      void runFindingSolution(selectedFindingId);
+      void runFindingSolution(solutionFindingId);
     }
     void broadcastFindingSolution(currentState());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedFindingId]);
+  }, [solutionFindingId]);
 
   // Keep the window in sync as the solution generates.
   useEffect(() => {

@@ -15,7 +15,8 @@ export { isReasoningModel } from "./providers";
  * Anthropic), so it's safe to apply unconditionally.
  */
 export const JSON_MODE_INSTRUCTION =
-  "\n\nReturn your answer strictly as a JSON object matching the provided schema.";
+  "\n\nReturn your answer strictly as a single JSON object matching the provided schema. " +
+  "Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.";
 
 /**
  * Resolve a Vercel AI SDK model for the active provider, driven by the provider
