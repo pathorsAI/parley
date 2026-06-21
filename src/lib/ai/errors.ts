@@ -1,3 +1,6 @@
+import { APICallError, NoObjectGeneratedError } from "ai";
+import { log } from "../log";
+
 /**
  * Turn an AI SDK error into a legible, single-line message.
  *
@@ -39,4 +42,72 @@ export function describeAiError(err: unknown): string {
 
 function truncate(s: string, max = 600): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+function parseJson(s: unknown): Record<string, unknown> | undefined {
+  if (typeof s !== "string") return undefined;
+  try {
+    return JSON.parse(s) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Diagnostic fields pulled from an AI SDK error — privacy-safe: status codes,
+ * provider error codes, finishReason, token COUNTS, and output LENGTHS only
+ * (never content). These are what actually explain a failure, e.g.
+ * `finishReason "length"` + a near-empty output ⇒ a reasoning model burned its
+ * whole budget on hidden reasoning (Groq → `json_validate_failed`,
+ * `failed_generation: ""`).
+ */
+function aiErrorMeta(err: unknown): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!err || typeof err !== "object") return out;
+  out.error = (err as { name?: string }).name;
+
+  if (APICallError.isInstance(err)) {
+    out.status = err.statusCode;
+    out.retryable = err.isRetryable;
+    const perr = parseJson(err.responseBody)?.error as Record<string, unknown> | undefined;
+    if (perr?.code) out.code = perr.code;
+    if (typeof perr?.failed_generation === "string") out.failedGenLen = perr.failed_generation.length;
+  }
+  if (NoObjectGeneratedError.isInstance(err)) {
+    out.finishReason = err.finishReason;
+    out.inputTokens = err.usage?.inputTokens;
+    out.outputTokens = err.usage?.outputTokens;
+    if (typeof err.text === "string") out.textLen = err.text.length;
+  }
+  return out;
+}
+
+/** The raw model output from a failed structured call (the provider's
+ *  `failed_generation`, or the generated text the SDK couldn't parse), if any —
+ *  for dev-only diagnosis and a possible cross-model repair retry. */
+function aiErrorRawText(err: unknown): string | null {
+  if (NoObjectGeneratedError.isInstance(err) && typeof err.text === "string" && err.text.trim()) {
+    return err.text;
+  }
+  if (APICallError.isInstance(err)) {
+    const fg = (parseJson(err.responseBody)?.error as Record<string, unknown> | undefined)?.failed_generation;
+    if (typeof fg === "string" && fg.trim()) return fg;
+  }
+  return null;
+}
+
+/**
+ * Log a failed AI structured-output call so failures are diagnosable from the
+ * rotating field log (and the in-app Field Log window). Two channels:
+ *  - WARN: privacy-safe metadata (provider, model, status, error code,
+ *    finishReason, token counts, output length) — always written.
+ *  - DEBUG: the RAW model output (failed_generation / unparsed text, truncated).
+ *    The log plugin keeps DEBUG only in dev builds, so the actual content is
+ *    captured for debugging + a possible repair retry without leaking into
+ *    release logs.
+ */
+export function logAiError(scope: string, fields: Record<string, unknown>, err: unknown): void {
+  log.warn(`${scope}: failed`, { ...fields, ...aiErrorMeta(err) });
+  const raw = aiErrorRawText(err);
+  if (raw) log.debug(`${scope}: raw model output`, { ...fields, response: raw.slice(0, 4000) });
 }

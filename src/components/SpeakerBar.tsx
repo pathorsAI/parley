@@ -3,6 +3,7 @@ import { useStore, speakerKey } from "../lib/store";
 import { speakerDotClass } from "../lib/speakerColors";
 import { useI18n } from "../i18n";
 import { Input } from "@/components/ui/input";
+import { MeetingContextButton } from "./MeetingContextButton";
 import type { Source } from "../lib/types";
 
 interface SpeakerEntry {
@@ -22,8 +23,6 @@ export function SpeakerBar() {
   const segments = useStore((s) => s.segments);
   const names = useStore((s) => s.speakerNames);
   const setSpeakerName = useStore((s) => s.setSpeakerName);
-  const meetingContext = useStore((s) => s.meetingContext);
-  const setMeetingContext = useStore((s) => s.setMeetingContext);
 
   function defaultLabel(sp: Pick<SpeakerEntry, "source" | "speaker">) {
     if (sp.source === "mix") return t("speaker.speaker", { number: sp.speaker || 1 });
@@ -48,15 +47,10 @@ export function SpeakerBar() {
   }, [segments]);
 
   return (
-    <div className="flex shrink-0 flex-col gap-2 border-b px-5 py-2.5">
-      <Input
-        value={meetingContext}
-        onChange={(e) => setMeetingContext(e.target.value)}
-        placeholder={t("meeting.contextPlaceholder")}
-        className="h-8 text-xs"
-      />
+    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-5 py-2.5">
+      <MeetingContextButton />
       {speakers.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
+        <>
           <span className="text-[11px] text-muted-foreground">{t("meeting.speakers")}</span>
           {speakers.map((sp) => (
             <div key={sp.key} className="flex items-center gap-1.5">
@@ -69,7 +63,7 @@ export function SpeakerBar() {
               />
             </div>
           ))}
-        </div>
+        </>
       )}
     </div>
   );

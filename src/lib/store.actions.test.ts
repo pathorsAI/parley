@@ -164,6 +164,25 @@ describe("findings selection invalidation", () => {
     expect(s.findingSolutions).toEqual({});
   });
 
+  it("keeps the selection + its solution when the finding survives (streaming partials)", () => {
+    const entry = { status: "done", solution: null, error: null } as const;
+    useStore.setState({
+      findings: [makeFinding("a")],
+      selectedFindingId: "a",
+      findingSolutions: { a: { ...entry }, gone: { ...entry } },
+    });
+
+    // A later streamed partial commits a growing list with STABLE ids: "a" is
+    // still present (plus a newly-completed "b"); the no-longer-present "gone" drops.
+    const next = [makeFinding("a"), makeFinding("b")];
+    useStore.getState().setFindings(next);
+
+    const s = useStore.getState();
+    expect(s.findings).toEqual(next);
+    expect(s.selectedFindingId).toBe("a"); // survived the partial → still open
+    expect(s.findingSolutions).toEqual({ a: { ...entry } }); // its solution preserved; "gone" cleared
+  });
+
   it("setFindingSolution merges a patch into the per-finding entry", () => {
     useStore.getState().setFindingSolution("f1", { status: "running" });
     expect(useStore.getState().findingSolutions.f1).toEqual({

@@ -35,7 +35,9 @@ export function ActionItemsPanel({ onSeek }: { onSeek: (ms: number) => void }) {
           {keyMissing && (
             <p className="px-1 pt-4 text-center text-xs text-muted-foreground">{t("actionItems.noKey")}</p>
           )}
-          {!keyMissing && running && (
+          {/* Centered spinner only until the first item streams in; after that the
+              items render live and a slim footer hint shows it's still going. */}
+          {!keyMissing && running && items.length === 0 && (
             <p className="flex items-center justify-center gap-1.5 px-1 pt-4 text-center text-xs text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" />
               {t("actionItems.generating")}
@@ -79,6 +81,14 @@ export function ActionItemsPanel({ onSeek }: { onSeek: (ms: number) => void }) {
               </label>
             </div>
           ))}
+
+          {/* Still streaming, but rows are already showing. */}
+          {!keyMissing && running && items.length > 0 && (
+            <p className="flex items-center gap-1.5 px-1 pt-1 text-[11px] text-muted-foreground">
+              <Loader2 className="size-3 animate-spin" />
+              {t("actionItems.generating")}
+            </p>
+          )}
         </div>
       </ScrollArea>
     </div>

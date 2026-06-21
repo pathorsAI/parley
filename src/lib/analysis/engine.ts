@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useStore, isTrimmed, type AppMode } from "../store";
+import { useStore, isTrimmed, meetingBriefText, type AppMode } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { analyzeTimeline } from "../ai/timeline";
 import { evalSignature } from "../evaluations/presets";
@@ -9,7 +9,7 @@ import type { EvalDef, Settings, TimelineEvent, TranscriptSegment } from "../typ
 let analysisBusy = false;
 
 /** Bump when the analysis prompt/output shape changes, to invalidate caches. */
-const ANALYSIS_CACHE_VERSION = "2";
+const ANALYSIS_CACHE_VERSION = "5";
 
 /** Deterministic 32-bit FNV-1a hash → hex; good enough for a content cache key. */
 function fnv1a(s: string): string {
@@ -105,7 +105,10 @@ export async function listenForCacheClear(): Promise<() => void> {
  */
 export async function runAnalysis(opts?: { mode?: AppMode; force?: boolean }): Promise<void> {
   const state = useStore.getState();
-  const { settings, speakerNames, meetingContext } = state;
+  const { settings, speakerNames } = state;
+  // The brief folds the per-deal BATNA / target / bottom line into the context, so
+  // it both feeds the prompt AND keys the cache (editing setup → re-analysis).
+  const meetingContext = meetingBriefText(state);
   const mode = opts?.mode ?? state.appMode;
   // REPLAY: honor the trim keep-window — trimmed segments are excluded from analysis.
   const segments =
@@ -148,6 +151,9 @@ export async function runAnalysis(opts?: { mode?: AppMode; force?: boolean }): P
       meetingContext,
       names: speakerNames,
       mode,
+      // Stream findings into the store as they're generated so dots + rows appear
+      // progressively instead of all at once when the whole pass finishes.
+      onPartial: (partial) => useStore.getState().setFindings(partial),
     });
     if (cacheKey) writeAnalysisCache(cacheKey, events);
     useStore.getState().setFindings(events);

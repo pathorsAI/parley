@@ -1,4 +1,4 @@
-import { useStore, isTrimmed } from "../store";
+import { useStore, isTrimmed, meetingBriefText } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { generateActionItems } from "../ai/actionItems";
 
@@ -11,7 +11,8 @@ let actionItemsBusy = false;
  */
 export async function runActionItems(): Promise<void> {
   const state = useStore.getState();
-  const { settings, speakerNames, meetingContext, findings } = state;
+  const { settings, speakerNames, findings } = state;
+  const meetingContext = meetingBriefText(state);
   // Honor the trim keep-window (replay-only feature) — same as the analysis pass.
   const segments = state.segments.filter((s) => !isTrimmed(s, state.replayTrim));
   if (actionItemsBusy) return;
@@ -28,6 +29,8 @@ export async function runActionItems(): Promise<void> {
       findings,
       meetingContext,
       names: speakerNames,
+      // Stream items into the store so they appear one-by-one while generating.
+      onPartial: (partial) => useStore.getState().setActionItems(partial),
     });
     useStore.getState().setActionItems(items);
     useStore.getState().setActionItemsStatus("done");

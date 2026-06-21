@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useReplayPlayheadMs, useSetReplayPlayhead } from "./spine";
+import { useBumpReplaySeek, useReplayPlayheadMs, useSetReplayPlayhead } from "./spine";
 
 /** How often the audio's timeupdate is allowed to push into the store (~5/sec). */
 const PLAYHEAD_THROTTLE_MS = 200;
@@ -45,6 +45,7 @@ export function useReplayPlayer(durationMs: number, offsetMs = 0): ReplayPlayer 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playheadMs = useReplayPlayheadMs();
   const setPlayhead = useSetReplayPlayhead();
+  const bumpSeek = useBumpReplaySeek();
 
   const [playing, setPlaying] = useState(false);
   const [scrubbing, setScrubbing] = useState(false);
@@ -62,8 +63,13 @@ export function useReplayPlayer(durationMs: number, offsetMs = 0): ReplayPlayer 
       const a = audioRef.current;
       if (a) a.currentTime = (next + offsetMs) / 1000;
       setPlayhead(next);
+      // Mark discrete jumps (timeline finding, transcript row, action item, jump
+      // button) so the transcript scrolls to them. During a scrubber DRAG `seek`
+      // fires on every pointer move — don't scroll on each; endScrub bumps once on
+      // release instead.
+      if (!scrubbingRef.current) bumpSeek();
     },
-    [clamp, setPlayhead, offsetMs]
+    [clamp, setPlayhead, offsetMs, bumpSeek]
   );
 
   const toggle = useCallback(() => {
@@ -89,7 +95,9 @@ export function useReplayPlayer(durationMs: number, offsetMs = 0): ReplayPlayer 
   const endScrub = useCallback(() => {
     scrubbingRef.current = false;
     setScrubbing(false);
-  }, []);
+    // The drag/click is done — scroll the transcript to the released position once.
+    bumpSeek();
+  }, [bumpSeek]);
 
   const onTimeUpdate = useCallback(() => {
     const a = audioRef.current;

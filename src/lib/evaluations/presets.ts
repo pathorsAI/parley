@@ -23,19 +23,34 @@ export function buildPresetEvalDefs(t: T): EvalDef[] {
       name: t("tpl.eval.deception.name"),
       description: t("tpl.eval.deception.desc"),
       prompt:
-        "You are monitoring the OTHER party ('them') for signs of deception or manipulation. " +
-        "Look for: internal contradictions across what they've said, evasive non-answers, " +
-        "unverifiable grand claims, moving goalposts, false urgency, or pressure tactics. " +
-        "Flag only when you have concrete textual evidence. Cite the exact conflicting or suspicious quotes.",
+        "You are monitoring the OTHER party ('them') for active DECEPTION or MANIPULATION (bad-faith tactics) " +
+        "— NOT mere inconsistency. Look for: evasive non-answers, bluffing, unverifiable grand claims, moving " +
+        "the goalposts, manufactured/false urgency, or pressure tactics meant to mislead or coerce. A legitimate " +
+        "constraint, an honest 'I don't know', or a stated change of position for a real reason is NOT deception. " +
+        "Flag only with concrete textual evidence; quote the suspicious lines.",
+    },
+    {
+      id: "inconsistency",
+      name: t("tpl.eval.inconsistency.name"),
+      description: t("tpl.eval.inconsistency.desc"),
+      prompt:
+        "Track whether the OTHER party ('them') CONTRADICTS THEMSELVES: a later statement that genuinely " +
+        "conflicts with something they said earlier — a number, commitment, timeline, position, or fact that " +
+        "changed WITHOUT a stated reason. Flag only a real contradiction and cite BOTH conflicting quotes with " +
+        "their timestamps. A stated change of position for a legitimate reason, or a constraint/concern they " +
+        "raise (e.g. 'if I sign this as-is I'd breach a prior commitment'), is NOT an inconsistency — do not flag it.",
     },
     {
       id: "pushback",
       name: t("tpl.eval.pushback.name"),
       description: t("tpl.eval.pushback.desc"),
       prompt:
-        "Identify moments where I ('me') should push back. Look for one-sided terms, unreasonable " +
-        "demands, assumptions stated as facts, or concessions being extracted from me without reciprocity. " +
-        "If found, flag it and suggest specifically what to push back on.",
+        "Identify moments where I ('me') should push back. Pushing back is NOT only arguing a term — it also " +
+        "means calling out vague over-promising or grand 'big-picture' pitches with no specifics, and pressing " +
+        "when the other party blurs focus or paints a rosy picture to dodge a hard point. Look for: one-sided " +
+        "terms, unreasonable demands, assumptions stated as facts, concessions extracted from me without " +
+        "reciprocity, or hand-wavy promises I should pin down. Flag it and suggest specifically what to push " +
+        "back on or what concrete commitment to ask for.",
     },
     {
       id: "unanswered",
@@ -75,6 +90,69 @@ export function buildPresetEvalDefs(t: T): EvalDef[] {
         "happens, flag it, name the specific point they slid off, and suggest how I can steer back. This helps " +
         "a less-experienced operator catch deflection in the moment.",
     },
+    {
+      id: "leverage",
+      name: t("tpl.eval.leverage.name"),
+      description: t("tpl.eval.leverage.desc"),
+      prompt:
+        "Apply the principled-negotiation 'invent OPTIONS for mutual gain' principle: spot chances to EXPAND " +
+        "THE PIE rather than just split it — issues the two sides value DIFFERENTLY that can be traded, package " +
+        "deals, or contingent terms. Using the meeting context and MY stated target/direction, surface a concrete " +
+        "option ME can propose (what ME gives, what ME asks for in return) that moves toward MY goal while still " +
+        "being attractive to THEM — so ME negotiates on value, not just position.",
+    },
+  ];
+}
+
+/**
+ * Principled-negotiation evaluations (Fisher & Ury, "Getting to Yes") — interests
+ * over positions, BATNA, ZOPA, and objective criteria. They lean on the per-deal
+ * setup (my BATNA / target / bottom line) injected into the prompt context, so
+ * they're bundled into the negotiation-flavoured templates rather than the general
+ * default set.
+ */
+function principledDefs(t: T): EvalDef[] {
+  return [
+    {
+      id: "interests",
+      name: t("tpl.eval.interests.name"),
+      description: t("tpl.eval.interests.desc"),
+      prompt:
+        "Apply 'focus on INTERESTS, not positions'. A position is what a side DEMANDS; the interest is the " +
+        "underlying WHY — the need, fear, or goal behind it. Flag when the conversation is locked on positions, " +
+        "name the likely interest behind THEM's position (and behind MINE), and suggest how ME can satisfy the " +
+        "interest instead of haggling the position. Quote the positional line.",
+    },
+    {
+      id: "batna",
+      name: t("tpl.eval.batna.name"),
+      description: t("tpl.eval.batna.desc"),
+      prompt:
+        "Track BATNA (Best Alternative To a Negotiated Agreement) — each side's walk-away option, the true " +
+        "source of leverage. Using MY BATNA and bottom line from the setup, flag: signals about THEM's " +
+        "alternatives (strong or weak), moments THEM tests or probes MY alternative, and when the conversation " +
+        "pushes ME toward MY bottom line. Note who currently holds the stronger BATNA and what it means for MY leverage.",
+    },
+    {
+      id: "zopa",
+      name: t("tpl.eval.zopa.name"),
+      description: t("tpl.eval.zopa.desc"),
+      prompt:
+        "Map the ZOPA (Zone Of Possible Agreement) on the key terms (price, scope, timing, equity, …): track " +
+        "what each side reveals about their acceptable range versus MY target and bottom line from the setup. " +
+        "Flag when an offer falls OUTSIDE the likely ZOPA, when the revealed ranges OVERLAP (a deal is reachable), " +
+        "or when a number is still missing to locate the zone. Be concrete about which term and the implied range.",
+    },
+    {
+      id: "criteria",
+      name: t("tpl.eval.criteria.name"),
+      description: t("tpl.eval.criteria.desc"),
+      prompt:
+        "Apply 'insist on OBJECTIVE CRITERIA'. Flag when a number or term is justified by will, pressure, or " +
+        "'that's just our policy' rather than an objective standard (market rate, precedent, independent " +
+        "benchmark, a formula). Name the objective criterion ME could anchor to so the term is decided on merit, " +
+        "not power. Quote the unsupported claim.",
+    },
   ];
 }
 
@@ -98,7 +176,11 @@ function nextMove(t: T): EvalDef {
 /** Build the full built-in template library for a given language. */
 export function buildPresetEvalTemplates(t: T): EvalTemplate[] {
   const core = buildPresetEvalDefs(t);
-  const [deception, pushback, unanswered, , claims, topicShift] = core;
+  const [deception, inconsistency, pushback, unanswered, , claims, topicShift, leverage] = core;
+  const [interests, batna, zopa, criteria] = principledDefs(t);
+  // The clean principled-negotiation set (interests/BATNA/ZOPA/criteria + options
+  // + the key tactics), offered as its own template.
+  const principled: EvalDef[] = [interests, batna, zopa, criteria, leverage, pushback, deception, inconsistency];
 
   const interviewDefs: EvalDef[] = [
     {
@@ -208,11 +290,17 @@ export function buildPresetEvalTemplates(t: T): EvalTemplate[] {
     },
     unanswered, // unanswered questions
     topicShift, // topic shift / focus dilution
+    leverage, // trade-offs to steer toward my goal
     nextMove(t), // recommend the next move
   ];
 
   const dealDefs: EvalDef[] = [
+    interests, // interests, not positions
+    batna, // BATNA / walk-away leverage
+    zopa, // zone of possible agreement
+    criteria, // objective criteria
     deception, // deception / pressure tactics
+    inconsistency, // self-contradiction
     pushback, // when to push back
     {
       id: "ng-concessions",
@@ -225,6 +313,7 @@ export function buildPresetEvalTemplates(t: T): EvalTemplate[] {
     unanswered, // unanswered questions
     claims, // claims to verify
     topicShift, // topic shift / focus dilution
+    leverage, // trade-offs to steer toward my goal
     nextMove(t), // recommend the next move
   ];
 
@@ -257,12 +346,14 @@ export function buildPresetEvalTemplates(t: T): EvalTemplate[] {
         "customer concentration, churn/retention, unit economics, legal/compliance, cap table, key-person risk, " +
         "tech debt/security. Flag the gaps so I ('me') can raise them before the call ends.",
     },
-    deception, // deception / inconsistency
+    deception, // deception / manipulation
+    inconsistency, // self-contradiction
     topicShift, // topic shift / focus dilution
   ];
 
   return [
     { id: "tpl-general", name: t("tpl.evalSet.tpl-general.name"), builtin: true, evals: core },
+    { id: "tpl-principled", name: t("tpl.evalSet.tpl-principled.name"), builtin: true, evals: principled },
     { id: "tpl-interview", name: t("tpl.evalSet.tpl-interview.name"), builtin: true, evals: interviewDefs },
     { id: "tpl-salary", name: t("tpl.evalSet.tpl-salary.name"), builtin: true, evals: salaryDefs },
     { id: "tpl-sales", name: t("tpl.evalSet.tpl-sales.name"), builtin: true, evals: salesDefs },

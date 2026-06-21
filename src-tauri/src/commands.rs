@@ -275,6 +275,38 @@ pub fn get_templates_path(app: AppHandle) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Read the tail of the rotating field log (`<app_log_dir>/parley.log`) for the
+/// live in-app log viewer. Returns at most `max_bytes` from the end; a partial
+/// first line (from cutting mid-line) is dropped so callers always get whole
+/// lines. Empty string if the file doesn't exist yet.
+#[tauri::command]
+pub fn read_log_tail(app: AppHandle, max_bytes: u64) -> Result<String, String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    let path = dir.join("parley.log");
+    let mut file = match std::fs::File::open(&path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let len = file.metadata().map_err(|e| e.to_string())?.len();
+    let cap = max_bytes.max(1);
+    let start = len.saturating_sub(cap);
+    file.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+
+    let mut text = String::from_utf8_lossy(&buf).into_owned();
+    // Drop the leading partial line when we started mid-file.
+    if start > 0 {
+        if let Some(nl) = text.find('\n') {
+            text = text.split_off(nl + 1);
+        }
+    }
+    Ok(text)
+}
+
 /// Path to the live session snapshot the built-in MCP server reads.
 pub(crate) fn session_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;

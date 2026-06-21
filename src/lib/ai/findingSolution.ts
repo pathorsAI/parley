@@ -1,12 +1,12 @@
-import { generateObject } from "ai";
 import { z } from "zod";
-import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider";
+import { JSON_MODE_INSTRUCTION } from "./provider";
+import { generateObjectResilient } from "./generate";
 import { formatClock, transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext, outputLanguageInstruction } from "./profile";
 import type { FindingSolution, Settings, TimelineEvent, TranscriptSegment } from "../types";
 
-const moveSchema = z.object({
+const replySchema = z.object({
   kind: z
     .enum(["rebut", "reframe", "trade", "concede_redirect"])
     .describe(
@@ -14,43 +14,43 @@ const moveSchema = z.object({
         "trade = don't argue the logic, use negotiation leverage instead; " +
         "concede_redirect = grant the small point, then pivot to what matters."
     ),
-  approach: z
+  reply: z
     .string()
-    .describe("A concrete move ME should have made — phrased as something ME could actually say or do."),
-  why: z.string().describe("One sentence on why this is the better move."),
-  predictedReaction: z
+    .describe(
+      "A VERBATIM line MY SIDE (ME) says next at this moment — MY words, ready to use, no stage directions. NEVER a line THEM would say."
+    ),
+  consideration: z
     .string()
-    .describe("Realistic prediction of how a tough, self-interested THEM would react to this move."),
+    .describe(
+      "ONE short line: the key trade-off, or what this reply does for ME's position in the OVERALL negotiation."
+    ),
 });
 
-// Strict json_schema: every property must be present in `required`, so use
-// `.nullable()` (not `.optional()`). Downstream code is null-safe.
 const schema = z.object({
-  summary: z
-    .string()
-    .describe("One line: what went wrong (ME) or what THEM did, and what ME should do instead."),
-  moves: z.array(moveSchema).describe("1-3 concrete corrective moves, spanning kinds where sensible."),
-  suggestedLine: z
-    .string()
-    .nullable()
-    .describe('For an ME-side mistake, a VERBATIM line ME could have said instead; null if not applicable.'),
+  replies: z
+    .array(replySchema)
+    .describe("2-3 distinct ready-to-use reply options, spanning angles (rebut/reframe/trade/concede_redirect) where sensible."),
 });
 
-const SYSTEM = `You are the coaching engine for Parley. The user ("ME") is in a negotiation/interview against the other party ("THEM"). You are given ONE notable moment from the conversation plus the surrounding transcript. Show ME how it should have been handled.
+const SYSTEM = `You are the reply coach for Parley. The user ("ME") is in a negotiation/interview against the other party ("THEM"). You are given ONE notable moment plus the FULL conversation transcript.
 
-- If the moment is a MISTAKE / MISSED MOVE BY ME (side = "me"): explain what ME should have said or done instead, and provide a VERBATIM "suggestedLine" ME could have used at that moment.
-- If the moment is an ARGUMENT / PRESSURE / CLAIM BY THEM (side = "them"): show ME how to counter it. Set "suggestedLine" to null unless a specific verbatim reply is clearly the strongest move.
+WHOSE REPLY — CRITICAL: every "reply" is the next line MY SIDE ("ME") says, in MY voice and serving MY interest. You are coaching ME, NOT THEM — NEVER write what THEM would say, and NEVER continue, defend, or strengthen THEM's argument. The self-profile and meeting context tell you which speaker is ME; everyone else is THEM. If the moment's side is "them", ME is RESPONDING TO / countering what THEM did there; if the side is "me", ME is fixing MY OWN misstep — what ME should have said instead. If it's ever unclear who is who, infer ME from the profile + meeting context (and which side each speaker argues for) and ALWAYS reply from MY side.
 
-For each move give a concrete "approach" (something ME could actually say/do), a one-sentence "why", and a realistic "predictedReaction" from a tough, self-interested THEM. Offer 1-3 moves spanning the angles where sensible (rebut / reframe / trade / concede_redirect) — don't force kinds that don't fit. Ground everything in what was actually said; never invent quotes. Respond ENTIRELY in the language of the transcript.`;
+Think about the WHOLE negotiation — the overall stakes, leverage, and where the deal is heading — not just this one local exchange. A reply that wins this point but weakens ME's position in the bigger picture is a bad reply. Then hand ME ready-to-use ways to reply at this moment.
 
-/** Window (ms) of transcript on each side of the finding to hand the model. */
-const WINDOW_MS = 60_000;
+Ground the replies in PRINCIPLED NEGOTIATION: focus on INTERESTS not positions, appeal to OBJECTIVE CRITERIA rather than raw pressure, look for OPTIONS that create mutual gain, and account for MY BATNA / target / bottom line (given in the context, if any) and the ZOPA. Never invent facts, numbers, or a BATNA that wasn't given.
+
+Output ONLY:
+- 2-3 distinct "reply" options, each a VERBATIM line ME can say right now. Span different strategic angles where it helps (rebut / reframe / trade / concede_redirect) — don't force angles that don't fit.
+- For each, ONE short "consideration": the key trade-off, or what the reply does for ME's position in the overall negotiation.
+
+Be terse. Do NOT explain at length what went wrong, summarize, or narrate the situation — ME already knows the moment. Ground every reply in what was actually said across the whole transcript; never invent quotes or facts. Respond ENTIRELY in the language of the transcript.`;
 
 /**
- * Generate the "how it should have been done" solution for ONE finding. Reads a
- * window of transcript around the moment (full transcript fallback) plus the
- * finding fields, and branches the framing on `finding.side`. Mode-agnostic:
- * works for LIVE (transcript so far) and REPLAY (whole recording) alike.
+ * Generate the "how should I reply" solution for ONE finding. Reads the FULL
+ * transcript (global — the model weighs the whole negotiation, not just the
+ * local exchange) plus the finding fields. Mode-agnostic: works for LIVE
+ * (transcript so far) and REPLAY (whole recording) alike.
  */
 export async function generateFindingSolution(opts: {
   settings: Settings;
@@ -61,38 +61,35 @@ export async function generateFindingSolution(opts: {
 }): Promise<FindingSolution> {
   const { settings, finding, segments, meetingContext, names } = opts;
 
-  const near = segments.filter(
-    (s) => s.endMs >= finding.atMs - WINDOW_MS && s.startMs <= finding.atMs + WINDOW_MS
-  );
-  const windowed = transcriptWithTimestamps(near.length ? near : segments, names);
+  // Global: hand the model the entire conversation so its reply accounts for the
+  // whole negotiation, not just a 1-2 minute window around the moment.
+  const fullTranscript = transcriptWithTimestamps(segments, names);
 
   const ctx =
     profileContext(settings) +
     (meetingContext?.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "");
 
+  const quotes = finding.quotes ?? [];
   const moment =
-    `The moment (at ${formatClock(finding.atMs)}, side = ${finding.side}):\n` +
+    `The moment to reply to (at ${formatClock(finding.atMs)}, side = ${finding.side}):\n` +
     `- ${finding.title}: ${finding.detail}` +
-    (finding.quote ? `\n- Quote: "${finding.quote}"` : "");
+    (quotes.length ? `\n- Quote(s):\n${quotes.map((q) => `  - "${q}"`).join("\n")}` : "");
 
-  const { object, usage } = await generateObject({
-    model: getModel(settings, "eval"),
-    providerOptions: getProviderOptions(settings, "eval"),
+  const { object, usage } = await generateObjectResilient({
+    settings,
+    kind: "eval",
     schema,
     system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
-    prompt: `${ctx}${moment}\n\nSurrounding transcript:\n${windowed || "(no transcript)"}\n\nShow ME how this should have been handled.`,
+    prompt: `${ctx}${moment}\n\nFull transcript:\n${fullTranscript || "(no transcript)"}\n\nWeigh the whole negotiation, then give ME the reply options — each a line MY side would say next, never THEM's.`,
   });
   void recordLlmUsage(settings, "eval", "eval", usage);
 
   return {
     findingId: finding.id,
-    summary: object.summary,
-    moves: (object.moves ?? []).map((m) => ({
-      kind: m.kind,
-      approach: m.approach,
-      why: m.why,
-      predictedReaction: m.predictedReaction,
+    replies: (object.replies ?? []).map((r) => ({
+      kind: r.kind,
+      reply: r.reply,
+      consideration: r.consideration,
     })),
-    suggestedLine: object.suggestedLine?.trim() ? object.suggestedLine.trim() : null,
   };
 }
