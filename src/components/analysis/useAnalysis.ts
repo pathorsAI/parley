@@ -1,9 +1,20 @@
+import { useMemo } from "react";
 import { useStore } from "../../lib/store";
 import type { TimelineEvent } from "../../lib/types";
 
 /** Reactive selectors over the shared analysis slice — used by both modes. */
 export function useFindings(): TimelineEvent[] {
   return useStore((s) => s.findings);
+}
+
+/**
+ * Map of evaluation id → display name, for labelling which eval a finding came
+ * from (findings with source === "eval" carry an `evalId`). Memoized off the
+ * runtime `evaluations` so it only rebuilds when the active set changes.
+ */
+export function useEvalNames(): Map<string, string> {
+  const evaluations = useStore((s) => s.evaluations);
+  return useMemo(() => new Map(evaluations.map((e) => [e.id, e.name])), [evaluations]);
 }
 
 export function useAnalysisStatus() {

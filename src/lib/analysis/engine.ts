@@ -148,6 +148,9 @@ export async function runAnalysis(opts?: { mode?: AppMode; force?: boolean }): P
       meetingContext,
       names: speakerNames,
       mode,
+      // Stream findings into the store as they're generated so dots + rows appear
+      // progressively instead of all at once when the whole pass finishes.
+      onPartial: (partial) => useStore.getState().setFindings(partial),
     });
     if (cacheKey) writeAnalysisCache(cacheKey, events);
     useStore.getState().setFindings(events);

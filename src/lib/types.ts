@@ -78,44 +78,34 @@ export interface Evaluation extends EvalDef {
 }
 
 /**
- * War-game move taxonomy. Reused by the per-finding solution engine (FindingMove)
- * and the interactive opponent-reply branch (WargameBranch).
+ * Strategic-angle taxonomy for reply options. Used by the per-finding solution
+ * engine ({@link SolutionReply}) to tag each suggested reply and drive its accent
+ * colour + i18n label (`wargame.kind.*`).
  */
 export type WargameStrategyKind = "rebut" | "reframe" | "trade" | "concede_redirect";
 
-/** One turn in an on-demand opponent-reply branch simulation. */
-export interface WargameBranchTurn {
-  role: "me" | "them";
-  text: string;
-}
-
 /**
- * A per-finding "how it should have been done" solution. The opponent war-gaming
- * engine, repurposed from a standalone tab into a lazy drilldown on a single
- * timeline finding: given one notable moment, what ME should have said/done.
+ * A per-finding "how should I reply" solution. Given ONE notable moment, the
+ * engine reasons over the WHOLE negotiation (global, not just the local
+ * exchange) and returns a few ready-to-use reply options — minimal prose, no
+ * diagnosis of what went wrong.
  */
 
-/** One concrete corrective move ME could have made, with its likely fallout. */
-export interface FindingMove {
+/** One concrete way ME could reply at this moment, with a one-line consideration. */
+export interface SolutionReply {
   /** Reuses the war-game angle taxonomy so accent colors + i18n labels carry over. */
   kind: WargameStrategyKind;
-  /** A concrete move ME could make/say at the table. */
-  approach: string;
-  /** One sentence on why this is the better move — the teaching value. */
-  why: string;
-  /** Realistic prediction of how THEM would react to this move. */
-  predictedReaction: string;
+  /** The actual line ME should say — verbatim, ready to use at the table. */
+  reply: string;
+  /** ONE short line: the key trade-off / what this reply does for the overall negotiation. */
+  consideration: string;
 }
 
-/** The full solution for one finding: a headline plus 1-3 moves. */
+/** The full solution for one finding: a few distinct reply options. */
 export interface FindingSolution {
   findingId: string;
-  /** One-line "what went wrong / what to do instead". */
-  summary: string;
-  /** 1-3 concrete corrective moves, ideally spanning kinds where sensible. */
-  moves: FindingMove[];
-  /** For ME-side findings: a verbatim line ME could have said instead (or null). */
-  suggestedLine?: string | null;
+  /** 2-3 distinct ready-to-use reply options, spanning angles where sensible. */
+  replies: SolutionReply[];
 }
 
 /** Lazy per-finding solution cache entry, keyed by TimelineEvent.id in the store. */

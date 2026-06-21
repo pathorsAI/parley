@@ -129,8 +129,10 @@ export const PROVIDERS: ProviderInfo[] = [
     baseURL: "https://api.moonshot.ai/v1",
     apiKeyField: "kimiApiKey",
     keyPlaceholder: "sk-…",
-    models: ["kimi-k2-0905-preview", "kimi-k2-turbo-preview", "moonshot-v1-128k"],
-    defaults: { ask: "kimi-k2-turbo-preview", eval: "kimi-k2-0905-preview" },
+    // Moonshot ships new K2 point-releases often; pick the exact current id with
+    // the "Custom model" field in Settings if a newer one isn't listed here.
+    models: ["kimi-k2-thinking", "kimi-k2-turbo-preview", "kimi-k2-0905-preview"],
+    defaults: { ask: "kimi-k2-turbo-preview", eval: "kimi-k2-thinking" },
   },
   {
     id: "ollama",
@@ -157,8 +159,15 @@ export const PROVIDERS: ProviderInfo[] = [
     apiKeyField: "openrouterApiKey",
     keyPlaceholder: "sk-or-…",
     supportsStructuredOutputs: true,
-    models: ["openai/gpt-5.5", "openai/gpt-4.1", "anthropic/claude-sonnet-4.5", "openai/gpt-oss-120b"],
-    defaults: { ask: "openai/gpt-4.1", eval: "openai/gpt-5.5" },
+    models: [
+      "openai/gpt-5.5",
+      "anthropic/claude-opus-4.8",
+      "anthropic/claude-sonnet-4.6",
+      "z-ai/glm-5.2",
+      "moonshotai/kimi-k2-thinking",
+      "openai/gpt-oss-120b",
+    ],
+    defaults: { ask: "anthropic/claude-sonnet-4.6", eval: "openai/gpt-5.5" },
   },
 ];
 

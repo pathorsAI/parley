@@ -1,6 +1,6 @@
-import { generateObject } from "ai";
 import { z } from "zod";
-import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider";
+import { JSON_MODE_INSTRUCTION } from "./provider";
+import { streamObjectResilient } from "./generate";
 import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext, outputLanguageInstruction } from "./profile";
@@ -34,10 +34,31 @@ You are given the FINDINGS from the retro analysis (notable moments, each with a
 
 Be selective — surface the actions that genuinely matter (typically 3-7), not busywork. Ground everything in what was actually said. Respond ENTIRELY in the language of the transcript.`;
 
+/** A (possibly half-streamed) raw action item — every field may be absent. */
+type RawItem = { text?: string | null; rationale?: string | null; linkedEventId?: string | null; time?: string | null };
+
+/** Resolve ONE raw item → an ActionItem, or null if it isn't ready yet. `id` is
+ *  caller-supplied so it's stable across partial updates. */
+function mapActionItem(it: RawItem, id: string, byId: Map<string, TimelineEvent>): ActionItem | null {
+  if (!it.text || !it.rationale) return null; // still streaming → don't show a blank row
+  const linked = it.linkedEventId && byId.has(it.linkedEventId) ? byId.get(it.linkedEventId)! : null;
+  const atMs = linked ? linked.atMs : parseClockMs(it.time ?? undefined);
+  return {
+    id,
+    text: it.text,
+    rationale: it.rationale,
+    done: false,
+    linkedEventId: linked ? linked.id : null,
+    atMs: atMs ?? null,
+    severity: linked?.severity,
+  };
+}
+
 /**
  * Generate post-meeting action items from the whole-recording analysis findings
  * plus the full transcript. Each item links back to the finding/moment that
- * motivated it (when one applies) so the UI can seek to it. REPLAY-only.
+ * motivated it (when one applies) so the UI can seek to it. Streams items into
+ * `onPartial` as they're produced. REPLAY-only.
  */
 export async function generateActionItems(opts: {
   settings: Settings;
@@ -45,8 +66,10 @@ export async function generateActionItems(opts: {
   findings: TimelineEvent[];
   meetingContext?: string;
   names?: Record<string, string>;
+  /** Called with the cumulative items as they stream in. */
+  onPartial?: (items: ActionItem[]) => void;
 }): Promise<ActionItem[]> {
-  const { settings, segments, findings, meetingContext, names } = opts;
+  const { settings, segments, findings, meetingContext, names, onPartial } = opts;
   const transcript = transcriptWithTimestamps(segments, names);
   if (!transcript.trim()) return [];
 
@@ -57,27 +80,36 @@ export async function generateActionItems(opts: {
     ? findings.map((f) => `### id: ${f.id}\n[${f.side}] ${f.title}: ${f.detail}`).join("\n\n")
     : "(no findings)";
 
-  const { object, usage } = await generateObject({
-    model: getModel(settings, "eval"),
-    providerOptions: getProviderOptions(settings, "eval"),
+  const byId = new Map(findings.map((f) => [f.id, f]));
+  // Stable id per array index so streamed rows keep their identity as they fill in.
+  const ids: string[] = [];
+  const idAt = (i: number) => (ids[i] ??= crypto.randomUUID());
+  const placeItems = (raw: ReadonlyArray<RawItem | undefined> | undefined): ActionItem[] => {
+    const out: ActionItem[] = [];
+    (raw ?? []).forEach((it, i) => {
+      const a = it ? mapActionItem(it, idAt(i), byId) : null;
+      if (a) out.push(a);
+    });
+    return out;
+  };
+
+  // Only push when a new item becomes placeable (see timeline.ts for rationale).
+  let emittedCount = -1;
+  const { object, usage } = await streamObjectResilient({
+    settings,
+    kind: "eval",
     schema,
     system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: `${ctx}Findings:\n${findingsList}\n\nFull transcript:\n${transcript}`,
+    onPartial: (p) => {
+      if (!onPartial) return;
+      const placed = placeItems((p as { items?: (RawItem | undefined)[] }).items);
+      if (placed.length === emittedCount) return;
+      emittedCount = placed.length;
+      onPartial(placed);
+    },
   });
   void recordLlmUsage(settings, "eval", "eval", usage);
 
-  const byId = new Map(findings.map((f) => [f.id, f]));
-  return object.items.map((it) => {
-    const linked = it.linkedEventId && byId.has(it.linkedEventId) ? byId.get(it.linkedEventId)! : null;
-    const atMs = linked ? linked.atMs : parseClockMs(it.time ?? undefined);
-    return {
-      id: crypto.randomUUID(),
-      text: it.text,
-      rationale: it.rationale,
-      done: false,
-      linkedEventId: linked ? linked.id : null,
-      atMs: atMs ?? null,
-      severity: linked?.severity,
-    };
-  });
+  return placeItems(object.items);
 }

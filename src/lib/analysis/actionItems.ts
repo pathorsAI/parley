@@ -28,6 +28,8 @@ export async function runActionItems(): Promise<void> {
       findings,
       meetingContext,
       names: speakerNames,
+      // Stream items into the store so they appear one-by-one while generating.
+      onPartial: (partial) => useStore.getState().setActionItems(partial),
     });
     useStore.getState().setActionItems(items);
     useStore.getState().setActionItemsStatus("done");

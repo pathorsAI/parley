@@ -138,6 +138,14 @@ interface ParleyState {
   exitReplay: () => void;
   /** Move the replay playhead (drives both audio position and the transcript). */
   setReplayPlayhead: (ms: number) => void;
+  /**
+   * Bumped on every EXPLICIT seek (scrubber, timeline finding, transcript row,
+   * action item) — but NOT on passive playback ticks. The transcript watches it
+   * to scroll the active line into view on a jump even while paused, so audio ⇄
+   * transcript ⇄ timeline stay visually in sync in both directions.
+   */
+  replaySeekNonce: number;
+  bumpReplaySeek: () => void;
 
   /** Keep-window: segments outside it are excluded from the view + all analysis.
    *  null = no trim. See {@link ReplayTrim} and {@link isTrimmed}. */
@@ -270,6 +278,7 @@ export const useStore = create<ParleyState>()(
       appMode: "live",
       replay: null,
       replayPlayheadMs: 0,
+      replaySeekNonce: 0,
       replayTrim: null,
       ingestWizardOpen: false,
       ingestWizardStep: "count",
@@ -356,6 +365,7 @@ export const useStore = create<ParleyState>()(
   },
 
   setReplayPlayhead: (ms) => set({ replayPlayheadMs: Math.max(0, ms) }),
+  bumpReplaySeek: () => set((s) => ({ replaySeekNonce: s.replaySeekNonce + 1 })),
 
   setReplayTrim: (trim) => set({ replayTrim: trim }),
 
@@ -374,9 +384,24 @@ export const useStore = create<ParleyState>()(
   closeIngestWizard: () => set({ ingestWizardOpen: false, ingestAudioPath: null }),
   releaseAnalysisGate: () => set({ analysisGate: "open" }),
 
-  // Replacing the findings list invalidates the selection + any cached solutions
-  // (the model mints fresh finding ids each pass, so old solutions are stale).
-  setFindings: (events) => set({ findings: events, selectedFindingId: null, findingSolutions: {} }),
+  // Replace the findings list, keeping the selection + cached solutions of any
+  // finding that STILL EXISTS in the new list. During streaming, partials commit
+  // a growing list with stable ids, so a finding the user opened mid-stream (and
+  // its in-flight "how to reply" solution) survives the next partial. A fresh
+  // analysis pass mints new ids, so nothing matches → selection + solutions clear.
+  setFindings: (events) =>
+    set((s) => {
+      const ids = new Set(events.map((e) => e.id));
+      const keepSel = !!s.selectedFindingId && ids.has(s.selectedFindingId);
+      const findingSolutions = Object.fromEntries(
+        Object.entries(s.findingSolutions).filter(([id]) => ids.has(id))
+      );
+      return {
+        findings: events,
+        selectedFindingId: keepSel ? s.selectedFindingId : null,
+        findingSolutions,
+      };
+    }),
 
   dropFindingsOutsideTrim: () =>
     set((s) => {

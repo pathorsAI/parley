@@ -2,6 +2,7 @@ import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatClock } from "../../lib/store";
 import { useI18n } from "../../i18n";
+import { useEvalNames } from "./useAnalysis";
 import type { TimelineEvent } from "../../lib/types";
 
 const SEVERITY_DOT: Record<TimelineEvent["severity"], string> = {
@@ -26,6 +27,8 @@ export function FindingRow({
   onSelect: (event: TimelineEvent) => void;
 }) {
   const { t } = useI18n();
+  const evalNames = useEvalNames();
+  const evalName = event.source === "eval" ? evalNames.get(event.evalId ?? "") : undefined;
   return (
     <li className={cn("rounded-lg border", selected ? "border-primary/50 bg-muted/30" : "border-border")}>
       <button
@@ -44,6 +47,14 @@ export function FindingRow({
             </span>
             {event.source === "extra" && (
               <span className="rounded bg-muted px-1 text-[9px] text-muted-foreground">{t("timeline.extra")}</span>
+            )}
+            {evalName && (
+              <span
+                className="truncate rounded bg-muted px-1 text-[9px] text-muted-foreground"
+                title={`${t("timeline.evalLabel")}: ${evalName}`}
+              >
+                {evalName}
+              </span>
             )}
           </span>
           <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{event.detail}</span>

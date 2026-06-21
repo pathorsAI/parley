@@ -1,6 +1,6 @@
-import { generateObject } from "ai";
 import { z } from "zod";
-import { getModel, getProviderOptions, JSON_MODE_INSTRUCTION } from "./provider";
+import { JSON_MODE_INSTRUCTION } from "./provider";
+import { streamObjectResilient } from "./generate";
 import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext, outputLanguageInstruction } from "./profile";
@@ -86,6 +86,53 @@ function startMsForQuote(quote: string | null | undefined, segments: TranscriptS
   return null;
 }
 
+/** A (possibly half-streamed) raw event from the model — every field may be absent. */
+type RawEvent = {
+  time?: string | null;
+  side?: "me" | "them";
+  severity?: "info" | "warn" | "critical";
+  source?: "eval" | "extra";
+  evalId?: string | null;
+  title?: string | null;
+  detail?: string | null;
+  quote?: string | null;
+};
+
+/**
+ * Place ONE raw model event onto the timeline, or return null if it isn't ready
+ * (still streaming → missing a rendered field, or can't be anchored in time). The
+ * `id` is supplied by the caller so it stays stable across partial updates.
+ */
+function mapTimelineEvent(
+  e: RawEvent,
+  id: string,
+  segments: TranscriptSegment[],
+  evalIds: Set<string>,
+  maxMs: number
+): TimelineEvent | null {
+  // Require the fields the UI renders so a half-streamed row never flashes blank.
+  if (!e.side || !e.severity || !e.title || !e.detail) return null;
+  // Time-anchor: trust the cited clock when plausible, else fuzzy-match the quote.
+  let atMs = parseClockMs(e.time ?? undefined);
+  if (atMs === null || atMs < 0 || (maxMs !== Infinity && atMs > maxMs + 5000)) {
+    atMs = startMsForQuote(e.quote, segments);
+  }
+  if (atMs === null) return null; // can't place it in time yet → drop
+
+  const hasEval = e.source === "eval" && !!e.evalId && evalIds.has(e.evalId);
+  return {
+    id,
+    atMs: Math.max(0, atMs),
+    side: e.side,
+    severity: e.severity,
+    source: hasEval ? "eval" : "extra",
+    evalId: hasEval ? e.evalId ?? undefined : undefined,
+    title: e.title,
+    detail: e.detail,
+    quote: e.quote?.trim() || undefined,
+  };
+}
+
 /**
  * Whole-recording retro analysis. Runs over the FULL transcript (NOT masked) and
  * returns time-anchored findings for the replay timeline. Each finding is tagged
@@ -100,8 +147,10 @@ export async function analyzeTimeline(opts: {
   names?: Record<string, string>;
   /** "replay" (default) frames the analysis as a finished retro; "live" as in-progress. */
   mode?: "live" | "replay";
+  /** Called with the cumulative placed findings as they stream in (for live UI). */
+  onPartial?: (events: TimelineEvent[]) => void;
 }): Promise<TimelineEvent[]> {
-  const { settings, segments, evals, meetingContext, names, mode = "replay" } = opts;
+  const { settings, segments, evals, meetingContext, names, mode = "replay", onPartial } = opts;
 
   const transcript = transcriptWithTimestamps(segments, names);
   const ctx =
@@ -117,47 +166,48 @@ export async function analyzeTimeline(opts: {
   const model = settings.models[settings.provider].eval;
   log.info("ai.timeline: start", { provider, model, segments: segments.length, evals: evals.length });
 
-  const generated = await generateObject({
-    model: getModel(settings, "eval"),
-    providerOptions: getProviderOptions(settings, "eval"),
+  // Only treat evalId as valid if it actually matches a configured evaluation.
+  const evalIds = new Set(evals.map((e) => e.id));
+  const maxMs = segments.reduce((m, s) => Math.max(m, s.endMs), 0) || Infinity;
+  // Stable id per array index so streamed rows keep their identity as the object
+  // fills in — and the final list reuses the same ids (no re-key/flicker at end).
+  const ids: string[] = [];
+  const idAt = (i: number) => (ids[i] ??= crypto.randomUUID());
+
+  const placeEvents = (raw: ReadonlyArray<RawEvent | undefined> | undefined): TimelineEvent[] => {
+    const out: TimelineEvent[] = [];
+    (raw ?? []).forEach((e, i) => {
+      const ev = e ? mapTimelineEvent(e, idAt(i), segments, evalIds, maxMs) : null;
+      if (ev) out.push(ev);
+    });
+    out.sort((a, b) => a.atMs - b.atMs);
+    return out;
+  };
+
+  // Only push to the store when a NEW finding becomes placeable (streamObject
+  // emits a partial on every field delta; the placed list only grows as elements
+  // complete) — avoids redundant store writes while a title streams in char-by-char.
+  let emittedCount = -1;
+  const { object, usage } = await streamObjectResilient({
+    settings,
+    kind: "eval",
     schema,
     system: system + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: `${ctx}Active evaluations:\n${list}\n\n${transcriptLabel}:\n${transcript || "(no speech was captured)"}`,
+    onPartial: (p) => {
+      if (!onPartial) return;
+      const placed = placeEvents((p as { events?: (RawEvent | undefined)[] }).events);
+      if (placed.length === emittedCount) return;
+      emittedCount = placed.length;
+      onPartial(placed);
+    },
   }).catch((e) => {
     log.error("ai.timeline: failed", { provider, model, error: String(e) });
     throw e;
   });
-  const { object, usage } = generated;
   void recordLlmUsage(settings, "eval", "eval", usage);
 
-  // Only treat evalId as valid if it actually matches a configured evaluation.
-  const evalIds = new Set(evals.map((e) => e.id));
-  const maxMs = segments.reduce((m, s) => Math.max(m, s.endMs), 0) || Infinity;
-
-  const events: TimelineEvent[] = [];
-  for (const e of object.events) {
-    // Time-anchor: trust the cited clock when plausible, else fuzzy-match the quote.
-    let atMs = parseClockMs(e.time);
-    if (atMs === null || atMs < 0 || (maxMs !== Infinity && atMs > maxMs + 5000)) {
-      atMs = startMsForQuote(e.quote, segments);
-    }
-    if (atMs === null) continue; // can't place it in time → drop
-
-    const hasEval = e.source === "eval" && !!e.evalId && evalIds.has(e.evalId);
-    events.push({
-      id: crypto.randomUUID(),
-      atMs: Math.max(0, atMs),
-      side: e.side,
-      severity: e.severity,
-      source: hasEval ? "eval" : "extra",
-      evalId: hasEval ? e.evalId ?? undefined : undefined,
-      title: e.title,
-      detail: e.detail,
-      quote: e.quote?.trim() || undefined,
-    });
-  }
-
-  events.sort((a, b) => a.atMs - b.atMs);
+  const events = placeEvents(object.events);
   log.info("ai.timeline: ok", { raw: object.events.length, placed: events.length });
   return events;
 }

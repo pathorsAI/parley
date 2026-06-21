@@ -4,6 +4,9 @@ import { formatClock } from "../../lib/store";
 import { cn } from "@/lib/utils";
 import type { TimelineEvent } from "../../lib/types";
 import { useI18n } from "../../i18n";
+import { useEvalNames } from "./useAnalysis";
+
+const SEVERITIES = ["info", "warn", "critical"] as const;
 
 /** Severity → dot fill. Mirrors the info/warn/critical conventions used elsewhere. */
 const SEVERITY_DOT: Record<TimelineEvent["severity"], string> = {
@@ -154,6 +157,23 @@ export function AnalysisTimeline({
         />
       </div>
 
+      {/* Legend: what the dot colours (severity) and the ring (AI-extra) mean. */}
+      {findings.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-[4.5rem] text-[9px] text-muted-foreground">
+          <span className="font-medium text-muted-foreground/70">{t("timeline.legend")}:</span>
+          {SEVERITIES.map((sev) => (
+            <span key={sev} className="flex items-center gap-1">
+              <span className={cn("size-2 rounded-full", SEVERITY_DOT[sev])} />
+              {t(`timeline.sev.${sev}` as const)}
+            </span>
+          ))}
+          <span className="flex items-center gap-1">
+            <span className="size-2 rounded-full bg-muted-foreground/40 ring-2 ring-foreground/40 ring-offset-1 ring-offset-background" />
+            {t("timeline.extra")}
+          </span>
+        </div>
+      )}
+
       {status === "done" && findings.length === 0 && (
         <div className="mt-1 text-[10px] text-muted-foreground/70">{t("timeline.empty")}</div>
       )}
@@ -186,10 +206,21 @@ function Lane({
   extraLabel,
   tooltipTime,
 }: LaneProps) {
+  const { t } = useI18n();
+  const evalNames = useEvalNames();
+  const playheadPct =
+    playheadMs !== undefined && axisMaxMs > 0 ? Math.max(0, Math.min(1, playheadMs / axisMaxMs)) : null;
   return (
     <div className="flex items-center gap-2">
       <span className="w-16 shrink-0 truncate text-right text-[10px] text-muted-foreground">{label}</span>
       <div className="relative h-5 min-w-0 flex-1 rounded bg-muted/40">
+        {/* Playhead marker — keeps the audio/scrubber position visible on the band. */}
+        {playheadPct !== null && (
+          <span
+            className="pointer-events-none absolute inset-y-0 z-10 w-px bg-primary/70"
+            style={{ left: `${playheadPct * 100}%` }}
+          />
+        )}
         {events.map((e) => {
           const pct = axisMaxMs > 0 ? Math.max(0, Math.min(1, e.atMs / axisMaxMs)) : 0;
           const near = playheadMs !== undefined && Math.abs(e.atMs - playheadMs) <= NEAR_MS;
@@ -223,7 +254,19 @@ function Lane({
                       <span className="rounded bg-muted px-1 text-[9px] text-muted-foreground">{extraLabel}</span>
                     )}
                   </span>
-                  <span className="mt-0.5 block font-medium">{e.title}</span>
+                  {/* Why this dot is this colour (severity) + which eval flagged it. */}
+                  <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <span className={cn("size-1.5 rounded-full", SEVERITY_DOT[e.severity])} />
+                      {t(`timeline.sev.${e.severity}` as const)}
+                    </span>
+                    {e.source === "eval" && evalNames.get(e.evalId ?? "") && (
+                      <span>
+                        {t("timeline.evalLabel")}: {evalNames.get(e.evalId ?? "")}
+                      </span>
+                    )}
+                  </span>
+                  <span className="mt-0.5 block font-medium text-popover-foreground">{e.title}</span>
                   <span className="mt-0.5 block text-muted-foreground">{e.detail}</span>
                 </span>
               )}
