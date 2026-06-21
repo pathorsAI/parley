@@ -17,10 +17,14 @@
 //! upload.
 
 use std::fs::File;
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
-use audiopus::{coder::Encoder, Application, Bitrate, Channels, SampleRate};
+use audiopus::{
+    coder::{Decoder, Encoder},
+    Application, Bitrate, Channels, SampleRate,
+};
 use ogg::PacketWriteEndInfo;
 use symphonia::core::audio::AudioBufferRef;
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
@@ -84,6 +88,12 @@ pub fn compress_for_upload(input: &Path) -> Result<PathBuf> {
 /// `convert_integer_to_float_audio` uses), so callers get a single contiguous
 /// buffer they can slice by timestamp. Decodes once; slicing is the caller's job.
 pub fn decode_to_16k_mono(input: &Path) -> Result<Vec<f32>> {
+    // Ogg-Opus (the app's own recordings + many uploads): symphonia demuxes Ogg
+    // but ships no Opus decoder, so decode the packets with libopus directly to
+    // 16 kHz mono (no resample step needed).
+    if is_ogg_opus(input)? {
+        return decode_ogg_opus_16k_mono(input);
+    }
     let decoded = decode_to_mono_f32(input)?;
     if decoded.samples.is_empty() {
         return Err(anyhow!("decoded audio was empty"));
@@ -92,6 +102,46 @@ pub fn decode_to_16k_mono(input: &Path) -> Result<Vec<f32>> {
     let mut resampler = LinearResampler::new(decoded.sample_rate, TARGET_RATE);
     resampler.process(&decoded.samples, &mut pcm16);
     Ok(pcm16.into_iter().map(|s| s as f32 / 32768.0).collect())
+}
+
+/// Sniff whether `input` is an Ogg stream carrying Opus: the `OggS` capture
+/// pattern plus an `OpusHead` identification header in the first page. symphonia
+/// can demux Ogg but has no Opus *decoder*, so these take the libopus path below.
+fn is_ogg_opus(input: &Path) -> Result<bool> {
+    let mut f = File::open(input).with_context(|| format!("open {}", input.display()))?;
+    let mut buf = [0u8; 128];
+    let n = f.read(&mut buf)?;
+    let head = &buf[..n];
+    Ok(head.starts_with(b"OggS") && head.windows(8).any(|w| w == b"OpusHead"))
+}
+
+/// Decode an Ogg-Opus file straight to 16 kHz mono `f32` using libopus: the `ogg`
+/// crate demuxes pages → packets and the Opus decoder is created at 16 kHz mono
+/// so it downmixes + outputs the target rate directly. The two header packets
+/// (`OpusHead`/`OpusTags`) are skipped; a corrupt audio packet is skipped rather
+/// than aborting the whole decode.
+fn decode_ogg_opus_16k_mono(input: &Path) -> Result<Vec<f32>> {
+    let file = File::open(input).with_context(|| format!("open {}", input.display()))?;
+    let mut reader = ogg::reading::PacketReader::new(BufReader::new(file));
+    let mut decoder = Decoder::new(SampleRate::Hz16000, Channels::Mono)
+        .map_err(|e| anyhow!("opus decoder init: {e}"))?;
+    let mut samples: Vec<f32> = Vec::new();
+    // 120 ms is the largest Opus packet duration; 16 kHz mono → 1920 samples (+ margin).
+    let mut frame = vec![0i16; 2880];
+    while let Some(packet) = reader.read_packet().context("read ogg packet")? {
+        let data = &packet.data;
+        if data.is_empty() || data.starts_with(b"OpusHead") || data.starts_with(b"OpusTags") {
+            continue;
+        }
+        match decoder.decode(Some(&data[..]), &mut frame[..], false) {
+            Ok(n) => samples.extend(frame[..n].iter().map(|&s| s as f32 / 32768.0)),
+            Err(_) => continue,
+        }
+    }
+    if samples.is_empty() {
+        return Err(anyhow!("decoded Opus audio was empty"));
+    }
+    Ok(samples)
 }
 
 /// Trim a recording to the `[start_ms, end_ms]` window and re-encode the kept
