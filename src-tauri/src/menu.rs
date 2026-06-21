@@ -1,9 +1,10 @@
 //! Native (macOS menu-bar) diagnostics menu: open the log folder, and clear the
 //! caches. Built on top of the platform default menu so the standard items
 //! (Quit, Edit, Window, …) stay intact. The on-disk caches (transcription,
-//! diarization) are cleared directly; the analysis cache lives in the webview's
-//! localStorage, so that one is cleared via a `cache://clear-analysis` event the
-//! frontend listens for.
+//! diarization) are cleared directly. The webview-side caches live in
+//! localStorage, so those are cleared via events the frontend listens for: the
+//! analysis cache via `cache://clear-analysis`, and the saved speaker names (part
+//! of the diarization result) via `cache://clear-speakers`.
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -51,6 +52,9 @@ pub fn on_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
         }
         "clear_cache_diarization" => {
             clear_cache_dir(app, "diarizations");
+            // The cluster cache is on disk; the speaker NAMES live in the webview's
+            // localStorage, so clear those via an event too.
+            let _ = app.emit("cache://clear-speakers", ());
             notify(app, "Diarization cache cleared.");
         }
         "clear_cache_analysis" => {
@@ -61,6 +65,7 @@ pub fn on_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
             clear_cache_dir(app, "transcriptions");
             clear_cache_dir(app, "diarizations");
             let _ = app.emit("cache://clear-analysis", ());
+            let _ = app.emit("cache://clear-speakers", ());
             notify(app, "All caches cleared.");
         }
         _ => {}

@@ -73,12 +73,19 @@ export async function runVoiceDiarize(opts: {
     const sp = idToSpeaker.get(s.id);
     return sp ? { ...s, speaker: sp } : s;
   });
-  // Clustering reshuffles speaker NUMBERS, so any prior speaker→name mapping (an
-  // earlier run, or inline renames) no longer matches these voices. Reset names
-  // so the naming step starts clean — otherwise a stale name labels the wrong
-  // speaker. Names typed in the post-run naming step are applied after this.
-  useStore.setState({ segments: updated, speakerNames: {} });
+  // Clustering reshuffles speaker NUMBERS, so any in-memory speaker→name mapping no
+  // longer matches these voices. But the clustering is deterministic per recording
+  // (cached on disk), so names saved for THIS file + speaker count still line up —
+  // restore them so a re-upload lands pre-named. Falls back to a clean slate the
+  // first time the recording is named.
+  const { readSpeakerNames, speakerCountOf } = await import("./namesCache");
+  const restored = readSpeakerNames(replay.audioPath, speakerCountOf(updated)) ?? {};
+  useStore.setState({ segments: updated, speakerNames: restored });
 
-  log.info("diarize: applied", { assigned: idToSpeaker.size, speakers });
+  log.info("diarize: applied", {
+    assigned: idToSpeaker.size,
+    speakers,
+    restoredNames: Object.keys(restored).length,
+  });
   return { assigned: idToSpeaker.size, total: finalSegs.length, speakers };
 }

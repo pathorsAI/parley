@@ -457,6 +457,13 @@ export const useStore = create<ParleyState>()(
       const next = { ...state.speakerNames };
       if (name.trim()) next[key] = name.trim();
       else delete next[key];
+      // Persist names per uploaded recording so re-uploading restores them. Replay
+      // only — a live meeting has no stable on-disk recording to key against.
+      if (state.replay?.audioPath) {
+        void import("./speakers/namesCache").then(({ writeSpeakerNames, speakerCountOf }) =>
+          writeSpeakerNames(state.replay!.audioPath, speakerCountOf(state.segments), next)
+        );
+      }
       return { speakerNames: next };
     }),
 
