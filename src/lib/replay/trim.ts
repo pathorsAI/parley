@@ -1,21 +1,18 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { useStore, type ReplayTrim } from "../store";
 import { log } from "../log";
 
-interface TrimResult {
-  audioPath: string;
-  durationMs: number;
-}
-
 /**
- * Destructively trim the loaded recording to `[trim.startMs, trim.endMs]`:
- *  - Rust re-encodes the kept audio range to a fresh 16 kHz Opus file.
- *  - The transcript, findings, and action items are rebased to that new 0-based
- *    timeline (anything outside the window is dropped; in-window items shift left
- *    by `startMs`).
- *  - The replay session points at the new (shorter) audio; the playhead resets.
+ * Trim the loaded recording to `[trim.startMs, trim.endMs]` — instantly.
  *
- * Recoverable: re-uploading the original restores the full recording (cached).
+ * The audio file is left untouched (no re-encode): we only
+ *  - drop the transcript / findings / action items outside the window and rebase
+ *    the ones we keep onto a fresh 0-based timeline, and
+ *  - shift the session's `audioOffsetMs` so the player (and the voice diarizer)
+ *    map that 0-based timeline back onto the original audio.
+ *
+ * That makes Apply effectively free — the already-computed analysis is reused as
+ * is (nothing re-runs), which is the whole point: trimming after analysis must be
+ * cheap. Re-uploading the original restores the full recording (cached).
  */
 export async function trimRecording(trim: ReplayTrim): Promise<void> {
   const { replay } = useStore.getState();
@@ -23,13 +20,8 @@ export async function trimRecording(trim: ReplayTrim): Promise<void> {
 
   const startMs = Math.max(0, Math.round(trim.startMs));
   const endMs = Math.round(trim.endMs);
+  if (endMs <= startMs) return;
   log.info("trim: start", { startMs, endMs });
-
-  const res = await invoke<TrimResult>("trim_recording", {
-    audioPath: replay.audioPath,
-    startMs,
-    endMs,
-  });
 
   const inWindow = (ms: number) => ms >= startMs && ms <= endMs;
   const rebase = (ms: number) => Math.max(0, ms - startMs);
@@ -44,14 +36,12 @@ export async function trimRecording(trim: ReplayTrim): Promise<void> {
     .filter((a) => a.atMs == null || inWindow(a.atMs))
     .map((a) => ({ ...a, atMs: a.atMs == null ? null : rebase(a.atMs) }));
 
+  // Accumulate the offset so repeated trims compose; the audio file never changes.
+  const audioOffsetMs = (replay.audioOffsetMs ?? 0) + startMs;
+  const durationMs = endMs - startMs;
+
   useStore.setState({
-    replay: {
-      ...replay,
-      audioPath: res.audioPath,
-      audioSrc: convertFileSrc(res.audioPath),
-      durationMs: res.durationMs,
-      segments,
-    },
+    replay: { ...replay, durationMs, segments, audioOffsetMs },
     segments,
     findings,
     actionItems,
@@ -60,5 +50,5 @@ export async function trimRecording(trim: ReplayTrim): Promise<void> {
     selectedFindingId: null,
   });
 
-  log.info("trim: applied", { durationMs: res.durationMs, segments: segments.length });
+  log.info("trim: applied", { durationMs, audioOffsetMs, segments: segments.length });
 }

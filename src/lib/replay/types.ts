@@ -21,6 +21,11 @@ export interface ReplaySession {
   /** URL the webview `<audio>` loads and seeks (asset:// or blob:). */
   audioSrc: string;
   durationMs: number;
+  /** Where playhead 0 sits inside the (un-shortened) audio file, in ms. A trim is
+   *  instant + leaves the file alone: instead of re-encoding, we drop the
+   *  out-of-window transcript/findings and shift this offset, so the player and
+   *  the voice diarizer map the 0-based timeline back onto the original audio. */
+  audioOffsetMs?: number;
   createdAt: number;
   /** Diarized + timestamped segments, same shape as live transcription. */
   segments: TranscriptSegment[];

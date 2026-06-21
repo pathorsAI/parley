@@ -33,7 +33,7 @@ export function ReplayScreen() {
 
   const session = useReplaySession();
   const playheadMs = useReplayPlayheadMs();
-  const player = useReplayPlayer(session?.durationMs ?? 0);
+  const player = useReplayPlayer(session?.durationMs ?? 0, session?.audioOffsetMs ?? 0);
 
   // Run the whole-recording analysis once, then chain action items.
   useReplayAnalysis();
@@ -74,6 +74,7 @@ export function ReplayScreen() {
         src={session.audioSrc}
         preload="metadata"
         onTimeUpdate={player.onTimeUpdate}
+        onLoadedMetadata={player.onLoadedMetadata}
         onPlay={player.onPlay}
         onPause={player.onPause}
         onEnded={player.onEnded}

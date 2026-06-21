@@ -301,7 +301,7 @@ export const zhTW = {
   "replay.trimming": "修剪中…",
   "replay.trimReset": "重設",
   "replay.trimKept": "保留 {start} – {end}",
-  "replay.trimNote": "套用後會裁掉此範圍外的音訊、逐字稿與分析（重新上傳即可還原）。",
+  "replay.trimNote": "立即套用：範圍外的逐字稿與分析會移除，播放也只會播保留範圍（不會重新分析；重新上傳即可還原）。",
   "replay.trimStart": "修剪起點",
   "replay.trimEnd": "修剪終點",
   // Time-anchored retro timeline (whole-recording analysis → markers).
@@ -723,7 +723,7 @@ export const en = {
   "replay.trimming": "Trimming…",
   "replay.trimReset": "Reset",
   "replay.trimKept": "Keeping {start} – {end}",
-  "replay.trimNote": "Apply cuts the audio, transcript & analysis to this range (re-upload to restore).",
+  "replay.trimNote": "Applies instantly: transcript & findings outside the range are removed and playback is limited to it (no re-analysis; re-upload to restore).",
   "replay.trimStart": "Trim start",
   "replay.trimEnd": "Trim end",
   // Time-anchored retro timeline (whole-recording analysis → markers).

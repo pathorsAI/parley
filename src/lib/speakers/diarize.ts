@@ -45,10 +45,14 @@ export async function runVoiceDiarize(opts: {
     throw new Error("No transcript to diarize.");
   }
 
+  // A trim is non-destructive to the audio file: the segments are on a 0-based
+  // timeline, but `replay.audioPath` is still the original recording. Shift the
+  // spans back by the trim offset so we embed the right slices of that file.
+  const offsetMs = replay.audioOffsetMs ?? 0;
   const spans = finalSegs.map((s) => ({
     id: s.id,
-    startMs: Math.max(0, Math.round(s.startMs)),
-    endMs: Math.max(0, Math.round(s.endMs)),
+    startMs: Math.max(0, Math.round(s.startMs + offsetMs)),
+    endMs: Math.max(0, Math.round(s.endMs + offsetMs)),
   }));
 
   const result = await invoke<RustSegSpeaker[]>("diarize_audio", {

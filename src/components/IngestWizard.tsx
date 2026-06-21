@@ -65,7 +65,7 @@ export function IngestWizard() {
   // Player for the pre-diarize trim step (drives a local <audio>). Store-backed,
   // so it shares the playhead with the (idle, behind-the-modal) replay screen.
   const session = useReplaySession();
-  const player = useReplayPlayer(session?.durationMs ?? 0);
+  const player = useReplayPlayer(session?.durationMs ?? 0, session?.audioOffsetMs ?? 0);
 
   const [numSpeakers, setNumSpeakers] = useState<number | null>(null);
   const [templateId, setTemplateId] = useState("");
@@ -290,6 +290,7 @@ export function IngestWizard() {
                 src={session.audioSrc}
                 preload="metadata"
                 onTimeUpdate={player.onTimeUpdate}
+                onLoadedMetadata={player.onLoadedMetadata}
                 onPlay={player.onPlay}
                 onPause={player.onPause}
                 onEnded={player.onEnded}
