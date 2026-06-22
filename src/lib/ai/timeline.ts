@@ -15,8 +15,14 @@ const eventSchema = z.object({
     .describe("The [m:ss] (or m:ss) time this moment occurred, copied from the transcript line."),
   side: z
     .enum(["me", "them"])
-    .describe('"me" = a problem/mistake/missed move by ME; "them" = a substantive move by THEM.'),
-  severity: z.enum(["info", "warn", "critical"]),
+    .describe(
+      `"them" = a substantive move BY THEM (a position, argument, demand, anchor, pressure, leverage, or a constraint/concern they raised — INCLUDING a THEM objection/pressure ME later rebutted, which stays "them" even though rebutting it was ME's good move); "me" = a problem/mistake/missed move BY ME (including one ME later corrected). Attribute by WHOSE move it was, never by who came out ahead.`
+    ),
+  severity: z
+    .enum(["info", "warn", "critical"])
+    .describe(
+      `How much this moment matters. For a resolved win, judge severity by the STAKES the challenge would have had IF UNHANDLED — a resolved finding already renders GREEN, so do not wash it down to "info".`
+    ),
   source: z
     .enum(["eval", "extra"])
     .describe('"eval" when it matches one or more configured evaluations (set evalIds); "extra" otherwise.'),
@@ -61,7 +67,7 @@ const SYSTEM_BODY = `
 
 You are given the user's ACTIVE EVALUATIONS (each with an id, a name, and what to look for) and the full timestamped transcript (every line is prefixed with its [m:ss] start time).
 
-Work at the level of MEANINGFUL EXCHANGES, not individual sentences. Read the WHOLE conversation, then surface only the handful of moments that genuinely shaped the negotiation — a position taken, leverage, a constraint or concern raised, a concession, a real risk, or a mistake/missed move by ME. GROUP a back-and-forth on one topic into ONE moment, anchored at its most representative timestamp; do NOT emit a separate finding for each sentence or minor turn. Prefer a few high-signal findings over many granular ones.
+Work at the level of MEANINGFUL EXCHANGES, not individual sentences. Read the WHOLE conversation, then surface only the handful of moments that genuinely shaped the negotiation — a position taken, leverage, a constraint or concern raised, a concession, a real risk, a mistake/missed move by ME, OR a real challenge/objection/pressure/risk from THEM that ME then TOOK ON and handled (a WIN worth recording — surface it as a resolved moment; see RESOLVED MOMENTS). A win counts ONLY when there was genuine tension for ME to defuse — never ME merely answering a neutral question, being agreeable, or saying something pleasant. GROUP a back-and-forth on one topic into ONE moment, anchored at its most representative timestamp; do NOT emit a separate finding for each sentence or minor turn — a mistake by ME and ME's own later correction of it are ONE resolved moment, never two. Prefer a few high-signal findings over many granular ones, and surface open/unresolved problems and risks FIRST: wins are ADDITIONAL, never a substitute for an open problem and never take its slot.
 
 For EACH moment provide:
 - time: the [m:ss] it is best anchored to — copy a real timestamp from the transcript so ME can jump back.
@@ -81,7 +87,7 @@ INTERPRET IN FULL CONTEXT — accuracy matters more than coverage:
 - When THEM makes a strong point or a good proposal, surface it as a "them" moment so ME can think about how to respond — even if no eval targets it.
 - If MY negotiation setup (BATNA / target / bottom line) is provided in the context, USE it: judge leverage and the ZOPA (zone of possible agreement) against it, separate interests from positions, prefer objective criteria over pressure, and flag when ME is being pushed toward MY bottom line.
 
-RESOLVED MOMENTS: a problem ME already took on is not an open problem. When ME later answers, counters, corrects, or defuses a moment, set resolved + resolution so ME sees what was already handled (it is shown in GREEN). Be honest — mark resolved ONLY when the transcript really shows ME addressing it — but do NOT require the response to be perfect: mark it resolved if ME took it on at all; whether the response was strong enough is judged separately. A moment ME ignored or never came back to stays unresolved.
+RESOLVED MOMENTS — record what ME handled, do NOT drop it. A real challenge ME took on is a WIN worth showing precisely BECAUSE handling it is what ME should see; when ME later answers, counters, corrects, or defuses a moment, set resolved + resolution and it renders GREEN. Keep its side by WHOSE move it was, never by who came out ahead: a THEM objection/pressure/risk ME rebutted stays "them" + resolved; a ME misstep ME later fixed stays "me" + resolved. Be honest — mark resolved ONLY when the transcript really shows ME addressing it; you need NOT judge whether the response was strong (that is judged separately), but you DO need a concrete "how": if you cannot name MY actual move in the resolution line, it is not a win — omit the moment, do NOT emit it as an unresolved warn/critical instead. In a still-in-progress meeting, mark resolved ONLY once ME has clearly finished addressing it; a reply still unfolding stays unresolved. A moment ME ignored or never came back to stays unresolved.
 
 Be selective and ACCURATE. A short list of well-judged, strategic findings is far better than many literal ones. Ground everything in what was actually said; never fabricate quotes or timestamps.`;
 
