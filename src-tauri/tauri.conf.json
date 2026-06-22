@@ -38,7 +38,8 @@
       "onnxruntime/libonnxruntime.dylib"
     ],
     "macOS": {
-      "entitlements": "entitlements.plist"
+      "entitlements": "entitlements.plist",
+      "signingIdentity": "-"
     },
     "icon": [
       "icons/32x32.png",
