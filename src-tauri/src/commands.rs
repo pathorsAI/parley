@@ -142,7 +142,7 @@ pub fn start_meeting(
             match (rx_me, rx_them) {
                 (Some(a), Some(b)) => {
                     let (tx_mix, rx_mix) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-                    tauri::async_runtime::spawn(crate::audio::mixer::mix_streams(a, b, tx_mix));
+                    tauri::async_runtime::spawn(crate::audio::mixer::mix_streams(app.clone(), a, b, tx_mix));
                     run_metered_session(&app, provider, make_config(), "mix", rx_mix);
                 }
                 // If one capture failed, transcribe whichever started.
