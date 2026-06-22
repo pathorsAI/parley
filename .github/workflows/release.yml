@@ -35,7 +35,19 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-darwin
+
+      - name: Install Opus (for audiopus_sys)
+        # Apple Silicon-only build: install a native arm64 libopus so audiopus_sys
+        # links it via pkg-config instead of compiling Opus from source. (Building
+        # Opus from source does NOT cross-compile cleanly, which is why the universal
+        # build's x86_64 slice failed to link `_opus_decode` &c.) autotools is kept as
+        # a fallback in case the source path is taken anyway; Homebrew names libtoolize
+        # `glibtoolize` (libtool is keg-only on macOS), so expose it under that name.
+        run: |
+          set -euxo pipefail
+          brew install opus pkg-config autoconf automake libtool
+          ln -sf "$(brew --prefix libtool)/bin/glibtoolize" "$(brew --prefix)/bin/libtoolize"
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -93,5 +105,5 @@ jobs:
           releaseDraft: false
           prerelease: false
           tauriScript: bun run tauri
-          args: --target universal-apple-darwin
+          args: --target aarch64-apple-darwin
           releaseAssetNamePattern: "[name]-[version]-[platform]-[arch].[ext]"
