@@ -8,5 +8,10 @@
 	<!-- Allow the JIT/dynamic codegen the webview needs under hardened runtime. -->
 	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
+	<!-- The ONNX Runtime dylib is loaded dynamically at runtime (via ORT_DYLIB_PATH)
+	     and is signed with a different (ad-hoc) identity than the app; without this,
+	     library validation under the hardened runtime would refuse to load it. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
 </dict>
 </plist>
