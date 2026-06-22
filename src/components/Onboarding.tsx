@@ -41,8 +41,24 @@ export function Onboarding() {
     }
   }
 
+  // Permissions step (4): re-check on entry AND whenever the app regains focus /
+  // becomes visible, plus a slow fallback poll — so granting mic/screen access in
+  // the system prompt or System Settings flips the row to ✓ on its own when the
+  // user comes back, instead of staying stale until a manual re-check. (Webview
+  // focus events aren't fully reliable across the app-switch to System Settings,
+  // hence the 2 s poll; it stops when the user leaves the step.)
   useEffect(() => {
-    if (step === 4) void recheck();
+    if (step !== 4) return;
+    void recheck();
+    const recheckNow = () => void recheck();
+    window.addEventListener("focus", recheckNow);
+    document.addEventListener("visibilitychange", recheckNow);
+    const id = window.setInterval(recheckNow, 2000);
+    return () => {
+      window.removeEventListener("focus", recheckNow);
+      document.removeEventListener("visibilitychange", recheckNow);
+      window.clearInterval(id);
+    };
   }, [step]);
 
   function finish() {
