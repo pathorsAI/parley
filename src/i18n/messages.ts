@@ -451,25 +451,25 @@ export const zhTW = {
   "tpl.eval.dd-checklist.name": "盡調項目遺漏",
   "tpl.eval.dd-checklist.desc": "標準盡職調查面向中尚未觸及的部分",
 
-  "tpl.todo.todo-interview.name": "面試候選人 / Job interview",
+  "tpl.todo.todo-interview.name": "面試候選人",
   "tpl.todo.todo-interview.items":
     "自我介紹與職缺說明\n請候選人介紹背景與動機\n深入追問一個代表性專案\n驗證核心技術／能力\n詢問過去的衝突與處理方式\n保留候選人提問時間\n確認薪資期待與可到職時間\n說明後續流程與時程",
-  "tpl.todo.todo-salary.name": "薪資談判 / Salary negotiation",
+  "tpl.todo.todo-salary.name": "薪資談判",
   "tpl.todo.todo-salary.items":
     "先讓對方提出數字／區間\n確認薪酬全貌：底薪、獎金、股票、簽約金、福利\n說明自身價值與市場行情依據\n提出有依據的目標數字（錨定）\n釐清股票條件（數量、估值、vesting）\n確認升遷／調薪的時程與標準\n處理對方的施壓或人為期限\n爭取書面 offer 與考慮時間",
-  "tpl.todo.todo-sales-discovery.name": "銷售電話 / Sales call",
+  "tpl.todo.todo-sales-discovery.name": "銷售電話",
   "tpl.todo.todo-sales-discovery.items":
     "確認對方的角色與決策權\n了解現況與目前做法\n挖掘核心痛點與其影響\n量化痛點的成本／損失\n確認預算範圍\n釐清決策流程與關鍵人\n了解時程與急迫性\n詢問現有方案／競品\n約定明確的下一步",
-  "tpl.todo.todo-deal.name": "商務談判 / Deal-making",
+  "tpl.todo.todo-deal.name": "商務談判",
   "tpl.todo.todo-deal.items":
     "確認雙方目標與底線（BATNA）\n釐清對方真正在意的優先順序\n盤點價格／條款／時程等變數\n先談整體框架再談細節\n每次讓步都換回對等條件\n記錄雙方已同意與待決事項\n確認決策流程與簽約時程\n總結共識並約定下一步",
-  "tpl.todo.todo-diligence.name": "盡職調查 / Diligence call",
+  "tpl.todo.todo-diligence.name": "盡職調查",
   "tpl.todo.todo-diligence.items":
     "確認核心財務數據與成長趨勢\n了解營收結構與客戶集中度\n確認留存／churn 與單位經濟\n釐清競爭與市場風險\n確認團隊、關鍵人與股權結構\n了解法務／合規／智財狀況\n詢問技術債與資安現況\n索取佐證文件並約定 follow-up",
-  "tpl.todo.todo-coffee-chat.name": "Coffee chat（創業前輩）",
+  "tpl.todo.todo-coffee-chat.name": "創業前輩諮詢",
   "tpl.todo.todo-coffee-chat.items":
     "簡短自我介紹與來意\n請教對方的創業歷程與關鍵轉折\n請教他們現階段最大的挑戰\n針對我目前的方向請教看法\n請教常見的坑與建議\n詢問值得認識的人／引薦\n請教推薦的資源或書\n約定下次 follow-up 的方式",
-  "tpl.todo.todo-fundraising.name": "投資人 pitch",
+  "tpl.todo.todo-fundraising.name": "投資人簡報",
   "tpl.todo.todo-fundraising.items":
     "一句話講清楚在做什麼\n說明問題與市場規模\nDemo 產品\n商業模式與關鍵數據（traction）\n介紹團隊與為何是我們\n競爭與護城河\n募資金額與資金用途\n確認對方的投資範圍與決策流程",
 } as const satisfies Dict;
