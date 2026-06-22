@@ -15,8 +15,14 @@ const eventSchema = z.object({
     .describe("The [m:ss] (or m:ss) time this moment occurred, copied from the transcript line."),
   side: z
     .enum(["me", "them"])
-    .describe('"me" = a problem/mistake/missed move by ME; "them" = a substantive move by THEM.'),
-  severity: z.enum(["info", "warn", "critical"]),
+    .describe(
+      `"them" = a substantive move BY THEM (a position, argument, demand, anchor, pressure, leverage, or a constraint/concern they raised — INCLUDING a THEM objection/pressure ME later rebutted, which stays "them" even though rebutting it was ME's good move); "me" = a problem/mistake/missed move BY ME (including one ME later corrected). Attribute by WHOSE move it was, never by who came out ahead.`
+    ),
+  severity: z
+    .enum(["info", "warn", "critical"])
+    .describe(
+      `How much this moment matters. For a resolved win, judge severity by the STAKES the challenge would have had IF UNHANDLED — a resolved finding already renders GREEN, so do not wash it down to "info".`
+    ),
   source: z
     .enum(["eval", "extra"])
     .describe('"eval" when it matches one or more configured evaluations (set evalIds); "extra" otherwise.'),
@@ -33,6 +39,20 @@ const eventSchema = z.object({
       "Verbatim quote(s) anchoring this moment — usually one, but include MULTIPLE when they belong together " +
         "(e.g. BOTH sides of a contradiction, or a promise and its walk-back). [] if you have nothing exact."
     ),
+  // Whether ME later took this moment on. Always present (false by default) so
+  // strict json_schema and json_object (Groq) both keep the key.
+  resolved: z
+    .boolean()
+    .describe(
+      "true when, LATER in the conversation, ME actually responded to / addressed this moment — answered the " +
+        "question, countered the pressure, corrected the misstep, or defused the risk. (Whether ME did it WELL is " +
+        "judged elsewhere; here only whether ME took it on.) false if it was left unaddressed or you are unsure."
+    ),
+  resolution: z
+    .string()
+    .describe(
+      'When resolved, ONE short line on HOW ME handled it — name MY actual move and quote/paraphrase MY key words. "" when not resolved.'
+    ),
 });
 // The wrapper key is "moments" to match the prompt's vocabulary ("notable
 // moments") — in json_object mode (Groq) the key isn't server-enforced, so a
@@ -47,7 +67,7 @@ const SYSTEM_BODY = `
 
 You are given the user's ACTIVE EVALUATIONS (each with an id, a name, and what to look for) and the full timestamped transcript (every line is prefixed with its [m:ss] start time).
 
-Work at the level of MEANINGFUL EXCHANGES, not individual sentences. Read the WHOLE conversation, then surface only the handful of moments that genuinely shaped the negotiation — a position taken, leverage, a constraint or concern raised, a concession, a real risk, or a mistake/missed move by ME. GROUP a back-and-forth on one topic into ONE moment, anchored at its most representative timestamp; do NOT emit a separate finding for each sentence or minor turn. Prefer a few high-signal findings over many granular ones.
+Work at the level of MEANINGFUL EXCHANGES, not individual sentences. Read the WHOLE conversation, then surface only the handful of moments that genuinely shaped the negotiation — a position taken, leverage, a constraint or concern raised, a concession, a real risk, a mistake/missed move by ME, OR a real challenge/objection/pressure/risk from THEM that ME then TOOK ON and handled (a WIN worth recording — surface it as a resolved moment; see RESOLVED MOMENTS). A win counts ONLY when there was genuine tension for ME to defuse — never ME merely answering a neutral question, being agreeable, or saying something pleasant. GROUP a back-and-forth on one topic into ONE moment, anchored at its most representative timestamp; do NOT emit a separate finding for each sentence or minor turn — a mistake by ME and ME's own later correction of it are ONE resolved moment, never two. Prefer a few high-signal findings over many granular ones, and surface open/unresolved problems and risks FIRST: wins are ADDITIONAL, never a substitute for an open problem and never take its slot.
 
 For EACH moment provide:
 - time: the [m:ss] it is best anchored to — copy a real timestamp from the transcript so ME can jump back.
@@ -58,12 +78,16 @@ For EACH moment provide:
 - title: a short label for the dynamic (not a quote).
 - detail: 1-2 sentences on the STRATEGIC substance — what is really going on (the underlying interest, leverage, risk, or move) and why it matters — so ME knows how to think about and negotiate it, not merely what was said.
 - quotes: the verbatim line(s) that anchor it — usually one, but cite MULTIPLE when they belong together (e.g. BOTH sides of a contradiction, or a promise and its later walk-back). [] if you have nothing exact.
+- resolved: true ONLY when, LATER in the transcript, ME actually responded to / addressed this moment — answered the question, countered the pressure, corrected MY own misstep, or defused the risk. false if it was left hanging, ignored, or you are unsure. (Mainly a "them" pressure/objection/risk that ME took on, but also a "me" misstep ME later fixed.)
+- resolution: when resolved, ONE short line naming MY actual move and quoting/paraphrasing MY key words; "" when not resolved.
 
 INTERPRET IN FULL CONTEXT — accuracy matters more than coverage:
 - A neutral QUESTION or request from either side is NOT a claim, assertion, or pressure; never label it as one. Asking is not claiming.
 - Do NOT mislabel a legitimate CONSTRAINT, concern, or honest disclosure as deception or inconsistency. Someone explaining a genuine conflict (e.g. "if I sign this as-is I'd breach a prior commitment") or changing approach for a stated reason is raising something to SOLVE — flag deception/inconsistency ONLY when the transcript genuinely shows a contradiction or misrepresentation in context.
 - When THEM makes a strong point or a good proposal, surface it as a "them" moment so ME can think about how to respond — even if no eval targets it.
 - If MY negotiation setup (BATNA / target / bottom line) is provided in the context, USE it: judge leverage and the ZOPA (zone of possible agreement) against it, separate interests from positions, prefer objective criteria over pressure, and flag when ME is being pushed toward MY bottom line.
+
+RESOLVED MOMENTS — record what ME handled, do NOT drop it. A real challenge ME took on is a WIN worth showing precisely BECAUSE handling it is what ME should see; when ME later answers, counters, corrects, or defuses a moment, set resolved + resolution and it renders GREEN. Keep its side by WHOSE move it was, never by who came out ahead: a THEM objection/pressure/risk ME rebutted stays "them" + resolved; a ME misstep ME later fixed stays "me" + resolved. Be honest — mark resolved ONLY when the transcript really shows ME addressing it; you need NOT judge whether the response was strong (that is judged separately), but you DO need a concrete "how": if you cannot name MY actual move in the resolution line, it is not a win — omit the moment, do NOT emit it as an unresolved warn/critical instead. In a still-in-progress meeting, mark resolved ONLY once ME has clearly finished addressing it; a reply still unfolding stays unresolved. A moment ME ignored or never came back to stays unresolved.
 
 Be selective and ACCURATE. A short list of well-judged, strategic findings is far better than many literal ones. Ground everything in what was actually said; never fabricate quotes or timestamps.`;
 
@@ -109,6 +133,8 @@ type RawEvent = {
   title?: string | null;
   detail?: string | null;
   quotes?: (string | null)[] | null;
+  resolved?: boolean | null;
+  resolution?: string | null;
 };
 
 /** Keep only non-empty trimmed strings from a (possibly partial) array. */
@@ -141,6 +167,11 @@ function mapTimelineEvent(
   // Keep only eval ids that match a configured evaluation.
   const matchedEvalIds = cleanStrings(e.evalIds).filter((x) => validEvalIds.has(x));
   const isEval = e.source === "eval" && matchedEvalIds.length > 0;
+  // Only treat as resolved when ME actually has a "how" to show — a resolved flag
+  // with no resolution text is useless (and ambiguous), so fall back to the
+  // severity state in that case.
+  const resolution = typeof e.resolution === "string" ? e.resolution.trim() : "";
+  const resolved = e.resolved === true && resolution.length > 0;
   return {
     id,
     atMs: Math.max(0, atMs),
@@ -151,6 +182,8 @@ function mapTimelineEvent(
     title: e.title,
     detail: e.detail,
     quotes: quotes.length ? quotes : undefined,
+    resolved: resolved || undefined,
+    resolution: resolved ? resolution : undefined,
   };
 }
 

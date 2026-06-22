@@ -75,12 +75,21 @@ export async function generateFindingSolution(opts: {
     `- ${finding.title}: ${finding.detail}` +
     (quotes.length ? `\n- Quote(s):\n${quotes.map((q) => `  - "${q}"`).join("\n")}` : "");
 
+  // If the retro already found ME defused this moment, hand the model MY actual
+  // response so the suggestions BUILD ON it (reinforce / strengthen) instead of
+  // ignoring what ME already said.
+  const resolvedBlock =
+    finding.resolved && finding.resolution?.trim()
+      ? `\n\nME ALREADY RESPONDED to this moment later in the conversation:\n- ${finding.resolution.trim()}\n` +
+        `Treat that as MY starting point: if it worked, give replies that REINFORCE or EXTEND it; if it was weak or incomplete, give a STRONGER version of the same move. Do NOT ignore it, repeat it verbatim, or contradict MY own line.`
+      : "";
+
   const { object, usage } = await generateObjectResilient({
     settings,
     kind: "eval",
     schema,
     system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
-    prompt: `${ctx}${moment}\n\nFull transcript:\n${fullTranscript || "(no transcript)"}\n\nWeigh the whole negotiation, then give ME the reply options — each a line MY side would say next, never THEM's.`,
+    prompt: `${ctx}${moment}${resolvedBlock}\n\nFull transcript:\n${fullTranscript || "(no transcript)"}\n\nWeigh the whole negotiation, then give ME the reply options — each a line MY side would say next, never THEM's.`,
   });
   void recordLlmUsage(settings, "eval", "eval", usage);
 

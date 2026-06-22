@@ -11,6 +11,9 @@ const SEVERITY_DOT: Record<TimelineEvent["severity"], string> = {
   critical: "bg-red-500",
 };
 
+/** Moment ME already defused → green, overriding the severity colour. */
+const RESOLVED_DOT = "bg-emerald-500";
+
 /**
  * One finding in the right-hand list. Clicking the row HIGHLIGHTS the finding and
  * seeks to its moment — it does NOT open the reply window (that would spend a
@@ -50,7 +53,9 @@ export function FindingRow({
         }}
         className="flex w-full cursor-pointer items-start gap-2 rounded-lg px-2.5 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
-        <span className={cn("mt-1 size-2 shrink-0 rounded-full", SEVERITY_DOT[event.severity])} />
+        <span
+          className={cn("mt-1 size-2 shrink-0 rounded-full", event.resolved ? RESOLVED_DOT : SEVERITY_DOT[event.severity])}
+        />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
             <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
@@ -59,6 +64,11 @@ export function FindingRow({
             <span className={cn("text-xs font-medium", event.side === "me" ? "text-sky-400" : "text-amber-400")}>
               {event.title}
             </span>
+            {event.resolved && (
+              <span className="rounded bg-emerald-500/10 px-1 text-[9px] font-medium text-emerald-600 dark:text-emerald-400">
+                {t("timeline.resolved")}
+              </span>
+            )}
             {event.source === "extra" && (
               <span className="rounded bg-muted px-1 text-[9px] text-muted-foreground">{t("timeline.extra")}</span>
             )}
@@ -81,6 +91,11 @@ export function FindingRow({
               “{q}”
             </span>
           ))}
+          {event.resolved && event.resolution && (
+            <span className="mt-1 block text-[11px] leading-snug text-emerald-600 dark:text-emerald-400">
+              {t("timeline.resolvedHow")}: {event.resolution}
+            </span>
+          )}
           <button
             type="button"
             onClick={(e) => {
