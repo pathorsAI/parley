@@ -170,6 +170,17 @@ pub async fn diarize_audio(
     Ok(result)
 }
 
+/// Pre-download the speaker-diarization model (~27 MB) into the app data dir
+/// WITHOUT running the embedding pipeline. Used by onboarding so the first real
+/// diarization is instant and works offline; the on-demand download inside
+/// [`diarize_audio`] still covers the case where this was skipped. Idempotent — a
+/// present, checksum-valid model returns immediately. Emits `diarize://progress`
+/// (stage `downloading-model`) while fetching.
+#[tauri::command]
+pub async fn download_diarize_model(app: AppHandle) -> Result<(), String> {
+    ensure_model(&app).await.map(|_| ()).map_err(|e| format!("{e:#}"))
+}
+
 /// Cache key for a diarization run: audio identity (name + byte size) + the exact
 /// spans + the requested speaker count + the model/algo version. Any real change
 /// to those inputs yields a different key (so it recomputes); identical inputs

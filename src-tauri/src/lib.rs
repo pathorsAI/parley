@@ -69,6 +69,7 @@ pub fn run() {
             permissions::open_privacy_settings,
             replay::transcribe_file,
             diarize::diarize_audio,
+            diarize::download_diarize_model,
             mcp::get_mcp_server_info
         ])
         .run(tauri::generate_context!())
