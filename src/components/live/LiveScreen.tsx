@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+import { useDefaultLayout } from "react-resizable-panels";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -20,24 +22,39 @@ export function LiveScreen() {
   const showTranscript = layout !== "assistant";
   const showEvals = layout !== "transcript";
 
+  // Persist the dragged column proportions to localStorage. `panelIds` makes the
+  // library store a separate layout per visible set, so each preset (full /
+  // assistant / transcript) keeps its own sizes — no reset on reload. key=layout
+  // remounts the group on a preset switch so the saved sizes re-apply in-session too.
+  const panelIds = useMemo(
+    () => [...(showTranscript ? ["transcript"] : []), "work", ...(showEvals ? ["findings"] : [])],
+    [showTranscript, showEvals]
+  );
+  const saved = useDefaultLayout({ id: "parley:live", panelIds, storage: window.localStorage });
+
   return (
-    // key=layout remounts the group so panel sizes reset cleanly on change.
-    <ResizablePanelGroup key={layout} orientation="horizontal" className="min-h-0 flex-1">
+    <ResizablePanelGroup
+      key={layout}
+      orientation="horizontal"
+      className="min-h-0 flex-1"
+      defaultLayout={saved.defaultLayout}
+      onLayoutChanged={saved.onLayoutChanged}
+    >
       {showTranscript && (
         <>
-          <ResizablePanel defaultSize={26} minSize={15}>
+          <ResizablePanel id="transcript" defaultSize={26} minSize={15}>
             <MeetingView />
           </ResizablePanel>
           <ResizableHandle withHandle />
         </>
       )}
-      <ResizablePanel defaultSize={showTranscript && showEvals ? 46 : 60} minSize={30}>
+      <ResizablePanel id="work" defaultSize={showTranscript && showEvals ? 46 : 60} minSize={30}>
         <WorkPanel />
       </ResizablePanel>
       {showEvals && (
         <>
           <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={28} minSize={18}>
+          <ResizablePanel id="findings" defaultSize={28} minSize={18}>
             <FindingsPanel mode="live" onSeek={setHighlightMs} />
           </ResizablePanel>
         </>

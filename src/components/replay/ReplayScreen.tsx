@@ -1,3 +1,4 @@
+import { useDefaultLayout } from "react-resizable-panels";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -52,6 +53,10 @@ export function ReplayScreen() {
   const evalTemplates = useStore((s) => s.settings.evalTemplates);
   const evaluations = useStore((s) => s.settings.evaluations);
   const analyzedEvalSig = useStore((s) => s.analyzedEvalSig);
+
+  // Persist the dragged column proportions (transcript / center / findings) to
+  // localStorage so they survive reloads.
+  const saved = useDefaultLayout({ id: "parley:replay", storage: window.localStorage });
 
   if (!session) {
     return (
@@ -114,8 +119,13 @@ export function ReplayScreen() {
         stale={templateStale}
       />
 
-      <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
-        <ResizablePanel defaultSize={42} minSize={24}>
+      <ResizablePanelGroup
+        orientation="horizontal"
+        className="min-h-0 flex-1"
+        defaultLayout={saved.defaultLayout}
+        onLayoutChanged={saved.onLayoutChanged}
+      >
+        <ResizablePanel id="transcript" defaultSize={42} minSize={24}>
           <div className="flex h-full min-h-0 flex-col">
             <div className="flex h-9 shrink-0 items-center border-b px-4">
               <span className="text-xs font-medium text-foreground">{t("replay.transcript")}</span>
@@ -137,7 +147,7 @@ export function ReplayScreen() {
 
         <ResizableHandle withHandle />
 
-        <ResizablePanel defaultSize={34} minSize={22}>
+        <ResizablePanel id="center" defaultSize={34} minSize={22}>
           <Tabs defaultValue="actions" className="flex h-full min-h-0 flex-col gap-0">
             <div className="px-3 pt-2.5">
               <TabsList className="w-full">
@@ -156,7 +166,7 @@ export function ReplayScreen() {
 
         <ResizableHandle withHandle />
 
-        <ResizablePanel defaultSize={24} minSize={18}>
+        <ResizablePanel id="findings" defaultSize={24} minSize={18}>
           <FindingsPanel mode="replay" onSeek={player.seek} />
         </ResizablePanel>
       </ResizablePanelGroup>
