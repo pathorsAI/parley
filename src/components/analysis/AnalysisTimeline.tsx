@@ -15,6 +15,12 @@ const SEVERITY_DOT: Record<TimelineEvent["severity"], string> = {
   critical: "bg-red-500",
 };
 
+/** Moment ME already defused → green, overriding the severity colour. */
+const RESOLVED_DOT = "bg-emerald-500";
+
+/** Dot colour for a finding: green when ME already handled it, else by severity. */
+const dotClass = (e: TimelineEvent) => (e.resolved ? RESOLVED_DOT : SEVERITY_DOT[e.severity]);
+
 /** A marker is "near" the playhead within this window (ms). */
 const NEAR_MS = 4000;
 
@@ -171,6 +177,12 @@ export function AnalysisTimeline({
             <span className="size-2 rounded-full bg-muted-foreground/40 ring-2 ring-foreground/40 ring-offset-1 ring-offset-background" />
             {t("timeline.extra")}
           </span>
+          {findings.some((f) => f.resolved) && (
+            <span className="flex items-center gap-1">
+              <span className={cn("size-2 rounded-full", RESOLVED_DOT)} />
+              {t("timeline.resolved")}
+            </span>
+          )}
         </div>
       )}
 
@@ -235,7 +247,7 @@ function Lane({
               onMouseLeave={() => setHovered(null)}
               className={cn(
                 "absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full transition-transform hover:scale-125",
-                SEVERITY_DOT[e.severity],
+                dotClass(e),
                 e.source === "extra" && "ring-2 ring-foreground/40 ring-offset-1 ring-offset-background",
                 near && "scale-125",
                 isSelected && "scale-150 ring-2 ring-primary ring-offset-1 ring-offset-background",
@@ -257,8 +269,8 @@ function Lane({
                   {/* Why this dot is this colour (severity) + which eval flagged it. */}
                   <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
                     <span className="flex items-center gap-1">
-                      <span className={cn("size-1.5 rounded-full", SEVERITY_DOT[e.severity])} />
-                      {t(`timeline.sev.${e.severity}` as const)}
+                      <span className={cn("size-1.5 rounded-full", dotClass(e))} />
+                      {e.resolved ? t("timeline.resolved") : t(`timeline.sev.${e.severity}` as const)}
                     </span>
                     {e.source === "eval" && (e.evalIds?.length ?? 0) > 0 && (
                       <span>
@@ -269,6 +281,11 @@ function Lane({
                   </span>
                   <span className="mt-0.5 block font-medium text-popover-foreground">{e.title}</span>
                   <span className="mt-0.5 block text-muted-foreground">{e.detail}</span>
+                  {e.resolved && e.resolution && (
+                    <span className="mt-0.5 block text-emerald-500">
+                      {t("timeline.resolvedHow")}: {e.resolution}
+                    </span>
+                  )}
                 </span>
               )}
             </button>
