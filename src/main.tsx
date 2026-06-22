@@ -16,7 +16,9 @@ const window_ = route.startsWith("settings")
     ? "finding-solution"
     : route.startsWith("diagnostics")
       ? "diagnostics"
-      : "main";
+      : route.startsWith("history")
+        ? "history"
+        : "main";
 log.info("ui: boot", { window: window_ });
 
 const SettingsApp = lazy(() =>
@@ -28,6 +30,9 @@ const FindingSolutionApp = lazy(() =>
 const DiagnosticsApp = lazy(() =>
   import("./diagnostics/DiagnosticsApp").then((module) => ({ default: module.DiagnosticsApp }))
 );
+const HistoryApp = lazy(() =>
+  import("./history/HistoryApp").then((module) => ({ default: module.HistoryApp }))
+);
 
 function Root() {
   switch (window_) {
@@ -37,6 +42,8 @@ function Root() {
       return <FindingSolutionApp />;
     case "diagnostics":
       return <DiagnosticsApp />;
+    case "history":
+      return <HistoryApp />;
     default:
       return <App />;
   }
