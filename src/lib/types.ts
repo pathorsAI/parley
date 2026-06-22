@@ -139,6 +139,13 @@ export interface TimelineEvent {
   /** Supporting verbatim quotes — several when they belong together (e.g. BOTH
    *  sides of a contradiction, or a promise and its walk-back). */
   quotes?: string[];
+  /** REPLAY/post-eval: true when ME LATER addressed / defused / answered this
+   *  moment elsewhere in the conversation. Rendered GREEN ("resolved") instead of
+   *  the severity colour, and its {@link resolution} is fed to the reply coach so
+   *  suggestions build on what ME already said rather than ignoring it. */
+  resolved?: boolean;
+  /** One short line on HOW ME handled it — present only when {@link resolved}. */
+  resolution?: string;
 }
 
 /** A meeting to-do / agenda item to make sure gets covered. */
