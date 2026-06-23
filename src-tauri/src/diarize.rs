@@ -181,6 +181,35 @@ pub async fn download_diarize_model(app: AppHandle) -> Result<(), String> {
     ensure_model(&app).await.map(|_| ()).map_err(|e| format!("{e:#}"))
 }
 
+/// Whether the on-device speaker model is present, for the Settings UI. A cheap
+/// check — existence + exact byte size, no full SHA (the download path verifies
+/// the hash; a wrong-size leftover `.part` won't read as present). Lets Settings
+/// show a present/missing indicator and offer a Download button when it's missing
+/// (e.g. onboarding was skipped and no recording has been diarized yet).
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiarizeModelStatus {
+    present: bool,
+    size_bytes: u64,
+    expected_bytes: u64,
+}
+
+#[tauri::command]
+pub fn diarize_model_status(app: AppHandle) -> Result<DiarizeModelStatus, String> {
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("resolve app data dir: {e}"))?
+        .join("models")
+        .join(MODEL_FILE);
+    let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    Ok(DiarizeModelStatus {
+        present: size_bytes == MODEL_BYTES,
+        size_bytes,
+        expected_bytes: MODEL_BYTES,
+    })
+}
+
 /// Cache key for a diarization run: audio identity (name + byte size) + the exact
 /// spans + the requested speaker count + the model/algo version. Any real change
 /// to those inputs yields a different key (so it recomputes); identical inputs
