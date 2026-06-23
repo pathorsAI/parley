@@ -74,6 +74,7 @@ pub fn run() {
             history::list_history,
             history::read_history_entry,
             history::delete_history_entry,
+            diarize::download_diarize_model,
             mcp::get_mcp_server_info
         ])
         .run(tauri::generate_context!())

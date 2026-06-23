@@ -5,9 +5,11 @@
 
 use std::collections::VecDeque;
 
+use tauri::AppHandle;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use super::TARGET_SAMPLE_RATE;
+use crate::transcription::common::LevelMeter;
 
 /// Drop the oldest samples once a side backs up beyond this (the other side
 /// stalled). Bounds memory and keeps the two streams roughly time-aligned.
@@ -15,12 +17,16 @@ const MAX_BACKLOG: usize = TARGET_SAMPLE_RATE as usize * 2; // 2 seconds
 
 /// Sum `rx_a` and `rx_b` sample-by-sample into `tx_out` until both close.
 /// Mixes only where both sides have data; once one side ends, the remainder of
-/// the other passes through untouched.
+/// the other passes through untouched. The mic side (`rx_a`) is metered and
+/// emitted as the "me" input level so the header mic meter still moves even though
+/// mic + system are merged into a single (diarized) transcription session.
 pub async fn mix_streams(
+    app: AppHandle,
     mut rx_a: UnboundedReceiver<Vec<i16>>,
     mut rx_b: UnboundedReceiver<Vec<i16>>,
     tx_out: UnboundedSender<Vec<i16>>,
 ) {
+    let mut mic_meter = LevelMeter::new(app, "me");
     let mut a: VecDeque<i16> = VecDeque::new();
     let mut b: VecDeque<i16> = VecDeque::new();
     let mut a_open = true;
@@ -29,7 +35,10 @@ pub async fn mix_streams(
     while a_open || b_open {
         tokio::select! {
             chunk = rx_a.recv(), if a_open => match chunk {
-                Some(c) => a.extend(c),
+                Some(c) => {
+                    mic_meter.push(&c);
+                    a.extend(c);
+                }
                 None => a_open = false,
             },
             chunk = rx_b.recv(), if b_open => match chunk {

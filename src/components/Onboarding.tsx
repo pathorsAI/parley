@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Check, ChevronLeft, ChevronRight, Mic, Monitor, X } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { Check, ChevronLeft, ChevronRight, Download, Loader2, Mic, Monitor, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isTauri } from "../lib/tauriEvents";
 import { PROVIDERS, PROVIDER_BY_ID } from "../lib/ai/providers";
@@ -19,7 +20,7 @@ import type { AppLanguage, LlmProvider, Settings, SttProviderId } from "../lib/t
 
 type Perms = { microphone: string; screenRecording: boolean };
 
-const STEP_COUNT = 7;
+const STEP_COUNT = 8;
 
 export function Onboarding() {
   const { t } = useI18n();
@@ -40,8 +41,24 @@ export function Onboarding() {
     }
   }
 
+  // Permissions step (4): re-check on entry AND whenever the app regains focus /
+  // becomes visible, plus a slow fallback poll — so granting mic/screen access in
+  // the system prompt or System Settings flips the row to ✓ on its own when the
+  // user comes back, instead of staying stale until a manual re-check. (Webview
+  // focus events aren't fully reliable across the app-switch to System Settings,
+  // hence the 2 s poll; it stops when the user leaves the step.)
   useEffect(() => {
-    if (step === 4) void recheck();
+    if (step !== 4) return;
+    void recheck();
+    const recheckNow = () => void recheck();
+    window.addEventListener("focus", recheckNow);
+    document.addEventListener("visibilitychange", recheckNow);
+    const id = window.setInterval(recheckNow, 2000);
+    return () => {
+      window.removeEventListener("focus", recheckNow);
+      document.removeEventListener("visibilitychange", recheckNow);
+      window.clearInterval(id);
+    };
   }, [step]);
 
   function finish() {
@@ -243,7 +260,9 @@ export function Onboarding() {
             </div>
           )}
 
-          {step === 6 && (
+          {step === 6 && <DiarizeModelStep />}
+
+          {step === 7 && (
             <div className="flex flex-col items-center gap-3 py-6 text-center">
               <div className="flex size-12 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
                 <Check className="size-6" />
@@ -328,6 +347,98 @@ function PermRow({
         <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={onAction}>
           {actionLabel}
         </Button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Optional step: pre-fetch the ~27 MB speaker-diarization model so the first real
+ * diarization is instant and works offline. Fully skippable — Next advances
+ * regardless, and the model still downloads on demand on first use if skipped.
+ * Reuses the Rust `diarize://progress` events for the progress bar.
+ */
+function DiarizeModelStep() {
+  const { t } = useI18n();
+  const [status, setStatus] = useState<"idle" | "downloading" | "done" | "error">("idle");
+  const [progress, setProgress] = useState<{ received: number; total: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    let unlisten: (() => void) | undefined;
+    listen<{ stage: string; received: number; total: number }>("diarize://progress", (e) => {
+      if (alive && e.payload.stage === "downloading-model") {
+        setProgress({ received: e.payload.received, total: e.payload.total });
+      }
+    }).then((u) => {
+      if (alive) unlisten = u;
+      else u();
+    });
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, []);
+
+  const pct =
+    progress && progress.total > 0 ? Math.min(100, Math.round((progress.received / progress.total) * 100)) : 0;
+
+  async function download() {
+    if (status === "downloading") return;
+    setStatus("downloading");
+    setError(null);
+    setProgress(null);
+    try {
+      const { prefetchDiarizeModel } = await import("../lib/speakers/diarize");
+      await prefetchDiarizeModel();
+      setStatus("done");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setStatus("error");
+    } finally {
+      setProgress(null);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <h2 className="text-base font-semibold tracking-tight">{t("onboarding.diarize.title")}</h2>
+      <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.diarize.body")}</p>
+      {status === "done" ? (
+        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-500">
+          <Check className="size-4" />
+          {t("onboarding.diarize.ready")}
+        </div>
+      ) : (
+        <>
+          <Button
+            size="sm"
+            className="h-8 gap-1.5 self-start"
+            disabled={status === "downloading"}
+            onClick={() => void download()}
+          >
+            {status === "downloading" ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Download className="size-3.5" />
+            )}
+            {status === "downloading"
+              ? t("onboarding.diarize.downloading", { percent: pct })
+              : t("onboarding.diarize.download")}
+          </Button>
+          {status === "downloading" && (
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+            </div>
+          )}
+          {error && (
+            <p className="rounded-md bg-orange-500/10 px-2.5 py-1.5 text-[11px] text-orange-400">
+              {t("onboarding.diarize.failed", { error })}
+            </p>
+          )}
+          <p className="text-[11px] text-muted-foreground">{t("onboarding.diarize.skipHint")}</p>
+        </>
       )}
     </div>
   );

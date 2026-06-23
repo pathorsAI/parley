@@ -89,3 +89,13 @@ export async function runVoiceDiarize(opts: {
   });
   return { assigned: idToSpeaker.size, total: finalSegs.length, speakers };
 }
+
+/**
+ * Pre-download the speaker-diarization model (~27 MB) so the first real
+ * diarization is instant and works offline. Idempotent — a no-op if the model is
+ * already cached. Emits `diarize://progress` (stage "downloading-model") for a
+ * progress bar. Invoked from onboarding.
+ */
+export async function prefetchDiarizeModel(): Promise<void> {
+  await invoke("download_diarize_model");
+}

@@ -37,6 +37,13 @@ export const zhTW = {
   "onboarding.perms.hint": "若被拒絕，請到系統設定 › 隱私權與安全性 開啟，可能需重啟 app。",
   "onboarding.profile.title": "你的基本資料（選填）",
   "onboarding.profile.body": "讓 AI 知道你是誰、對方怎麼稱呼你，分人時也更能認出你。",
+  "onboarding.diarize.title": "語者辨識模型（選填）",
+  "onboarding.diarize.body": "下載本機語者辨識模型（約 27MB），上傳錄音後能用聲音把不同說話者分開。先下載好，第一次使用就不用等、離線也能用。",
+  "onboarding.diarize.download": "下載模型（約 27MB）",
+  "onboarding.diarize.downloading": "下載中… {percent}%",
+  "onboarding.diarize.ready": "模型已就緒",
+  "onboarding.diarize.failed": "（下載失敗：{error}）",
+  "onboarding.diarize.skipHint": "可略過 —— 第一次使用語者辨識時會自動下載。",
   "onboarding.done.title": "設定完成！",
   "onboarding.done.body": "按右上角的「開始會議」即可開始。隨時可到設定（⚙）調整。",
   "app.subtitle.real": "會議助理",
@@ -459,27 +466,27 @@ export const zhTW = {
   "tpl.eval.dd-checklist.name": "盡調項目遺漏",
   "tpl.eval.dd-checklist.desc": "標準盡職調查面向中尚未觸及的部分",
 
-  "tpl.todo.todo-interview.name": "面試候選人 / Job interview",
+  "tpl.todo.todo-interview.name": "面試候選人",
   "tpl.todo.todo-interview.items":
     "自我介紹與職缺說明\n請候選人介紹背景與動機\n深入追問一個代表性專案\n驗證核心技術／能力\n詢問過去的衝突與處理方式\n保留候選人提問時間\n確認薪資期待與可到職時間\n說明後續流程與時程",
-  "tpl.todo.todo-salary.name": "薪資談判 / Salary negotiation",
+  "tpl.todo.todo-salary.name": "薪資談判",
   "tpl.todo.todo-salary.items":
-    "先讓對方提出數字／區間\n確認薪酬全貌：底薪、獎金、股票、簽約金、福利\n說明自身價值與市場行情依據\n提出有依據的目標數字（錨定）\n釐清股票條件（數量、估值、vesting）\n確認升遷／調薪的時程與標準\n處理對方的施壓或人為期限\n爭取書面 offer 與考慮時間",
-  "tpl.todo.todo-sales-discovery.name": "銷售電話 / Sales call",
+    "先讓對方提出數字／區間\n確認薪酬全貌：底薪、獎金、股票、簽約金、福利\n說明自身價值與市場行情依據\n提出有依據的目標數字（錨定）\n釐清股票條件（數量、估值、歸屬期）\n確認升遷／調薪的時程與標準\n處理對方的施壓或人為期限\n爭取書面聘僱通知與考慮時間",
+  "tpl.todo.todo-sales-discovery.name": "銷售電話",
   "tpl.todo.todo-sales-discovery.items":
     "確認對方的角色與決策權\n了解現況與目前做法\n挖掘核心痛點與其影響\n量化痛點的成本／損失\n確認預算範圍\n釐清決策流程與關鍵人\n了解時程與急迫性\n詢問現有方案／競品\n約定明確的下一步",
-  "tpl.todo.todo-deal.name": "商務談判 / Deal-making",
+  "tpl.todo.todo-deal.name": "商務談判",
   "tpl.todo.todo-deal.items":
-    "確認雙方目標與底線（BATNA）\n釐清對方真正在意的優先順序\n盤點價格／條款／時程等變數\n先談整體框架再談細節\n每次讓步都換回對等條件\n記錄雙方已同意與待決事項\n確認決策流程與簽約時程\n總結共識並約定下一步",
-  "tpl.todo.todo-diligence.name": "盡職調查 / Diligence call",
+    "確認雙方目標與底線（最佳替代方案）\n釐清對方真正在意的優先順序\n盤點價格／條款／時程等變數\n先談整體框架再談細節\n每次讓步都換回對等條件\n記錄雙方已同意與待決事項\n確認決策流程與簽約時程\n總結共識並約定下一步",
+  "tpl.todo.todo-diligence.name": "盡職調查",
   "tpl.todo.todo-diligence.items":
-    "確認核心財務數據與成長趨勢\n了解營收結構與客戶集中度\n確認留存／churn 與單位經濟\n釐清競爭與市場風險\n確認團隊、關鍵人與股權結構\n了解法務／合規／智財狀況\n詢問技術債與資安現況\n索取佐證文件並約定 follow-up",
-  "tpl.todo.todo-coffee-chat.name": "Coffee chat（創業前輩）",
+    "確認核心財務數據與成長趨勢\n了解營收結構與客戶集中度\n確認留存率與流失率、單位經濟\n釐清競爭與市場風險\n確認團隊、關鍵人與股權結構\n了解法務／合規／智財狀況\n詢問技術債與資安現況\n索取佐證文件並約定後續追蹤",
+  "tpl.todo.todo-coffee-chat.name": "創業前輩諮詢",
   "tpl.todo.todo-coffee-chat.items":
-    "簡短自我介紹與來意\n請教對方的創業歷程與關鍵轉折\n請教他們現階段最大的挑戰\n針對我目前的方向請教看法\n請教常見的坑與建議\n詢問值得認識的人／引薦\n請教推薦的資源或書\n約定下次 follow-up 的方式",
-  "tpl.todo.todo-fundraising.name": "投資人 pitch",
+    "簡短自我介紹與來意\n請教對方的創業歷程與關鍵轉折\n請教他們現階段最大的挑戰\n針對我目前的方向請教看法\n請教常見的坑與建議\n詢問值得認識的人／引薦\n請教推薦的資源或書\n約定下次後續聯繫的方式",
+  "tpl.todo.todo-fundraising.name": "投資人簡報",
   "tpl.todo.todo-fundraising.items":
-    "一句話講清楚在做什麼\n說明問題與市場規模\nDemo 產品\n商業模式與關鍵數據（traction）\n介紹團隊與為何是我們\n競爭與護城河\n募資金額與資金用途\n確認對方的投資範圍與決策流程",
+    "一句話講清楚在做什麼\n說明問題與市場規模\n展示產品\n商業模式與關鍵成長數據\n介紹團隊與為何是我們\n競爭與護城河\n募資金額與資金用途\n確認對方的投資範圍與決策流程",
 } as const satisfies Dict;
 
 export const en = {
@@ -512,6 +519,13 @@ export const en = {
   "onboarding.perms.hint": "If denied, enable it in System Settings › Privacy & Security; you may need to restart the app.",
   "onboarding.profile.title": "Your profile (optional)",
   "onboarding.profile.body": "Lets the AI know who you are, how the other party addresses you, and recognize your lines when diarizing.",
+  "onboarding.diarize.title": "Speaker diarization model (optional)",
+  "onboarding.diarize.body": "Download the on-device model (~27 MB) that separates speakers by voice in uploaded recordings. Grab it now so the first diarization is instant and works offline.",
+  "onboarding.diarize.download": "Download model (~27 MB)",
+  "onboarding.diarize.downloading": "Downloading… {percent}%",
+  "onboarding.diarize.ready": "Model ready",
+  "onboarding.diarize.failed": "(Download failed: {error})",
+  "onboarding.diarize.skipHint": "Optional — it'll download automatically the first time you use diarization.",
   "onboarding.done.title": "You're all set!",
   "onboarding.done.body": "Press “Start meeting” in the top-right to begin. You can tweak anything later in Settings (⚙).",
   "app.subtitle.real": "meeting copilot",
