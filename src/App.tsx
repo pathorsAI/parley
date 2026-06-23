@@ -18,6 +18,7 @@ import { initSessionCommands } from "./lib/sessionCommands";
 import { useThemePreference } from "./lib/theme";
 import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
+import { listenForHistoryOpen, listenForRecordingSaved } from "./lib/history/history";
 
 function App() {
   useThemePreference();
@@ -34,6 +35,8 @@ function App() {
     const unCacheClear = listenForCacheClear();
     const unSpeakerCacheClear = listenForSpeakerCacheClear();
     const unViewLogs = listenForViewLogsMenu();
+    const unRecordingSaved = listenForRecordingSaved();
+    const unHistoryOpen = listenForHistoryOpen();
     return () => {
       unTranscript.then((fn) => fn());
       unSettings.then((fn) => fn());
@@ -44,6 +47,8 @@ function App() {
       unCacheClear.then((fn) => fn());
       unSpeakerCacheClear.then((fn) => fn());
       unViewLogs.then((fn) => fn());
+      unRecordingSaved.then((fn) => fn());
+      unHistoryOpen.then((fn) => fn());
     };
   }, []);
 
