@@ -4,6 +4,7 @@ import { LiveScreen } from "./components/live/LiveScreen";
 import { ReplayScreen } from "./components/replay/ReplayScreen";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { IngestWizard } from "./components/IngestWizard";
 import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWindow";
 import { useFindingSolutionHost } from "./components/analysis/useFindingSolutionHost";
@@ -19,6 +20,7 @@ import { useThemePreference } from "./lib/theme";
 import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import { listenForHistoryOpen, listenForRecordingSaved } from "./lib/history/history";
+import { checkForUpdate } from "./lib/update";
 
 function App() {
   useThemePreference();
@@ -52,6 +54,13 @@ function App() {
     };
   }, []);
 
+  // Check for an app update shortly after launch — surfaces a dismissible banner
+  // only; applying is always user-initiated, so it never interrupts a meeting.
+  useEffect(() => {
+    const id = setTimeout(() => void checkForUpdate({ silent: true }), 3000);
+    return () => clearTimeout(id);
+  }, []);
+
   // LIVE background engine: optional auto-analyze interval + TODO agenda auto-check.
   useAnalysisEngine();
 
@@ -62,6 +71,7 @@ function App() {
     <div className="flex h-screen flex-col bg-background text-foreground">
       {!onboarded && <Onboarding />}
       <AnalysisErrorDialog />
+      <UpdateBanner />
       <IngestWizard />
       {/* In the Tauri app the drilldown is its own OS window (see
           useFindingSolutionHost); in plain browser dev we fall back to the

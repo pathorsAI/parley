@@ -494,6 +494,17 @@ export const zhTW = {
   "tpl.todo.todo-fundraising.name": "投資人簡報",
   "tpl.todo.todo-fundraising.items":
     "一句話講清楚在做什麼\n說明問題與市場規模\n展示產品\n商業模式與關鍵成長數據\n介紹團隊與為何是我們\n競爭與護城河\n募資金額與資金用途\n確認對方的投資範圍與決策流程",
+
+  // App auto-update
+  "update.available": "有新版本 {version} — 重新啟動以更新",
+  "update.restart": "更新並重啟",
+  "update.updating": "更新中…",
+  "update.dismiss": "關閉",
+  "update.found": "找到新版 {version}",
+  "update.upToDate": "已是最新版本",
+  "settings.update.title": "軟體更新",
+  "settings.update.check": "檢查更新",
+  "settings.update.help": "Parley 啟動時會自動檢查更新；有新版本時上方會出現橫幅，點「更新並重啟」即可。",
 } as const satisfies Dict;
 
 export const en = {
@@ -981,6 +992,17 @@ export const en = {
   "tpl.todo.todo-fundraising.name": "Investor pitch",
   "tpl.todo.todo-fundraising.items":
     "Explain what you do in one sentence\nLay out the problem and market size\nDemo the product\nBusiness model and key metrics (traction)\nIntroduce the team and why it's us\nCompetition and moat\nRaise amount and use of funds\nConfirm their investment range and decision process",
+
+  // App auto-update
+  "update.available": "Version {version} available — restart to update",
+  "update.restart": "Update & restart",
+  "update.updating": "Updating…",
+  "update.dismiss": "Dismiss",
+  "update.found": "Found {version}",
+  "update.upToDate": "You're up to date",
+  "settings.update.title": "Software updates",
+  "settings.update.check": "Check for updates",
+  "settings.update.help": "Parley checks for updates on launch; when one's available a banner appears up top — click Update & restart.",
 } as const satisfies Record<keyof typeof zhTW, string>;
 
 export const DICTS: Record<AppLanguage, Dict> = {
