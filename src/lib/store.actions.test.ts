@@ -87,6 +87,56 @@ describe("enterReplay / exitReplay", () => {
   });
 });
 
+describe("loadHistory", () => {
+  it("loads a saved entry into replay and RESTORES its analysis (no re-run)", () => {
+    const session = replaySession([seg({ id: "s1", text: "saved line" })], {
+      id: "hist-1",
+      name: "即時會議 · 2026",
+      speakerNames: { "them-1": "Bob" },
+    });
+    const entry = {
+      id: "hist-1",
+      title: "即時會議 · 2026",
+      source: "live" as const,
+      createdAt: 123,
+      durationMs: 60_000,
+      segments: session.segments,
+      speakerNames: { "them-1": "Bob" },
+      findings: [makeFinding("f1"), makeFinding("f2")],
+      actionItems: [
+        { id: "ai", text: "follow up", rationale: "why", done: false, linkedEventId: null, atMs: null },
+      ],
+      meetingContext: "context here",
+      meetingBatna: "batna",
+      meetingTarget: "target",
+      meetingFloor: "floor",
+      audio: "audio.ogg",
+    };
+
+    useStore.getState().loadHistory(entry, session);
+
+    const s = useStore.getState();
+    expect(s.appMode).toBe("replay");
+    expect(s.replay).toBe(session);
+    expect(s.segments).toEqual(session.segments);
+    expect(s.speakerNames).toEqual({ "them-1": "Bob" });
+    expect(s.meetingStatus).toBe("stopped");
+    // Analysis restored verbatim and marked done so useReplayAnalysis won't re-run.
+    expect(s.findings).toHaveLength(2);
+    expect(s.analysisStatus).toBe("done");
+    expect(s.actionItems).toHaveLength(1);
+    expect(s.actionItemsStatus).toBe("done");
+    // Per-meeting context + negotiation setup restored.
+    expect(s.meetingContext).toBe("context here");
+    expect(s.meetingBatna).toBe("batna");
+    expect(s.meetingTarget).toBe("target");
+    expect(s.meetingFloor).toBe("floor");
+    // analysisGate open + a non-stale eval signature so findings aren't flagged stale.
+    expect(s.analysisGate).toBe("open");
+    expect(s.analyzedEvalSig).not.toBe("");
+  });
+});
+
 describe("ingest wizard + analysis gate", () => {
   it("openIngestWizard arms the deferred gate and sets step/path", () => {
     expect(useStore.getState().analysisGate).toBe("open");
