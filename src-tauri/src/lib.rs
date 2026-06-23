@@ -70,6 +70,7 @@ pub fn run() {
             replay::transcribe_file,
             diarize::diarize_audio,
             diarize::download_diarize_model,
+            diarize::diarize_model_status,
             mcp::get_mcp_server_info
         ])
         .run(tauri::generate_context!())
