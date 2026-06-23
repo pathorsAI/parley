@@ -37,6 +37,11 @@ pub fn write_templates(app: AppHandle, json: String) -> Result<(), String> {
     std::fs::write(&path, json).map_err(|e| e.to_string())
 }
 
+/// Accumulates the live meeting's recorded PCM (16 kHz mono i16) so it can be
+/// encoded to Ogg/Opus on stop and saved into the local history. `None` between
+/// meetings; armed (`Some(empty)`) by `start_meeting` and drained by `stop_meeting`.
+pub(crate) type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
+
 /// Shared meeting state held in Tauri's managed state. `running` gates all
 /// capture threads; clearing it tells them to release their devices and exit.
 #[derive(Default)]
@@ -45,6 +50,8 @@ pub struct MeetingState {
     threads: Mutex<Vec<JoinHandle<()>>>,
     /// Separate flag for the Settings "test mic" preview (no Soniox).
     test_running: Arc<AtomicBool>,
+    /// Buffers the recorded audio of the in-progress live meeting (see RecorderBuf).
+    recorder: RecorderBuf,
 }
 
 /// List available microphone input device names (for the Settings picker).
@@ -114,6 +121,10 @@ pub fn start_meeting(
         return Ok(());
     }
     let running = state.running.clone();
+    // Arm a fresh recording buffer for this meeting (the designated session below
+    // tees its PCM into it; stop_meeting encodes + clears it).
+    *state.recorder.lock().unwrap() = Some(Vec::new());
+    let recorder = state.recorder.clone();
     let model = model
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| provider.default_model().to_string());
@@ -143,19 +154,26 @@ pub fn start_meeting(
                 (Some(a), Some(b)) => {
                     let (tx_mix, rx_mix) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
                     tauri::async_runtime::spawn(crate::audio::mixer::mix_streams(app.clone(), a, b, tx_mix));
-                    run_metered_session(&app, provider, make_config(), "mix", rx_mix);
+                    // Record the mixed stream → the saved file holds both sides.
+                    run_metered_session(&app, provider, make_config(), "mix", rx_mix, Some(recorder));
                 }
-                // If one capture failed, transcribe whichever started.
-                (Some(a), None) => run_metered_session(&app, provider, make_config(), "me", a),
-                (None, Some(b)) => run_metered_session(&app, provider, make_config(), "them", b),
+                // If one capture failed, transcribe + record whichever started.
+                (Some(a), None) => {
+                    run_metered_session(&app, provider, make_config(), "me", a, Some(recorder))
+                }
+                (None, Some(b)) => {
+                    run_metered_session(&app, provider, make_config(), "them", b, Some(recorder))
+                }
                 (None, None) => {}
             }
         } else {
+            // No diarization → two sessions. Record the mic only (mixing two
+            // un-aligned streams into one file would garble it); see plan note.
             if let Some(rx) = spawn_capture(&state, mic, running.clone(), "me") {
-                run_metered_session(&app, provider, make_config(), "me", rx);
+                run_metered_session(&app, provider, make_config(), "me", rx, Some(recorder));
             }
             if let Some(rx) = spawn_capture(&state, sys, running.clone(), "them") {
-                run_metered_session(&app, provider, make_config(), "them", rx);
+                run_metered_session(&app, provider, make_config(), "them", rx, None);
             }
         }
     }
@@ -166,7 +184,7 @@ pub fn start_meeting(
             device_name: input_device,
         };
         if let Some(rx) = spawn_capture(&state, mic, running.clone(), "me") {
-            run_metered_session(&app, provider, make_config(), "me", rx);
+            run_metered_session(&app, provider, make_config(), "me", rx, Some(recorder));
         }
     }
 
@@ -184,6 +202,39 @@ pub fn stop_meeting(app: AppHandle, state: State<MeetingState>) -> Result<(), St
         let _ = h.join();
     }
     let _ = app.emit("meeting://status", "stopped");
+
+    // Encode the captured audio off-thread and tell the frontend where it landed
+    // (which then writes the history entry). Skip very short / empty recordings.
+    let pcm = state.recorder.lock().unwrap().take();
+    if let Some(pcm) = pcm {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let rate = crate::audio::TARGET_SAMPLE_RATE as usize;
+            if pcm.len() < rate * 2 {
+                log::info!("recording: too short to save ({} samples)", pcm.len());
+                return;
+            }
+            let duration_ms = (pcm.len() as u64 * 1000) / rate as u64;
+            let out = crate::replay_audio::unique_recording_path();
+            match crate::replay_audio::encode_opus_ogg(&pcm, &out) {
+                Ok(()) => {
+                    log::info!(
+                        "recording: saved {} ({} ms)",
+                        out.to_string_lossy(),
+                        duration_ms
+                    );
+                    let _ = app.emit(
+                        "meeting://recording-saved",
+                        serde_json::json!({
+                            "path": out.to_string_lossy(),
+                            "durationMs": duration_ms,
+                        }),
+                    );
+                }
+                Err(e) => log::error!("recording: encode failed: {e}"),
+            }
+        });
+    }
     Ok(())
 }
 
@@ -224,12 +275,15 @@ fn spawn_capture<S: AudioSource>(
 
 /// Run a transcription session over `rx`, counting the audio streamed so the
 /// frontend can bill it. Emits a `usage://stt` event when the session ends.
+/// When `recorder` is `Some`, every chunk is also appended to it so the meeting
+/// can be saved to history (only the designated session passes a recorder).
 fn run_metered_session(
     app: &AppHandle,
     provider: SttProvider,
     config: TranscribeConfig,
     label: &'static str,
     rx: UnboundedReceiver<Vec<i16>>,
+    recorder: Option<RecorderBuf>,
 ) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -242,6 +296,12 @@ fn run_metered_session(
             let mut samples: u64 = 0;
             while let Some(chunk) = rx.recv().await {
                 samples += chunk.len() as u64;
+                // Tee into the recording buffer (kept while the meeting is armed).
+                if let Some(rec) = &recorder {
+                    if let Some(buf) = rec.lock().unwrap().as_mut() {
+                        buf.extend_from_slice(&chunk);
+                    }
+                }
                 if count_tx.send(chunk).is_err() {
                     break;
                 }
