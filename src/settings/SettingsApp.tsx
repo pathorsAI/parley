@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { appLogDir, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { log } from "../lib/log";
-import { Check, Copy, Monitor, Moon, PlugZap, Plus, Sun, Trash2 } from "lucide-react";
+import { Check, Copy, Download, Loader2, Monitor, Moon, PlugZap, Plus, Sun, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
@@ -372,6 +373,9 @@ export function SettingsApp() {
                 {t("settings.transcription.noDiarizationWarning")}
               </p>
             )}
+            <Field label={t("settings.transcription.speakerModel")}>
+              <DiarizeModelField />
+            </Field>
             <Field label={t("settings.transcription.microphone")}>
               <div className="flex max-w-sm flex-col gap-2">
                 <Select
@@ -908,6 +912,117 @@ function TodoTemplateEditor({
       <Button variant="ghost" size="sm" className="w-fit text-[11px]" onClick={() => onChange({ items: [...tpl.items, ""] })}>
         <Plus className="size-3.5" /> {t("settings.todos.addItem")}
       </Button>
+    </div>
+  );
+}
+
+/**
+ * On-device speaker-diarization model: shows whether it's downloaded and offers a
+ * manual download when it's missing — the recovery path for users who skipped the
+ * onboarding step (previously the model could only ever be fetched there or
+ * implicitly on first diarization). Reuses the Rust `diarize://progress` events
+ * (stage `downloading-model`) for the progress bar, same as onboarding.
+ */
+function DiarizeModelField() {
+  const { t } = useI18n();
+  // null = still checking; true/false = known presence.
+  const [present, setPresent] = useState<boolean | null>(null);
+  const [status, setStatus] = useState<"idle" | "downloading" | "error">("idle");
+  const [pct, setPct] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(() => {
+    if (!isTauri()) {
+      setPresent(false);
+      return;
+    }
+    import("../lib/speakers/diarize")
+      .then((m) => m.diarizeModelStatus())
+      .then((s) => setPresent(s.present))
+      .catch(() => setPresent(false));
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  // Mirror onboarding's progress wiring so the bar fills while fetching.
+  useEffect(() => {
+    if (!isTauri()) return;
+    let alive = true;
+    let unlisten: (() => void) | undefined;
+    listen<{ stage: string; received: number; total: number }>("diarize://progress", (e) => {
+      if (alive && e.payload.stage === "downloading-model" && e.payload.total > 0) {
+        setPct(Math.min(100, Math.round((e.payload.received / e.payload.total) * 100)));
+      }
+    }).then((u) => {
+      if (alive) unlisten = u;
+      else u();
+    });
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, []);
+
+  async function download() {
+    if (status === "downloading") return;
+    setStatus("downloading");
+    setError(null);
+    setPct(0);
+    try {
+      const { prefetchDiarizeModel } = await import("../lib/speakers/diarize");
+      await prefetchDiarizeModel();
+      setPresent(true);
+      setStatus("idle");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setStatus("error");
+    }
+  }
+
+  return (
+    <div className="flex max-w-md flex-col gap-2">
+      {present === true ? (
+        <span className="flex items-center gap-1.5 text-sm text-emerald-500">
+          <Check className="size-4" />
+          {t("settings.transcription.speakerModelInstalled")}
+        </span>
+      ) : (
+        <>
+          <div className="flex items-center gap-2.5">
+            <span className="text-sm text-muted-foreground">
+              {present === null ? "…" : t("settings.transcription.speakerModelMissing")}
+            </span>
+            <Button
+              size="sm"
+              className="h-7 gap-1.5 text-[11px]"
+              disabled={status === "downloading" || present === null}
+              onClick={() => void download()}
+            >
+              {status === "downloading" ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Download className="size-3.5" />
+              )}
+              {status === "downloading"
+                ? t("settings.transcription.speakerModelDownloading", { percent: pct })
+                : t("settings.transcription.speakerModelDownload")}
+            </Button>
+          </div>
+          {status === "downloading" && (
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+            </div>
+          )}
+          {error && (
+            <p className="rounded-md bg-orange-500/10 px-2.5 py-1.5 text-[11px] text-orange-400">
+              {t("settings.transcription.speakerModelFailed", { error })}
+            </p>
+          )}
+        </>
+      )}
+      <p className="text-[11px] text-muted-foreground">{t("settings.transcription.speakerModelHelp")}</p>
     </div>
   );
 }
