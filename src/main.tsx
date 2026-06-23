@@ -19,6 +19,11 @@ const window_ = route.startsWith("settings")
       : "main";
 log.info("ui: boot", { window: window_ });
 
+// Scope window-chrome CSS to the right surface: only the main window is
+// undecorated + transparent (rounded macOS-style corners); the secondary
+// windows keep native decorations and an opaque background.
+document.documentElement.dataset.appWindow = window_;
+
 const SettingsApp = lazy(() =>
   import("./settings/SettingsApp").then((module) => ({ default: module.SettingsApp }))
 );

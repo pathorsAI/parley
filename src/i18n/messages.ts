@@ -67,6 +67,7 @@ export const zhTW = {
   "titlebar.closeWindow": "關閉視窗",
   "titlebar.minimizeWindow": "最小化視窗",
   "titlebar.maximizeWindow": "最大化視窗",
+  "titlebar.fullscreenWindow": "全螢幕",
 
   "settings.nav.basic": "基本設定",
   "settings.nav.provider": "模型供應商",
@@ -534,6 +535,7 @@ export const en = {
   "titlebar.closeWindow": "Close window",
   "titlebar.minimizeWindow": "Minimize window",
   "titlebar.maximizeWindow": "Maximize window",
+  "titlebar.fullscreenWindow": "Toggle full screen",
 
   "settings.nav.basic": "Basic Settings",
   "settings.nav.provider": "LLM Provider",
