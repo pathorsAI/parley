@@ -502,7 +502,9 @@ export const zhTW = {
   "update.dismiss": "關閉",
   "update.found": "找到新版 {version}",
   "update.upToDate": "已是最新版本",
+  "update.reopen": "更新已安裝——請手動關閉並重新開啟 Parley 完成更新",
   "settings.update.title": "軟體更新",
+  "settings.update.current": "目前版本 v{version}",
   "settings.update.check": "檢查更新",
   "settings.update.help": "Parley 啟動時會自動檢查更新；有新版本時上方會出現橫幅，點「更新並重啟」即可。",
 } as const satisfies Dict;
@@ -1000,7 +1002,9 @@ export const en = {
   "update.dismiss": "Dismiss",
   "update.found": "Found {version}",
   "update.upToDate": "You're up to date",
+  "update.reopen": "Update installed — please quit and reopen Parley to finish",
   "settings.update.title": "Software updates",
+  "settings.update.current": "Current version v{version}",
   "settings.update.check": "Check for updates",
   "settings.update.help": "Parley checks for updates on launch; when one's available a banner appears up top — click Update & restart.",
 } as const satisfies Record<keyof typeof zhTW, string>;
