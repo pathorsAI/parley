@@ -291,7 +291,8 @@ fn tools() -> Vec<Value> {
             "get_session_status",
             "Get live session status",
             "Get the current Parley meeting state: meetingStatus (idle/recording/stopped), \
-             when it was last updated, and counts of transcript segments, todos, and evaluations.",
+             when it was last updated, and counts of transcript segments, todos, evaluations, \
+             and timeline-analysis findings.",
             json!({ "type": "object", "properties": {} }),
         ),
         tool(
@@ -359,7 +360,84 @@ fn tools() -> Vec<Value> {
             "Remove an evaluation from the current meeting by id. Get ids from list_evaluations.",
             json!({ "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }),
         ),
+        tool(
+            "list_findings",
+            "List timeline-analysis findings",
+            "List the current meeting's timeline-analysis findings (the markers on the \
+             replay timeline) as TimelineEvent objects: \
+             { id, atMs, side, severity, source, title, detail, quotes?, evalIds?, resolved?, resolution? }.",
+            json!({ "type": "object", "properties": {} }),
+        ),
+        tool(
+            "set_findings",
+            "Overwrite timeline-analysis findings",
+            "Replace the ENTIRE timeline-analysis findings list with the provided events \
+             (the markers shown on the replay timeline). Applied within ~1.5s. Use list_findings \
+             first to see the current set. Omit an event id to mint a new one.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "events": {
+                        "type": "array",
+                        "description": "The full findings list to render on the timeline.",
+                        "items": finding_schema()
+                    }
+                },
+                "required": ["events"]
+            }),
+        ),
+        tool(
+            "update_finding",
+            "Edit one timeline-analysis finding",
+            "Patch a single timeline-analysis finding by id. Pass the id plus only the fields to \
+             change; the id itself cannot be changed. Get ids from list_findings.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "atMs": { "type": "number", "description": "Moment on the recording timeline (ms)." },
+                    "side": { "type": "string", "enum": ["me", "them"] },
+                    "severity": { "type": "string", "enum": ["info", "warn", "critical"] },
+                    "source": { "type": "string", "enum": ["eval", "extra"] },
+                    "title": { "type": "string" },
+                    "detail": { "type": "string" },
+                    "quotes": { "type": "array", "items": { "type": "string" } },
+                    "evalIds": { "type": "array", "items": { "type": "string" } },
+                    "resolved": { "type": "boolean" },
+                    "resolution": { "type": "string" }
+                },
+                "required": ["id"]
+            }),
+        ),
+        tool(
+            "remove_finding",
+            "Remove one timeline-analysis finding",
+            "Delete a single timeline-analysis finding by id. Get ids from list_findings.",
+            json!({ "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }),
+        ),
     ]
+}
+
+/// JSON-Schema for one TimelineEvent, shared by set_findings. `me` = a problem/
+/// mistake by ME; `them` = a point/pressure the other party raised.
+fn finding_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string", "description": "Stable id; omit to mint a new one." },
+            "atMs": { "type": "number", "description": "Moment on the recording timeline (ms)." },
+            "side": { "type": "string", "enum": ["me", "them"], "description": "Lane: my problem vs their move." },
+            "severity": { "type": "string", "enum": ["info", "warn", "critical"] },
+            "source": { "type": "string", "enum": ["eval", "extra"], "description": "From an eval, or an AI-caught extra moment." },
+            "title": { "type": "string", "description": "Short label." },
+            "detail": { "type": "string", "description": "One or two sentences explaining the moment." },
+            "quotes": { "type": "array", "items": { "type": "string" }, "description": "Supporting verbatim quotes." },
+            "evalIds": { "type": "array", "items": { "type": "string" }, "description": "Matching evaluation ids (for source=eval)." },
+            "resolved": { "type": "boolean", "description": "True when ME later addressed/defused this moment." },
+            "resolution": { "type": "string", "description": "One line on how ME handled it (only when resolved)." }
+        },
+        "required": ["atMs", "side", "severity", "title", "detail"]
+    })
 }
 
 fn tool(name: &str, title: &str, description: &str, input_schema: Value) -> Value {
@@ -446,6 +524,24 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             "remove_evaluation",
             json!({ "id": required_str(&args, "id")? }),
         )?,
+        "list_findings" => read_session(&state.session_path)
+            .get("findings")
+            .cloned()
+            .unwrap_or_else(|| json!([])),
+        "set_findings" => append_command(
+            &state.commands_path,
+            "set_findings",
+            json!({ "events": args.get("events").cloned().unwrap_or_else(|| json!([])) }),
+        )?,
+        "update_finding" => {
+            required_str(&args, "id")?; // validate before queueing the raw patch
+            append_command(&state.commands_path, "update_finding", args)?
+        }
+        "remove_finding" => append_command(
+            &state.commands_path,
+            "remove_finding",
+            json!({ "id": required_str(&args, "id")? }),
+        )?,
         _ => anyhow::bail!("unknown tool: {name}"),
     };
     Ok(json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&value)? }] }))
@@ -493,6 +589,7 @@ fn session_status(path: &PathBuf) -> Value {
         "segmentCount": s.pointer("/transcript/segmentCount").cloned().unwrap_or_else(|| json!(0)),
         "todoCount": count("todos"),
         "evalCount": count("evaluations"),
+        "findingCount": count("findings"),
     })
 }
 

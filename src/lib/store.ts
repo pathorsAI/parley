@@ -196,6 +196,11 @@ interface ParleyState {
    *  When it differs from the active eval set, the findings are stale → re-analyze. */
   analyzedEvalSig: string;
   setFindings: (events: TimelineEvent[]) => void;
+  /** Patch a single finding by id (MCP/external edit). The id stays fixed. */
+  updateFinding: (id: string, patch: Partial<TimelineEvent>) => void;
+  /** Delete a single finding by id (MCP/external edit), clearing any selection
+   *  or cached solution that pointed at it. */
+  removeFinding: (id: string) => void;
   setAnalysisStatus: (status: ParleyState["analysisStatus"]) => void;
   setAnalysisError: (error: string | null) => void;
   /** Drop findings + action items outside the replay keep-window. Applied when a
@@ -478,6 +483,23 @@ export const useStore = create<ParleyState>()(
         findingSolutions,
       };
     }),
+
+  updateFinding: (id, patch) =>
+    set((s) => ({
+      // Spread patch first, then pin id back so an external edit can never
+      // rewrite the id (which keys selection + the solution cache).
+      findings: s.findings.map((f) => (f.id === id ? { ...f, ...patch, id: f.id } : f)),
+    })),
+
+  removeFinding: (id) =>
+    set((s) => ({
+      findings: s.findings.filter((f) => f.id !== id),
+      selectedFindingId: s.selectedFindingId === id ? null : s.selectedFindingId,
+      solutionFindingId: s.solutionFindingId === id ? null : s.solutionFindingId,
+      findingSolutions: Object.fromEntries(
+        Object.entries(s.findingSolutions).filter(([k]) => k !== id),
+      ),
+    })),
 
   dropFindingsOutsideTrim: () =>
     set((s) => {
