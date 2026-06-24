@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Circle, FileAudio, Loader2, LogOut, Mic, Minus, Settings, Square, X } from "lucide-react";
+import { Circle, FileAudio, History, Loader2, LogOut, Maximize2, Mic, Minus, Settings, Square, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { log } from "../lib/log";
 import { STT_BY_ID, sttApiKey } from "../lib/transcription/providers";
 import { startMockStream, stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
 import { openSettingsWindow } from "../lib/settingsSync";
+import { openHistoryWindow } from "../lib/history/history";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
@@ -276,6 +277,17 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
             </Button>
           </>
         )}
+
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-8 w-8"
+          aria-label={t("titlebar.history")}
+          title={t("titlebar.history")}
+          onClick={() => void openHistoryWindow()}
+        >
+          <History className="size-4" />
+        </Button>
 
         <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => void openSettingsWindow()}>
           <Settings className="size-4" />

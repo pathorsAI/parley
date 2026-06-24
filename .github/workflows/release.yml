@@ -98,6 +98,11 @@ jobs:
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater artifact signing (minisign) — lets the app verify auto-updates
+          # against the pubkey in tauri.conf.json. tauri-action signs the bundle and
+          # attaches `latest.json` to the release when these are present.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ steps.release.outputs.tag }}
           releaseName: "Parley ${{ steps.release.outputs.tag }}"

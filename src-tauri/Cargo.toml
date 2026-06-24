@@ -1,6 +1,6 @@
 [package]
 name = "parley"
-version = "0.6.2"
+version = "0.6.6"
 description = "Parley — realtime meeting copilot for interviews and negotiations"
 authors = ["you"]
 edition = "2021"
@@ -22,6 +22,8 @@ tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
 log = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }

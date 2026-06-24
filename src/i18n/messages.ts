@@ -68,6 +68,21 @@ export const zhTW = {
   "titlebar.minimizeWindow": "最小化視窗",
   "titlebar.maximizeWindow": "最大化視窗",
   "titlebar.fullscreenWindow": "全螢幕",
+  "titlebar.history": "歷史紀錄",
+
+  "history.title": "歷史紀錄",
+  "history.liveTitle": "即時會議",
+  "history.count": "{count} 筆",
+  "history.refresh": "重新整理",
+  "history.loading": "載入中…",
+  "history.empty": "還沒有任何歷史紀錄",
+  "history.emptyHint": "結束一場即時會議，或上傳並分析一段錄音，就會自動存成一筆紀錄。",
+  "history.browserOnly": "歷史紀錄只在 Parley App 中可用。",
+  "history.badge.live": "即時",
+  "history.badge.upload": "上傳",
+  "history.delete": "刪除",
+  "history.findings": "{count} 項分析",
+  "history.hasAudio": "含錄音",
 
   "settings.nav.basic": "基本設定",
   "settings.nav.provider": "模型供應商",
@@ -146,6 +161,13 @@ export const zhTW = {
   "settings.transcription.apiKey": "{provider} API key",
   "settings.transcription.noDiarizationTag": "無分人",
   "settings.transcription.noDiarizationWarning": "此供應商不支援語者辨識（speaker diarization）。它只能依音源分出「你」與「對方」，無法再區分同一邊的多位說話者——對方有多人時會全部併到同一個 speaker，個別歸屬可能不準。需要精細分人請用 Soniox 或 Deepgram；要用此供應商也行，由你決定。",
+  "settings.transcription.speakerModel": "語者辨識模型（本機）",
+  "settings.transcription.speakerModelInstalled": "已安裝（約 27MB）",
+  "settings.transcription.speakerModelMissing": "尚未下載",
+  "settings.transcription.speakerModelDownload": "下載（約 27MB）",
+  "settings.transcription.speakerModelDownloading": "下載中… {percent}%",
+  "settings.transcription.speakerModelFailed": "下載失敗：{error}",
+  "settings.transcription.speakerModelHelp": "上傳錄音後用聲音把不同說話者分開的本機模型。略過引導沒下載也沒關係——第一次使用語者辨識時會自動下載；先下載好則離線也能用、第一次不用等。",
   "settings.transcription.sonioxKey": "Soniox API key",
   "settings.transcription.microphone": "麥克風（輸入裝置）",
   "settings.transcription.systemDefault": "系統預設",
@@ -473,6 +495,19 @@ export const zhTW = {
   "tpl.todo.todo-fundraising.name": "投資人簡報",
   "tpl.todo.todo-fundraising.items":
     "一句話講清楚在做什麼\n說明問題與市場規模\n展示產品\n商業模式與關鍵成長數據\n介紹團隊與為何是我們\n競爭與護城河\n募資金額與資金用途\n確認對方的投資範圍與決策流程",
+
+  // App auto-update
+  "update.available": "有新版本 {version} — 重新啟動以更新",
+  "update.restart": "更新並重啟",
+  "update.updating": "更新中…",
+  "update.dismiss": "關閉",
+  "update.found": "找到新版 {version}",
+  "update.upToDate": "已是最新版本",
+  "update.reopen": "更新已安裝——請手動關閉並重新開啟 Parley 完成更新",
+  "settings.update.title": "軟體更新",
+  "settings.update.current": "目前版本 v{version}",
+  "settings.update.check": "檢查更新",
+  "settings.update.help": "Parley 啟動時會自動檢查更新；有新版本時上方會出現橫幅，點「更新並重啟」即可。",
 } as const satisfies Dict;
 
 export const en = {
@@ -536,6 +571,21 @@ export const en = {
   "titlebar.minimizeWindow": "Minimize window",
   "titlebar.maximizeWindow": "Maximize window",
   "titlebar.fullscreenWindow": "Toggle full screen",
+  "titlebar.history": "History",
+
+  "history.title": "History",
+  "history.liveTitle": "Live meeting",
+  "history.count": "{count} saved",
+  "history.refresh": "Refresh",
+  "history.loading": "Loading…",
+  "history.empty": "No history yet",
+  "history.emptyHint": "Finish a live meeting, or upload and analyze a recording, and it'll be saved here automatically.",
+  "history.browserOnly": "History is only available in the Parley app.",
+  "history.badge.live": "Live",
+  "history.badge.upload": "Upload",
+  "history.delete": "Delete",
+  "history.findings": "{count} findings",
+  "history.hasAudio": "Has recording",
 
   "settings.nav.basic": "Basic Settings",
   "settings.nav.provider": "LLM Provider",
@@ -614,6 +664,13 @@ export const en = {
   "settings.transcription.apiKey": "{provider} API key",
   "settings.transcription.noDiarizationTag": "no diarization",
   "settings.transcription.noDiarizationWarning": "This provider doesn't support speaker diarization. It can only split 'you' vs 'the other side' by audio source — it can't tell apart multiple people on the same side, so several remote speakers collapse into one and individual attribution may be off. Use Soniox or Deepgram for fine-grained speaker separation; using this provider is fine too — your call.",
+  "settings.transcription.speakerModel": "Speaker model (on-device)",
+  "settings.transcription.speakerModelInstalled": "Installed (~27 MB)",
+  "settings.transcription.speakerModelMissing": "Not downloaded",
+  "settings.transcription.speakerModelDownload": "Download (~27 MB)",
+  "settings.transcription.speakerModelDownloading": "Downloading… {percent}%",
+  "settings.transcription.speakerModelFailed": "Download failed: {error}",
+  "settings.transcription.speakerModelHelp": "On-device model that separates speakers by voice in uploaded recordings. If you skipped it during onboarding that's fine — it downloads automatically the first time you use diarization; grabbing it here means the first run is instant and works offline.",
   "settings.transcription.sonioxKey": "Soniox API key",
   "settings.transcription.microphone": "Microphone (input device)",
   "settings.transcription.systemDefault": "System default",
@@ -939,6 +996,19 @@ export const en = {
   "tpl.todo.todo-fundraising.name": "Investor pitch",
   "tpl.todo.todo-fundraising.items":
     "Explain what you do in one sentence\nLay out the problem and market size\nDemo the product\nBusiness model and key metrics (traction)\nIntroduce the team and why it's us\nCompetition and moat\nRaise amount and use of funds\nConfirm their investment range and decision process",
+
+  // App auto-update
+  "update.available": "Version {version} available — restart to update",
+  "update.restart": "Update & restart",
+  "update.updating": "Updating…",
+  "update.dismiss": "Dismiss",
+  "update.found": "Found {version}",
+  "update.upToDate": "You're up to date",
+  "update.reopen": "Update installed — please quit and reopen Parley to finish",
+  "settings.update.title": "Software updates",
+  "settings.update.current": "Current version v{version}",
+  "settings.update.check": "Check for updates",
+  "settings.update.help": "Parley checks for updates on launch; when one's available a banner appears up top — click Update & restart.",
 } as const satisfies Record<keyof typeof zhTW, string>;
 
 export const DICTS: Record<AppLanguage, Dict> = {

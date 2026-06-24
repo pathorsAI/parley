@@ -12,10 +12,12 @@ import type {
   TranscriptSegment,
 } from "./types";
 import type { ReplaySession } from "./replay/types";
+import type { HistoryEntry } from "./history/types";
 import {
   buildBuiltinEvalLabels,
   buildPresetEvalDefs,
   buildPresetEvalTemplates,
+  evalSignature,
   evalsFromDefs,
 } from "./evaluations/presets";
 import { reconcileTemplates } from "./templates";
@@ -134,6 +136,9 @@ interface ParleyState {
   replayPlayheadMs: number;
   /** Load an uploaded recording and switch into replay mode. */
   enterReplay: (session: ReplaySession) => void;
+  /** Load a saved history entry into replay mode, RESTORING its analysis (unlike
+   *  {@link enterReplay}, which clears findings so a fresh pass can run). */
+  loadHistory: (entry: HistoryEntry, session: ReplaySession) => void;
   /** Leave replay mode and return to a clean live/idle state. */
   exitReplay: () => void;
   /** Move the replay playhead (drives both audio position and the transcript). */
@@ -255,6 +260,10 @@ interface ParleyState {
   highlightMs: number | null;
   setHighlightMs: (ms: number | null) => void;
 
+  /** An available app update (drives the banner prompt); null = none / up to date. */
+  update: { version: string; body: string } | null;
+  setUpdate: (update: { version: string; body: string } | null) => void;
+
   // todos
   addTodo: (text: string) => void;
   toggleTodo: (id: string) => void;
@@ -322,10 +331,12 @@ export const useStore = create<ParleyState>()(
       meetingTarget: "",
       meetingFloor: "",
       highlightMs: null,
+      update: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
+  setUpdate: (update) => set({ update }),
 
   enterReplay: (session) => {
     log.info("store: enter replay", {
@@ -355,6 +366,49 @@ export const useStore = create<ParleyState>()(
       actionItemsStatus: "idle",
       actionItemsError: null,
     });
+  },
+
+  loadHistory: (entry, session) => {
+    log.info("store: load history", {
+      id: entry.id,
+      source: entry.source,
+      segments: entry.segments.length,
+      findings: entry.findings.length,
+    });
+    set((state) => ({
+      appMode: "replay",
+      replay: session,
+      replayPlayheadMs: 0,
+      replaySeekNonce: state.replaySeekNonce + 1,
+      replayTrim: null,
+      ingestWizardOpen: false,
+      ingestAudioPath: null,
+      // Open so playback/seeking works, but the analysis below is already "done"
+      // (see useReplayAnalysis: it only runs when status is "idle"), so loading a
+      // saved entry never re-spends a generation.
+      analysisGate: "open",
+      segments: entry.segments,
+      speakerNames: entry.speakerNames,
+      meetingStatus: "stopped",
+      highlightMs: null,
+      // Restore the saved analysis verbatim.
+      findings: entry.findings,
+      analysisStatus: "done",
+      analysisError: null,
+      analyzedEvalSig: evalSignature(state.evaluations),
+      actionItems: entry.actionItems,
+      actionItemsStatus: "done",
+      actionItemsError: null,
+      // Restore the per-meeting context + negotiation setup.
+      meetingContext: entry.meetingContext,
+      meetingBatna: entry.meetingBatna,
+      meetingTarget: entry.meetingTarget,
+      meetingFloor: entry.meetingFloor,
+      // Nothing selected / open yet.
+      selectedFindingId: null,
+      solutionFindingId: null,
+      findingSolutions: {},
+    }));
   },
 
   exitReplay: () => {

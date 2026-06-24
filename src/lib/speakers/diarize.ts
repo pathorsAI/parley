@@ -99,3 +99,22 @@ export async function runVoiceDiarize(opts: {
 export async function prefetchDiarizeModel(): Promise<void> {
   await invoke("download_diarize_model");
 }
+
+/** Presence of the on-device speaker model, mirroring Rust `DiarizeModelStatus`. */
+export interface DiarizeModelStatus {
+  /** True once the model is downloaded and the expected size. */
+  present: boolean;
+  /** Bytes on disk (0 if absent). */
+  sizeBytes: number;
+  /** Expected size of the complete model. */
+  expectedBytes: number;
+}
+
+/**
+ * Check whether the speaker-diarization model is already downloaded. Cheap
+ * (existence + size, no hashing). Used by Settings to show a present/missing
+ * indicator and offer a manual download when onboarding was skipped.
+ */
+export async function diarizeModelStatus(): Promise<DiarizeModelStatus> {
+  return invoke<DiarizeModelStatus>("diarize_model_status");
+}
