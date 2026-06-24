@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Circle, FileAudio, History, Loader2, LogOut, Maximize2, Mic, Minus, Settings, Square, X } from "lucide-react";
@@ -14,11 +14,49 @@ import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
 
 /**
+ * Track main-window focus so the traffic lights can dim to grey when the window
+ * is inactive — matching native macOS behaviour. Defaults to focused (and stays
+ * focused in browser dev, where there's no window to query).
+ */
+function useWindowFocused(): boolean {
+  const [focused, setFocused] = useState(true);
+  useEffect(() => {
+    if (!isTauri()) return;
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      const win = getCurrentWindow();
+      try {
+        const initial = await win.isFocused();
+        if (active) setFocused(initial);
+      } catch {
+        /* ignore — keep default */
+      }
+      const un = await win.onFocusChanged(({ payload }) => {
+        if (active) setFocused(payload);
+      });
+      if (active) unlisten = un;
+      else un();
+    })();
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+  return focused;
+}
+
+/**
  * Custom window titlebar. The main Tauri window is undecorated, so this header
  * owns both the draggable region and the window controls.
+ *
+ * In fullscreen there are no window controls (macOS hides the traffic lights and
+ * reveals its own menu bar at the top edge), so we drop our traffic lights and
+ * let the logo + brand sit at the leading edge.
  */
-export function TitleBar() {
+export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
   const { t } = useI18n();
+  const focused = useWindowFocused();
   const status = useStore((s) => s.meetingStatus);
   const transcriptionProvider = useStore((s) => s.settings.transcriptionProvider);
   const sttKey = useStore((s) => sttApiKey(s.settings, s.settings.transcriptionProvider));
@@ -103,13 +141,14 @@ export function TitleBar() {
     }
   }
 
-  async function controlWindow(action: "close" | "minimize" | "maximize") {
+  async function controlWindow(action: "close" | "minimize" | "fullscreen") {
     if (!isTauri()) return;
     const appWindow = getCurrentWindow();
     try {
       if (action === "close") await appWindow.close();
       if (action === "minimize") await appWindow.minimize();
-      if (action === "maximize") await appWindow.toggleMaximize();
+      // Native macOS maps the green button to full screen (not window zoom).
+      if (action === "fullscreen") await appWindow.setFullscreen(!(await appWindow.isFullscreen()));
     } catch (e) {
       log.warn("window: action failed", { action, error: String(e) });
     }
@@ -118,34 +157,64 @@ export function TitleBar() {
   return (
     <header
       data-tauri-drag-region
-      className="relative flex h-[52px] shrink-0 items-center justify-between border-b bg-background/85 pl-[104px] pr-3 backdrop-blur"
+      className={`relative flex h-[52px] shrink-0 items-center justify-between border-b bg-background/85 pr-3 backdrop-blur ${
+        fullscreen ? "pl-4" : "pl-[104px]"
+      }`}
     >
-      <div className="absolute left-4 top-1/2 flex -translate-y-1/2 items-center gap-2">
+      {/* macOS traffic lights: native sizing/colours, glyphs reveal on hover of
+          the whole cluster (not per-button), and the trio dims to grey when the
+          window loses focus — matching the system buttons. Hidden in fullscreen,
+          where macOS shows no window controls. */}
+      {!fullscreen && (
+      <div className="group/traffic absolute left-4 top-1/2 flex -translate-y-1/2 items-center gap-2">
         <button
           type="button"
           aria-label={t("titlebar.closeWindow")}
           onClick={() => void controlWindow("close")}
-          className="group grid size-3.5 place-items-center rounded-full bg-red-500 text-red-950 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.18)] transition hover:bg-red-400"
+          className={`grid size-3 place-items-center rounded-full shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.14)] transition-colors ${
+            focused ? "bg-[#FF5F57]" : "bg-[#c7c7c9] group-hover/traffic:bg-[#FF5F57] dark:bg-[#565658]"
+          }`}
         >
-          <X className="size-2.5 opacity-0 transition-opacity group-hover:opacity-75" strokeWidth={3} />
+          <X
+            className="size-2 text-black/55 opacity-0 transition-opacity group-hover/traffic:opacity-100"
+            strokeWidth={3}
+          />
         </button>
         <button
           type="button"
           aria-label={t("titlebar.minimizeWindow")}
           onClick={() => void controlWindow("minimize")}
-          className="group grid size-3.5 place-items-center rounded-full bg-yellow-500 text-yellow-950 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.18)] transition hover:bg-yellow-400"
+          className={`grid size-3 place-items-center rounded-full shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.14)] transition-colors ${
+            focused ? "bg-[#FEBC2E]" : "bg-[#c7c7c9] group-hover/traffic:bg-[#FEBC2E] dark:bg-[#565658]"
+          }`}
         >
-          <Minus className="size-2.5 opacity-0 transition-opacity group-hover:opacity-75" strokeWidth={3} />
+          <Minus
+            className="size-2 text-black/55 opacity-0 transition-opacity group-hover/traffic:opacity-100"
+            strokeWidth={3}
+          />
         </button>
         <button
           type="button"
-          aria-label={t("titlebar.maximizeWindow")}
-          onClick={() => void controlWindow("maximize")}
-          className="group grid size-3.5 place-items-center rounded-full bg-emerald-500 text-emerald-950 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.18)] transition hover:bg-emerald-400"
+          aria-label={t("titlebar.fullscreenWindow")}
+          onClick={() => void controlWindow("fullscreen")}
+          className={`grid size-3 place-items-center rounded-full shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.14)] transition-colors ${
+            focused ? "bg-[#28C840]" : "bg-[#c7c7c9] group-hover/traffic:bg-[#28C840] dark:bg-[#565658]"
+          }`}
         >
-          <Maximize2 className="size-2 opacity-0 transition-opacity group-hover:opacity-75" strokeWidth={3} />
+          {/* Native zoom/fullscreen glyph: two filled triangles tucked into
+              opposite corners, leaving a diagonal gap — not lucide's thin
+              double-arrow, which reads wrong at this size. */}
+          <svg
+            viewBox="0 0 10 10"
+            aria-hidden
+            className="size-2 fill-current text-black/55 opacity-0 transition-opacity group-hover/traffic:opacity-100"
+          >
+            <path d="M1.4 1.4H6L1.4 6Z" />
+            <path d="M8.6 8.6H4L8.6 4Z" />
+          </svg>
         </button>
       </div>
+      )}
 
       <div data-tauri-drag-region className="flex items-center gap-2.5">
         <img src="/parley.svg" alt="" className="h-5 w-5 rounded-[5px]" />
