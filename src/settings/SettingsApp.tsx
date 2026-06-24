@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { appLogDir, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { log } from "../lib/log";
@@ -74,6 +75,7 @@ export function SettingsApp() {
   const [logPath, setLogPath] = useState("");
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateMsg, setUpdateMsg] = useState("");
+  const [appVersion, setAppVersion] = useState("");
   const info = PROVIDER_BY_ID[settings.provider];
   const providerLabel = info.label;
   const sttInfo = STT_BY_ID[settings.transcriptionProvider];
@@ -85,6 +87,7 @@ export function SettingsApp() {
 
   useEffect(() => {
     if (!isTauri()) return;
+    getVersion().then(setAppVersion).catch(() => {});
     invoke<string[]>("list_input_devices").then(setDevices).catch(() => {});
     invoke<string>("get_templates_path").then(setTemplatesPath).catch(() => {});
     appLogDir().then((d) => join(d, "parley.log")).then(setLogPath).catch(() => {});
@@ -254,6 +257,11 @@ export function SettingsApp() {
               </Button>
             </Field>
             <Field label={t("settings.update.title")}>
+              {appVersion && (
+                <p className="text-sm">
+                  {t("settings.update.current", { version: appVersion })}
+                </p>
+              )}
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
