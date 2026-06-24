@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Check, Loader2, Pause, Play, Scissors } from "lucide-react";
+import { Check, Download, Loader2, Pause, Play, Scissors } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatClock, type ReplayTrim } from "../../lib/store";
@@ -13,12 +13,15 @@ interface ReplayPlayerBarProps {
   player: ReplayPlayer;
   /** Rendered top-right of the header (REPLAY mounts the Analyze menu here). */
   rightSlot?: ReactNode;
+  /** Save the recording's audio to a user-chosen folder (Tauri only; omit to hide). */
+  onExport?: () => void;
   /** Localized strings (resolved by the parent via the replay i18n shim). */
   labels: {
     title: string;
     play: string;
     pause: string;
     playhead: string;
+    exportAudio: string;
     trim: string;
     trimApply: string;
     trimming: string;
@@ -41,7 +44,7 @@ interface ReplayPlayerBarProps {
  * outside is removed. Re-uploading the original restores it (cached). The draft
  * lives locally until Apply, so nothing happens until you confirm.
  */
-export function ReplayPlayerBar({ name, durationMs, player, rightSlot, labels }: ReplayPlayerBarProps) {
+export function ReplayPlayerBar({ name, durationMs, player, rightSlot, onExport, labels }: ReplayPlayerBarProps) {
   const [trimOpen, setTrimOpen] = useState(false);
   const [draft, setDraft] = useState<ReplayTrim | null>(null);
   const [trimming, setTrimming] = useState(false);
@@ -115,6 +118,20 @@ export function ReplayPlayerBar({ name, durationMs, player, rightSlot, labels }:
           <span className="w-10 shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
             {formatClock(durationMs)}
           </span>
+
+          {/* Save the recording's audio out to a folder of the user's choosing. */}
+          {onExport && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+              onClick={onExport}
+              aria-label={labels.exportAudio}
+              title={labels.exportAudio}
+            >
+              <Download className="size-4" />
+            </Button>
+          )}
 
           {/* Toggle the trim handles. */}
           <Button

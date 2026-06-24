@@ -59,6 +59,7 @@ pub fn run() {
             commands::start_mic_test,
             commands::stop_mic_test,
             commands::save_transcript,
+            commands::export_recording,
             commands::read_templates,
             commands::write_templates,
             commands::get_templates_path,

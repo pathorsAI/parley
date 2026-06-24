@@ -252,6 +252,17 @@ pub fn save_transcript(filename: String, contents: String) -> Result<String, Str
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Copy a recording's audio file to a user-chosen destination (the replay
+/// "Save audio…" action — the frontend picks `dst` via the save dialog).
+#[tauri::command]
+pub fn export_recording(src: String, dst: String) -> Result<(), String> {
+    if !std::path::Path::new(&src).exists() {
+        return Err(format!("source recording not found: {src}"));
+    }
+    std::fs::copy(&src, &dst).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Start one capture backend on its own thread, returning the PCM receiver.
 /// Returns `None` if the device failed to start.
 fn spawn_capture<S: AudioSource>(

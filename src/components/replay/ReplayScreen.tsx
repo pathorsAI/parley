@@ -7,6 +7,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useI18n } from "../../i18n";
 import { useStore } from "../../lib/store";
+import { isTauri } from "../../lib/tauriEvents";
 import { evalSignature, findActiveTemplate } from "../../lib/evaluations/presets";
 import { AnalysisTimeline } from "../analysis/AnalysisTimeline";
 import { AnalyzeMenu } from "../analysis/AnalyzeMenu";
@@ -71,6 +72,27 @@ export function ReplayScreen() {
   const templateStale =
     findings.length > 0 && analysisStatus === "done" && evalSignature(evaluations) !== analyzedEvalSig;
 
+  // Save the recording's audio out to a folder the user picks, then reveal it.
+  async function exportRecording() {
+    if (!isTauri()) return;
+    try {
+      const ext = session!.audioPath.split(".").pop() || "ogg";
+      const base = session!.name.replace(/\.[^./\\]+$/, "") || "recording";
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const dst = await save({
+        defaultPath: `${base}.${ext}`,
+        filters: [{ name: "Audio", extensions: [ext] }],
+      });
+      if (!dst) return;
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("export_recording", { src: session!.audioPath, dst });
+      const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      await revealItemInDir(dst);
+    } catch (e) {
+      console.error("[export]", e);
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {/* Hidden audio element — the player hook drives + observes it. */}
@@ -91,11 +113,13 @@ export function ReplayScreen() {
         durationMs={session.durationMs}
         player={player}
         rightSlot={<AnalyzeMenu />}
+        onExport={isTauri() ? exportRecording : undefined}
         labels={{
           title: t("replay.title"),
           play: t("replay.play"),
           pause: t("replay.pause"),
           playhead: t("replay.playhead"),
+          exportAudio: t("replay.export"),
           trim: t("replay.trim"),
           trimApply: t("replay.trimApply"),
           trimming: t("replay.trimming"),
