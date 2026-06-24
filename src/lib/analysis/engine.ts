@@ -176,8 +176,14 @@ export async function runAnalysis(opts?: { mode?: AppMode; force?: boolean }): P
  * the analysis actually succeeded (so a failed pass doesn't wipe good items).
  */
 export async function reanalyzeAll(): Promise<void> {
+  // Pin the entry we started on; if the user loads a DIFFERENT record mid-run
+  // (e.g. from the History window, which isn't gated by the busy menu), don't
+  // chain action items — that would re-arm the persist for the new entry and
+  // write THIS run's analysis onto it.
+  const startedFor = useStore.getState().loadedHistoryId;
   await runAnalysis({ mode: "replay", force: true });
   if (useStore.getState().analysisStatus !== "done") return;
+  if (useStore.getState().loadedHistoryId !== startedFor) return;
   const { regenerateActionItems } = await import("./actionItems");
   regenerateActionItems();
 }
