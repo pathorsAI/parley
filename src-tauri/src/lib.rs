@@ -77,6 +77,7 @@ pub fn run() {
             history::save_history_entry,
             history::list_history,
             history::read_history_entry,
+            history::rename_history_entry,
             history::delete_history_entry,
             diarize::download_diarize_model,
             diarize::diarize_model_status,

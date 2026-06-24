@@ -80,6 +80,9 @@ export const zhTW = {
   "history.badge.live": "即時",
   "history.badge.upload": "上傳",
   "history.delete": "刪除",
+  "history.rename": "重新命名",
+  "history.renameSave": "儲存",
+  "history.renameFailed": "重新命名失敗：{error}",
   "history.findings": "{count} 項分析",
   "history.hasAudio": "含錄音",
 
@@ -595,6 +598,9 @@ export const en = {
   "history.badge.live": "Live",
   "history.badge.upload": "Upload",
   "history.delete": "Delete",
+  "history.rename": "Rename",
+  "history.renameSave": "Save",
+  "history.renameFailed": "Rename failed: {error}",
   "history.findings": "{count} findings",
   "history.hasAudio": "Has recording",
 

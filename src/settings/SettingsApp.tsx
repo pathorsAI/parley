@@ -17,6 +17,7 @@ import { LevelMeter } from "../components/LevelMeter";
 import { UsagePanel } from "./UsagePanel";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
 import { Button } from "@/components/ui/button";
+import { Toaster } from "@/components/ui/sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -141,6 +142,7 @@ export function SettingsApp() {
 
   return (
     <div className="flex h-screen bg-background text-foreground">
+      <Toaster />
       {/* Left nav */}
       <nav className="flex w-48 shrink-0 flex-col gap-0.5 border-r bg-muted/30 p-2">
         <div className="px-2 pb-2 pt-1 text-sm font-semibold tracking-tight">{t("common.settings")}</div>

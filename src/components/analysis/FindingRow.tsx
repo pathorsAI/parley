@@ -83,14 +83,9 @@ export function FindingRow({
             ))}
           </span>
           <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{event.detail}</span>
-          {event.quotes?.map((q, i) => (
-            <span
-              key={i}
-              className="mt-1 block border-l-2 border-border pl-2 text-[11px] italic text-muted-foreground/80"
-            >
-              “{q}”
-            </span>
-          ))}
+          {/* The referenced transcript quote is intentionally NOT shown — clicking
+              the row already seeks to that moment in the transcript. Quotes are
+              still kept on the event for time-anchoring. */}
           {event.resolved && event.resolution && (
             <span className="mt-1 block text-[11px] leading-snug text-emerald-600 dark:text-emerald-400">
               {t("timeline.resolvedHow")}: {event.resolution}

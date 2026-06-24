@@ -127,6 +127,25 @@ pub fn read_history_entry(app: AppHandle, id: String) -> Result<HistoryRead, Str
     Ok(HistoryRead { meta, audio_path })
 }
 
+/// Rename an entry: patch `title` in both `meta.json` and `summary.json` (leaving
+/// the recording + analysis untouched).
+#[tauri::command]
+pub fn rename_history_entry(app: AppHandle, id: String, title: String) -> Result<(), String> {
+    let dir = history_dir(&app)?.join(safe_id(&id));
+    for file in ["meta.json", "summary.json"] {
+        let path = dir.join(file);
+        let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let mut value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("title".into(), serde_json::Value::String(title.clone()));
+        }
+        let out = serde_json::to_string(&value).map_err(|e| e.to_string())?;
+        std::fs::write(&path, out).map_err(|e| e.to_string())?;
+    }
+    log::info!("history: renamed entry {id}");
+    Ok(())
+}
+
 /// Delete an entry's folder and everything in it.
 #[tauri::command]
 pub fn delete_history_entry(app: AppHandle, id: String) -> Result<(), String> {

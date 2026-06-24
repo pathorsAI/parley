@@ -151,6 +151,13 @@ export async function listHistory(): Promise<HistoryEntrySummary[]> {
   return summaries.sort((a, b) => b.createdAt - a.createdAt);
 }
 
+/** Rename an entry (patches the title in meta + summary). */
+export async function renameHistoryEntry(id: string, title: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("rename_history_entry", { id, title: title.trim() });
+  log.info("history: entry renamed", { id });
+}
+
 /** Delete one entry's folder. */
 export async function deleteHistoryEntry(id: string): Promise<void> {
   if (!isTauri()) return;

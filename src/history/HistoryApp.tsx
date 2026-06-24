@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { FileAudio, Mic, RefreshCw, Trash2, Upload, Users, Volume2, ZapOff } from "lucide-react";
+import { Check, FileAudio, Mic, Pencil, RefreshCw, Trash2, Upload, Users, Volume2, ZapOff } from "lucide-react";
+import { toast } from "sonner";
 import { useThemePreference } from "../lib/theme";
 import { isTauri } from "../lib/tauriEvents";
 import { log } from "../lib/log";
 import { useI18n } from "../i18n";
-import { deleteHistoryEntry, emitHistoryOpen, listHistory } from "../lib/history/history";
+import { deleteHistoryEntry, emitHistoryOpen, listHistory, renameHistoryEntry } from "../lib/history/history";
 import type { HistoryEntrySummary } from "../lib/history/types";
 import { Button } from "@/components/ui/button";
+import { Toaster } from "@/components/ui/sonner";
 
 /** m:ss for short clips, h:mm:ss past an hour. */
 function formatDuration(ms: number): string {
@@ -79,6 +81,21 @@ export function HistoryApp() {
     [],
   );
 
+  const rename = useCallback(
+    async (id: string, title: string) => {
+      const clean = title.trim();
+      if (!clean) return;
+      try {
+        await renameHistoryEntry(id, clean);
+        setEntries((prev) => prev?.map((e) => (e.id === id ? { ...e, title: clean } : e)) ?? null);
+      } catch (e) {
+        log.error("history: rename failed", { id, error: String(e) });
+        toast.error(t("history.renameFailed", { error: e instanceof Error ? e.message : String(e) }));
+      }
+    },
+    [t],
+  );
+
   if (!isTauri()) {
     return (
       <div className="flex h-screen items-center justify-center bg-background px-6 text-center text-sm text-muted-foreground">
@@ -129,11 +146,13 @@ export function HistoryApp() {
                 busy={busyId === e.id}
                 onOpen={() => void open(e.id)}
                 onDelete={() => void remove(e.id)}
+                onRename={(title) => void rename(e.id, title)}
               />
             ))}
           </div>
         )}
       </div>
+      <Toaster />
     </div>
   );
 }
@@ -144,15 +163,30 @@ function HistoryCard({
   busy,
   onOpen,
   onDelete,
+  onRename,
 }: {
   entry: HistoryEntrySummary;
   locale: string;
   busy: boolean;
   onOpen: () => void;
   onDelete: () => void;
+  onRename: (title: string) => void;
 }) {
   const { t } = useI18n();
   const isLive = entry.source === "live";
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(entry.title);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function startEdit() {
+    setDraft(entry.title);
+    setEditing(true);
+    requestAnimationFrame(() => inputRef.current?.select());
+  }
+  function commit() {
+    setEditing(false);
+    if (draft.trim() && draft.trim() !== entry.title) onRename(draft);
+  }
   return (
     <div
       role="button"
@@ -182,6 +216,18 @@ function HistoryCard({
         </span>
         <button
           type="button"
+          aria-label={t("history.rename")}
+          title={t("history.rename")}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            startEdit();
+          }}
+          className="grid size-6 place-items-center rounded-md text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
+        >
+          <Pencil className="size-3.5" />
+        </button>
+        <button
+          type="button"
           aria-label={t("history.delete")}
           title={t("history.delete")}
           disabled={busy}
@@ -195,7 +241,39 @@ function HistoryCard({
         </button>
       </div>
 
-      <div className="line-clamp-2 text-sm font-medium leading-snug">{entry.title}</div>
+      {editing ? (
+        <div className="flex items-center gap-1" onClick={(ev) => ev.stopPropagation()}>
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(ev) => setDraft(ev.target.value)}
+            onKeyDown={(ev) => {
+              ev.stopPropagation();
+              if (ev.key === "Enter") {
+                ev.preventDefault();
+                commit();
+              } else if (ev.key === "Escape") {
+                ev.preventDefault();
+                setDraft(entry.title);
+                setEditing(false);
+              }
+            }}
+            onBlur={commit}
+            className="min-w-0 flex-1 rounded border bg-background px-1.5 py-1 text-sm font-medium outline-none focus:border-primary"
+          />
+          <button
+            type="button"
+            aria-label={t("history.renameSave")}
+            onMouseDown={(ev) => ev.preventDefault()}
+            onClick={commit}
+            className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:text-foreground"
+          >
+            <Check className="size-3.5" />
+          </button>
+        </div>
+      ) : (
+        <div className="line-clamp-2 text-sm font-medium leading-snug">{entry.title}</div>
+      )}
       <div className="text-[11px] text-muted-foreground">{formatDate(entry.createdAt, locale)}</div>
 
       {entry.snippet && (
