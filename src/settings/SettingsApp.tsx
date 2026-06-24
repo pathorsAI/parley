@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -81,17 +81,24 @@ export function SettingsApp() {
   const [appVersion, setAppVersion] = useState("");
   const cloudAuth = useStore((s) => s.cloudAuth);
   const [signingIn, setSigningIn] = useState(false);
+  const signInAbort = useRef<AbortController | null>(null);
 
   async function doSignIn() {
+    const controller = new AbortController();
+    signInAbort.current = controller;
     setSigningIn(true);
     try {
-      await signInWithGoogle();
+      await signInWithGoogle(controller.signal);
     } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      toast.error(t("settings.account.signInFailed", { error }), {
-        action: { label: t("toast.retry"), onClick: () => void doSignIn() },
-      });
+      // Don't toast a user-initiated cancel.
+      if (!controller.signal.aborted) {
+        const error = e instanceof Error ? e.message : String(e);
+        toast.error(t("settings.account.signInFailed", { error }), {
+          action: { label: t("toast.retry"), onClick: () => void doSignIn() },
+        });
+      }
     } finally {
+      if (signInAbort.current === controller) signInAbort.current = null;
       setSigningIn(false);
     }
   }
@@ -331,15 +338,26 @@ export function SettingsApp() {
               </div>
             ) : (
               <div className="flex flex-col gap-3">
-                <Button
-                  size="sm"
-                  className="h-9 w-fit gap-2 text-xs"
-                  disabled={signingIn || !isTauri()}
-                  onClick={() => void doSignIn()}
-                >
-                  {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
-                  {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    className="h-9 w-fit gap-2 text-xs"
+                    disabled={signingIn || !isTauri()}
+                    onClick={() => void doSignIn()}
+                  >
+                    {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+                    {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
+                  </Button>
+                  {signingIn && (
+                    <button
+                      type="button"
+                      onClick={() => signInAbort.current?.abort()}
+                      className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    >
+                      {t("settings.account.cancel")}
+                    </button>
+                  )}
+                </div>
                 <p className="max-w-sm text-[11px] text-muted-foreground">
                   {isTauri() ? t("settings.account.signedOutHelp") : t("settings.account.desktopOnly")}
                 </p>

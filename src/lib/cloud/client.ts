@@ -28,8 +28,9 @@ export async function fetchMe(token: string): Promise<Me> {
  * to a one-shot local server (Rust `start_oauth_loopback`) that emits
  * `auth://callback`. We then fetch /me and stash the session. Works in `tauri dev`.
  */
-export async function signInWithGoogle(): Promise<void> {
+export async function signInWithGoogle(signal?: AbortSignal): Promise<void> {
   if (!isTauri()) throw new Error("desktop only");
+  if (signal?.aborted) throw new Error("cancelled");
   const { invoke } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
   const { openUrl } = await import("@tauri-apps/plugin-opener");
@@ -38,19 +39,23 @@ export async function signInWithGoogle(): Promise<void> {
 
   const token = await new Promise<string>((resolve, reject) => {
     let unlisten: (() => void) | undefined;
-    const timer = setTimeout(() => {
-      unlisten?.();
-      reject(new Error("timed out"));
-    }, 3 * 60 * 1000);
-    const done = (fn: () => void) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const onAbort = () => settle(() => reject(new Error("cancelled")));
+    const settle = (fn: () => void) => {
       clearTimeout(timer);
       unlisten?.();
+      signal?.removeEventListener("abort", onAbort);
       fn();
     };
 
+    // Bail if the browser flow never routes back (closed tab, an error Better
+    // Auth couldn't redirect, etc.) — so the UI doesn't hang on a stuck spinner.
+    timer = setTimeout(() => settle(() => reject(new Error("timed out"))), 2 * 60 * 1000);
+    signal?.addEventListener("abort", onAbort);
+
     listen<{ token?: string; error?: string }>("auth://callback", (e) => {
-      if (e.payload.token) done(() => resolve(e.payload.token!));
-      else done(() => reject(new Error(e.payload.error || "sign-in failed")));
+      if (e.payload.token) settle(() => resolve(e.payload.token!));
+      else settle(() => reject(new Error(e.payload.error || "sign-in failed")));
     }).then((fn) => {
       unlisten = fn;
     });
@@ -60,7 +65,7 @@ export async function signInWithGoogle(): Promise<void> {
     const signInUrl = `${CLOUD_URL}/desktop/sign-in?to=${encodeURIComponent(
       `http://127.0.0.1:${port}/cb`
     )}`;
-    openUrl(signInUrl).catch((err) => done(() => reject(err)));
+    openUrl(signInUrl).catch((err) => settle(() => reject(err)));
   });
 
   const me = await fetchMe(token);

@@ -519,6 +519,7 @@ export const zhTW = {
   "settings.account.signedInHelp": "已登入。雲端同步即將推出。",
   "settings.account.signedOutHelp": "登入後即可跨裝置同步錄音與分析，並在團隊中分享。",
   "settings.account.desktopOnly": "登入功能只在 Parley App 中可用。",
+  "settings.account.cancel": "取消",
 } as const satisfies Dict;
 
 export const en = {
@@ -1031,6 +1032,7 @@ export const en = {
   "settings.account.signedInHelp": "Signed in. Cloud sync is coming soon.",
   "settings.account.signedOutHelp": "Sign in to sync your recordings & analysis across devices and share within your team.",
   "settings.account.desktopOnly": "Sign-in is only available in the Parley app.",
+  "settings.account.cancel": "Cancel",
 } as const satisfies Record<keyof typeof zhTW, string>;
 
 export const DICTS: Record<AppLanguage, Dict> = {
