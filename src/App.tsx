@@ -54,11 +54,18 @@ function App() {
     };
   }, []);
 
-  // Check for an app update shortly after launch — surfaces a dismissible banner
-  // only; applying is always user-initiated, so it never interrupts a meeting.
+  // Check for an app update shortly after launch, then keep re-checking on a slow
+  // interval so a long-running window still catches a release that lands while
+  // it's open. Surfaces a dismissible banner only; applying is always
+  // user-initiated, so it never interrupts a meeting.
   useEffect(() => {
-    const id = setTimeout(() => void checkForUpdate({ silent: true }), 3000);
-    return () => clearTimeout(id);
+    const RECHECK_MS = 30 * 60 * 1000; // every 30 min while the app stays open
+    const first = setTimeout(() => void checkForUpdate({ silent: true }), 3000);
+    const recheck = setInterval(() => void checkForUpdate({ silent: true }), RECHECK_MS);
+    return () => {
+      clearTimeout(first);
+      clearInterval(recheck);
+    };
   }, []);
 
   // LIVE background engine: optional auto-analyze interval + TODO agenda auto-check.
