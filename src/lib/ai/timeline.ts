@@ -8,11 +8,15 @@ import { log } from "../log";
 import type { EvalDef, Settings, TimelineEvent, TranscriptSegment } from "../types";
 
 // One notable moment the model surfaced. `time` is the [m:ss]/m:ss it cites; we
-// parse it into atMs and fall back to fuzzy-matching the quote when it's unusable.
+// parse it into atMs and snap it to the exact transcript segment — the timestamp
+// IS the anchor, so no verbatim quote needs generating.
 const eventSchema = z.object({
   time: z
     .string()
-    .describe("The [m:ss] (or m:ss) time this moment occurred, copied from the transcript line."),
+    .describe(
+      "The [m:ss] (or m:ss) time this moment is anchored to — copy a REAL timestamp " +
+        "EXACTLY from the transcript line it refers to. This is the only anchor, so it must be accurate."
+    ),
   side: z
     .enum(["me", "them"])
     .describe(
@@ -26,19 +30,13 @@ const eventSchema = z.object({
   source: z
     .enum(["eval", "extra"])
     .describe('"eval" when it matches one or more configured evaluations (set evalIds); "extra" otherwise.'),
-  // Arrays (possibly empty), not nullable — a moment can match several evals and
-  // cite several quotes. strict json_schema still has every property present.
+  // Array (possibly empty), not nullable — a moment can match several evals.
+  // strict json_schema still has every property present.
   evalIds: z
     .array(z.string())
     .describe('Ids of EVERY configured evaluation this moment matches (a moment may match several); [] for "extra".'),
   title: z.string().describe("A short label for the moment."),
   detail: z.string().describe("One or two sentences explaining what happened and why it matters."),
-  quotes: z
-    .array(z.string())
-    .describe(
-      "Verbatim quote(s) anchoring this moment — usually one, but include MULTIPLE when they belong together " +
-        "(e.g. BOTH sides of a contradiction, or a promise and its walk-back). [] if you have nothing exact."
-    ),
   // Whether ME later took this moment on. Always present (false by default) so
   // strict json_schema and json_object (Groq) both keep the key.
   resolved: z
@@ -70,14 +68,13 @@ You are given the user's ACTIVE EVALUATIONS (each with an id, a name, and what t
 Work at the level of MEANINGFUL EXCHANGES, not individual sentences. Read the WHOLE conversation, then surface only the handful of moments that genuinely shaped the negotiation — a position taken, leverage, a constraint or concern raised, a concession, a real risk, a mistake/missed move by ME, OR a real challenge/objection/pressure/risk from THEM that ME then TOOK ON and handled (a WIN worth recording — surface it as a resolved moment; see RESOLVED MOMENTS). A win counts ONLY when there was genuine tension for ME to defuse — never ME merely answering a neutral question, being agreeable, or saying something pleasant. GROUP a back-and-forth on one topic into ONE moment, anchored at its most representative timestamp; do NOT emit a separate finding for each sentence or minor turn — a mistake by ME and ME's own later correction of it are ONE resolved moment, never two. Prefer a few high-signal findings over many granular ones, and surface open/unresolved problems and risks FIRST: wins are ADDITIONAL, never a substitute for an open problem and never take its slot.
 
 For EACH moment provide:
-- time: the [m:ss] it is best anchored to — copy a real timestamp from the transcript so ME can jump back.
+- time: the [m:ss] it is best anchored to — copy a REAL timestamp EXACTLY from the transcript line it refers to. This is the ONLY anchor (there are no quotes), so it must be accurate enough for ME to jump straight to that line.
 - side: "them" for a substantive move BY THEM (a position, argument, demand, anchor, pressure, leverage, or a constraint/concern they raised); "me" for a problem/mistake/missed move BY ME.
 - severity: info / warn / critical.
 - source: "eval" when the moment matches one OR MORE configured evaluations — also set evalIds to EVERY eval id it genuinely matches. A single moment can match SEVERAL (e.g. a grand over-promise can be both "pushback" and "deception"). Do NOT force-fit: if it doesn't clearly fit any eval, use "extra" with evalIds [].
 - evalIds: the matching evaluation ids (array — one, several, or [] for "extra").
 - title: a short label for the dynamic (not a quote).
 - detail: 1-2 sentences on the STRATEGIC substance — what is really going on (the underlying interest, leverage, risk, or move) and why it matters — so ME knows how to think about and negotiate it, not merely what was said.
-- quotes: the verbatim line(s) that anchor it — usually one, but cite MULTIPLE when they belong together (e.g. BOTH sides of a contradiction, or a promise and its later walk-back). [] if you have nothing exact.
 - resolved: true ONLY when, LATER in the transcript, ME actually responded to / addressed this moment — answered the question, countered the pressure, corrected MY own misstep, or defused the risk. false if it was left hanging, ignored, or you are unsure. (Mainly a "them" pressure/objection/risk that ME took on, but also a "me" misstep ME later fixed.)
 - resolution: when resolved, ONE short line naming MY actual move and quoting/paraphrasing MY key words; "" when not resolved.
 
@@ -89,7 +86,7 @@ INTERPRET IN FULL CONTEXT — accuracy matters more than coverage:
 
 RESOLVED MOMENTS — record what ME handled, do NOT drop it. A real challenge ME took on is a WIN worth showing precisely BECAUSE handling it is what ME should see; when ME later answers, counters, corrects, or defuses a moment, set resolved + resolution and it renders GREEN. Keep its side by WHOSE move it was, never by who came out ahead: a THEM objection/pressure/risk ME rebutted stays "them" + resolved; a ME misstep ME later fixed stays "me" + resolved. Be honest — mark resolved ONLY when the transcript really shows ME addressing it; you need NOT judge whether the response was strong (that is judged separately), but you DO need a concrete "how": if you cannot name MY actual move in the resolution line, it is not a win — omit the moment, do NOT emit it as an unresolved warn/critical instead. In a still-in-progress meeting, mark resolved ONLY once ME has clearly finished addressing it; a reply still unfolding stays unresolved. A moment ME ignored or never came back to stays unresolved.
 
-Be selective and ACCURATE. A short list of well-judged, strategic findings is far better than many literal ones. Ground everything in what was actually said; never fabricate quotes or timestamps.`;
+Be selective and ACCURATE. A short list of well-judged, strategic findings is far better than many literal ones. Ground everything in what was actually said; never fabricate timestamps — every time must be copied from a real transcript line.`;
 
 /** Parse a model-supplied "[m:ss]" / "m:ss" / "h:mm:ss" time into milliseconds. */
 export function parseClockMs(raw: string | undefined): number | null {
@@ -105,22 +102,29 @@ export function parseClockMs(raw: string | undefined): number | null {
   return totalSec * 1000;
 }
 
-/** Normalize for fuzzy matching: lowercase, strip non-alphanumerics. */
-function norm(s: string): string {
-  return s.toLowerCase().replace(/\s+/g, " ").replace(/[^\p{L}\p{N} ]/gu, "").trim();
-}
-
-/** Find the segment whose text contains the quote (fuzzy). Returns its startMs. */
-function startMsForQuote(quote: string | null | undefined, segments: TranscriptSegment[]): number | null {
-  if (!quote) return null;
-  const q = norm(quote);
-  if (q.length < 4) return null;
+/**
+ * Snap a parsed clock (second-precision) to a real transcript segment. Each line
+ * is displayed with `formatClock(startMs)`, so when the model copies a line's
+ * [m:ss] the parse floors it to the second — match the line that DISPLAYS that
+ * exact clock so the jump + highlight land on it. Fall back to the line in
+ * progress at that time, then the nearest line, then the raw value.
+ */
+function snapToSegment(atMs: number, segments: TranscriptSegment[]): number {
+  let exact: number | null = null; // line whose [m:ss] equals the cited clock
+  let active: number | null = null; // line in progress at atMs
+  let nearest: number | null = null;
+  let nearestDelta = Infinity;
   for (const s of segments) {
     if (!s.text.trim()) continue;
-    const t = norm(s.text);
-    if (t.includes(q) || q.includes(t)) return s.startMs;
+    if (exact === null && s.startMs >= atMs && s.startMs < atMs + 1000) exact = s.startMs;
+    if (s.startMs <= atMs && atMs <= s.endMs) active = s.startMs;
+    const d = Math.abs(s.startMs - atMs);
+    if (d < nearestDelta) {
+      nearestDelta = d;
+      nearest = s.startMs;
+    }
   }
-  return null;
+  return exact ?? active ?? nearest ?? atMs;
 }
 
 /** A (possibly half-streamed) raw event from the model — every field may be absent. */
@@ -132,7 +136,6 @@ type RawEvent = {
   evalIds?: (string | null)[] | null;
   title?: string | null;
   detail?: string | null;
-  quotes?: (string | null)[] | null;
   resolved?: boolean | null;
   resolution?: string | null;
 };
@@ -156,13 +159,13 @@ function mapTimelineEvent(
 ): TimelineEvent | null {
   // Require the fields the UI renders so a half-streamed row never flashes blank.
   if (!e.side || !e.severity || !e.title || !e.detail) return null;
-  const quotes = cleanStrings(e.quotes);
-  // Time-anchor: trust the cited clock when plausible, else fuzzy-match a quote.
-  let atMs = parseClockMs(e.time ?? undefined);
-  if (atMs === null || atMs < 0 || (maxMs !== Infinity && atMs > maxMs + 5000)) {
-    atMs = quotes.reduce<number | null>((acc, q) => acc ?? startMsForQuote(q, segments), null);
-  }
-  if (atMs === null) return null; // can't place it in time yet → drop
+  // Time-anchor purely on the cited clock — it's the sole anchor now. Drop the
+  // moment if it's missing or out of range (still streaming, or a bad timestamp).
+  const parsed = parseClockMs(e.time ?? undefined);
+  if (parsed === null || parsed < 0 || (maxMs !== Infinity && parsed > maxMs + 5000)) return null;
+  // Snap to the real segment so the jump + transcript highlight land on the line
+  // (and the second-precision rounding self-corrects to the exact startMs).
+  const atMs = snapToSegment(parsed, segments);
 
   // Keep only eval ids that match a configured evaluation.
   const matchedEvalIds = cleanStrings(e.evalIds).filter((x) => validEvalIds.has(x));
@@ -181,7 +184,6 @@ function mapTimelineEvent(
     evalIds: isEval ? matchedEvalIds : undefined,
     title: e.title,
     detail: e.detail,
-    quotes: quotes.length ? quotes : undefined,
     resolved: resolved || undefined,
     resolution: resolved ? resolution : undefined,
   };

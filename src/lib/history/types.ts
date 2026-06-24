@@ -46,6 +46,9 @@ export interface HistoryEntrySummary {
   speakerCount: number;
   /** Number of analysis findings. */
   findingsCount: number;
+  /** Number of post-meeting action items. Optional: entries saved before this
+   *  field existed simply omit it (the card then hides the action-item stat). */
+  actionItemsCount?: number;
   hasAudio: boolean;
   /** First spoken line of the transcript, for a preview. */
   snippet: string;
