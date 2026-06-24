@@ -183,6 +183,43 @@ describe("findings selection invalidation", () => {
     expect(s.findingSolutions).toEqual({ a: { ...entry } }); // its solution preserved; "gone" cleared
   });
 
+  it("updateFinding patches one finding in place and never rewrites its id", () => {
+    useStore.setState({ findings: [makeFinding("a"), makeFinding("b")] });
+
+    // Patch includes an id field, which must be ignored — the keyed id stays "a".
+    useStore.getState().updateFinding("a", {
+      title: "edited",
+      severity: "critical",
+      id: "hijack",
+    } as Partial<TimelineEvent>);
+
+    const s = useStore.getState();
+    const a = s.findings.find((f) => f.title === "edited");
+    expect(a?.id).toBe("a");
+    expect(a?.severity).toBe("critical");
+    expect(a?.detail).toBe("something happened"); // untouched field preserved
+    expect(s.findings.find((f) => f.id === "b")?.title).toBe("moment"); // sibling untouched
+    expect(s.findings.some((f) => f.id === "hijack")).toBe(false);
+  });
+
+  it("removeFinding deletes one finding and clears its selection + solution", () => {
+    const entry = { status: "done", solution: null, error: null } as const;
+    useStore.setState({
+      findings: [makeFinding("a"), makeFinding("b")],
+      selectedFindingId: "a",
+      solutionFindingId: "a",
+      findingSolutions: { a: { ...entry }, b: { ...entry } },
+    });
+
+    useStore.getState().removeFinding("a");
+
+    const s = useStore.getState();
+    expect(s.findings.map((f) => f.id)).toEqual(["b"]);
+    expect(s.selectedFindingId).toBeNull();
+    expect(s.solutionFindingId).toBeNull();
+    expect(s.findingSolutions).toEqual({ b: { ...entry } });
+  });
+
   it("setFindingSolution merges a patch into the per-finding entry", () => {
     useStore.getState().setFindingSolution("f1", { status: "running" });
     expect(useStore.getState().findingSolutions.f1).toEqual({
