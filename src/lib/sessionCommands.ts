@@ -82,6 +82,12 @@ function applyCommand(cmd: SessionCommand): void {
         s.updateSettings({ evaluations: s.settings.evaluations.filter((e) => e.id !== a.id) });
       }
       break;
+    case "add_finding": {
+      // The whole args object IS the finding to insert.
+      const finding = normalizeFinding(a);
+      if (finding) s.addFinding(finding);
+      break;
+    }
     case "set_findings":
       if (Array.isArray(a.events)) {
         const events = a.events

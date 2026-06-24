@@ -62,7 +62,7 @@ It runs in two complementary modes:
 
 - **Bring your own providers** — pick your transcription vendor and LLM (Claude, OpenAI, Gemini, Groq, Ollama, OpenRouter, and more).
 - **Local-first** — audio and transcripts go straight to the providers you configure; no Pathors AI proxy in between.
-- **Built-in MCP server** — connect Claude (or any MCP client) to the live meeting while the app is open: read the transcript, manage agenda TODOs, and read/overwrite/edit the timeline analysis, plus manage evaluation/agenda templates.
+- **Built-in MCP server** — connect Claude (or any MCP client) to the live meeting while the app is open: read the transcript, manage agenda TODOs, and read/add/overwrite/edit the timeline analysis, plus manage evaluation/agenda templates.
 - **Traditional Chinese** — on-the-fly conversion of transcribed text.
 - **Native macOS UI** — clean, custom window chrome.
 

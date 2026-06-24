@@ -233,6 +233,37 @@ describe("findings selection invalidation", () => {
     expect(s.findingSolutions).toEqual({ a: { ...entry } }); // its solution preserved; "gone" cleared
   });
 
+  it("addFinding inserts one finding in atMs order without replacing the list", () => {
+    useStore.setState({
+      findings: [
+        { ...makeFinding("a"), atMs: 1000 },
+        { ...makeFinding("c"), atMs: 3000 },
+      ],
+      selectedFindingId: "a",
+      findingSolutions: { a: { status: "done", solution: null, error: null } },
+    });
+
+    useStore.getState().addFinding({ ...makeFinding("b"), atMs: 2000 });
+
+    const s = useStore.getState();
+    expect(s.findings.map((f) => f.id)).toEqual(["a", "b", "c"]); // chronological
+    expect(s.selectedFindingId).toBe("a"); // existing selection untouched
+    expect(s.findingSolutions.a).toBeDefined(); // existing solution untouched
+  });
+
+  it("addFinding reassigns a colliding id so the existing finding is never clobbered", () => {
+    useStore.setState({ findings: [{ ...makeFinding("dup"), title: "original", atMs: 0 }] });
+
+    useStore.getState().addFinding({ ...makeFinding("dup"), title: "incoming", atMs: 5000 });
+
+    const s = useStore.getState();
+    expect(s.findings).toHaveLength(2);
+    const original = s.findings.find((f) => f.title === "original");
+    const incoming = s.findings.find((f) => f.title === "incoming");
+    expect(original?.id).toBe("dup"); // kept its id
+    expect(incoming?.id).not.toBe("dup"); // got a fresh one
+  });
+
   it("updateFinding patches one finding in place and never rewrites its id", () => {
     useStore.setState({ findings: [makeFinding("a"), makeFinding("b")] });
 
