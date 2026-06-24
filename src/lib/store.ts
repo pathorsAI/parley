@@ -196,6 +196,9 @@ interface ParleyState {
    *  When it differs from the active eval set, the findings are stale → re-analyze. */
   analyzedEvalSig: string;
   setFindings: (events: TimelineEvent[]) => void;
+  /** Insert one finding (MCP/external add) without replacing the list, keeping it
+   *  ordered by atMs. A colliding id is reassigned so existing findings are safe. */
+  addFinding: (event: TimelineEvent) => void;
   /** Patch a single finding by id (MCP/external edit). The id stays fixed. */
   updateFinding: (id: string, patch: Partial<TimelineEvent>) => void;
   /** Delete a single finding by id (MCP/external edit), clearing any selection
@@ -481,6 +484,17 @@ export const useStore = create<ParleyState>()(
         selectedFindingId: keepSel ? s.selectedFindingId : null,
         solutionFindingId: keepSol ? s.solutionFindingId : null,
         findingSolutions,
+      };
+    }),
+
+  addFinding: (event) =>
+    set((s) => {
+      // Never clobber an existing finding's id (it keys selection + solutions).
+      const id = s.findings.some((f) => f.id === event.id) ? crypto.randomUUID() : event.id;
+      // Re-sort by atMs to preserve the chronological invariant the analysis
+      // pipeline establishes (timeline.ts) and the findings list renders in.
+      return {
+        findings: [...s.findings, { ...event, id }].sort((a, b) => a.atMs - b.atMs),
       };
     }),
 
