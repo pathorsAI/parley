@@ -264,11 +264,6 @@ interface ParleyState {
   update: { version: string; body: string } | null;
   setUpdate: (update: { version: string; body: string } | null) => void;
 
-  /** Transient notification (errors with an optional retry, or info). null = none. */
-  toast: { id: string; kind: "error" | "info"; message: string; retry?: () => void } | null;
-  showToast: (toast: { kind: "error" | "info"; message: string; retry?: () => void }) => void;
-  dismissToast: () => void;
-
   // todos
   addTodo: (text: string) => void;
   toggleTodo: (id: string) => void;
@@ -337,14 +332,11 @@ export const useStore = create<ParleyState>()(
       meetingFloor: "",
       highlightMs: null,
       update: null,
-      toast: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
   setUpdate: (update) => set({ update }),
-  showToast: (toast) => set({ toast: { id: crypto.randomUUID(), ...toast } }),
-  dismissToast: () => set({ toast: null }),
 
   enterReplay: (session) => {
     log.info("store: enter replay", {

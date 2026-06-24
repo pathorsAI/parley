@@ -5,6 +5,7 @@ import {
   ResizableHandle,
 } from "@/components/ui/resizable";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { toast } from "sonner";
 import { useI18n } from "../../i18n";
 import { useStore } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
@@ -90,10 +91,10 @@ export function ReplayScreen() {
       await revealItemInDir(dst);
     } catch (e) {
       console.error("[export]", e);
-      useStore.getState().showToast({
-        kind: "error",
-        message: t("replay.exportFailed", { error: e instanceof Error ? e.message : String(e) }),
-        retry: exportRecording,
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error(t("replay.exportFailed", { error: message }), {
+        duration: Infinity,
+        action: { label: t("toast.retry"), onClick: () => void exportRecording() },
       });
     }
   }

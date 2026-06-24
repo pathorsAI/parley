@@ -5,7 +5,7 @@ import { ReplayScreen } from "./components/replay/ReplayScreen";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import { UpdateBanner } from "./components/UpdateBanner";
-import { Toast } from "./components/Toast";
+import { Toaster } from "./components/ui/sonner";
 import { IngestWizard } from "./components/IngestWizard";
 import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWindow";
 import { useFindingSolutionHost } from "./components/analysis/useFindingSolutionHost";
@@ -73,7 +73,7 @@ function App() {
       {!onboarded && <Onboarding />}
       <AnalysisErrorDialog />
       <UpdateBanner />
-      <Toast />
+      <Toaster />
       <IngestWizard />
       {/* In the Tauri app the drilldown is its own OS window (see
           useFindingSolutionHost); in plain browser dev we fall back to the
