@@ -11,6 +11,11 @@ import { log } from "../../lib/log";
  * then auto-generate the post-meeting action items once that analysis finishes.
  * Both fire once per session (guarded by a per-session ref + the engines' own
  * module-level busy flags). Dragging the playhead never re-runs anything.
+ *
+ * Persisting a RE-ANALYSIS back to the loaded entry lives OUTSIDE this hook in
+ * {@link initHistoryPersistSync} (a module-level store subscription) so it can't
+ * be cancelled by this component unmounting mid-debounce when the user navigates
+ * away right after re-analyzing.
  */
 export function useReplayAnalysis(): void {
   const replayId = useStore((s) => s.replay?.id ?? null);
@@ -70,8 +75,12 @@ export function useReplayAnalysis(): void {
     const session = useStore.getState().replay;
     if (!session) return;
     savedFor.current = replayId;
-    void saveUploadToHistory(session).catch((e) =>
-      log.error("history: upload save failed", { error: String(e) }),
-    );
+    void saveUploadToHistory(session)
+      .then((newId) => {
+        // Mark the just-saved upload as the loaded entry so a later re-analysis
+        // overwrites it (initHistoryPersistSync) instead of being lost or duplicated.
+        if (newId) useStore.getState().setLoadedHistoryId(newId);
+      })
+      .catch((e) => log.error("history: upload save failed", { error: String(e) }));
   }, [replayId, actionItemsStatus]);
 }

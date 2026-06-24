@@ -133,6 +133,12 @@ interface ParleyState {
   appMode: AppMode;
   /** The uploaded recording under analysis (null in live mode). */
   replay: ReplaySession | null;
+  /** Id of the saved History entry currently loaded into replay — set by
+   *  {@link loadHistory}, and after a fresh upload auto-saves. When set, re-running
+   *  the analysis OVERWRITES that entry on disk instead of the result being lost.
+   *  null for a not-yet-saved upload or in live mode. */
+  loadedHistoryId: string | null;
+  setLoadedHistoryId: (id: string | null) => void;
   /** Scrub position (ms) in replay mode — drives audio + transcript highlight. */
   replayPlayheadMs: number;
   /** Load an uploaded recording and switch into replay mode. */
@@ -300,6 +306,7 @@ export const useStore = create<ParleyState>()(
     (set) => ({
       appMode: "live",
       replay: null,
+      loadedHistoryId: null,
       replayPlayheadMs: 0,
       replaySeekNonce: 0,
       replayTrim: null,
@@ -338,6 +345,7 @@ export const useStore = create<ParleyState>()(
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
   setCloudAuth: (cloudAuth) => set({ cloudAuth }),
+  setLoadedHistoryId: (loadedHistoryId) => set({ loadedHistoryId }),
 
   enterReplay: (session) => {
     log.info("store: enter replay", {
@@ -348,6 +356,8 @@ export const useStore = create<ParleyState>()(
     set({
       appMode: "replay",
       replay: session,
+      // A fresh upload isn't a saved entry yet — cleared until its auto-save.
+      loadedHistoryId: null,
       // Start at the beginning of the recording (the full transcript always
       // shows now — no masking); the playhead is just for playback/navigation.
       replayPlayheadMs: 0,
@@ -379,6 +389,8 @@ export const useStore = create<ParleyState>()(
     set((state) => ({
       appMode: "replay",
       replay: session,
+      // Re-running the analysis now overwrites THIS saved entry on disk.
+      loadedHistoryId: entry.id,
       replayPlayheadMs: 0,
       replaySeekNonce: state.replaySeekNonce + 1,
       replayTrim: null,
@@ -417,6 +429,7 @@ export const useStore = create<ParleyState>()(
     set({
       appMode: "live",
       replay: null,
+      loadedHistoryId: null,
       replayPlayheadMs: 0,
       replayTrim: null,
       ingestWizardOpen: false,
@@ -546,6 +559,7 @@ export const useStore = create<ParleyState>()(
     set({
       meetingStatus: "recording",
       meetingStartedAt: Date.now(),
+      loadedHistoryId: null,
       segments: [],
       speakerNames: {},
       findings: [],

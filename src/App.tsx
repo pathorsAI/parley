@@ -19,7 +19,7 @@ import { initSessionCommands } from "./lib/sessionCommands";
 import { useThemePreference } from "./lib/theme";
 import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
-import { listenForHistoryOpen, listenForRecordingSaved } from "./lib/history/history";
+import { initHistoryPersistSync, listenForHistoryOpen, listenForRecordingSaved } from "./lib/history/history";
 import { checkForUpdate } from "./lib/update";
 import { refreshSession } from "./lib/cloud/client";
 
@@ -40,6 +40,7 @@ function App() {
     const unViewLogs = listenForViewLogsMenu();
     const unRecordingSaved = listenForRecordingSaved();
     const unHistoryOpen = listenForHistoryOpen();
+    const unHistoryPersist = initHistoryPersistSync();
     return () => {
       unTranscript.then((fn) => fn());
       unSettings.then((fn) => fn());
@@ -52,6 +53,7 @@ function App() {
       unViewLogs.then((fn) => fn());
       unRecordingSaved.then((fn) => fn());
       unHistoryOpen.then((fn) => fn());
+      unHistoryPersist();
     };
   }, []);
 

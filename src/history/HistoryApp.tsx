@@ -6,7 +6,13 @@ import { useThemePreference } from "../lib/theme";
 import { isTauri } from "../lib/tauriEvents";
 import { log } from "../lib/log";
 import { useI18n } from "../i18n";
-import { deleteHistoryEntry, emitHistoryOpen, listHistory, renameHistoryEntry } from "../lib/history/history";
+import {
+  deleteHistoryEntry,
+  emitHistoryOpen,
+  listenForHistoryUpdated,
+  listHistory,
+  renameHistoryEntry,
+} from "../lib/history/history";
 import { listenForSettings } from "../lib/settingsSync";
 import type { HistoryEntrySummary } from "../lib/history/types";
 import { Button } from "@/components/ui/button";
@@ -62,6 +68,13 @@ export function HistoryApp() {
     const un = listenForSettings();
     return () => void un.then((fn) => fn());
   }, []);
+
+  // Re-list when the main window overwrites an entry (re-analysis), so the grid's
+  // findings count / snippet don't go stale while this window stays open.
+  useEffect(() => {
+    const un = listenForHistoryUpdated(() => refresh());
+    return () => void un.then((fn) => fn());
+  }, [refresh]);
 
   const open = useCallback(async (id: string) => {
     await emitHistoryOpen(id);
