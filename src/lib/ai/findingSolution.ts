@@ -69,11 +69,11 @@ export async function generateFindingSolution(opts: {
     profileContext(settings) +
     (meetingContext?.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "");
 
-  const quotes = finding.quotes ?? [];
+  // The moment is anchored by its timestamp; the model locates the surrounding
+  // exchange in the full timestamped transcript below (no quotes are stored).
   const moment =
-    `The moment to reply to (at ${formatClock(finding.atMs)}, side = ${finding.side}):\n` +
-    `- ${finding.title}: ${finding.detail}` +
-    (quotes.length ? `\n- Quote(s):\n${quotes.map((q) => `  - "${q}"`).join("\n")}` : "");
+    `The moment to reply to (at ${formatClock(finding.atMs)} in the transcript below, side = ${finding.side}):\n` +
+    `- ${finding.title}: ${finding.detail}`;
 
   // If the retro already found ME defused this moment, hand the model MY actual
   // response so the suggestions BUILD ON it (reinforce / strengthen) instead of
