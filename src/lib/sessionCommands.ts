@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "./store";
 import { isTauri } from "./tauriEvents";
-import type { EvalDef } from "./types";
+import type { EvalDef, TimelineEvent } from "./types";
 
 /**
  * Apply mutation commands the MCP server enqueues (add/check/remove todo,
@@ -20,6 +20,33 @@ let timer: ReturnType<typeof setInterval> | null = null;
 
 function lines(raw: string): string[] {
   return raw.split("\n").map((l) => l.trim()).filter(Boolean);
+}
+
+/**
+ * Coerce a loosely-shaped finding (e.g. from an MCP client) into a valid
+ * {@link TimelineEvent}, filling defaults and minting an id when missing. Returns
+ * null only when there is no usable content at all (no title and no detail).
+ */
+function normalizeFinding(raw: unknown): TimelineEvent | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const title = typeof o.title === "string" ? o.title : "";
+  const detail = typeof o.detail === "string" ? o.detail : "";
+  if (!title.trim() && !detail.trim()) return null;
+  return {
+    id: typeof o.id === "string" && o.id ? o.id : crypto.randomUUID(),
+    atMs: Number.isFinite(o.atMs) ? Number(o.atMs) : 0,
+    side: o.side === "me" ? "me" : "them",
+    severity:
+      o.severity === "critical" ? "critical" : o.severity === "warn" ? "warn" : "info",
+    source: o.source === "eval" ? "eval" : "extra",
+    evalIds: Array.isArray(o.evalIds) ? o.evalIds.map(String) : undefined,
+    title,
+    detail,
+    quotes: Array.isArray(o.quotes) ? o.quotes.map(String) : undefined,
+    resolved: typeof o.resolved === "boolean" ? o.resolved : undefined,
+    resolution: typeof o.resolution === "string" ? o.resolution : undefined,
+  };
 }
 
 function applyCommand(cmd: SessionCommand): void {
@@ -54,6 +81,24 @@ function applyCommand(cmd: SessionCommand): void {
       if (a.id) {
         s.updateSettings({ evaluations: s.settings.evaluations.filter((e) => e.id !== a.id) });
       }
+      break;
+    case "set_findings":
+      if (Array.isArray(a.events)) {
+        const events = a.events
+          .map(normalizeFinding)
+          .filter((f): f is TimelineEvent => f !== null);
+        s.setFindings(events);
+      }
+      break;
+    case "update_finding":
+      if (a.id) {
+        // Everything except the id is treated as a partial patch.
+        const { id: _id, ...patch } = a;
+        s.updateFinding(String(a.id), patch as Partial<TimelineEvent>);
+      }
+      break;
+    case "remove_finding":
+      if (a.id) s.removeFinding(String(a.id));
       break;
   }
 }
