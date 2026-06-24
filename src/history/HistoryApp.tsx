@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Check, FileAudio, Mic, Pencil, RefreshCw, Trash2, Upload, Users, Volume2, ZapOff } from "lucide-react";
+import { Check, Clock, Mic, Pencil, RefreshCw, Sparkles, Trash2, Upload, Users, Volume2, ZapOff } from "lucide-react";
 import { toast } from "sonner";
 import { useThemePreference } from "../lib/theme";
 import { isTauri } from "../lib/tauriEvents";
@@ -200,46 +200,45 @@ function HistoryCard({
       }}
       className="group relative flex cursor-pointer flex-col gap-2 rounded-lg border bg-card p-3 text-left transition hover:border-foreground/25 hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <div className="flex items-center gap-1.5">
-        <span
-          className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-            isLive
-              ? "bg-red-500/15 text-red-500"
-              : "bg-sky-500/15 text-sky-500"
-          }`}
-        >
-          {isLive ? <Mic className="size-2.5" /> : <Upload className="size-2.5" />}
-          {isLive ? t("history.badge.live") : t("history.badge.upload")}
-        </span>
-        <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">
-          {formatDuration(entry.durationMs)}
-        </span>
-        <button
-          type="button"
-          aria-label={t("history.rename")}
-          title={t("history.rename")}
-          onClick={(ev) => {
-            ev.stopPropagation();
-            startEdit();
-          }}
-          className="grid size-6 place-items-center rounded-md text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
-        >
-          <Pencil className="size-3.5" />
-        </button>
-        <button
-          type="button"
-          aria-label={t("history.delete")}
-          title={t("history.delete")}
-          disabled={busy}
-          onClick={(ev) => {
-            ev.stopPropagation();
-            onDelete();
-          }}
-          className="grid size-6 place-items-center rounded-md text-muted-foreground opacity-0 transition hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 disabled:opacity-40"
-        >
-          <Trash2 className="size-3.5" />
-        </button>
-      </div>
+      {/* Hover actions, tucked into the top-right corner so they don't crowd the meta. */}
+      {!editing && (
+        <div className="absolute right-2 top-2 z-10 flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
+          <button
+            type="button"
+            aria-label={t("history.rename")}
+            title={t("history.rename")}
+            onClick={(ev) => {
+              ev.stopPropagation();
+              startEdit();
+            }}
+            className="grid size-6 place-items-center rounded-md bg-background/70 text-muted-foreground backdrop-blur transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <Pencil className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            aria-label={t("history.delete")}
+            title={t("history.delete")}
+            disabled={busy}
+            onClick={(ev) => {
+              ev.stopPropagation();
+              onDelete();
+            }}
+            className="grid size-6 place-items-center rounded-md bg-background/70 text-muted-foreground backdrop-blur transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
+          >
+            <Trash2 className="size-3.5" />
+          </button>
+        </div>
+      )}
+
+      <span
+        className={`inline-flex w-fit items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+          isLive ? "bg-red-500/15 text-red-500" : "bg-sky-500/15 text-sky-500"
+        }`}
+      >
+        {isLive ? <Mic className="size-2.5" /> : <Upload className="size-2.5" />}
+        {isLive ? t("history.badge.live") : t("history.badge.upload")}
+      </span>
 
       {editing ? (
         <div className="flex items-center gap-1" onClick={(ev) => ev.stopPropagation()}>
@@ -280,17 +279,21 @@ function HistoryCard({
         <p className="line-clamp-2 text-xs text-muted-foreground/80">{entry.snippet}</p>
       )}
 
-      <div className="mt-auto flex items-center gap-3 pt-1 text-[10px] text-muted-foreground">
+      <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-[10px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1 tabular-nums">
+          <Clock className="size-3" />
+          {formatDuration(entry.durationMs)}
+        </span>
         <span className="inline-flex items-center gap-1">
           <Users className="size-3" />
           {entry.speakerCount}
         </span>
         <span className="inline-flex items-center gap-1">
-          <FileAudio className="size-3" />
+          <Sparkles className="size-3" />
           {t("history.findings", { count: entry.findingsCount })}
         </span>
         {entry.hasAudio && (
-          <span className="inline-flex items-center gap-1" title={t("history.hasAudio")}>
+          <span className="ml-auto inline-flex items-center gap-1" title={t("history.hasAudio")}>
             <Volume2 className="size-3" />
           </span>
         )}
