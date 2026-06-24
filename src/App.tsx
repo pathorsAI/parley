@@ -21,6 +21,7 @@ import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import { listenForHistoryOpen, listenForRecordingSaved } from "./lib/history/history";
 import { checkForUpdate } from "./lib/update";
+import { refreshSession } from "./lib/cloud/client";
 
 function App() {
   useThemePreference();
@@ -54,9 +55,11 @@ function App() {
     };
   }, []);
 
-  // Check for an app update shortly after launch — surfaces a dismissible banner
+  // Check for an app update shortly after launch — surfaces a dismissible toast
   // only; applying is always user-initiated, so it never interrupts a meeting.
+  // Also re-validate any stored cloud sign-in.
   useEffect(() => {
+    void refreshSession();
     const id = setTimeout(() => void checkForUpdate({ silent: true }), 3000);
     return () => clearTimeout(id);
   }, []);

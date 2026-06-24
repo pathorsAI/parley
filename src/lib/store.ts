@@ -12,6 +12,7 @@ import type {
   TranscriptSegment,
 } from "./types";
 import type { ReplaySession } from "./replay/types";
+import type { CloudAuth } from "./cloud/types";
 import type { HistoryEntry } from "./history/types";
 import {
   buildBuiltinEvalLabels,
@@ -260,6 +261,10 @@ interface ParleyState {
   highlightMs: number | null;
   setHighlightMs: (ms: number | null) => void;
 
+  /** Parley Cloud sign-in (Google). Persisted so you stay signed in. null = signed out. */
+  cloudAuth: CloudAuth | null;
+  setCloudAuth: (auth: CloudAuth | null) => void;
+
   // todos
   addTodo: (text: string) => void;
   toggleTodo: (id: string) => void;
@@ -327,10 +332,12 @@ export const useStore = create<ParleyState>()(
       meetingTarget: "",
       meetingFloor: "",
       highlightMs: null,
+      cloudAuth: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
+  setCloudAuth: (cloudAuth) => set({ cloudAuth }),
 
   enterReplay: (session) => {
     log.info("store: enter replay", {
@@ -610,8 +617,8 @@ export const useStore = create<ParleyState>()(
     {
       name: "parley-settings",
       version: 3,
-      // Persist only settings — transcript and eval state are per-session.
-      partialize: (state) => ({ settings: state.settings }),
+      // Persist settings + the cloud sign-in — transcript/eval state is per-session.
+      partialize: (state) => ({ settings: state.settings, cloudAuth: state.cloudAuth }),
       // Backfill any settings fields missing from older persisted state.
       merge: (persisted, current) => {
         const p = (persisted as { settings?: Partial<Settings> } | undefined)?.settings ?? {};
@@ -666,6 +673,8 @@ export const useStore = create<ParleyState>()(
             ...ENV_KEYS,
           },
           evaluations: evalsFromDefs(relabeledEvals),
+          // Restore the persisted cloud sign-in (re-validated on startup).
+          cloudAuth: (persisted as { cloudAuth?: CloudAuth } | undefined)?.cloudAuth ?? null,
         };
       },
     }

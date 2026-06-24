@@ -4,11 +4,13 @@ import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { appLogDir, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { toast } from "sonner";
 import { log } from "../lib/log";
-import { Check, Copy, Download, Loader2, Monitor, Moon, PlugZap, Plus, Sun, Trash2 } from "lucide-react";
+import { Check, Copy, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, Plus, Sun, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
+import { signInWithGoogle, signOut } from "../lib/cloud/client";
 import { isTauri } from "../lib/tauriEvents";
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
@@ -42,7 +44,7 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
 };
 import type { AppLanguage, AppLayout, AppTheme, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 
-type Category = "basic" | "provider" | "transcription" | "evaluations" | "todos" | "mcp" | "usage";
+type Category = "basic" | "account" | "provider" | "transcription" | "evaluations" | "todos" | "mcp" | "usage";
 
 interface McpServerInfo {
   running: boolean;
@@ -52,6 +54,7 @@ interface McpServerInfo {
 
 const NAV: { id: Category; labelKey: TranslationKey }[] = [
   { id: "basic", labelKey: "settings.nav.basic" },
+  { id: "account", labelKey: "settings.nav.account" },
   { id: "provider", labelKey: "settings.nav.provider" },
   { id: "transcription", labelKey: "settings.nav.transcription" },
   { id: "evaluations", labelKey: "settings.nav.evaluations" },
@@ -76,6 +79,22 @@ export function SettingsApp() {
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateMsg, setUpdateMsg] = useState("");
   const [appVersion, setAppVersion] = useState("");
+  const cloudAuth = useStore((s) => s.cloudAuth);
+  const [signingIn, setSigningIn] = useState(false);
+
+  async function doSignIn() {
+    setSigningIn(true);
+    try {
+      await signInWithGoogle();
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      toast.error(t("settings.account.signInFailed", { error }), {
+        action: { label: t("toast.retry"), onClick: () => void doSignIn() },
+      });
+    } finally {
+      setSigningIn(false);
+    }
+  }
   const info = PROVIDER_BY_ID[settings.provider];
   const providerLabel = info.label;
   const sttInfo = STT_BY_ID[settings.transcriptionProvider];
@@ -284,6 +303,48 @@ export function SettingsApp() {
               </div>
               <p className="max-w-sm text-[11px] text-muted-foreground">{t("settings.update.help")}</p>
             </Field>
+          </Section>
+        )}
+
+        {cat === "account" && (
+          <Section title={t("settings.account.title")}>
+            {cloudAuth ? (
+              <div className="flex flex-col gap-3">
+                <div className="flex max-w-sm items-center gap-3 rounded-lg border p-3">
+                  {cloudAuth.user.image ? (
+                    <img src={cloudAuth.user.image} alt="" className="size-9 rounded-full" />
+                  ) : (
+                    <div className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-sm font-medium">
+                      {(cloudAuth.user.name || cloudAuth.user.email).slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{cloudAuth.user.name || cloudAuth.user.email}</div>
+                    <div className="truncate text-[11px] text-muted-foreground">{cloudAuth.user.email}</div>
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" className="h-8 w-fit text-xs" onClick={() => void signOut()}>
+                  <LogOut className="size-3.5" />
+                  {t("settings.account.signOut")}
+                </Button>
+                <p className="max-w-sm text-[11px] text-muted-foreground">{t("settings.account.signedInHelp")}</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <Button
+                  size="sm"
+                  className="h-9 w-fit gap-2 text-xs"
+                  disabled={signingIn || !isTauri()}
+                  onClick={() => void doSignIn()}
+                >
+                  {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+                  {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
+                </Button>
+                <p className="max-w-sm text-[11px] text-muted-foreground">
+                  {isTauri() ? t("settings.account.signedOutHelp") : t("settings.account.desktopOnly")}
+                </p>
+              </div>
+            )}
           </Section>
         )}
 

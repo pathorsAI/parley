@@ -3,6 +3,7 @@ import { useStore } from "./store";
 import { isTauri } from "./tauriEvents";
 import { log } from "./log";
 import type { Settings } from "./types";
+import type { CloudAuth } from "./cloud/types";
 
 const SETTINGS_EVENT = "settings://updated";
 
@@ -55,6 +56,17 @@ function settingsFromPersist(raw: string | null): Settings | null {
   }
 }
 
+/** Pull the cloud sign-in out of the same persist payload (synced cross-window). */
+function cloudAuthFromPersist(raw: string | null): CloudAuth | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { state?: { cloudAuth?: CloudAuth | null } };
+    return parsed?.state?.cloudAuth ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Main-window listener: apply settings pushed from the settings window. Uses two
  * channels for resilience:
@@ -79,6 +91,8 @@ export async function listenForSettings(): Promise<UnlistenFn> {
       });
       useStore.getState().applySettings(settings);
     }
+    // Cloud sign-in/out done in the other window (it's persisted under the same key).
+    useStore.getState().setCloudAuth(cloudAuthFromPersist(e.newValue));
   };
   window.addEventListener("storage", onStorage);
 

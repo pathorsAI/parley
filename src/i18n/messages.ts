@@ -84,6 +84,7 @@ export const zhTW = {
   "history.hasAudio": "含錄音",
 
   "settings.nav.basic": "基本設定",
+  "settings.nav.account": "帳號",
   "settings.nav.provider": "模型供應商",
   "settings.nav.transcription": "轉錄",
   "settings.nav.evaluations": "評估模板",
@@ -509,7 +510,15 @@ export const zhTW = {
   "settings.update.title": "軟體更新",
   "settings.update.current": "目前版本 v{version}",
   "settings.update.check": "檢查更新",
-  "settings.update.help": "Parley 啟動時會自動檢查更新；有新版本時上方會出現橫幅，點「更新並重啟」即可。",
+  "settings.update.help": "Parley 啟動時會自動檢查更新；有新版本時會跳出提示，點「更新並重啟」即可。",
+  "settings.account.title": "帳號 / Parley Cloud",
+  "settings.account.signInGoogle": "用 Google 登入",
+  "settings.account.signingIn": "登入中…（請在瀏覽器完成）",
+  "settings.account.signOut": "登出",
+  "settings.account.signInFailed": "登入失敗：{error}",
+  "settings.account.signedInHelp": "已登入。雲端同步即將推出。",
+  "settings.account.signedOutHelp": "登入後即可跨裝置同步錄音與分析，並在團隊中分享。",
+  "settings.account.desktopOnly": "登入功能只在 Parley App 中可用。",
 } as const satisfies Dict;
 
 export const en = {
@@ -589,6 +598,7 @@ export const en = {
   "history.hasAudio": "Has recording",
 
   "settings.nav.basic": "Basic Settings",
+  "settings.nav.account": "Account",
   "settings.nav.provider": "LLM Provider",
   "settings.nav.transcription": "Transcription",
   "settings.nav.evaluations": "Evaluations",
@@ -1012,7 +1022,15 @@ export const en = {
   "settings.update.title": "Software updates",
   "settings.update.current": "Current version v{version}",
   "settings.update.check": "Check for updates",
-  "settings.update.help": "Parley checks for updates on launch; when one's available a banner appears up top — click Update & restart.",
+  "settings.update.help": "Parley checks for updates on launch; when one's available a prompt appears — click Update & restart.",
+  "settings.account.title": "Account / Parley Cloud",
+  "settings.account.signInGoogle": "Sign in with Google",
+  "settings.account.signingIn": "Signing in… (finish in your browser)",
+  "settings.account.signOut": "Sign out",
+  "settings.account.signInFailed": "Sign-in failed: {error}",
+  "settings.account.signedInHelp": "Signed in. Cloud sync is coming soon.",
+  "settings.account.signedOutHelp": "Sign in to sync your recordings & analysis across devices and share within your team.",
+  "settings.account.desktopOnly": "Sign-in is only available in the Parley app.",
 } as const satisfies Record<keyof typeof zhTW, string>;
 
 export const DICTS: Record<AppLanguage, Dict> = {

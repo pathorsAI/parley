@@ -60,6 +60,7 @@ pub fn run() {
             commands::stop_mic_test,
             commands::save_transcript,
             commands::export_recording,
+            commands::start_oauth_loopback,
             commands::read_templates,
             commands::write_templates,
             commands::get_templates_path,
