@@ -369,6 +369,14 @@ fn tools() -> Vec<Value> {
             json!({ "type": "object", "properties": {} }),
         ),
         tool(
+            "add_finding",
+            "Add one timeline-analysis finding",
+            "Insert a SINGLE finding without touching the rest of the list (unlike set_findings, \
+             which replaces everything). The new marker is placed in chronological order by atMs. \
+             Applied within ~1.5s. Omit id to mint a new one.",
+            finding_schema(),
+        ),
+        tool(
             "set_findings",
             "Overwrite timeline-analysis findings",
             "Replace the ENTIRE timeline-analysis findings list with the provided events \
@@ -528,6 +536,7 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             .get("findings")
             .cloned()
             .unwrap_or_else(|| json!([])),
+        "add_finding" => append_command(&state.commands_path, "add_finding", args)?,
         "set_findings" => append_command(
             &state.commands_path,
             "set_findings",
