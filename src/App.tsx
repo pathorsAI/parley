@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { TitleBar } from "./components/TitleBar";
 import { LiveScreen } from "./components/live/LiveScreen";
 import { ReplayScreen } from "./components/replay/ReplayScreen";
@@ -22,10 +22,44 @@ import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import { listenForHistoryOpen, listenForRecordingSaved } from "./lib/history/history";
 import { checkForUpdate } from "./lib/update";
 
+/**
+ * Track main-window fullscreen state. Drives both the rounded corners (a
+ * fullscreen window fills the display edge-to-edge, so it squares off; a
+ * zoomed/maximized window is still a floating window and stays rounded) and the
+ * auto-hiding titlebar.
+ */
+function useFullscreen(): boolean {
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    if (!isTauri()) return;
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const win = getCurrentWindow();
+      const sync = async () => {
+        const fs = await win.isFullscreen();
+        if (active) setFullscreen(fs);
+      };
+      await sync();
+      const un = await win.onResized(() => void sync());
+      if (active) unlisten = un;
+      else un();
+    })();
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+  return fullscreen;
+}
+
 function App() {
   useThemePreference();
   const appMode = useStore((s) => s.appMode);
   const onboarded = useStore((s) => s.settings.onboarded);
+  const fullscreen = useFullscreen();
+  const rounded = isTauri() && !fullscreen;
 
   useEffect(() => {
     const unTranscript = listenForTranscript();
@@ -75,7 +109,11 @@ function App() {
   useFindingSolutionHost();
 
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
+    <div
+      className={`flex h-screen flex-col overflow-hidden bg-background text-foreground ${
+        rounded ? "rounded-[12px]" : ""
+      }`}
+    >
       {!onboarded && <Onboarding />}
       <AnalysisErrorDialog />
       <UpdateBanner />
@@ -84,7 +122,7 @@ function App() {
           useFindingSolutionHost); in plain browser dev we fall back to the
           in-app overlay so the feature still works without multi-window. */}
       {!isTauri() && <FindingSolutionWindow />}
-      <TitleBar />
+      <TitleBar fullscreen={fullscreen} />
       {appMode === "replay" ? <ReplayScreen /> : <LiveScreen />}
     </div>
   );
