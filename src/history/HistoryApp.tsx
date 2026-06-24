@@ -7,6 +7,7 @@ import { isTauri } from "../lib/tauriEvents";
 import { log } from "../lib/log";
 import { useI18n } from "../i18n";
 import { deleteHistoryEntry, emitHistoryOpen, listHistory, renameHistoryEntry } from "../lib/history/history";
+import { listenForSettings } from "../lib/settingsSync";
 import type { HistoryEntrySummary } from "../lib/history/types";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
@@ -53,6 +54,14 @@ export function HistoryApp() {
   }, []);
 
   useEffect(refresh, [refresh]);
+
+  // This is a separate webview with its own store, so it only hydrates settings at
+  // open time. Subscribe to cross-window settings changes (mirrors App.tsx) so
+  // theme + language switched in the Settings window apply here live too.
+  useEffect(() => {
+    const un = listenForSettings();
+    return () => void un.then((fn) => fn());
+  }, []);
 
   const open = useCallback(async (id: string) => {
     await emitHistoryOpen(id);
