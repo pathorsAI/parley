@@ -22,10 +22,11 @@ export async function fetchMe(token: string): Promise<Me> {
 }
 
 /**
- * Sign in with Google. Opens the system browser to the cloud's Google flow with
- * a loopback callback; the cloud hands the session token back to a one-shot local
- * server (Rust `start_oauth_loopback`), which emits `auth://callback`. We then
- * fetch /me and stash the session. Works in `tauri dev` (no URL scheme needed).
+ * Sign in with Google. Opens the cloud's `/desktop/sign-in` in the SYSTEM BROWSER
+ * — the entire OAuth flow (incl. the state cookie) lives there, which is what
+ * avoids `state_mismatch`. After Google, the cloud hands the session token back
+ * to a one-shot local server (Rust `start_oauth_loopback`) that emits
+ * `auth://callback`. We then fetch /me and stash the session. Works in `tauri dev`.
  */
 export async function signInWithGoogle(): Promise<void> {
   if (!isTauri()) throw new Error("desktop only");
@@ -40,7 +41,7 @@ export async function signInWithGoogle(): Promise<void> {
     const timer = setTimeout(() => {
       unlisten?.();
       reject(new Error("timed out"));
-    }, 5 * 60 * 1000);
+    }, 3 * 60 * 1000);
     const done = (fn: () => void) => {
       clearTimeout(timer);
       unlisten?.();
@@ -54,22 +55,12 @@ export async function signInWithGoogle(): Promise<void> {
       unlisten = fn;
     });
 
-    // Ask the cloud for the Google authorization URL, with the loopback as the
-    // post-OAuth handoff target, then open it in the system browser.
-    const callbackURL = `${CLOUD_URL}/desktop/auth-handoff?to=${encodeURIComponent(
+    // Open the WHOLE flow in the system browser (state cookie lives there). The
+    // cloud initiates Google sign-in and routes the token back to our loopback.
+    const signInUrl = `${CLOUD_URL}/desktop/sign-in?to=${encodeURIComponent(
       `http://127.0.0.1:${port}/cb`
     )}`;
-    fetch(`${CLOUD_URL}/auth/sign-in/social`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider: "google", callbackURL }),
-    })
-      .then((r) => r.json() as Promise<{ url?: string }>)
-      .then((d) => {
-        if (!d.url) throw new Error("no auth url");
-        return openUrl(d.url);
-      })
-      .catch((err) => done(() => reject(err)));
+    openUrl(signInUrl).catch((err) => done(() => reject(err)));
   });
 
   const me = await fetchMe(token);
