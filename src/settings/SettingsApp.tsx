@@ -72,6 +72,8 @@ export function SettingsApp() {
   const [templatesPath, setTemplatesPath] = useState("");
   const [mcpInfo, setMcpInfo] = useState<McpServerInfo | null>(null);
   const [logPath, setLogPath] = useState("");
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateMsg, setUpdateMsg] = useState("");
   const info = PROVIDER_BY_ID[settings.provider];
   const providerLabel = info.label;
   const sttInfo = STT_BY_ID[settings.transcriptionProvider];
@@ -250,6 +252,29 @@ export function SettingsApp() {
               >
                 {t("settings.basic.rerunSetup")}
               </Button>
+            </Field>
+            <Field label={t("settings.update.title")}>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 w-fit text-xs"
+                  disabled={updateChecking}
+                  onClick={async () => {
+                    setUpdateChecking(true);
+                    setUpdateMsg("");
+                    const { checkForUpdate } = await import("../lib/update");
+                    const r = await checkForUpdate({ silent: false });
+                    setUpdateMsg(r ? t("update.found", { version: r.version }) : t("update.upToDate"));
+                    setUpdateChecking(false);
+                  }}
+                >
+                  {updateChecking ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+                  {t("settings.update.check")}
+                </Button>
+                {updateMsg && <span className="text-[11px] text-muted-foreground">{updateMsg}</span>}
+              </div>
+              <p className="max-w-sm text-[11px] text-muted-foreground">{t("settings.update.help")}</p>
             </Field>
           </Section>
         )}
