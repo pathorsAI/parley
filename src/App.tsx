@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { TitleBar } from "./components/TitleBar";
 import { LiveScreen } from "./components/live/LiveScreen";
 import { ReplayScreen } from "./components/replay/ReplayScreen";
@@ -23,10 +23,44 @@ import { initHistoryPersistSync, listenForHistoryOpen, listenForRecordingSaved }
 import { checkForUpdate } from "./lib/update";
 import { refreshSession } from "./lib/cloud/client";
 
+/**
+ * Track main-window fullscreen state. Drives both the rounded corners (a
+ * fullscreen window fills the display edge-to-edge, so it squares off; a
+ * zoomed/maximized window is still a floating window and stays rounded) and the
+ * auto-hiding titlebar.
+ */
+function useFullscreen(): boolean {
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    if (!isTauri()) return;
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const win = getCurrentWindow();
+      const sync = async () => {
+        const fs = await win.isFullscreen();
+        if (active) setFullscreen(fs);
+      };
+      await sync();
+      const un = await win.onResized(() => void sync());
+      if (active) unlisten = un;
+      else un();
+    })();
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+  return fullscreen;
+}
+
 function App() {
   useThemePreference();
   const appMode = useStore((s) => s.appMode);
   const onboarded = useStore((s) => s.settings.onboarded);
+  const fullscreen = useFullscreen();
+  const rounded = isTauri() && !fullscreen;
 
   useEffect(() => {
     const unTranscript = listenForTranscript();
@@ -57,13 +91,20 @@ function App() {
     };
   }, []);
 
-  // Check for an app update shortly after launch — surfaces a dismissible toast
-  // only; applying is always user-initiated, so it never interrupts a meeting.
-  // Also re-validate any stored cloud sign-in.
+  // Check for an app update shortly after launch, then keep re-checking on a slow
+  // interval so a long-running window still catches a release that lands while
+  // it's open. Surfaces a dismissible banner only; applying is always
+  // user-initiated, so it never interrupts a meeting. Also re-validate any stored
+  // cloud sign-in on launch.
   useEffect(() => {
     void refreshSession();
-    const id = setTimeout(() => void checkForUpdate({ silent: true }), 3000);
-    return () => clearTimeout(id);
+    const RECHECK_MS = 30 * 60 * 1000; // every 30 min while the app stays open
+    const first = setTimeout(() => void checkForUpdate({ silent: true }), 3000);
+    const recheck = setInterval(() => void checkForUpdate({ silent: true }), RECHECK_MS);
+    return () => {
+      clearTimeout(first);
+      clearInterval(recheck);
+    };
   }, []);
 
   // LIVE background engine: optional auto-analyze interval + TODO agenda auto-check.
@@ -73,7 +114,11 @@ function App() {
   useFindingSolutionHost();
 
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
+    <div
+      className={`flex h-screen flex-col overflow-hidden bg-background text-foreground ${
+        rounded ? "rounded-[12px]" : ""
+      }`}
+    >
       {!onboarded && <Onboarding />}
       <AnalysisErrorDialog />
       <Toaster />
@@ -82,7 +127,7 @@ function App() {
           useFindingSolutionHost); in plain browser dev we fall back to the
           in-app overlay so the feature still works without multi-window. */}
       {!isTauri() && <FindingSolutionWindow />}
-      <TitleBar />
+      <TitleBar fullscreen={fullscreen} />
       {appMode === "replay" ? <ReplayScreen /> : <LiveScreen />}
     </div>
   );

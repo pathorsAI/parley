@@ -67,6 +67,7 @@ export const zhTW = {
   "titlebar.closeWindow": "關閉視窗",
   "titlebar.minimizeWindow": "最小化視窗",
   "titlebar.maximizeWindow": "最大化視窗",
+  "titlebar.fullscreenWindow": "全螢幕",
   "titlebar.history": "歷史紀錄",
 
   "history.title": "歷史紀錄",
@@ -592,6 +593,7 @@ export const en = {
   "titlebar.closeWindow": "Close window",
   "titlebar.minimizeWindow": "Minimize window",
   "titlebar.maximizeWindow": "Maximize window",
+  "titlebar.fullscreenWindow": "Toggle full screen",
   "titlebar.history": "History",
 
   "history.title": "History",
