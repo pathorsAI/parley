@@ -12,6 +12,7 @@ import type {
   TranscriptSegment,
 } from "./types";
 import type { ReplaySession } from "./replay/types";
+import type { CloudAuth } from "./cloud/types";
 import type { HistoryEntry } from "./history/types";
 import {
   buildBuiltinEvalLabels,
@@ -132,6 +133,12 @@ interface ParleyState {
   appMode: AppMode;
   /** The uploaded recording under analysis (null in live mode). */
   replay: ReplaySession | null;
+  /** Id of the saved History entry currently loaded into replay — set by
+   *  {@link loadHistory}, and after a fresh upload auto-saves. When set, re-running
+   *  the analysis OVERWRITES that entry on disk instead of the result being lost.
+   *  null for a not-yet-saved upload or in live mode. */
+  loadedHistoryId: string | null;
+  setLoadedHistoryId: (id: string | null) => void;
   /** Scrub position (ms) in replay mode — drives audio + transcript highlight. */
   replayPlayheadMs: number;
   /** Load an uploaded recording and switch into replay mode. */
@@ -268,9 +275,9 @@ interface ParleyState {
   highlightMs: number | null;
   setHighlightMs: (ms: number | null) => void;
 
-  /** An available app update (drives the banner prompt); null = none / up to date. */
-  update: { version: string; body: string } | null;
-  setUpdate: (update: { version: string; body: string } | null) => void;
+  /** Parley Cloud sign-in (Google). Persisted so you stay signed in. null = signed out. */
+  cloudAuth: CloudAuth | null;
+  setCloudAuth: (auth: CloudAuth | null) => void;
 
   // todos
   addTodo: (text: string) => void;
@@ -307,6 +314,7 @@ export const useStore = create<ParleyState>()(
     (set) => ({
       appMode: "live",
       replay: null,
+      loadedHistoryId: null,
       replayPlayheadMs: 0,
       replaySeekNonce: 0,
       replayTrim: null,
@@ -339,12 +347,13 @@ export const useStore = create<ParleyState>()(
       meetingTarget: "",
       meetingFloor: "",
       highlightMs: null,
-      update: null,
+      cloudAuth: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
-  setUpdate: (update) => set({ update }),
+  setCloudAuth: (cloudAuth) => set({ cloudAuth }),
+  setLoadedHistoryId: (loadedHistoryId) => set({ loadedHistoryId }),
 
   enterReplay: (session) => {
     log.info("store: enter replay", {
@@ -355,6 +364,8 @@ export const useStore = create<ParleyState>()(
     set({
       appMode: "replay",
       replay: session,
+      // A fresh upload isn't a saved entry yet — cleared until its auto-save.
+      loadedHistoryId: null,
       // Start at the beginning of the recording (the full transcript always
       // shows now — no masking); the playhead is just for playback/navigation.
       replayPlayheadMs: 0,
@@ -386,6 +397,8 @@ export const useStore = create<ParleyState>()(
     set((state) => ({
       appMode: "replay",
       replay: session,
+      // Re-running the analysis now overwrites THIS saved entry on disk.
+      loadedHistoryId: entry.id,
       replayPlayheadMs: 0,
       replaySeekNonce: state.replaySeekNonce + 1,
       replayTrim: null,
@@ -424,6 +437,7 @@ export const useStore = create<ParleyState>()(
     set({
       appMode: "live",
       replay: null,
+      loadedHistoryId: null,
       replayPlayheadMs: 0,
       replayTrim: null,
       ingestWizardOpen: false,
@@ -581,6 +595,7 @@ export const useStore = create<ParleyState>()(
     set({
       meetingStatus: "recording",
       meetingStartedAt: Date.now(),
+      loadedHistoryId: null,
       segments: [],
       speakerNames: {},
       findings: [],
@@ -652,8 +667,8 @@ export const useStore = create<ParleyState>()(
     {
       name: "parley-settings",
       version: 3,
-      // Persist only settings — transcript and eval state are per-session.
-      partialize: (state) => ({ settings: state.settings }),
+      // Persist settings + the cloud sign-in — transcript/eval state is per-session.
+      partialize: (state) => ({ settings: state.settings, cloudAuth: state.cloudAuth }),
       // Backfill any settings fields missing from older persisted state.
       merge: (persisted, current) => {
         const p = (persisted as { settings?: Partial<Settings> } | undefined)?.settings ?? {};
@@ -708,6 +723,8 @@ export const useStore = create<ParleyState>()(
             ...ENV_KEYS,
           },
           evaluations: evalsFromDefs(relabeledEvals),
+          // Restore the persisted cloud sign-in (re-validated on startup).
+          cloudAuth: (persisted as { cloudAuth?: CloudAuth } | undefined)?.cloudAuth ?? null,
         };
       },
     }
