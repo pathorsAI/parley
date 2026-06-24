@@ -44,7 +44,7 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
 };
 import type { AppLanguage, AppLayout, AppTheme, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 
-type Category = "basic" | "account" | "provider" | "transcription" | "evaluations" | "todos" | "mcp" | "usage";
+type Category = "basic" | "provider" | "transcription" | "evaluations" | "todos" | "mcp" | "usage";
 
 interface McpServerInfo {
   running: boolean;
@@ -54,7 +54,6 @@ interface McpServerInfo {
 
 const NAV: { id: Category; labelKey: TranslationKey }[] = [
   { id: "basic", labelKey: "settings.nav.basic" },
-  { id: "account", labelKey: "settings.nav.account" },
   { id: "provider", labelKey: "settings.nav.provider" },
   { id: "transcription", labelKey: "settings.nav.transcription" },
   { id: "evaluations", labelKey: "settings.nav.evaluations" },
@@ -164,6 +163,59 @@ export function SettingsApp() {
 
         {cat === "basic" && (
           <Section title={t("settings.basic.title")}>
+            <Field label={t("settings.nav.account")}>
+              {cloudAuth ? (
+                <div className="flex max-w-sm items-center gap-3 rounded-lg border p-2.5">
+                  {cloudAuth.user.image ? (
+                    <img src={cloudAuth.user.image} alt="" className="size-9 shrink-0 rounded-full" />
+                  ) : (
+                    <div className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-sm font-medium">
+                      {(cloudAuth.user.name || cloudAuth.user.email).slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{cloudAuth.user.name || cloudAuth.user.email}</div>
+                    <div className="truncate text-[11px] text-muted-foreground">{cloudAuth.user.email}</div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => void signOut()}
+                    title={t("settings.account.signOut")}
+                    aria-label={t("settings.account.signOut")}
+                  >
+                    <LogOut className="size-4" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex max-w-sm flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      className="h-9 w-fit gap-2 text-xs"
+                      disabled={signingIn || !isTauri()}
+                      onClick={() => void doSignIn()}
+                    >
+                      {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+                      {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
+                    </Button>
+                    {signingIn && (
+                      <button
+                        type="button"
+                        onClick={() => signInAbort.current?.abort()}
+                        className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      >
+                        {t("settings.account.cancel")}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {isTauri() ? t("settings.account.signedOutHelp") : t("settings.account.desktopOnly")}
+                  </p>
+                </div>
+              )}
+            </Field>
             <Field label={t("settings.basic.name")}>
               <Input
                 className="max-w-sm"
@@ -310,59 +362,6 @@ export function SettingsApp() {
               </div>
               <p className="max-w-sm text-[11px] text-muted-foreground">{t("settings.update.help")}</p>
             </Field>
-          </Section>
-        )}
-
-        {cat === "account" && (
-          <Section title={t("settings.account.title")}>
-            {cloudAuth ? (
-              <div className="flex flex-col gap-3">
-                <div className="flex max-w-sm items-center gap-3 rounded-lg border p-3">
-                  {cloudAuth.user.image ? (
-                    <img src={cloudAuth.user.image} alt="" className="size-9 rounded-full" />
-                  ) : (
-                    <div className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-sm font-medium">
-                      {(cloudAuth.user.name || cloudAuth.user.email).slice(0, 1).toUpperCase()}
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{cloudAuth.user.name || cloudAuth.user.email}</div>
-                    <div className="truncate text-[11px] text-muted-foreground">{cloudAuth.user.email}</div>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm" className="h-8 w-fit text-xs" onClick={() => void signOut()}>
-                  <LogOut className="size-3.5" />
-                  {t("settings.account.signOut")}
-                </Button>
-                <p className="max-w-sm text-[11px] text-muted-foreground">{t("settings.account.signedInHelp")}</p>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    className="h-9 w-fit gap-2 text-xs"
-                    disabled={signingIn || !isTauri()}
-                    onClick={() => void doSignIn()}
-                  >
-                    {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
-                    {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
-                  </Button>
-                  {signingIn && (
-                    <button
-                      type="button"
-                      onClick={() => signInAbort.current?.abort()}
-                      className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                    >
-                      {t("settings.account.cancel")}
-                    </button>
-                  )}
-                </div>
-                <p className="max-w-sm text-[11px] text-muted-foreground">
-                  {isTauri() ? t("settings.account.signedOutHelp") : t("settings.account.desktopOnly")}
-                </p>
-              </div>
-            )}
           </Section>
         )}
 
