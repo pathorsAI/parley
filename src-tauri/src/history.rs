@@ -92,6 +92,28 @@ pub fn save_history_entry(
     Ok(dir.to_string_lossy().into_owned())
 }
 
+/// Save an entry pulled from the cloud: write the already-encoded audio bytes (if
+/// any) as `audio.ogg` plus the meta/summary JSON verbatim, so a cloud-only
+/// recording becomes an ordinary local entry that loads into replay unchanged.
+#[tauri::command]
+pub fn save_remote_history_entry(
+    app: AppHandle,
+    id: String,
+    summary_json: String,
+    meta_json: String,
+    audio: Option<Vec<u8>>,
+) -> Result<String, String> {
+    let dir = history_dir(&app)?.join(safe_id(&id));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    if let Some(bytes) = audio.filter(|b| !b.is_empty()) {
+        std::fs::write(dir.join("audio.ogg"), &bytes).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(dir.join("summary.json"), summary_json).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("meta.json"), meta_json).map_err(|e| e.to_string())?;
+    log::info!("history: saved remote entry {}", dir.to_string_lossy());
+    Ok(dir.to_string_lossy().into_owned())
+}
+
 /// List every entry's `summary.json` (raw strings; the frontend parses + sorts).
 /// Missing/corrupt summaries are skipped rather than failing the whole list.
 #[tauri::command]

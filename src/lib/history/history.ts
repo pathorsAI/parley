@@ -91,6 +91,14 @@ async function persist(
     compress,
   });
   log.info("history: entry saved", { id: entry.id, source: entry.source });
+  // Best-effort push to the cloud when signed in (dynamic import avoids a static
+  // cycle: sync.ts imports buildSummary/listHistory from here). No-op when signed out.
+  void pushToCloud(entry.id);
+}
+
+/** Fire-and-forget cloud push (signed-in only); kept here so save paths stay simple. */
+function pushToCloud(id: string): void {
+  void import("../cloud/sync").then((m) => m.pushLocalEntrySafe(id));
 }
 
 // ── Save paths ──────────────────────────────────────────────────────────────
@@ -163,6 +171,7 @@ export async function updateHistoryEntry(id: string, snapshot?: AnalysisSnapshot
     compress: false,
   });
   await emitHistoryUpdated(id);
+  pushToCloud(id); // re-analysis → refresh the cloud copy too (best-effort)
   log.info("history: entry analysis overwritten", { id, findings: updated.findings.length });
 }
 
