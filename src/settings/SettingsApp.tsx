@@ -1,20 +1,23 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { appLogDir, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { toast } from "sonner";
 import { log } from "../lib/log";
-import { Check, Copy, Download, Loader2, Monitor, Moon, PlugZap, Plus, Sun, Trash2 } from "lucide-react";
+import { Check, Copy, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, Plus, Sun, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
+import { signInWithGoogle, signOut } from "../lib/cloud/client";
 import { isTauri } from "../lib/tauriEvents";
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
 import { UsagePanel } from "./UsagePanel";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
 import { Button } from "@/components/ui/button";
+import { Toaster } from "@/components/ui/sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -76,6 +79,29 @@ export function SettingsApp() {
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateMsg, setUpdateMsg] = useState("");
   const [appVersion, setAppVersion] = useState("");
+  const cloudAuth = useStore((s) => s.cloudAuth);
+  const [signingIn, setSigningIn] = useState(false);
+  const signInAbort = useRef<AbortController | null>(null);
+
+  async function doSignIn() {
+    const controller = new AbortController();
+    signInAbort.current = controller;
+    setSigningIn(true);
+    try {
+      await signInWithGoogle(controller.signal);
+    } catch (e) {
+      // Don't toast a user-initiated cancel.
+      if (!controller.signal.aborted) {
+        const error = e instanceof Error ? e.message : String(e);
+        toast.error(t("settings.account.signInFailed", { error }), {
+          action: { label: t("toast.retry"), onClick: () => void doSignIn() },
+        });
+      }
+    } finally {
+      if (signInAbort.current === controller) signInAbort.current = null;
+      setSigningIn(false);
+    }
+  }
   const info = PROVIDER_BY_ID[settings.provider];
   const providerLabel = info.label;
   const sttInfo = STT_BY_ID[settings.transcriptionProvider];
@@ -116,6 +142,7 @@ export function SettingsApp() {
 
   return (
     <div className="flex h-screen bg-background text-foreground">
+      <Toaster />
       {/* Left nav */}
       <nav className="flex w-48 shrink-0 flex-col gap-0.5 border-r bg-muted/30 p-2">
         <div className="px-2 pb-2 pt-1 text-sm font-semibold tracking-tight">{t("common.settings")}</div>
@@ -138,6 +165,59 @@ export function SettingsApp() {
 
         {cat === "basic" && (
           <Section title={t("settings.basic.title")}>
+            <Field label={t("settings.nav.account")}>
+              {cloudAuth ? (
+                <div className="flex max-w-sm items-center gap-3 rounded-lg border p-2.5">
+                  {cloudAuth.user.image ? (
+                    <img src={cloudAuth.user.image} alt="" className="size-9 shrink-0 rounded-full" />
+                  ) : (
+                    <div className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-sm font-medium">
+                      {(cloudAuth.user.name || cloudAuth.user.email).slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{cloudAuth.user.name || cloudAuth.user.email}</div>
+                    <div className="truncate text-[11px] text-muted-foreground">{cloudAuth.user.email}</div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => void signOut()}
+                    title={t("settings.account.signOut")}
+                    aria-label={t("settings.account.signOut")}
+                  >
+                    <LogOut className="size-4" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex max-w-sm flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      className="h-9 w-fit gap-2 text-xs"
+                      disabled={signingIn || !isTauri()}
+                      onClick={() => void doSignIn()}
+                    >
+                      {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+                      {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
+                    </Button>
+                    {signingIn && (
+                      <button
+                        type="button"
+                        onClick={() => signInAbort.current?.abort()}
+                        className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      >
+                        {t("settings.account.cancel")}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {isTauri() ? t("settings.account.signedOutHelp") : t("settings.account.desktopOnly")}
+                  </p>
+                </div>
+              )}
+            </Field>
             <Field label={t("settings.basic.name")}>
               <Input
                 className="max-w-sm"

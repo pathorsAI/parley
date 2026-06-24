@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Circle, FileAudio, History, Loader2, LogOut, Maximize2, Mic, Minus, Settings, Square, X } from "lucide-react";
+import { Circle, FileAudio, History, Loader2, LogOut, Mic, Minus, Settings, Square, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { log } from "../lib/log";
 import { STT_BY_ID, sttApiKey } from "../lib/transcription/providers";

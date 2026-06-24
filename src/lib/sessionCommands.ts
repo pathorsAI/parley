@@ -43,7 +43,6 @@ function normalizeFinding(raw: unknown): TimelineEvent | null {
     evalIds: Array.isArray(o.evalIds) ? o.evalIds.map(String) : undefined,
     title,
     detail,
-    quotes: Array.isArray(o.quotes) ? o.quotes.map(String) : undefined,
     resolved: typeof o.resolved === "boolean" ? o.resolved : undefined,
     resolution: typeof o.resolution === "string" ? o.resolution : undefined,
   };

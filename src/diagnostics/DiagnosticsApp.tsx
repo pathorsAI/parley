@@ -4,6 +4,7 @@ import { appLogDir, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { FolderOpen, Search } from "lucide-react";
 import { useThemePreference } from "../lib/theme";
+import { listenForSettings } from "../lib/settingsSync";
 import { isTauri } from "../lib/tauriEvents";
 import { log } from "../lib/log";
 import { useI18n } from "../i18n";
@@ -66,6 +67,13 @@ export function DiagnosticsApp() {
   const [autoscroll, setAutoscroll] = useState(true);
   const [logPath, setLogPath] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Separate webview → own store; subscribe to cross-window settings so theme +
+  // language changed in Settings apply here live too (mirrors App.tsx).
+  useEffect(() => {
+    const un = listenForSettings();
+    return () => void un.then((fn) => fn());
+  }, []);
 
   // Resolve the on-disk log path once (for the reveal affordance).
   useEffect(() => {
