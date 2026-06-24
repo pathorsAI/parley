@@ -90,6 +90,11 @@ export function ReplayScreen() {
       await revealItemInDir(dst);
     } catch (e) {
       console.error("[export]", e);
+      useStore.getState().showToast({
+        kind: "error",
+        message: t("replay.exportFailed", { error: e instanceof Error ? e.message : String(e) }),
+        retry: exportRecording,
+      });
     }
   }
 
