@@ -4,7 +4,6 @@ import { LiveScreen } from "./components/live/LiveScreen";
 import { ReplayScreen } from "./components/replay/ReplayScreen";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
-import { UpdateBanner } from "./components/UpdateBanner";
 import { Toaster } from "./components/ui/sonner";
 import { IngestWizard } from "./components/IngestWizard";
 import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWindow";
@@ -72,7 +71,6 @@ function App() {
     <div className="flex h-screen flex-col bg-background text-foreground">
       {!onboarded && <Onboarding />}
       <AnalysisErrorDialog />
-      <UpdateBanner />
       <Toaster />
       <IngestWizard />
       {/* In the Tauri app the drilldown is its own OS window (see

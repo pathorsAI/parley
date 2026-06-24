@@ -260,10 +260,6 @@ interface ParleyState {
   highlightMs: number | null;
   setHighlightMs: (ms: number | null) => void;
 
-  /** An available app update (drives the banner prompt); null = none / up to date. */
-  update: { version: string; body: string } | null;
-  setUpdate: (update: { version: string; body: string } | null) => void;
-
   // todos
   addTodo: (text: string) => void;
   toggleTodo: (id: string) => void;
@@ -331,12 +327,10 @@ export const useStore = create<ParleyState>()(
       meetingTarget: "",
       meetingFloor: "",
       highlightMs: null,
-      update: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
-  setUpdate: (update) => set({ update }),
 
   enterReplay: (session) => {
     log.info("store: enter replay", {
