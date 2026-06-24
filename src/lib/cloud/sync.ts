@@ -38,6 +38,13 @@ async function cloudFetch(path: string, init?: RequestInit): Promise<Response> {
     ...init,
     headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${t}` },
   });
+  if (res.status === 401 || res.status === 403) {
+    // The session is dead — clear it so the UI reflects signed-out consistently
+    // (badges go local, account card shows signed-out) instead of a misleading
+    // "everything is local" while still appearing signed in.
+    useStore.getState().setCloudAuth(null);
+    throw new Error(`cloud auth ${res.status}`);
+  }
   if (!res.ok) throw new Error(`cloud ${init?.method ?? "GET"} ${path} → ${res.status}`);
   return res;
 }
@@ -143,6 +150,7 @@ export async function listMergedHistory(): Promise<HistoryCardItem[]> {
       durationMs: c.durationMs,
       speakerCount: c.speakerCount,
       findingsCount: c.findingsCount,
+      actionItemsCount: c.actionItemsCount,
       hasAudio: c.hasAudio,
       snippet: c.snippet,
       sync: "cloud",

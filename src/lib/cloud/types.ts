@@ -29,6 +29,7 @@ export interface CloudRecordingSummary {
   durationMs: number;
   speakerCount: number;
   findingsCount: number;
+  actionItemsCount?: number;
   hasAudio: boolean;
   snippet: string;
   /** Server push time (epoch ms) — last-writer-wins ordering. */

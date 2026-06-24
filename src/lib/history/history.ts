@@ -49,6 +49,7 @@ export function buildSummary(entry: HistoryEntry): HistoryEntrySummary {
     durationMs: entry.durationMs,
     speakerCount: speakerCountOf(entry),
     findingsCount: entry.findings.length,
+    actionItemsCount: entry.actionItems.length,
     hasAudio: entry.audio != null,
     snippet: snippetOf(entry),
   };
@@ -98,10 +99,19 @@ async function persist(
 
 /** Fire-and-forget cloud push (signed-in only); kept here so save paths stay simple. */
 function pushToCloud(id: string): void {
-  void import("../cloud/sync").then((m) => m.pushLocalEntrySafe(id));
+  void import("../cloud/sync")
+    .then((m) => m.pushLocalEntrySafe(id))
+    .catch(() => {}); // a failed chunk import must not become an unhandled rejection
 }
 
 // ── Save paths ──────────────────────────────────────────────────────────────
+
+/**
+ * The in-flight UPLOAD save (Opus compress + write), or null. The re-analysis
+ * persist subscription awaits this before overwriting, so a re-analysis fired
+ * during the slow compress can't run updateHistoryEntry before the file exists.
+ */
+let uploadSaveInFlight: Promise<unknown> | null = null;
 
 /**
  * Auto-save a finished LIVE meeting once Rust reports the encoded recording.
@@ -136,8 +146,9 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
  */
 export async function saveUploadToHistory(session: ReplaySession): Promise<string | null> {
   if (!isTauri()) return null;
+  const id = crypto.randomUUID();
   const entry: HistoryEntry = {
-    id: crypto.randomUUID(),
+    id,
     title: session.name,
     source: "upload",
     createdAt: session.createdAt,
@@ -145,8 +156,20 @@ export async function saveUploadToHistory(session: ReplaySession): Promise<strin
     audio: "audio.ogg",
     ...snapshotAnalysis(),
   };
-  await persist(entry, session.audioPath, /* compress */ true);
-  return entry.id;
+  // Mark this as the loaded entry BEFORE the (multi-second Opus) compress runs, so
+  // a re-analysis fired DURING that window marks it dirty and overwrites it once
+  // saved — instead of being lost because loadedHistoryId was still null. The
+  // persist subscription awaits `uploadSaveInFlight` so the overwrite can't run
+  // before the file exists.
+  useStore.getState().setLoadedHistoryId(id);
+  const saving = persist(entry, session.audioPath, /* compress */ true);
+  uploadSaveInFlight = saving;
+  try {
+    await saving;
+  } finally {
+    if (uploadSaveInFlight === saving) uploadSaveInFlight = null;
+  }
+  return id;
 }
 
 /**
@@ -346,9 +369,12 @@ export function initHistoryPersistSync(): UnlistenFn {
     pending = null;
     dirty = false;
     if (!p) return;
-    void updateHistoryEntry(p.id, p.snapshot).catch((e) =>
-      log.error("history: re-analysis save failed", { id: p.id, error: String(e) }),
-    );
+    // If an upload save is still compressing/writing this entry, wait for it so the
+    // file exists before we overwrite it (the re-analyze-during-compress race).
+    void Promise.resolve(uploadSaveInFlight)
+      .catch(() => {})
+      .then(() => updateHistoryEntry(p.id, p.snapshot))
+      .catch((e) => log.error("history: re-analysis save failed", { id: p.id, error: String(e) }));
   };
 
   return useStore.subscribe((state, prev) => {

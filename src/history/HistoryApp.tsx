@@ -5,6 +5,8 @@ import {
   Clock,
   CloudCheck,
   CloudDownload,
+  CloudOff,
+  ListChecks,
   Loader2,
   Mic,
   Pencil,
@@ -34,8 +36,10 @@ import {
   pushLocalEntrySafe,
   pushUnsyncedToCloud,
   type HistoryCardItem,
+  type HistorySyncState,
 } from "../lib/cloud/sync";
 import { listenForSettings } from "../lib/settingsSync";
+import { useStore } from "../lib/store";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -61,6 +65,30 @@ function formatDate(ts: number, locale: string): string {
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/** Per-card cloud-sync indicator. Hidden when signed out (sync not in use). */
+function SyncIcon({ sync, signedIn }: { sync: HistorySyncState; signedIn: boolean }) {
+  const { t } = useI18n();
+  if (!signedIn) return null;
+  if (sync === "synced")
+    return (
+      <span className="inline-flex" title={t("history.sync.synced")}>
+        <CloudCheck className="size-3 text-emerald-500/90" />
+      </span>
+    );
+  if (sync === "cloud")
+    return (
+      <span className="inline-flex" title={t("history.sync.cloudOnly")}>
+        <CloudDownload className="size-3 text-sky-500/90" />
+      </span>
+    );
+  // Local-only while signed in → on this device, not backed up yet.
+  return (
+    <span className="inline-flex" title={t("history.sync.local")}>
+      <CloudOff className="size-3 text-muted-foreground/60" />
+    </span>
+  );
+}
+
 /**
  * Standalone History window (Tauri multi-window, like Settings / Field Log).
  * Lists every saved session as a grid of cards — local ∪ cloud when signed in.
@@ -71,6 +99,7 @@ export function HistoryApp() {
   useThemePreference();
   const { t, language } = useI18n();
   const locale = language === "en" ? "en-US" : "zh-TW";
+  const signedIn = useStore((s) => !!s.cloudAuth);
   const [entries, setEntries] = useState<HistoryCardItem[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -152,8 +181,10 @@ export function HistoryApp() {
     async (item: HistoryCardItem) => {
       setBusyId(item.id);
       try {
-        if (item.sync !== "cloud") await deleteHistoryEntry(item.id); // local copy
+        // Cloud FIRST: if it fails we abort before destroying the (recoverable) local
+        // copy, rather than deleting local and leaving a dangling cloud entry.
         if (item.sync !== "local") await deleteCloudRecording(item.id); // cloud copy
+        if (item.sync !== "cloud") await deleteHistoryEntry(item.id); // local copy
         setEntries((prev) => prev?.filter((e) => e.id !== item.id) ?? null);
       } catch (e) {
         log.error("history: delete failed", { id: item.id, error: String(e) });
@@ -230,6 +261,7 @@ export function HistoryApp() {
                 key={e.id}
                 entry={e}
                 locale={locale}
+                signedIn={signedIn}
                 busy={busyId === e.id}
                 downloading={downloadingId === e.id}
                 onOpen={() => void openItem(e)}
@@ -248,6 +280,7 @@ export function HistoryApp() {
 function HistoryCard({
   entry,
   locale,
+  signedIn,
   busy,
   downloading,
   onOpen,
@@ -256,6 +289,7 @@ function HistoryCard({
 }: {
   entry: HistoryCardItem;
   locale: string;
+  signedIn: boolean;
   busy: boolean;
   downloading: boolean;
   onOpen: () => void;
@@ -389,17 +423,14 @@ function HistoryCard({
             <Sparkles className="size-3" />
             {t("history.findings", { count: entry.findingsCount })}
           </span>
+          {typeof entry.actionItemsCount === "number" && (
+            <span className="inline-flex items-center gap-1">
+              <ListChecks className="size-3" />
+              {t("history.actions", { count: entry.actionItemsCount })}
+            </span>
+          )}
           <span className="ml-auto inline-flex items-center gap-2">
-            {entry.sync === "synced" && (
-              <span className="inline-flex" title={t("history.sync.synced")}>
-                <CloudCheck className="size-3 text-emerald-500/80" />
-              </span>
-            )}
-            {entry.sync === "cloud" && (
-              <span className="inline-flex" title={t("history.sync.cloudOnly")}>
-                <CloudDownload className="size-3 text-sky-500/80" />
-              </span>
-            )}
+            <SyncIcon sync={entry.sync} signedIn={signedIn} />
             {entry.hasAudio && (
               <span className="inline-flex" title={t("history.hasAudio")}>
                 <Volume2 className="size-3" />

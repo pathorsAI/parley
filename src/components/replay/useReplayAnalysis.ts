@@ -75,12 +75,11 @@ export function useReplayAnalysis(): void {
     const session = useStore.getState().replay;
     if (!session) return;
     savedFor.current = replayId;
-    void saveUploadToHistory(session)
-      .then((newId) => {
-        // Mark the just-saved upload as the loaded entry so a later re-analysis
-        // overwrites it (initHistoryPersistSync) instead of being lost or duplicated.
-        if (newId) useStore.getState().setLoadedHistoryId(newId);
-      })
-      .catch((e) => log.error("history: upload save failed", { error: String(e) }));
+    // saveUploadToHistory marks the new entry as loaded BEFORE its slow compress,
+    // so a re-analysis during that window overwrites it (initHistoryPersistSync)
+    // instead of being lost or duplicated.
+    void saveUploadToHistory(session).catch((e) =>
+      log.error("history: upload save failed", { error: String(e) }),
+    );
   }, [replayId, actionItemsStatus]);
 }
