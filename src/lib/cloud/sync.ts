@@ -57,12 +57,8 @@ export async function pushLocalEntry(id: string): Promise<void> {
     "read_history_entry",
     { id }
   );
-  const summary = buildSummary(meta);
-  await cloudFetch(`/recordings/${id}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ summary, meta }),
-  });
+  // Upload the audio FIRST, then commit the summary row — so a row never claims
+  // hasAudio before its blob exists (which would 404 a download on another device).
   if (audioPath) {
     // Read the local recording through the webview's asset channel, then upload it.
     const buf = await (await fetch(convertFileSrc(audioPath))).arrayBuffer();
@@ -72,6 +68,12 @@ export async function pushLocalEntry(id: string): Promise<void> {
       body: buf,
     });
   }
+  const summary = buildSummary(meta);
+  await cloudFetch(`/recordings/${id}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ summary, meta }),
+  });
   log.info("cloud: pushed recording", { id, hasAudio: !!audioPath });
 }
 
