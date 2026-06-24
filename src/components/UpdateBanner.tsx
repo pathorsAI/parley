@@ -16,6 +16,7 @@ export function UpdateBanner() {
   const setUpdate = useStore((s) => s.setUpdate);
   const [busy, setBusy] = useState(false);
   const [pct, setPct] = useState(0);
+  const [installedNeedsReopen, setInstalledNeedsReopen] = useState(false);
 
   if (!update) return null;
 
@@ -24,9 +25,31 @@ export function UpdateBanner() {
     try {
       await applyPendingUpdate(setPct); // relaunches on success — never returns
     } catch (e) {
+      // The update finished installing but the auto-relaunch failed — tell the
+      // user to reopen rather than silently resetting (the new version IS staged).
       console.error("[update] apply failed", e);
       setBusy(false);
+      setInstalledNeedsReopen(true);
     }
+  }
+
+  if (installedNeedsReopen) {
+    return (
+      <div className="pointer-events-none fixed inset-x-0 top-[60px] z-50 flex justify-center">
+        <div className="pointer-events-auto flex items-center gap-2.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3.5 py-1.5 text-xs font-medium text-emerald-700 shadow-sm backdrop-blur dark:text-emerald-200">
+          <Download className="size-3.5 shrink-0" />
+          <span>{t("update.reopen")}</span>
+          <button
+            type="button"
+            onClick={() => setUpdate(null)}
+            className="shrink-0 opacity-60 transition-opacity hover:opacity-100"
+            aria-label={t("update.dismiss")}
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
