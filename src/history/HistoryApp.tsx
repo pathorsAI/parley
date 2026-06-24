@@ -316,8 +316,11 @@ function HistoryCard({
     <div
       role="button"
       tabIndex={0}
-      onClick={onOpen}
+      onClick={() => {
+        if (!editing) onOpen();
+      }}
       onKeyDown={(ev) => {
+        if (editing) return; // while renaming, the input owns the keyboard
         if (ev.key === "Enter" || ev.key === " ") {
           ev.preventDefault();
           onOpen();
@@ -372,7 +375,9 @@ function HistoryCard({
         </span>
 
         {editing ? (
-          <div className="flex items-center gap-1" onClick={(ev) => ev.stopPropagation()}>
+          // The card's onClick/onKeyDown already bail while editing, so this
+          // wrapper needs no interaction handlers (keeps it a plain element).
+          <div className="flex items-center gap-1">
             <input
               ref={inputRef}
               value={draft}
