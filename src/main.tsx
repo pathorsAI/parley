@@ -18,7 +18,9 @@ const window_ = route.startsWith("settings")
       ? "diagnostics"
       : route.startsWith("history")
         ? "history"
-        : "main";
+        : route.startsWith("voice-typing")
+          ? "voice-typing"
+          : "main";
 log.info("ui: boot", { window: window_ });
 
 // Scope window-chrome CSS to the right surface: only the main window is
@@ -38,6 +40,9 @@ const DiagnosticsApp = lazy(() =>
 const HistoryApp = lazy(() =>
   import("./history/HistoryApp").then((module) => ({ default: module.HistoryApp }))
 );
+const VoiceTypingApp = lazy(() =>
+  import("./voice-typing/VoiceTypingApp").then((module) => ({ default: module.VoiceTypingApp }))
+);
 
 function Root() {
   switch (window_) {
@@ -49,6 +54,8 @@ function Root() {
       return <DiagnosticsApp />;
     case "history":
       return <HistoryApp />;
+    case "voice-typing":
+      return <VoiceTypingApp />;
     default:
       return <App />;
   }

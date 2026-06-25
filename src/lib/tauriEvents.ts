@@ -25,6 +25,9 @@ export async function listenForTranscript(): Promise<UnlistenFn> {
   }
   return listen<TranscriptEventPayload>("transcript://segment", (event) => {
     const p = event.payload;
+    // Voice-typing dictation streams over the same event but belongs to the
+    // floating overlay, not the meeting transcript — keep it out of the store.
+    if ((p.source as string) === "voice-typing") return;
     void toTraditional(p.text).then((text) => {
       useStore.getState().upsertSegment({
         id: p.id,

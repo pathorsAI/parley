@@ -1,0 +1,138 @@
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { RefreshCw } from "lucide-react";
+import { useI18n } from "../i18n";
+import { isTauri } from "../lib/tauriEvents";
+import { Button } from "@/components/ui/button";
+
+interface Perms {
+  microphone: string;
+  // The Rust struct serializes camelCase (#[serde(rename_all = "camelCase")]).
+  screenRecording: boolean;
+}
+
+type Status = "granted" | "denied" | "pending";
+
+/**
+ * Overview of every macOS permission Parley uses, with live grant status. Each
+ * row's button triggers the native permission prompt (which itself offers an
+ * "Open System Settings" button), so we never stack a prompt + a settings window.
+ */
+export function PermissionsPanel() {
+  const { t } = useI18n();
+  const [microphone, setMicrophone] = useState<Status>("pending");
+  const [accessibility, setAccessibility] = useState<Status>("pending");
+  const [screen, setScreen] = useState<Status>("pending");
+
+  async function refresh() {
+    if (!isTauri()) return;
+    try {
+      const p = await invoke<Perms>("check_permissions");
+      setMicrophone(p.microphone === "authorized" ? "granted" : p.microphone === "denied" ? "denied" : "pending");
+      setScreen(p.screenRecording ? "granted" : "pending");
+      setAccessibility((await invoke<boolean>("accessibility_status", { prompt: false })) ? "granted" : "pending");
+    } catch {
+      /* non-macOS */
+    }
+  }
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  // The native request prompts (mic / accessibility / screen) only show once per
+  // app launch. So the first click triggers the prompt (which itself offers an
+  // "Open System Settings" button); every click after that opens the relevant
+  // Privacy pane directly — otherwise repeat clicks would do nothing.
+  const requested = useRef<Set<string>>(new Set());
+  async function grant(key: string, pane: string, request: () => Promise<void>) {
+    if (!requested.current.has(key)) {
+      requested.current.add(key);
+      await request().catch(() => {});
+    } else {
+      await invoke("open_privacy_settings", { pane }).catch(() => {});
+    }
+    await refresh();
+  }
+
+  if (!isTauri()) return null;
+
+  return (
+    <div className="flex max-w-xl flex-col gap-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] text-muted-foreground">{t("settings.permissions.subtitle")}</p>
+        <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-[11px]" onClick={() => void refresh()}>
+          <RefreshCw className="size-3" />
+          {t("settings.permissions.refresh")}
+        </Button>
+      </div>
+
+      <Row
+        label={t("settings.permissions.microphone")}
+        desc={t("settings.permissions.microphoneDesc")}
+        status={microphone}
+        onGrant={() => grant("mic", "microphone", () => invoke("request_microphone"))}
+      />
+      <Row
+        label={t("settings.voiceTyping.accessibility")}
+        desc={t("settings.permissions.accessibilityDesc")}
+        status={accessibility}
+        onGrant={() =>
+          grant("accessibility", "accessibility", async () => {
+            await invoke("accessibility_status", { prompt: true });
+            await invoke("ensure_fn_listener");
+          })
+        }
+      />
+      <Row
+        label={t("settings.permissions.screen")}
+        desc={t("settings.permissions.screenDesc")}
+        status={screen}
+        onGrant={() => grant("screen", "screen", () => invoke("request_screen_recording").then(() => {}))}
+      />
+    </div>
+  );
+}
+
+function Row({
+  label,
+  desc,
+  status,
+  onGrant,
+}: {
+  label: string;
+  desc: string;
+  status: Status;
+  onGrant: () => void;
+}) {
+  const { t } = useI18n();
+  const granted = status === "granted";
+  const tone =
+    status === "granted"
+      ? "text-emerald-600 dark:text-emerald-400"
+      : status === "denied"
+        ? "text-red-600 dark:text-red-400"
+        : "text-amber-600 dark:text-amber-400";
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+      <div className="flex min-w-0 flex-col">
+        <span className="text-sm font-medium">{label}</span>
+        <span className="text-[11px] leading-relaxed text-muted-foreground">{desc}</span>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        {granted ? (
+          <span className={`text-[11px] font-medium ${tone}`}>{t("settings.voiceTyping.granted")}</span>
+        ) : (
+          <>
+            {status === "denied" && (
+              <span className={`text-[11px] font-medium ${tone}`}>{t("settings.permissions.denied")}</span>
+            )}
+            <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={onGrant}>
+              {t("settings.voiceTyping.grant")}
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
