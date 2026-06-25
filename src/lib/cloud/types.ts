@@ -16,6 +16,36 @@ export interface CloudAuth {
   activeOrganizationId: string | null;
 }
 
+/** A Better Auth organization the signed-in user belongs to. */
+export interface CloudOrg {
+  id: string;
+  name: string;
+  slug: string;
+  logo?: string | null;
+}
+
+/** A pending invitation for the signed-in user to join an org. */
+export interface CloudInvitation {
+  id: string;
+  organizationId: string;
+  /** Present on `list-user-invitations`; the org's display name for the prompt. */
+  organizationName?: string;
+  email: string;
+  role: string;
+  status: string;
+  expiresAt?: number;
+}
+
+/** A member of an org (for the org's member list). */
+export interface CloudOrgMember {
+  id: string;
+  userId: string;
+  role: string;
+  /** Joined from the user row when the backend includes it. */
+  name?: string;
+  email?: string;
+}
+
 /**
  * A recording's card metadata as the cloud knows it (the synced mirror of a
  * desktop `HistoryEntrySummary`, plus the server's `updatedAt`). Listing these
