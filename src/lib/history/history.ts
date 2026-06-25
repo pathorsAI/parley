@@ -14,11 +14,13 @@ import { useStore, speakerKey } from "../store";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
 import { markDirty } from "../cloud/syncState";
+import { CLOUD_URL, cloudFetch, cloudToken } from "../cloud/client";
 import { translate } from "../../i18n/messages";
 import type { ReplaySession } from "../replay/types";
 import type { HistoryEntry, HistoryEntrySummary } from "./types";
 
 const HISTORY_OPEN_EVENT = "history://open";
+const HISTORY_OPEN_ORG_EVENT = "history://open-org";
 const HISTORY_UPDATED_EVENT = "history://updated";
 const RECORDING_SAVED_EVENT = "meeting://recording-saved";
 
@@ -271,6 +273,48 @@ export async function loadHistoryEntry(id: string): Promise<void> {
   }
 }
 
+/**
+ * Load an ORG (cloud-shared) recording into replay WITHOUT persisting it to the
+ * local history dir — org recordings must never pollute the personal list. The
+ * full entry (transcript + analysis) comes over HTTP; the audio is streamed to a
+ * temp cache file by Rust (`download_remote_audio`). Loaded read-only so the
+ * re-analysis-persist subscription leaves someone else's shared recording alone.
+ */
+export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
+  const base = `/orgs/${encodeURIComponent(orgId)}/recordings/${encodeURIComponent(id)}`;
+  const meta = (await (await cloudFetch(`${base}/meta`)).json()) as HistoryEntry;
+  let audioPath = "";
+  const t = cloudToken();
+  if (meta.audio && t) {
+    audioPath = await invoke<string>("download_remote_audio", {
+      id,
+      url: `${CLOUD_URL}${base}/audio`,
+      token: t,
+    });
+  }
+  const audioSrc = audioPath ? convertFileSrc(audioPath) : "";
+  const session: ReplaySession = {
+    id: meta.id,
+    name: meta.title,
+    audioPath,
+    audioSrc,
+    durationMs: meta.durationMs,
+    audioOffsetMs: 0,
+    createdAt: meta.createdAt,
+    segments: meta.segments,
+    speakerNames: meta.speakerNames,
+  };
+  useStore.getState().loadHistory(meta, session, { readOnly: true });
+  log.info("history: org entry loaded", { orgId, id, hasAudio: !!audioPath });
+  if (isTauri()) {
+    try {
+      await getCurrentWindow().setFocus();
+    } catch (e) {
+      log.warn("history: focus main window failed", { error: String(e) });
+    }
+  }
+}
+
 // ── History window + cross-window events ─────────────────────────────────────
 
 /** Open (or focus) the dedicated History window (`#history` route). */
@@ -310,6 +354,22 @@ export async function listenForHistoryOpen(): Promise<UnlistenFn> {
   return listen<{ id: string }>(HISTORY_OPEN_EVENT, (e) => {
     void loadHistoryEntry(e.payload.id).catch((err) =>
       log.error("history: load failed", { id: e.payload.id, error: String(err) }),
+    );
+  });
+}
+
+/** From the History window: ask the main window to load an ORG recording. */
+export async function emitHistoryOpenOrg(orgId: string, id: string): Promise<void> {
+  if (!isTauri()) return;
+  await emit(HISTORY_OPEN_ORG_EVENT, { orgId, id });
+}
+
+/** Main-window listener: load the org recording requested by the History window. */
+export async function listenForHistoryOpenOrg(): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<{ orgId: string; id: string }>(HISTORY_OPEN_ORG_EVENT, (e) => {
+    void loadOrgEntry(e.payload.orgId, e.payload.id).catch((err) =>
+      log.error("history: org load failed", { id: e.payload.id, error: String(err) }),
     );
   });
 }

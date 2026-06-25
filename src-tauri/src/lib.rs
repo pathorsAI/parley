@@ -77,6 +77,7 @@ pub fn run() {
             diarize::diarize_audio,
             history::save_history_entry,
             history::save_remote_history_entry,
+            history::download_remote_audio,
             history::list_history,
             history::read_history_entry,
             history::rename_history_entry,

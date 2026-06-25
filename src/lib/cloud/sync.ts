@@ -12,9 +12,8 @@
 
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { isTauri } from "../tauriEvents";
-import { useStore } from "../store";
 import { log } from "../log";
-import { CLOUD_URL } from "./client";
+import { CLOUD_URL, cloudFetch, cloudToken, isAuthError } from "./client";
 import { buildSummary, listHistory } from "../history/history";
 import { getSyncMeta, pruneSyncMeta, setSynced } from "./syncState";
 import type { HistoryEntry, HistoryEntrySummary } from "../history/types";
@@ -33,37 +32,12 @@ export interface HistoryCardItem extends HistoryEntrySummary {
   cloudUpdatedAt?: number;
 }
 
-function token(): string | null {
-  return useStore.getState().cloudAuth?.token ?? null;
-}
-
-/** A thrown cloud-auth failure (cleared session) — used to short-circuit the sweep. */
-function isAuthError(e: unknown): boolean {
-  return e instanceof Error && /\bauth\b/.test(e.message);
-}
-
-/** Bearer-authenticated fetch against the cloud; throws on a non-2xx response. */
-async function cloudFetch(path: string, init?: RequestInit): Promise<Response> {
-  const t = token();
-  if (!t) throw new Error("not signed in");
-  const res = await fetch(`${CLOUD_URL}${path}`, {
-    ...init,
-    headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${t}` },
-  });
-  if (res.status === 401 || res.status === 403) {
-    // The session is dead — clear it so the UI reflects signed-out consistently
-    // (badges go local, account card shows signed-out) instead of a misleading
-    // "everything is local" while still appearing signed in.
-    useStore.getState().setCloudAuth(null);
-    throw new Error(`cloud auth ${res.status}`);
-  }
-  if (!res.ok) throw new Error(`cloud ${init?.method ?? "GET"} ${path} → ${res.status}`);
-  return res;
-}
+// `cloudFetch`, `cloudToken`, and `isAuthError` now live in ./client — one shared
+// bearer-fetch seam for sync + orgs + the org-replay download.
 
 /** List the signed-in account's recordings (the synced mirror). [] when signed out. */
 export async function listCloudRecordings(): Promise<CloudRecordingSummary[]> {
-  if (!token()) return [];
+  if (!cloudToken()) return [];
   const res = await cloudFetch("/recordings");
   const data = (await res.json()) as { recordings?: CloudRecordingSummary[] };
   return data.recordings ?? [];
@@ -89,7 +63,7 @@ export async function pushLocalEntry(id: string): Promise<void> {
 
 /** The actual push: summary + full entry JSON, with the audio uploaded first. */
 async function pushLocalEntryNow(id: string): Promise<void> {
-  if (!isTauri() || !token()) return;
+  if (!isTauri() || !cloudToken()) return;
   const { meta, audioPath } = await invoke<{ meta: HistoryEntry; audioPath: string | null }>(
     "read_history_entry",
     { id }
@@ -120,7 +94,7 @@ async function pushLocalEntryNow(id: string): Promise<void> {
 
 /** Best-effort push of one entry — never throws (used from save paths). */
 export async function pushLocalEntrySafe(id: string): Promise<void> {
-  if (!token()) return;
+  if (!cloudToken()) return;
   try {
     await pushLocalEntry(id);
   } catch (e) {
@@ -139,7 +113,7 @@ export async function downloadCloudEntry(rec: {
   hasAudio: boolean;
   cloudUpdatedAt?: number;
 }): Promise<void> {
-  const t = token();
+  const t = cloudToken();
   if (!isTauri() || !t) throw new Error("not signed in");
   const meta = (await (await cloudFetch(`/recordings/${rec.id}/meta`)).json()) as HistoryEntry;
   await invoke("save_remote_history_entry", {
@@ -157,7 +131,7 @@ export async function downloadCloudEntry(rec: {
 
 /** Remove a recording from the cloud (tombstone + drop its blobs). */
 export async function deleteCloudRecording(id: string): Promise<void> {
-  if (!token()) return;
+  if (!cloudToken()) return;
   await cloudFetch(`/recordings/${id}`, { method: "DELETE" });
 }
 
@@ -167,7 +141,7 @@ export async function deleteCloudRecording(id: string): Promise<void> {
  */
 export async function listMergedHistory(): Promise<HistoryCardItem[]> {
   const local = await listHistory();
-  if (!token()) return local.map((e) => ({ ...e, sync: "local" as const }));
+  if (!cloudToken()) return local.map((e) => ({ ...e, sync: "local" as const }));
 
   let cloud: CloudRecordingSummary[];
   try {
@@ -227,7 +201,7 @@ export async function listMergedHistory(): Promise<HistoryCardItem[]> {
  * grid. Bails on the first auth failure rather than retrying every entry.
  */
 export async function pushUnsyncedToCloud(): Promise<number> {
-  if (!isTauri() || !token()) return 0;
+  if (!isTauri() || !cloudToken()) return 0;
   // If the cloud list itself fails, skip the pass — don't treat "cloud empty" as
   // "push everything" (that would hammer the server on a transient outage).
   let cloud: CloudRecordingSummary[];
@@ -256,4 +230,47 @@ export async function pushUnsyncedToCloud(): Promise<number> {
   }
   if (pushed) log.info("cloud: pushed unsynced entries", { pushed });
   return pushed;
+}
+
+// ── Org-shared recordings ─────────────────────────────────────────────────────
+// An org is a shared space: members see what others shared INTO it. Sharing is an
+// explicit COPY (the personal original stays put), so nothing personal ever leaks
+// into an org unless the user deliberately puts it there.
+
+/** List the recordings shared into an org the signed-in user belongs to. */
+export async function listOrgRecordings(orgId: string): Promise<CloudRecordingSummary[]> {
+  if (!cloudToken()) return [];
+  const res = await cloudFetch(`/orgs/${encodeURIComponent(orgId)}/recordings`);
+  const data = (await res.json()) as { recordings?: CloudRecordingSummary[] };
+  return data.recordings ?? [];
+}
+
+/**
+ * Share a recording into an org as an independent COPY. The server copies from the
+ * user's own cloud keyspace, so the source must be in the cloud first: best-effort
+ * push it (no-op/duplicate-safe; a cloud-only entry is already there). Returns the
+ * new org-side summary.
+ */
+export async function shareRecordingToOrg(
+  id: string,
+  orgId: string,
+): Promise<CloudRecordingSummary> {
+  await pushLocalEntrySafe(id); // ensure the source exists in the user keyspace
+  const res = await cloudFetch(`/recordings/${encodeURIComponent(id)}/share`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ orgId }),
+  });
+  const data = (await res.json()) as { recording: CloudRecordingSummary };
+  log.info("cloud: shared recording to org", { id, orgId, newId: data.recording?.id });
+  return data.recording;
+}
+
+/** Remove a shared recording from an org (uploader or org admin/owner only). */
+export async function deleteOrgRecording(orgId: string, id: string): Promise<void> {
+  if (!cloudToken()) return;
+  await cloudFetch(
+    `/orgs/${encodeURIComponent(orgId)}/recordings/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
 }
