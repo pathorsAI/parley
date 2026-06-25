@@ -69,8 +69,26 @@ export async function listCloudRecordings(): Promise<CloudRecordingSummary[]> {
   return data.recordings ?? [];
 }
 
-/** Push ONE local entry to the cloud: summary + full entry JSON, then the audio. */
+// One in-flight push per id. Two pushes for the SAME entry must not race: each
+// reads the current disk content and clears dirty on its own response, so an older
+// push resolving last could record stale content as "synced". Chaining makes the
+// later push read the latest disk content and have the final say.
+const pushChains = new Map<string, Promise<unknown>>();
+
+/** Push ONE local entry to the cloud (serialized per id). */
 export async function pushLocalEntry(id: string): Promise<void> {
+  const prev = pushChains.get(id) ?? Promise.resolve();
+  const next = prev.catch(() => {}).then(() => pushLocalEntryNow(id));
+  pushChains.set(id, next);
+  try {
+    await next;
+  } finally {
+    if (pushChains.get(id) === next) pushChains.delete(id);
+  }
+}
+
+/** The actual push: summary + full entry JSON, with the audio uploaded first. */
+async function pushLocalEntryNow(id: string): Promise<void> {
   if (!isTauri() || !token()) return;
   const { meta, audioPath } = await invoke<{ meta: HistoryEntry; audioPath: string | null }>(
     "read_history_entry",
@@ -168,8 +186,10 @@ export async function listMergedHistory(): Promise<HistoryCardItem[]> {
     if (meta.cloudUpdatedAt === undefined) {
       // First sight of an already-synced entry → assume the local copy matches the
       // current cloud (it was pushed/pulled from this device) and record that, so
-      // only a LATER cloud bump (another device) reads as stale.
-      setSynced(e.id, c.updatedAt);
+      // only a LATER cloud bump (another device) reads as stale. But NEVER record a
+      // baseline while a local change is pending (dirty) — that would drop the
+      // re-push the sweep still owes; leave dirty so the sweep pushes it.
+      if (!meta.dirty) setSynced(e.id, c.updatedAt);
       return { ...e, sync: "synced", cloudUpdatedAt: c.updatedAt };
     }
     // Stale only when the cloud is strictly newer AND we have no unpushed local

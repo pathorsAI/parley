@@ -92,11 +92,15 @@ pub fn save_history_entry(
     Ok(dir.to_string_lossy().into_owned())
 }
 
-/// Save an entry pulled from the cloud: write the meta/summary JSON verbatim, and
-/// — when `audio_url` is given — fetch the recording HERE (reqwest, bearer auth)
-/// and stream it to `audio.ogg`, so a cloud-only recording becomes an ordinary
-/// local entry that loads into replay unchanged. Downloading in Rust keeps the
-/// multi-MB blob off the JS↔Rust IPC (no JSON `number[]` round-trip).
+/// Save an entry pulled from the cloud: when `audio_url` is given, fetch the
+/// recording HERE (reqwest, bearer auth — off the JS↔Rust IPC, no `number[]`
+/// round-trip) and write `audio.ogg` plus the meta/summary JSON, so a cloud-only
+/// recording becomes an ordinary local entry that loads into replay unchanged.
+///
+/// The audio is fetched BEFORE anything is written, so a failed download leaves
+/// nothing partial for a new entry and doesn't disturb the existing files for a
+/// "stale" re-pull (the on-disk invariant: a summary claiming `hasAudio` always
+/// has `audio.ogg`). Mirrors pushLocalEntry's "audio first, then commit".
 #[tauri::command]
 pub async fn save_remote_history_entry(
     app: AppHandle,
@@ -106,23 +110,29 @@ pub async fn save_remote_history_entry(
     audio_url: Option<String>,
     token: Option<String>,
 ) -> Result<String, String> {
+    // Fetch the audio first — bail (writing nothing) if it fails.
+    let audio_bytes = match (audio_url, token) {
+        (Some(url), Some(token)) => {
+            let res = reqwest::Client::new()
+                .get(&url)
+                .bearer_auth(&token)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            if !res.status().is_success() {
+                return Err(format!("audio download failed: {}", res.status()));
+            }
+            Some(res.bytes().await.map_err(|e| e.to_string())?)
+        }
+        _ => None,
+    };
     let dir = history_dir(&app)?.join(safe_id(&id));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    if let Some(bytes) = &audio_bytes {
+        std::fs::write(dir.join("audio.ogg"), bytes).map_err(|e| e.to_string())?;
+    }
     std::fs::write(dir.join("summary.json"), summary_json).map_err(|e| e.to_string())?;
     std::fs::write(dir.join("meta.json"), meta_json).map_err(|e| e.to_string())?;
-    if let (Some(url), Some(token)) = (audio_url, token) {
-        let res = reqwest::Client::new()
-            .get(&url)
-            .bearer_auth(&token)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        if !res.status().is_success() {
-            return Err(format!("audio download failed: {}", res.status()));
-        }
-        let bytes = res.bytes().await.map_err(|e| e.to_string())?;
-        std::fs::write(dir.join("audio.ogg"), &bytes).map_err(|e| e.to_string())?;
-    }
     log::info!("history: saved remote entry {}", dir.to_string_lossy());
     Ok(dir.to_string_lossy().into_owned())
 }

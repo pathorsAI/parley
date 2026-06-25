@@ -224,6 +224,9 @@ export async function renameHistoryEntry(id: string, title: string): Promise<voi
   if (!isTauri()) return;
   await invoke("rename_history_entry", { id, title: title.trim() });
   log.info("history: entry renamed", { id });
+  // A rename is a content change → go through the same dirty→push→clear lifecycle
+  // as save/re-analysis, so a failed cloud push is retried by the background sweep.
+  pushToCloud(id);
 }
 
 /** Delete one entry's folder. */

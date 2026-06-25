@@ -33,7 +33,6 @@ import {
   deleteCloudRecording,
   downloadCloudEntry,
   listMergedHistory,
-  pushLocalEntrySafe,
   pushUnsyncedToCloud,
   type HistoryCardItem,
   type HistorySyncState,
@@ -208,10 +207,9 @@ export function HistoryApp() {
       const clean = title.trim();
       if (!clean) return;
       try {
+        // renameHistoryEntry now pushes to the cloud itself (dirty → sweep-retried).
         await renameHistoryEntry(id, clean);
         setEntries((prev) => prev?.map((e) => (e.id === id ? { ...e, title: clean } : e)) ?? null);
-        // Keep the cloud copy's title in step (best-effort; no-op when signed out).
-        void pushLocalEntrySafe(id);
       } catch (e) {
         log.error("history: rename failed", { id, error: String(e) });
         toast.error(t("history.renameFailed", { error: errText(e) }));
