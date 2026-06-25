@@ -255,6 +255,9 @@ export interface Settings {
   assemblyaiApiKey: string;
   /** Microphone input device name; empty = system default. */
   inputDevice: string;
+  /** Voice typing: after releasing the push-to-talk key, also paste the text
+   *  into the frontmost app (simulated ⌘V). Off by default; needs Accessibility. */
+  voiceTypingAutoPaste: boolean;
   /** The active evaluation set used in meetings (the runtime copy lives in the store). */
   evaluations: EvalDef[];
   /** Library of evaluation templates (built-in + custom) you can apply. */
