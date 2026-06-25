@@ -185,6 +185,7 @@ export const zhTW = {
   "settings.transcription.systemDefault": "系統預設",
   "settings.transcription.stopTest": "停止測試",
   "settings.transcription.testMic": "測試麥克風",
+  "settings.transcription.lockedWhileRecording": "會議錄製中，麥克風已鎖定（結束會議後才能切換或測試）。",
   "settings.transcription.help":
     "若錄音沒有聲音，多半是抓錯麥克風，換一個並用 Test 確認音量。系統音訊（對方）目前用 Core Audio tap，需簽章與授權才會有聲音。",
   "settings.evaluations.title": "評估模板",
@@ -712,6 +713,7 @@ export const en = {
   "settings.transcription.systemDefault": "System default",
   "settings.transcription.stopTest": "Stop test",
   "settings.transcription.testMic": "Test mic",
+  "settings.transcription.lockedWhileRecording": "The mic is locked while a meeting is recording — stop the meeting to switch or test it.",
   "settings.transcription.help":
     "If recording has no sound, the selected microphone is probably wrong. Pick another one and use Test to confirm level. System audio currently uses a Core Audio tap and requires signing and permission.",
   "settings.evaluations.title": "Evaluations",
