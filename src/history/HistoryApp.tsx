@@ -181,6 +181,16 @@ export function HistoryApp() {
     return () => window.removeEventListener("focus", onFocus);
   }, [reloadOrgs]);
 
+  // If the selected org disappears from the list (deleted in the Settings window,
+  // or our membership was removed), snap back to personal — otherwise the content
+  // pane would keep querying a dead org (now a harmless 403) while its sidebar
+  // folder is already gone. Runs whenever the refreshed org list no longer has it.
+  useEffect(() => {
+    if (selection.kind === "org" && !orgs.some((o) => o.id === selection.id)) {
+      setSelection({ kind: "personal" });
+    }
+  }, [orgs, selection]);
+
   const refresh = useCallback(() => {
     setEntries(null);
     if (selection.kind === "org") {
