@@ -144,8 +144,15 @@ interface ParleyState {
   /** Load an uploaded recording and switch into replay mode. */
   enterReplay: (session: ReplaySession) => void;
   /** Load a saved history entry into replay mode, RESTORING its analysis (unlike
-   *  {@link enterReplay}, which clears findings so a fresh pass can run). */
-  loadHistory: (entry: HistoryEntry, session: ReplaySession) => void;
+   *  {@link enterReplay}, which clears findings so a fresh pass can run). Pass
+   *  `{ readOnly: true }` for an ORG recording viewed from the cloud — it leaves
+   *  {@link loadedHistoryId} null so the personal re-analysis-persist subscription
+   *  never tries to write someone else's shared recording into the local dir. */
+  loadHistory: (
+    entry: HistoryEntry,
+    session: ReplaySession,
+    opts?: { readOnly?: boolean },
+  ) => void;
   /** Leave replay mode and return to a clean live/idle state. */
   exitReplay: () => void;
   /** Move the replay playhead (drives both audio position and the transcript). */
@@ -387,18 +394,21 @@ export const useStore = create<ParleyState>()(
     });
   },
 
-  loadHistory: (entry, session) => {
+  loadHistory: (entry, session, opts) => {
     log.info("store: load history", {
       id: entry.id,
       source: entry.source,
       segments: entry.segments.length,
       findings: entry.findings.length,
+      readOnly: !!opts?.readOnly,
     });
     set((state) => ({
       appMode: "replay",
       replay: session,
-      // Re-running the analysis now overwrites THIS saved entry on disk.
-      loadedHistoryId: entry.id,
+      // Re-running the analysis overwrites THIS saved entry on disk — but only for
+      // an own/local entry. A read-only org recording leaves this null so the
+      // re-analysis-persist subscription doesn't try to write it to the local dir.
+      loadedHistoryId: opts?.readOnly ? null : entry.id,
       replayPlayheadMs: 0,
       replaySeekNonce: state.replaySeekNonce + 1,
       replayTrim: null,

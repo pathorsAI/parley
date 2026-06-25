@@ -105,3 +105,40 @@ export async function refreshSession(): Promise<void> {
     log.warn("cloud: session refresh failed", { error: String(e) });
   }
 }
+
+// ── Authenticated fetch ───────────────────────────────────────────────────────
+// The shared bearer-fetch seam, here in the client so every cloud feature (sync,
+// orgs, replay download) speaks to the backend the same way and a dead session is
+// cleared in exactly one place.
+
+/** The current bearer session token, or null when signed out. */
+export function cloudToken(): string | null {
+  return useStore.getState().cloudAuth?.token ?? null;
+}
+
+/** A thrown cloud-auth failure (the session was cleared) — lets sweeps short-circuit
+ *  instead of retrying every entry against a dead session. */
+export function isAuthError(e: unknown): boolean {
+  return e instanceof Error && /\bauth\b/.test(e.message);
+}
+
+/**
+ * Bearer-authenticated fetch against the cloud; throws on a non-2xx response. On
+ * 401/403 it clears the stored session so the whole UI reflects signed-out
+ * consistently (badges go local, the account card shows signed-out) instead of a
+ * misleading "everything is local" while still appearing signed in.
+ */
+export async function cloudFetch(path: string, init?: RequestInit): Promise<Response> {
+  const t = cloudToken();
+  if (!t) throw new Error("not signed in");
+  const res = await fetch(`${CLOUD_URL}${path}`, {
+    ...init,
+    headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${t}` },
+  });
+  if (res.status === 401 || res.status === 403) {
+    useStore.getState().setCloudAuth(null);
+    throw new Error(`cloud auth ${res.status}`);
+  }
+  if (!res.ok) throw new Error(`cloud ${init?.method ?? "GET"} ${path} → ${res.status}`);
+  return res;
+}

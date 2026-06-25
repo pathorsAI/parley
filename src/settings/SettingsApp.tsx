@@ -11,6 +11,14 @@ import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
 import { signInWithGoogle, signOut } from "../lib/cloud/client";
+import {
+  createOrg,
+  listMyOrgs,
+  inviteToOrg,
+  listMyInvitations,
+  acceptInvitation,
+} from "../lib/cloud/orgs";
+import type { CloudInvitation, CloudOrg } from "../lib/cloud/types";
 import { isTauri } from "../lib/tauriEvents";
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
@@ -239,6 +247,11 @@ export function SettingsApp() {
                 </div>
               )}
             </Field>
+            {cloudAuth && (
+              <Field label={t("settings.account.org.title")}>
+                <OrgPanel />
+              </Field>
+            )}
             <Field label={t("settings.basic.name")}>
               <Input
                 className="max-w-sm"
@@ -1169,6 +1182,166 @@ function DiarizeModelField() {
         </>
       )}
       <p className="text-[11px] text-muted-foreground">{t("settings.transcription.speakerModelHelp")}</p>
+    </div>
+  );
+}
+
+/**
+ * Organizations management: create an org, invite teammates by email, and accept
+ * pending invitations. Talks to the cloud's better-auth `organization` plugin via
+ * ../lib/cloud/orgs. Rendered only when signed in (its parent gates on `cloudAuth`).
+ */
+function OrgPanel() {
+  const { t } = useI18n();
+  const cloudAuth = useStore((s) => s.cloudAuth);
+  const [orgs, setOrgs] = useState<CloudOrg[]>([]);
+  const [invitations, setInvitations] = useState<CloudInvitation[]>([]);
+  // Per-org invite inputs + pending flags, keyed by org id.
+  const [inviteEmails, setInviteEmails] = useState<Record<string, string>>({});
+  const [inviting, setInviting] = useState<Record<string, boolean>>({});
+  const [newOrgName, setNewOrgName] = useState("");
+  const [creating, setCreating] = useState(false);
+  // Per-invitation accept flags, keyed by invitation id.
+  const [accepting, setAccepting] = useState<Record<string, boolean>>({});
+
+  const reload = useCallback(async () => {
+    try {
+      const [myOrgs, myInvites] = await Promise.all([listMyOrgs(), listMyInvitations()]);
+      setOrgs(myOrgs);
+      setInvitations(myInvites);
+    } catch {
+      toast.error(t("settings.account.org.loadFailed"));
+    }
+  }, [t]);
+
+  // (Re)load whenever we have a session — including when sign-in just completed.
+  useEffect(() => {
+    if (cloudAuth) void reload();
+  }, [cloudAuth, reload]);
+
+  async function create() {
+    const name = newOrgName.trim();
+    if (!name || creating) return;
+    setCreating(true);
+    try {
+      await createOrg(name);
+      toast.success(t("settings.account.org.created", { org: name }));
+      setNewOrgName("");
+      await reload();
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      toast.error(t("settings.account.org.createFailed", { error }));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function invite(orgId: string) {
+    const email = (inviteEmails[orgId] ?? "").trim();
+    if (!email || inviting[orgId]) return;
+    setInviting((m) => ({ ...m, [orgId]: true }));
+    try {
+      await inviteToOrg(orgId, email);
+      toast.success(t("settings.account.org.invited", { email }));
+      setInviteEmails((m) => ({ ...m, [orgId]: "" }));
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      toast.error(t("settings.account.org.inviteFailed", { error }));
+    } finally {
+      setInviting((m) => ({ ...m, [orgId]: false }));
+    }
+  }
+
+  async function accept(invitation: CloudInvitation) {
+    if (accepting[invitation.id]) return;
+    const name = invitation.organizationName ?? invitation.organizationId;
+    setAccepting((m) => ({ ...m, [invitation.id]: true }));
+    try {
+      await acceptInvitation(invitation.id);
+      toast.success(t("settings.account.org.joined", { org: name }));
+      await reload();
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      toast.error(t("settings.account.org.acceptFailed", { error }));
+    } finally {
+      setAccepting((m) => ({ ...m, [invitation.id]: false }));
+    }
+  }
+
+  return (
+    <div className="flex max-w-sm flex-col gap-3">
+      {/* My organizations */}
+      {orgs.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground">{t("settings.account.org.noOrgs")}</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {orgs.map((org) => (
+            <div key={org.id} className="flex flex-col gap-1.5 rounded-lg border p-2.5">
+              <div className="truncate text-sm font-medium">{org.name}</div>
+              <div className="flex items-center gap-2">
+                <Input
+                  className="h-7 text-xs"
+                  placeholder={t("settings.account.org.invitePlaceholder")}
+                  value={inviteEmails[org.id] ?? ""}
+                  onChange={(e) => setInviteEmails((m) => ({ ...m, [org.id]: e.target.value }))}
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 shrink-0 px-2 text-[11px]"
+                  disabled={inviting[org.id] || !(inviteEmails[org.id] ?? "").trim()}
+                  onClick={() => void invite(org.id)}
+                >
+                  {inviting[org.id] ? t("settings.account.org.inviting") : t("settings.account.org.invite")}
+                </Button>
+              </div>
+            </div>
+          ))}
+          <p className="text-[11px] text-muted-foreground">{t("settings.account.org.inviteHint")}</p>
+        </div>
+      )}
+
+      {/* Create organization */}
+      <div className="flex items-center gap-2">
+        <Input
+          className="h-7 text-xs"
+          placeholder={t("settings.account.org.createPlaceholder")}
+          value={newOrgName}
+          onChange={(e) => setNewOrgName(e.target.value)}
+        />
+        <Button
+          variant="secondary"
+          size="sm"
+          className="h-7 shrink-0 px-2 text-[11px]"
+          disabled={creating || !newOrgName.trim()}
+          onClick={() => void create()}
+        >
+          {creating ? t("settings.account.org.creating") : t("settings.account.org.create")}
+        </Button>
+      </div>
+
+      {/* Pending invitations */}
+      {invitations.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-[11px] font-medium text-muted-foreground">{t("settings.account.org.pending")}</p>
+          {invitations.map((inv) => (
+            <div key={inv.id} className="flex items-center gap-2 rounded-lg border p-2.5">
+              <span className="min-w-0 flex-1 truncate text-sm">
+                {inv.organizationName ?? inv.organizationId}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="h-7 shrink-0 px-2 text-[11px]"
+                disabled={accepting[inv.id]}
+                onClick={() => void accept(inv)}
+              >
+                {accepting[inv.id] ? t("settings.account.org.accepting") : t("settings.account.org.accept")}
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
