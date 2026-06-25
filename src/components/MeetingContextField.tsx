@@ -30,7 +30,7 @@ export function MeetingContextField({ rows = 3, autoFocus = false }: { rows?: nu
           value={meetingContext}
           onChange={(e) => setMeetingContext(e.target.value)}
           placeholder={t("meeting.contextPlaceholder")}
-          className="resize-none text-xs"
+          className="max-h-48 overflow-y-auto resize-none text-xs"
         />
       </div>
       <div className="flex flex-col gap-2">
