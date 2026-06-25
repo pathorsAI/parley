@@ -70,8 +70,19 @@ describe("enterReplay / exitReplay", () => {
   it("exitReplay returns to a clean live/idle state", () => {
     const session = replaySession([seg({ id: "s1" })]);
     useStore.getState().enterReplay(session);
-    // Simulate having opened the wizard + run analysis during replay.
-    useStore.setState({ analysisGate: "deferred", findings: [makeFinding("f1")] });
+    // Simulate having opened the wizard + run analysis + a post-call delivery pass.
+    useStore.setState({
+      analysisGate: "deferred",
+      findings: [makeFinding("f1")],
+      deliveryAssessment: {
+        tone: "firm",
+        toneEvidence: "we need this by Friday",
+        fillers: { level: "ok", examples: [], note: "" },
+        pace: "comfortable",
+        summary: "Clear and direct.",
+      },
+      deliveryStatus: "done",
+    });
 
     useStore.getState().exitReplay();
 
@@ -84,6 +95,9 @@ describe("enterReplay / exitReplay", () => {
     expect(s.analysisGate).toBe("open");
     expect(s.findings).toEqual([]);
     expect(s.replayTrim).toBeNull();
+    // Delivery slice must not leak into the next LIVE session.
+    expect(s.deliveryAssessment).toBeNull();
+    expect(s.deliveryStatus).toBe("idle");
   });
 });
 

@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import type {
   ActionItem,
   AppLanguage,
+  DeliveryAssessment,
   DeliveryNudge,
   Evaluation,
   FindingSolutionEntry,
@@ -237,6 +238,13 @@ interface ParleyState {
   /** Show a nudge (replaces any current one); the UI auto-dismisses it. */
   pushDeliveryNudge: (n: DeliveryNudge) => void;
   clearDeliveryNudge: () => void;
+  /** The current delivery assessment (tone + filler frequency). LIVE updates it
+   *  on a rolling cadence; REPLAY computes it once over the whole recording. */
+  deliveryAssessment: DeliveryAssessment | null;
+  /** Mainly for REPLAY: drives the post-call delivery section's spinner. */
+  deliveryStatus: "idle" | "running" | "done" | "error";
+  setDeliveryAssessment: (a: DeliveryAssessment | null) => void;
+  setDeliveryStatus: (s: ParleyState["deliveryStatus"]) => void;
 
   // ── Action items (REPLAY post-meeting follow-ups) ───────────────────────────
   /** Generated from the analysis findings + transcript; ephemeral, replay-only. */
@@ -334,6 +342,8 @@ export const useStore = create<ParleyState>()(
       autoAnalyzeSec: 45,
       prosody: null,
       deliveryNudge: null,
+      deliveryAssessment: null,
+      deliveryStatus: "idle",
       actionItems: [],
       actionItemsStatus: "idle",
       actionItemsError: null,
@@ -386,6 +396,8 @@ export const useStore = create<ParleyState>()(
       actionItems: [],
       actionItemsStatus: "idle",
       actionItemsError: null,
+      deliveryAssessment: null,
+      deliveryStatus: "idle",
     });
   },
 
@@ -434,6 +446,10 @@ export const useStore = create<ParleyState>()(
       selectedFindingId: null,
       solutionFindingId: null,
       findingSolutions: {},
+      // Delivery isn't persisted in history yet → recompute once on open (cheap,
+      // opt-in). useReplayAnalysis runs it after the restored analysis settles.
+      deliveryAssessment: null,
+      deliveryStatus: "idle",
     }));
   },
 
@@ -462,6 +478,8 @@ export const useStore = create<ParleyState>()(
       actionItems: [],
       actionItemsStatus: "idle",
       actionItemsError: null,
+      deliveryAssessment: null,
+      deliveryStatus: "idle",
     });
   },
 
@@ -563,6 +581,8 @@ export const useStore = create<ParleyState>()(
   setProsody: (m) => set({ prosody: m }),
   pushDeliveryNudge: (n) => set({ deliveryNudge: n }),
   clearDeliveryNudge: () => set({ deliveryNudge: null }),
+  setDeliveryAssessment: (a) => set({ deliveryAssessment: a }),
+  setDeliveryStatus: (s) => set({ deliveryStatus: s }),
 
   setActionItems: (items) => set({ actionItems: items }),
   setActionItemsStatus: (status) => set({ actionItemsStatus: status }),
@@ -616,6 +636,8 @@ export const useStore = create<ParleyState>()(
       findingSolutions: {},
       prosody: null,
       deliveryNudge: null,
+      deliveryAssessment: null,
+      deliveryStatus: "idle",
     });
   },
 

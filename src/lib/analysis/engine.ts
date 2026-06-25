@@ -187,6 +187,11 @@ export async function reanalyzeAll(): Promise<void> {
   if (useStore.getState().loadedHistoryId !== startedFor) return;
   const { regenerateActionItems } = await import("./actionItems");
   regenerateActionItems();
+  // Refresh the delivery verdict against the re-analyzed transcript too, so it
+  // doesn't desync from findings/action items. The runner manages its own
+  // running/done status, so the one-shot replay stage-2b effect stays inert.
+  const { runDeliveryAnalysis } = await import("./deliveryRun");
+  void runDeliveryAnalysis();
 }
 
 /**
@@ -248,9 +253,10 @@ export function useAnalysisEngine() {
           });
       }
 
-      // Tone (aggressive/rude) coaching — opt-in, cheap, cooldowned. Fires only
-      // when there's fresh speech, and surfaces a NUDGE (never a finding) so it
-      // stays out of the evaluations/timeline list (the user's chosen UX).
+      // Delivery coaching (tone + over-frequent fillers) — opt-in, cheap,
+      // cooldowned. Fires only when there's fresh speech. Stores the full
+      // assessment for the live Delivery panel, and surfaces NUDGES (never a
+      // finding) so it stays out of the evaluations/timeline list.
       const maxEndMs = segments.reduce((m, s) => (s.isFinal ? Math.max(m, s.endMs) : m), 0);
       if (
         settings.delivery.tone &&
@@ -263,20 +269,35 @@ export function useAnalysisEngine() {
         lastToneEndMs.current = maxEndMs;
         toneBusy.current = true;
         const prosody = useStore.getState().prosody;
-        import("../ai/tone")
-          .then(({ analyzeTone, TONE_FLAGGED }) =>
-            analyzeTone({ settings, segments, names: speakerNames, prosody }).then((res) => {
-              if (!res || !TONE_FLAGGED.has(res.tone)) return;
-              const lang = useStore.getState().settings.language;
-              useStore.getState().pushDeliveryNudge({
-                kind: "tone",
-                severity: res.tone === "sharp" ? "info" : "warn",
-                message: res.nudge || translate(lang, "delivery.nudge.tone"),
-                evidence: res.evidence || undefined,
-              });
-            })
+        import("../ai/delivery")
+          .then(({ analyzeDelivery, TONE_FLAGGED }) =>
+            analyzeDelivery({ settings, segments, names: speakerNames, prosody, mode: "live" }).then(
+              (res) => {
+                if (!res) return;
+                const store = useStore.getState();
+                store.setDeliveryAssessment(res);
+                const lang = store.settings.language;
+                // Tone nudge when sharp/aggressive/rude.
+                if (TONE_FLAGGED.has(res.tone)) {
+                  store.pushDeliveryNudge({
+                    kind: "tone",
+                    severity: res.tone === "sharp" ? "info" : "warn",
+                    message: translate(lang, "delivery.nudge.tone"),
+                    evidence: res.toneEvidence || undefined,
+                  });
+                } else if (res.fillers.level === "frequent") {
+                  // Otherwise, nudge on over-frequent fillers (don't stack two).
+                  store.pushDeliveryNudge({
+                    kind: "filler",
+                    severity: "info",
+                    message: translate(lang, "delivery.nudge.filler"),
+                    evidence: res.fillers.examples.slice(0, 3).join("、") || undefined,
+                  });
+                }
+              }
+            )
           )
-          .catch((e) => console.error("[tone]", e))
+          .catch((e) => console.error("[delivery]", e))
           .finally(() => {
             toneBusy.current = false;
           });
