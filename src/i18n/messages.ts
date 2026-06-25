@@ -148,6 +148,10 @@ export const zhTW = {
   "settings.account.org.accepting": "處理中…",
   "settings.account.org.joined": "已加入 {org}",
   "settings.account.org.acceptFailed": "接受邀請失敗：{error}",
+  "settings.account.org.errAlreadyMember": "對方已經是這個組織的成員了。",
+  "settings.account.org.errAlreadyInvited": "對方已經被邀請過了，邀請正等待接受。",
+  "settings.account.org.errOrgGone": "找不到這個組織，可能已被刪除——請重新整理後再試。",
+  "settings.account.org.errInvalidEmail": "請輸入有效的電子郵件地址。",
   "settings.account.org.delete": "刪除組織",
   "settings.account.org.deleteWarning":
     "此動作無法復原。組織、所有成員與共享到組織的錄音都會永久刪除。",
@@ -740,6 +744,10 @@ export const en = {
   "settings.account.org.accepting": "Accepting…",
   "settings.account.org.joined": "Joined {org}",
   "settings.account.org.acceptFailed": "Couldn’t accept invite: {error}",
+  "settings.account.org.errAlreadyMember": "They’re already a member of this organization.",
+  "settings.account.org.errAlreadyInvited": "They’ve already been invited — the invite is pending.",
+  "settings.account.org.errOrgGone": "That organization no longer exists — refresh and try again.",
+  "settings.account.org.errInvalidEmail": "Please enter a valid email address.",
   "settings.account.org.delete": "Delete organization",
   "settings.account.org.deleteWarning":
     "This can’t be undone. The organization, all members, and every recording shared into it are permanently deleted.",

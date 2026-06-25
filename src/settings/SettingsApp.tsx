@@ -10,7 +10,7 @@ import { Check, Copy, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, 
 import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
-import { signInWithGoogle, signOut } from "../lib/cloud/client";
+import { signInWithGoogle, signOut, CloudError } from "../lib/cloud/client";
 import { CLOUD_ENABLED } from "../lib/flags";
 import {
   createOrg,
@@ -1279,10 +1279,30 @@ function OrgPanel() {
       setNewOrgName("");
       await reload();
     } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      toast.error(t("settings.account.org.createFailed", { error }));
+      toast.error(t("settings.account.org.createFailed", { error: cloudErrMsg(e) }));
     } finally {
       setCreating(false);
+    }
+  }
+
+  // Turn a cloud failure into a human, localized reason. better-auth returns a
+  // machine `code` on a 4xx; we translate the ones a user can actually act on, and
+  // fall back to the backend's own message for anything unmapped (still far better
+  // than a bare "→ 400").
+  function cloudErrMsg(e: unknown): string {
+    const code = e instanceof CloudError ? e.code : null;
+    switch (code) {
+      case "USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION":
+        return t("settings.account.org.errAlreadyMember");
+      case "USER_IS_ALREADY_INVITED_TO_THIS_ORGANIZATION":
+        return t("settings.account.org.errAlreadyInvited");
+      case "MEMBER_NOT_FOUND":
+      case "ORGANIZATION_NOT_FOUND":
+        return t("settings.account.org.errOrgGone");
+      case "INVALID_EMAIL":
+        return t("settings.account.org.errInvalidEmail");
+      default:
+        return e instanceof Error ? e.message : String(e);
     }
   }
 
@@ -1295,8 +1315,7 @@ function OrgPanel() {
       toast.success(t("settings.account.org.invited", { email }));
       setInviteEmails((m) => ({ ...m, [orgId]: "" }));
     } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      toast.error(t("settings.account.org.inviteFailed", { error }));
+      toast.error(t("settings.account.org.inviteFailed", { error: cloudErrMsg(e) }));
     } finally {
       setInviting((m) => ({ ...m, [orgId]: false }));
     }
@@ -1311,8 +1330,7 @@ function OrgPanel() {
       toast.success(t("settings.account.org.joined", { org: name }));
       await reload();
     } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      toast.error(t("settings.account.org.acceptFailed", { error }));
+      toast.error(t("settings.account.org.acceptFailed", { error: cloudErrMsg(e) }));
     } finally {
       setAccepting((m) => ({ ...m, [invitation.id]: false }));
     }
@@ -1336,8 +1354,7 @@ function OrgPanel() {
       setDeleteConfirm((m) => drop(m) as Record<string, string>);
       await reload();
     } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      toast.error(t("settings.account.org.deleteFailed", { error }));
+      toast.error(t("settings.account.org.deleteFailed", { error: cloudErrMsg(e) }));
     } finally {
       setDeleting((m) => ({ ...m, [org.id]: false }));
     }
