@@ -12,6 +12,8 @@ import { openHistoryWindow } from "../lib/history/history";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
+import { PaceGauge } from "./delivery/PaceGauge";
+import { MonotonyGauge } from "./delivery/MonotonyGauge";
 
 /**
  * Track main-window focus so the traffic lights can dim to grey when the window
@@ -61,6 +63,7 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
   const transcriptionProvider = useStore((s) => s.settings.transcriptionProvider);
   const sttKey = useStore((s) => sttApiKey(s.settings, s.settings.transcriptionProvider));
   const inputDevice = useStore((s) => s.settings.inputDevice);
+  const delivery = useStore((s) => s.settings.delivery);
   const startMeeting = useStore((s) => s.startMeeting);
   const stopMeeting = useStore((s) => s.stopMeeting);
   const appMode = useStore((s) => s.appMode);
@@ -251,6 +254,8 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
                 : t("titlebar.status.idle")}
             </div>
             {recording && <LevelMeter source="me" className="h-1.5 w-14" />}
+            {recording && delivery.pace && <PaceGauge className="h-1.5 w-10" />}
+            {recording && delivery.pitch && <MonotonyGauge className="h-1.5 w-10" />}
 
             {!recording && isTauri() && (
               <Button
