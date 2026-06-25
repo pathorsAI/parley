@@ -55,7 +55,15 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
 };
 import type { AppLanguage, AppLayout, AppTheme, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 
-type Category = "basic" | "provider" | "transcription" | "evaluations" | "todos" | "mcp" | "usage";
+type Category =
+  | "basic"
+  | "account"
+  | "provider"
+  | "transcription"
+  | "evaluations"
+  | "todos"
+  | "mcp"
+  | "usage";
 
 interface McpServerInfo {
   running: boolean;
@@ -63,8 +71,11 @@ interface McpServerInfo {
   templates_path: string;
 }
 
-const NAV: { id: Category; labelKey: TranslationKey }[] = [
+// `cloudOnly` entries (the account/orgs page) are compiled out of the OSS edition,
+// which has no sign-in at all — so they never appear in that build's nav.
+const NAV: { id: Category; labelKey: TranslationKey; cloudOnly?: boolean }[] = [
   { id: "basic", labelKey: "settings.nav.basic" },
+  { id: "account", labelKey: "settings.nav.account", cloudOnly: true },
   { id: "provider", labelKey: "settings.nav.provider" },
   { id: "transcription", labelKey: "settings.nav.transcription" },
   { id: "evaluations", labelKey: "settings.nav.evaluations" },
@@ -177,7 +188,7 @@ export function SettingsApp() {
       {/* Left nav */}
       <nav className="flex w-48 shrink-0 flex-col gap-0.5 border-r bg-muted/30 p-2">
         <div className="px-2 pb-2 pt-1 text-sm font-semibold tracking-tight">{t("common.settings")}</div>
-        {NAV.map((n) => (
+        {NAV.filter((n) => CLOUD_ENABLED || !n.cloudOnly).map((n) => (
           <button
             key={n.id}
             onClick={() => setCat(n.id)}
@@ -194,11 +205,9 @@ export function SettingsApp() {
       <div className="min-w-0 flex-1 overflow-y-auto px-8 py-6">
         <p className="mb-5 text-xs text-muted-foreground">{t("settings.note")}</p>
 
-        {cat === "basic" && (
-          <Section title={t("settings.basic.title")}>
-            {CLOUD_ENABLED && (
-              <>
-            <Field label={t("settings.nav.account")}>
+        {cat === "account" && CLOUD_ENABLED && (
+          <Section title={t("settings.nav.account")}>
+            <Field label={t("settings.account.signIn")}>
               {cloudAuth ? (
                 <div className="flex max-w-sm items-center gap-3 rounded-lg border p-2.5">
                   {cloudAuth.user.image ? (
@@ -256,8 +265,11 @@ export function SettingsApp() {
                 <OrgPanel />
               </Field>
             )}
-              </>
-            )}
+          </Section>
+        )}
+
+        {cat === "basic" && (
+          <Section title={t("settings.basic.title")}>
             <Field label={t("settings.basic.name")}>
               <Input
                 className="max-w-sm"
