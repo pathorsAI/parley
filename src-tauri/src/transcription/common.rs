@@ -22,6 +22,10 @@ use crate::audio::TARGET_SAMPLE_RATE;
 pub const TRANSCRIPT_EVENT: &str = "transcript://segment";
 /// Event the frontend listens on for the live input-level meter.
 pub const LEVEL_EVENT: &str = "audio://level";
+/// Event the frontend listens on for live delivery-coaching prosody metrics
+/// (pitch variation, pauses) computed on the "me" mic stream — see
+/// [`crate::audio::prosody::ProsodyAnalyzer`].
+pub const PROSODY_EVENT: &str = "audio://prosody";
 
 /// rustls 0.23 requires a process-wide default CryptoProvider before any TLS
 /// handshake; installing it lazily (once) avoids a panic in the ws task.

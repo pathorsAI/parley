@@ -39,6 +39,44 @@ export async function listenForTranscript(): Promise<UnlistenFn> {
   });
 }
 
+/** Shape of the `audio://prosody` payload (snake_case on the wire). */
+interface ProsodyEventPayload {
+  source: Source;
+  f0_hz: number;
+  pitch_var_semitones: number;
+  monotony_score: number;
+  speech_rate_hz: number;
+  voiced_ratio: number;
+  silence_ms: number;
+  longest_pause_ms: number;
+  speaking: boolean;
+}
+
+/**
+ * Subscribe to backend prosody events (live delivery coaching on the "me" mic)
+ * and feed them into the store. Mirrors {@link listenForTranscript}; no-op
+ * outside Tauri. Only "me" is ever emitted, but we filter defensively.
+ */
+export async function listenForProsody(): Promise<UnlistenFn> {
+  if (!("__TAURI_INTERNALS__" in window)) {
+    return () => {};
+  }
+  return listen<ProsodyEventPayload>("audio://prosody", (event) => {
+    const p = event.payload;
+    if (p.source !== "me") return;
+    useStore.getState().setProsody({
+      f0Hz: p.f0_hz,
+      pitchVarSemitones: p.pitch_var_semitones,
+      monotonyScore: p.monotony_score,
+      speechRateHz: p.speech_rate_hz,
+      voicedRatio: p.voiced_ratio,
+      silenceMs: p.silence_ms,
+      longestPauseMs: p.longest_pause_ms,
+      speaking: p.speaking,
+    });
+  });
+}
+
 /** True when running inside the Tauri shell (vs a plain browser dev session). */
 export function isTauri(): boolean {
   return "__TAURI_INTERNALS__" in window;
