@@ -1319,6 +1319,8 @@ function OrgPanel() {
         return t("settings.account.org.errAlreadyMember");
       case "USER_IS_ALREADY_INVITED_TO_THIS_ORGANIZATION":
         return t("settings.account.org.errAlreadyInvited");
+      case "YOU_ARE_NOT_ALLOWED_TO_INVITE_USERS_TO_THIS_ORGANIZATION":
+        return t("settings.account.org.errNoInvitePermission");
       case "MEMBER_NOT_FOUND":
       case "ORGANIZATION_NOT_FOUND":
         return t("settings.account.org.errOrgGone");
@@ -1424,27 +1426,31 @@ function OrgPanel() {
                 </ul>
               )}
 
-              <div className="flex items-center gap-2">
-                <Input
-                  className="h-7 text-xs"
-                  placeholder={t("settings.account.org.invitePlaceholder")}
-                  value={inviteEmails[org.id] ?? ""}
-                  onChange={(e) => setInviteEmails((m) => ({ ...m, [org.id]: e.target.value }))}
-                />
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="h-7 shrink-0 px-2 text-[11px]"
-                  disabled={inviting[org.id] || !(inviteEmails[org.id] ?? "").trim()}
-                  onClick={() => void invite(org.id)}
-                >
-                  {inviting[org.id] ? (
-                    <Spinning label={t("settings.account.org.inviting")} />
-                  ) : (
-                    t("settings.account.org.invite")
-                  )}
-                </Button>
-              </div>
+              {/* Inviting is owner/admin-only — plain members can't (the server
+                  403s), so don't show them an invite box they can't use. */}
+              {(org.role === "owner" || org.role === "admin") && (
+                <div className="flex items-center gap-2">
+                  <Input
+                    className="h-7 text-xs"
+                    placeholder={t("settings.account.org.invitePlaceholder")}
+                    value={inviteEmails[org.id] ?? ""}
+                    onChange={(e) => setInviteEmails((m) => ({ ...m, [org.id]: e.target.value }))}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="h-7 shrink-0 px-2 text-[11px]"
+                    disabled={inviting[org.id] || !(inviteEmails[org.id] ?? "").trim()}
+                    onClick={() => void invite(org.id)}
+                  >
+                    {inviting[org.id] ? (
+                      <Spinning label={t("settings.account.org.inviting")} />
+                    ) : (
+                      t("settings.account.org.invite")
+                    )}
+                  </Button>
+                </div>
+              )}
 
               {/* Danger zone — owner-only. Only the org's owner can delete it (the
                   server re-checks), so non-owners never see the affordance at all.
@@ -1509,7 +1515,9 @@ function OrgPanel() {
                 ))}
             </div>
           ))}
-          <p className="text-[11px] text-muted-foreground">{t("settings.account.org.inviteHint")}</p>
+          {orgs.some((o) => o.role === "owner" || o.role === "admin") && (
+            <p className="text-[11px] text-muted-foreground">{t("settings.account.org.inviteHint")}</p>
+          )}
         </div>
       )}
 
