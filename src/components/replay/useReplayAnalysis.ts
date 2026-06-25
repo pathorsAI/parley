@@ -3,6 +3,7 @@ import { useStore } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { runAnalysis } from "../../lib/analysis/engine";
 import { runActionItems } from "../../lib/analysis/actionItems";
+import { runDeliveryAnalysis } from "../../lib/analysis/deliveryRun";
 import { saveUploadToHistory } from "../../lib/history/history";
 import { log } from "../../lib/log";
 
@@ -22,8 +23,10 @@ export function useReplayAnalysis(): void {
   const analysisStatus = useStore((s) => s.analysisStatus);
   const actionItemsStatus = useStore((s) => s.actionItemsStatus);
   const analysisGate = useStore((s) => s.analysisGate);
+  const deliveryStatus = useStore((s) => s.deliveryStatus);
   const analysisStartedFor = useRef<string | null>(null);
   const actionsStartedFor = useRef<string | null>(null);
+  const deliveryStartedFor = useRef<string | null>(null);
   const savedFor = useRef<string | null>(null);
 
   // 1) Analyze the whole recording once — but only after the ingest wizard's
@@ -58,6 +61,26 @@ export function useReplayAnalysis(): void {
     actionsStartedFor.current = replayId;
     void runActionItems();
   }, [replayId, analysisStatus, actionItemsStatus]);
+
+  // 2b) Chain the delivery assessment off the finished analysis too (independent
+  //     of action items). Once per session; delivery isn't persisted in history
+  //     yet, so a loaded entry (status reset to "idle") recomputes it cheaply.
+  useEffect(() => {
+    if (!replayId) {
+      deliveryStartedFor.current = null;
+      return;
+    }
+    if (analysisStatus !== "done") return;
+    if (deliveryStatus !== "idle") return;
+    if (deliveryStartedFor.current === replayId) return;
+
+    const { settings, segments } = useStore.getState();
+    if (!hasProviderKey(settings)) return;
+    if (!segments.some((s) => s.isFinal && s.text.trim())) return;
+
+    deliveryStartedFor.current = replayId;
+    void runDeliveryAnalysis();
+  }, [replayId, analysisStatus, deliveryStatus]);
 
   // 3) Auto-save a freshly-analyzed UPLOAD to history once its analysis + action
   //    items settle. Gated on `actionsStartedFor` (set only when WE ran the
