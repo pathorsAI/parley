@@ -13,6 +13,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useStore, speakerKey } from "../store";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
+import { markDirty } from "../cloud/syncState";
 import { translate } from "../../i18n/messages";
 import type { ReplaySession } from "../replay/types";
 import type { HistoryEntry, HistoryEntrySummary } from "./types";
@@ -99,6 +100,9 @@ async function persist(
 
 /** Fire-and-forget cloud push (signed-in only); kept here so save paths stay simple. */
 function pushToCloud(id: string): void {
+  // Content changed → flag dirty; pushLocalEntry clears it on a confirmed push, so
+  // if this best-effort push fails the background sweep re-pushes it later.
+  markDirty(id);
   void import("../cloud/sync")
     .then((m) => m.pushLocalEntrySafe(id))
     .catch(() => {}); // a failed chunk import must not become an unhandled rejection

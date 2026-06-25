@@ -75,6 +75,12 @@ function SyncIcon({ sync, signedIn }: { sync: HistorySyncState; signedIn: boolea
         <CloudCheck className="size-3 text-emerald-500/90" />
       </span>
     );
+  if (sync === "stale")
+    return (
+      <span className="inline-flex" title={t("history.sync.stale")}>
+        <RefreshCw className="size-3 text-amber-500/90" />
+      </span>
+    );
   if (sync === "cloud")
     return (
       <span className="inline-flex" title={t("history.sync.cloudOnly")}>
@@ -151,8 +157,9 @@ export function HistoryApp() {
 
   const openItem = useCallback(
     async (item: HistoryCardItem) => {
-      // Cloud-only: download it to disk first so it loads into replay like any other.
-      if (item.sync === "cloud") {
+      // Cloud-only: download it first. Stale: re-pull so the newer cloud version
+      // (re-analyzed on another device) replaces the local copy before opening.
+      if (item.sync === "cloud" || item.sync === "stale") {
         setDownloadingId(item.id);
         try {
           await downloadCloudEntry(item);

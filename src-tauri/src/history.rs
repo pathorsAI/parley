@@ -92,24 +92,37 @@ pub fn save_history_entry(
     Ok(dir.to_string_lossy().into_owned())
 }
 
-/// Save an entry pulled from the cloud: write the already-encoded audio bytes (if
-/// any) as `audio.ogg` plus the meta/summary JSON verbatim, so a cloud-only
-/// recording becomes an ordinary local entry that loads into replay unchanged.
+/// Save an entry pulled from the cloud: write the meta/summary JSON verbatim, and
+/// — when `audio_url` is given — fetch the recording HERE (reqwest, bearer auth)
+/// and stream it to `audio.ogg`, so a cloud-only recording becomes an ordinary
+/// local entry that loads into replay unchanged. Downloading in Rust keeps the
+/// multi-MB blob off the JS↔Rust IPC (no JSON `number[]` round-trip).
 #[tauri::command]
-pub fn save_remote_history_entry(
+pub async fn save_remote_history_entry(
     app: AppHandle,
     id: String,
     summary_json: String,
     meta_json: String,
-    audio: Option<Vec<u8>>,
+    audio_url: Option<String>,
+    token: Option<String>,
 ) -> Result<String, String> {
     let dir = history_dir(&app)?.join(safe_id(&id));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    if let Some(bytes) = audio.filter(|b| !b.is_empty()) {
-        std::fs::write(dir.join("audio.ogg"), &bytes).map_err(|e| e.to_string())?;
-    }
     std::fs::write(dir.join("summary.json"), summary_json).map_err(|e| e.to_string())?;
     std::fs::write(dir.join("meta.json"), meta_json).map_err(|e| e.to_string())?;
+    if let (Some(url), Some(token)) = (audio_url, token) {
+        let res = reqwest::Client::new()
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !res.status().is_success() {
+            return Err(format!("audio download failed: {}", res.status()));
+        }
+        let bytes = res.bytes().await.map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("audio.ogg"), &bytes).map_err(|e| e.to_string())?;
+    }
     log::info!("history: saved remote entry {}", dir.to_string_lossy());
     Ok(dir.to_string_lossy().into_owned())
 }
