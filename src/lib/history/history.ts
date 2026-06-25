@@ -126,7 +126,11 @@ let uploadSaveInFlight: Promise<unknown> | null = null;
 export async function saveLiveToHistory(audioTempPath: string, durationMs: number): Promise<void> {
   if (!isTauri()) return;
   if (!hasSpokenTranscript()) {
+    // Nothing was transcribed — almost certainly an accidental Start/Stop. Don't
+    // save a history entry, and discard the encoded temp recording so it doesn't
+    // orphan in the temp dir (an entry would normally consume it on save).
     log.info("history: live save skipped (no transcript)");
+    await invoke("discard_recording", { path: audioTempPath }).catch(() => {});
     return;
   }
   const s = useStore.getState();

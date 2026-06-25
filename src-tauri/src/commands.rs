@@ -261,6 +261,33 @@ pub fn stop_meeting(app: AppHandle, state: State<MeetingState>) -> Result<(), St
     Ok(())
 }
 
+/// Delete a freshly-encoded live recording the frontend decided NOT to save —
+/// e.g. an empty meeting with no transcript (likely an accidental Start/Stop).
+/// `save_history_entry` removes the temp source when it moves it into an entry
+/// folder; this is the matching cleanup for the skip path so the `.ogg` doesn't
+/// orphan in the temp dir.
+///
+/// Guarded: only removes a file under the OS temp dir whose name matches our own
+/// `parley-recording-*.ogg`, so it can never be coerced into deleting an
+/// arbitrary path.
+#[tauri::command]
+pub fn discard_recording(path: String) {
+    let p = std::path::Path::new(&path);
+    let in_temp = p.starts_with(std::env::temp_dir());
+    let looks_like_ours = p
+        .file_name()
+        .and_then(|f| f.to_str())
+        .is_some_and(|f| f.starts_with("parley-recording-") && f.ends_with(".ogg"));
+    if in_temp && looks_like_ours {
+        match std::fs::remove_file(p) {
+            Ok(()) => log::info!("recording: discarded unsaved {path}"),
+            Err(e) => log::warn!("recording: discard failed for {path}: {e}"),
+        }
+    } else {
+        log::warn!("recording: refused to discard non-recording path {path}");
+    }
+}
+
 /// Save a meeting transcript (markdown) to ~/Documents/Parley and return the
 /// absolute path written. Creates the folder if needed.
 #[tauri::command]

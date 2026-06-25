@@ -55,6 +55,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::start_meeting,
             commands::stop_meeting,
+            commands::discard_recording,
             commands::list_input_devices,
             commands::start_mic_test,
             commands::stop_mic_test,
