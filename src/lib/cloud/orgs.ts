@@ -97,11 +97,13 @@ export async function deleteOrg(organizationId: string): Promise<void> {
   log.info("cloud: deleted org", { organizationId });
 }
 
-/** Members of an org (for the management list). */
+/**
+ * Who's in an org — name/email/avatar/role, owner-first. Uses the cloud's
+ * member-gated /orgs/:orgId/members (a member⋈user join) rather than better-auth's
+ * list-members, which nests the user under `member.user` and needs admin perms.
+ */
 export async function listOrgMembers(organizationId: string): Promise<CloudOrgMember[]> {
-  const res = await cloudFetch(
-    `/auth/organization/list-members?organizationId=${encodeURIComponent(organizationId)}`,
-  );
-  const data = (await res.json()) as { members?: CloudOrgMember[] } | CloudOrgMember[];
-  return Array.isArray(data) ? data : (data.members ?? []);
+  const res = await cloudFetch(`/orgs/${encodeURIComponent(organizationId)}/members`);
+  const data = (await res.json()) as CloudOrgMember[];
+  return Array.isArray(data) ? data : [];
 }
