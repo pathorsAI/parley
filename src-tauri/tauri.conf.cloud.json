@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://parley-cloud.pathors.workers.dev/download/latest.json"
+      ]
+    }
+  }
+}
