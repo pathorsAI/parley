@@ -48,6 +48,7 @@ import {
 import { listMyOrgs } from "../lib/cloud/orgs";
 import { listenForSettings, openSettingsWindow } from "../lib/settingsSync";
 import { useStore } from "../lib/store";
+import { CLOUD_ENABLED } from "../lib/flags";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import type { CloudOrg, CloudRecordingSummary } from "../lib/cloud/types";
@@ -139,7 +140,9 @@ export function HistoryApp() {
   useThemePreference();
   const { t, language } = useI18n();
   const locale = language === "en" ? "en-US" : "zh-TW";
-  const signedIn = useStore((s) => !!s.cloudAuth);
+  // Hooks must run unconditionally; the flag just forces cloud UI off in the OSS build.
+  const signedInRaw = useStore((s) => !!s.cloudAuth);
+  const signedIn = CLOUD_ENABLED && signedInRaw;
   const [orgs, setOrgs] = useState<CloudOrg[]>([]);
   const [selection, setSelection] = useState<Selection>({ kind: "personal" });
   const [entries, setEntries] = useState<HistoryCardItem[] | null>(null);
@@ -333,7 +336,8 @@ export function HistoryApp() {
 
   return (
     <div className="flex h-screen bg-background text-foreground">
-      {/* ── Sidebar: personal + shared (org) contexts ── */}
+      {/* ── Sidebar: personal + shared (org) contexts (cloud edition only) ── */}
+      {CLOUD_ENABLED && (
       <aside className="flex w-48 shrink-0 flex-col gap-0.5 overflow-y-auto border-r p-2">
         <SidebarItem
           icon={<FolderClosed className="size-4" />}
@@ -371,6 +375,7 @@ export function HistoryApp() {
           </>
         )}
       </aside>
+      )}
 
       {/* ── Content: the selected context's grid ── */}
       <div className="flex min-w-0 flex-1 flex-col">

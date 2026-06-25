@@ -11,6 +11,7 @@ import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
 import { signInWithGoogle, signOut } from "../lib/cloud/client";
+import { CLOUD_ENABLED } from "../lib/flags";
 import {
   createOrg,
   listMyOrgs,
@@ -194,6 +195,8 @@ export function SettingsApp() {
 
         {cat === "basic" && (
           <Section title={t("settings.basic.title")}>
+            {CLOUD_ENABLED && (
+              <>
             <Field label={t("settings.nav.account")}>
               {cloudAuth ? (
                 <div className="flex max-w-sm items-center gap-3 rounded-lg border p-2.5">
@@ -251,6 +254,8 @@ export function SettingsApp() {
               <Field label={t("settings.account.org.title")}>
                 <OrgPanel />
               </Field>
+            )}
+              </>
             )}
             <Field label={t("settings.basic.name")}>
               <Input
