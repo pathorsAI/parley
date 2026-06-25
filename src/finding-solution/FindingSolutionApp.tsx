@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { formatClock, useStore } from "../lib/store";
 import { log } from "../lib/log";
 import { useThemePreference } from "../lib/theme";
+import { listenForSettings } from "../lib/settingsSync";
 import { useI18n } from "../i18n";
 import { hasProviderKey } from "../lib/ai/settings";
 import { FindingSolutionView } from "../components/analysis/FindingSolutionView";
@@ -28,6 +29,13 @@ export function FindingSolutionApp() {
   const keyMissing = useStore((s) => !hasProviderKey(s.settings));
   const [state, setState] = useState<FindingSolutionState>({ finding: null, entry: null });
   const { finding, entry } = state;
+
+  // Separate webview → own store; subscribe to cross-window settings so theme +
+  // language changed in Settings apply here live too (mirrors App.tsx).
+  useEffect(() => {
+    const un = listenForSettings();
+    return () => void un.then((fn) => fn());
+  }, []);
 
   // Subscribe to main-window pushes; announce ourselves to pull current state.
   useEffect(() => {

@@ -136,9 +136,6 @@ export interface TimelineEvent {
   title: string;
   /** One or two sentences explaining the moment. */
   detail: string;
-  /** Supporting verbatim quotes — several when they belong together (e.g. BOTH
-   *  sides of a contradiction, or a promise and its walk-back). */
-  quotes?: string[];
   /** REPLAY/post-eval: true when ME LATER addressed / defused / answered this
    *  moment elsewhere in the conversation. Rendered GREEN ("resolved") instead of
    *  the severity colour, and its {@link resolution} is fed to the reply coach so

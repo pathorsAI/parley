@@ -1,20 +1,32 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { appLogDir, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { toast } from "sonner";
 import { log } from "../lib/log";
-import { Check, Copy, Download, Loader2, Monitor, Moon, PlugZap, Plus, Sun, Trash2 } from "lucide-react";
+import { Check, Copy, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, Plus, Sun, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
+import { signInWithGoogle, signOut } from "../lib/cloud/client";
+import { CLOUD_ENABLED } from "../lib/flags";
+import {
+  createOrg,
+  listMyOrgs,
+  inviteToOrg,
+  listMyInvitations,
+  acceptInvitation,
+} from "../lib/cloud/orgs";
+import type { CloudInvitation, CloudOrg } from "../lib/cloud/types";
 import { isTauri } from "../lib/tauriEvents";
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
 import { UsagePanel } from "./UsagePanel";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
 import { Button } from "@/components/ui/button";
+import { Toaster } from "@/components/ui/sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -69,6 +81,9 @@ export function SettingsApp() {
   const [cat, setCat] = useState<Category>("basic");
   const [devices, setDevices] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
+  // A meeting is recording in the main window → lock the mic test + device picker
+  // so changing the input can't disrupt the live capture.
+  const [recording, setRecording] = useState(false);
   const [newTplName, setNewTplName] = useState("");
   const [templatesPath, setTemplatesPath] = useState("");
   const [mcpInfo, setMcpInfo] = useState<McpServerInfo | null>(null);
@@ -76,6 +91,29 @@ export function SettingsApp() {
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateMsg, setUpdateMsg] = useState("");
   const [appVersion, setAppVersion] = useState("");
+  const cloudAuth = useStore((s) => s.cloudAuth);
+  const [signingIn, setSigningIn] = useState(false);
+  const signInAbort = useRef<AbortController | null>(null);
+
+  async function doSignIn() {
+    const controller = new AbortController();
+    signInAbort.current = controller;
+    setSigningIn(true);
+    try {
+      await signInWithGoogle(controller.signal);
+    } catch (e) {
+      // Don't toast a user-initiated cancel.
+      if (!controller.signal.aborted) {
+        const error = e instanceof Error ? e.message : String(e);
+        toast.error(t("settings.account.signInFailed", { error }), {
+          action: { label: t("toast.retry"), onClick: () => void doSignIn() },
+        });
+      }
+    } finally {
+      if (signInAbort.current === controller) signInAbort.current = null;
+      setSigningIn(false);
+    }
+  }
   const info = PROVIDER_BY_ID[settings.provider];
   const providerLabel = info.label;
   const sttInfo = STT_BY_ID[settings.transcriptionProvider];
@@ -104,7 +142,25 @@ export function SettingsApp() {
     };
   }, [mcpInfo?.running]);
 
+  // Reflect the live meeting's recording state (query once, then follow the
+  // broadcast `meeting://status`) so the mic controls lock while recording.
+  useEffect(() => {
+    if (!isTauri()) return;
+    let alive = true;
+    void invoke<boolean>("meeting_active")
+      .then((a) => alive && setRecording(a))
+      .catch(() => {});
+    const un = listen<string>("meeting://status", (e) => {
+      if (alive) setRecording(e.payload === "recording");
+    });
+    return () => {
+      alive = false;
+      void un.then((fn) => fn());
+    };
+  }, []);
+
   async function toggleTest() {
+    if (recording) return; // the mic belongs to the meeting while recording
     if (testing) {
       await invoke("stop_mic_test").catch(() => {});
       setTesting(false);
@@ -116,6 +172,7 @@ export function SettingsApp() {
 
   return (
     <div className="flex h-screen bg-background text-foreground">
+      <Toaster />
       {/* Left nav */}
       <nav className="flex w-48 shrink-0 flex-col gap-0.5 border-r bg-muted/30 p-2">
         <div className="px-2 pb-2 pt-1 text-sm font-semibold tracking-tight">{t("common.settings")}</div>
@@ -138,6 +195,68 @@ export function SettingsApp() {
 
         {cat === "basic" && (
           <Section title={t("settings.basic.title")}>
+            {CLOUD_ENABLED && (
+              <>
+            <Field label={t("settings.nav.account")}>
+              {cloudAuth ? (
+                <div className="flex max-w-sm items-center gap-3 rounded-lg border p-2.5">
+                  {cloudAuth.user.image ? (
+                    <img src={cloudAuth.user.image} alt="" className="size-9 shrink-0 rounded-full" />
+                  ) : (
+                    <div className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-sm font-medium">
+                      {(cloudAuth.user.name || cloudAuth.user.email).slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{cloudAuth.user.name || cloudAuth.user.email}</div>
+                    <div className="truncate text-[11px] text-muted-foreground">{cloudAuth.user.email}</div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => void signOut()}
+                    title={t("settings.account.signOut")}
+                    aria-label={t("settings.account.signOut")}
+                  >
+                    <LogOut className="size-4" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex max-w-sm flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      className="h-9 w-fit gap-2 text-xs"
+                      disabled={signingIn || !isTauri()}
+                      onClick={() => void doSignIn()}
+                    >
+                      {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+                      {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
+                    </Button>
+                    {signingIn && (
+                      <button
+                        type="button"
+                        onClick={() => signInAbort.current?.abort()}
+                        className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      >
+                        {t("settings.account.cancel")}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {isTauri() ? t("settings.account.signedOutHelp") : t("settings.account.desktopOnly")}
+                  </p>
+                </div>
+              )}
+            </Field>
+            {cloudAuth && (
+              <Field label={t("settings.account.org.title")}>
+                <OrgPanel />
+              </Field>
+            )}
+              </>
+            )}
             <Field label={t("settings.basic.name")}>
               <Input
                 className="max-w-sm"
@@ -165,7 +284,7 @@ export function SettingsApp() {
             </Field>
             <Field label={t("settings.basic.background")}>
               <Textarea
-                className="max-w-sm"
+                className="max-w-sm max-h-64 overflow-y-auto resize-none"
                 rows={4}
                 placeholder={t("settings.basic.backgroundPlaceholder")}
                 value={settings.userBackground}
@@ -413,6 +532,7 @@ export function SettingsApp() {
               <div className="flex max-w-sm flex-col gap-2">
                 <Select
                   value={settings.inputDevice || "__default__"}
+                  disabled={recording}
                   onValueChange={async (v) => {
                     const dev = v === "__default__" ? "" : v;
                     patch({ inputDevice: dev });
@@ -429,11 +549,22 @@ export function SettingsApp() {
                   </SelectContent>
                 </Select>
                 <div className="flex items-center gap-2">
-                  <Button variant={testing ? "destructive" : "outline"} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleTest}>
+                  <Button
+                    variant={testing ? "destructive" : "outline"}
+                    size="sm"
+                    className="h-7 px-2 text-[11px]"
+                    disabled={recording}
+                    onClick={toggleTest}
+                  >
                     {testing ? t("settings.transcription.stopTest") : t("settings.transcription.testMic")}
                   </Button>
                   <LevelMeter source="test" className="h-2 flex-1" />
                 </div>
+                {recording && (
+                  <p className="text-[11px] text-muted-foreground">
+                    {t("settings.transcription.lockedWhileRecording")}
+                  </p>
+                )}
               </div>
             </Field>
             <p className="max-w-md text-[11px] text-muted-foreground">
@@ -928,7 +1059,7 @@ function EvalEditor({
         </Button>
       </div>
       <Input value={ev.description} onChange={(e) => onChange({ description: e.target.value })} placeholder={t("settings.evaluations.descriptionPlaceholder")} className="h-8 text-xs" />
-      <Textarea value={ev.prompt} onChange={(e) => onChange({ prompt: e.target.value })} placeholder={t("settings.evaluations.promptPlaceholder")} rows={3} className="resize-none text-xs" />
+      <Textarea value={ev.prompt} onChange={(e) => onChange({ prompt: e.target.value })} placeholder={t("settings.evaluations.promptPlaceholder")} rows={3} className="max-h-40 overflow-y-auto resize-none text-xs" />
     </div>
   );
 }
@@ -1082,6 +1213,166 @@ function DiarizeModelField() {
         </>
       )}
       <p className="text-[11px] text-muted-foreground">{t("settings.transcription.speakerModelHelp")}</p>
+    </div>
+  );
+}
+
+/**
+ * Organizations management: create an org, invite teammates by email, and accept
+ * pending invitations. Talks to the cloud's better-auth `organization` plugin via
+ * ../lib/cloud/orgs. Rendered only when signed in (its parent gates on `cloudAuth`).
+ */
+function OrgPanel() {
+  const { t } = useI18n();
+  const cloudAuth = useStore((s) => s.cloudAuth);
+  const [orgs, setOrgs] = useState<CloudOrg[]>([]);
+  const [invitations, setInvitations] = useState<CloudInvitation[]>([]);
+  // Per-org invite inputs + pending flags, keyed by org id.
+  const [inviteEmails, setInviteEmails] = useState<Record<string, string>>({});
+  const [inviting, setInviting] = useState<Record<string, boolean>>({});
+  const [newOrgName, setNewOrgName] = useState("");
+  const [creating, setCreating] = useState(false);
+  // Per-invitation accept flags, keyed by invitation id.
+  const [accepting, setAccepting] = useState<Record<string, boolean>>({});
+
+  const reload = useCallback(async () => {
+    try {
+      const [myOrgs, myInvites] = await Promise.all([listMyOrgs(), listMyInvitations()]);
+      setOrgs(myOrgs);
+      setInvitations(myInvites);
+    } catch {
+      toast.error(t("settings.account.org.loadFailed"));
+    }
+  }, [t]);
+
+  // (Re)load whenever we have a session — including when sign-in just completed.
+  useEffect(() => {
+    if (cloudAuth) void reload();
+  }, [cloudAuth, reload]);
+
+  async function create() {
+    const name = newOrgName.trim();
+    if (!name || creating) return;
+    setCreating(true);
+    try {
+      await createOrg(name);
+      toast.success(t("settings.account.org.created", { org: name }));
+      setNewOrgName("");
+      await reload();
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      toast.error(t("settings.account.org.createFailed", { error }));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function invite(orgId: string) {
+    const email = (inviteEmails[orgId] ?? "").trim();
+    if (!email || inviting[orgId]) return;
+    setInviting((m) => ({ ...m, [orgId]: true }));
+    try {
+      await inviteToOrg(orgId, email);
+      toast.success(t("settings.account.org.invited", { email }));
+      setInviteEmails((m) => ({ ...m, [orgId]: "" }));
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      toast.error(t("settings.account.org.inviteFailed", { error }));
+    } finally {
+      setInviting((m) => ({ ...m, [orgId]: false }));
+    }
+  }
+
+  async function accept(invitation: CloudInvitation) {
+    if (accepting[invitation.id]) return;
+    const name = invitation.organizationName ?? invitation.organizationId;
+    setAccepting((m) => ({ ...m, [invitation.id]: true }));
+    try {
+      await acceptInvitation(invitation.id);
+      toast.success(t("settings.account.org.joined", { org: name }));
+      await reload();
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      toast.error(t("settings.account.org.acceptFailed", { error }));
+    } finally {
+      setAccepting((m) => ({ ...m, [invitation.id]: false }));
+    }
+  }
+
+  return (
+    <div className="flex max-w-sm flex-col gap-3">
+      {/* My organizations */}
+      {orgs.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground">{t("settings.account.org.noOrgs")}</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {orgs.map((org) => (
+            <div key={org.id} className="flex flex-col gap-1.5 rounded-lg border p-2.5">
+              <div className="truncate text-sm font-medium">{org.name}</div>
+              <div className="flex items-center gap-2">
+                <Input
+                  className="h-7 text-xs"
+                  placeholder={t("settings.account.org.invitePlaceholder")}
+                  value={inviteEmails[org.id] ?? ""}
+                  onChange={(e) => setInviteEmails((m) => ({ ...m, [org.id]: e.target.value }))}
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 shrink-0 px-2 text-[11px]"
+                  disabled={inviting[org.id] || !(inviteEmails[org.id] ?? "").trim()}
+                  onClick={() => void invite(org.id)}
+                >
+                  {inviting[org.id] ? t("settings.account.org.inviting") : t("settings.account.org.invite")}
+                </Button>
+              </div>
+            </div>
+          ))}
+          <p className="text-[11px] text-muted-foreground">{t("settings.account.org.inviteHint")}</p>
+        </div>
+      )}
+
+      {/* Create organization */}
+      <div className="flex items-center gap-2">
+        <Input
+          className="h-7 text-xs"
+          placeholder={t("settings.account.org.createPlaceholder")}
+          value={newOrgName}
+          onChange={(e) => setNewOrgName(e.target.value)}
+        />
+        <Button
+          variant="secondary"
+          size="sm"
+          className="h-7 shrink-0 px-2 text-[11px]"
+          disabled={creating || !newOrgName.trim()}
+          onClick={() => void create()}
+        >
+          {creating ? t("settings.account.org.creating") : t("settings.account.org.create")}
+        </Button>
+      </div>
+
+      {/* Pending invitations */}
+      {invitations.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-[11px] font-medium text-muted-foreground">{t("settings.account.org.pending")}</p>
+          {invitations.map((inv) => (
+            <div key={inv.id} className="flex items-center gap-2 rounded-lg border p-2.5">
+              <span className="min-w-0 flex-1 truncate text-sm">
+                {inv.organizationName ?? inv.organizationId}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="h-7 shrink-0 px-2 text-[11px]"
+                disabled={accepting[inv.id]}
+                onClick={() => void accept(inv)}
+              >
+                {accepting[inv.id] ? t("settings.account.org.accepting") : t("settings.account.org.accept")}
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

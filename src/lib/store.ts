@@ -14,6 +14,7 @@ import type {
   TranscriptSegment,
 } from "./types";
 import type { ReplaySession } from "./replay/types";
+import type { CloudAuth } from "./cloud/types";
 import type { HistoryEntry } from "./history/types";
 import {
   buildBuiltinEvalLabels,
@@ -52,27 +53,6 @@ function relocalizeBuiltins(settings: Settings): Settings {
   };
 }
 
-/**
- * Optional dev convenience: API keys from a gitignored `.env` (VITE_* vars).
- * Empty/undefined in any published build (no .env), so nothing is baked in.
- * Only defined keys are included, so they overlay without clobbering UI values.
- */
-const ENV_KEYS: Partial<Settings> = Object.fromEntries(
-  (
-    [
-      ["sonioxApiKey", import.meta.env.VITE_SONIOX_API_KEY],
-      ["anthropicApiKey", import.meta.env.VITE_ANTHROPIC_API_KEY],
-      ["openaiApiKey", import.meta.env.VITE_OPENAI_API_KEY],
-      ["geminiApiKey", import.meta.env.VITE_GEMINI_API_KEY],
-      ["openrouterApiKey", import.meta.env.VITE_OPENROUTER_API_KEY],
-      ["groqApiKey", import.meta.env.VITE_GROQ_API_KEY],
-      ["qwenApiKey", import.meta.env.VITE_QWEN_API_KEY],
-      ["kimiApiKey", import.meta.env.VITE_KIMI_API_KEY],
-      ["ollamaApiKey", import.meta.env.VITE_OLLAMA_API_KEY],
-    ] as const
-  ).filter(([, v]) => !!v)
-) as Partial<Settings>;
-
 // Built-in templates are seeded in the default language; the persist `merge`
 // (rehydrate) and `relocalizeBuiltins` (on language change) re-resolve them to
 // the active language afterward.
@@ -110,7 +90,6 @@ const DEFAULT_SETTINGS: Settings = {
   // Pace + pauses are free (timing/DSP) so default on; pitch + tone (LLM cost)
   // are opt-in. See DeliveryToggles.
   delivery: { pace: true, pitch: false, pauses: true, tone: false },
-  ...ENV_KEYS,
 };
 
 /** Whether the app is capturing a live meeting or analyzing an uploaded one. */
@@ -137,13 +116,26 @@ interface ParleyState {
   appMode: AppMode;
   /** The uploaded recording under analysis (null in live mode). */
   replay: ReplaySession | null;
+  /** Id of the saved History entry currently loaded into replay — set by
+   *  {@link loadHistory}, and after a fresh upload auto-saves. When set, re-running
+   *  the analysis OVERWRITES that entry on disk instead of the result being lost.
+   *  null for a not-yet-saved upload or in live mode. */
+  loadedHistoryId: string | null;
+  setLoadedHistoryId: (id: string | null) => void;
   /** Scrub position (ms) in replay mode — drives audio + transcript highlight. */
   replayPlayheadMs: number;
   /** Load an uploaded recording and switch into replay mode. */
   enterReplay: (session: ReplaySession) => void;
   /** Load a saved history entry into replay mode, RESTORING its analysis (unlike
-   *  {@link enterReplay}, which clears findings so a fresh pass can run). */
-  loadHistory: (entry: HistoryEntry, session: ReplaySession) => void;
+   *  {@link enterReplay}, which clears findings so a fresh pass can run). Pass
+   *  `{ readOnly: true }` for an ORG recording viewed from the cloud — it leaves
+   *  {@link loadedHistoryId} null so the personal re-analysis-persist subscription
+   *  never tries to write someone else's shared recording into the local dir. */
+  loadHistory: (
+    entry: HistoryEntry,
+    session: ReplaySession,
+    opts?: { readOnly?: boolean },
+  ) => void;
   /** Leave replay mode and return to a clean live/idle state. */
   exitReplay: () => void;
   /** Move the replay playhead (drives both audio position and the transcript). */
@@ -283,9 +275,9 @@ interface ParleyState {
   highlightMs: number | null;
   setHighlightMs: (ms: number | null) => void;
 
-  /** An available app update (drives the banner prompt); null = none / up to date. */
-  update: { version: string; body: string } | null;
-  setUpdate: (update: { version: string; body: string } | null) => void;
+  /** Parley Cloud sign-in (Google). Persisted so you stay signed in. null = signed out. */
+  cloudAuth: CloudAuth | null;
+  setCloudAuth: (auth: CloudAuth | null) => void;
 
   // todos
   addTodo: (text: string) => void;
@@ -322,6 +314,7 @@ export const useStore = create<ParleyState>()(
     (set) => ({
       appMode: "live",
       replay: null,
+      loadedHistoryId: null,
       replayPlayheadMs: 0,
       replaySeekNonce: 0,
       replayTrim: null,
@@ -356,12 +349,13 @@ export const useStore = create<ParleyState>()(
       meetingTarget: "",
       meetingFloor: "",
       highlightMs: null,
-      update: null,
+      cloudAuth: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
-  setUpdate: (update) => set({ update }),
+  setCloudAuth: (cloudAuth) => set({ cloudAuth }),
+  setLoadedHistoryId: (loadedHistoryId) => set({ loadedHistoryId }),
 
   enterReplay: (session) => {
     log.info("store: enter replay", {
@@ -372,6 +366,8 @@ export const useStore = create<ParleyState>()(
     set({
       appMode: "replay",
       replay: session,
+      // A fresh upload isn't a saved entry yet — cleared until its auto-save.
+      loadedHistoryId: null,
       // Start at the beginning of the recording (the full transcript always
       // shows now — no masking); the playhead is just for playback/navigation.
       replayPlayheadMs: 0,
@@ -393,16 +389,21 @@ export const useStore = create<ParleyState>()(
     });
   },
 
-  loadHistory: (entry, session) => {
+  loadHistory: (entry, session, opts) => {
     log.info("store: load history", {
       id: entry.id,
       source: entry.source,
       segments: entry.segments.length,
       findings: entry.findings.length,
+      readOnly: !!opts?.readOnly,
     });
     set((state) => ({
       appMode: "replay",
       replay: session,
+      // Re-running the analysis overwrites THIS saved entry on disk — but only for
+      // an own/local entry. A read-only org recording leaves this null so the
+      // re-analysis-persist subscription doesn't try to write it to the local dir.
+      loadedHistoryId: opts?.readOnly ? null : entry.id,
       replayPlayheadMs: 0,
       replaySeekNonce: state.replaySeekNonce + 1,
       replayTrim: null,
@@ -441,6 +442,7 @@ export const useStore = create<ParleyState>()(
     set({
       appMode: "live",
       replay: null,
+      loadedHistoryId: null,
       replayPlayheadMs: 0,
       replayTrim: null,
       ingestWizardOpen: false,
@@ -602,6 +604,7 @@ export const useStore = create<ParleyState>()(
     set({
       meetingStatus: "recording",
       meetingStartedAt: Date.now(),
+      loadedHistoryId: null,
       segments: [],
       speakerNames: {},
       findings: [],
@@ -675,8 +678,8 @@ export const useStore = create<ParleyState>()(
     {
       name: "parley-settings",
       version: 3,
-      // Persist only settings — transcript and eval state are per-session.
-      partialize: (state) => ({ settings: state.settings }),
+      // Persist settings + the cloud sign-in — transcript/eval state is per-session.
+      partialize: (state) => ({ settings: state.settings, cloudAuth: state.cloudAuth }),
       // Backfill any settings fields missing from older persisted state.
       merge: (persisted, current) => {
         const p = (persisted as { settings?: Partial<Settings> } | undefined)?.settings ?? {};
@@ -729,10 +732,10 @@ export const useStore = create<ParleyState>()(
               buildPresetEvalTemplates(t),
               validEvalTpls ? p.evalTemplates! : []
             ),
-            // Dev .env keys win over persisted-empty values (no-op in prod).
-            ...ENV_KEYS,
           },
           evaluations: evalsFromDefs(relabeledEvals),
+          // Restore the persisted cloud sign-in (re-validated on startup).
+          cloudAuth: (persisted as { cloudAuth?: CloudAuth } | undefined)?.cloudAuth ?? null,
         };
       },
     }

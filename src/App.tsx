@@ -4,7 +4,7 @@ import { LiveScreen } from "./components/live/LiveScreen";
 import { ReplayScreen } from "./components/replay/ReplayScreen";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
-import { UpdateBanner } from "./components/UpdateBanner";
+import { Toaster } from "./components/ui/sonner";
 import { IngestWizard } from "./components/IngestWizard";
 import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWindow";
 import { useFindingSolutionHost } from "./components/analysis/useFindingSolutionHost";
@@ -21,8 +21,15 @@ import { initSessionCommands } from "./lib/sessionCommands";
 import { useThemePreference } from "./lib/theme";
 import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
-import { listenForHistoryOpen, listenForRecordingSaved } from "./lib/history/history";
+import {
+  initHistoryPersistSync,
+  listenForHistoryOpen,
+  listenForHistoryOpenOrg,
+  listenForRecordingSaved,
+} from "./lib/history/history";
 import { checkForUpdate } from "./lib/update";
+import { refreshSession } from "./lib/cloud/client";
+import { CLOUD_ENABLED } from "./lib/flags";
 
 /**
  * Track main-window fullscreen state. Drives both the rounded corners (a
@@ -76,6 +83,8 @@ function App() {
     const unViewLogs = listenForViewLogsMenu();
     const unRecordingSaved = listenForRecordingSaved();
     const unHistoryOpen = listenForHistoryOpen();
+    const unHistoryOpenOrg = CLOUD_ENABLED ? listenForHistoryOpenOrg() : null;
+    const unHistoryPersist = initHistoryPersistSync();
     return () => {
       unTranscript.then((fn) => fn());
       unProsody.then((fn) => fn());
@@ -89,14 +98,18 @@ function App() {
       unViewLogs.then((fn) => fn());
       unRecordingSaved.then((fn) => fn());
       unHistoryOpen.then((fn) => fn());
+      unHistoryOpenOrg?.then((fn) => fn());
+      unHistoryPersist();
     };
   }, []);
 
   // Check for an app update shortly after launch, then keep re-checking on a slow
   // interval so a long-running window still catches a release that lands while
   // it's open. Surfaces a dismissible banner only; applying is always
-  // user-initiated, so it never interrupts a meeting.
+  // user-initiated, so it never interrupts a meeting. Also re-validate any stored
+  // cloud sign-in on launch.
   useEffect(() => {
+    if (CLOUD_ENABLED) void refreshSession();
     const RECHECK_MS = 30 * 60 * 1000; // every 30 min while the app stays open
     const first = setTimeout(() => void checkForUpdate({ silent: true }), 3000);
     const recheck = setInterval(() => void checkForUpdate({ silent: true }), RECHECK_MS);
@@ -123,7 +136,7 @@ function App() {
     >
       {!onboarded && <Onboarding />}
       <AnalysisErrorDialog />
-      <UpdateBanner />
+      <Toaster />
       <IngestWizard />
       {/* In the Tauri app the drilldown is its own OS window (see
           useFindingSolutionHost); in plain browser dev we fall back to the
