@@ -1,0 +1,47 @@
+import { invoke } from "@tauri-apps/api/core";
+import { useStore } from "../lib/store";
+import { useI18n } from "../i18n";
+import { isTauri } from "../lib/tauriEvents";
+
+/**
+ * Voice-typing options inside Transcription settings: a short description plus
+ * the auto-paste opt-in. The macOS permissions it needs (Input Monitoring for
+ * the global fn key, Accessibility for auto-paste) are granted from the
+ * dedicated Permissions tab.
+ */
+export function VoiceTypingSettings() {
+  const { t } = useI18n();
+  const settings = useStore((s) => s.settings);
+  const updateSettings = useStore((s) => s.updateSettings);
+
+  if (!isTauri()) return null;
+
+  return (
+    <div className="mt-2 flex max-w-md flex-col gap-3 rounded-lg border p-3">
+      <div className="text-sm font-medium">{t("settings.voiceTyping.title")}</div>
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        {t("settings.voiceTyping.hint")}
+      </p>
+
+      <label className="flex items-center justify-between gap-3">
+        <span className="flex flex-col">
+          <span className="text-sm">{t("settings.voiceTyping.autoPaste")}</span>
+          <span className="text-[11px] text-muted-foreground">
+            {t("settings.voiceTyping.autoPasteHint")}
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          className="size-4 shrink-0"
+          checked={settings.voiceTypingAutoPaste}
+          onChange={async (e) => {
+            const on = e.target.checked;
+            updateSettings({ voiceTypingAutoPaste: on });
+            // Auto-paste needs Accessibility — prompt the moment it's enabled.
+            if (on) await invoke("accessibility_status", { prompt: true }).catch(() => {});
+          }}
+        />
+      </label>
+    </div>
+  );
+}

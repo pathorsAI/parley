@@ -84,6 +84,7 @@ const DEFAULT_SETTINGS: Settings = {
   deepgramApiKey: "",
   assemblyaiApiKey: "",
   inputDevice: "",
+  voiceTypingAutoPaste: false,
   evaluations: buildPresetEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),
   todoTemplates: buildPresetTodoTemplates(tDefault),
