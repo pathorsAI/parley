@@ -137,6 +137,40 @@ pub async fn save_remote_history_entry(
     Ok(dir.to_string_lossy().into_owned())
 }
 
+/// Download a cloud audio file to a temp cache path and return it, so an ORG
+/// recording can be replayed WITHOUT persisting it under the personal `history/`
+/// dir (org recordings must never pollute the local history list). Fetched here
+/// (reqwest, bearer auth) so the multi-MB blob never crosses the JS↔Rust IPC. The
+/// file lands in `<app_cache_dir>/org-audio/<id>.ogg`; replay reads it via
+/// `convertFileSrc`. Re-downloaded on each open (a cache, not a record).
+#[tauri::command]
+pub async fn download_remote_audio(
+    app: AppHandle,
+    id: String,
+    url: String,
+    token: String,
+) -> Result<String, String> {
+    let res = reqwest::Client::new()
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("audio download failed: {}", res.status()));
+    }
+    let bytes = res.bytes().await.map_err(|e| e.to_string())?;
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("org-audio");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{}.ogg", safe_id(&id)));
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// List every entry's `summary.json` (raw strings; the frontend parses + sorts).
 /// Missing/corrupt summaries are skipped rather than failing the whole list.
 #[tauri::command]
