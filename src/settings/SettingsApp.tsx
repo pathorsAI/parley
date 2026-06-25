@@ -72,6 +72,9 @@ export function SettingsApp() {
   const [cat, setCat] = useState<Category>("basic");
   const [devices, setDevices] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
+  // A meeting is recording in the main window → lock the mic test + device picker
+  // so changing the input can't disrupt the live capture.
+  const [recording, setRecording] = useState(false);
   const [newTplName, setNewTplName] = useState("");
   const [templatesPath, setTemplatesPath] = useState("");
   const [mcpInfo, setMcpInfo] = useState<McpServerInfo | null>(null);
@@ -130,7 +133,25 @@ export function SettingsApp() {
     };
   }, [mcpInfo?.running]);
 
+  // Reflect the live meeting's recording state (query once, then follow the
+  // broadcast `meeting://status`) so the mic controls lock while recording.
+  useEffect(() => {
+    if (!isTauri()) return;
+    let alive = true;
+    void invoke<boolean>("meeting_active")
+      .then((a) => alive && setRecording(a))
+      .catch(() => {});
+    const un = listen<string>("meeting://status", (e) => {
+      if (alive) setRecording(e.payload === "recording");
+    });
+    return () => {
+      alive = false;
+      void un.then((fn) => fn());
+    };
+  }, []);
+
   async function toggleTest() {
+    if (recording) return; // the mic belongs to the meeting while recording
     if (testing) {
       await invoke("stop_mic_test").catch(() => {});
       setTesting(false);
@@ -493,6 +514,7 @@ export function SettingsApp() {
               <div className="flex max-w-sm flex-col gap-2">
                 <Select
                   value={settings.inputDevice || "__default__"}
+                  disabled={recording}
                   onValueChange={async (v) => {
                     const dev = v === "__default__" ? "" : v;
                     patch({ inputDevice: dev });
@@ -509,11 +531,22 @@ export function SettingsApp() {
                   </SelectContent>
                 </Select>
                 <div className="flex items-center gap-2">
-                  <Button variant={testing ? "destructive" : "outline"} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleTest}>
+                  <Button
+                    variant={testing ? "destructive" : "outline"}
+                    size="sm"
+                    className="h-7 px-2 text-[11px]"
+                    disabled={recording}
+                    onClick={toggleTest}
+                  >
                     {testing ? t("settings.transcription.stopTest") : t("settings.transcription.testMic")}
                   </Button>
                   <LevelMeter source="test" className="h-2 flex-1" />
                 </div>
+                {recording && (
+                  <p className="text-[11px] text-muted-foreground">
+                    {t("settings.transcription.lockedWhileRecording")}
+                  </p>
+                )}
               </div>
             </Field>
             <p className="max-w-md text-[11px] text-muted-foreground">

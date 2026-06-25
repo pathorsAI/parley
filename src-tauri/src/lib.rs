@@ -58,6 +58,7 @@ pub fn run() {
             commands::list_input_devices,
             commands::start_mic_test,
             commands::stop_mic_test,
+            commands::meeting_active,
             commands::save_transcript,
             commands::export_recording,
             commands::start_oauth_loopback,

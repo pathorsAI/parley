@@ -69,6 +69,13 @@ pub fn start_mic_test(
     state: State<MeetingState>,
     input_device: Option<String>,
 ) -> Result<(), String> {
+    // The meeting owns the mic until it ends — never open a competing input stream
+    // while recording. On macOS a second stream can make CoreAudio renegotiate the
+    // device and silently kill the meeting's capture (transcription stops). The UI
+    // also disables the test while recording; this is the reliable backstop.
+    if state.running.load(Ordering::SeqCst) {
+        return Ok(());
+    }
     if state.test_running.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
@@ -100,6 +107,14 @@ pub fn stop_mic_test(state: State<MeetingState>) {
     state.test_running.store(false, Ordering::SeqCst);
 }
 
+/// Whether a live meeting is currently recording. The Settings UI uses this to
+/// disable the mic test + device picker while recording (switching the input
+/// mid-meeting can disrupt the meeting's capture).
+#[tauri::command]
+pub fn meeting_active(state: State<MeetingState>) -> bool {
+    state.running.load(Ordering::SeqCst)
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn start_meeting(
@@ -120,6 +135,9 @@ pub fn start_meeting(
     if state.running.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
+    // Tear down any Settings "test mic" stream so it can't contend with the
+    // meeting's capture (its thread exits when this flag clears).
+    state.test_running.store(false, Ordering::SeqCst);
     let running = state.running.clone();
     // Arm a fresh recording buffer for this meeting (the designated session below
     // tees its PCM into it; stop_meeting encodes + clears it).
