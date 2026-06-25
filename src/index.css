@@ -175,8 +175,14 @@ textarea,
   }
 }
 
-/* Native-app cursor behaviour: controls use the default arrow, not the web
-   pointing-hand. Real text hyperlinks keep the pointer. */
-a[href] {
+/* Cursor behaviour: interactive controls (buttons, tabs, dropdown triggers
+   and items, links, and custom role="button" elements) use the pointing-hand
+   cursor. Text inputs keep their default I-beam; disabled controls do not. */
+a[href],
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+[role="tab"]:not([aria-disabled="true"]),
+[role="option"]:not([aria-disabled="true"]),
+[role="menuitem"]:not([aria-disabled="true"]) {
   cursor: pointer;
 }
