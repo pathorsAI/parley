@@ -98,6 +98,8 @@ jobs:
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The GitHub release is the LOCAL-ONLY OSS edition — no account/sync code.
+          VITE_PARLEY_CLOUD: "false"
           # Updater artifact signing (minisign) — lets the app verify auto-updates
           # against the pubkey in tauri.conf.json. tauri-action signs the bundle and
           # attaches `latest.json` to the release when these are present.
@@ -112,3 +114,35 @@ jobs:
           tauriScript: bun run tauri
           args: --target aarch64-apple-darwin
           releaseAssetNamePattern: "[name]-[version]-[platform]-[arch].[ext]"
+
+      # ── Cloud edition ──────────────────────────────────────────────────────────
+      # The OSS release above is already published to GitHub. Now build the CLOUD
+      # edition (account/sync/orgs compiled in, updater pointed at the website feed)
+      # and push it to R2 under `downloads/`, where the parley-cloud Worker's
+      # /download route serves it to the marketing site + the cloud app's updater.
+      # These steps run AFTER the GitHub release, so a cloud-upload failure never
+      # blocks the OSS release.
+      - name: Build cloud edition
+        env:
+          VITE_PARLEY_CLOUD: "true"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bun run tauri build --config src-tauri/tauri.conf.cloud.json --target aarch64-apple-darwin
+
+      - name: Upload cloud edition to R2 (website download + updater feed)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BUNDLE="src-tauri/target/aarch64-apple-darwin/release/bundle"
+          TARGZ="${BUNDLE}/macos/Parley.app.tar.gz"
+          DMG="$(ls "${BUNDLE}"/dmg/Parley_*_aarch64.dmg | head -1)"
+          VERSION="${{ steps.release.outputs.tag }}"; VERSION="${VERSION#v}"
+          # Build the updater feed (latest.json) — signature is the .sig file, url
+          # points at the Worker download route (which streams the .app.tar.gz from R2).
+          SIG_FILE="${TARGZ}.sig" VERSION="${VERSION}" node -e 'const fs=require("fs");const sig=fs.readFileSync(process.env.SIG_FILE,"utf8").trim();fs.writeFileSync("latest.json",JSON.stringify({version:process.env.VERSION,pub_date:new Date().toISOString(),platforms:{"darwin-aarch64":{signature:sig,url:"https://parley-cloud.pathors.workers.dev/download/Parley.app.tar.gz"}}},null,2));'
+          bunx wrangler r2 object put "parley-recordings/downloads/Parley.app.tar.gz" --file "${TARGZ}" --remote
+          bunx wrangler r2 object put "parley-recordings/downloads/Parley.dmg" --file "${DMG}" --remote
+          bunx wrangler r2 object put "parley-recordings/downloads/latest.json" --file latest.json --remote
