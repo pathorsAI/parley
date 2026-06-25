@@ -3,9 +3,11 @@ import { persist } from "zustand/middleware";
 import type {
   ActionItem,
   AppLanguage,
+  DeliveryNudge,
   Evaluation,
   FindingSolutionEntry,
   MeetingStatus,
+  ProsodyMetrics,
   Settings,
   TimelineEvent,
   TodoItem,
@@ -85,6 +87,9 @@ const DEFAULT_SETTINGS: Settings = {
   evaluations: buildPresetEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),
   todoTemplates: buildPresetTodoTemplates(tDefault),
+  // Pace + pauses are free (timing/DSP) so default on; pitch + tone (LLM cost)
+  // are opt-in. See DeliveryToggles.
+  delivery: { pace: true, pitch: false, pauses: true, tone: false },
 };
 
 /** Whether the app is capturing a live meeting or analyzing an uploaded one. */
@@ -223,6 +228,16 @@ interface ParleyState {
   setAutoAnalyze: (on: boolean) => void;
   setAutoAnalyzeSec: (sec: number) => void;
 
+  // ── Live delivery coaching (LIVE only; "me" mic, issue #22) ─────────────────
+  /** Latest prosody metrics from the backend; null until the first event. */
+  prosody: ProsodyMetrics | null;
+  setProsody: (m: ProsodyMetrics | null) => void;
+  /** The transient coaching nudge currently shown (null = none). */
+  deliveryNudge: DeliveryNudge | null;
+  /** Show a nudge (replaces any current one); the UI auto-dismisses it. */
+  pushDeliveryNudge: (n: DeliveryNudge) => void;
+  clearDeliveryNudge: () => void;
+
   // ── Action items (REPLAY post-meeting follow-ups) ───────────────────────────
   /** Generated from the analysis findings + transcript; ephemeral, replay-only. */
   actionItems: ActionItem[];
@@ -317,6 +332,8 @@ export const useStore = create<ParleyState>()(
       findingSolutions: {},
       autoAnalyze: false,
       autoAnalyzeSec: 45,
+      prosody: null,
+      deliveryNudge: null,
       actionItems: [],
       actionItemsStatus: "idle",
       actionItemsError: null,
@@ -543,6 +560,10 @@ export const useStore = create<ParleyState>()(
   setAutoAnalyze: (on) => set({ autoAnalyze: on }),
   setAutoAnalyzeSec: (sec) => set({ autoAnalyzeSec: Math.max(20, sec || 45) }),
 
+  setProsody: (m) => set({ prosody: m }),
+  pushDeliveryNudge: (n) => set({ deliveryNudge: n }),
+  clearDeliveryNudge: () => set({ deliveryNudge: null }),
+
   setActionItems: (items) => set({ actionItems: items }),
   setActionItemsStatus: (status) => set({ actionItemsStatus: status }),
   setActionItemsError: (error) => set({ actionItemsError: error }),
@@ -593,6 +614,8 @@ export const useStore = create<ParleyState>()(
       selectedFindingId: null,
       solutionFindingId: null,
       findingSolutions: {},
+      prosody: null,
+      deliveryNudge: null,
     });
   },
 
@@ -613,7 +636,7 @@ export const useStore = create<ParleyState>()(
 
   stopMeeting: () => {
     log.info("store: meeting stopped");
-    set({ meetingStatus: "stopped" });
+    set({ meetingStatus: "stopped", prosody: null, deliveryNudge: null });
   },
 
   upsertSegment: (segment) =>
@@ -697,6 +720,8 @@ export const useStore = create<ParleyState>()(
             // Deep-merge models so a new provider (e.g. groq) isn't dropped by
             // older persisted state that only had anthropic/openrouter.
             models: { ...DEFAULT_SETTINGS.models, ...(p.models ?? {}) },
+            // Backfill delivery-coaching toggles for states saved before they existed.
+            delivery: { ...DEFAULT_SETTINGS.delivery, ...(p.delivery ?? {}) },
             reasoningEffort,
             // Fold latest built-in templates over persisted ones, keeping customs.
             todoTemplates: reconcileTemplates(
