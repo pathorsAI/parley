@@ -18,6 +18,7 @@ import {
   inviteToOrg,
   listMyInvitations,
   acceptInvitation,
+  deleteOrg,
 } from "../lib/cloud/orgs";
 import type { CloudInvitation, CloudOrg } from "../lib/cloud/types";
 import { isTauri } from "../lib/tauriEvents";
@@ -54,7 +55,15 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
 };
 import type { AppLanguage, AppLayout, AppTheme, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 
-type Category = "basic" | "provider" | "transcription" | "evaluations" | "todos" | "mcp" | "usage";
+type Category =
+  | "basic"
+  | "account"
+  | "provider"
+  | "transcription"
+  | "evaluations"
+  | "todos"
+  | "mcp"
+  | "usage";
 
 interface McpServerInfo {
   running: boolean;
@@ -62,8 +71,11 @@ interface McpServerInfo {
   templates_path: string;
 }
 
-const NAV: { id: Category; labelKey: TranslationKey }[] = [
+// `cloudOnly` entries (the account/orgs page) are compiled out of the OSS edition,
+// which has no sign-in at all — so they never appear in that build's nav.
+const NAV: { id: Category; labelKey: TranslationKey; cloudOnly?: boolean }[] = [
   { id: "basic", labelKey: "settings.nav.basic" },
+  { id: "account", labelKey: "settings.nav.account", cloudOnly: true },
   { id: "provider", labelKey: "settings.nav.provider" },
   { id: "transcription", labelKey: "settings.nav.transcription" },
   { id: "evaluations", labelKey: "settings.nav.evaluations" },
@@ -176,7 +188,7 @@ export function SettingsApp() {
       {/* Left nav */}
       <nav className="flex w-48 shrink-0 flex-col gap-0.5 border-r bg-muted/30 p-2">
         <div className="px-2 pb-2 pt-1 text-sm font-semibold tracking-tight">{t("common.settings")}</div>
-        {NAV.map((n) => (
+        {NAV.filter((n) => CLOUD_ENABLED || !n.cloudOnly).map((n) => (
           <button
             key={n.id}
             onClick={() => setCat(n.id)}
@@ -193,11 +205,9 @@ export function SettingsApp() {
       <div className="min-w-0 flex-1 overflow-y-auto px-8 py-6">
         <p className="mb-5 text-xs text-muted-foreground">{t("settings.note")}</p>
 
-        {cat === "basic" && (
-          <Section title={t("settings.basic.title")}>
-            {CLOUD_ENABLED && (
-              <>
-            <Field label={t("settings.nav.account")}>
+        {cat === "account" && CLOUD_ENABLED && (
+          <Section title={t("settings.nav.account")}>
+            <Field label={t("settings.account.signIn")}>
               {cloudAuth ? (
                 <div className="flex max-w-sm items-center gap-3 rounded-lg border p-2.5">
                   {cloudAuth.user.image ? (
@@ -255,8 +265,11 @@ export function SettingsApp() {
                 <OrgPanel />
               </Field>
             )}
-              </>
-            )}
+          </Section>
+        )}
+
+        {cat === "basic" && (
+          <Section title={t("settings.basic.title")}>
             <Field label={t("settings.basic.name")}>
               <Input
                 className="max-w-sm"
@@ -1234,6 +1247,12 @@ function OrgPanel() {
   const [creating, setCreating] = useState(false);
   // Per-invitation accept flags, keyed by invitation id.
   const [accepting, setAccepting] = useState<Record<string, boolean>>({});
+  // Org deletion: which org's danger zone is open, the retyped-name confirmation
+  // value, and the in-flight flag — all keyed by org id. Deletion stays gated
+  // until the typed value exactly matches the org name (the second confirmation).
+  const [deletingOpen, setDeletingOpen] = useState<Record<string, boolean>>({});
+  const [deleteConfirm, setDeleteConfirm] = useState<Record<string, string>>({});
+  const [deleting, setDeleting] = useState<Record<string, boolean>>({});
 
   const reload = useCallback(async () => {
     try {
@@ -1299,6 +1318,31 @@ function OrgPanel() {
     }
   }
 
+  async function remove(org: CloudOrg) {
+    // Hard gate: never fire unless the retyped name matches exactly (trim both
+    // sides so a stray trailing space in the org name can't make it un-typeable).
+    if (deleting[org.id] || (deleteConfirm[org.id] ?? "").trim() !== org.name.trim()) return;
+    setDeleting((m) => ({ ...m, [org.id]: true }));
+    try {
+      await deleteOrg(org.id);
+      toast.success(t("settings.account.org.deleted", { org: org.name }));
+      // The org is gone now; drop its per-org UI state so no stale keys linger.
+      const drop = (m: Record<string, unknown>) => {
+        const next = { ...m };
+        delete next[org.id];
+        return next;
+      };
+      setDeletingOpen((m) => drop(m) as Record<string, boolean>);
+      setDeleteConfirm((m) => drop(m) as Record<string, string>);
+      await reload();
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      toast.error(t("settings.account.org.deleteFailed", { error }));
+    } finally {
+      setDeleting((m) => ({ ...m, [org.id]: false }));
+    }
+  }
+
   return (
     <div className="flex max-w-sm flex-col gap-3">
       {/* My organizations */}
@@ -1326,6 +1370,66 @@ function OrgPanel() {
                   {inviting[org.id] ? t("settings.account.org.inviting") : t("settings.account.org.invite")}
                 </Button>
               </div>
+
+              {/* Danger zone — owner-only. Only the org's owner can delete it (the
+                  server re-checks), so non-owners never see the affordance at all.
+                  Deletion is intentionally awkward: first click reveals the panel;
+                  the final button stays disabled until the org name is retyped
+                  exactly — two deliberate confirmations before anything dies. */}
+              {org.role === "owner" &&
+                (!deletingOpen[org.id] ? (
+                  <button
+                    type="button"
+                    aria-expanded={false}
+                    className="self-start text-[11px] text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
+                    onClick={() => setDeletingOpen((m) => ({ ...m, [org.id]: true }))}
+                  >
+                    {t("settings.account.org.delete")}
+                  </button>
+                ) : (
+                  <div className="flex flex-col gap-1.5 rounded-md border border-destructive/40 bg-destructive/5 p-2">
+                    <p className="text-[11px] text-destructive">
+                      {t("settings.account.org.deleteWarning")}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {t("settings.account.org.deleteConfirmPrompt", { org: org.name })}
+                    </p>
+                    <Input
+                      className="h-7 text-xs"
+                      placeholder={org.name}
+                      value={deleteConfirm[org.id] ?? ""}
+                      onChange={(e) => setDeleteConfirm((m) => ({ ...m, [org.id]: e.target.value }))}
+                    />
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="h-7 px-2 text-[11px]"
+                        disabled={
+                          deleting[org.id] ||
+                          (deleteConfirm[org.id] ?? "").trim() !== org.name.trim()
+                        }
+                        onClick={() => void remove(org)}
+                      >
+                        {deleting[org.id]
+                          ? t("settings.account.org.deleting")
+                          : t("settings.account.org.deleteConfirm")}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-[11px]"
+                        disabled={deleting[org.id]}
+                        onClick={() => {
+                          setDeletingOpen((m) => ({ ...m, [org.id]: false }));
+                          setDeleteConfirm((m) => ({ ...m, [org.id]: "" }));
+                        }}
+                      >
+                        {t("settings.account.org.deleteCancel")}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
             </div>
           ))}
           <p className="text-[11px] text-muted-foreground">{t("settings.account.org.inviteHint")}</p>

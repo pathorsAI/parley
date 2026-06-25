@@ -123,10 +123,12 @@ export function isAuthError(e: unknown): boolean {
 }
 
 /**
- * Bearer-authenticated fetch against the cloud; throws on a non-2xx response. On
- * 401/403 it clears the stored session so the whole UI reflects signed-out
- * consistently (badges go local, the account card shows signed-out) instead of a
- * misleading "everything is local" while still appearing signed in.
+ * Bearer-authenticated fetch against the cloud; throws on a non-2xx response. A
+ * 401 means the SESSION is dead (missing/expired token) → clear the stored auth so
+ * the whole UI reflects signed-out consistently. A 403 is RESOURCE-level ("signed
+ * in but not allowed" — e.g. a non-owner deleting an org, or a non-member touching
+ * an org): the session is valid, so we must NOT sign the user out — just throw a
+ * normal error the caller surfaces (a toast), or the next 403 would log them out.
  */
 export async function cloudFetch(path: string, init?: RequestInit): Promise<Response> {
   const t = cloudToken();
@@ -135,7 +137,7 @@ export async function cloudFetch(path: string, init?: RequestInit): Promise<Resp
     ...init,
     headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${t}` },
   });
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401) {
     useStore.getState().setCloudAuth(null);
     throw new Error(`cloud auth ${res.status}`);
   }
