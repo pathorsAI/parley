@@ -165,7 +165,7 @@ export function SettingsApp() {
             </Field>
             <Field label={t("settings.basic.background")}>
               <Textarea
-                className="max-w-sm"
+                className="max-w-sm max-h-64 overflow-y-auto resize-none"
                 rows={4}
                 placeholder={t("settings.basic.backgroundPlaceholder")}
                 value={settings.userBackground}
@@ -902,7 +902,7 @@ function EvalEditor({
         </Button>
       </div>
       <Input value={ev.description} onChange={(e) => onChange({ description: e.target.value })} placeholder={t("settings.evaluations.descriptionPlaceholder")} className="h-8 text-xs" />
-      <Textarea value={ev.prompt} onChange={(e) => onChange({ prompt: e.target.value })} placeholder={t("settings.evaluations.promptPlaceholder")} rows={3} className="resize-none text-xs" />
+      <Textarea value={ev.prompt} onChange={(e) => onChange({ prompt: e.target.value })} placeholder={t("settings.evaluations.promptPlaceholder")} rows={3} className="max-h-40 overflow-y-auto resize-none text-xs" />
     </div>
   );
 }
