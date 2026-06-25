@@ -439,6 +439,32 @@ export function SettingsApp() {
             <p className="max-w-md text-[11px] text-muted-foreground">
               {t("settings.transcription.help")}
             </p>
+
+            {/* Live delivery coaching (issue #22): mic-only pace/pitch/pause/tone. */}
+            <div className="flex max-w-md flex-col gap-2 rounded-lg border p-3">
+              <p className="text-xs font-medium">{t("settings.delivery.title")}</p>
+              <p className="text-[11px] text-muted-foreground">{t("settings.delivery.desc")}</p>
+              {(
+                [
+                  ["pace", "settings.delivery.pace"],
+                  ["pitch", "settings.delivery.pitch"],
+                  ["pauses", "settings.delivery.pauses"],
+                  ["tone", "settings.delivery.tone"],
+                ] as [keyof Settings["delivery"], TranslationKey][]
+              ).map(([key, labelKey]) => (
+                <label key={key} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-3.5 accent-primary"
+                    checked={settings.delivery[key]}
+                    onChange={(e) =>
+                      patch({ delivery: { ...settings.delivery, [key]: e.target.checked } })
+                    }
+                  />
+                  {t(labelKey)}
+                </label>
+              ))}
+            </div>
           </Section>
         )}
 

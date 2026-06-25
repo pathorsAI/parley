@@ -264,4 +264,60 @@ export interface Settings {
   evalTemplates: EvalTemplate[];
   /** Library of TODO/agenda templates (built-in + custom) you can apply. */
   todoTemplates: TodoTemplate[];
+  /** Per-metric opt-in for live delivery coaching (see DeliveryToggles). */
+  delivery: DeliveryToggles;
+}
+
+/**
+ * Which live delivery-coaching signals are active. All scored on the user's own
+ * mic ("me") only (issue #22). Pace + pauses are free (timing/DSP) so default on;
+ * pitch (monotony) and tone (an LLM call) are opt-in.
+ */
+export interface DeliveryToggles {
+  /** Speech-rate gauge + "slow down" nudge (derived from transcript timing). */
+  pace: boolean;
+  /** Pitch-variation gauge + "you've gone flat" nudge (Rust F0 DSP). */
+  pitch: boolean;
+  /** Pause / silence / talk-time signals + steamroll / dead-air nudges. */
+  pauses: boolean;
+  /** LLM-judged aggressive/rude tone nudge (an extra, cheap eval call). */
+  tone: boolean;
+}
+
+/**
+ * Live prosody metrics for the "me" mic stream, mapped from the backend
+ * `audio://prosody` event. Pitch/pause fields come from the Rust DSP analyzer;
+ * `null` in the store until the first event of a meeting arrives.
+ */
+export interface ProsodyMetrics {
+  /** Latest voiced pitch in Hz (0 while unvoiced). */
+  f0Hz: number;
+  /** Std-dev of F0 (semitones) over the rolling window — the monotony signal. */
+  pitchVarSemitones: number;
+  /** Convenience 0..1 (1 = very monotone); 0 until enough voiced frames. */
+  monotonyScore: number;
+  /** Mic-anchored speech rate (syllable nuclei per second) over the window. */
+  speechRateHz: number;
+  /** Fraction of the window that was voiced (0..1). */
+  voicedRatio: number;
+  /** Current trailing silence in ms (0 while speaking). */
+  silenceMs: number;
+  /** Longest pause within the window in ms. */
+  longestPauseMs: number;
+  /** Whether the most recent frame was voiced. */
+  speaking: boolean;
+}
+
+/** Kind of live delivery nudge surfaced to the speaker (see DeliveryNudge). */
+export type DeliveryNudgeKind = "pace" | "monotone" | "steamroll" | "deadair" | "tone";
+
+/** A transient, peripheral coaching nudge shown mid-call. */
+export interface DeliveryNudge {
+  kind: DeliveryNudgeKind;
+  /** Localized one-liner, e.g. "Slow down" / "Your tone is sharpening". */
+  message: string;
+  /** Severity drives the accent color (info = gentle, warn = stronger). */
+  severity: "info" | "warn";
+  /** Optional short evidence (used by the tone nudge: the quoted phrase). */
+  evidence?: string;
 }

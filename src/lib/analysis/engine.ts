@@ -3,6 +3,7 @@ import { useStore, isTrimmed, meetingBriefText, type AppMode } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { analyzeTimeline } from "../ai/timeline";
 import { evalSignature } from "../evaluations/presets";
+import { translate } from "../../i18n";
 import { isTauri } from "../tauriEvents";
 import type { EvalDef, Settings, TimelineEvent, TranscriptSegment } from "../types";
 
@@ -188,13 +189,30 @@ export async function reanalyzeAll(): Promise<void> {
  * Replaces the old `useEvaluationEngine`; the TODO auto-check is preserved here
  * since the agenda checklist is a LIVE-only concern.
  */
+/** Min ms between tone checks (and so the fastest a tone nudge can repeat). */
+const TONE_COOLDOWN_MS = 15_000;
+/** New finalized speech (ms) required since the last tone check before re-running. */
+const TONE_MIN_NEW_SPEECH_MS = 2_000;
+
 export function useAnalysisEngine() {
   const meetingStatus = useStore((s) => s.meetingStatus);
-  const lastRun = useRef<{ analysis: number; todos: number }>({ analysis: 0, todos: 0 });
+  const lastRun = useRef<{ analysis: number; todos: number; tone: number }>({
+    analysis: 0,
+    todos: 0,
+    tone: 0,
+  });
   const todoBusy = useRef(false);
+  const toneBusy = useRef(false);
+  /** Latest finalized segment end already seen by the tone check (per meeting). */
+  const lastToneEndMs = useRef(0);
 
   useEffect(() => {
     if (meetingStatus !== "recording") return;
+    // Fresh meeting → forget the previous meeting's transcript high-water mark and
+    // wall-clock cooldown markers, so the first speech can trigger checks promptly
+    // instead of being suppressed by a prior meeting's cadence.
+    lastToneEndMs.current = 0;
+    lastRun.current = { analysis: 0, todos: 0, tone: 0 };
 
     const tick = () => {
       const { autoAnalyze, autoAnalyzeSec, todos, settings, segments, speakerNames, markTodosDone } =
@@ -221,6 +239,40 @@ export function useAnalysisEngine() {
           .catch((e) => console.error("[todos]", e))
           .finally(() => {
             todoBusy.current = false;
+          });
+      }
+
+      // Tone (aggressive/rude) coaching — opt-in, cheap, cooldowned. Fires only
+      // when there's fresh speech, and surfaces a NUDGE (never a finding) so it
+      // stays out of the evaluations/timeline list (the user's chosen UX).
+      const maxEndMs = segments.reduce((m, s) => (s.isFinal ? Math.max(m, s.endMs) : m), 0);
+      if (
+        settings.delivery.tone &&
+        !toneBusy.current &&
+        hasProviderKey(settings) &&
+        now >= lastRun.current.tone + TONE_COOLDOWN_MS &&
+        maxEndMs > lastToneEndMs.current + TONE_MIN_NEW_SPEECH_MS
+      ) {
+        lastRun.current.tone = now;
+        lastToneEndMs.current = maxEndMs;
+        toneBusy.current = true;
+        const prosody = useStore.getState().prosody;
+        import("../ai/tone")
+          .then(({ analyzeTone, TONE_FLAGGED }) =>
+            analyzeTone({ settings, segments, names: speakerNames, prosody }).then((res) => {
+              if (!res || !TONE_FLAGGED.has(res.tone)) return;
+              const lang = useStore.getState().settings.language;
+              useStore.getState().pushDeliveryNudge({
+                kind: "tone",
+                severity: res.tone === "sharp" ? "info" : "warn",
+                message: res.nudge || translate(lang, "delivery.nudge.tone"),
+                evidence: res.evidence || undefined,
+              });
+            })
+          )
+          .catch((e) => console.error("[tone]", e))
+          .finally(() => {
+            toneBusy.current = false;
           });
       }
     };

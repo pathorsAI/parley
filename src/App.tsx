@@ -8,8 +8,10 @@ import { UpdateBanner } from "./components/UpdateBanner";
 import { IngestWizard } from "./components/IngestWizard";
 import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWindow";
 import { useFindingSolutionHost } from "./components/analysis/useFindingSolutionHost";
+import { DeliveryNudgeHost } from "./components/delivery/DeliveryNudgeHost";
+import { useDeliveryCoach } from "./lib/analysis/useDelivery";
 import { useStore } from "./lib/store";
-import { isTauri, listenForTranscript } from "./lib/tauriEvents";
+import { isTauri, listenForProsody, listenForTranscript } from "./lib/tauriEvents";
 import { listenForSettings } from "./lib/settingsSync";
 import { listenForViewLogsMenu } from "./lib/diagnostics";
 import { listenForSttUsage } from "./lib/usage/log";
@@ -63,6 +65,7 @@ function App() {
 
   useEffect(() => {
     const unTranscript = listenForTranscript();
+    const unProsody = listenForProsody();
     const unSettings = listenForSettings();
     const unTemplates = initTemplatesSync();
     const unSession = initSessionSync();
@@ -75,6 +78,7 @@ function App() {
     const unHistoryOpen = listenForHistoryOpen();
     return () => {
       unTranscript.then((fn) => fn());
+      unProsody.then((fn) => fn());
       unSettings.then((fn) => fn());
       unTemplates();
       unSession();
@@ -105,6 +109,9 @@ function App() {
   // LIVE background engine: optional auto-analyze interval + TODO agenda auto-check.
   useAnalysisEngine();
 
+  // LIVE delivery coach: turns the prosody stream into pace/monotone/pause nudges.
+  useDeliveryCoach();
+
   // Drive the standalone "how to reply" window (Tauri); no-op in browser dev.
   useFindingSolutionHost();
 
@@ -123,6 +130,7 @@ function App() {
           in-app overlay so the feature still works without multi-window. */}
       {!isTauri() && <FindingSolutionWindow />}
       <TitleBar fullscreen={fullscreen} />
+      <DeliveryNudgeHost />
       {appMode === "replay" ? <ReplayScreen /> : <LiveScreen />}
     </div>
   );

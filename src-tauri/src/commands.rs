@@ -148,7 +148,10 @@ pub fn start_meeting(
         };
         let sys = crate::audio::system_macos::SystemAudio;
         if diarization {
-            let rx_me = spawn_capture(&state, mic, running.clone(), "me");
+            // Tap the PRE-MIX mic for delivery coaching (issue #22): the prosody
+            // analyzer must see raw mic, never the mixed/diarized stream.
+            let rx_me = spawn_capture(&state, mic, running.clone(), "me")
+                .map(|rx| spawn_mic_prosody_tap(&app, rx));
             let rx_them = spawn_capture(&state, sys, running.clone(), "them");
             match (rx_me, rx_them) {
                 (Some(a), Some(b)) => {
@@ -170,6 +173,7 @@ pub fn start_meeting(
             // No diarization → two sessions. Record the mic only (mixing two
             // un-aligned streams into one file would garble it); see plan note.
             if let Some(rx) = spawn_capture(&state, mic, running.clone(), "me") {
+                let rx = spawn_mic_prosody_tap(&app, rx);
                 run_metered_session(&app, provider, make_config(), "me", rx, Some(recorder));
             }
             if let Some(rx) = spawn_capture(&state, sys, running.clone(), "them") {
@@ -184,6 +188,7 @@ pub fn start_meeting(
             device_name: input_device,
         };
         if let Some(rx) = spawn_capture(&state, mic, running.clone(), "me") {
+            let rx = spawn_mic_prosody_tap(&app, rx);
             run_metered_session(&app, provider, make_config(), "me", rx, Some(recorder));
         }
     }
@@ -271,6 +276,32 @@ fn spawn_capture<S: AudioSource>(
             None
         }
     }
+}
+
+/// Tee the mic ("me") PCM through a [`ProsodyAnalyzer`](crate::audio::prosody::ProsodyAnalyzer)
+/// for live delivery coaching, forwarding every chunk untouched downstream.
+/// Mirrors the sample `counter` in [`run_metered_session`]: one extra `Vec` move
+/// per chunk, no measurable STT impact.
+///
+/// This is the single mic tap point and it sits BEFORE the mixer, so with
+/// diarization on we analyze raw mic — never the mixed/diarized stream (the
+/// issue #22 hard constraint: delivery is scored on "me" only).
+fn spawn_mic_prosody_tap(
+    app: &AppHandle,
+    mut rx: UnboundedReceiver<Vec<i16>>,
+) -> UnboundedReceiver<Vec<i16>> {
+    let (tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut analyzer = crate::audio::prosody::ProsodyAnalyzer::new(app, "me");
+        while let Some(chunk) = rx.recv().await {
+            analyzer.push(&chunk);
+            if tx.send(chunk).is_err() {
+                break;
+            }
+        }
+    });
+    out_rx
 }
 
 /// Run a transcription session over `rx`, counting the audio streamed so the
