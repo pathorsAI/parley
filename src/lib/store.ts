@@ -51,27 +51,6 @@ function relocalizeBuiltins(settings: Settings): Settings {
   };
 }
 
-/**
- * Optional dev convenience: API keys from a gitignored `.env` (VITE_* vars).
- * Empty/undefined in any published build (no .env), so nothing is baked in.
- * Only defined keys are included, so they overlay without clobbering UI values.
- */
-const ENV_KEYS: Partial<Settings> = Object.fromEntries(
-  (
-    [
-      ["sonioxApiKey", import.meta.env.VITE_SONIOX_API_KEY],
-      ["anthropicApiKey", import.meta.env.VITE_ANTHROPIC_API_KEY],
-      ["openaiApiKey", import.meta.env.VITE_OPENAI_API_KEY],
-      ["geminiApiKey", import.meta.env.VITE_GEMINI_API_KEY],
-      ["openrouterApiKey", import.meta.env.VITE_OPENROUTER_API_KEY],
-      ["groqApiKey", import.meta.env.VITE_GROQ_API_KEY],
-      ["qwenApiKey", import.meta.env.VITE_QWEN_API_KEY],
-      ["kimiApiKey", import.meta.env.VITE_KIMI_API_KEY],
-      ["ollamaApiKey", import.meta.env.VITE_OLLAMA_API_KEY],
-    ] as const
-  ).filter(([, v]) => !!v)
-) as Partial<Settings>;
-
 // Built-in templates are seeded in the default language; the persist `merge`
 // (rehydrate) and `relocalizeBuiltins` (on language change) re-resolve them to
 // the active language afterward.
@@ -106,7 +85,6 @@ const DEFAULT_SETTINGS: Settings = {
   evaluations: buildPresetEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),
   todoTemplates: buildPresetTodoTemplates(tDefault),
-  ...ENV_KEYS,
 };
 
 /** Whether the app is capturing a live meeting or analyzing an uploaded one. */
@@ -729,8 +707,6 @@ export const useStore = create<ParleyState>()(
               buildPresetEvalTemplates(t),
               validEvalTpls ? p.evalTemplates! : []
             ),
-            // Dev .env keys win over persisted-empty values (no-op in prod).
-            ...ENV_KEYS,
           },
           evaluations: evalsFromDefs(relabeledEvals),
           // Restore the persisted cloud sign-in (re-validated on startup).
