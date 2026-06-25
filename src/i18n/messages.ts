@@ -148,6 +148,15 @@ export const zhTW = {
   "settings.account.org.accepting": "處理中…",
   "settings.account.org.joined": "已加入 {org}",
   "settings.account.org.acceptFailed": "接受邀請失敗：{error}",
+  "settings.account.org.delete": "刪除組織",
+  "settings.account.org.deleteWarning":
+    "此動作無法復原。組織、所有成員與共享到組織的錄音都會永久刪除。",
+  "settings.account.org.deleteConfirmPrompt": "請輸入組織名稱「{org}」以確認刪除。",
+  "settings.account.org.deleteConfirm": "永久刪除",
+  "settings.account.org.deleteCancel": "取消",
+  "settings.account.org.deleting": "刪除中…",
+  "settings.account.org.deleted": "已刪除組織 {org}",
+  "settings.account.org.deleteFailed": "刪除組織失敗：{error}",
 
   "settings.nav.basic": "基本設定",
   "settings.nav.account": "帳號",
@@ -730,6 +739,15 @@ export const en = {
   "settings.account.org.accepting": "Accepting…",
   "settings.account.org.joined": "Joined {org}",
   "settings.account.org.acceptFailed": "Couldn’t accept invite: {error}",
+  "settings.account.org.delete": "Delete organization",
+  "settings.account.org.deleteWarning":
+    "This can’t be undone. The organization, all members, and every recording shared into it are permanently deleted.",
+  "settings.account.org.deleteConfirmPrompt": "Type the organization name “{org}” to confirm.",
+  "settings.account.org.deleteConfirm": "Delete permanently",
+  "settings.account.org.deleteCancel": "Cancel",
+  "settings.account.org.deleting": "Deleting…",
+  "settings.account.org.deleted": "Deleted organization {org}",
+  "settings.account.org.deleteFailed": "Couldn’t delete organization: {error}",
 
   "settings.nav.basic": "Basic Settings",
   "settings.nav.account": "Account",

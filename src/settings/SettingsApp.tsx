@@ -18,6 +18,7 @@ import {
   inviteToOrg,
   listMyInvitations,
   acceptInvitation,
+  deleteOrg,
 } from "../lib/cloud/orgs";
 import type { CloudInvitation, CloudOrg } from "../lib/cloud/types";
 import { isTauri } from "../lib/tauriEvents";
@@ -1234,6 +1235,12 @@ function OrgPanel() {
   const [creating, setCreating] = useState(false);
   // Per-invitation accept flags, keyed by invitation id.
   const [accepting, setAccepting] = useState<Record<string, boolean>>({});
+  // Org deletion: which org's danger zone is open, the retyped-name confirmation
+  // value, and the in-flight flag — all keyed by org id. Deletion stays gated
+  // until the typed value exactly matches the org name (the second confirmation).
+  const [deletingOpen, setDeletingOpen] = useState<Record<string, boolean>>({});
+  const [deleteConfirm, setDeleteConfirm] = useState<Record<string, string>>({});
+  const [deleting, setDeleting] = useState<Record<string, boolean>>({});
 
   const reload = useCallback(async () => {
     try {
@@ -1299,6 +1306,31 @@ function OrgPanel() {
     }
   }
 
+  async function remove(org: CloudOrg) {
+    // Hard gate: never fire unless the retyped name matches exactly (trim both
+    // sides so a stray trailing space in the org name can't make it un-typeable).
+    if (deleting[org.id] || (deleteConfirm[org.id] ?? "").trim() !== org.name.trim()) return;
+    setDeleting((m) => ({ ...m, [org.id]: true }));
+    try {
+      await deleteOrg(org.id);
+      toast.success(t("settings.account.org.deleted", { org: org.name }));
+      // The org is gone now; drop its per-org UI state so no stale keys linger.
+      const drop = (m: Record<string, unknown>) => {
+        const next = { ...m };
+        delete next[org.id];
+        return next;
+      };
+      setDeletingOpen((m) => drop(m) as Record<string, boolean>);
+      setDeleteConfirm((m) => drop(m) as Record<string, string>);
+      await reload();
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      toast.error(t("settings.account.org.deleteFailed", { error }));
+    } finally {
+      setDeleting((m) => ({ ...m, [org.id]: false }));
+    }
+  }
+
   return (
     <div className="flex max-w-sm flex-col gap-3">
       {/* My organizations */}
@@ -1326,6 +1358,66 @@ function OrgPanel() {
                   {inviting[org.id] ? t("settings.account.org.inviting") : t("settings.account.org.invite")}
                 </Button>
               </div>
+
+              {/* Danger zone — owner-only. Only the org's owner can delete it (the
+                  server re-checks), so non-owners never see the affordance at all.
+                  Deletion is intentionally awkward: first click reveals the panel;
+                  the final button stays disabled until the org name is retyped
+                  exactly — two deliberate confirmations before anything dies. */}
+              {org.role === "owner" &&
+                (!deletingOpen[org.id] ? (
+                  <button
+                    type="button"
+                    aria-expanded={false}
+                    className="self-start text-[11px] text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
+                    onClick={() => setDeletingOpen((m) => ({ ...m, [org.id]: true }))}
+                  >
+                    {t("settings.account.org.delete")}
+                  </button>
+                ) : (
+                  <div className="flex flex-col gap-1.5 rounded-md border border-destructive/40 bg-destructive/5 p-2">
+                    <p className="text-[11px] text-destructive">
+                      {t("settings.account.org.deleteWarning")}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {t("settings.account.org.deleteConfirmPrompt", { org: org.name })}
+                    </p>
+                    <Input
+                      className="h-7 text-xs"
+                      placeholder={org.name}
+                      value={deleteConfirm[org.id] ?? ""}
+                      onChange={(e) => setDeleteConfirm((m) => ({ ...m, [org.id]: e.target.value }))}
+                    />
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="h-7 px-2 text-[11px]"
+                        disabled={
+                          deleting[org.id] ||
+                          (deleteConfirm[org.id] ?? "").trim() !== org.name.trim()
+                        }
+                        onClick={() => void remove(org)}
+                      >
+                        {deleting[org.id]
+                          ? t("settings.account.org.deleting")
+                          : t("settings.account.org.deleteConfirm")}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-[11px]"
+                        disabled={deleting[org.id]}
+                        onClick={() => {
+                          setDeletingOpen((m) => ({ ...m, [org.id]: false }));
+                          setDeleteConfirm((m) => ({ ...m, [org.id]: "" }));
+                        }}
+                      >
+                        {t("settings.account.org.deleteCancel")}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
             </div>
           ))}
           <p className="text-[11px] text-muted-foreground">{t("settings.account.org.inviteHint")}</p>

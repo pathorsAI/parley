@@ -22,6 +22,9 @@ export interface CloudOrg {
   name: string;
   slug: string;
   logo?: string | null;
+  /** The signed-in user's role in this org ("owner" | "admin" | "member"), when
+   *  the list came from /orgs/mine. Drives owner-only UI (e.g. the delete flow). */
+  role?: string;
 }
 
 /** A pending invitation for the signed-in user to join an org. */
