@@ -138,7 +138,11 @@ export function Onboarding() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PROVIDERS.map((p) => (
+                  {/* The hosted "parley" provider requires a signed-in cloud session,
+                      which is set up from Settings → Account, not first-run onboarding.
+                      Exclude it here so OSS/signed-out users can't pick an unusable
+                      provider (Settings gates it on CLOUD_ENABLED && cloudAuth). */}
+                  {PROVIDERS.filter((p) => p.id !== "parley").map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       <span className="flex items-center gap-2">
                         <img src={p.icon} alt="" className="size-4 rounded-sm" />

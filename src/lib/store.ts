@@ -77,6 +77,7 @@ const DEFAULT_SETTINGS: Settings = {
   qwenApiKey: "",
   kimiApiKey: "",
   ollamaApiKey: "",
+  parleyApiKey: "",
   reasoningEffort: { ask: "low", eval: "medium" },
   models: DEFAULT_MODELS,
   transcriptionProvider: "soniox",
