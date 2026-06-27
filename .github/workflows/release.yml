@@ -142,7 +142,7 @@ jobs:
           VERSION="${{ steps.release.outputs.tag }}"; VERSION="${VERSION#v}"
           # Build the updater feed (latest.json) — signature is the .sig file, url
           # points at the Worker download route (which streams the .app.tar.gz from R2).
-          SIG_FILE="${TARGZ}.sig" VERSION="${VERSION}" node -e 'const fs=require("fs");const sig=fs.readFileSync(process.env.SIG_FILE,"utf8").trim();fs.writeFileSync("latest.json",JSON.stringify({version:process.env.VERSION,pub_date:new Date().toISOString(),platforms:{"darwin-aarch64":{signature:sig,url:"https://parley-cloud.pathors.workers.dev/download/Parley.app.tar.gz"}}},null,2));'
+          SIG_FILE="${TARGZ}.sig" VERSION="${VERSION}" node -e 'const fs=require("fs");const sig=fs.readFileSync(process.env.SIG_FILE,"utf8").trim();fs.writeFileSync("latest.json",JSON.stringify({version:process.env.VERSION,pub_date:new Date().toISOString(),platforms:{"darwin-aarch64":{signature:sig,url:"https://api.parley.tw/download/Parley.app.tar.gz"}}},null,2));'
           bunx wrangler r2 object put "parley-recordings/downloads/Parley.app.tar.gz" --file "${TARGZ}" --remote
           bunx wrangler r2 object put "parley-recordings/downloads/Parley.dmg" --file "${DMG}" --remote
           bunx wrangler r2 object put "parley-recordings/downloads/latest.json" --file latest.json --remote

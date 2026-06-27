@@ -10,7 +10,7 @@ import type { CloudUser } from "./types";
  */
 export const CLOUD_URL =
   (import.meta.env.VITE_PARLEY_CLOUD_URL as string | undefined)?.replace(/\/$/, "") ||
-  "https://parley-cloud.pathors.workers.dev";
+  "https://api.parley.tw";
 
 type Me = { user: CloudUser | null; activeOrganizationId: string | null };
 
