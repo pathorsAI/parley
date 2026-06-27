@@ -426,7 +426,12 @@ export function SettingsApp() {
               <Select value={settings.provider} onValueChange={(v) => patch({ provider: v as LlmProvider })}>
                 <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {PROVIDERS.map((p) => (
+                  {PROVIDERS.filter(
+                    // The hosted "parley" provider only exists in the cloud build
+                    // and only when signed in (auth IS the gate) — hide it in the
+                    // OSS edition and when signed out.
+                    (p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth),
+                  ).map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       <span className="flex items-center gap-2">
                         <img src={p.icon} alt="" className="size-4 rounded-sm" />
@@ -456,6 +461,18 @@ export function SettingsApp() {
                 onChange={(e) => patch({ [info.apiKeyField]: e.target.value } as Partial<Settings>)}
               />
             </Field>
+            {settings.provider === "parley" ? (
+              // Hosted provider: no key, no model picker — the server forces the
+              // real model behind "parley-fast"/"parley-smart". Just confirm who
+              // the usage bills to.
+              <div className="flex flex-col gap-2 border-t pt-4">
+                <p className="text-[11px] text-muted-foreground">
+                  {t("settings.account.useParley.note", {
+                    email: cloudAuth?.user.email ?? "",
+                  })}
+                </p>
+              </div>
+            ) : (
             <div className="flex flex-col gap-3 border-t pt-4">
               <p className="text-[11px] text-muted-foreground">
                 {t("settings.provider.models", {
@@ -496,6 +513,7 @@ export function SettingsApp() {
                 )}
               </Field>
             </div>
+            )}
           </Section>
         )}
 

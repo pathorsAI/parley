@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { useI18n } from "../i18n";
+import { useStore } from "../lib/store";
+import { CLOUD_ENABLED } from "../lib/flags";
+import { fetchHostedQuota } from "../lib/cloud/usage";
+import type { HostedQuota } from "../lib/cloud/types";
 import { PROVIDER_BY_ID } from "../lib/ai/providers";
 import { readUsageEvents, type UsageEvent } from "../lib/usage/log";
 import { PRICING_NOTES } from "../lib/usage/pricing";
@@ -76,6 +81,10 @@ export function UsagePanel() {
 
   return (
     <div className="flex flex-col gap-5">
+      {/* Hosted-plan quota (only the cloud build, when signed in and on the
+          hosted "parley" provider). Shows above the BYOK cost pies. */}
+      {CLOUD_ENABLED && <HostedQuotaMeter />}
+
       {/* Period selector */}
       <div className="flex items-center gap-2">
         <div className="grid grid-cols-4 rounded-md bg-muted p-0.5">
@@ -126,6 +135,71 @@ export function UsagePanel() {
         <p className="text-[11px] text-muted-foreground">{t("settings.usage.noData")}</p>
       )}
       <p className="text-[10px] leading-relaxed text-muted-foreground">{PRICING_NOTES}</p>
+    </div>
+  );
+}
+
+/**
+ * Hosted-plan quota for the "parley" provider: a progress bar of LLM tokens
+ * used vs the monthly limit, plus the reset date. Fetched from {CLOUD_URL}/me/usage
+ * on mount. Renders nothing unless signed in AND the active provider is "parley"
+ * (the only mode where this allowance is spent). Whole block is gated by
+ * CLOUD_ENABLED at the call site.
+ */
+function HostedQuotaMeter() {
+  const { t } = useI18n();
+  const cloudAuth = useStore((s) => s.cloudAuth);
+  const provider = useStore((s) => s.settings.provider);
+  const [quota, setQuota] = useState<HostedQuota | null>(null);
+
+  const show = !!cloudAuth && provider === "parley";
+
+  useEffect(() => {
+    if (!show) return;
+    let alive = true;
+    fetchHostedQuota()
+      .then((q) => alive && setQuota(q))
+      .catch((e) => {
+        if (alive) toast.error(t("settings.usage.quota.loadFailed", { error: e instanceof Error ? e.message : String(e) }));
+      });
+    return () => {
+      alive = false;
+    };
+    // Only re-fetch when visibility flips — NOT on `t`, whose identity changes every
+    // render (which would loop: fetch → setQuota → render → new t → fetch → …).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [show]);
+
+  if (!show || !quota) return null;
+
+  const limit = quota.llmTokensLimit;
+  const used = quota.llmTokensUsed;
+  const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  const fmtTokens = (n: number) => `${(n / 1_000_000).toFixed(1)}M`;
+  const resetLabel = quota.periodResetTs
+    ? new Date(quota.periodResetTs).toLocaleDateString()
+    : t("settings.usage.quota.unlimited");
+
+  return (
+    <div className="flex flex-col gap-2.5 rounded-lg border bg-muted/20 p-4">
+      <div className="flex items-baseline justify-between">
+        <h3 className="text-xs font-semibold tracking-tight">{t("settings.usage.quota.title")}</h3>
+        <span className="text-[11px] text-muted-foreground tabular-nums">
+          {t("settings.usage.quota.reset")}: {resetLabel}
+        </span>
+      </div>
+      <div className="flex items-baseline justify-between text-[11px]">
+        <span className="text-muted-foreground">{t("settings.usage.quota.llm")}</span>
+        <span className="tabular-nums">
+          {fmtTokens(used)} / {limit > 0 ? fmtTokens(limit) : t("settings.usage.quota.unlimited")}
+        </span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+        <div
+          className={`h-full rounded-full transition-all ${pct >= 100 ? "bg-destructive" : "bg-primary"}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
     </div>
   );
 }
