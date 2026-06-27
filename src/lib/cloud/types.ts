@@ -48,8 +48,9 @@ export interface CloudOrgMember {
   name?: string;
   email?: string;
   image?: string | null;
-  /** Member join time (epoch seconds), owner-first ordering upstream. */
-  createdAt?: number;
+  /** Member join time as an ISO-8601 string (D1 timestamp → JSON). Ordering is
+   *  done server-side (owner-first); the client doesn't parse this today. */
+  createdAt?: string;
 }
 
 /**
