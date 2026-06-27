@@ -265,6 +265,10 @@ export function HistoryApp() {
   const loadPersonalFolders = useCallback(async () => {
     if (CLOUD_ENABLED && syncEnabled()) {
       try {
+        // Push any local-only folders (created/renamed while sync was off) FIRST, so
+        // mirroring the cloud list down below can't drop them — otherwise turning sync
+        // on would overwrite the local cache with a cloud list that lacks them.
+        await pushUnsyncedFolders();
         const cloud = (await listCloudFolders()).map(toLocalFolder).sort(byCreatedAt);
         writeLocalFolders(cloud); // refresh the local cache for offline + cross-window
         setPersonalFolders(cloud);
@@ -355,14 +359,9 @@ export function HistoryApp() {
     let alive = true;
     setSyncing(true);
     void (async () => {
-      if (CLOUD_ENABLED && syncEnabled()) {
-        try {
-          await pushUnsyncedFolders(); // folders FIRST so synced entries can reference them
-          await loadPersonalFolders();
-        } catch (e) {
-          log.warn("history: folder sweep failed", { error: String(e) });
-        }
-      }
+      // loadPersonalFolders push-uploads local-only folders, then mirrors the cloud
+      // list down — so a synced recording's folderId always resolves to a live folder.
+      await loadPersonalFolders();
       const n = await pushUnsyncedToCloud().catch((e) => {
         log.warn("history: background sync failed", { error: String(e) });
         return 0;
@@ -587,8 +586,13 @@ export function HistoryApp() {
         if (target.scope === "personal") {
           // Move between personal folders / root — a folderId reassignment on disk.
           if ((item.folderId ?? null) === target.folderId) return;
-          // A cloud-only card isn't on local disk, so we can't rewrite its meta here.
-          if (item.sync === "cloud") return;
+          // A cloud-only card has no local meta to retag; a "stale" card would re-push
+          // its OLDER local meta and clobber the newer cloud re-analysis. In both cases
+          // tell the user to open it first (which downloads / pulls the latest).
+          if (item.sync === "cloud" || item.sync === "stale") {
+            toast.message(t("history.move.needsDownload"));
+            return;
+          }
           try {
             await setEntryFolder(item.id, target.folderId);
             setEntries((prev) =>

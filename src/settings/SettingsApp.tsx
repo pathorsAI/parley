@@ -23,7 +23,7 @@ import {
 } from "../lib/cloud/orgs";
 import type { CloudInvitation, CloudOrg, CloudOrgMember } from "../lib/cloud/types";
 import { listCloudFolders, listOrgFolders, type CloudFolder } from "../lib/cloud/folders";
-import { listLocalFolders, type Folder as LocalFolder } from "../lib/history/folders";
+import { listLocalFolders, listenForFoldersUpdated, type Folder as LocalFolder } from "../lib/history/folders";
 import { syncEnabled as cloudSyncEnabled } from "../lib/cloud/client";
 import { isTauri } from "../lib/tauriEvents";
 import { useThemePreference } from "../lib/theme";
@@ -272,7 +272,17 @@ export function SettingsApp() {
                       type="checkbox"
                       className="size-3.5 accent-primary"
                       checked={settings.syncEnabled}
-                      onChange={(e) => patch({ syncEnabled: e.target.checked })}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        const p: Partial<Settings> = { syncEnabled: on };
+                        // An org default needs sync; turning sync off would leave the
+                        // picker showing "Personal" while the stored value stays org
+                        // (and silently reactivates on re-enable). Normalize it now.
+                        if (!on && settings.defaultSaveLocation.scope === "org") {
+                          p.defaultSaveLocation = { scope: "personal", folderId: null };
+                        }
+                        patch(p);
+                      }}
                     />
                     {t("settings.account.sync.title")}
                   </label>
@@ -1629,16 +1639,26 @@ function DefaultSavePicker({
   const [orgFolders, setOrgFolders] = useState<Record<string, CloudFolder[]>>({});
 
   // Personal folders: prefer the cloud list when sync is on (cross-device truth).
+  // Re-run when the toggle flips so enabling sync in an already-open window refreshes.
   useEffect(() => {
     void (async () => {
-      if (!cloudSyncEnabled()) return;
+      if (!syncOn || !cloudSyncEnabled()) {
+        setPersonal(listLocalFolders());
+        return;
+      }
       try {
         const cloud = await listCloudFolders();
         setPersonal(cloud.map((f) => ({ id: f.id, name: f.name, createdAt: f.createdAt })));
       } catch {
-        /* keep the local list */
+        setPersonal(listLocalFolders());
       }
     })();
+  }, [syncOn]);
+
+  // Reflect personal-folder create/rename/delete done in the History window live.
+  useEffect(() => {
+    const un = listenForFoldersUpdated(() => setPersonal(listLocalFolders()));
+    return () => void un.then((fn) => fn());
   }, []);
 
   // Org folders only matter for an org default, which needs sync on.
