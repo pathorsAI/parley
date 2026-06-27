@@ -248,10 +248,21 @@ pub fn stop_meeting(app: AppHandle, state: State<MeetingState>) -> Result<(), St
     }
 
     // Joining lets each capture thread release its device (drops its PCM sender,
-    // which in turn ends the Soniox session via channel close).
+    // which in turn ends the Soniox session via channel close). Capture threads
+    // self-exit within ~100 ms of `running` clearing, but bound the wait so a wedged
+    // thread (e.g. a stuck CoreAudio teardown) can't hang the stop command itself;
+    // the session WebSocket is force-closed separately by the watchdog above.
     let handles: Vec<JoinHandle<()>> = state.threads.lock().unwrap().drain(..).collect();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
     for h in handles {
-        let _ = h.join();
+        while !h.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if h.is_finished() {
+            let _ = h.join();
+        } else {
+            log::warn!("stop_meeting: capture thread didn't exit within grace; detaching");
+        }
     }
     let _ = app.emit("meeting://status", "stopped");
 

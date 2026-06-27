@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TitleBar } from "./components/TitleBar";
 import { LiveScreen } from "./components/live/LiveScreen";
 import { ReplayScreen } from "./components/replay/ReplayScreen";
@@ -71,34 +73,43 @@ function App() {
   const rounded = isTauri() && !fullscreen;
 
   useEffect(() => {
-    const unTranscript = listenForTranscript();
-    const unProsody = listenForProsody();
-    const unSettings = listenForSettings();
+    // StrictMode (dev) double-invokes this effect (mount→cleanup→mount) and Vite
+    // HMR re-runs it on edits. The Tauri `listen()` calls resolve their UnlistenFn
+    // on a LATER tick, so a naive `unX.then(fn => fn())` cleanup can fire its
+    // unlisten AFTER the re-mount has already re-subscribed — leaving two live
+    // handlers for `transcript://segment` / `audio://prosody` (the dev-only
+    // "double" symptom). Guard with an `active` flag: collect each unlisten as it
+    // resolves; if the effect is already torn down by then, unlisten immediately.
+    let active = true;
+    const live: Array<() => void> = [];
+    const track = (p: Promise<() => void>) => {
+      void p.then((fn) => {
+        if (active) live.push(fn);
+        else fn();
+      });
+    };
+    track(listenForTranscript());
+    track(listenForProsody());
+    track(listenForSettings());
+    track(listenForSttUsage());
+    track(listenForCacheClear());
+    track(listenForSpeakerCacheClear());
+    track(listenForViewLogsMenu());
+    track(listenForRecordingSaved());
+    track(listenForHistoryOpen());
+    if (CLOUD_ENABLED) track(listenForHistoryOpenOrg());
+    // These return a synchronous UnlistenFn.
     const unTemplates = initTemplatesSync();
     const unSession = initSessionSync();
     const unSessionCmds = initSessionCommands();
-    const unSttUsage = listenForSttUsage();
-    const unCacheClear = listenForCacheClear();
-    const unSpeakerCacheClear = listenForSpeakerCacheClear();
-    const unViewLogs = listenForViewLogsMenu();
-    const unRecordingSaved = listenForRecordingSaved();
-    const unHistoryOpen = listenForHistoryOpen();
-    const unHistoryOpenOrg = CLOUD_ENABLED ? listenForHistoryOpenOrg() : null;
     const unHistoryPersist = initHistoryPersistSync();
     return () => {
-      unTranscript.then((fn) => fn());
-      unProsody.then((fn) => fn());
-      unSettings.then((fn) => fn());
+      active = false;
+      live.forEach((fn) => fn());
+      live.length = 0;
       unTemplates();
       unSession();
       unSessionCmds();
-      unSttUsage.then((fn) => fn());
-      unCacheClear.then((fn) => fn());
-      unSpeakerCacheClear.then((fn) => fn());
-      unViewLogs.then((fn) => fn());
-      unRecordingSaved.then((fn) => fn());
-      unHistoryOpen.then((fn) => fn());
-      unHistoryOpenOrg?.then((fn) => fn());
       unHistoryPersist();
     };
   }, []);
@@ -116,6 +127,31 @@ function App() {
     return () => {
       clearTimeout(first);
       clearInterval(recheck);
+    };
+  }, []);
+
+  // If the window is closed (or dev-reloaded via HMR) mid-meeting, tell Rust to
+  // stop so the native capture/transcription session can't be orphaned. The only
+  // other stop_meeting caller is the toolbar toggle, so without this a reload/close
+  // leaves the backend recording. Best-effort: the IPC is dispatched even as the
+  // webview tears down; stop_meeting is idempotent.
+  useEffect(() => {
+    if (!isTauri()) return;
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    const stopIfRecording = () => {
+      if (useStore.getState().meetingStatus === "recording") {
+        void invoke("stop_meeting").catch(() => {});
+      }
+    };
+    window.addEventListener("beforeunload", stopIfRecording);
+    void getCurrentWindow()
+      .onCloseRequested(stopIfRecording)
+      .then((fn) => (active ? (unlisten = fn) : fn()));
+    return () => {
+      active = false;
+      window.removeEventListener("beforeunload", stopIfRecording);
+      unlisten?.();
     };
   }, []);
 
