@@ -44,9 +44,13 @@ export interface CloudOrgMember {
   id: string;
   userId: string;
   role: string;
-  /** Joined from the user row when the backend includes it. */
+  /** Joined from the user row by /orgs/:orgId/members. */
   name?: string;
   email?: string;
+  image?: string | null;
+  /** Member join time as an ISO-8601 string (D1 timestamp → JSON). Ordering is
+   *  done server-side (owner-first); the client doesn't parse this today. */
+  createdAt?: string;
 }
 
 /**
