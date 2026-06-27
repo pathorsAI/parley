@@ -193,7 +193,8 @@ export type LlmProvider =
   | "qwen"
   | "kimi"
   | "ollama"
-  | "openrouter";
+  | "openrouter"
+  | "parley";
 
 /** Reasoning depth for reasoning-capable models (e.g. Groq gpt-oss). */
 export type ReasoningEffort = "low" | "medium" | "high";
@@ -244,6 +245,10 @@ export interface Settings {
   /** Optional — only needed for a remote/secured Ollama; local needs none. */
   ollamaApiKey: string;
   openrouterApiKey: string;
+  /** Unused — the hosted "parley" provider authenticates with the Better Auth
+   *  session token, not an API key. Present so it satisfies the closed
+   *  apiKeyField union (every provider has a key field). */
+  parleyApiKey: string;
   /** Reasoning depth per model role for reasoning-capable models. */
   reasoningEffort: ModelReasoningEfforts;
   /** Per-provider model ids (ids differ between Anthropic and OpenRouter). */
