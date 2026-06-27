@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Circle, FileAudio, History, Loader2, LogOut, Mic, Minus, Settings, Square, X } from "lucide-react";
@@ -70,6 +70,12 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
   const replayName = useStore((s) => s.replay?.name ?? "");
   const exitReplay = useStore((s) => s.exitReplay);
   const [ingestMsg, setIngestMsg] = useState<string | null>(null);
+  // Guard the start/stop toggle so a rapid double-click can't fire two overlapping
+  // start/stop invokes (which is what could race two transcription sessions open,
+  // or interleave a stop with a start). The ref blocks re-entry synchronously
+  // (before any re-render); `toggleBusy` just disables the button visually.
+  const toggleBusyRef = useRef(false);
+  const [toggleBusy, setToggleBusy] = useState(false);
 
   const recording = status === "recording";
   const replayMode = appMode === "replay";
@@ -100,47 +106,56 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
   }
 
   async function toggle() {
-    if (recording) {
-      log.info("meeting: stop requested");
-      stopMeeting();
-      if (useRealPipeline) {
-        try {
-          await invoke("stop_meeting");
-        } catch (e) {
-          log.error("meeting: stop failed", { error: String(e) });
+    // Re-entrancy guard: ignore clicks while a start/stop is already in flight.
+    if (toggleBusyRef.current) return;
+    toggleBusyRef.current = true;
+    setToggleBusy(true);
+    try {
+      if (recording) {
+        log.info("meeting: stop requested");
+        stopMeeting();
+        if (useRealPipeline) {
+          try {
+            await invoke("stop_meeting");
+          } catch (e) {
+            log.error("meeting: stop failed", { error: String(e) });
+          }
+        } else {
+          stopMockStream();
         }
-      } else {
-        stopMockStream();
+        return;
       }
-      return;
-    }
-    startMeeting();
-    if (useRealPipeline) {
-      log.info("meeting: start requested", {
-        provider: transcriptionProvider,
-        model: STT_BY_ID[transcriptionProvider].label,
-        diarization: STT_BY_ID[transcriptionProvider].diarization,
-        inputDevice,
-        pipeline: "real",
-      });
-      try {
-        await invoke("start_meeting", {
+      startMeeting();
+      if (useRealPipeline) {
+        log.info("meeting: start requested", {
           provider: transcriptionProvider,
-          apiKey: sttKey,
+          model: STT_BY_ID[transcriptionProvider].label,
           diarization: STT_BY_ID[transcriptionProvider].diarization,
           inputDevice,
+          pipeline: "real",
         });
-      } catch (e) {
-        log.error("meeting: start failed", {
-          provider: transcriptionProvider,
-          inputDevice,
-          error: String(e),
-        });
-        stopMeeting();
+        try {
+          await invoke("start_meeting", {
+            provider: transcriptionProvider,
+            apiKey: sttKey,
+            diarization: STT_BY_ID[transcriptionProvider].diarization,
+            inputDevice,
+          });
+        } catch (e) {
+          log.error("meeting: start failed", {
+            provider: transcriptionProvider,
+            inputDevice,
+            error: String(e),
+          });
+          stopMeeting();
+        }
+      } else {
+        log.info("meeting: start (mock stream)");
+        startMockStream();
       }
-    } else {
-      log.info("meeting: start (mock stream)");
-      startMockStream();
+    } finally {
+      toggleBusyRef.current = false;
+      setToggleBusy(false);
     }
   }
 
@@ -274,7 +289,7 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
               size="sm"
               variant={recording ? "destructive" : "default"}
               onClick={toggle}
-              disabled={!!ingestMsg}
+              disabled={!!ingestMsg || toggleBusy}
               className="h-8"
             >
               {recording ? <Square className="size-3.5" /> : <Mic className="size-3.5" />}
