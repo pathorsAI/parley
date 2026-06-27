@@ -80,4 +80,9 @@ describe("buildSummary", () => {
     const noAudio = buildSummary(entry({ audio: null }));
     expect(noAudio.hasAudio).toBe(false);
   });
+
+  it("passes folderId through, defaulting to null when absent", () => {
+    expect(buildSummary(entry({ folderId: "fld-1" })).folderId).toBe("fld-1");
+    expect(buildSummary(entry()).folderId).toBeNull();
+  });
 });

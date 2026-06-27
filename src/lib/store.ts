@@ -90,6 +90,10 @@ const DEFAULT_SETTINGS: Settings = {
   // Pace + pauses are free (timing/DSP) so default on; pitch + tone (LLM cost)
   // are opt-in. See DeliveryToggles.
   delivery: { pace: true, pitch: false, pauses: true, tone: false },
+  // Signed-in accounts sync by default (prior behavior); the toggle lets a user
+  // keep this device local-only. Finished meetings save to the personal root.
+  syncEnabled: true,
+  defaultSaveLocation: { scope: "personal", folderId: null },
 };
 
 /** Whether the app is capturing a live meeting or analyzing an uploaded one. */

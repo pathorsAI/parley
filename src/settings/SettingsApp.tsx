@@ -22,6 +22,9 @@ import {
   deleteOrg,
 } from "../lib/cloud/orgs";
 import type { CloudInvitation, CloudOrg, CloudOrgMember } from "../lib/cloud/types";
+import { listCloudFolders, listOrgFolders, type CloudFolder } from "../lib/cloud/folders";
+import { listLocalFolders, type Folder as LocalFolder } from "../lib/history/folders";
+import { syncEnabled as cloudSyncEnabled } from "../lib/cloud/client";
 import { isTauri } from "../lib/tauriEvents";
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
@@ -54,7 +57,7 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
   value: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
   default: "bg-muted text-muted-foreground",
 };
-import type { AppLanguage, AppLayout, AppTheme, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
+import type { AppLanguage, AppLayout, AppTheme, DefaultSaveLocation, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 
 type Category =
   | "basic"
@@ -261,6 +264,37 @@ export function SettingsApp() {
                 </div>
               )}
             </Field>
+            {cloudAuth && (
+              <Field label={t("settings.account.sync.title")}>
+                <div className="flex max-w-md flex-col gap-2 rounded-lg border p-3">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="size-3.5 accent-primary"
+                      checked={settings.syncEnabled}
+                      onChange={(e) => patch({ syncEnabled: e.target.checked })}
+                    />
+                    {t("settings.account.sync.title")}
+                  </label>
+                  <p className="text-[11px] text-muted-foreground">{t("settings.account.sync.desc")}</p>
+                </div>
+              </Field>
+            )}
+            {cloudAuth && (
+              <Field label={t("settings.account.defaultSave.title")}>
+                <div className="flex max-w-md flex-col gap-2">
+                  <DefaultSavePicker
+                    value={settings.defaultSaveLocation}
+                    syncOn={settings.syncEnabled}
+                    onChange={(loc) => patch({ defaultSaveLocation: loc })}
+                  />
+                  <p className="text-[11px] text-muted-foreground">{t("settings.account.defaultSave.desc")}</p>
+                  {!settings.syncEnabled && (
+                    <p className="text-[11px] text-amber-500">{t("settings.account.defaultSave.syncOffHint")}</p>
+                  )}
+                </div>
+              </Field>
+            )}
             {cloudAuth && (
               <Field label={t("settings.account.org.title")}>
                 <OrgPanel />
@@ -1571,6 +1605,109 @@ function OrgPanel() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Default-save-location picker: a native select grouping the personal root + folders
+ * and — when cloud sync is on — each org's root + folders. Loads the folder lists
+ * itself so the Settings window stays self-contained. Choosing an org folder makes
+ * finished meetings auto-share into that team space (see history.ts resolveDefaultSave).
+ */
+function DefaultSavePicker({
+  value,
+  syncOn,
+  onChange,
+}: {
+  value: DefaultSaveLocation;
+  syncOn: boolean;
+  onChange: (loc: DefaultSaveLocation) => void;
+}) {
+  const { t } = useI18n();
+  const [personal, setPersonal] = useState<LocalFolder[]>(() => listLocalFolders());
+  const [orgs, setOrgs] = useState<CloudOrg[]>([]);
+  const [orgFolders, setOrgFolders] = useState<Record<string, CloudFolder[]>>({});
+
+  // Personal folders: prefer the cloud list when sync is on (cross-device truth).
+  useEffect(() => {
+    void (async () => {
+      if (!cloudSyncEnabled()) return;
+      try {
+        const cloud = await listCloudFolders();
+        setPersonal(cloud.map((f) => ({ id: f.id, name: f.name, createdAt: f.createdAt })));
+      } catch {
+        /* keep the local list */
+      }
+    })();
+  }, []);
+
+  // Org folders only matter for an org default, which needs sync on.
+  useEffect(() => {
+    if (!syncOn) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const mine = await listMyOrgs();
+        if (!alive) return;
+        setOrgs(mine);
+        const pairs = await Promise.all(
+          mine.map(async (o) => [o.id, await listOrgFolders(o.id).catch(() => [])] as const),
+        );
+        if (alive) setOrgFolders(Object.fromEntries(pairs));
+      } catch {
+        /* leave orgs empty */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [syncOn]);
+
+  const serialize = (loc: DefaultSaveLocation): string =>
+    loc.scope === "personal"
+      ? loc.folderId
+        ? `personal:${loc.folderId}`
+        : "personal"
+      : loc.folderId
+        ? `org:${loc.orgId}:${loc.folderId}`
+        : `org:${loc.orgId}`;
+
+  const parse = (v: string): DefaultSaveLocation => {
+    if (v === "personal") return { scope: "personal", folderId: null };
+    if (v.startsWith("personal:")) return { scope: "personal", folderId: v.slice("personal:".length) };
+    const rest = v.slice("org:".length);
+    const idx = rest.indexOf(":");
+    return idx === -1
+      ? { scope: "org", orgId: rest, folderId: null }
+      : { scope: "org", orgId: rest.slice(0, idx), folderId: rest.slice(idx + 1) };
+  };
+
+  return (
+    <select
+      value={serialize(value)}
+      onChange={(e) => onChange(parse(e.target.value))}
+      className="h-9 max-w-md rounded-md border bg-background px-2 text-sm outline-none focus:border-primary"
+    >
+      <optgroup label={t("settings.account.defaultSave.personal")}>
+        <option value="personal">{t("settings.account.defaultSave.root")}</option>
+        {personal.map((f) => (
+          <option key={f.id} value={`personal:${f.id}`}>
+            {f.name}
+          </option>
+        ))}
+      </optgroup>
+      {syncOn &&
+        orgs.map((o) => (
+          <optgroup key={o.id} label={o.name}>
+            <option value={`org:${o.id}`}>{t("settings.account.defaultSave.root")}</option>
+            {(orgFolders[o.id] ?? []).map((f) => (
+              <option key={f.id} value={`org:${o.id}:${f.id}`}>
+                {f.name}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+    </select>
   );
 }
 
