@@ -63,6 +63,7 @@ const DEFAULT_SETTINGS: Settings = {
   theme: "system",
   layout: "full",
   onboarded: false,
+  onboardingStep: 0,
   userName: "",
   userRole: "",
   userCompany: "",

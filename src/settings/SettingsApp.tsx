@@ -393,7 +393,20 @@ export function SettingsApp() {
                 variant="outline"
                 size="sm"
                 className="h-8 w-fit text-xs"
-                onClick={() => patch({ onboarded: false })}
+                onClick={async () => {
+                  patch({ onboarded: false, onboardingStep: 0 });
+                  // The onboarding renders on the MAIN window — bring it forward
+                  // and close this Settings window so it isn't hidden behind it.
+                  if (!isTauri()) return;
+                  try {
+                    const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+                    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+                    await (await WebviewWindow.getByLabel("main"))?.setFocus();
+                    await getCurrentWindow().close();
+                  } catch {
+                    /* ignore */
+                  }
+                }}
               >
                 {t("settings.basic.rerunSetup")}
               </Button>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Check, ChevronLeft, ChevronRight, Download, Loader2, Mic, Monitor, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Download, Keyboard, Loader2, Mic, Monitor, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isTauri } from "../lib/tauriEvents";
 import { PROVIDERS, PROVIDER_BY_ID } from "../lib/ai/providers";
@@ -26,8 +26,18 @@ export function Onboarding() {
   const { t } = useI18n();
   const settings = useStore((s) => s.settings);
   const patch = useStore((s) => s.updateSettings);
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(() => {
+    const s = settings.onboardingStep ?? 0;
+    return s >= 0 && s < STEP_COUNT ? s : 0;
+  });
   const [perms, setPerms] = useState<Perms | null>(null);
+  const [accessibilityOk, setAccessibilityOk] = useState(false);
+
+  // Persist the step so granting a permission (which often needs an app restart)
+  // resumes here instead of bouncing back to step 1.
+  useEffect(() => {
+    patch({ onboardingStep: step });
+  }, [step, patch]);
 
   const llm = PROVIDER_BY_ID[settings.provider];
   const stt = STT_BY_ID[settings.transcriptionProvider];
@@ -36,6 +46,7 @@ export function Onboarding() {
     if (!isTauri()) return;
     try {
       setPerms(await invoke<Perms>("check_permissions"));
+      setAccessibilityOk(await invoke<boolean>("accessibility_status", { prompt: false }));
     } catch {
       /* non-macOS or unavailable */
     }
@@ -62,7 +73,7 @@ export function Onboarding() {
   }, [step]);
 
   function finish() {
-    patch({ onboarded: true });
+    patch({ onboarded: true, onboardingStep: 0 });
   }
 
   const micOk = perms?.microphone === "authorized";
@@ -226,6 +237,18 @@ export function Onboarding() {
                 onAction={async () => {
                   await invoke("request_screen_recording").catch(() => {});
                   await invoke("open_privacy_settings", { pane: "screen" }).catch(() => {});
+                  void recheck();
+                }}
+              />
+              <PermRow
+                icon={<Keyboard className="size-4" />}
+                label={t("onboarding.perms.accessibility")}
+                ok={accessibilityOk}
+                actionLabel={t("onboarding.perms.grant")}
+                onAction={async () => {
+                  // Single native prompt (it offers its own "Open System Settings").
+                  await invoke("accessibility_status", { prompt: true }).catch(() => {});
+                  await invoke("ensure_fn_listener").catch(() => {});
                   void recheck();
                 }}
               />
