@@ -10,17 +10,21 @@ import { Check, Copy, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, 
 import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
-import { signInWithGoogle, signOut } from "../lib/cloud/client";
+import { signInWithGoogle, signOut, CloudError } from "../lib/cloud/client";
 import { CLOUD_ENABLED } from "../lib/flags";
 import {
   createOrg,
   listMyOrgs,
+  listOrgMembers,
   inviteToOrg,
   listMyInvitations,
   acceptInvitation,
   deleteOrg,
 } from "../lib/cloud/orgs";
-import type { CloudInvitation, CloudOrg } from "../lib/cloud/types";
+import type { CloudInvitation, CloudOrg, CloudOrgMember } from "../lib/cloud/types";
+import { listCloudFolders, listOrgFolders, type CloudFolder } from "../lib/cloud/folders";
+import { listLocalFolders, listenForFoldersUpdated, type Folder as LocalFolder } from "../lib/history/folders";
+import { syncEnabled as cloudSyncEnabled } from "../lib/cloud/client";
 import { isTauri } from "../lib/tauriEvents";
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
@@ -53,7 +57,7 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
   value: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
   default: "bg-muted text-muted-foreground",
 };
-import type { AppLanguage, AppLayout, AppTheme, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
+import type { AppLanguage, AppLayout, AppTheme, DefaultSaveLocation, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 import { VoiceTypingSettings } from "./VoiceTypingSettings";
 import { PermissionsPanel } from "./PermissionsPanel";
 
@@ -270,6 +274,47 @@ export function SettingsApp() {
                 </div>
               )}
             </Field>
+            {cloudAuth && (
+              <Field label={t("settings.account.sync.title")}>
+                <div className="flex max-w-md flex-col gap-2 rounded-lg border p-3">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="size-3.5 accent-primary"
+                      checked={settings.syncEnabled}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        const p: Partial<Settings> = { syncEnabled: on };
+                        // An org default needs sync; turning sync off would leave the
+                        // picker showing "Personal" while the stored value stays org
+                        // (and silently reactivates on re-enable). Normalize it now.
+                        if (!on && settings.defaultSaveLocation.scope === "org") {
+                          p.defaultSaveLocation = { scope: "personal", folderId: null };
+                        }
+                        patch(p);
+                      }}
+                    />
+                    {t("settings.account.sync.title")}
+                  </label>
+                  <p className="text-[11px] text-muted-foreground">{t("settings.account.sync.desc")}</p>
+                </div>
+              </Field>
+            )}
+            {cloudAuth && (
+              <Field label={t("settings.account.defaultSave.title")}>
+                <div className="flex max-w-md flex-col gap-2">
+                  <DefaultSavePicker
+                    value={settings.defaultSaveLocation}
+                    syncOn={settings.syncEnabled}
+                    onChange={(loc) => patch({ defaultSaveLocation: loc })}
+                  />
+                  <p className="text-[11px] text-muted-foreground">{t("settings.account.defaultSave.desc")}</p>
+                  {!settings.syncEnabled && (
+                    <p className="text-[11px] text-amber-500">{t("settings.account.defaultSave.syncOffHint")}</p>
+                  )}
+                </div>
+              </Field>
+            )}
             {cloudAuth && (
               <Field label={t("settings.account.org.title")}>
                 <OrgPanel />
@@ -1265,10 +1310,22 @@ function DiarizeModelField() {
  * pending invitations. Talks to the cloud's better-auth `organization` plugin via
  * ../lib/cloud/orgs. Rendered only when signed in (its parent gates on `cloudAuth`).
  */
+/** Button label while an action is in flight: a spinner + the text (no "…"). */
+function Spinning({ label }: { label: string }) {
+  return (
+    <span className="flex items-center gap-1">
+      <Loader2 className="size-3 animate-spin" />
+      {label}
+    </span>
+  );
+}
+
 function OrgPanel() {
   const { t } = useI18n();
   const cloudAuth = useStore((s) => s.cloudAuth);
   const [orgs, setOrgs] = useState<CloudOrg[]>([]);
+  // Roster per org id (who's a member), shown under each org.
+  const [members, setMembers] = useState<Record<string, CloudOrgMember[]>>({});
   const [invitations, setInvitations] = useState<CloudInvitation[]>([]);
   // Per-org invite inputs + pending flags, keyed by org id.
   const [inviteEmails, setInviteEmails] = useState<Record<string, string>>({});
@@ -1289,6 +1346,16 @@ function OrgPanel() {
       const [myOrgs, myInvites] = await Promise.all([listMyOrgs(), listMyInvitations()]);
       setOrgs(myOrgs);
       setInvitations(myInvites);
+      // Fetch each org's roster in parallel; a single org failing shouldn't blank
+      // the others, so swallow per-org errors and just omit that roster.
+      const rosters = await Promise.all(
+        myOrgs.map((o) =>
+          listOrgMembers(o.id)
+            .then((m) => [o.id, m] as const)
+            .catch(() => [o.id, [] as CloudOrgMember[]] as const),
+        ),
+      );
+      setMembers(Object.fromEntries(rosters));
     } catch {
       toast.error(t("settings.account.org.loadFailed"));
     }
@@ -1309,10 +1376,32 @@ function OrgPanel() {
       setNewOrgName("");
       await reload();
     } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      toast.error(t("settings.account.org.createFailed", { error }));
+      toast.error(t("settings.account.org.createFailed", { error: cloudErrMsg(e) }));
     } finally {
       setCreating(false);
+    }
+  }
+
+  // Turn a cloud failure into a human, localized reason. better-auth returns a
+  // machine `code` on a 4xx; we translate the ones a user can actually act on, and
+  // fall back to the backend's own message for anything unmapped (still far better
+  // than a bare "→ 400").
+  function cloudErrMsg(e: unknown): string {
+    const code = e instanceof CloudError ? e.code : null;
+    switch (code) {
+      case "USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION":
+        return t("settings.account.org.errAlreadyMember");
+      case "USER_IS_ALREADY_INVITED_TO_THIS_ORGANIZATION":
+        return t("settings.account.org.errAlreadyInvited");
+      case "YOU_ARE_NOT_ALLOWED_TO_INVITE_USERS_TO_THIS_ORGANIZATION":
+        return t("settings.account.org.errNoInvitePermission");
+      case "MEMBER_NOT_FOUND":
+      case "ORGANIZATION_NOT_FOUND":
+        return t("settings.account.org.errOrgGone");
+      case "INVALID_EMAIL":
+        return t("settings.account.org.errInvalidEmail");
+      default:
+        return e instanceof Error ? e.message : String(e);
     }
   }
 
@@ -1325,8 +1414,7 @@ function OrgPanel() {
       toast.success(t("settings.account.org.invited", { email }));
       setInviteEmails((m) => ({ ...m, [orgId]: "" }));
     } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      toast.error(t("settings.account.org.inviteFailed", { error }));
+      toast.error(t("settings.account.org.inviteFailed", { error: cloudErrMsg(e) }));
     } finally {
       setInviting((m) => ({ ...m, [orgId]: false }));
     }
@@ -1341,8 +1429,7 @@ function OrgPanel() {
       toast.success(t("settings.account.org.joined", { org: name }));
       await reload();
     } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      toast.error(t("settings.account.org.acceptFailed", { error }));
+      toast.error(t("settings.account.org.acceptFailed", { error: cloudErrMsg(e) }));
     } finally {
       setAccepting((m) => ({ ...m, [invitation.id]: false }));
     }
@@ -1366,8 +1453,7 @@ function OrgPanel() {
       setDeleteConfirm((m) => drop(m) as Record<string, string>);
       await reload();
     } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      toast.error(t("settings.account.org.deleteFailed", { error }));
+      toast.error(t("settings.account.org.deleteFailed", { error: cloudErrMsg(e) }));
     } finally {
       setDeleting((m) => ({ ...m, [org.id]: false }));
     }
@@ -1383,23 +1469,62 @@ function OrgPanel() {
           {orgs.map((org) => (
             <div key={org.id} className="flex flex-col gap-1.5 rounded-lg border p-2.5">
               <div className="truncate text-sm font-medium">{org.name}</div>
-              <div className="flex items-center gap-2">
-                <Input
-                  className="h-7 text-xs"
-                  placeholder={t("settings.account.org.invitePlaceholder")}
-                  value={inviteEmails[org.id] ?? ""}
-                  onChange={(e) => setInviteEmails((m) => ({ ...m, [org.id]: e.target.value }))}
-                />
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="h-7 shrink-0 px-2 text-[11px]"
-                  disabled={inviting[org.id] || !(inviteEmails[org.id] ?? "").trim()}
-                  onClick={() => void invite(org.id)}
-                >
-                  {inviting[org.id] ? t("settings.account.org.inviting") : t("settings.account.org.invite")}
-                </Button>
-              </div>
+
+              {/* Roster — who's in this org (name/email, role, "you"). */}
+              {(members[org.id]?.length ?? 0) > 0 && (
+                <ul className="flex flex-col gap-1">
+                  {members[org.id].map((mem) => (
+                    <li key={mem.id} className="flex items-center gap-2">
+                      {mem.image ? (
+                        <img src={mem.image} alt="" className="size-5 shrink-0 rounded-full" />
+                      ) : (
+                        <div className="grid size-5 shrink-0 place-items-center rounded-full bg-secondary text-[9px] font-medium">
+                          {(mem.name || mem.email || "?").slice(0, 1).toUpperCase()}
+                        </div>
+                      )}
+                      <span className="min-w-0 flex-1 truncate text-[11px]">
+                        {mem.name || mem.email}
+                        {mem.userId === cloudAuth?.user.id && (
+                          <span className="text-muted-foreground"> {t("settings.account.org.you")}</span>
+                        )}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-muted-foreground">
+                        {mem.role === "owner"
+                          ? t("settings.account.org.roleOwner")
+                          : mem.role === "admin"
+                            ? t("settings.account.org.roleAdmin")
+                            : t("settings.account.org.roleMember")}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* Inviting is owner/admin-only — plain members can't (the server
+                  403s), so don't show them an invite box they can't use. */}
+              {(org.role === "owner" || org.role === "admin") && (
+                <div className="flex items-center gap-2">
+                  <Input
+                    className="h-7 text-xs"
+                    placeholder={t("settings.account.org.invitePlaceholder")}
+                    value={inviteEmails[org.id] ?? ""}
+                    onChange={(e) => setInviteEmails((m) => ({ ...m, [org.id]: e.target.value }))}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="h-7 shrink-0 px-2 text-[11px]"
+                    disabled={inviting[org.id] || !(inviteEmails[org.id] ?? "").trim()}
+                    onClick={() => void invite(org.id)}
+                  >
+                    {inviting[org.id] ? (
+                      <Spinning label={t("settings.account.org.inviting")} />
+                    ) : (
+                      t("settings.account.org.invite")
+                    )}
+                  </Button>
+                </div>
+              )}
 
               {/* Danger zone — owner-only. Only the org's owner can delete it (the
                   server re-checks), so non-owners never see the affordance at all.
@@ -1441,9 +1566,11 @@ function OrgPanel() {
                         }
                         onClick={() => void remove(org)}
                       >
-                        {deleting[org.id]
-                          ? t("settings.account.org.deleting")
-                          : t("settings.account.org.deleteConfirm")}
+                        {deleting[org.id] ? (
+                          <Spinning label={t("settings.account.org.deleting")} />
+                        ) : (
+                          t("settings.account.org.deleteConfirm")
+                        )}
                       </Button>
                       <Button
                         variant="ghost"
@@ -1462,7 +1589,9 @@ function OrgPanel() {
                 ))}
             </div>
           ))}
-          <p className="text-[11px] text-muted-foreground">{t("settings.account.org.inviteHint")}</p>
+          {orgs.some((o) => o.role === "owner" || o.role === "admin") && (
+            <p className="text-[11px] text-muted-foreground">{t("settings.account.org.inviteHint")}</p>
+          )}
         </div>
       )}
 
@@ -1481,7 +1610,11 @@ function OrgPanel() {
           disabled={creating || !newOrgName.trim()}
           onClick={() => void create()}
         >
-          {creating ? t("settings.account.org.creating") : t("settings.account.org.create")}
+          {creating ? (
+            <Spinning label={t("settings.account.org.creating")} />
+          ) : (
+            t("settings.account.org.create")
+          )}
         </Button>
       </div>
 
@@ -1501,13 +1634,130 @@ function OrgPanel() {
                 disabled={accepting[inv.id]}
                 onClick={() => void accept(inv)}
               >
-                {accepting[inv.id] ? t("settings.account.org.accepting") : t("settings.account.org.accept")}
+                {accepting[inv.id] ? (
+                  <Spinning label={t("settings.account.org.accepting")} />
+                ) : (
+                  t("settings.account.org.accept")
+                )}
               </Button>
             </div>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Default-save-location picker: a native select grouping the personal root + folders
+ * and — when cloud sync is on — each org's root + folders. Loads the folder lists
+ * itself so the Settings window stays self-contained. Choosing an org folder makes
+ * finished meetings auto-share into that team space (see history.ts resolveDefaultSave).
+ */
+function DefaultSavePicker({
+  value,
+  syncOn,
+  onChange,
+}: {
+  value: DefaultSaveLocation;
+  syncOn: boolean;
+  onChange: (loc: DefaultSaveLocation) => void;
+}) {
+  const { t } = useI18n();
+  const [personal, setPersonal] = useState<LocalFolder[]>(() => listLocalFolders());
+  const [orgs, setOrgs] = useState<CloudOrg[]>([]);
+  const [orgFolders, setOrgFolders] = useState<Record<string, CloudFolder[]>>({});
+
+  // Personal folders: prefer the cloud list when sync is on (cross-device truth).
+  // Re-run when the toggle flips so enabling sync in an already-open window refreshes.
+  useEffect(() => {
+    void (async () => {
+      if (!syncOn || !cloudSyncEnabled()) {
+        setPersonal(listLocalFolders());
+        return;
+      }
+      try {
+        const cloud = await listCloudFolders();
+        setPersonal(cloud.map((f) => ({ id: f.id, name: f.name, createdAt: f.createdAt })));
+      } catch {
+        setPersonal(listLocalFolders());
+      }
+    })();
+  }, [syncOn]);
+
+  // Reflect personal-folder create/rename/delete done in the History window live.
+  useEffect(() => {
+    const un = listenForFoldersUpdated(() => setPersonal(listLocalFolders()));
+    return () => void un.then((fn) => fn());
+  }, []);
+
+  // Org folders only matter for an org default, which needs sync on.
+  useEffect(() => {
+    if (!syncOn) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const mine = await listMyOrgs();
+        if (!alive) return;
+        setOrgs(mine);
+        const pairs = await Promise.all(
+          mine.map(async (o) => [o.id, await listOrgFolders(o.id).catch(() => [])] as const),
+        );
+        if (alive) setOrgFolders(Object.fromEntries(pairs));
+      } catch {
+        /* leave orgs empty */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [syncOn]);
+
+  const serialize = (loc: DefaultSaveLocation): string =>
+    loc.scope === "personal"
+      ? loc.folderId
+        ? `personal:${loc.folderId}`
+        : "personal"
+      : loc.folderId
+        ? `org:${loc.orgId}:${loc.folderId}`
+        : `org:${loc.orgId}`;
+
+  const parse = (v: string): DefaultSaveLocation => {
+    if (v === "personal") return { scope: "personal", folderId: null };
+    if (v.startsWith("personal:")) return { scope: "personal", folderId: v.slice("personal:".length) };
+    const rest = v.slice("org:".length);
+    const idx = rest.indexOf(":");
+    return idx === -1
+      ? { scope: "org", orgId: rest, folderId: null }
+      : { scope: "org", orgId: rest.slice(0, idx), folderId: rest.slice(idx + 1) };
+  };
+
+  return (
+    <select
+      value={serialize(value)}
+      onChange={(e) => onChange(parse(e.target.value))}
+      className="h-9 max-w-md rounded-md border bg-background px-2 text-sm outline-none focus:border-primary"
+    >
+      <optgroup label={t("settings.account.defaultSave.personal")}>
+        <option value="personal">{t("settings.account.defaultSave.root")}</option>
+        {personal.map((f) => (
+          <option key={f.id} value={`personal:${f.id}`}>
+            {f.name}
+          </option>
+        ))}
+      </optgroup>
+      {syncOn &&
+        orgs.map((o) => (
+          <optgroup key={o.id} label={o.name}>
+            <option value={`org:${o.id}`}>{t("settings.account.defaultSave.root")}</option>
+            {(orgFolders[o.id] ?? []).map((f) => (
+              <option key={f.id} value={`org:${o.id}:${f.id}`}>
+                {f.name}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+    </select>
   );
 }
 

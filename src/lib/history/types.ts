@@ -33,6 +33,9 @@ export interface HistoryEntry {
   meetingFloor: string;
   /** Recording file name within the entry folder ("audio.ogg"), or null if none. */
   audio: string | null;
+  /** Which personal folder this entry lives in; null/absent = the personal root
+   *  (個人). A folderId not in the live personal folder list renders at the root. */
+  folderId?: string | null;
 }
 
 /** The card shown in the history grid — small, so listing stays cheap. */
@@ -52,4 +55,6 @@ export interface HistoryEntrySummary {
   hasAudio: boolean;
   /** First spoken line of the transcript, for a preview. */
   snippet: string;
+  /** Personal folder this entry lives in; null/absent = the personal root. */
+  folderId?: string | null;
 }
