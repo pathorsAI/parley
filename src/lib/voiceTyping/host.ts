@@ -14,6 +14,7 @@ import { useStore } from "../store";
 import { sttApiKey } from "../transcription/providers";
 import { log } from "../log";
 import { showOverlay, hideOverlay, prewarmOverlay } from "./overlay";
+import { appendVoiceEntry } from "./history";
 
 // After the key is released we keep the session open and wait for the STT to
 // flush its final tokens — finalizing only once the text has been quiet for
@@ -138,6 +139,7 @@ async function finalize() {
     } catch (e) {
       log.error("voice-typing: copy/paste failed", { error: String(e) });
     }
+    void appendVoiceEntry(text);
   }
   await emit("voicetyping://session", { phase: "done", message: text ? "ok" : "empty" });
   scheduleHide();

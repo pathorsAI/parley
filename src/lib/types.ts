@@ -225,6 +225,9 @@ export interface Settings {
   layout: AppLayout;
   /** False until the first-run onboarding wizard is completed or skipped. */
   onboarded: boolean;
+  /** Current onboarding wizard step, persisted so granting a permission (which
+   *  often needs an app restart) resumes where you left off instead of step 1. */
+  onboardingStep: number;
   /** Your name — helps the AI recognize when you're speaking or addressed. */
   userName: string;
   /** Your role / title — tailors the assistance to your seat at the table. */
