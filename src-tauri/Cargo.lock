@@ -3299,7 +3299,7 @@ dependencies = [
 
 [[package]]
 name = "parley"
-version = "0.8.2"
+version = "0.8.4"
 dependencies = [
  "anyhow",
  "audiopus",
