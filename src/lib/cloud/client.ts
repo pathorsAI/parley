@@ -123,6 +123,22 @@ export function isAuthError(e: unknown): boolean {
 }
 
 /**
+ * A non-2xx cloud response. Carries the backend's own `code`/`message` (better-auth
+ * returns `{ code, message }`) and the HTTP `status`, so callers can map a specific
+ * failure to a friendly, localized toast instead of showing a bare "→ 400".
+ */
+export class CloudError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | null,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "CloudError";
+  }
+}
+
+/**
  * Bearer-authenticated fetch against the cloud; throws on a non-2xx response. A
  * 401 means the SESSION is dead (missing/expired token) → clear the stored auth so
  * the whole UI reflects signed-out consistently. A 403 is RESOURCE-level ("signed
@@ -141,6 +157,23 @@ export async function cloudFetch(path: string, init?: RequestInit): Promise<Resp
     useStore.getState().setCloudAuth(null);
     throw new Error(`cloud auth ${res.status}`);
   }
-  if (!res.ok) throw new Error(`cloud ${init?.method ?? "GET"} ${path} → ${res.status}`);
+  if (!res.ok) {
+    // Pull the backend's own error (better-auth: `{ code, message }`) so the caller
+    // can show why it failed (e.g. "already a member") instead of an opaque status.
+    let code: string | null = null;
+    let message = "";
+    try {
+      const body = (await res.clone().json()) as { code?: string; message?: string };
+      code = body.code ?? null;
+      message = body.message ?? "";
+    } catch {
+      /* non-JSON body — fall back to the status line below */
+    }
+    throw new CloudError(
+      message || `cloud ${init?.method ?? "GET"} ${path} → ${res.status}`,
+      code,
+      res.status,
+    );
+  }
   return res;
 }
