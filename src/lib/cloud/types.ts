@@ -16,6 +16,26 @@ export interface CloudAuth {
   activeOrganizationId: string | null;
 }
 
+/**
+ * The signed-in user's hosted-plan usage for the current billing period, as
+ * returned by GET {CLOUD_URL}/me/usage. STT fields are reserved for Phase 2; the
+ * LLM token meter drives the "parley" provider's quota bar in Settings.
+ */
+export interface HostedQuota {
+  /** Plan id, e.g. "free". */
+  plan: string;
+  /** Speech-to-text seconds consumed this period (Phase 2). */
+  sttSecondsUsed: number;
+  /** Speech-to-text seconds allowed this period (Phase 2). */
+  sttSecondsLimit: number;
+  /** LLM tokens (prompt + completion) consumed this period. */
+  llmTokensUsed: number;
+  /** LLM tokens allowed this period. */
+  llmTokensLimit: number;
+  /** Epoch ms when the period resets and counters roll back to zero. */
+  periodResetTs: number;
+}
+
 /** A Better Auth organization the signed-in user belongs to. */
 export interface CloudOrg {
   id: string;

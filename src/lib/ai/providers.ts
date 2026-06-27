@@ -37,7 +37,8 @@ export interface ProviderInfo {
     | "qwenApiKey"
     | "kimiApiKey"
     | "ollamaApiKey"
-    | "openrouterApiKey";
+    | "openrouterApiKey"
+    | "parleyApiKey";
   keyPlaceholder: string;
   /** False for providers that run locally without an API key (Ollama). */
   requiresKey?: boolean;
@@ -168,6 +169,25 @@ export const PROVIDERS: ProviderInfo[] = [
       "openai/gpt-oss-120b",
     ],
     defaults: { ask: "anthropic/claude-sonnet-4.6", eval: "openai/gpt-5.5" },
+  },
+  {
+    id: "parley",
+    label: "Parley",
+    note: "provider.note.parley",
+    tag: { label: "provider.tag.hosted", tone: "value" },
+    // No dedicated brand icon yet; reuse Groq's (the hosted backend is Groq).
+    icon: "/providers/groq.png",
+    kind: "openai-compatible",
+    // Literal so this registry stays dependency-free; provider.ts overrides the
+    // baseURL with the live CLOUD_URL at model-build time.
+    baseURL: "https://api.parley.tw/v1",
+    apiKeyField: "parleyApiKey",
+    keyPlaceholder: "",
+    requiresKey: false,
+    // Mirror Groq (the hosted backend) — it accepts the OpenAI json_schema shape.
+    supportsStructuredOutputs: true,
+    models: ["parley-fast", "parley-smart"],
+    defaults: { ask: "parley-smart", eval: "parley-fast" },
   },
 ];
 
