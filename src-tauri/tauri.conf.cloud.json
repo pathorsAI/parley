@@ -3,7 +3,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://parley-cloud.pathors.workers.dev/download/latest.json"
+        "https://api.parley.tw/download/latest.json"
       ]
     }
   }

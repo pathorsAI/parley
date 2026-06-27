@@ -1,6 +1,7 @@
 import { isTauri } from "../tauriEvents";
 import { useStore } from "../store";
 import { log } from "../log";
+import { CLOUD_ENABLED } from "../flags";
 import type { CloudUser } from "./types";
 
 /**
@@ -10,7 +11,7 @@ import type { CloudUser } from "./types";
  */
 export const CLOUD_URL =
   (import.meta.env.VITE_PARLEY_CLOUD_URL as string | undefined)?.replace(/\/$/, "") ||
-  "https://parley-cloud.pathors.workers.dev";
+  "https://api.parley.tw";
 
 type Me = { user: CloudUser | null; activeOrganizationId: string | null };
 
@@ -116,10 +117,40 @@ export function cloudToken(): string | null {
   return useStore.getState().cloudAuth?.token ?? null;
 }
 
+/**
+ * Whether automatic PERSONAL cloud sync is active: the cloud edition, signed in,
+ * AND the user's sync toggle is on. This is the single gate every automatic
+ * personal-sync path funnels through — the save-time push (history.ts pushToCloud),
+ * the background sweep, and the merged-history cloud read. Org features are
+ * intentionally NOT gated on it: an org is inherently a cloud space, so sharing /
+ * org listing stay available (gated only on a valid session) even with sync off.
+ */
+export function syncEnabled(): boolean {
+  if (!CLOUD_ENABLED) return false;
+  const s = useStore.getState();
+  return !!s.cloudAuth && s.settings.syncEnabled;
+}
+
 /** A thrown cloud-auth failure (the session was cleared) — lets sweeps short-circuit
  *  instead of retrying every entry against a dead session. */
 export function isAuthError(e: unknown): boolean {
   return e instanceof Error && /\bauth\b/.test(e.message);
+}
+
+/**
+ * A non-2xx cloud response. Carries the backend's own `code`/`message` (better-auth
+ * returns `{ code, message }`) and the HTTP `status`, so callers can map a specific
+ * failure to a friendly, localized toast instead of showing a bare "→ 400".
+ */
+export class CloudError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | null,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "CloudError";
+  }
 }
 
 /**
@@ -141,6 +172,23 @@ export async function cloudFetch(path: string, init?: RequestInit): Promise<Resp
     useStore.getState().setCloudAuth(null);
     throw new Error(`cloud auth ${res.status}`);
   }
-  if (!res.ok) throw new Error(`cloud ${init?.method ?? "GET"} ${path} → ${res.status}`);
+  if (!res.ok) {
+    // Pull the backend's own error (better-auth: `{ code, message }`) so the caller
+    // can show why it failed (e.g. "already a member") instead of an opaque status.
+    let code: string | null = null;
+    let message = "";
+    try {
+      const body = (await res.clone().json()) as { code?: string; message?: string };
+      code = body.code ?? null;
+      message = body.message ?? "";
+    } catch {
+      /* non-JSON body — fall back to the status line below */
+    }
+    throw new CloudError(
+      message || `cloud ${init?.method ?? "GET"} ${path} → ${res.status}`,
+      code,
+      res.status,
+    );
+  }
   return res;
 }
