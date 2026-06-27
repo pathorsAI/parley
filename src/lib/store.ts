@@ -91,6 +91,10 @@ const DEFAULT_SETTINGS: Settings = {
   // Pace + pauses are free (timing/DSP) so default on; pitch + tone (LLM cost)
   // are opt-in. See DeliveryToggles.
   delivery: { pace: true, pitch: false, pauses: true, tone: false },
+  // Signed-in accounts sync by default (prior behavior); the toggle lets a user
+  // keep this device local-only. Finished meetings save to the personal root.
+  syncEnabled: true,
+  defaultSaveLocation: { scope: "personal", folderId: null },
 };
 
 /** Whether the app is capturing a live meeting or analyzing an uploaded one. */
@@ -561,7 +565,12 @@ export const useStore = create<ParleyState>()(
   setAutoAnalyze: (on) => set({ autoAnalyze: on }),
   setAutoAnalyzeSec: (sec) => set({ autoAnalyzeSec: Math.max(20, sec || 45) }),
 
-  setProsody: (m) => set({ prosody: m }),
+  // Prosody is a live-only signal. Ignore non-null updates outside a recording so a
+  // leaked/duplicate listener (e.g. a dev StrictMode re-subscribe, or a backend
+  // frame slipping through stop_meeting's teardown grace) can't move the gauges
+  // after stop. A null reset always applies.
+  setProsody: (m) =>
+    set((state) => (m && state.meetingStatus !== "recording" ? {} : { prosody: m })),
   pushDeliveryNudge: (n) => set({ deliveryNudge: n }),
   clearDeliveryNudge: () => set({ deliveryNudge: null }),
 
@@ -642,6 +651,10 @@ export const useStore = create<ParleyState>()(
 
   upsertSegment: (segment) =>
     set((state) => {
+      // Live transcript events must never mutate a loaded REPLAY recording — drop a
+      // stray live event (e.g. a leaked listener) while viewing a saved session.
+      // (Live finalize after stop is appMode "live"/"stopped", so it's unaffected.)
+      if (state.appMode === "replay") return {};
       const idx = state.segments.findIndex((s) => s.id === segment.id);
       if (idx === -1) {
         return { segments: [...state.segments, segment] };

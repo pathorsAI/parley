@@ -268,6 +268,26 @@ export interface Settings {
   todoTemplates: TodoTemplate[];
   /** Per-metric opt-in for live delivery coaching (see DeliveryToggles). */
   delivery: DeliveryToggles;
+  /** Whether to sync personal recordings + folders to Parley Cloud while signed in.
+   *  Off → this device keeps everything local (no automatic push/pull); explicit
+   *  org sharing still works. Default on (preserves the prior signed-in behavior). */
+  syncEnabled: boolean;
+  /** Where a finished meeting is saved by default. */
+  defaultSaveLocation: DefaultSaveLocation;
+}
+
+/**
+ * The default destination for auto-saved meetings. A personal folder (or the
+ * personal root), or an org folder — in which case the meeting is saved locally at
+ * the personal root AND auto-shared (copied) into that org folder after analysis
+ * settles, so teammates see it immediately while the user keeps their own copy.
+ */
+export interface DefaultSaveLocation {
+  scope: "personal" | "org";
+  /** Target org id when scope === "org". */
+  orgId?: string | null;
+  /** Target folder id within the scope, or null for the scope's root. */
+  folderId: string | null;
 }
 
 /**

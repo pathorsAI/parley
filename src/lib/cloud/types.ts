@@ -89,6 +89,8 @@ export interface CloudRecordingSummary {
   actionItemsCount?: number;
   hasAudio: boolean;
   snippet: string;
+  /** Folder the recording lives in, within its scope; null/absent = the scope root. */
+  folderId?: string | null;
   /** Server push time (epoch ms) — last-writer-wins ordering. */
   updatedAt: number;
 }
