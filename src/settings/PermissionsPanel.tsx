@@ -13,6 +13,20 @@ interface Perms {
 
 type Status = "granted" | "denied" | "pending";
 
+/** Map the native microphone authorization string to our tri-state status. */
+function micStatus(raw: string): Status {
+  if (raw === "authorized") return "granted";
+  if (raw === "denied") return "denied";
+  return "pending";
+}
+
+/** Text colour for each status. */
+function toneFor(status: Status): string {
+  if (status === "granted") return "text-emerald-600 dark:text-emerald-400";
+  if (status === "denied") return "text-red-600 dark:text-red-400";
+  return "text-amber-600 dark:text-amber-400";
+}
+
 /**
  * Overview of every macOS permission Parley uses, with live grant status. Each
  * row's button triggers the native permission prompt (which itself offers an
@@ -28,7 +42,7 @@ export function PermissionsPanel() {
     if (!isTauri()) return;
     try {
       const p = await invoke<Perms>("check_permissions");
-      setMicrophone(p.microphone === "authorized" ? "granted" : p.microphone === "denied" ? "denied" : "pending");
+      setMicrophone(micStatus(p.microphone));
       setScreen(p.screenRecording ? "granted" : "pending");
       setAccessibility((await invoke<boolean>("accessibility_status", { prompt: false })) ? "granted" : "pending");
     } catch {
@@ -36,7 +50,7 @@ export function PermissionsPanel() {
     }
   }
   useEffect(() => {
-    void refresh();
+    refresh().catch(() => {});
   }, []);
 
   // The native request prompts (mic / accessibility / screen) only show once per
@@ -45,11 +59,11 @@ export function PermissionsPanel() {
   // Privacy pane directly — otherwise repeat clicks would do nothing.
   const requested = useRef<Set<string>>(new Set());
   async function grant(key: string, pane: string, request: () => Promise<void>) {
-    if (!requested.current.has(key)) {
+    if (requested.current.has(key)) {
+      await invoke("open_privacy_settings", { pane }).catch(() => {});
+    } else {
       requested.current.add(key);
       await request().catch(() => {});
-    } else {
-      await invoke("open_privacy_settings", { pane }).catch(() => {});
     }
     await refresh();
   }
@@ -60,7 +74,14 @@ export function PermissionsPanel() {
     <div className="flex max-w-xl flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] text-muted-foreground">{t("settings.permissions.subtitle")}</p>
-        <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-[11px]" onClick={() => void refresh()}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1.5 px-2 text-[11px]"
+          onClick={() => {
+            refresh().catch(() => {});
+          }}
+        >
           <RefreshCw className="size-3" />
           {t("settings.permissions.refresh")}
         </Button>
@@ -98,20 +119,15 @@ function Row({
   desc,
   status,
   onGrant,
-}: {
+}: Readonly<{
   label: string;
   desc: string;
   status: Status;
   onGrant: () => void;
-}) {
+}>) {
   const { t } = useI18n();
   const granted = status === "granted";
-  const tone =
-    status === "granted"
-      ? "text-emerald-600 dark:text-emerald-400"
-      : status === "denied"
-        ? "text-red-600 dark:text-red-400"
-        : "text-amber-600 dark:text-amber-400";
+  const tone = toneFor(status);
 
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border p-3">

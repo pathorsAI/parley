@@ -12,13 +12,13 @@ import {
 } from "../lib/voiceTyping/history";
 
 /** Past voice-typing dictations: search, copy, delete one, clear all. */
-export function VoiceTypingHistory({ locale }: { locale: string }) {
+export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
   const { t } = useI18n();
   const [entries, setEntries] = useState<VoiceEntry[] | null>(null);
   const [query, setQuery] = useState("");
 
   const refresh = useCallback(() => {
-    void listVoiceEntries().then(setEntries);
+    listVoiceEntries().then(setEntries).catch(() => {});
   }, []);
   useEffect(refresh, [refresh]);
 
@@ -52,6 +52,64 @@ export function VoiceTypingHistory({ locale }: { locale: string }) {
     refresh();
   }
 
+  let content;
+  if (filtered === null) {
+    content = (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        {t("history.loading")}
+      </div>
+    );
+  } else if (filtered.length === 0) {
+    content = (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+        <Mic className="size-8 opacity-40" />
+        <p className="text-sm">{t("history.voiceTyping.empty")}</p>
+        <p className="max-w-xs text-xs opacity-70">{t("history.voiceTyping.emptyHint")}</p>
+      </div>
+    );
+  } else {
+    content = (
+      <div className="flex flex-col gap-2">
+        {filtered.map((e) => (
+          <div key={e.id} className="group/row flex items-start gap-3 rounded-lg border p-3">
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <p className="select-text whitespace-pre-wrap break-words text-sm leading-snug">
+                {e.text}
+              </p>
+              <span className="text-[11px] text-muted-foreground">{fmt.format(e.ts)}</span>
+            </div>
+            <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/row:opacity-100">
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-7"
+                aria-label={t("history.voiceTyping.copy")}
+                title={t("history.voiceTyping.copy")}
+                onClick={() => {
+                  copy(e.text).catch(() => {});
+                }}
+              >
+                <Copy className="size-3.5" />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-7 text-muted-foreground hover:text-destructive"
+                aria-label={t("history.voiceTyping.delete")}
+                title={t("history.voiceTyping.delete")}
+                onClick={() => {
+                  remove(e.id).catch(() => {});
+                }}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <>
       <header className="flex shrink-0 items-center gap-2 border-b px-4 py-3">
@@ -69,7 +127,9 @@ export function VoiceTypingHistory({ locale }: { locale: string }) {
             size="sm"
             variant="ghost"
             className="ml-auto h-8 gap-1.5 px-2 text-[11px] text-muted-foreground"
-            onClick={() => void clearAll()}
+            onClick={() => {
+              clearAll().catch(() => {});
+            }}
           >
             <Trash2 className="size-3.5" />
             {t("history.voiceTyping.clearAll")}
@@ -90,55 +150,7 @@ export function VoiceTypingHistory({ locale }: { locale: string }) {
           </div>
         )}
 
-        {filtered === null ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            {t("history.loading")}
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
-            <Mic className="size-8 opacity-40" />
-            <p className="text-sm">{t("history.voiceTyping.empty")}</p>
-            <p className="max-w-xs text-xs opacity-70">{t("history.voiceTyping.emptyHint")}</p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {filtered.map((e) => (
-              <div
-                key={e.id}
-                className="group/row flex items-start gap-3 rounded-lg border p-3"
-              >
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <p className="select-text whitespace-pre-wrap break-words text-sm leading-snug">
-                    {e.text}
-                  </p>
-                  <span className="text-[11px] text-muted-foreground">{fmt.format(e.ts)}</span>
-                </div>
-                <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/row:opacity-100">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="size-7"
-                    aria-label={t("history.voiceTyping.copy")}
-                    title={t("history.voiceTyping.copy")}
-                    onClick={() => void copy(e.text)}
-                  >
-                    <Copy className="size-3.5" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="size-7 text-muted-foreground hover:text-destructive"
-                    aria-label={t("history.voiceTyping.delete")}
-                    title={t("history.voiceTyping.delete")}
-                    onClick={() => void remove(e.id)}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        {content}
       </div>
     </>
   );

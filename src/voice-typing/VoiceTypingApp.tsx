@@ -29,8 +29,13 @@ type Phase = "listening" | "finalizing" | "done";
 
 /** Numeric index from a "voice-typing-{n}" segment id (tail sorts last). */
 function idIndex(id: string): number {
-  const m = id.match(/-(\d+)$/);
-  return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
+  const m = /-(\d+)$/.exec(id);
+  return m ? Number.parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
+}
+
+/** Decay the waveform bars toward the floor (extracted to keep nesting shallow). */
+function decayBars(bars: number[]): number[] {
+  return bars.map((b) => Math.max(BAR_FLOOR, b * 0.8));
 }
 
 /**
@@ -45,10 +50,14 @@ export function VoiceTypingApp() {
   const [text, setText] = useState("");
   const [phase, setPhase] = useState<Phase>("listening");
   const [error, setError] = useState<string | null>(null);
-  const [bars, setBars] = useState<number[]>(() => Array(BAR_COUNT).fill(BAR_FLOOR));
+  const [bars, setBars] = useState<number[]>(() =>
+    Array.from({ length: BAR_COUNT }, () => BAR_FLOOR),
+  );
 
   const finalsRef = useRef<Map<string, string>>(new Map());
   const interimRef = useRef("");
+  // Stable per-position keys for the waveform bars (values shift, positions don't).
+  const barKeys = useRef(Array.from({ length: BAR_COUNT }, (_, i) => `bar-${i}`));
 
   // This window must be see-through; the shared stylesheet paints an opaque
   // app background, so strip it for the overlay only.
@@ -75,13 +84,13 @@ export function VoiceTypingApp() {
     const raw = ordered.join("") + interimRef.current;
     const converted = (await toTraditional(raw)).trim();
     setText(converted);
-    void emit("voicetyping://text", { text: converted });
+    emit("voicetyping://text", { text: converted }).catch(() => {});
   };
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
 
-    void listen<SegPayload>("transcript://segment", (e) => {
+    listen<SegPayload>("transcript://segment", (e) => {
       const p = e.payload;
       if (p.source !== "voice-typing") return;
       if (p.is_final) {
@@ -90,10 +99,12 @@ export function VoiceTypingApp() {
       } else {
         interimRef.current = p.text;
       }
-      void publish.current();
-    }).then((u) => unsubs.push(u));
+      publish.current().catch(() => {});
+    })
+      .then((u) => unsubs.push(u))
+      .catch(() => {});
 
-    void listen<LevelPayload>("audio://level", (e) => {
+    listen<LevelPayload>("audio://level", (e) => {
       if (e.payload.source !== "voice-typing") return;
       const v = Math.min(1, Math.sqrt(Math.max(0, e.payload.level)));
       setBars((prev) => {
@@ -101,9 +112,11 @@ export function VoiceTypingApp() {
         next.push(BAR_FLOOR + v * (1 - BAR_FLOOR));
         return next;
       });
-    }).then((u) => unsubs.push(u));
+    })
+      .then((u) => unsubs.push(u))
+      .catch(() => {});
 
-    void listen<SessionPayload>("voicetyping://session", (e) => {
+    listen<SessionPayload>("voicetyping://session", (e) => {
       const { phase: p, message } = e.payload;
       if (p === "start") {
         finalsRef.current.clear();
@@ -119,7 +132,9 @@ export function VoiceTypingApp() {
         setError(message === "no-key" ? "noKey" : "error");
         setPhase("done");
       }
-    }).then((u) => unsubs.push(u));
+    })
+      .then((u) => unsubs.push(u))
+      .catch(() => {});
 
     return () => unsubs.forEach((u) => u());
   }, []);
@@ -127,13 +142,19 @@ export function VoiceTypingApp() {
   // Let the waveform settle back to the floor when not actively listening.
   useEffect(() => {
     if (phase === "listening") return;
-    const id = window.setInterval(() => {
-      setBars((prev) => prev.map((b) => Math.max(BAR_FLOOR, b * 0.8)));
-    }, 90);
-    return () => window.clearInterval(id);
+    const id = setInterval(() => setBars(decayBars), 90);
+    return () => clearInterval(id);
   }, [phase]);
 
-  const bubble = error ? t(error === "noKey" ? "voiceTyping.noKey" : "voiceTyping.error") : text;
+  const errorKey = error === "noKey" ? "voiceTyping.noKey" : "voiceTyping.error";
+  const bubble = error ? t(errorKey) : text;
+
+  let phaseIcon = <Mic className="size-2.5" />;
+  if (phase === "finalizing") {
+    phaseIcon = <Loader2 className="size-2.5 animate-spin" />;
+  } else if (phase === "done") {
+    phaseIcon = <Check className="size-2.5" strokeWidth={3} />;
+  }
 
   return (
     <div className="flex h-screen w-screen select-none flex-col items-center justify-end gap-2 pb-4">
@@ -157,18 +178,12 @@ export function VoiceTypingApp() {
             phase === "done" ? "bg-emerald-500" : "bg-sky-500"
           }`}
         >
-          {phase === "finalizing" ? (
-            <Loader2 className="size-2.5 animate-spin" />
-          ) : phase === "done" ? (
-            <Check className="size-2.5" strokeWidth={3} />
-          ) : (
-            <Mic className="size-2.5" />
-          )}
+          {phaseIcon}
         </div>
         <div className="flex h-4 items-center gap-[2px]">
           {bars.map((b, i) => (
             <span
-              key={i}
+              key={barKeys.current[i]}
               className="w-[2px] rounded-full bg-sky-500"
               style={{ height: `${Math.max(2, Math.round(b * 16))}px` }}
             />
