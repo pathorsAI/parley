@@ -402,77 +402,150 @@ export function HistoryApp() {
         {selection.kind === "voice-typing" ? (
           <VoiceTypingHistory locale={locale} />
         ) : (
-          <>
-        <header className="flex shrink-0 items-center gap-2 border-b px-4 py-3">
-          {isOrg ? (
-            <span className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
-              <UsersRound className="size-4 text-sky-500" />
-              {selection.name}
-            </span>
-          ) : (
-            <h1 className="text-sm font-semibold tracking-tight">{t("history.title")}</h1>
-          )}
-          {entries && (
-            <span className="text-[11px] text-muted-foreground">
-              {t("history.count", { count: entries.length })}
-            </span>
-          )}
-          {syncing && !isOrg && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
-          <Button
-            size="icon"
-            variant="ghost"
-            className="ml-auto h-8 w-8"
-            aria-label={t("history.refresh")}
-            title={t("history.refresh")}
-            onClick={() => {
+          <MeetingsContent
+            isOrg={isOrg}
+            orgName={selection.kind === "org" ? selection.name : ""}
+            entries={entries}
+            syncing={syncing}
+            locale={locale}
+            signedIn={signedIn}
+            orgs={orgs}
+            busyId={busyId}
+            downloadingId={downloadingId}
+            sharingId={sharingId}
+            onRefresh={() => {
               refresh();
               reloadOrgs();
             }}
-          >
-            <RefreshCw className="size-4" />
-          </Button>
-        </header>
-
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
-          {entries === null ? (
-            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-              {t("history.loading")}
-            </div>
-          ) : entries.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
-              <ZapOff className="size-8 opacity-40" />
-              <p className="text-sm">{isOrg ? t("history.org.empty") : t("history.empty")}</p>
-              <p className="max-w-xs text-xs opacity-70">
-                {isOrg ? t("history.org.emptyHint") : t("history.emptyHint")}
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
-              {entries.map((e) => (
-                <HistoryCard
-                  key={e.id}
-                  entry={e}
-                  locale={locale}
-                  signedIn={signedIn}
-                  isOrgContext={isOrg}
-                  orgs={orgs}
-                  busy={busyId === e.id}
-                  downloading={downloadingId === e.id}
-                  sharing={sharingId === e.id}
-                  onOpen={() => void openItem(e)}
-                  onDelete={() => void remove(e)}
-                  onRename={(title) => void rename(e.id, title)}
-                  onShare={(org) => void share(e, org)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-          </>
+            openItem={openItem}
+            remove={remove}
+            rename={rename}
+            share={share}
+          />
         )}
       </div>
       <Toaster />
     </div>
+  );
+}
+
+/** The meetings/org grid (header + cards). Kept separate from HistoryApp so the
+ *  voice-typing tab can swap in without nesting this whole tree under a ternary. */
+function MeetingsContent({
+  isOrg,
+  orgName,
+  entries,
+  syncing,
+  locale,
+  signedIn,
+  orgs,
+  busyId,
+  downloadingId,
+  sharingId,
+  onRefresh,
+  openItem,
+  remove,
+  rename,
+  share,
+}: Readonly<{
+  isOrg: boolean;
+  orgName: string;
+  entries: HistoryCardItem[] | null;
+  syncing: boolean;
+  locale: string;
+  signedIn: boolean;
+  orgs: CloudOrg[];
+  busyId: string | null;
+  downloadingId: string | null;
+  sharingId: string | null;
+  onRefresh: () => void;
+  openItem: (item: HistoryCardItem) => Promise<void>;
+  remove: (item: HistoryCardItem) => Promise<void>;
+  rename: (id: string, title: string) => Promise<void>;
+  share: (item: HistoryCardItem, org: CloudOrg) => Promise<void>;
+}>) {
+  const { t } = useI18n();
+
+  let body;
+  if (entries === null) {
+    body = (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        {t("history.loading")}
+      </div>
+    );
+  } else if (entries.length === 0) {
+    body = (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+        <ZapOff className="size-8 opacity-40" />
+        <p className="text-sm">{isOrg ? t("history.org.empty") : t("history.empty")}</p>
+        <p className="max-w-xs text-xs opacity-70">
+          {isOrg ? t("history.org.emptyHint") : t("history.emptyHint")}
+        </p>
+      </div>
+    );
+  } else {
+    body = (
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
+        {entries.map((e) => (
+          <HistoryCard
+            key={e.id}
+            entry={e}
+            locale={locale}
+            signedIn={signedIn}
+            isOrgContext={isOrg}
+            orgs={orgs}
+            busy={busyId === e.id}
+            downloading={downloadingId === e.id}
+            sharing={sharingId === e.id}
+            onOpen={() => {
+              openItem(e).catch(() => {});
+            }}
+            onDelete={() => {
+              remove(e).catch(() => {});
+            }}
+            onRename={(title) => {
+              rename(e.id, title).catch(() => {});
+            }}
+            onShare={(org) => {
+              share(e, org).catch(() => {});
+            }}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <header className="flex shrink-0 items-center gap-2 border-b px-4 py-3">
+        {isOrg ? (
+          <span className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
+            <UsersRound className="size-4 text-sky-500" />
+            {orgName}
+          </span>
+        ) : (
+          <h1 className="text-sm font-semibold tracking-tight">{t("history.title")}</h1>
+        )}
+        {entries && (
+          <span className="text-[11px] text-muted-foreground">
+            {t("history.count", { count: entries.length })}
+          </span>
+        )}
+        {syncing && !isOrg && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+        <Button
+          size="icon"
+          variant="ghost"
+          className="ml-auto h-8 w-8"
+          aria-label={t("history.refresh")}
+          title={t("history.refresh")}
+          onClick={onRefresh}
+        >
+          <RefreshCw className="size-4" />
+        </Button>
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">{body}</div>
+    </>
   );
 }
 

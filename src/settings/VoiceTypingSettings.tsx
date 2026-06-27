@@ -23,7 +23,7 @@ export function VoiceTypingSettings() {
         {t("settings.voiceTyping.hint")}
       </p>
 
-      <label className="flex items-center justify-between gap-3">
+      <label htmlFor="voice-typing-auto-paste" className="flex items-center justify-between gap-3">
         <span className="flex flex-col">
           <span className="text-sm">{t("settings.voiceTyping.autoPaste")}</span>
           <span className="text-[11px] text-muted-foreground">
@@ -31,6 +31,7 @@ export function VoiceTypingSettings() {
           </span>
         </span>
         <input
+          id="voice-typing-auto-paste"
           type="checkbox"
           className="size-4 shrink-0"
           checked={settings.voiceTypingAutoPaste}

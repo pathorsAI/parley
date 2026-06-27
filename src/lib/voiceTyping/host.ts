@@ -29,25 +29,29 @@ let lastTextAt = 0;
 let releasedAt = 0;
 let down = false;
 let busy = false;
-let settleTimer: number | undefined;
-let hideTimer: number | undefined;
+let settleTimer: ReturnType<typeof setTimeout> | undefined;
+let hideTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Wire up the host. Returns a cleanup function. No-op outside Tauri. */
 export function initVoiceTyping(): () => void {
   if (!isTauri()) return () => {};
   let unPtt: UnlistenFn = () => {};
   let unText: UnlistenFn = () => {};
-  void listen<{ down: boolean }>("voicetyping://ptt", (e) => void onPtt(e.payload.down)).then(
-    (u) => (unPtt = u),
-  );
-  void listen<{ text: string }>("voicetyping://text", (e) => {
+  listen<{ down: boolean }>("voicetyping://ptt", (e) => {
+    onPtt(e.payload.down).catch(() => {});
+  })
+    .then((u) => (unPtt = u))
+    .catch(() => {});
+  listen<{ text: string }>("voicetyping://text", (e) => {
     latestText = e.payload.text;
     lastTextAt = Date.now();
-  }).then((u) => (unText = u));
+  })
+    .then((u) => (unText = u))
+    .catch(() => {});
   // Warm the overlay window so it's listening before the first key press.
   // (The native fn listener is started by Rust at launch; the Settings panel
   // re-arms it after the user grants Accessibility.)
-  void prewarmOverlay();
+  prewarmOverlay().catch(() => {});
   return () => {
     unPtt();
     unText();
@@ -114,11 +118,11 @@ async function endSession() {
  *  or MAX_WAIT_MS after release as a hard stop. */
 function waitForSettle() {
   clearTimeout(settleTimer);
-  settleTimer = window.setTimeout(() => {
+  settleTimer = setTimeout(() => {
     const quietFor = Date.now() - lastTextAt;
     const elapsed = Date.now() - releasedAt;
     if (quietFor >= SETTLE_MS || elapsed >= MAX_WAIT_MS) {
-      void finalize();
+      finalize().catch(() => {});
     } else {
       waitForSettle();
     }
@@ -139,7 +143,7 @@ async function finalize() {
     } catch (e) {
       log.error("voice-typing: copy/paste failed", { error: String(e) });
     }
-    void appendVoiceEntry(text);
+    appendVoiceEntry(text).catch(() => {});
   }
   await emit("voicetyping://session", { phase: "done", message: text ? "ok" : "empty" });
   scheduleHide();
@@ -147,5 +151,7 @@ async function finalize() {
 
 function scheduleHide() {
   clearTimeout(hideTimer);
-  hideTimer = window.setTimeout(() => void hideOverlay(), HIDE_DELAY_MS);
+  hideTimer = setTimeout(() => {
+    hideOverlay().catch(() => {});
+  }, HIDE_DELAY_MS);
 }
