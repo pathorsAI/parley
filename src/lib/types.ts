@@ -304,6 +304,9 @@ export interface ProsodyMetrics {
   longestPauseMs: number;
   /** Whether the most recent frame was voiced. */
   speaking: boolean;
+  /** One-shot edge: a filled pause ("um/uh/呃/痾") was just detected acoustically
+   *  (STT drops these, so this mic-derived flag is the only source). */
+  filledPause: boolean;
 }
 
 /** Kind of live delivery nudge surfaced to the speaker (see DeliveryNudge). */
@@ -313,7 +316,8 @@ export type DeliveryNudgeKind =
   | "steamroll"
   | "deadair"
   | "tone"
-  | "filler";
+  | "filler"
+  | "filledpause";
 
 /** A transient, peripheral coaching nudge shown mid-call. */
 export interface DeliveryNudge {

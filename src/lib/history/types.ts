@@ -5,7 +5,7 @@
 // unchanged. `HistoryEntrySummary` is the lightweight card the history grid
 // lists (written to `summary.json` so listing never parses the full entries).
 
-import type { ActionItem, TimelineEvent, TranscriptSegment } from "../types";
+import type { ActionItem, DeliveryAssessment, TimelineEvent, TranscriptSegment } from "../types";
 
 /** Where a saved session came from: a captured live meeting or an upload. */
 export type HistorySource = "live" | "upload";
@@ -33,6 +33,13 @@ export interface HistoryEntry {
   meetingFloor: string;
   /** Recording file name within the entry folder ("audio.ogg"), or null if none. */
   audio: string | null;
+  /** Saved LLM delivery assessment (tone + fillers + summary). Optional: entries
+   *  saved before this field existed omit it → the panel recomputes once on open. */
+  deliveryAssessment?: DeliveryAssessment | null;
+  /** Acoustically measured articulation rate (syllables/sec) for the post-call
+   *  pace read. Optional for back-compat; absent/0 → the panel falls back to the
+   *  LLM's coarse pace label. */
+  speechRateHz?: number | null;
 }
 
 /** The card shown in the history grid — small, so listing stays cheap. */

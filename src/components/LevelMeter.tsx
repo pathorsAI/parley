@@ -33,7 +33,11 @@ export function LevelMeter({ source, className }: { source: string; className?: 
   }, []);
 
   const pct = Math.min(100, Math.round(Math.sqrt(level) * 100));
-  const color = pct > 75 ? "bg-amber-400" : pct > 3 ? "bg-emerald-500" : "bg-muted-foreground/30";
+  // Green = receiving you, red = clipping (too hot). Amber is deliberately NOT
+  // used here so it reads only as "delivery worth a look" in the DeliveryPanel —
+  // one consistent colour language across the meters instead of amber-means-three-
+  // things (loud vs. too-fast vs. too-flat).
+  const color = pct > 92 ? "bg-red-500" : pct > 3 ? "bg-emerald-500" : "bg-muted-foreground/30";
 
   return (
     <div className={`h-1.5 overflow-hidden rounded-full bg-muted ${className ?? "w-16"}`}>

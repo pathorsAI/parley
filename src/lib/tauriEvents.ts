@@ -50,6 +50,7 @@ interface ProsodyEventPayload {
   silence_ms: number;
   longest_pause_ms: number;
   speaking: boolean;
+  filled_pause: boolean;
 }
 
 /**
@@ -73,6 +74,7 @@ export async function listenForProsody(): Promise<UnlistenFn> {
       silenceMs: p.silence_ms,
       longestPauseMs: p.longest_pause_ms,
       speaking: p.speaking,
+      filledPause: p.filled_pause,
     });
   });
 }

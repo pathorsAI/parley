@@ -70,7 +70,26 @@ function snapshotAnalysis() {
     meetingBatna: s.meetingBatna,
     meetingTarget: s.meetingTarget,
     meetingFloor: s.meetingFloor,
+    deliveryAssessment: s.deliveryAssessment,
+    // Upload/loaded entries carry the measured pace on the replay session; a live
+    // meeting has none here — saveLiveToHistory measures the recording + sets it.
+    speechRateHz: s.replay?.speechRateHz ?? null,
   };
+}
+
+/** Measure a recording's articulation rate (syllables/sec) via Rust; null on any
+ *  failure. Lets the live-save path produce the SAME measured-pace quantity the
+ *  upload path does (both run the DSP over the stored 16 kHz audio), instead of an
+ *  LLM guess or the live windowed rate (which includes pauses). */
+async function measureRecordingRate(path: string): Promise<number | null> {
+  if (!isTauri()) return null;
+  try {
+    const hz = await invoke<number>("measure_audio_speech_rate", { path });
+    return hz > 0 ? hz : null;
+  } catch (e) {
+    log.warn("history: live speech-rate measure failed", { error: String(e) });
+    return null;
+  }
 }
 
 /** The analysis slice captured by {@link snapshotAnalysis} (passed to a deferred save). */
@@ -132,6 +151,9 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
   const s = useStore.getState();
   const createdAt = s.meetingStartedAt ?? Date.now();
   const dateLabel = new Date(createdAt).toLocaleString(localeOf());
+  // Measure the captured recording's pace with the same DSP the upload path uses,
+  // so a reopened live meeting shows a real (comparable) measured pace.
+  const speechRateHz = await measureRecordingRate(audioTempPath);
   const entry: HistoryEntry = {
     id: crypto.randomUUID(),
     title: `${translate(s.settings.language, "history.liveTitle")} · ${dateLabel}`,
@@ -140,6 +162,7 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
     durationMs,
     audio: "audio.ogg",
     ...snapshotAnalysis(),
+    speechRateHz,
   };
   await persist(entry, audioTempPath, /* compress */ false);
 }
@@ -261,6 +284,7 @@ export async function loadHistoryEntry(id: string): Promise<void> {
     createdAt: meta.createdAt,
     segments: meta.segments,
     speakerNames: meta.speakerNames,
+    speechRateHz: meta.speechRateHz ?? null,
   };
   useStore.getState().loadHistory(meta, session);
   log.info("history: entry loaded", { id, hasAudio: !!audioPath });
@@ -303,6 +327,7 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
     createdAt: meta.createdAt,
     segments: meta.segments,
     speakerNames: meta.speakerNames,
+    speechRateHz: meta.speechRateHz ?? null,
   };
   useStore.getState().loadHistory(meta, session, { readOnly: true });
   log.info("history: org entry loaded", { orgId, id, hasAudio: !!audioPath });

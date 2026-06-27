@@ -13,6 +13,7 @@ const ICON: Record<DeliveryNudgeKind, typeof Gauge> = {
   deadair: Volume2,
   tone: TriangleAlert,
   filler: MessageSquareDashed,
+  filledpause: MessageSquareDashed,
 };
 
 /**
