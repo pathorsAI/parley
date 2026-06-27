@@ -48,6 +48,11 @@ pub(crate) type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
 pub struct MeetingState {
     running: Arc<AtomicBool>,
     threads: Mutex<Vec<JoinHandle<()>>>,
+    /// Live transcription session tasks (the per-source Soniox/etc. WebSocket
+    /// loops). Held so `stop_meeting` can `abort()` them — a direct cancel that
+    /// closes the socket even if the capture→channel-close cascade stalls, instead
+    /// of letting the session linger and keep emitting transcript after stop.
+    tasks: Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>,
     /// Separate flag for the Settings "test mic" preview (no Soniox).
     test_running: Arc<AtomicBool>,
     /// Buffers the recorded audio of the in-progress live meeting (see RecorderBuf).
@@ -142,6 +147,8 @@ pub fn start_meeting(
     // Arm a fresh recording buffer for this meeting (the designated session below
     // tees its PCM into it; stop_meeting encodes + clears it).
     *state.recorder.lock().unwrap() = Some(Vec::new());
+    // Drop any (finished) session handles from a prior meeting before this one fills in.
+    state.tasks.lock().unwrap().clear();
     let recorder = state.recorder.clone();
     let model = model
         .filter(|m| !m.trim().is_empty())
@@ -171,19 +178,20 @@ pub fn start_meeting(
             let rx_me = spawn_capture(&state, mic, running.clone(), "me")
                 .map(|rx| spawn_mic_prosody_tap(&app, rx));
             let rx_them = spawn_capture(&state, sys, running.clone(), "them");
+            let mut tasks = state.tasks.lock().unwrap();
             match (rx_me, rx_them) {
                 (Some(a), Some(b)) => {
                     let (tx_mix, rx_mix) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
                     tauri::async_runtime::spawn(crate::audio::mixer::mix_streams(app.clone(), a, b, tx_mix));
                     // Record the mixed stream → the saved file holds both sides.
-                    run_metered_session(&app, provider, make_config(), "mix", rx_mix, Some(recorder));
+                    tasks.push(run_metered_session(&app, provider, make_config(), "mix", rx_mix, Some(recorder)));
                 }
                 // If one capture failed, transcribe + record whichever started.
                 (Some(a), None) => {
-                    run_metered_session(&app, provider, make_config(), "me", a, Some(recorder))
+                    tasks.push(run_metered_session(&app, provider, make_config(), "me", a, Some(recorder)));
                 }
                 (None, Some(b)) => {
-                    run_metered_session(&app, provider, make_config(), "them", b, Some(recorder))
+                    tasks.push(run_metered_session(&app, provider, make_config(), "them", b, Some(recorder)));
                 }
                 (None, None) => {}
             }
@@ -192,10 +200,12 @@ pub fn start_meeting(
             // un-aligned streams into one file would garble it); see plan note.
             if let Some(rx) = spawn_capture(&state, mic, running.clone(), "me") {
                 let rx = spawn_mic_prosody_tap(&app, rx);
-                run_metered_session(&app, provider, make_config(), "me", rx, Some(recorder));
+                let task = run_metered_session(&app, provider, make_config(), "me", rx, Some(recorder));
+                state.tasks.lock().unwrap().push(task);
             }
             if let Some(rx) = spawn_capture(&state, sys, running.clone(), "them") {
-                run_metered_session(&app, provider, make_config(), "them", rx, None);
+                let task = run_metered_session(&app, provider, make_config(), "them", rx, None);
+                state.tasks.lock().unwrap().push(task);
             }
         }
     }
@@ -207,7 +217,8 @@ pub fn start_meeting(
         };
         if let Some(rx) = spawn_capture(&state, mic, running.clone(), "me") {
             let rx = spawn_mic_prosody_tap(&app, rx);
-            run_metered_session(&app, provider, make_config(), "me", rx, Some(recorder));
+            let task = run_metered_session(&app, provider, make_config(), "me", rx, Some(recorder));
+            state.tasks.lock().unwrap().push(task);
         }
     }
 
@@ -218,6 +229,24 @@ pub fn start_meeting(
 #[tauri::command]
 pub fn stop_meeting(app: AppHandle, state: State<MeetingState>) -> Result<(), String> {
     state.running.store(false, Ordering::SeqCst);
+
+    // Direct-cancel safety net for the transcription sessions. Clearing `running`
+    // starts the graceful capture→channel-close cascade (which closes the socket
+    // and emits final usage); but if any link stalls, the WebSocket would linger
+    // and keep producing transcript after stop. So hand the session tasks to a
+    // watchdog that force-aborts them after a short grace — long enough for the
+    // normal path to finish first (aborting an already-finished task is a no-op).
+    let tasks: Vec<tauri::async_runtime::JoinHandle<()>> =
+        state.tasks.lock().unwrap().drain(..).collect();
+    if !tasks.is_empty() {
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            for t in tasks {
+                t.abort();
+            }
+        });
+    }
+
     // Joining lets each capture thread release its device (drops its PCM sender,
     // which in turn ends the Soniox session via channel close).
     let handles: Vec<JoinHandle<()>> = state.threads.lock().unwrap().drain(..).collect();
@@ -469,7 +498,7 @@ fn run_metered_session(
     label: &'static str,
     rx: UnboundedReceiver<Vec<i16>>,
     recorder: Option<RecorderBuf>,
-) {
+) -> tauri::async_runtime::JoinHandle<()> {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         // Interpose a sample counter between capture and the STT adapter: it
@@ -510,7 +539,7 @@ fn run_metered_session(
                 "seconds": seconds,
             }),
         );
-    });
+    })
 }
 
 /// Get the absolute path to the templates.json file.
