@@ -42,11 +42,20 @@ pub fn write_templates(app: AppHandle, json: String) -> Result<(), String> {
 /// meetings; armed (`Some(empty)`) by `start_meeting` and drained by `stop_meeting`.
 pub(crate) type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
 
-/// Shared meeting state held in Tauri's managed state. `running` gates all
-/// capture threads; clearing it tells them to release their devices and exit.
+/// Shared meeting state held in Tauri's managed state. `running` is the global
+/// "a meeting is active" status (queried by the mic-test + UI). Capture threads,
+/// however, watch a PER-SESSION `capture_gate` (not `running`) so a thread from a
+/// previous meeting can never be revived by the next `start_meeting` flipping a
+/// shared flag back to true — each meeting gets a fresh gate, and stop clears it.
 #[derive(Default)]
 pub struct MeetingState {
     running: Arc<AtomicBool>,
+    /// Per-meeting capture flag handed to every capture thread of the CURRENT
+    /// session. `start_meeting` installs a fresh one; `stop_meeting` clears it to
+    /// tell exactly this session's threads to exit. A detached/wedged thread from
+    /// an old session holds its own (already-false) gate, so a later meeting can't
+    /// adopt or revive it. `None` between meetings.
+    capture_gate: Mutex<Option<Arc<AtomicBool>>>,
     threads: Mutex<Vec<JoinHandle<()>>>,
     /// Live transcription session tasks (the per-source Soniox/etc. WebSocket
     /// loops). Held so `stop_meeting` can `abort()` them — a direct cancel that
@@ -143,7 +152,13 @@ pub fn start_meeting(
     // Tear down any Settings "test mic" stream so it can't contend with the
     // meeting's capture (its thread exits when this flag clears).
     state.test_running.store(false, Ordering::SeqCst);
-    let running = state.running.clone();
+    // Per-session capture gate: a FRESH flag owned by THIS meeting's capture threads
+    // (not the global `state.running`). Installed in state so stop_meeting can clear
+    // exactly this session's threads; a later start_meeting installs a new one, so a
+    // detached/wedged thread from a prior session can never be revived. The var is
+    // named `running` so the capture call sites below read naturally.
+    let running = Arc::new(AtomicBool::new(true));
+    *state.capture_gate.lock().unwrap() = Some(running.clone());
     // Arm a fresh recording buffer for this meeting (the designated session below
     // tees its PCM into it; stop_meeting encodes + clears it).
     *state.recorder.lock().unwrap() = Some(Vec::new());
@@ -229,18 +244,25 @@ pub fn start_meeting(
 #[tauri::command]
 pub fn stop_meeting(app: AppHandle, state: State<MeetingState>) -> Result<(), String> {
     state.running.store(false, Ordering::SeqCst);
+    // Tell THIS session's capture threads to exit. They watch the per-session gate,
+    // not the global `running`; `take()` so the next meeting installs a fresh one and
+    // can never reuse/revive this session's gate.
+    if let Some(gate) = state.capture_gate.lock().unwrap().take() {
+        gate.store(false, Ordering::SeqCst);
+    }
 
-    // Direct-cancel safety net for the transcription sessions. Clearing `running`
-    // starts the graceful capture→channel-close cascade (which closes the socket
-    // and emits final usage); but if any link stalls, the WebSocket would linger
-    // and keep producing transcript after stop. So hand the session tasks to a
-    // watchdog that force-aborts them after a short grace — long enough for the
-    // normal path to finish first (aborting an already-finished task is a no-op).
+    // Direct-cancel safety net for the transcription sessions. Clearing the gate
+    // above starts the graceful capture→channel-close cascade, which closes the
+    // socket and emits final usage. The abort is ONLY a backstop for a socket that
+    // never closes (a stalled provider/network): wait a generous grace so even a slow
+    // finalize completes first — aborting an already-finished task is a no-op, and
+    // after stop no new audio flows, so the extra idle wait produces no new transcript.
+    // (A short grace would cut a slow finalize and lose the last segment + usage event.)
     let tasks: Vec<tauri::async_runtime::JoinHandle<()>> =
         state.tasks.lock().unwrap().drain(..).collect();
     if !tasks.is_empty() {
         tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(8000)).await;
             for t in tasks {
                 t.abort();
             }
@@ -249,9 +271,11 @@ pub fn stop_meeting(app: AppHandle, state: State<MeetingState>) -> Result<(), St
 
     // Joining lets each capture thread release its device (drops its PCM sender,
     // which in turn ends the Soniox session via channel close). Capture threads
-    // self-exit within ~100 ms of `running` clearing, but bound the wait so a wedged
+    // self-exit within ~100 ms of the gate clearing, but bound the wait so a wedged
     // thread (e.g. a stuck CoreAudio teardown) can't hang the stop command itself;
-    // the session WebSocket is force-closed separately by the watchdog above.
+    // the session WebSocket is force-closed separately by the watchdog above. A
+    // detached wedged thread is harmless: it holds a now-dead per-session gate, so a
+    // later meeting (fresh gate) never adopts or revives it.
     let handles: Vec<JoinHandle<()>> = state.threads.lock().unwrap().drain(..).collect();
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
     for h in handles {
