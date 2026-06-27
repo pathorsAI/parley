@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::audio::{microphone::Microphone, AudioSource};
 use crate::transcription::{self, SttProvider, TranscribeConfig};
@@ -107,6 +107,48 @@ pub fn start_voice_typing(
         );
     });
     Ok(())
+}
+
+/// Path to the voice-typing history file (one JSON object per line).
+fn voice_history_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("voice_typing_history.jsonl"))
+}
+
+/// Append one history entry (a JSON line: `{ id, text, ts }`).
+#[tauri::command]
+pub fn append_voice_history(app: AppHandle, line: String) -> Result<(), String> {
+    use std::io::Write;
+    let path = voice_history_path(&app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    writeln!(f, "{line}").map_err(|e| e.to_string())
+}
+
+/// Read the whole history file (empty string if none yet). The frontend parses
+/// the JSONL and owns filtering for delete/clear (which write the file back).
+#[tauri::command]
+pub fn read_voice_history(app: AppHandle) -> Result<String, String> {
+    match std::fs::read_to_string(voice_history_path(&app)?) {
+        Ok(s) => Ok(s),
+        Err(_) => Ok(String::new()),
+    }
+}
+
+/// Overwrite the history file (used by delete-one / clear-all).
+#[tauri::command]
+pub fn write_voice_history(app: AppHandle, content: String) -> Result<(), String> {
+    let path = voice_history_path(&app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, content).map_err(|e| e.to_string())
 }
 
 /// Stop the session: clear `running` and join the mic thread (which drops its

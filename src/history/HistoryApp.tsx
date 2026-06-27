@@ -52,9 +52,13 @@ import { CLOUD_ENABLED } from "../lib/flags";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import type { CloudOrg, CloudRecordingSummary } from "../lib/cloud/types";
+import { VoiceTypingHistory } from "./VoiceTypingHistory";
 
 /** Which context (left sidebar) is selected: the personal library, or an org. */
-type Selection = { kind: "personal" } | { kind: "org"; id: string; name: string };
+type Selection =
+  | { kind: "personal" }
+  | { kind: "voice-typing" }
+  | { kind: "org"; id: string; name: string };
 
 /** m:ss for short clips, h:mm:ss past an hour. */
 function formatDuration(ms: number): string {
@@ -193,6 +197,8 @@ export function HistoryApp() {
 
   const refresh = useCallback(() => {
     setEntries(null);
+    // The voice-typing tab is self-contained (loads its own JSONL log).
+    if (selection.kind === "voice-typing") return;
     if (selection.kind === "org") {
       const orgId = selection.id;
       listOrgRecordings(orgId)
@@ -216,7 +222,7 @@ export function HistoryApp() {
   // Background: push any local entries the cloud doesn't have yet, then re-list so
   // their badges flip local → synced. Personal context only; no-op when signed out.
   useEffect(() => {
-    if (isOrg) return;
+    if (selection.kind !== "personal") return;
     let alive = true;
     setSyncing(true);
     pushUnsyncedToCloud()
@@ -347,15 +353,20 @@ export function HistoryApp() {
   return (
     <div className="flex h-screen bg-background text-foreground">
       {/* ── Sidebar: personal + shared (org) contexts (cloud edition only) ── */}
-      {CLOUD_ENABLED && (
       <aside className="flex w-48 shrink-0 flex-col gap-0.5 overflow-y-auto border-r p-2">
         <SidebarItem
           icon={<FolderClosed className="size-4" />}
-          label={t("history.sidebar.personal")}
-          active={!isOrg}
+          label={t("history.sidebar.meetings")}
+          active={selection.kind === "personal"}
           onClick={() => setSelection({ kind: "personal" })}
         />
-        {signedIn && (
+        <SidebarItem
+          icon={<Mic className="size-4" />}
+          label={t("history.sidebar.voiceTyping")}
+          active={selection.kind === "voice-typing"}
+          onClick={() => setSelection({ kind: "voice-typing" })}
+        />
+        {CLOUD_ENABLED && signedIn && (
           <>
             <div className="mt-3 px-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
               {t("history.sidebar.shared")}
@@ -385,10 +396,13 @@ export function HistoryApp() {
           </>
         )}
       </aside>
-      )}
 
-      {/* ── Content: the selected context's grid ── */}
+      {/* ── Content: the selected context's grid (or the voice-typing log) ── */}
       <div className="flex min-w-0 flex-1 flex-col">
+        {selection.kind === "voice-typing" ? (
+          <VoiceTypingHistory locale={locale} />
+        ) : (
+          <>
         <header className="flex shrink-0 items-center gap-2 border-b px-4 py-3">
           {isOrg ? (
             <span className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
@@ -454,6 +468,8 @@ export function HistoryApp() {
             </div>
           )}
         </div>
+          </>
+        )}
       </div>
       <Toaster />
     </div>
