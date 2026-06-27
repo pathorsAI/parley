@@ -1,6 +1,7 @@
 import { isTauri } from "../tauriEvents";
 import { useStore } from "../store";
 import { log } from "../log";
+import { CLOUD_ENABLED } from "../flags";
 import type { CloudUser } from "./types";
 
 /**
@@ -114,6 +115,20 @@ export async function refreshSession(): Promise<void> {
 /** The current bearer session token, or null when signed out. */
 export function cloudToken(): string | null {
   return useStore.getState().cloudAuth?.token ?? null;
+}
+
+/**
+ * Whether automatic PERSONAL cloud sync is active: the cloud edition, signed in,
+ * AND the user's sync toggle is on. This is the single gate every automatic
+ * personal-sync path funnels through — the save-time push (history.ts pushToCloud),
+ * the background sweep, and the merged-history cloud read. Org features are
+ * intentionally NOT gated on it: an org is inherently a cloud space, so sharing /
+ * org listing stay available (gated only on a valid session) even with sync off.
+ */
+export function syncEnabled(): boolean {
+  if (!CLOUD_ENABLED) return false;
+  const s = useStore.getState();
+  return !!s.cloudAuth && s.settings.syncEnabled;
 }
 
 /** A thrown cloud-auth failure (the session was cleared) — lets sweeps short-circuit
