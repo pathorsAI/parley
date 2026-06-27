@@ -54,6 +54,8 @@ interface RustTranscriptionResult {
   durationMs: number;
   /** True when served from the on-disk cache (no Soniox call → don't bill it). */
   cached: boolean;
+  /** Acoustically measured articulation rate (syllables/sec); 0 if unmeasurable. */
+  speechRateHz: number;
 }
 
 /**
@@ -181,6 +183,7 @@ export async function transcribeRecording(
     createdAt: Date.now(),
     segments,
     speakerNames: {},
+    speechRateHz: result.speechRateHz || null,
   };
 }
 

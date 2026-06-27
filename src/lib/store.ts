@@ -233,6 +233,9 @@ interface ParleyState {
   /** Latest prosody metrics from the backend; null until the first event. */
   prosody: ProsodyMetrics | null;
   setProsody: (m: ProsodyMetrics | null) => void;
+  /** Running count of filled pauses ("um/uh/呃/痾") detected acoustically this
+   *  meeting (STT drops them, so this is the only tally). Reset on meeting start. */
+  filledPauseCount: number;
   /** The transient coaching nudge currently shown (null = none). */
   deliveryNudge: DeliveryNudge | null;
   /** Show a nudge (replaces any current one); the UI auto-dismisses it. */
@@ -341,6 +344,7 @@ export const useStore = create<ParleyState>()(
       autoAnalyze: false,
       autoAnalyzeSec: 45,
       prosody: null,
+      filledPauseCount: 0,
       deliveryNudge: null,
       deliveryAssessment: null,
       deliveryStatus: "idle",
@@ -446,10 +450,11 @@ export const useStore = create<ParleyState>()(
       selectedFindingId: null,
       solutionFindingId: null,
       findingSolutions: {},
-      // Delivery isn't persisted in history yet → recompute once on open (cheap,
-      // opt-in). useReplayAnalysis runs it after the restored analysis settles.
-      deliveryAssessment: null,
-      deliveryStatus: "idle",
+      // Restore the saved delivery assessment when present (older entries predate
+      // it → recompute once on open via useReplayAnalysis, which only runs when
+      // status is "idle"). The measured pace rides on `session.speechRateHz`.
+      deliveryAssessment: entry.deliveryAssessment ?? null,
+      deliveryStatus: entry.deliveryAssessment ? "done" : "idle",
     }));
   },
 
@@ -578,7 +583,14 @@ export const useStore = create<ParleyState>()(
   setAutoAnalyze: (on) => set({ autoAnalyze: on }),
   setAutoAnalyzeSec: (sec) => set({ autoAnalyzeSec: Math.max(20, sec || 45) }),
 
-  setProsody: (m) => set({ prosody: m }),
+  setProsody: (m) =>
+    set((s) => {
+      if (!m) return { prosody: null };
+      return {
+        prosody: m,
+        filledPauseCount: m.filledPause ? s.filledPauseCount + 1 : s.filledPauseCount,
+      };
+    }),
   pushDeliveryNudge: (n) => set({ deliveryNudge: n }),
   clearDeliveryNudge: () => set({ deliveryNudge: null }),
   setDeliveryAssessment: (a) => set({ deliveryAssessment: a }),
@@ -635,6 +647,7 @@ export const useStore = create<ParleyState>()(
       solutionFindingId: null,
       findingSolutions: {},
       prosody: null,
+      filledPauseCount: 0,
       deliveryNudge: null,
       deliveryAssessment: null,
       deliveryStatus: "idle",

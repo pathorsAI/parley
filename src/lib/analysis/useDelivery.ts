@@ -17,6 +17,7 @@ const NUDGE_KEY: Record<Exclude<DeliveryNudgeKind, "tone" | "filler">, Translati
   monotone: "delivery.nudge.monotone",
   steamroll: "delivery.nudge.steamroll",
   deadair: "delivery.nudge.deadair",
+  filledpause: "delivery.nudge.filledpause",
 };
 
 /**

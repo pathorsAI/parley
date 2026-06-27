@@ -42,6 +42,10 @@ struct ReplaySegment {
 struct CachedTranscription {
     segments: Vec<ReplaySegment>,
     duration_ms: u64,
+    /// Measured articulation rate; `default` so caches written before this field
+    /// existed still deserialize (they just read back as 0.0).
+    #[serde(default)]
+    speech_rate_hz: f32,
 }
 
 /// Result of `transcribe_file` — segments plus the overall duration. `cached` is
@@ -53,6 +57,10 @@ pub struct TranscriptionResult {
     segments: Vec<ReplaySegment>,
     duration_ms: u64,
     cached: bool,
+    /// Acoustically measured articulation rate (syllable nuclei per second of
+    /// voiced speech) over the whole recording — the post-call pace read, anchored
+    /// to the audio rather than guessed from STT-timed text. 0.0 if unmeasurable.
+    speech_rate_hz: f32,
 }
 
 // --- Soniox wire types --------------------------------------------------------
@@ -153,6 +161,7 @@ pub async fn transcribe_file(
                 segments: cached.segments,
                 duration_ms: cached.duration_ms,
                 cached: true,
+                speech_rate_hz: cached.speech_rate_hz,
             });
         }
     }
@@ -189,6 +198,12 @@ pub async fn transcribe_file(
         }
     };
 
+    // Measure the speaker's articulation rate acoustically over the audio we're
+    // about to transcribe, so the post-call pace read is a real measurement — not
+    // an LLM guess from STT-timed text. Done while the (compressed) temp still
+    // exists; best-effort (0.0 on any decode failure, so it can never block STT).
+    let speech_rate_hz = measure_speech_rate_blocking(upload_path.clone()).await;
+
     // Run the rest of the flow, ensuring the temp file is cleaned up afterward.
     let result = run_upload_and_transcribe(
         &client,
@@ -198,7 +213,11 @@ pub async fn transcribe_file(
         language_hints,
         diarization,
     )
-    .await;
+    .await
+    .map(|mut r| {
+        r.speech_rate_hz = speech_rate_hz;
+        r
+    });
 
     if let Some(temp) = compressed_temp.take() {
         let _ = tokio::fs::remove_file(&temp).await;
@@ -242,10 +261,12 @@ async fn write_cache(path: &std::path::Path, result: &TranscriptionResult) {
     struct CacheWrite<'a> {
         segments: &'a [ReplaySegment],
         duration_ms: u64,
+        speech_rate_hz: f32,
     }
     let payload = CacheWrite {
         segments: &result.segments,
         duration_ms: result.duration_ms,
+        speech_rate_hz: result.speech_rate_hz,
     };
     let json = match serde_json::to_vec_pretty(&payload) {
         Ok(j) => j,
@@ -272,6 +293,33 @@ async fn compress_for_upload_blocking(path: String) -> Result<std::path::PathBuf
     })
     .await
     .map_err(|e| format!("compression task panicked: {e}"))?
+}
+
+/// Measure the articulation rate (syllables/sec) of a recording already on disk.
+/// Used by the LIVE-meeting save path so its post-call pace is the *same* quantity
+/// as the upload path's — both decode the stored 16 kHz mono audio and run the
+/// identical DSP, rather than the live windowed speaking-rate (which includes
+/// pauses and would read systematically lower). Returns 0.0 if unmeasurable.
+#[tauri::command]
+pub async fn measure_audio_speech_rate(path: String) -> f32 {
+    measure_speech_rate_blocking(path).await
+}
+
+/// Decode `path` to 16 kHz mono and measure the speaker's articulation rate off
+/// the async runtime (CPU-bound decode + DSP). Best-effort: any decode failure or
+/// task panic resolves to 0.0 so it can never block a transcription.
+async fn measure_speech_rate_blocking(path: String) -> f32 {
+    tokio::task::spawn_blocking(move || {
+        match crate::replay_audio::decode_to_16k_mono(std::path::Path::new(&path)) {
+            Ok(pcm) => crate::audio::prosody::measure_speech_rate_hz(&pcm, 16_000),
+            Err(e) => {
+                log::warn!("replay: speech-rate measure failed error={e}");
+                0.0
+            }
+        }
+    })
+    .await
+    .unwrap_or(0.0)
 }
 
 /// Upload `upload_path` to Soniox, create + poll the transcription job, fetch the
@@ -423,6 +471,8 @@ async fn run_upload_and_transcribe(
         segments,
         duration_ms,
         cached: false,
+        // Filled in by the caller (`transcribe_file`), which has the audio path.
+        speech_rate_hz: 0.0,
     })
 }
 

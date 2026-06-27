@@ -31,4 +31,8 @@ export interface ReplaySession {
   segments: TranscriptSegment[];
   /** Optional speaker-number → display-name map (`{}` is fine). */
   speakerNames: Record<string, string>;
+  /** Acoustically measured articulation rate (syllables/sec) over the recording —
+   *  the post-call pace read, anchored to the audio rather than the transcript.
+   *  Set by ingest (from Rust) and restored from history; absent/0 when unknown. */
+  speechRateHz?: number | null;
 }

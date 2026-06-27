@@ -21,6 +21,7 @@ function sample(over: Partial<ProsodyMetrics> = {}): ProsodyMetrics {
     silenceMs: 0,
     longestPauseMs: 400,
     speaking: true,
+    filledPause: false,
     ...over,
   };
 }
@@ -93,6 +94,18 @@ describe("DeliveryCoach", () => {
       if (r) kind = r.kind;
     }
     expect(kind).toBe("deadair");
+  });
+
+  it("nudges once on a filled pause, then respects cooldown", () => {
+    const coach = new DeliveryCoach(ALL_ON);
+    // A filled-pause edge fires immediately (no calibration needed).
+    expect(coach.observe(sample({ filledPause: true }), 1000)?.kind).toBe("filledpause");
+    // Another within the cooldown window is suppressed.
+    expect(coach.observe(sample({ filledPause: true }), 5000)).toBeNull();
+    // After the cooldown it can fire again.
+    expect(
+      coach.observe(sample({ filledPause: true }), 1000 + DEFAULT_THRESHOLDS.cooldownMs + 1)?.kind
+    ).toBe("filledpause");
   });
 
   it("does NOT flag dead air on opening silence before any speech", () => {

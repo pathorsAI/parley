@@ -74,6 +74,7 @@ pub fn run() {
             permissions::request_screen_recording,
             permissions::open_privacy_settings,
             replay::transcribe_file,
+            replay::measure_audio_speech_rate,
             diarize::diarize_audio,
             history::save_history_entry,
             history::save_remote_history_entry,

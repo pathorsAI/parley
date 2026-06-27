@@ -26,7 +26,13 @@ export async function runDeliveryAnalysis(): Promise<void> {
 
   state.setDeliveryStatus("running");
   try {
-    const res = await analyzeDelivery({ settings, segments, names: speakerNames, mode: "post" });
+    const res = await analyzeDelivery({
+      settings,
+      segments,
+      names: speakerNames,
+      measuredRateHz: state.replay?.speechRateHz ?? null,
+      mode: "post",
+    });
     useStore.getState().setDeliveryAssessment(res);
     useStore.getState().setDeliveryStatus("done");
   } catch (e) {

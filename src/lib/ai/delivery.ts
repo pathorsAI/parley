@@ -82,10 +82,13 @@ export async function analyzeDelivery(opts: {
   segments: TranscriptSegment[];
   names?: Record<string, string>;
   prosody?: ProsodyMetrics | null;
+  /** Whole-recording acoustic speech rate (syllables/sec) for the POST pass, where
+   *  there's no live prosody stream — keeps the LLM's pace/summary honest. */
+  measuredRateHz?: number | null;
   /** "live" trims to recent speech + cheaper prompt; "post" uses the whole call. */
   mode?: "live" | "post";
 }): Promise<DeliveryAssessment | null> {
-  const { settings, segments, names, prosody, mode = "live" } = opts;
+  const { settings, segments, names, prosody, measuredRateHz, mode = "live" } = opts;
   const finals = segments.filter((s) => s.isFinal && s.text.trim());
   if (finals.length === 0) return null;
 
@@ -101,7 +104,11 @@ export async function analyzeDelivery(opts: {
   const delivery = prosody
     ? `Your delivery signals: ~${prosody.speechRateHz.toFixed(1)} syllables/sec, ` +
       `pitch variation ${prosody.pitchVarSemitones.toFixed(1)} semitones.\n\n`
-    : "";
+    : measuredRateHz
+      ? `Measured speaking rate over this recording: ~${measuredRateHz.toFixed(1)} ` +
+        `syllables/sec (≈ ${Math.round(measuredRateHz * 60)} syllables/min). ` +
+        `Use this for the pace read rather than guessing from the text.\n\n`
+      : "";
   const watchlist = `Filler watchlist (judge OVER-use of these as verbal crutches only — ignore meaningful uses, and ignore non-lexical um/uh sounds): ${fillerWatchlist(settings.language).join(", ")}\n\n`;
   const ctx =
     profileContext(settings) + (mc ? `Meeting context: ${mc}\n\n` : "") + delivery + watchlist;

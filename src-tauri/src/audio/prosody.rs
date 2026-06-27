@@ -26,14 +26,21 @@ use crate::transcription::common::PROSODY_EVENT;
 /// Analysis frame: ~64 ms at 16 kHz. Large enough that the YIN difference function
 /// reaches the ~228-sample lag of a low (70 Hz) male voice (needs frame ≥ 2·lag).
 const FRAME: usize = 1024;
-/// Hop between successive frames: ~32 ms → ~31 frames/s.
-const HOP: usize = 512;
+/// Hop between successive frames: ~16 ms → ~62 frames/s. Finer than the frame so
+/// the RMS envelope resolves adjacent syllables in fast speech (a coarser ~32 ms
+/// hop smeared them together and under-counted quick talkers).
+const HOP: usize = 256;
 /// Rolling window over which monotony / pause stats are computed.
 const WINDOW_MS: u64 = 7_000;
+/// Shorter rolling window for the SPEECH-RATE read specifically: the 7 s monotony
+/// window made pace lag by seconds (slow to react, slow to clear). ~3 s still holds
+/// enough syllables to be stable at a normal pace while tracking changes ~2× faster.
+const RATE_WINDOW_MS: u64 = 3_000;
 /// Emit cadence (~2 Hz), matching the level meter's "glanceable" rate.
 const EMIT_EVERY_MS: u64 = 500;
-/// Minimum voiced (pitched) frames in the window before monotony is meaningful.
-const MIN_VOICED_FRAMES: usize = 12;
+/// Minimum voiced (pitched) frames in the window before monotony is meaningful
+/// (scaled to the ~16 ms hop so it still means ~0.4 s of real voicing).
+const MIN_VOICED_FRAMES: usize = 24;
 
 /// Below this RMS (on a 0..1 scale) a frame is treated as silence/unvoiced and
 /// excluded from F0 stats. Speech RMS is typically > 0.02; quiet rooms < 0.005.
@@ -48,6 +55,17 @@ const F0_MAX_HZ: f32 = 400.0;
 /// Reference pitch for the Hz↔semitone conversion. Arbitrary: variance (the only
 /// thing monotony uses) is invariant to it.
 const SEMITONE_REF_HZ: f32 = 100.0;
+
+/// Filled-pause ("um/uh/呃/痾/嗯") detection. A filled pause is one sustained,
+/// flat, vowel-like sound — distinct from connected speech (which has syllable
+/// structure) and from a normal syllable (which is short). STT drops these and the
+/// LLM filler check ignores them, so they're detected purely acoustically here.
+/// Minimum held duration (ms): longer than a normal syllable (~150–250 ms) so we
+/// don't flag ordinary speech.
+const FILLED_MIN_MS: u64 = 400;
+/// Maximum F0 spread (semitones) over the held sound — filled pauses are flat;
+/// real words carry more pitch movement.
+const FILLED_FLAT_SEMITONES: f32 = 1.2;
 
 /// Payload emitted to the frontend ~2×/s. Snake-case on the wire; the frontend
 /// maps it to camelCase (see `tauriEvents.ts`), mirroring `transcript://segment`.
@@ -76,6 +94,10 @@ struct ProsodyEvent {
     longest_pause_ms: u64,
     /// Whether the most recent frame was voiced.
     speaking: bool,
+    /// One-shot edge: true on the single emit where a filled pause ("um/uh") has
+    /// just been recognized (a sustained, flat, single held vowel). The frontend
+    /// counts these + nudges; STT can't see them so this is the only source.
+    filled_pause: bool,
 }
 
 /// One analyzed frame's contribution to the rolling stats.
@@ -105,6 +127,9 @@ pub struct ProsodyAnalyzer {
     /// voiced anything — so pre-speech startup reports 0 trailing silence rather
     /// than the full elapsed time (which would spuriously trip a dead-air nudge).
     last_voiced_ms: Option<u64>,
+    /// True while the current trailing voiced run already qualifies as a filled
+    /// pause, so it's reported once (rising edge) rather than every emit it's held.
+    in_filled_pause: bool,
 }
 
 impl ProsodyAnalyzer {
@@ -117,6 +142,7 @@ impl ProsodyAnalyzer {
             frames: VecDeque::new(),
             last_emit_ms: 0,
             last_voiced_ms: None,
+            in_filled_pause: false,
         }
     }
 
@@ -162,7 +188,17 @@ impl ProsodyAnalyzer {
         }
     }
 
-    fn emit(&self, now_ms: u64) {
+    fn emit(&mut self, now_ms: u64) {
+        // Rising-edge filled-pause detection: qualifies once the trailing held
+        // sound passes the duration/flatness/single-nucleus test; reported true
+        // only on the transition into that state (drop the borrow before mutating).
+        let qualifies = {
+            let run = self.current_voiced_run();
+            Self::is_filled_pause_run(&run)
+        };
+        let filled_pause = qualifies && !self.in_filled_pause;
+        self.in_filled_pause = qualifies;
+
         let voiced_semitones: Vec<f32> = self.frames.iter().filter_map(|f| f.semitones).collect();
         let total = self.frames.len().max(1);
         let voiced_ratio = voiced_semitones.len() as f32 / total as f32;
@@ -207,8 +243,56 @@ impl ProsodyAnalyzer {
                 silence_ms,
                 longest_pause_ms: self.longest_pause(now_ms),
                 speaking,
+                filled_pause,
             },
         );
+    }
+
+    /// The current trailing run of voiced speech (walking back from the latest
+    /// frame), bridging a single-frame voicing flicker. Empty if not speaking.
+    fn current_voiced_run(&self) -> Vec<&FrameStat> {
+        let mut run: Vec<&FrameStat> = Vec::new();
+        let mut gap = 0;
+        for f in self.frames.iter().rev() {
+            if f.semitones.is_some() && f.rms >= VOICING_RMS_FLOOR {
+                run.push(f);
+                gap = 0;
+            } else {
+                gap += 1;
+                if gap > 1 {
+                    break;
+                }
+            }
+        }
+        run.reverse();
+        run
+    }
+
+    /// Whether a trailing voiced run is a filled pause: held long enough, with a
+    /// flat pitch, and no real syllable structure (one continuous sound, not
+    /// connected speech). These three together separate "uhhh" from both a normal
+    /// syllable (too short) and a run of real words (multiple nuclei / pitch move).
+    fn is_filled_pause_run(run: &[&FrameStat]) -> bool {
+        if run.len() < 3 {
+            return false;
+        }
+        let dur_ms = run.last().unwrap().t_ms.saturating_sub(run.first().unwrap().t_ms);
+        if dur_ms < FILLED_MIN_MS {
+            return false;
+        }
+        let semis: Vec<f32> = run.iter().filter_map(|f| f.semitones).collect();
+        if semis.len() < 3 {
+            return false;
+        }
+        let mean = semis.iter().sum::<f32>() / semis.len() as f32;
+        let var = semis.iter().map(|x| (x - mean) * (x - mean)).sum::<f32>() / semis.len() as f32;
+        if var.sqrt() > FILLED_FLAT_SEMITONES {
+            return false;
+        }
+        // A held vowel has ≤1 intensity peak; connected speech has several.
+        let rms: Vec<f32> = run.iter().map(|f| f.rms).collect();
+        let voiced: Vec<bool> = run.iter().map(|f| f.semitones.is_some()).collect();
+        count_syllable_nuclei(&rms, &voiced) <= 1
     }
 
     /// Longest gap (ms) between consecutive voiced frames in the window, including
@@ -236,28 +320,50 @@ impl ProsodyAnalyzer {
         longest
     }
 
-    /// Speech rate (syllable nuclei per second) over the frames currently in the
-    /// window. Returns 0 until the window spans enough time to be meaningful.
+    /// Live speaking rate (syllable nuclei per second) over the most recent
+    /// {@link RATE_WINDOW_MS}. Two deliberate choices:
+    ///  - a SHORT window (not the 7 s monotony window) so the read reacts quickly
+    ///    and doesn't linger after you stop — fixing the "laggy" feel;
+    ///  - dividing by the window's wall-clock span (a *speaking* rate, pauses
+    ///    included) so the number lines up with the familiar 字/分 references the
+    ///    user calibrates against (~180 normal, ~300 fast). Syllable peaks are
+    ///    voicing-gated so breaths / fricatives aren't miscounted.
+    ///
+    /// (The post-call/replay number uses `measure_speech_rate_hz`, an articulation
+    /// rate over the whole recording — a different, pause-excluding summary.)
     fn speech_rate_hz(&self) -> f32 {
-        let span_ms = match (self.frames.front(), self.frames.back()) {
-            (Some(first), Some(last)) => last.t_ms.saturating_sub(first.t_ms),
-            _ => 0,
+        let Some(last_t) = self.frames.back().map(|f| f.t_ms) else {
+            return 0.0;
         };
-        if span_ms < 1_000 {
+        let cutoff = last_t.saturating_sub(RATE_WINDOW_MS);
+        let recent: Vec<&FrameStat> = self.frames.iter().filter(|f| f.t_ms >= cutoff).collect();
+        if recent.len() < 8 {
             return 0.0;
         }
-        let rms: Vec<f32> = self.frames.iter().map(|f| f.rms).collect();
-        let nuclei = count_syllable_nuclei(&rms);
+        let span_ms = recent
+            .last()
+            .unwrap()
+            .t_ms
+            .saturating_sub(recent.first().unwrap().t_ms);
+        if span_ms < 800 {
+            return 0.0;
+        }
+        let rms: Vec<f32> = recent.iter().map(|f| f.rms).collect();
+        // Gate nuclei on YIN voicing (a syllable nucleus is a vowel → pitched).
+        let voiced: Vec<bool> = recent.iter().map(|f| f.voiced).collect();
+        let nuclei = count_syllable_nuclei(&rms, &voiced);
         nuclei as f32 / (span_ms as f32 / 1000.0)
     }
 }
 
 /// Count syllable nuclei in an RMS envelope — local maxima above a per-window
-/// loudness floor, each separated from the previous peak by a clear dip. A cheap
-/// approximation of de Jong & Wempe's intensity-peak method; we only need it to
-/// be *self-consistent* (the frontend judges rate relative to the speaker's own
-/// baseline), not perfectly calibrated.
-fn count_syllable_nuclei(rms: &[f32]) -> usize {
+/// loudness floor, each separated from the previous peak by a clear dip, and
+/// VOICED (a nucleus is a vowel → pitched). The voicing gate (`voiced[i]`) rejects
+/// breaths, fricatives, and clicks that would otherwise inflate the count. A cheap
+/// approximation of de Jong & Wempe's intensity-peak method; we only need it to be
+/// *self-consistent* (the frontend judges rate relative to the speaker's own
+/// baseline), not perfectly calibrated. `voiced` must be the same length as `rms`.
+fn count_syllable_nuclei(rms: &[f32], voiced: &[bool]) -> usize {
     if rms.len() < 3 {
         return 0;
     }
@@ -267,9 +373,12 @@ fn count_syllable_nuclei(rms: &[f32]) -> usize {
     // Ignore frames more than 25 dB below the window's loudest — that's silence
     // / background, not a voiced syllable.
     let floor = peak_db - 25.0;
-    // Require a 2 dB dip between successive nuclei so one syllable isn't counted
-    // twice on a noisy plateau.
-    const MIN_DIP_DB: f32 = 2.0;
+    // Require a dip between successive nuclei so one syllable isn't counted twice
+    // on a noisy plateau. Kept modest (1.2 dB) because fast, connected speech
+    // smooths the inter-syllable valleys via coarticulation — a stricter threshold
+    // merged adjacent syllables and systematically UNDER-counted quick talkers,
+    // capping the measured rate well below their real pace.
+    const MIN_DIP_DB: f32 = 1.2;
 
     let mut count = 0usize;
     let mut last_peak: Option<f32> = None;
@@ -277,7 +386,8 @@ fn count_syllable_nuclei(rms: &[f32]) -> usize {
     for i in 1..db.len() - 1 {
         let v = db[i];
         valley = valley.min(v);
-        let is_local_max = v > db[i - 1] && v >= db[i + 1] && v > floor;
+        let is_local_max =
+            v > db[i - 1] && v >= db[i + 1] && v > floor && voiced.get(i).copied().unwrap_or(true);
         if !is_local_max {
             continue;
         }
@@ -300,6 +410,54 @@ fn count_syllable_nuclei(rms: &[f32]) -> usize {
         }
     }
     count
+}
+
+/// Batch speech rate (syllable nuclei per second of *voiced* speech — i.e.
+/// articulation rate) over a whole decoded recording in normalized mono `f32`.
+///
+/// Unlike the live [`ProsodyAnalyzer`], which reports a windowed *speaking* rate
+/// that includes pauses, this divides by phonation (voiced) time only, so long
+/// silences in an uploaded recording don't drag the number down. The replay/retro
+/// path uses it so the post-call pace read is a real acoustic measurement — not an
+/// LLM guess from the transcript (whose timing reflects STT cadence, not how fast
+/// the speaker actually talks). Returns 0.0 when there isn't enough voiced speech.
+///
+/// Nuclei are counted in `WINDOW_MS`-sized blocks so the per-window loudness floor
+/// adapts to a recording whose level drifts, matching the live analyzer's framing.
+pub fn measure_speech_rate_hz(pcm: &[f32], sample_rate: u32) -> f32 {
+    if sample_rate == 0 || pcm.len() < FRAME {
+        return 0.0;
+    }
+    let hop_sec = HOP as f32 / sample_rate as f32;
+
+    // Per-frame RMS envelope + per-frame voicing (above the loudness floor) — the
+    // same framing the live analyzer uses, so the two rates are comparable. Here
+    // voicing is RMS-based (the batch has no per-frame YIN); it both gates the
+    // nuclei and measures phonation time.
+    let mut rms: Vec<f32> = Vec::new();
+    let mut voiced: Vec<bool> = Vec::new();
+    let mut i = 0;
+    while i + FRAME <= pcm.len() {
+        let r = rms_of(&pcm[i..i + FRAME]);
+        voiced.push(r >= VOICING_RMS_FLOOR);
+        rms.push(r);
+        i += HOP;
+    }
+    let voiced_sec = voiced.iter().filter(|&&v| v).count() as f32 * hop_sec;
+    if voiced_sec <= 0.0 {
+        return 0.0;
+    }
+
+    let block = (((WINDOW_MS as f32 / 1000.0) / hop_sec).round() as usize).max(8);
+    let mut nuclei = 0usize;
+    let mut start = 0;
+    while start < rms.len() {
+        let end = (start + block).min(rms.len());
+        nuclei += count_syllable_nuclei(&rms[start..end], &voiced[start..end]);
+        start = end;
+    }
+
+    nuclei as f32 / voiced_sec
 }
 
 /// Root-mean-square amplitude of a frame (samples already in −1..1).
@@ -429,14 +587,89 @@ mod tests {
         for _ in 0..5 {
             env.extend_from_slice(&[0.01, 0.05, 0.3, 0.5, 0.3, 0.05, 0.01]);
         }
-        let n = count_syllable_nuclei(&env);
+        let voiced = vec![true; env.len()];
+        let n = count_syllable_nuclei(&env, &voiced);
         assert!((4..=6).contains(&n), "expected ~5 nuclei, got {n}");
     }
 
     #[test]
     fn syllable_nuclei_ignores_flat_silence() {
         let env = vec![0.0001f32; 50];
-        assert_eq!(count_syllable_nuclei(&env), 0);
+        assert_eq!(count_syllable_nuclei(&env, &vec![true; env.len()]), 0);
+    }
+
+    #[test]
+    fn syllable_nuclei_unvoiced_peaks_rejected() {
+        // A loud peak that isn't voiced (e.g. a fricative/click burst) must NOT be
+        // counted as a syllable — the voicing gate rejects it.
+        let env = vec![0.05, 0.5, 0.05];
+        assert_eq!(count_syllable_nuclei(&env, &[true, false, true]), 0);
+        assert_eq!(count_syllable_nuclei(&env, &[true, true, true]), 1);
+    }
+
+    #[test]
+    fn syllable_nuclei_splits_shallow_dips() {
+        // Two voiced peaks separated by only a ~1.6 dB dip (0.5 → 0.416 → 0.5): a
+        // stricter ≥2 dB threshold merged these into one nucleus (under-counting
+        // fast, connected speech); the 1.2 dB threshold resolves them as two.
+        let env = vec![0.05, 0.5, 0.416, 0.5, 0.05];
+        assert_eq!(count_syllable_nuclei(&env, &vec![true; env.len()]), 2);
+    }
+
+    #[test]
+    fn measure_speech_rate_tracks_bump_density() {
+        // 3 s of a 150 Hz carrier amplitude-modulated into 9 loudness bumps
+        // (3 syllables/s). The whole clip is voiced, so articulation rate ≈ 3/s.
+        let rate = TARGET_SAMPLE_RATE;
+        let dur_s = 3.0f32;
+        let bumps = 9.0f32;
+        let n = (rate as f32 * dur_s) as usize;
+        let mut pcm = vec![0f32; n];
+        for (k, s) in pcm.iter_mut().enumerate() {
+            let t = k as f32 / rate as f32;
+            let carrier = (2.0 * PI * 150.0 * t).sin();
+            let frac = ((t / dur_s) * bumps).fract();
+            let env = 0.5 - 0.5 * (2.0 * PI * frac).cos(); // one raised-cosine peak per bump
+            *s = carrier * (0.05 + 0.5 * env);
+        }
+        let r = measure_speech_rate_hz(&pcm, rate);
+        assert!((r - 3.0).abs() < 1.2, "rate {r} should be ~3 syllables/s");
+    }
+
+    fn frame_at(i: u64, semitones: f32, rms: f32) -> FrameStat {
+        let hop_ms = HOP as u64 * 1000 / TARGET_SAMPLE_RATE as u64;
+        FrameStat {
+            t_ms: i * hop_ms,
+            voiced: true,
+            semitones: Some(semitones),
+            rms,
+        }
+    }
+
+    #[test]
+    fn filled_pause_detects_held_flat_vowel() {
+        // ~480 ms of steady, flat, voiced sound (one held "uhhh") → filled pause.
+        let frames: Vec<FrameStat> = (0..30).map(|i| frame_at(i, 0.01 * i as f32, 0.2)).collect();
+        let run: Vec<&FrameStat> = frames.iter().collect();
+        assert!(ProsodyAnalyzer::is_filled_pause_run(&run));
+    }
+
+    #[test]
+    fn filled_pause_rejects_short_and_pitch_varied() {
+        // Too short (~200 ms) — a normal syllable, not a held filler.
+        let short: Vec<FrameStat> = (0..13).map(|i| frame_at(i, 0.0, 0.2)).collect();
+        assert!(!ProsodyAnalyzer::is_filled_pause_run(&short.iter().collect::<Vec<_>>()));
+        // Long but pitch swings widely — a real word, not a flat "um".
+        let varied: Vec<FrameStat> =
+            (0..30).map(|i| frame_at(i, (i as f32 * 0.5).sin() * 3.0, 0.2)).collect();
+        assert!(!ProsodyAnalyzer::is_filled_pause_run(&varied.iter().collect::<Vec<_>>()));
+    }
+
+    #[test]
+    fn measure_speech_rate_zero_on_silence() {
+        let silence = vec![0.0f32; TARGET_SAMPLE_RATE as usize];
+        assert_eq!(measure_speech_rate_hz(&silence, TARGET_SAMPLE_RATE), 0.0);
+        assert_eq!(measure_speech_rate_hz(&[], TARGET_SAMPLE_RATE), 0.0);
     }
 
     #[test]
