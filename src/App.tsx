@@ -32,6 +32,7 @@ import {
 import { checkForUpdate } from "./lib/update";
 import { refreshSession } from "./lib/cloud/client";
 import { CLOUD_ENABLED } from "./lib/flags";
+import { initVoiceTyping } from "./lib/voiceTyping/host";
 
 /**
  * Track main-window fullscreen state. Drives both the rounded corners (a
@@ -103,6 +104,7 @@ function App() {
     const unSession = initSessionSync();
     const unSessionCmds = initSessionCommands();
     const unHistoryPersist = initHistoryPersistSync();
+    const unVoiceTyping = initVoiceTyping();
     return () => {
       active = false;
       live.forEach((fn) => fn());
@@ -111,6 +113,7 @@ function App() {
       unSession();
       unSessionCmds();
       unHistoryPersist();
+      unVoiceTyping();
     };
   }, []);
 
@@ -121,6 +124,9 @@ function App() {
   // cloud sign-in on launch.
   useEffect(() => {
     if (CLOUD_ENABLED) void refreshSession();
+    // Skip update checks in dev — there are no updater artifacts and the banner
+    // just gets in the way while iterating.
+    if (import.meta.env.DEV) return;
     const RECHECK_MS = 30 * 60 * 1000; // every 30 min while the app stays open
     const first = setTimeout(() => void checkForUpdate({ silent: true }), 3000);
     const recheck = setInterval(() => void checkForUpdate({ silent: true }), RECHECK_MS);
