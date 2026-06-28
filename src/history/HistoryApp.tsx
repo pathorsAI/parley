@@ -88,6 +88,7 @@ import { CLOUD_ENABLED } from "../lib/flags";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import type { CloudOrg, CloudRecordingSummary } from "../lib/cloud/types";
+import { VoiceTypingHistory } from "./VoiceTypingHistory";
 
 /**
  * Which context (left sidebar) is selected. Both kinds carry a `folderId`: null is
@@ -204,6 +205,10 @@ export function HistoryApp() {
   const signedInRaw = useStore((s) => !!s.cloudAuth);
   const signedIn = CLOUD_ENABLED && signedInRaw;
   const [orgs, setOrgs] = useState<CloudOrg[]>([]);
+  // The voice-typing log is a sibling view to the meetings library; it lives
+  // outside `selection` (which is folder-scoped) so library state stays intact
+  // while the user dips into it.
+  const [view, setView] = useState<"library" | "voice">("library");
   const [selection, setSelection] = useState<Selection>({ kind: "personal", folderId: null });
   const [entries, setEntries] = useState<HistoryCardItem[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -227,6 +232,12 @@ export function HistoryApp() {
   >(null);
 
   const isOrg = selection.kind === "org";
+
+  // Switch back to the meetings library and select a folder/scope in one go.
+  const selectLibrary = (sel: Selection) => {
+    setView("library");
+    setSelection(sel);
+  };
 
   // ── Orgs ────────────────────────────────────────────────────────────────────
   const reloadOrgs = useCallback(() => {
@@ -696,8 +707,8 @@ export function HistoryApp() {
         <SidebarRow
           icon={<FolderClosed className="size-4" />}
           label={t("history.sidebar.personal")}
-          active={selection.kind === "personal" && selection.folderId === null}
-          onSelect={() => setSelection({ kind: "personal", folderId: null })}
+          active={view === "library" && selection.kind === "personal" && selection.folderId === null}
+          onSelect={() => selectLibrary({ kind: "personal", folderId: null })}
           {...dropProps({ scope: "personal", folderId: null })}
         />
         {personalFolders.map((f) => (
@@ -706,8 +717,8 @@ export function HistoryApp() {
             depth={1}
             icon={<Folder className="size-4" />}
             label={f.name}
-            active={selection.kind === "personal" && selection.folderId === f.id}
-            onSelect={() => setSelection({ kind: "personal", folderId: f.id })}
+            active={view === "library" && selection.kind === "personal" && selection.folderId === f.id}
+            onSelect={() => selectLibrary({ kind: "personal", folderId: f.id })}
             onRename={(name) => renamePersonalFolder(f.id, name)}
             onDelete={() => deletePersonalFolder(f)}
             {...dropProps({ scope: "personal", folderId: f.id })}
@@ -719,6 +730,14 @@ export function HistoryApp() {
           <AddFolderButton depth={1} onClick={() => setNewFolderScope("personal")} />
         )}
 
+        {/* Voice-typing dictation log — a sibling library, not a meetings folder. */}
+        <SidebarRow
+          icon={<Mic className="size-4" />}
+          label={t("history.sidebar.voiceTyping")}
+          active={view === "voice"}
+          onSelect={() => setView("voice")}
+        />
+
         {signedIn && (
           <>
             <div className="mt-3 px-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
@@ -729,14 +748,14 @@ export function HistoryApp() {
                 <SidebarRow
                   icon={<UsersRound className="size-4" />}
                   label={o.name}
-                  active={selection.kind === "org" && selection.id === o.id && selection.folderId === null}
+                  active={view === "library" && selection.kind === "org" && selection.id === o.id && selection.folderId === null}
                   expandable
                   expanded={!!expanded[o.id]}
                   onToggle={() => toggleOrg(o.id)}
                   onSelect={() => {
                     ensureOrgFolders(o.id);
                     setExpanded((p) => ({ ...p, [o.id]: true }));
-                    setSelection({ kind: "org", id: o.id, name: o.name, folderId: null });
+                    selectLibrary({ kind: "org", id: o.id, name: o.name, folderId: null });
                   }}
                   {...dropProps({ scope: "org", orgId: o.id, folderId: null })}
                 />
@@ -747,8 +766,8 @@ export function HistoryApp() {
                       depth={2}
                       icon={<Folder className="size-4" />}
                       label={f.name}
-                      active={selection.kind === "org" && selection.id === o.id && selection.folderId === f.id}
-                      onSelect={() => setSelection({ kind: "org", id: o.id, name: o.name, folderId: f.id })}
+                      active={view === "library" && selection.kind === "org" && selection.id === o.id && selection.folderId === f.id}
+                      onSelect={() => selectLibrary({ kind: "org", id: o.id, name: o.name, folderId: f.id })}
                       onRename={(name) => renameOrgFolderUI(o.id, f.id, name)}
                       onDelete={() => deleteOrgFolderUI(o.id, f)}
                       {...dropProps({ scope: "org", orgId: o.id, folderId: f.id })}
@@ -783,92 +802,36 @@ export function HistoryApp() {
         )}
       </aside>
 
-      {/* ── Content: the selected folder's grid ── */}
+      {/* ── Content: the meetings grid, or the voice-typing dictation log ── */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex shrink-0 items-center gap-2 border-b px-4 py-3">
-          {isOrg ? (
-            <span className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
-              <UsersRound className="size-4 text-sky-500" />
-              {selection.name}
-              {selectedFolderName && (
-                <>
-                  <ChevronRight className="size-3.5 text-muted-foreground" />
-                  <span className="inline-flex items-center gap-1">
-                    <Folder className="size-3.5 text-muted-foreground" />
-                    {selectedFolderName}
-                  </span>
-                </>
-              )}
-            </span>
-          ) : (
-            <h1 className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
-              {headerLabel}
-            </h1>
-          )}
-          <span className="text-xs text-muted-foreground">{t("history.count", { count: visible.length })}</span>
-          {!isOrg && syncing && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
-          <button
-            type="button"
-            onClick={refresh}
-            className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <RefreshCw className="size-3.5" />
-            {t("history.refresh")}
-          </button>
-        </header>
-
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
-          {entries === null ? (
-            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-              <Loader2 className="mr-2 size-4 animate-spin" />
-              {t("history.loading")}
-            </div>
-          ) : visible.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
-              <p className="text-sm text-muted-foreground">
-                {isOrg
-                  ? selection.folderId
-                    ? t("history.folder.empty")
-                    : t("history.org.empty")
-                  : selection.folderId
-                    ? t("history.folder.empty")
-                    : t("history.empty")}
-              </p>
-              <p className="text-xs text-muted-foreground/70">
-                {selection.folderId
-                  ? t("history.folder.emptyHint")
-                  : isOrg
-                    ? t("history.org.emptyHint")
-                    : t("history.emptyHint")}
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
-              {visible.map((entry) => (
-                <HistoryCard
-                  key={entry.id}
-                  entry={entry}
-                  locale={locale}
-                  signedIn={signedIn}
-                  isOrgContext={isOrg}
-                  orgs={orgs}
-                  busy={busyId === entry.id}
-                  downloading={downloadingId === entry.id}
-                  sharing={sharingId === entry.id}
-                  onOpen={() => void openItem(entry)}
-                  onDelete={() => void remove(entry)}
-                  onRename={(title) => void rename(entry.id, title)}
-                  onShare={(org) => void share(entry, org)}
-                  onDragStart={() => setDragItem(entry)}
-                  onDragEnd={() => {
-                    setDragItem(null);
-                    setDropKey(null);
-                  }}
-                />
-              ))}
-            </div>
-          )}
-        </div>
+        {view === "voice" ? (
+          <VoiceTypingHistory locale={locale} />
+        ) : (
+          <LibraryContent
+            selection={selection}
+            headerLabel={headerLabel}
+            selectedFolderName={selectedFolderName}
+            entries={entries}
+            visible={visible}
+            syncing={syncing}
+            locale={locale}
+            signedIn={signedIn}
+            orgs={orgs}
+            busyId={busyId}
+            downloadingId={downloadingId}
+            sharingId={sharingId}
+            onRefresh={refresh}
+            openItem={openItem}
+            remove={remove}
+            rename={rename}
+            share={share}
+            onDragStart={setDragItem}
+            onDragEnd={() => {
+              setDragItem(null);
+              setDropKey(null);
+            }}
+          />
+        )}
       </div>
 
       {movePrompt && (
@@ -889,6 +852,153 @@ export function HistoryApp() {
       )}
       <Toaster />
     </div>
+  );
+}
+
+/**
+ * The meetings library pane: header (scope + breadcrumb), count, refresh, and the
+ * card grid for the selected folder. Split out of HistoryApp so the voice-typing
+ * log can swap into the content area without nesting this whole tree.
+ */
+function LibraryContent({
+  selection,
+  headerLabel,
+  selectedFolderName,
+  entries,
+  visible,
+  syncing,
+  locale,
+  signedIn,
+  orgs,
+  busyId,
+  downloadingId,
+  sharingId,
+  onRefresh,
+  openItem,
+  remove,
+  rename,
+  share,
+  onDragStart,
+  onDragEnd,
+}: Readonly<{
+  selection: Selection;
+  headerLabel: string;
+  selectedFolderName: string | null;
+  entries: HistoryCardItem[] | null;
+  visible: HistoryCardItem[];
+  syncing: boolean;
+  locale: string;
+  signedIn: boolean;
+  orgs: CloudOrg[];
+  busyId: string | null;
+  downloadingId: string | null;
+  sharingId: string | null;
+  onRefresh: () => void;
+  openItem: (item: HistoryCardItem) => Promise<void>;
+  remove: (item: HistoryCardItem) => Promise<void>;
+  rename: (id: string, title: string) => Promise<void>;
+  share: (item: HistoryCardItem, org: CloudOrg) => Promise<void>;
+  onDragStart: (item: HistoryCardItem) => void;
+  onDragEnd: () => void;
+}>) {
+  const { t } = useI18n();
+  const isOrg = selection.kind === "org";
+
+  let emptyTitle: string;
+  if (selection.folderId) emptyTitle = t("history.folder.empty");
+  else if (isOrg) emptyTitle = t("history.org.empty");
+  else emptyTitle = t("history.empty");
+
+  let emptyHint: string;
+  if (selection.folderId) emptyHint = t("history.folder.emptyHint");
+  else if (isOrg) emptyHint = t("history.org.emptyHint");
+  else emptyHint = t("history.emptyHint");
+
+  let body;
+  if (entries === null) {
+    body = (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        <Loader2 className="mr-2 size-4 animate-spin" />
+        {t("history.loading")}
+      </div>
+    );
+  } else if (visible.length === 0) {
+    body = (
+      <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
+        <p className="text-sm text-muted-foreground">{emptyTitle}</p>
+        <p className="text-xs text-muted-foreground/70">{emptyHint}</p>
+      </div>
+    );
+  } else {
+    body = (
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
+        {visible.map((entry) => (
+          <HistoryCard
+            key={entry.id}
+            entry={entry}
+            locale={locale}
+            signedIn={signedIn}
+            isOrgContext={isOrg}
+            orgs={orgs}
+            busy={busyId === entry.id}
+            downloading={downloadingId === entry.id}
+            sharing={sharingId === entry.id}
+            onOpen={() => {
+              openItem(entry).catch(() => {});
+            }}
+            onDelete={() => {
+              remove(entry).catch(() => {});
+            }}
+            onRename={(title) => {
+              rename(entry.id, title).catch(() => {});
+            }}
+            onShare={(org) => {
+              share(entry, org).catch(() => {});
+            }}
+            onDragStart={() => onDragStart(entry)}
+            onDragEnd={onDragEnd}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <header className="flex shrink-0 items-center gap-2 border-b px-4 py-3">
+        {isOrg ? (
+          <span className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
+            <UsersRound className="size-4 text-sky-500" />
+            {selection.name}
+            {selectedFolderName && (
+              <>
+                <ChevronRight className="size-3.5 text-muted-foreground" />
+                <span className="inline-flex items-center gap-1">
+                  <Folder className="size-3.5 text-muted-foreground" />
+                  {selectedFolderName}
+                </span>
+              </>
+            )}
+          </span>
+        ) : (
+          <h1 className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
+            {headerLabel}
+          </h1>
+        )}
+        <span className="text-xs text-muted-foreground">{t("history.count", { count: visible.length })}</span>
+        {!isOrg && syncing && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <RefreshCw className="size-3.5" />
+          {t("history.refresh")}
+        </button>
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">{body}</div>
+    </>
   );
 }
 

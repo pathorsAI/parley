@@ -101,11 +101,13 @@ export async function recordLlmUsage(
 export async function listenForSttUsage(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   return listen<{ provider: string; source: string; seconds: number }>("usage://stt", (e) => {
-    const { provider, seconds } = e.payload;
+    const { provider, source, seconds } = e.payload;
     if (!seconds || seconds <= 0) return;
     void recordUsage({
       kind: "stt",
-      category: "transcription",
+      // Label voice typing separately from meeting transcription so usage/billing
+      // can tell them apart.
+      category: source === "voice-typing" ? "voice-typing" : "transcription",
       provider,
       model: "",
       seconds,

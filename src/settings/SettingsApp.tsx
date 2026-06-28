@@ -58,12 +58,15 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
   default: "bg-muted text-muted-foreground",
 };
 import type { AppLanguage, AppLayout, AppTheme, DefaultSaveLocation, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
+import { VoiceTypingSettings } from "./VoiceTypingSettings";
+import { PermissionsPanel } from "./PermissionsPanel";
 
 type Category =
   | "basic"
   | "account"
   | "provider"
   | "transcription"
+  | "permissions"
   | "evaluations"
   | "todos"
   | "mcp"
@@ -82,6 +85,7 @@ const NAV: { id: Category; labelKey: TranslationKey; cloudOnly?: boolean }[] = [
   { id: "account", labelKey: "settings.nav.account", cloudOnly: true },
   { id: "provider", labelKey: "settings.nav.provider" },
   { id: "transcription", labelKey: "settings.nav.transcription" },
+  { id: "permissions", labelKey: "settings.nav.permissions" },
   { id: "evaluations", labelKey: "settings.nav.evaluations" },
   { id: "todos", labelKey: "settings.nav.todos" },
   { id: "mcp", labelKey: "settings.nav.mcp" },
@@ -139,10 +143,16 @@ export function SettingsApp() {
     void broadcastSettings({ ...useStore.getState().settings });
   }
 
+  // Enumerate mic devices only on the Transcription tab — doing it on every
+  // Settings open can trip the macOS microphone permission prompt.
+  useEffect(() => {
+    if (!isTauri() || cat !== "transcription") return;
+    invoke<string[]>("list_input_devices").then(setDevices).catch(() => {});
+  }, [cat]);
+
   useEffect(() => {
     if (!isTauri()) return;
     getVersion().then(setAppVersion).catch(() => {});
-    invoke<string[]>("list_input_devices").then(setDevices).catch(() => {});
     invoke<string>("get_templates_path").then(setTemplatesPath).catch(() => {});
     appLogDir().then((d) => join(d, "parley.log")).then(setLogPath).catch(() => {});
     const refreshMcpInfo = () => {
@@ -428,7 +438,20 @@ export function SettingsApp() {
                 variant="outline"
                 size="sm"
                 className="h-8 w-fit text-xs"
-                onClick={() => patch({ onboarded: false })}
+                onClick={async () => {
+                  patch({ onboarded: false, onboardingStep: 0 });
+                  // The onboarding renders on the MAIN window — bring it forward
+                  // and close this Settings window so it isn't hidden behind it.
+                  if (!isTauri()) return;
+                  try {
+                    const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+                    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+                    await (await WebviewWindow.getByLabel("main"))?.setFocus();
+                    await getCurrentWindow().close();
+                  } catch {
+                    /* ignore */
+                  }
+                }}
               >
                 {t("settings.basic.rerunSetup")}
               </Button>
@@ -672,6 +695,13 @@ export function SettingsApp() {
                 </label>
               ))}
             </div>
+            <VoiceTypingSettings />
+          </Section>
+        )}
+
+        {cat === "permissions" && (
+          <Section title={t("settings.permissions.title")}>
+            <PermissionsPanel />
           </Section>
         )}
 
