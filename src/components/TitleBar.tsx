@@ -6,6 +6,7 @@ import { useStore } from "../lib/store";
 import { log } from "../lib/log";
 import { STT_BY_ID, sttApiKey } from "../lib/transcription/providers";
 import { CLOUD_URL } from "../lib/cloud/client";
+import { toast } from "sonner";
 import { startMockStream, stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
 import { openSettingsWindow } from "../lib/settingsSync";
@@ -158,6 +159,12 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
           });
           stopMeeting();
         }
+      } else if (transcriptionProvider === "parley") {
+        // Hosted STT selected but no usable cloud session — never fake it with a
+        // mock transcript; tell the user to sign in and back out of "recording".
+        log.info("meeting: start blocked (parley, no session)");
+        stopMeeting();
+        toast.error(t("meeting.error.signin"));
       } else {
         log.info("meeting: start (mock stream)");
         startMockStream();

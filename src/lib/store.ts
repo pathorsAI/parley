@@ -361,7 +361,17 @@ export const useStore = create<ParleyState>()(
   setMeetingContext: (text) => set({ meetingContext: text }),
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
-  setCloudAuth: (cloudAuth) => set({ cloudAuth }),
+  setCloudAuth: (cloudAuth) =>
+    set((s) => {
+      // Signing out (or an expired session): a stale hosted "parley" STT
+      // selection can no longer authenticate. Fall back to a BYOK default so the
+      // next meeting fails loud (or works) instead of silently starting a mock
+      // stream, and so the Settings picker doesn't render blank.
+      if (!cloudAuth && s.settings.transcriptionProvider === "parley") {
+        return { cloudAuth, settings: { ...s.settings, transcriptionProvider: "soniox" } };
+      }
+      return { cloudAuth };
+    }),
   setLoadedHistoryId: (loadedHistoryId) => set({ loadedHistoryId }),
 
   enterReplay: (session) => {

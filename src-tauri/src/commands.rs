@@ -567,7 +567,24 @@ fn run_metered_session(
         if let Err(e) =
             transcription::run_session(provider, app.clone(), config, label, count_rx).await
         {
+            let msg = e.to_string();
             eprintln!("[stt:{label}] session ended: {e}");
+            // Surface the failure to the UI instead of silently leaving the
+            // meeting in "recording" with no transcript. Hosted mode hits this
+            // routinely (402 out of credits / 401 expired session at connect);
+            // BYOK hits it on a bad key. Classify so the frontend can show an
+            // actionable message.
+            let code = if msg.contains("402") {
+                "quota"
+            } else if msg.contains("401") {
+                "auth"
+            } else {
+                "connect"
+            };
+            let _ = app.emit(
+                "meeting://error",
+                serde_json::json!({ "source": label, "code": code, "message": msg }),
+            );
         }
 
         let samples = counter.await.unwrap_or(0);
