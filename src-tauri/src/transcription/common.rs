@@ -120,7 +120,15 @@ pub async fn connect_with_headers(
     }
     let (ws, _) = tokio_tungstenite::connect_async(req)
         .await
-        .map_err(|e| anyhow!("connect failed: {e}"))?;
+        .map_err(|e| match &e {
+            // Preserve the HTTP status from a refused upgrade (e.g. the hosted
+            // relay's 402 quota / 401 expired-session) so the caller can surface
+            // an actionable message instead of an opaque "connect failed".
+            tokio_tungstenite::tungstenite::Error::Http(resp) => {
+                anyhow!("connect failed: HTTP {}", resp.status().as_u16())
+            }
+            _ => anyhow!("connect failed: {e}"),
+        })?;
     Ok(ws)
 }
 

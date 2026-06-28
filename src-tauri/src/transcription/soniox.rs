@@ -126,6 +126,7 @@ pub async fn run_session(
     // Forward captured PCM, emit a level meter, keep the session alive, then
     // finalize and close.
     let mut meter = LevelMeter::new(app.clone(), source);
+    let is_relay = config.relay_endpoint.is_some();
     let forward = async move {
         let mut total: u64 = 0;
         let mut next_log: u64 = TARGET_SAMPLE_RATE as u64;
@@ -159,7 +160,16 @@ pub async fn run_session(
         let _ = write
             .send(Message::Text("{\"type\":\"finalize\"}".to_string()))
             .await;
-        let _ = write.close().await;
+        // BYOK: close our write half so Soniox flushes the final tokens to our
+        // still-open read half and then ends. In hosted RELAY mode, do NOT close
+        // here — the relay must forward this finalize to Soniox and stream the
+        // flushed tail BACK to us first; closing now would make the relay's
+        // server socket fire 'close' and stop relaying, truncating the last
+        // utterance. The relay closes the socket once Soniox finishes, which ends
+        // the read loop below (it also breaks on Soniox's `finished` marker).
+        if !is_relay {
+            let _ = write.close().await;
+        }
     };
 
     // Read tokens → speaker-runs via the shared SegmentBuilder.
