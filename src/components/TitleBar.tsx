@@ -5,6 +5,8 @@ import { Circle, FileAudio, History, Loader2, LogOut, Mic, Minus, Settings, Squa
 import { useStore } from "../lib/store";
 import { log } from "../lib/log";
 import { STT_BY_ID, sttApiKey } from "../lib/transcription/providers";
+import { CLOUD_URL } from "../lib/cloud/client";
+import { toast } from "sonner";
 import { startMockStream, stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
 import { openSettingsWindow } from "../lib/settingsSync";
@@ -135,11 +137,19 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
           pipeline: "real",
         });
         try {
+          // Hosted "parley" STT: relay audio through Parley Cloud (cloud WSS URL
+          // + the session token as apiKey, via sttApiKey). BYOK providers send no
+          // relay URL and connect straight to their vendor.
+          const relayUrl =
+            transcriptionProvider === "parley"
+              ? `${CLOUD_URL.replace(/^http/, "ws")}/stt/stream`
+              : undefined;
           await invoke("start_meeting", {
             provider: transcriptionProvider,
             apiKey: sttKey,
             diarization: STT_BY_ID[transcriptionProvider].diarization,
             inputDevice,
+            relayUrl,
           });
         } catch (e) {
           log.error("meeting: start failed", {
@@ -149,6 +159,12 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
           });
           stopMeeting();
         }
+      } else if (transcriptionProvider === "parley") {
+        // Hosted STT selected but no usable cloud session — never fake it with a
+        // mock transcript; tell the user to sign in and back out of "recording".
+        log.info("meeting: start blocked (parley, no session)");
+        stopMeeting();
+        toast.error(t("meeting.error.signin"));
       } else {
         log.info("meeting: start (mock stream)");
         startMockStream();
