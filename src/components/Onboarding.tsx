@@ -191,7 +191,9 @@ export function Onboarding() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {STT_PROVIDERS.map((p) => (
+                  {/* Onboarding runs before sign-in, so the hosted "parley" STT
+                      (which needs a cloud session) is never offered here. */}
+                  {STT_PROVIDERS.filter((p) => p.id !== "parley").map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       <span className="flex items-center gap-2">
                         <img src={p.icon} alt="" className="size-4 rounded-sm" />
