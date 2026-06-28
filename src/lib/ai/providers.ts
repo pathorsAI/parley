@@ -175,8 +175,9 @@ export const PROVIDERS: ProviderInfo[] = [
     label: "Parley",
     note: "provider.note.parley",
     tag: { label: "provider.tag.hosted", tone: "value" },
-    // No dedicated brand icon yet; reuse Groq's (the hosted backend is Groq).
-    icon: "/providers/groq.png",
+    // Parley's own brand mark — the hosted service is Parley's, so it must read
+    // as Parley, not as the upstream backend (Groq) it happens to route to.
+    icon: "/providers/parley.svg",
     kind: "openai-compatible",
     // Literal so this registry stays dependency-free; provider.ts overrides the
     // baseURL with the live CLOUD_URL at model-build time.
