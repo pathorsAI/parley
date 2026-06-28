@@ -56,6 +56,8 @@ pub fn start_voice_typing(
         model,
         language_hints: language_hints.unwrap_or_default(),
         diarization: false,
+        // Voice typing is BYOK-only (no hosted relay).
+        relay_endpoint: None,
     };
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();

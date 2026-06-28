@@ -599,7 +599,11 @@ export function SettingsApp() {
               >
                 <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {STT_PROVIDERS.map((p) => (
+                  {STT_PROVIDERS.filter(
+                    // Hosted "parley" STT only exists in the cloud build and only
+                    // when signed in (the session token IS the credential).
+                    (p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth),
+                  ).map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       <span className="flex items-center gap-2">
                         <img src={p.icon} alt="" className="size-4 rounded-sm" />

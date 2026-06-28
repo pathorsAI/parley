@@ -8,7 +8,7 @@
 export type Source = "me" | "them" | "mix";
 
 /** Speech-to-text providers (mirrors the Rust `SttProvider` ids). */
-export type SttProviderId = "soniox" | "deepgram" | "assemblyai" | "openai" | "gemini";
+export type SttProviderId = "soniox" | "deepgram" | "assemblyai" | "openai" | "gemini" | "parley";
 
 /**
  * A single transcript segment from a Soniox realtime session.
