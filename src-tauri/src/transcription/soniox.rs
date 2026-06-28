@@ -8,7 +8,9 @@ use tauri::AppHandle;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
-use super::common::{ensure_crypto_provider, LevelMeter, SegmentBuilder, TranscribeConfig};
+use super::common::{
+    connect_with_headers, ensure_crypto_provider, LevelMeter, SegmentBuilder, TranscribeConfig,
+};
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
 
@@ -21,7 +23,10 @@ const TOKEN_FIN: &str = "<fin>";
 
 #[derive(Serialize)]
 struct SonioxConfig<'a> {
-    api_key: &'a str,
+    /// Omitted in hosted "parley" relay mode — the relay injects the master key
+    /// server-side, so the Soniox key never rides in the client's config frame.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_key: Option<&'a str>,
     model: &'a str,
     audio_format: &'a str,
     sample_rate: u32,
@@ -69,10 +74,25 @@ pub async fn run_session(
     source: &'static str,
     mut pcm_rx: UnboundedReceiver<Vec<i16>>,
 ) -> Result<()> {
-    ensure_crypto_provider();
-    let (ws, _) = tokio_tungstenite::connect_async(SONIOX_WS_URL)
-        .await
-        .map_err(|e| anyhow!("connect failed: {e}"))?;
+    // Hosted "parley" relay (config.relay_endpoint set): connect to the cloud
+    // WSS with a Bearer token instead of the vendor with an api_key. Otherwise
+    // BYOK: straight to Soniox. Both yield the same Soniox wire protocol below.
+    let ws = match &config.relay_endpoint {
+        Some(relay_url) => {
+            connect_with_headers(
+                relay_url,
+                &[("Authorization", format!("Bearer {}", config.api_key))],
+            )
+            .await?
+        }
+        None => {
+            ensure_crypto_provider();
+            let (ws, _) = tokio_tungstenite::connect_async(SONIOX_WS_URL)
+                .await
+                .map_err(|e| anyhow!("connect failed: {e}"))?;
+            ws
+        }
+    };
     let (mut write, mut read) = ws.split();
 
     let language_hints = if config.language_hints.is_empty() {
@@ -81,7 +101,12 @@ pub async fn run_session(
         Some(config.language_hints.clone())
     };
     let wire = SonioxConfig {
-        api_key: &config.api_key,
+        // Relay mode omits the key (the relay injects it); BYOK sends it.
+        api_key: if config.relay_endpoint.is_some() {
+            None
+        } else {
+            Some(config.api_key.as_str())
+        },
         model: &config.model,
         audio_format: "pcm_s16le",
         sample_rate: TARGET_SAMPLE_RATE,
