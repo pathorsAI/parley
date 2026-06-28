@@ -458,8 +458,14 @@ export function SettingsApp() {
             </Field>
             <Field label={t("settings.update.title")}>
               {appVersion && (
-                <p className="text-sm">
+                <p className="flex items-center gap-2 text-sm">
                   {t("settings.update.current", { version: appVersion })}
+                  <span
+                    className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground"
+                    title={CLOUD_ENABLED ? t("settings.edition.official.hint") : t("settings.edition.oss.hint")}
+                  >
+                    {CLOUD_ENABLED ? t("settings.edition.official") : t("settings.edition.oss")}
+                  </span>
                 </p>
               )}
               <div className="flex items-center gap-2">
