@@ -1,6 +1,9 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 import { useStore } from "./store";
 import { toTraditional } from "./zhConvert";
+import { translate, type TranslationKey } from "../i18n/messages";
 import type { Source } from "./types";
 
 /** Shape of the `transcript://segment` payload emitted by the Rust backend. */
@@ -77,6 +80,40 @@ export async function listenForProsody(): Promise<UnlistenFn> {
       longestPauseMs: p.longest_pause_ms,
       speaking: p.speaking,
     });
+  });
+}
+
+/** Shape of the `meeting://error` payload (a transcription session failed). */
+interface MeetingErrorPayload {
+  source: string;
+  /** "quota" (402) | "auth" (401) | "connect" (other). */
+  code: string;
+  message: string;
+}
+
+/**
+ * Subscribe to backend transcription-failure events. A meeting that loses its
+ * STT session would otherwise sit in "recording" with no transcript and no
+ * signal — especially in hosted mode, where 402 (out of credits) and 401
+ * (expired session) are routine. Stop the meeting and surface an actionable
+ * toast. No-op outside Tauri.
+ */
+export async function listenForMeetingError(): Promise<UnlistenFn> {
+  if (!("__TAURI_INTERNALS__" in window)) {
+    return () => {};
+  }
+  return listen<MeetingErrorPayload>("meeting://error", (event) => {
+    const { code } = event.payload;
+    // Tear the (transcript-less) meeting down so the UI leaves "recording".
+    useStore.getState().stopMeeting();
+    void invoke("stop_meeting").catch(() => {});
+    const key: TranslationKey =
+      code === "quota"
+        ? "meeting.error.quota"
+        : code === "auth"
+          ? "meeting.error.auth"
+          : "meeting.error.connect";
+    toast.error(translate(useStore.getState().settings.language, key));
   });
 }
 
