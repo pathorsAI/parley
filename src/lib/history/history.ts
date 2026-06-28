@@ -430,6 +430,12 @@ export async function openHistoryWindow(): Promise<void> {
     minWidth: 720,
     minHeight: 480,
     resizable: true,
+    // The folder sidebar uses HTML5 drag-and-drop (drag a card onto a folder). Tauri's
+    // native OS drag-drop handler is ON by default and SWALLOWS the webview's dragover/
+    // drop events, so without this the drop zones never highlight and nothing moves.
+    // This window has no OS file-drop needs (uploads happen in the main window), so it's
+    // safe to hand drag-drop to the webview.
+    dragDropEnabled: false,
   });
   win.once("tauri://error", (e) => log.error("history: window error", { error: String(e) }));
 }
