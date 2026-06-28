@@ -49,6 +49,12 @@ pub struct TranscribeConfig {
     /// Whether the caller wants speaker diarization; adapters that don't support
     /// it just emit speaker 0.
     pub diarization: bool,
+    /// Hosted "parley" mode: when set, this is the cloud STT relay's `wss://` URL.
+    /// The adapter connects HERE (not the vendor) with `Authorization: Bearer
+    /// {api_key}` and omits the provider key from its config frame — the relay
+    /// injects the real key server-side, so the vendor stays hidden. `None` =
+    /// BYOK direct-to-vendor (the default for every other provider).
+    pub relay_endpoint: Option<String>,
 }
 
 /// Payload emitted to the frontend for each transcript update.

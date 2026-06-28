@@ -140,11 +140,16 @@ pub fn start_meeting(
     language_hints: Option<Vec<String>>,
     diarization: Option<bool>,
     input_device: Option<String>,
+    // Hosted "parley" mode: the cloud STT relay's `wss://` URL. When set,
+    // `api_key` is the cloud Bearer token (not a vendor key) and the adapter
+    // relays through this URL. Absent for BYOK providers.
+    relay_url: Option<String>,
 ) -> Result<(), String> {
     let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
     if api_key.trim().is_empty() {
         return Err("missing transcription API key".into());
     }
+    let relay_endpoint = relay_url.filter(|u| !u.trim().is_empty());
     // Ignore if already running.
     if state.running.swap(true, Ordering::SeqCst) {
         return Ok(());
@@ -176,6 +181,7 @@ pub fn start_meeting(
         model: model.clone(),
         language_hints: language_hints.clone(),
         diarization,
+        relay_endpoint: relay_endpoint.clone(),
     };
 
     // Diarizing providers separate speakers themselves, so mix mic + system

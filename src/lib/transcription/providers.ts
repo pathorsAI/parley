@@ -1,5 +1,6 @@
 import type { Settings, SttProviderId } from "../types";
 import { PROVIDER_BY_ID } from "../ai/providers";
+import { cloudToken } from "../cloud/client";
 
 /**
  * Single source of truth for speech-to-text providers, mirroring the Rust
@@ -35,6 +36,18 @@ export const STT_PROVIDERS: SttProviderInfo[] = [
   { id: "assemblyai", label: "AssemblyAI", diarization: false, apiKeyField: "assemblyaiApiKey", keyPlaceholder: "…", icon: "/providers/assemblyai.png" },
   { ...fromLlm("openai"), diarization: false },
   { ...fromLlm("gemini"), diarization: false },
+  // Hosted account mode: audio is relayed through Parley Cloud to Soniox (which
+  // diarizes), so no vendor is exposed and no key field is used — auth is the
+  // signed-in cloud session (see sttApiKey). Borrows the Parley brand from the
+  // LLM registry. The picker only offers it in the cloud build when signed in.
+  {
+    id: "parley",
+    label: PROVIDER_BY_ID["parley"].label,
+    diarization: true,
+    apiKeyField: "parleyApiKey",
+    keyPlaceholder: "",
+    icon: PROVIDER_BY_ID["parley"].icon,
+  },
 ];
 
 export const STT_BY_ID = Object.fromEntries(STT_PROVIDERS.map((p) => [p.id, p])) as Record<
@@ -42,7 +55,12 @@ export const STT_BY_ID = Object.fromEntries(STT_PROVIDERS.map((p) => [p.id, p]))
   SttProviderInfo
 >;
 
-/** The API key string for a given STT provider from settings. */
+/**
+ * The credential a given STT provider authenticates with. BYOK providers use
+ * their settings key field; the hosted "parley" provider has no key — it rides
+ * the signed-in cloud session token (empty when signed out, which gates start).
+ */
 export function sttApiKey(settings: Settings, id: SttProviderId): string {
+  if (id === "parley") return cloudToken() ?? "";
   return (settings[STT_BY_ID[id].apiKeyField] as string) ?? "";
 }
