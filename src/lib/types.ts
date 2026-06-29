@@ -214,6 +214,16 @@ export type AppTheme = "light" | "dark" | "system";
 /** Main window panel layout preference. */
 export type AppLayout = "full" | "assistant" | "transcript";
 
+/** Push-to-talk key for the global voice-typing listener on macOS. The picker is
+ *  the single source of truth — exactly one is live at a time. `alt-space` needs
+ *  no extra permission; the modifier keys need Input Monitoring. */
+export type VoiceTypingShortcut =
+  | "alt-space"
+  | "fn"
+  | "right-option"
+  | "right-command"
+  | "right-control";
+
 /** Model ids for one provider: a fast model for Q&A, a stronger one for evals. */
 export interface ProviderModels {
   ask: string;
@@ -269,6 +279,9 @@ export interface Settings {
   /** Voice typing: after releasing the push-to-talk key, also paste the text
    *  into the frontmost app (simulated ⌘V). Off by default; needs Accessibility. */
   voiceTypingAutoPaste: boolean;
+  /** Voice typing push-to-talk key. Defaults to Option+Space (no extra
+   *  permission); can be switched to a hold-friendly modifier key. */
+  voiceTypingShortcut: VoiceTypingShortcut;
   /** The active evaluation set used in meetings (the runtime copy lives in the store). */
   evaluations: EvalDef[];
   /** Library of evaluation templates (built-in + custom) you can apply. */
