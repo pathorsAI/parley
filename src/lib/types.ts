@@ -214,8 +214,12 @@ export type AppTheme = "light" | "dark" | "system";
 /** Main window panel layout preference. */
 export type AppLayout = "full" | "assistant" | "transcript";
 
-/** Push-to-talk key used by the global voice-typing listener on macOS. */
-export type VoiceTypingShortcut = "fn" | "right-option" | "right-command" | "right-control";
+/**
+ * Push-to-talk key used by the global voice-typing listener on macOS.
+ * Built-in presets are "fn", "right-option", "right-command", and
+ * "right-control"; custom keys are stored as "keycode:<mac-vk>".
+ */
+export type VoiceTypingShortcut = string;
 
 /** Model ids for one provider: a fast model for Q&A, a stronger one for evals. */
 export interface ProviderModels {

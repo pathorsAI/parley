@@ -1,9 +1,10 @@
 //! Global push-to-talk key listener for voice typing.
 //!
 //! The default trigger is the macOS `fn` (Globe) key. Users can switch to a
-//! right-side modifier when another app already owns Globe/fn. We tap at the HID
-//! level (`kCGHIDEventTap`), which sees modifier transitions before AppKit
-//! monitors and lets us swallow the selected push-to-talk key.
+//! right-side modifier when another app already owns Globe/fn, or record any
+//! arbitrary key as a custom push-to-talk button. We tap at the HID level
+//! (`kCGHIDEventTap`), which sees key transitions before AppKit monitors and
+//! lets us swallow the selected push-to-talk key.
 //!
 //! An HID keyboard tap requires Input Monitoring (TCC). Settings/onboarding can
 //! request it explicitly; the grant may take effect on the next run. Auto-paste
@@ -22,7 +23,7 @@ pub struct HotkeyStatus {
     shortcut: String,
 }
 
-/// Whether Input Monitoring is granted (needed to see the fn key globally).
+/// Whether Input Monitoring is granted (needed to see the push-to-talk key globally).
 #[tauri::command]
 pub fn input_monitoring_status() -> bool {
     imp::listen_event_authorized()
@@ -35,7 +36,7 @@ pub fn request_input_monitoring() -> bool {
     imp::request_listen_event()
 }
 
-/// Start the global fn-key tap if it isn't running and the permission is granted.
+/// Start the global push-to-talk tap if it isn't running and the permission is granted.
 /// Safe to call repeatedly. Returns whether the tap is active.
 #[tauri::command]
 pub fn ensure_fn_listener(app: AppHandle) -> bool {
@@ -51,7 +52,7 @@ pub fn set_voice_typing_shortcut(app: AppHandle, shortcut: String) -> HotkeyStat
     HotkeyStatus {
         authorized: imp::listen_event_authorized(),
         active,
-        shortcut: imp::shortcut_id().to_string(),
+        shortcut: imp::shortcut_id(),
     }
 }
 
@@ -61,7 +62,7 @@ pub fn voice_typing_hotkey_status() -> HotkeyStatus {
     HotkeyStatus {
         authorized: imp::listen_event_authorized(),
         active: imp::is_started(),
-        shortcut: imp::shortcut_id().to_string(),
+        shortcut: imp::shortcut_id(),
     }
 }
 
@@ -73,7 +74,8 @@ pub fn init(app: AppHandle) {
 #[cfg(target_os = "macos")]
 mod imp {
     use std::ffi::c_void;
-    use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+    use std::sync::Mutex;
 
     use tauri::{AppHandle, Emitter};
 
@@ -90,6 +92,8 @@ mod imp {
     const KCG_HID_EVENT_TAP: u32 = 0; // kCGHIDEventTap — earliest point in the pipeline
     const KCG_HEAD_INSERT: u32 = 0; // kCGHeadInsertEventTap
     const KCG_TAP_OPTION_DEFAULT: u32 = 0; // kCGEventTapOptionDefault
+    const KCG_EVENT_KEYDOWN: CGEventType = 10;
+    const KCG_EVENT_KEYUP: CGEventType = 11;
     const KCG_EVENT_FLAGS_CHANGED: CGEventType = 12;
     const KCG_KEYBOARD_EVENT_KEYCODE: u32 = 9; // CGEventField
     const FLAG_MASK_CONTROL: u64 = 0x0004_0000; // kCGEventFlagMaskControl
@@ -102,10 +106,15 @@ mod imp {
     const KVK_RIGHT_CONTROL: i64 = 62;
     const TAP_DISABLED_BY_TIMEOUT: CGEventType = 0xFFFF_FFFE;
     const TAP_DISABLED_BY_USER_INPUT: CGEventType = 0xFFFF_FFFF;
-    const SHORTCUT_FN: u8 = 0;
-    const SHORTCUT_RIGHT_OPTION: u8 = 1;
-    const SHORTCUT_RIGHT_COMMAND: u8 = 2;
-    const SHORTCUT_RIGHT_CONTROL: u8 = 3;
+
+    #[derive(Clone, Copy, Debug)]
+    enum Shortcut {
+        Fn,
+        RightOption,
+        RightCommand,
+        RightControl,
+        Custom(u16),
+    }
 
     type CGEventTapCallBack =
         extern "C" fn(CGEventTapProxy, CGEventType, CGEventRef, *mut c_void) -> CGEventRef;
@@ -142,7 +151,7 @@ mod imp {
 
     static KEY_DOWN: AtomicBool = AtomicBool::new(false);
     static STARTED: AtomicBool = AtomicBool::new(false);
-    static SHORTCUT: AtomicU8 = AtomicU8::new(SHORTCUT_FN);
+    static SHORTCUT: Mutex<Shortcut> = Mutex::new(Shortcut::Fn);
     /// The live tap port, so the callback can re-enable it when macOS disables it.
     static TAP_PORT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
@@ -159,39 +168,61 @@ mod imp {
     }
 
     pub fn set_shortcut(id: &str) {
-        let next = match id {
-            "right-option" => SHORTCUT_RIGHT_OPTION,
-            "right-command" => SHORTCUT_RIGHT_COMMAND,
-            "right-control" => SHORTCUT_RIGHT_CONTROL,
-            _ => SHORTCUT_FN,
+        let shortcut = if let Some(raw) = id.strip_prefix("keycode:") {
+            raw.parse::<u16>()
+                .map(Shortcut::Custom)
+                .unwrap_or(Shortcut::Fn)
+        } else {
+            match id {
+                "right-option" => Shortcut::RightOption,
+                "right-command" => Shortcut::RightCommand,
+                "right-control" => Shortcut::RightControl,
+                _ => Shortcut::Fn,
+            }
         };
-        SHORTCUT.store(next, Ordering::SeqCst);
+        if let Ok(mut guard) = SHORTCUT.lock() {
+            *guard = shortcut;
+        }
         KEY_DOWN.store(false, Ordering::SeqCst);
     }
 
-    pub fn shortcut_id() -> &'static str {
-        match SHORTCUT.load(Ordering::SeqCst) {
-            SHORTCUT_RIGHT_OPTION => "right-option",
-            SHORTCUT_RIGHT_COMMAND => "right-command",
-            SHORTCUT_RIGHT_CONTROL => "right-control",
-            _ => "fn",
+    pub fn shortcut_id() -> String {
+        let s = SHORTCUT.lock().map(|g| *g).unwrap_or(Shortcut::Fn);
+        match s {
+            Shortcut::Fn => "fn".into(),
+            Shortcut::RightOption => "right-option".into(),
+            Shortcut::RightCommand => "right-command".into(),
+            Shortcut::RightControl => "right-control".into(),
+            Shortcut::Custom(c) => format!("keycode:{c}"),
         }
     }
 
-    fn trigger_state(key_code: i64, flags: u64) -> Option<bool> {
-        match SHORTCUT.load(Ordering::SeqCst) {
-            SHORTCUT_RIGHT_OPTION if key_code == KVK_RIGHT_OPTION => {
+    fn current_shortcut() -> Shortcut {
+        SHORTCUT.lock().map(|g| *g).unwrap_or(Shortcut::Fn)
+    }
+
+    fn preset_trigger_state(key_code: i64, flags: u64, shortcut: Shortcut) -> Option<bool> {
+        match shortcut {
+            Shortcut::RightOption if key_code == KVK_RIGHT_OPTION => {
                 Some((flags & FLAG_MASK_ALTERNATE) != 0)
             }
-            SHORTCUT_RIGHT_COMMAND if key_code == KVK_RIGHT_COMMAND => {
+            Shortcut::RightCommand if key_code == KVK_RIGHT_COMMAND => {
                 Some((flags & FLAG_MASK_COMMAND) != 0)
             }
-            SHORTCUT_RIGHT_CONTROL if key_code == KVK_RIGHT_CONTROL => {
+            Shortcut::RightControl if key_code == KVK_RIGHT_CONTROL => {
                 Some((flags & FLAG_MASK_CONTROL) != 0)
             }
-            SHORTCUT_FN if key_code == KVK_FUNCTION => Some((flags & FLAG_MASK_SECONDARY_FN) != 0),
+            Shortcut::Fn if key_code == KVK_FUNCTION => {
+                Some((flags & FLAG_MASK_SECONDARY_FN) != 0)
+            }
             _ => None,
         }
+    }
+
+    unsafe fn emit_ptt(app_ptr: *mut c_void, down: bool) {
+        let app = &*(app_ptr as *const AppHandle);
+        log::info!("voice-typing: {} {}", shortcut_id(), if down { "down" } else { "up" });
+        let _ = app.emit("voicetyping://ptt", serde_json::json!({ "down": down }));
     }
 
     extern "C" fn callback(
@@ -207,25 +238,45 @@ mod imp {
             }
             return event;
         }
-        if etype == KCG_EVENT_FLAGS_CHANGED && !user.is_null() {
-            let key_code =
-                unsafe { CGEventGetIntegerValueField(event, KCG_KEYBOARD_EVENT_KEYCODE) };
+
+        if user.is_null() {
+            return event;
+        }
+
+        let shortcut = current_shortcut();
+
+        // Preset modifiers (including fn/Globe) are best detected via
+        // flags-changed so we can see modifier transitions without an actual
+        // key-down event.
+        if etype == KCG_EVENT_FLAGS_CHANGED && matches!(shortcut, Shortcut::Fn | Shortcut::RightOption | Shortcut::RightCommand | Shortcut::RightControl) {
+            let key_code = unsafe { CGEventGetIntegerValueField(event, KCG_KEYBOARD_EVENT_KEYCODE) };
             let flags = unsafe { CGEventGetFlags(event) };
-            if let Some(now) = trigger_state(key_code, flags) {
+            if let Some(now) = preset_trigger_state(key_code, flags, shortcut) {
                 if KEY_DOWN.swap(now, Ordering::SeqCst) != now {
-                    let app = unsafe { &*(user as *const AppHandle) };
-                    log::info!(
-                        "voice-typing: {} {}",
-                        shortcut_id(),
-                        if now { "down" } else { "up" }
-                    );
-                    let _ = app.emit("voicetyping://ptt", serde_json::json!({ "down": now }));
+                    unsafe { emit_ptt(user, now) };
                 }
                 // Swallow the selected push-to-talk key so the system or another
                 // frontmost app doesn't also react to the modifier transition.
                 return std::ptr::null();
             }
+            return event;
         }
+
+        // Custom keys are ordinary keys, so look for key-down / key-up events.
+        if let Shortcut::Custom(custom_code) = shortcut {
+            if etype == KCG_EVENT_KEYDOWN || etype == KCG_EVENT_KEYUP {
+                let key_code =
+                    unsafe { CGEventGetIntegerValueField(event, KCG_KEYBOARD_EVENT_KEYCODE) } as u16;
+                if key_code == custom_code {
+                    let down = etype == KCG_EVENT_KEYDOWN;
+                    if KEY_DOWN.swap(down, Ordering::SeqCst) != down {
+                        unsafe { emit_ptt(user, down) };
+                    }
+                    return std::ptr::null();
+                }
+            }
+        }
+
         event
     }
 
@@ -245,7 +296,9 @@ mod imp {
         // the run loop for the app's lifetime.
         std::thread::spawn(move || unsafe {
             let user = Box::into_raw(Box::new(app)) as *mut c_void;
-            let mask: u64 = 1 << KCG_EVENT_FLAGS_CHANGED;
+            let mask: u64 = (1 << KCG_EVENT_FLAGS_CHANGED)
+                | (1 << KCG_EVENT_KEYDOWN)
+                | (1 << KCG_EVENT_KEYUP);
             let port = CGEventTapCreate(
                 KCG_HID_EVENT_TAP,
                 KCG_HEAD_INSERT,
@@ -264,7 +317,7 @@ mod imp {
             let source = CFMachPortCreateRunLoopSource(std::ptr::null(), port, 0);
             CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes);
             CGEventTapEnable(port, true);
-            log::info!("voice-typing: fn-key HID tap started");
+            log::info!("voice-typing: push-to-talk HID tap started");
             CFRunLoopRun();
         });
         true
@@ -287,7 +340,7 @@ mod imp {
         false
     }
     pub fn set_shortcut(_id: &str) {}
-    pub fn shortcut_id() -> &'static str {
-        "fn"
+    pub fn shortcut_id() -> String {
+        "fn".into()
     }
 }
