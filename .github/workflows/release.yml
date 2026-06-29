@@ -102,7 +102,7 @@ jobs:
         run: bash src-tauri/scripts/fetch-onnxruntime.sh
 
       - name: Import Apple signing certificate
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        if: secrets.APPLE_CERTIFICATE != ''
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -122,7 +122,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
       - name: Prepare Apple API Key
-        if: ${{ secrets.APPLE_API_KEY_CONTENT != '' }}
+        if: secrets.APPLE_API_KEY_CONTENT != ''
         run: |
           mkdir -p "${{ runner.temp }}/private_keys"
           echo "${{ secrets.APPLE_API_KEY_CONTENT }}" > "${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8"
