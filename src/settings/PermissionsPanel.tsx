@@ -57,6 +57,20 @@ export function PermissionsPanel() {
     refresh().catch(() => {});
   }, []);
 
+  useEffect(() => {
+    const refreshNow = () => {
+      refresh().catch(() => {});
+    };
+    globalThis.addEventListener("focus", refreshNow);
+    document.addEventListener("visibilitychange", refreshNow);
+    const id = globalThis.setInterval(refreshNow, 2000);
+    return () => {
+      globalThis.removeEventListener("focus", refreshNow);
+      document.removeEventListener("visibilitychange", refreshNow);
+      globalThis.clearInterval(id);
+    };
+  }, []);
+
   // The native request prompts (mic / accessibility / screen) only show once per
   // app launch. So the first click triggers the prompt (which itself offers an
   // "Open System Settings" button); every click after that opens the relevant
@@ -70,6 +84,11 @@ export function PermissionsPanel() {
       await request().catch(() => {});
     }
     await refresh();
+    for (const delay of [500, 1500, 3000, 6000]) {
+      globalThis.setTimeout(() => {
+        refresh().catch(() => {});
+      }, delay);
+    }
   }
 
   if (!isTauri()) return null;
