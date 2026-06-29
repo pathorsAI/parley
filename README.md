@@ -116,7 +116,7 @@ Parley is currently unsigned, so on first launch macOS Gatekeeper may block it. 
 
 Parley does not use macOS Dictation. It runs its own microphone capture and realtime STT pipeline, so the output uses whichever transcription provider you configured in Settings.
 
-On macOS, hold `fn`/Globe to record a short voice typing session and release it to finish transcription. Parley copies the completed text to the system clipboard; if you enable auto-paste, it also sends Cmd+V to the frontmost app. Global `fn` capture requires Input Monitoring permission, and auto-paste requires Accessibility permission.
+On macOS, hold the push-to-talk key to record a short voice typing session and release it to finish transcription. The key is selectable in **Settings → Voice typing**: `Option+Space` (the default, no extra permission) or a hold-friendly modifier — `fn`/Globe, Right Option, Right Command, or Right Control. Parley copies the completed text to the system clipboard; if you enable auto-paste, it also sends Cmd+V to the frontmost app. The modifier keys require Input Monitoring permission, and auto-paste requires Accessibility permission.
 
 ---
 
@@ -132,6 +132,6 @@ Licensed under the [Apache License 2.0](LICENSE). Copyright 2026 Pathors AI.
 
 ## Press-And-Hold Dictation
 
-Parley does not use macOS Dictation. It uses its own microphone capture and the configured realtime STT provider. In the Tauri desktop app, hold `Option+Space` to record a short dictation, release to transcribe, and Parley copies the completed text to the system clipboard for pasting.
+Parley does not use macOS Dictation. It uses its own microphone capture and the configured realtime STT provider. In the Tauri desktop app, hold the push-to-talk key to record a short dictation, release to transcribe, and Parley copies the completed text to the system clipboard for pasting.
 
-macOS does not expose the `fn` key as a reliable official global shortcut for third-party apps, so `Option+Space` is the default stable shortcut instead of `fn`-hold.
+`Option+Space` is the default because macOS does not expose the `fn` key as a reliable official global shortcut for third-party apps. If you'd rather use `fn`/Globe or a right-side modifier, pick it in **Settings → Voice typing**; those keys are captured via a low-level event tap and need Input Monitoring permission.

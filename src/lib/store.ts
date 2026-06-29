@@ -89,6 +89,7 @@ const DEFAULT_SETTINGS: Settings = {
   inputDevice: "",
   voiceTypingEnabled: true,
   voiceTypingAutoPaste: false,
+  voiceTypingShortcut: "alt-space",
   evaluations: buildPresetEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),
   todoTemplates: buildPresetTodoTemplates(tDefault),
