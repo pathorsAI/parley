@@ -608,11 +608,6 @@ export function SettingsApp() {
                       <span className="flex items-center gap-2">
                         <img src={p.icon} alt="" className="size-4 rounded-sm" />
                         {p.label}
-                        {!p.diarization && (
-                          <span className="rounded bg-amber-500/15 px-1.5 py-px text-[10px] font-medium text-amber-600 dark:text-amber-300">
-                            {t("settings.transcription.noDiarizationTag")}
-                          </span>
-                        )}
                       </span>
                     </SelectItem>
                   ))}
