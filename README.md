@@ -64,6 +64,7 @@ It runs in two complementary modes:
 - **Local-first** — audio and transcripts go straight to the providers you configure; no Pathors AI proxy in between.
 - **Built-in MCP server** — connect Claude (or any MCP client) to the live meeting while the app is open: read the transcript, manage agenda TODOs, and read/add/overwrite/edit the timeline analysis, plus manage evaluation/agenda templates.
 - **Traditional Chinese** — on-the-fly conversion of transcribed text.
+- **Voice typing** — hold `fn`/Globe on macOS to dictate into the app Parley was previously focused behind; release to transcribe, copy the result, and optionally auto-paste it back into the frontmost app.
 - **Native macOS UI** — clean, custom window chrome.
 
 ---
@@ -107,6 +108,15 @@ Parley is currently unsigned, so on first launch macOS Gatekeeper may block it. 
    ```
 
 3. Paste your API keys in the **Settings** panel inside the app on first launch.
+
+---
+
+
+## 🎙️ Voice Typing
+
+Parley does not use macOS Dictation. It runs its own microphone capture and realtime STT pipeline, so the output uses whichever transcription provider you configured in Settings.
+
+On macOS, hold `fn`/Globe to record a short voice typing session and release it to finish transcription. Parley copies the completed text to the system clipboard; if you enable auto-paste, it also sends Cmd+V to the frontmost app. Global `fn` capture requires Input Monitoring permission, and auto-paste requires Accessibility permission.
 
 ---
 
