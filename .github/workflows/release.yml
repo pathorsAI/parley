@@ -126,8 +126,26 @@ jobs:
           # can never appear on CI, hanging the build at "replacing existing signature".
           echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
           security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -t cert -f pkcs12 -k "$KEYCHAIN_PATH" -T /usr/bin/codesign -T /usr/bin/productsign
+
+          # The exported .p12 contains only the leaf "Developer ID Application" cert,
+          # not Apple's intermediate/root. Without the full chain, codesign fails with
+          # `errSecInternalComponent` ("unable to build chain to self-signed root") and
+          # the Tauri build exits 1 at signing time. Import Apple's Developer ID G2
+          # intermediate + Apple Root so the chain resolves. (Verified locally: leaf
+          # alone → 0 valid identities + sign failure; leaf + these two → 1 valid + sign OK.)
+          curl -fsSL -o "${{ runner.temp }}/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          curl -fsSL -o "${{ runner.temp }}/AppleRoot.cer" https://www.apple.com/appleca/AppleIncRootCertificate.cer
+          security import "${{ runner.temp }}/DeveloperIDG2CA.cer" -k "$KEYCHAIN_PATH"
+          security import "${{ runner.temp }}/AppleRoot.cer" -k "$KEYCHAIN_PATH"
+
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+          # Assert a usable signing identity exists. `find-identity` exits 0 even with
+          # "0 valid identities found", so grep for an actual match — otherwise fail
+          # loudly here instead of ambiguously mid-build at codesign time.
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" | tee /tmp/identities.txt
+          grep -q '1 valid identities found\|[1-9][0-9]* valid identities found' /tmp/identities.txt \
+            || { echo "::error::No valid code-signing identity in keychain (cert chain incomplete?)"; exit 1; }
 
       - name: Prepare Apple API Key
         if: ${{ env.APPLE_API_KEY != '' && env.APPLE_API_ISSUER != '' && env.APPLE_API_KEY_CONTENT != '' }}
