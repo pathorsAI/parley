@@ -86,9 +86,9 @@ export type WargameStrategyKind = "rebut" | "reframe" | "trade" | "concede_redir
 
 /**
  * A per-finding "how should I reply" solution. Given ONE notable moment, the
- * engine reasons over the WHOLE negotiation (global, not just the local
- * exchange) and returns a few ready-to-use reply options — minimal prose, no
- * diagnosis of what went wrong.
+ * engine returns a few ready-to-use reply options — minimal prose, no diagnosis
+ * of what went wrong. LIVE advice is bounded to what ME knew at that moment;
+ * REPLAY may include explicitly labeled hindsight in the consideration.
  */
 
 /** One concrete way ME could reply at this moment, with a one-line consideration. */
@@ -136,10 +136,10 @@ export interface TimelineEvent {
   title: string;
   /** One or two sentences explaining the moment. */
   detail: string;
-  /** REPLAY/post-eval: true when ME LATER addressed / defused / answered this
-   *  moment elsewhere in the conversation. Rendered GREEN ("resolved") instead of
-   *  the severity colour, and its {@link resolution} is fed to the reply coach so
-   *  suggestions build on what ME already said rather than ignoring it. */
+  /** REPLAY/post-eval: true when ME meaningfully mitigated / repaired this
+   *  moment elsewhere in the conversation. A mere reply or weak concession is not
+   *  enough. Rendered GREEN ("resolved") instead of the severity colour, and its
+   *  {@link resolution} is fed to the reply coach as labeled hindsight. */
   resolved?: boolean;
   /** One short line on HOW ME handled it — present only when {@link resolved}. */
   resolution?: string;
