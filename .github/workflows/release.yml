@@ -29,6 +29,8 @@ jobs:
       APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
 
     steps:
       - name: Checkout
@@ -102,9 +104,8 @@ jobs:
         run: bash src-tauri/scripts/fetch-onnxruntime.sh
 
       - name: Import Apple signing certificate
-        if: secrets.APPLE_CERTIFICATE != ''
+        if: ${{ env.APPLE_CERTIFICATE != '' }}
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           CERT_PATH="${{ runner.temp }}/certificate.p12"
@@ -122,11 +123,11 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
       - name: Prepare Apple API Key
-        if: secrets.APPLE_API_KEY_CONTENT != ''
+        if: ${{ env.APPLE_API_KEY_CONTENT != '' }}
         run: |
           mkdir -p "${{ runner.temp }}/private_keys"
-          echo "${{ secrets.APPLE_API_KEY_CONTENT }}" > "${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8"
-          echo "APPLE_API_KEY_PATH=${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8" >> $GITHUB_ENV
+          echo "$APPLE_API_KEY_CONTENT" > "${{ runner.temp }}/private_keys/AuthKey_${{ env.APPLE_API_KEY }}.p8"
+          echo "APPLE_API_KEY_PATH=${{ runner.temp }}/private_keys/AuthKey_${{ env.APPLE_API_KEY }}.p8" >> $GITHUB_ENV
 
       - name: Build and upload Tauri bundles
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
