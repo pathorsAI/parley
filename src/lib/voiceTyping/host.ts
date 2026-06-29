@@ -51,7 +51,7 @@ export function initVoiceTyping(): () => void {
   // Apply the saved push-to-talk key so the right trigger is live from launch
   // (registers Option+Space, or arms the HID tap for a modifier key). The
   // Settings panel re-applies it whenever the user changes the selection.
-  void invoke("set_voice_typing_shortcut", {
+  invoke("set_voice_typing_shortcut", {
     shortcut: useStore.getState().settings.voiceTypingShortcut,
   }).catch(() => {});
   // Warm the overlay window so it's listening before the first key press.

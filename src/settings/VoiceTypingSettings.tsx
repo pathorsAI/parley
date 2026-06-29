@@ -46,7 +46,7 @@ export const VoiceTypingSettings = () => {
   useEffect(() => {
     if (!isTauri()) return;
     let alive = true;
-    void invoke<HotkeyStatus>("voice_typing_hotkey_status")
+    invoke<HotkeyStatus>("voice_typing_hotkey_status")
       .then((s) => {
         if (alive) setStatus(s);
       })
@@ -64,13 +64,13 @@ export const VoiceTypingSettings = () => {
 
   const setVoiceTypingEnabled = (enabled: boolean) => {
     updateSettings({ voiceTypingEnabled: enabled });
-    void broadcastSettings({ ...useStore.getState().settings });
+    broadcastSettings({ ...useStore.getState().settings }).catch(() => {});
   };
 
   const chooseShortcut = async (shortcut: VoiceTypingShortcut) => {
     setSaving(shortcut);
     updateSettings({ voiceTypingShortcut: shortcut });
-    void broadcastSettings({ ...useStore.getState().settings });
+    broadcastSettings({ ...useStore.getState().settings }).catch(() => {});
     let s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(
       () => null,
     );
@@ -135,7 +135,9 @@ export const VoiceTypingSettings = () => {
               variant={selected === shortcut ? "secondary" : "outline"}
               size="sm"
               className="h-9 justify-start gap-2 px-2 text-xs"
-              onClick={() => void chooseShortcut(shortcut)}
+              onClick={() => {
+                chooseShortcut(shortcut).catch(() => {});
+              }}
             >
               {saving === shortcut ? (
                 <Loader2 className="size-3.5 animate-spin" />
@@ -156,7 +158,7 @@ export const VoiceTypingSettings = () => {
             type="button"
             className="self-start text-[11px] font-medium text-primary underline-offset-2 hover:underline"
             onClick={() => {
-              void invoke("open_privacy_settings", { pane: "input-monitoring" });
+              invoke("open_privacy_settings", { pane: "input-monitoring" }).catch(() => {});
             }}
           >
             {t("settings.voiceTyping.openInputMonitoring")}
@@ -179,7 +181,7 @@ export const VoiceTypingSettings = () => {
           onChange={async (e) => {
             const on = e.target.checked;
             updateSettings({ voiceTypingAutoPaste: on });
-            void broadcastSettings({ ...useStore.getState().settings });
+            broadcastSettings({ ...useStore.getState().settings }).catch(() => {});
             // Auto-paste needs Accessibility — prompt the moment it's enabled.
             if (on) await invoke("accessibility_status", { prompt: true }).catch(() => {});
           }}
