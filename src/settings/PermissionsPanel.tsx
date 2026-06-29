@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RefreshCw } from "lucide-react";
 import { useI18n } from "../i18n";
+import { useStore } from "../lib/store";
 import { isTauri } from "../lib/tauriEvents";
 import { Button } from "@/components/ui/button";
 
@@ -34,7 +35,9 @@ function toneFor(status: Status): string {
  */
 export function PermissionsPanel() {
   const { t } = useI18n();
+  const shortcut = useStore((s) => s.settings.voiceTypingShortcut);
   const [microphone, setMicrophone] = useState<Status>("pending");
+  const [inputMonitoring, setInputMonitoring] = useState<Status>("pending");
   const [accessibility, setAccessibility] = useState<Status>("pending");
   const [screen, setScreen] = useState<Status>("pending");
 
@@ -44,6 +47,7 @@ export function PermissionsPanel() {
       const p = await invoke<Perms>("check_permissions");
       setMicrophone(micStatus(p.microphone));
       setScreen(p.screenRecording ? "granted" : "pending");
+      setInputMonitoring((await invoke<boolean>("input_monitoring_status")) ? "granted" : "pending");
       setAccessibility((await invoke<boolean>("accessibility_status", { prompt: false })) ? "granted" : "pending");
     } catch {
       /* non-macOS */
@@ -94,13 +98,24 @@ export function PermissionsPanel() {
         onGrant={() => grant("mic", "microphone", () => invoke("request_microphone"))}
       />
       <Row
+        label={t("settings.permissions.inputMonitoring")}
+        desc={t("settings.permissions.inputMonitoringDesc")}
+        status={inputMonitoring}
+        onGrant={() =>
+          grant("input-monitoring", "input-monitoring", async () => {
+            await invoke("request_input_monitoring");
+            await invoke("set_voice_typing_shortcut", { shortcut });
+          })
+        }
+      />
+      <Row
         label={t("settings.voiceTyping.accessibility")}
         desc={t("settings.permissions.accessibilityDesc")}
         status={accessibility}
         onGrant={() =>
           grant("accessibility", "accessibility", async () => {
             await invoke("accessibility_status", { prompt: true });
-            await invoke("ensure_fn_listener");
+            await invoke("set_voice_typing_shortcut", { shortcut });
           })
         }
       />

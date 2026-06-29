@@ -87,6 +87,7 @@ const DEFAULT_SETTINGS: Settings = {
   assemblyaiApiKey: "",
   inputDevice: "",
   voiceTypingAutoPaste: false,
+  voiceTypingShortcut: "fn",
   evaluations: buildPresetEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),
   todoTemplates: buildPresetTodoTemplates(tDefault),

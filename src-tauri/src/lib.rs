@@ -93,6 +93,8 @@ pub fn run() {
             voice_typing::present_voice_overlay,
             voice_typing::dismiss_voice_overlay,
             hotkey::ensure_fn_listener,
+            hotkey::set_voice_typing_shortcut,
+            hotkey::voice_typing_hotkey_status,
             hotkey::input_monitoring_status,
             hotkey::request_input_monitoring,
             replay::transcribe_file,
