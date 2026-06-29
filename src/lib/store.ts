@@ -64,6 +64,7 @@ const DEFAULT_SETTINGS: Settings = {
   theme: "system",
   layout: "full",
   onboarded: false,
+  onboardingStep: 0,
   userName: "",
   userRole: "",
   userCompany: "",
@@ -78,6 +79,7 @@ const DEFAULT_SETTINGS: Settings = {
   qwenApiKey: "",
   kimiApiKey: "",
   ollamaApiKey: "",
+  parleyApiKey: "",
   reasoningEffort: { ask: "low", eval: "medium" },
   models: DEFAULT_MODELS,
   transcriptionProvider: "soniox",
@@ -85,12 +87,17 @@ const DEFAULT_SETTINGS: Settings = {
   deepgramApiKey: "",
   assemblyaiApiKey: "",
   inputDevice: "",
+  voiceTypingAutoPaste: false,
   evaluations: buildPresetEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),
   todoTemplates: buildPresetTodoTemplates(tDefault),
   // Pace + pauses are free (timing/DSP) so default on; pitch + tone (LLM cost)
   // are opt-in. See DeliveryToggles.
   delivery: { pace: true, pitch: false, pauses: true, tone: false },
+  // Signed-in accounts sync by default (prior behavior); the toggle lets a user
+  // keep this device local-only. Finished meetings save to the personal root.
+  syncEnabled: true,
+  defaultSaveLocation: { scope: "personal", folderId: null },
 };
 
 /** Whether the app is capturing a live meeting or analyzing an uploaded one. */
@@ -368,7 +375,17 @@ export const useStore = create<ParleyState>()(
   setMeetingContext: (text) => set({ meetingContext: text }),
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
-  setCloudAuth: (cloudAuth) => set({ cloudAuth }),
+  setCloudAuth: (cloudAuth) =>
+    set((s) => {
+      // Signing out (or an expired session): a stale hosted "parley" STT
+      // selection can no longer authenticate. Fall back to a BYOK default so the
+      // next meeting fails loud (or works) instead of silently starting a mock
+      // stream, and so the Settings picker doesn't render blank.
+      if (!cloudAuth && s.settings.transcriptionProvider === "parley") {
+        return { cloudAuth, settings: { ...s.settings, transcriptionProvider: "soniox" } };
+      }
+      return { cloudAuth };
+    }),
   setLoadedHistoryId: (loadedHistoryId) => set({ loadedHistoryId }),
 
   enterReplay: (session) => {
@@ -583,12 +600,18 @@ export const useStore = create<ParleyState>()(
   setAutoAnalyze: (on) => set({ autoAnalyze: on }),
   setAutoAnalyzeSec: (sec) => set({ autoAnalyzeSec: Math.max(20, sec || 45) }),
 
+  // Prosody is a live-only signal. Ignore non-null updates outside a recording so a
+  // leaked/duplicate listener (e.g. a dev StrictMode re-subscribe, or a backend
+  // frame slipping through stop_meeting's teardown grace) can't move the gauges
+  // after stop. A null reset always applies. While recording, also bump the
+  // filled-pause counter when the DSP flags a held-vowel hesitation.
   setProsody: (m) =>
-    set((s) => {
+    set((state) => {
       if (!m) return { prosody: null };
+      if (state.meetingStatus !== "recording") return {};
       return {
         prosody: m,
-        filledPauseCount: m.filledPause ? s.filledPauseCount + 1 : s.filledPauseCount,
+        filledPauseCount: m.filledPause ? state.filledPauseCount + 1 : state.filledPauseCount,
       };
     }),
   pushDeliveryNudge: (n) => set({ deliveryNudge: n }),
@@ -676,6 +699,10 @@ export const useStore = create<ParleyState>()(
 
   upsertSegment: (segment) =>
     set((state) => {
+      // Live transcript events must never mutate a loaded REPLAY recording — drop a
+      // stray live event (e.g. a leaked listener) while viewing a saved session.
+      // (Live finalize after stop is appMode "live"/"stopped", so it's unaffected.)
+      if (state.appMode === "replay") return {};
       const idx = state.segments.findIndex((s) => s.id === segment.id);
       if (idx === -1) {
         return { segments: [...state.segments, segment] };

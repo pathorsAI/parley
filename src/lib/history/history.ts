@@ -10,11 +10,14 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { toast } from "sonner";
 import { useStore, speakerKey } from "../store";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
+import { CLOUD_ENABLED } from "../flags";
 import { markDirty } from "../cloud/syncState";
-import { CLOUD_URL, cloudFetch, cloudToken } from "../cloud/client";
+import { CLOUD_URL, cloudFetch, cloudToken, syncEnabled } from "../cloud/client";
+import { listLocalFolders } from "./folders";
 import { translate } from "../../i18n/messages";
 import type { ReplaySession } from "../replay/types";
 import type { HistoryEntry, HistoryEntrySummary } from "./types";
@@ -55,6 +58,7 @@ export function buildSummary(entry: HistoryEntry): HistoryEntrySummary {
     actionItemsCount: entry.actionItems.length,
     hasAudio: entry.audio != null,
     snippet: snippetOf(entry),
+    folderId: entry.folderId ?? null,
   };
 }
 
@@ -119,14 +123,70 @@ async function persist(
   void pushToCloud(entry.id);
 }
 
-/** Fire-and-forget cloud push (signed-in only); kept here so save paths stay simple. */
+/** Fire-and-forget cloud push (gated by the sync toggle); save paths stay simple. */
 function pushToCloud(id: string): void {
-  // Content changed → flag dirty; pushLocalEntry clears it on a confirmed push, so
-  // if this best-effort push fails the background sweep re-pushes it later.
+  // Content changed → flag dirty even when sync is off, so flipping sync ON later
+  // makes the background sweep push this entry. pushLocalEntry clears dirty on a
+  // confirmed push.
   markDirty(id);
+  // Sync toggle off (or signed out / OSS) → don't push now; the sweep handles it
+  // when sync is turned on. This is the save-time half of the syncEnabled chokepoint.
+  if (!syncEnabled()) return;
   void import("../cloud/sync")
     .then((m) => m.pushLocalEntrySafe(id))
     .catch(() => {}); // a failed chunk import must not become an unhandled rejection
+}
+
+// ── Default save location ─────────────────────────────────────────────────────
+
+/**
+ * Resolve where a finished meeting should be saved, per the user's default-save
+ * setting + the org-default guard. The LOCAL entry always lands in a personal
+ * folder (or the personal root): when the default targets an org, the local copy
+ * stays at the personal root and the org gets an auto-shared COPY afterward (so the
+ * user never loses their own recording). On any guard miss (org default but signed
+ * out / sync off / not the cloud edition) we fall back to the personal root and
+ * report it so the caller can surface a toast.
+ */
+function resolveDefaultSave(): {
+  folderId: string | null;
+  autoShare: { orgId: string; folderId: string | null } | null;
+  fallback: "syncOff" | null;
+} {
+  const loc = useStore.getState().settings.defaultSaveLocation;
+  if (!loc || loc.scope === "personal") {
+    const fid = loc?.folderId ?? null;
+    // A personal folder deleted since it was chosen → save at the root (orphan→root).
+    if (fid && !listLocalFolders().some((f) => f.id === fid)) {
+      return { folderId: null, autoShare: null, fallback: null };
+    }
+    return { folderId: fid, autoShare: null, fallback: null };
+  }
+  // scope === "org": needs the cloud edition, signed in, sync on.
+  if (!CLOUD_ENABLED || !loc.orgId || !syncEnabled()) {
+    return { folderId: null, autoShare: null, fallback: loc.orgId ? "syncOff" : null };
+  }
+  return { folderId: null, autoShare: { orgId: loc.orgId, folderId: loc.folderId ?? null }, fallback: null };
+}
+
+/** After a save, auto-share into the default org folder — or toast why it fell back. */
+async function applyDefaultOrgShare(
+  id: string,
+  res: ReturnType<typeof resolveDefaultSave>,
+): Promise<void> {
+  const lang = useStore.getState().settings.language;
+  if (res.fallback === "syncOff") {
+    toast.message(translate(lang, "history.defaultSave.orgNeedsSync"));
+    return;
+  }
+  if (!res.autoShare || !CLOUD_ENABLED) return;
+  try {
+    const m = await import("../cloud/sync");
+    await m.shareRecordingToOrg(id, res.autoShare.orgId, res.autoShare.folderId);
+  } catch (e) {
+    log.error("history: org auto-share failed", { id, error: String(e) });
+    toast.error(translate(lang, "history.defaultSave.orgShareFailed"));
+  }
 }
 
 // ── Save paths ──────────────────────────────────────────────────────────────
@@ -145,7 +205,11 @@ let uploadSaveInFlight: Promise<unknown> | null = null;
 export async function saveLiveToHistory(audioTempPath: string, durationMs: number): Promise<void> {
   if (!isTauri()) return;
   if (!hasSpokenTranscript()) {
+    // Nothing was transcribed — almost certainly an accidental Start/Stop. Don't
+    // save a history entry, and discard the encoded temp recording so it doesn't
+    // orphan in the temp dir (an entry would normally consume it on save).
     log.info("history: live save skipped (no transcript)");
+    await invoke("discard_recording", { path: audioTempPath }).catch(() => {});
     return;
   }
   const s = useStore.getState();
@@ -154,6 +218,7 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
   // Measure the captured recording's pace with the same DSP the upload path uses,
   // so a reopened live meeting shows a real (comparable) measured pace.
   const speechRateHz = await measureRecordingRate(audioTempPath);
+  const save = resolveDefaultSave();
   const entry: HistoryEntry = {
     id: crypto.randomUUID(),
     title: `${translate(s.settings.language, "history.liveTitle")} · ${dateLabel}`,
@@ -161,10 +226,12 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
     createdAt,
     durationMs,
     audio: "audio.ogg",
+    folderId: save.folderId,
     ...snapshotAnalysis(),
     speechRateHz,
   };
   await persist(entry, audioTempPath, /* compress */ false);
+  await applyDefaultOrgShare(entry.id, save);
 }
 
 /**
@@ -176,6 +243,7 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
 export async function saveUploadToHistory(session: ReplaySession): Promise<string | null> {
   if (!isTauri()) return null;
   const id = crypto.randomUUID();
+  const save = resolveDefaultSave();
   const entry: HistoryEntry = {
     id,
     title: session.name,
@@ -183,6 +251,7 @@ export async function saveUploadToHistory(session: ReplaySession): Promise<strin
     createdAt: session.createdAt,
     durationMs: session.durationMs,
     audio: "audio.ogg",
+    folderId: save.folderId,
     ...snapshotAnalysis(),
   };
   // Mark this as the loaded entry BEFORE the (multi-second Opus) compress runs, so
@@ -198,6 +267,7 @@ export async function saveUploadToHistory(session: ReplaySession): Promise<strin
   } finally {
     if (uploadSaveInFlight === saving) uploadSaveInFlight = null;
   }
+  await applyDefaultOrgShare(id, save);
   return id;
 }
 
@@ -252,6 +322,28 @@ export async function renameHistoryEntry(id: string, title: string): Promise<voi
   // A rename is a content change → go through the same dirty→push→clear lifecycle
   // as save/re-analysis, so a failed cloud push is retried by the background sweep.
   pushToCloud(id);
+}
+
+/**
+ * Move a personal entry into a folder (or to the personal root with folderId null).
+ * Read-modify-writes the entry's meta + summary on disk so its folderId persists,
+ * then best-effort syncs the new folderId to the cloud (gated by the sync toggle).
+ * Only valid for entries that exist on local disk (a cloud-only card has no meta
+ * here — the caller skips those).
+ */
+export async function setEntryFolder(id: string, folderId: string | null): Promise<void> {
+  if (!isTauri()) return;
+  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+  const updated: HistoryEntry = { ...meta, folderId };
+  await invoke("save_history_entry", {
+    id,
+    summaryJson: JSON.stringify(buildSummary(updated)),
+    metaJson: JSON.stringify(updated),
+    audioSourcePath: null, // leave the recording untouched
+    compress: false,
+  });
+  log.info("history: entry folder set", { id, folderId });
+  pushToCloud(id); // sync the new folderId (best-effort; gated by the sync toggle)
 }
 
 /** Delete one entry's folder. */
@@ -363,6 +455,12 @@ export async function openHistoryWindow(): Promise<void> {
     minWidth: 720,
     minHeight: 480,
     resizable: true,
+    // The folder sidebar uses HTML5 drag-and-drop (drag a card onto a folder). Tauri's
+    // native OS drag-drop handler is ON by default and SWALLOWS the webview's dragover/
+    // drop events, so without this the drop zones never highlight and nothing moves.
+    // This window has no OS file-drop needs (uploads happen in the main window), so it's
+    // safe to hand drag-drop to the webview.
+    dragDropEnabled: false,
   });
   win.once("tauri://error", (e) => log.error("history: window error", { error: String(e) }));
 }

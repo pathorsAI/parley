@@ -5,6 +5,8 @@ import { Circle, FileAudio, History, Loader2, LogOut, Mic, Minus, Settings, Squa
 import { useStore } from "../lib/store";
 import { log } from "../lib/log";
 import { STT_BY_ID, sttApiKey } from "../lib/transcription/providers";
+import { CLOUD_URL } from "../lib/cloud/client";
+import { toast } from "sonner";
 import { startMockStream, stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
 import { openSettingsWindow } from "../lib/settingsSync";
@@ -12,6 +14,8 @@ import { openHistoryWindow } from "../lib/history/history";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
+import { PaceGauge } from "./delivery/PaceGauge";
+import { MonotonyGauge } from "./delivery/MonotonyGauge";
 
 /**
  * Track main-window focus so the traffic lights can dim to grey when the window
@@ -61,11 +65,9 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
   const transcriptionProvider = useStore((s) => s.settings.transcriptionProvider);
   const sttKey = useStore((s) => sttApiKey(s.settings, s.settings.transcriptionProvider));
   const inputDevice = useStore((s) => s.settings.inputDevice);
+  const delivery = useStore((s) => s.settings.delivery);
   const startMeeting = useStore((s) => s.startMeeting);
   const stopMeeting = useStore((s) => s.stopMeeting);
-  // The live pace/intonation gauges moved into the DeliveryPanel (labeled, with
-  // numbers); the title bar keeps only the mic level meter so the three look-alike
-  // bars no longer sit unlabeled side by side.
   const appMode = useStore((s) => s.appMode);
   const replayName = useStore((s) => s.replay?.name ?? "");
   const exitReplay = useStore((s) => s.exitReplay);
@@ -135,11 +137,19 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
           pipeline: "real",
         });
         try {
+          // Hosted "parley" STT: relay audio through Parley Cloud (cloud WSS URL
+          // + the session token as apiKey, via sttApiKey). BYOK providers send no
+          // relay URL and connect straight to their vendor.
+          const relayUrl =
+            transcriptionProvider === "parley"
+              ? `${CLOUD_URL.replace(/^http/, "ws")}/stt/stream`
+              : undefined;
           await invoke("start_meeting", {
             provider: transcriptionProvider,
             apiKey: sttKey,
             diarization: STT_BY_ID[transcriptionProvider].diarization,
             inputDevice,
+            relayUrl,
           });
         } catch (e) {
           log.error("meeting: start failed", {
@@ -149,6 +159,12 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
           });
           stopMeeting();
         }
+      } else if (transcriptionProvider === "parley") {
+        // Hosted STT selected but no usable cloud session — never fake it with a
+        // mock transcript; tell the user to sign in and back out of "recording".
+        log.info("meeting: start blocked (parley, no session)");
+        stopMeeting();
+        toast.error(t("meeting.error.signin"));
       } else {
         log.info("meeting: start (mock stream)");
         startMockStream();
@@ -268,15 +284,9 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
                 ? t("titlebar.status.stopped")
                 : t("titlebar.status.idle")}
             </div>
-            {recording && (
-              <span
-                className="flex items-center gap-1.5 text-muted-foreground"
-                title={t("delivery.mic.tip")}
-              >
-                <Mic className="size-3" />
-                <LevelMeter source="me" className="h-1.5 w-16" />
-              </span>
-            )}
+            {recording && <LevelMeter source="me" className="h-1.5 w-14" />}
+            {recording && delivery.pace && <PaceGauge className="h-1.5 w-10" />}
+            {recording && delivery.pitch && <MonotonyGauge className="h-1.5 w-10" />}
 
             {!recording && isTauri() && (
               <Button

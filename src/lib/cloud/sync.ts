@@ -13,8 +13,8 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
-import { CLOUD_URL, cloudFetch, cloudToken, isAuthError } from "./client";
-import { buildSummary, listHistory } from "../history/history";
+import { CLOUD_URL, cloudFetch, cloudToken, isAuthError, syncEnabled } from "./client";
+import { buildSummary, listHistory, deleteHistoryEntry } from "../history/history";
 import { getSyncMeta, pruneSyncMeta, setSynced } from "./syncState";
 import type { HistoryEntry, HistoryEntrySummary } from "../history/types";
 import type { CloudRecordingSummary } from "./types";
@@ -141,7 +141,8 @@ export async function deleteCloudRecording(id: string): Promise<void> {
  */
 export async function listMergedHistory(): Promise<HistoryCardItem[]> {
   const local = await listHistory();
-  if (!cloudToken()) return local.map((e) => ({ ...e, sync: "local" as const }));
+  // Sync off (or signed out / OSS edition) → show local only, every card "local".
+  if (!syncEnabled()) return local.map((e) => ({ ...e, sync: "local" as const }));
 
   let cloud: CloudRecordingSummary[];
   try {
@@ -184,6 +185,7 @@ export async function listMergedHistory(): Promise<HistoryCardItem[]> {
       actionItemsCount: c.actionItemsCount,
       hasAudio: c.hasAudio,
       snippet: c.snippet,
+      folderId: c.folderId ?? null,
       sync: "cloud",
       cloudUpdatedAt: c.updatedAt,
     });
@@ -201,7 +203,7 @@ export async function listMergedHistory(): Promise<HistoryCardItem[]> {
  * grid. Bails on the first auth failure rather than retrying every entry.
  */
 export async function pushUnsyncedToCloud(): Promise<number> {
-  if (!isTauri() || !cloudToken()) return 0;
+  if (!isTauri() || !syncEnabled()) return 0;
   // If the cloud list itself fails, skip the pass — don't treat "cloud empty" as
   // "push everything" (that would hammer the server on a transient outage).
   let cloud: CloudRecordingSummary[];
@@ -246,24 +248,50 @@ export async function listOrgRecordings(orgId: string): Promise<CloudRecordingSu
 }
 
 /**
- * Share a recording into an org as an independent COPY. The server copies from the
- * user's own cloud keyspace, so the source must be in the cloud first: best-effort
- * push it (no-op/duplicate-safe; a cloud-only entry is already there). Returns the
+ * Share a recording into an org as an independent COPY, optionally into a specific
+ * org folder. The server copies from the user's own cloud keyspace, so the source
+ * must be in the cloud first: force a push (gated only on a valid session, NOT the
+ * sync toggle — sharing is an explicit move into a shared cloud space). Returns the
  * new org-side summary.
  */
 export async function shareRecordingToOrg(
   id: string,
   orgId: string,
+  folderId: string | null = null,
 ): Promise<CloudRecordingSummary> {
   await pushLocalEntrySafe(id); // ensure the source exists in the user keyspace
   const res = await cloudFetch(`/recordings/${encodeURIComponent(id)}/share`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ orgId }),
+    body: JSON.stringify({ orgId, folderId }),
   });
   const data = (await res.json()) as { recording: CloudRecordingSummary };
-  log.info("cloud: shared recording to org", { id, orgId, newId: data.recording?.id });
+  log.info("cloud: shared recording to org", { id, orgId, folderId, newId: data.recording?.id });
   return data.recording;
+}
+
+/**
+ * MOVE a personal recording into an org folder: copy it in (share), then remove the
+ * personal original. Client-orchestrated rather than a server flag because the
+ * desktop's source of truth is on local disk (a server "move" couldn't delete it,
+ * and the sweep would re-upload it). Order is the safe one: copy first, and only on
+ * success delete the personal copy (cloud first, then local) — a mid-way failure
+ * leaves the personal original intact. Returns the new org-side summary.
+ */
+export async function moveRecordingToOrg(
+  id: string,
+  orgId: string,
+  folderId: string | null = null,
+): Promise<CloudRecordingSummary> {
+  const shared = await shareRecordingToOrg(id, orgId, folderId);
+  // Copy succeeded → drop the personal original. Cloud first (so a failure aborts
+  // before we destroy the recoverable local copy); a tombstoned id is never
+  // resurrected by the sweep, so a leftover cloud row (if local delete then failed)
+  // is at worst a deletable cloud-only card.
+  await deleteCloudRecording(id);
+  await deleteHistoryEntry(id);
+  log.info("cloud: moved recording to org", { id, orgId, folderId, newId: shared.id });
+  return shared;
 }
 
 /** Remove a shared recording from an org (uploader or org admin/owner only). */

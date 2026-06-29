@@ -58,23 +58,24 @@ publishes this folder automatically.
 
 ## Custom domain with Cloudflare
 
-To serve the site at your own domain (e.g. `parley.pathors.com`) using GitHub
-Pages + Cloudflare DNS:
+The site is served at **`parley.tw`** (apex) via GitHub Pages + Cloudflare DNS.
+To reproduce or move it:
 
 1. **Tell GitHub the domain.** Create `website/CNAME` containing just the
    hostname, e.g.:
    ```
-   parley.pathors.com
+   parley.tw
    ```
    (Or set it under Settings → Pages → Custom domain, which creates the same
    file. Keeping it in `website/` means the Actions deploy preserves it.)
 
 2. **Add the DNS record in Cloudflare** (DNS → Records):
-   - **Subdomain** (recommended, e.g. `parley`): add a `CNAME` record
+   - **Apex/root** (`parley.tw`, current setup): add `CNAME` `@` →
+     `pathorsai.github.io` (Cloudflare flattens this automatically), or use
+     GitHub's four A records: `185.199.108.153`, `185.199.109.153`,
+     `185.199.110.153`, `185.199.111.153`.
+   - **Subdomain** (e.g. `parley`): add a `CNAME` record
      `parley` → `pathorsai.github.io`.
-   - **Apex/root** (`pathors.com`): add `CNAME` `@` → `pathorsai.github.io`
-     (Cloudflare flattens this automatically), or use GitHub's four A records:
-     `185.199.108.153`, `185.199.109.153`, `185.199.110.153`, `185.199.111.153`.
 
 3. **Proxy + SSL.** You can leave the record **Proxied** (orange cloud). Set
    Cloudflare **SSL/TLS → Overview → Full** (not Flexible — Flexible causes

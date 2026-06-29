@@ -16,12 +16,35 @@ export interface CloudAuth {
   activeOrganizationId: string | null;
 }
 
+/**
+ * The signed-in user's hosted-plan usage for the current billing period, as
+ * returned by GET {CLOUD_URL}/me/usage. STT fields are reserved for Phase 2; the
+ * LLM token meter drives the "parley" provider's quota bar in Settings.
+ */
+export interface HostedQuota {
+  /** Plan id, e.g. "free". */
+  plan: string;
+  /** Speech-to-text seconds consumed this period (Phase 2). */
+  sttSecondsUsed: number;
+  /** Speech-to-text seconds allowed this period (Phase 2). */
+  sttSecondsLimit: number;
+  /** LLM tokens (prompt + completion) consumed this period. */
+  llmTokensUsed: number;
+  /** LLM tokens allowed this period. */
+  llmTokensLimit: number;
+  /** Epoch ms when the period resets and counters roll back to zero. */
+  periodResetTs: number;
+}
+
 /** A Better Auth organization the signed-in user belongs to. */
 export interface CloudOrg {
   id: string;
   name: string;
   slug: string;
   logo?: string | null;
+  /** The signed-in user's role in this org ("owner" | "admin" | "member"), when
+   *  the list came from /orgs/mine. Drives owner-only UI (e.g. the delete flow). */
+  role?: string;
 }
 
 /** A pending invitation for the signed-in user to join an org. */
@@ -41,9 +64,13 @@ export interface CloudOrgMember {
   id: string;
   userId: string;
   role: string;
-  /** Joined from the user row when the backend includes it. */
+  /** Joined from the user row by /orgs/:orgId/members. */
   name?: string;
   email?: string;
+  image?: string | null;
+  /** Member join time as an ISO-8601 string (D1 timestamp → JSON). Ordering is
+   *  done server-side (owner-first); the client doesn't parse this today. */
+  createdAt?: string;
 }
 
 /**
@@ -62,6 +89,8 @@ export interface CloudRecordingSummary {
   actionItemsCount?: number;
   hasAudio: boolean;
   snippet: string;
+  /** Folder the recording lives in, within its scope; null/absent = the scope root. */
+  folderId?: string | null;
   /** Server push time (epoch ms) — last-writer-wins ordering. */
   updatedAt: number;
 }

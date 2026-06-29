@@ -40,12 +40,16 @@ export async function createOrg(name: string): Promise<CloudOrg> {
   return org;
 }
 
-/** Every org the signed-in user is a member of. */
+/**
+ * Every org the signed-in user is a member of, each carrying the caller's `role`.
+ * Uses the cloud's own /orgs/mine (a member⋈organization join) rather than
+ * better-auth's /organization/list, because the latter drops the membership role —
+ * which the UI needs to gate owner-only actions like deleting an org.
+ */
 export async function listMyOrgs(): Promise<CloudOrg[]> {
-  const res = await cloudFetch("/auth/organization/list");
-  const data = (await res.json()) as CloudOrg[] | { organizations?: CloudOrg[] };
-  // better-auth returns a bare array; tolerate a wrapped shape just in case.
-  return Array.isArray(data) ? data : (data.organizations ?? []);
+  const res = await cloudFetch("/orgs/mine");
+  const data = (await res.json()) as CloudOrg[];
+  return Array.isArray(data) ? data : [];
 }
 
 /**
@@ -82,11 +86,24 @@ export async function acceptInvitation(invitationId: string): Promise<void> {
   log.info("cloud: accepted invitation", { invitationId });
 }
 
-/** Members of an org (for the management list). */
+/**
+ * Delete an org outright (owner-only — the cloud rejects non-owners with 403).
+ * Irreversible: the backend purges every recording shared into the org and its
+ * R2 blobs, then deletes the org and cascades its members + invitations. The UI
+ * gates this behind a retype-the-name confirmation; this just fires the request.
+ */
+export async function deleteOrg(organizationId: string): Promise<void> {
+  await cloudFetch(`/orgs/${encodeURIComponent(organizationId)}`, { method: "DELETE" });
+  log.info("cloud: deleted org", { organizationId });
+}
+
+/**
+ * Who's in an org — name/email/avatar/role, owner-first. Uses the cloud's
+ * member-gated /orgs/:orgId/members (a member⋈user join) rather than better-auth's
+ * list-members, which nests the user under `member.user` and needs admin perms.
+ */
 export async function listOrgMembers(organizationId: string): Promise<CloudOrgMember[]> {
-  const res = await cloudFetch(
-    `/auth/organization/list-members?organizationId=${encodeURIComponent(organizationId)}`,
-  );
-  const data = (await res.json()) as { members?: CloudOrgMember[] } | CloudOrgMember[];
-  return Array.isArray(data) ? data : (data.members ?? []);
+  const res = await cloudFetch(`/orgs/${encodeURIComponent(organizationId)}/members`);
+  const data = (await res.json()) as CloudOrgMember[];
+  return Array.isArray(data) ? data : [];
 }

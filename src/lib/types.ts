@@ -8,7 +8,7 @@
 export type Source = "me" | "them" | "mix";
 
 /** Speech-to-text providers (mirrors the Rust `SttProvider` ids). */
-export type SttProviderId = "soniox" | "deepgram" | "assemblyai" | "openai" | "gemini";
+export type SttProviderId = "soniox" | "deepgram" | "assemblyai" | "openai" | "gemini" | "parley";
 
 /**
  * A single transcript segment from a Soniox realtime session.
@@ -193,7 +193,8 @@ export type LlmProvider =
   | "qwen"
   | "kimi"
   | "ollama"
-  | "openrouter";
+  | "openrouter"
+  | "parley";
 
 /** Reasoning depth for reasoning-capable models (e.g. Groq gpt-oss). */
 export type ReasoningEffort = "low" | "medium" | "high";
@@ -225,6 +226,9 @@ export interface Settings {
   layout: AppLayout;
   /** False until the first-run onboarding wizard is completed or skipped. */
   onboarded: boolean;
+  /** Current onboarding wizard step, persisted so granting a permission (which
+   *  often needs an app restart) resumes where you left off instead of step 1. */
+  onboardingStep: number;
   /** Your name — helps the AI recognize when you're speaking or addressed. */
   userName: string;
   /** Your role / title — tailors the assistance to your seat at the table. */
@@ -244,6 +248,10 @@ export interface Settings {
   /** Optional — only needed for a remote/secured Ollama; local needs none. */
   ollamaApiKey: string;
   openrouterApiKey: string;
+  /** Unused — the hosted "parley" provider authenticates with the Better Auth
+   *  session token, not an API key. Present so it satisfies the closed
+   *  apiKeyField union (every provider has a key field). */
+  parleyApiKey: string;
   /** Reasoning depth per model role for reasoning-capable models. */
   reasoningEffort: ModelReasoningEfforts;
   /** Per-provider model ids (ids differ between Anthropic and OpenRouter). */
@@ -255,6 +263,9 @@ export interface Settings {
   assemblyaiApiKey: string;
   /** Microphone input device name; empty = system default. */
   inputDevice: string;
+  /** Voice typing: after releasing the push-to-talk key, also paste the text
+   *  into the frontmost app (simulated ⌘V). Off by default; needs Accessibility. */
+  voiceTypingAutoPaste: boolean;
   /** The active evaluation set used in meetings (the runtime copy lives in the store). */
   evaluations: EvalDef[];
   /** Library of evaluation templates (built-in + custom) you can apply. */
@@ -263,6 +274,26 @@ export interface Settings {
   todoTemplates: TodoTemplate[];
   /** Per-metric opt-in for live delivery coaching (see DeliveryToggles). */
   delivery: DeliveryToggles;
+  /** Whether to sync personal recordings + folders to Parley Cloud while signed in.
+   *  Off → this device keeps everything local (no automatic push/pull); explicit
+   *  org sharing still works. Default on (preserves the prior signed-in behavior). */
+  syncEnabled: boolean;
+  /** Where a finished meeting is saved by default. */
+  defaultSaveLocation: DefaultSaveLocation;
+}
+
+/**
+ * The default destination for auto-saved meetings. A personal folder (or the
+ * personal root), or an org folder — in which case the meeting is saved locally at
+ * the personal root AND auto-shared (copied) into that org folder after analysis
+ * settles, so teammates see it immediately while the user keeps their own copy.
+ */
+export interface DefaultSaveLocation {
+  scope: "personal" | "org";
+  /** Target org id when scope === "org". */
+  orgId?: string | null;
+  /** Target folder id within the scope, or null for the scope's root. */
+  folderId: string | null;
 }
 
 /**

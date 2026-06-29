@@ -3,6 +3,8 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
 import type { Settings } from "../types";
 import { PROVIDER_BY_ID, isReasoningModel } from "./providers";
+import { cloudToken, CLOUD_URL } from "../cloud/client";
+import { CLOUD_ENABLED } from "../flags";
 
 export { isReasoningModel } from "./providers";
 
@@ -51,6 +53,21 @@ export function getModel(
       headers: { "anthropic-dangerous-direct-browser-access": "true" },
     });
     return anthropic(modelId);
+  }
+
+  // Hosted "parley" provider: route to Parley Cloud's OpenAI-compatible endpoint.
+  // The Better Auth session token rides as the SDK apiKey → `Authorization:
+  // Bearer <token>`; the server forces the real Groq model behind the
+  // "parley-fast"/"parley-smart" ids. Guarded by CLOUD_ENABLED so the OSS build's
+  // dead-code elimination drops this branch entirely (it ships no cloud account).
+  if (CLOUD_ENABLED && info.id === "parley") {
+    const parley = createOpenAICompatible({
+      name: info.id,
+      baseURL: `${CLOUD_URL}/v1`,
+      apiKey: cloudToken() ?? "",
+      supportsStructuredOutputs: opts?.forceJsonObject ? false : info.supportsStructuredOutputs ?? false,
+    });
+    return parley.chatModel(modelId);
   }
 
   const client = createOpenAICompatible({

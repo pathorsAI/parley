@@ -40,6 +40,9 @@ export interface HistoryEntry {
    *  pace read. Optional for back-compat; absent/0 → the panel falls back to the
    *  LLM's coarse pace label. */
   speechRateHz?: number | null;
+  /** Which personal folder this entry lives in; null/absent = the personal root
+   *  (個人). A folderId not in the live personal folder list renders at the root. */
+  folderId?: string | null;
 }
 
 /** The card shown in the history grid — small, so listing stays cheap. */
@@ -59,4 +62,6 @@ export interface HistoryEntrySummary {
   hasAudio: boolean;
   /** First spoken line of the transcript, for a preview. */
   snippet: string;
+  /** Personal folder this entry lives in; null/absent = the personal root. */
+  folderId?: string | null;
 }

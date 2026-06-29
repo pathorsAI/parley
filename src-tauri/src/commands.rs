@@ -42,11 +42,20 @@ pub fn write_templates(app: AppHandle, json: String) -> Result<(), String> {
 /// meetings; armed (`Some(empty)`) by `start_meeting` and drained by `stop_meeting`.
 pub(crate) type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
 
-/// Shared meeting state held in Tauri's managed state. `running` gates all
-/// capture threads; clearing it tells them to release their devices and exit.
+/// Shared meeting state held in Tauri's managed state. `running` is the global
+/// "a meeting is active" status (queried by the mic-test + UI). Capture threads,
+/// however, watch a PER-SESSION `capture_gate` (not `running`) so a thread from a
+/// previous meeting can never be revived by the next `start_meeting` flipping a
+/// shared flag back to true — each meeting gets a fresh gate, and stop clears it.
 #[derive(Default)]
 pub struct MeetingState {
     running: Arc<AtomicBool>,
+    /// Per-meeting capture flag handed to every capture thread of the CURRENT
+    /// session. `start_meeting` installs a fresh one; `stop_meeting` clears it to
+    /// tell exactly this session's threads to exit. A detached/wedged thread from
+    /// an old session holds its own (already-false) gate, so a later meeting can't
+    /// adopt or revive it. `None` between meetings.
+    capture_gate: Mutex<Option<Arc<AtomicBool>>>,
     threads: Mutex<Vec<JoinHandle<()>>>,
     /// Live transcription session tasks (the per-source Soniox/etc. WebSocket
     /// loops). Held so `stop_meeting` can `abort()` them — a direct cancel that
@@ -131,11 +140,16 @@ pub fn start_meeting(
     language_hints: Option<Vec<String>>,
     diarization: Option<bool>,
     input_device: Option<String>,
+    // Hosted "parley" mode: the cloud STT relay's `wss://` URL. When set,
+    // `api_key` is the cloud Bearer token (not a vendor key) and the adapter
+    // relays through this URL. Absent for BYOK providers.
+    relay_url: Option<String>,
 ) -> Result<(), String> {
     let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
     if api_key.trim().is_empty() {
         return Err("missing transcription API key".into());
     }
+    let relay_endpoint = relay_url.filter(|u| !u.trim().is_empty());
     // Ignore if already running.
     if state.running.swap(true, Ordering::SeqCst) {
         return Ok(());
@@ -143,7 +157,13 @@ pub fn start_meeting(
     // Tear down any Settings "test mic" stream so it can't contend with the
     // meeting's capture (its thread exits when this flag clears).
     state.test_running.store(false, Ordering::SeqCst);
-    let running = state.running.clone();
+    // Per-session capture gate: a FRESH flag owned by THIS meeting's capture threads
+    // (not the global `state.running`). Installed in state so stop_meeting can clear
+    // exactly this session's threads; a later start_meeting installs a new one, so a
+    // detached/wedged thread from a prior session can never be revived. The var is
+    // named `running` so the capture call sites below read naturally.
+    let running = Arc::new(AtomicBool::new(true));
+    *state.capture_gate.lock().unwrap() = Some(running.clone());
     // Arm a fresh recording buffer for this meeting (the designated session below
     // tees its PCM into it; stop_meeting encodes + clears it).
     *state.recorder.lock().unwrap() = Some(Vec::new());
@@ -161,6 +181,7 @@ pub fn start_meeting(
         model: model.clone(),
         language_hints: language_hints.clone(),
         diarization,
+        relay_endpoint: relay_endpoint.clone(),
     };
 
     // Diarizing providers separate speakers themselves, so mix mic + system
@@ -229,18 +250,25 @@ pub fn start_meeting(
 #[tauri::command]
 pub fn stop_meeting(app: AppHandle, state: State<MeetingState>) -> Result<(), String> {
     state.running.store(false, Ordering::SeqCst);
+    // Tell THIS session's capture threads to exit. They watch the per-session gate,
+    // not the global `running`; `take()` so the next meeting installs a fresh one and
+    // can never reuse/revive this session's gate.
+    if let Some(gate) = state.capture_gate.lock().unwrap().take() {
+        gate.store(false, Ordering::SeqCst);
+    }
 
-    // Direct-cancel safety net for the transcription sessions. Clearing `running`
-    // starts the graceful capture→channel-close cascade (which closes the socket
-    // and emits final usage); but if any link stalls, the WebSocket would linger
-    // and keep producing transcript after stop. So hand the session tasks to a
-    // watchdog that force-aborts them after a short grace — long enough for the
-    // normal path to finish first (aborting an already-finished task is a no-op).
+    // Direct-cancel safety net for the transcription sessions. Clearing the gate
+    // above starts the graceful capture→channel-close cascade, which closes the
+    // socket and emits final usage. The abort is ONLY a backstop for a socket that
+    // never closes (a stalled provider/network): wait a generous grace so even a slow
+    // finalize completes first — aborting an already-finished task is a no-op, and
+    // after stop no new audio flows, so the extra idle wait produces no new transcript.
+    // (A short grace would cut a slow finalize and lose the last segment + usage event.)
     let tasks: Vec<tauri::async_runtime::JoinHandle<()>> =
         state.tasks.lock().unwrap().drain(..).collect();
     if !tasks.is_empty() {
         tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(8000)).await;
             for t in tasks {
                 t.abort();
             }
@@ -248,10 +276,23 @@ pub fn stop_meeting(app: AppHandle, state: State<MeetingState>) -> Result<(), St
     }
 
     // Joining lets each capture thread release its device (drops its PCM sender,
-    // which in turn ends the Soniox session via channel close).
+    // which in turn ends the Soniox session via channel close). Capture threads
+    // self-exit within ~100 ms of the gate clearing, but bound the wait so a wedged
+    // thread (e.g. a stuck CoreAudio teardown) can't hang the stop command itself;
+    // the session WebSocket is force-closed separately by the watchdog above. A
+    // detached wedged thread is harmless: it holds a now-dead per-session gate, so a
+    // later meeting (fresh gate) never adopts or revives it.
     let handles: Vec<JoinHandle<()>> = state.threads.lock().unwrap().drain(..).collect();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
     for h in handles {
-        let _ = h.join();
+        while !h.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if h.is_finished() {
+            let _ = h.join();
+        } else {
+            log::warn!("stop_meeting: capture thread didn't exit within grace; detaching");
+        }
     }
     let _ = app.emit("meeting://status", "stopped");
 
@@ -288,6 +329,33 @@ pub fn stop_meeting(app: AppHandle, state: State<MeetingState>) -> Result<(), St
         });
     }
     Ok(())
+}
+
+/// Delete a freshly-encoded live recording the frontend decided NOT to save —
+/// e.g. an empty meeting with no transcript (likely an accidental Start/Stop).
+/// `save_history_entry` removes the temp source when it moves it into an entry
+/// folder; this is the matching cleanup for the skip path so the `.ogg` doesn't
+/// orphan in the temp dir.
+///
+/// Guarded: only removes a file under the OS temp dir whose name matches our own
+/// `parley-recording-*.ogg`, so it can never be coerced into deleting an
+/// arbitrary path.
+#[tauri::command]
+pub fn discard_recording(path: String) {
+    let p = std::path::Path::new(&path);
+    let in_temp = p.starts_with(std::env::temp_dir());
+    let looks_like_ours = p
+        .file_name()
+        .and_then(|f| f.to_str())
+        .is_some_and(|f| f.starts_with("parley-recording-") && f.ends_with(".ogg"));
+    if in_temp && looks_like_ours {
+        match std::fs::remove_file(p) {
+            Ok(()) => log::info!("recording: discarded unsaved {path}"),
+            Err(e) => log::warn!("recording: discard failed for {path}: {e}"),
+        }
+    } else {
+        log::warn!("recording: refused to discard non-recording path {path}");
+    }
 }
 
 /// Save a meeting transcript (markdown) to ~/Documents/Parley and return the
@@ -499,7 +567,24 @@ fn run_metered_session(
         if let Err(e) =
             transcription::run_session(provider, app.clone(), config, label, count_rx).await
         {
+            let msg = e.to_string();
             eprintln!("[stt:{label}] session ended: {e}");
+            // Surface the failure to the UI instead of silently leaving the
+            // meeting in "recording" with no transcript. Hosted mode hits this
+            // routinely (402 out of credits / 401 expired session at connect);
+            // BYOK hits it on a bad key. Classify so the frontend can show an
+            // actionable message.
+            let code = if msg.contains("402") {
+                "quota"
+            } else if msg.contains("401") {
+                "auth"
+            } else {
+                "connect"
+            };
+            let _ = app.emit(
+                "meeting://error",
+                serde_json::json!({ "source": label, "code": code, "message": msg }),
+            );
         }
 
         let samples = counter.await.unwrap_or(0);
