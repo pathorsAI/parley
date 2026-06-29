@@ -54,6 +54,13 @@ export function Onboarding() {
     }
   }
 
+  function schedulePermissionRechecks() {
+    void recheck();
+    for (const delay of [500, 1500, 3000, 6000]) {
+      globalThis.setTimeout(() => void recheck(), delay);
+    }
+  }
+
   // Permissions step (4): re-check on entry AND whenever the app regains focus /
   // becomes visible, plus a slow fallback poll — so granting mic/screen access in
   // the system prompt or System Settings flips the row to ✓ on its own when the
@@ -234,7 +241,7 @@ export function Onboarding() {
                   await invoke("start_mic_test", { inputDevice: settings.inputDevice }).catch(() => {});
                   await invoke("stop_mic_test").catch(() => {});
                   await invoke("open_privacy_settings", { pane: "microphone" }).catch(() => {});
-                  void recheck();
+                  schedulePermissionRechecks();
                 }}
               />
               <PermRow
@@ -245,7 +252,7 @@ export function Onboarding() {
                 onAction={async () => {
                   await invoke("request_screen_recording").catch(() => {});
                   await invoke("open_privacy_settings", { pane: "screen" }).catch(() => {});
-                  void recheck();
+                  schedulePermissionRechecks();
                 }}
               />
               <PermRow
@@ -256,7 +263,7 @@ export function Onboarding() {
                 onAction={async () => {
                   await invoke("request_input_monitoring").catch(() => {});
                   await invoke("set_voice_typing_shortcut", { shortcut: settings.voiceTypingShortcut }).catch(() => {});
-                  void recheck();
+                  schedulePermissionRechecks();
                 }}
               />
               <PermRow
@@ -267,7 +274,8 @@ export function Onboarding() {
                 onAction={async () => {
                   // Single native prompt (it offers its own "Open System Settings").
                   await invoke("accessibility_status", { prompt: true }).catch(() => {});
-                  void recheck();
+                  await invoke("ensure_fn_listener").catch(() => {});
+                  schedulePermissionRechecks();
                 }}
               />
               <div className="flex items-center gap-2">
