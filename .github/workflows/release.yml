@@ -109,10 +109,15 @@ jobs:
           KEYCHAIN_PATH="${{ runner.temp }}/build.keychain"
           KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
 
-          # Create keychain
+          # Create keychain. Disable the auto-lock timeout (-lut 21600 = 6h, and no
+          # -l so it does not lock on sleep): a freshly created keychain otherwise
+          # re-locks after the default ~5min idle. The Rust build before codesign runs
+          # takes far longer than that, so without this the keychain re-locks mid-build
+          # and codesign then hangs on a keychain-auth prompt at signing time.
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
 
           # Import certificate. Grant /usr/bin/codesign (and productsign) explicit
           # access to the imported private key via -T, then add `codesign:` to the
