@@ -50,7 +50,8 @@
     ],
     "macOS": {
       "entitlements": "entitlements.plist",
-      "signingIdentity": "-"
+      "signingIdentity": null,
+      "hardenedRuntime": true
     },
     "icon": [
       "icons/32x32.png",
