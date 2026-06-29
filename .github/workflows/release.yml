@@ -148,7 +148,7 @@ jobs:
           prerelease: false
           tauriScript: bun run tauri
           args: --target aarch64-apple-darwin
-          releaseAssetNamePattern: "[name]-[version]-[platform]-[arch].[ext]"
+          assetNamePattern: "[name]-[version]-[platform]-[arch].[ext]"
 
       # ── Cloud edition ──────────────────────────────────────────────────────────
       # The OSS release above is already published to GitHub. Now build the CLOUD
