@@ -274,7 +274,6 @@ export function Onboarding() {
                 onAction={async () => {
                   // Single native prompt (it offers its own "Open System Settings").
                   await invoke("accessibility_status", { prompt: true }).catch(() => {});
-                  await invoke("ensure_fn_listener").catch(() => {});
                   schedulePermissionRechecks();
                 }}
               />
