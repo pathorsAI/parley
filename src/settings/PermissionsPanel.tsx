@@ -11,6 +11,13 @@ interface Perms {
   screenRecording: boolean;
 }
 
+interface AppIdentity {
+  bundleIdentifier: string;
+  executablePath: string;
+  runningFromAppBundle: boolean;
+  likelyDevBinary: boolean;
+}
+
 type Status = "granted" | "denied" | "pending";
 
 /** Map the native microphone authorization string to our tri-state status. */
@@ -35,16 +42,21 @@ function toneFor(status: Status): string {
 export function PermissionsPanel() {
   const { t } = useI18n();
   const [microphone, setMicrophone] = useState<Status>("pending");
+  const [inputMonitoring, setInputMonitoring] = useState<Status>("pending");
   const [accessibility, setAccessibility] = useState<Status>("pending");
   const [screen, setScreen] = useState<Status>("pending");
+  const [identity, setIdentity] = useState<AppIdentity | null>(null);
 
   async function refresh() {
     if (!isTauri()) return;
     try {
       const p = await invoke<Perms>("check_permissions");
+      const id = await invoke<AppIdentity>("app_identity");
       setMicrophone(micStatus(p.microphone));
       setScreen(p.screenRecording ? "granted" : "pending");
+      setInputMonitoring((await invoke<boolean>("input_monitoring_status")) ? "granted" : "pending");
       setAccessibility((await invoke<boolean>("accessibility_status", { prompt: false })) ? "granted" : "pending");
+      setIdentity(id);
     } catch {
       /* non-macOS */
     }
@@ -94,13 +106,29 @@ export function PermissionsPanel() {
         onGrant={() => grant("mic", "microphone", () => invoke("request_microphone"))}
       />
       <Row
+        label={t("settings.permissions.inputMonitoring")}
+        desc={t("settings.permissions.inputMonitoringDesc")}
+        status={inputMonitoring}
+        onGrant={() =>
+          grant("input-monitoring", "input-monitoring", async () => {
+            await invoke("request_input_monitoring");
+            await invoke("open_privacy_settings", { pane: "input-monitoring" });
+            await invoke("ensure_fn_listener");
+          })
+        }
+        help={
+          identity?.likelyDevBinary
+            ? `${t("settings.permissions.inputMonitoringDevHelp")} ${identity.executablePath}`
+            : t("settings.permissions.inputMonitoringHelp")
+        }
+      />
+      <Row
         label={t("settings.voiceTyping.accessibility")}
         desc={t("settings.permissions.accessibilityDesc")}
         status={accessibility}
         onGrant={() =>
           grant("accessibility", "accessibility", async () => {
             await invoke("accessibility_status", { prompt: true });
-            await invoke("ensure_fn_listener");
           })
         }
       />
@@ -117,11 +145,13 @@ export function PermissionsPanel() {
 function Row({
   label,
   desc,
+  help,
   status,
   onGrant,
 }: Readonly<{
   label: string;
   desc: string;
+  help?: string;
   status: Status;
   onGrant: () => void;
 }>) {
@@ -134,6 +164,7 @@ function Row({
       <div className="flex min-w-0 flex-col">
         <span className="text-sm font-medium">{label}</span>
         <span className="text-[11px] leading-relaxed text-muted-foreground">{desc}</span>
+        {help && <span className="mt-1 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">{help}</span>}
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {granted ? (

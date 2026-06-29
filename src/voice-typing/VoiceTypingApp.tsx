@@ -7,6 +7,10 @@ import { useThemePreference } from "../lib/theme";
 
 const BAR_COUNT = 20;
 const BAR_FLOOR = 0.05;
+const WAVE_PROFILE = [
+  0.28, 0.44, 0.62, 0.38, 0.72, 0.5, 0.86, 0.64, 0.95, 0.74, 0.74, 0.95, 0.64, 0.86, 0.5, 0.72,
+  0.38, 0.62, 0.44, 0.28,
+];
 
 interface SegPayload {
   id: string;
@@ -38,13 +42,24 @@ function decayBars(bars: number[]): number[] {
   return bars.map((b) => Math.max(BAR_FLOOR, b * 0.8));
 }
 
+/** Convert the current mic level into a full instantaneous waveform, not history. */
+function instantWaveform(level: number): number[] {
+  const energy = Math.min(1, Math.sqrt(Math.max(0, level)));
+  const lift = BAR_FLOOR + energy * (1 - BAR_FLOOR);
+
+  return WAVE_PROFILE.map((shape, index) => {
+    const ripple = 0.08 * Math.sin(energy * Math.PI * 2 + index * 1.7);
+    return Math.max(BAR_FLOOR, Math.min(1, lift * (0.24 + shape * 0.76 + ripple)));
+  });
+}
+
 /**
  * The floating dictation overlay. Listens to the same realtime transcription
  * events as a meeting (tagged source "voice-typing"), converts Simplified →
  * Traditional for display, and reports the current text back to the host so the
  * clipboard matches what's shown. A waveform tracks the live mic level.
  */
-export function VoiceTypingApp() {
+export const VoiceTypingApp = () => {
   const { t } = useI18n();
   useThemePreference(); // so `foreground`/`background` reflect the user's theme
   const [text, setText] = useState("");
@@ -106,12 +121,7 @@ export function VoiceTypingApp() {
 
     listen<LevelPayload>("audio://level", (e) => {
       if (e.payload.source !== "voice-typing") return;
-      const v = Math.min(1, Math.sqrt(Math.max(0, e.payload.level)));
-      setBars((prev) => {
-        const next = prev.slice(1);
-        next.push(BAR_FLOOR + v * (1 - BAR_FLOOR));
-        return next;
-      });
+      setBars(instantWaveform(e.payload.level));
     })
       .then((u) => unsubs.push(u))
       .catch(() => {});
@@ -198,4 +208,4 @@ export function VoiceTypingApp() {
       </span>
     </div>
   );
-}
+};

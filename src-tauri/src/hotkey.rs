@@ -54,11 +54,13 @@ mod imp {
     type CFStringRef = *const c_void;
     type CGEventType = u32;
 
-    const KCG_HID_EVENT_TAP: u32 = 0; // kCGHIDEventTap — earliest point in the pipeline
-    const KCG_HEAD_INSERT: u32 = 0; // kCGHeadInsertEventTap
+    // kCGHIDEventTap: earliest point in the pipeline.
+    const KCG_HID_EVENT_TAP: u32 = 0;
+    // kCGHeadInsertEventTap.
+    const KCG_HEAD_INSERT: u32 = 0;
     // Active tap (NOT listen-only) so we can SWALLOW the fn key and stop macOS's
     // own "Press 🌐 to" action (emoji / dictation / input-source) from firing.
-    const KCG_TAP_OPTION_DEFAULT: u32 = 0; // kCGEventTapOptionDefault
+    const KCG_TAP_OPTION_DEFAULT: u32 = 0;
     const KCG_EVENT_FLAGS_CHANGED: CGEventType = 12;
     const KCG_KEYBOARD_EVENT_KEYCODE: u32 = 9; // CGEventField
     const FLAG_MASK_SECONDARY_FN: u64 = 0x0080_0000; // kCGEventFlagMaskSecondaryFn
@@ -126,7 +128,8 @@ mod imp {
             return event;
         }
         if etype == KCG_EVENT_FLAGS_CHANGED && !user.is_null() {
-            let key_code = unsafe { CGEventGetIntegerValueField(event, KCG_KEYBOARD_EVENT_KEYCODE) };
+            let key_code =
+                unsafe { CGEventGetIntegerValueField(event, KCG_KEYBOARD_EVENT_KEYCODE) };
             // Only the fn/Globe key drives push-to-talk.
             if key_code == KVK_FUNCTION {
                 let flags = unsafe { CGEventGetFlags(event) };
@@ -148,7 +151,8 @@ mod imp {
         if STARTED.swap(true, Ordering::SeqCst) {
             return true;
         }
-        if !listen_event_authorized() {
+        let authorized = listen_event_authorized();
+        if !authorized {
             // Don't prompt at launch — that's jarring. The user enables voice
             // typing from Settings → Permissions, which calls
             // request_input_monitoring (the prompt) explicitly.

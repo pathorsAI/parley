@@ -184,7 +184,11 @@ pub async fn transcribe_file(
                     "replay: compressed audio origBytes={} compBytes={} pct={:.1}",
                     orig,
                     comp,
-                    if orig > 0 { comp as f64 / orig as f64 * 100.0 } else { 0.0 }
+                    if orig > 0 {
+                        comp as f64 / orig as f64 * 100.0
+                    } else {
+                        0.0
+                    }
                 ),
                 _ => log::info!("replay: compressed audio (sizes unavailable)"),
             }
@@ -236,11 +240,20 @@ pub async fn transcribe_file(
 /// the file can't be stat'd or there's no cache dir.
 fn cache_file_path(app: &AppHandle, path: &str) -> Option<std::path::PathBuf> {
     let size = std::fs::metadata(path).ok()?.len();
-    let name = std::path::Path::new(path).file_name()?.to_string_lossy().into_owned();
+    let name = std::path::Path::new(path)
+        .file_name()?
+        .to_string_lossy()
+        .into_owned();
     // Sanitize the name to a safe single filename component.
     let safe: String = name
         .chars()
-        .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let dir = app.path().app_cache_dir().ok()?.join("transcriptions");
     Some(dir.join(format!("{safe}-{size}.json")))
@@ -271,7 +284,10 @@ async fn write_cache(path: &std::path::Path, result: &TranscriptionResult) {
     let json = match serde_json::to_vec_pretty(&payload) {
         Ok(j) => j,
         Err(e) => {
-            log::warn!("replay: failed to serialize transcription cache error={}", e);
+            log::warn!(
+                "replay: failed to serialize transcription cache error={}",
+                e
+            );
             return;
         }
     };
@@ -505,7 +521,9 @@ async fn loop_poll(
                 return Ok(audio_duration_ms);
             }
             "error" => {
-                let msg = status.error_message.unwrap_or_else(|| "unknown error".into());
+                let msg = status
+                    .error_message
+                    .unwrap_or_else(|| "unknown error".into());
                 log::error!("replay: transcription job error errorMessage={}", msg);
                 return Err(format!("Transcription failed: {msg}"));
             }

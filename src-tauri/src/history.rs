@@ -200,9 +200,7 @@ pub fn read_history_entry(app: AppHandle, id: String) -> Result<HistoryRead, Str
     let raw = std::fs::read_to_string(dir.join("meta.json")).map_err(|e| e.to_string())?;
     let meta: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     let audio = dir.join("audio.ogg");
-    let audio_path = audio
-        .exists()
-        .then(|| audio.to_string_lossy().into_owned());
+    let audio_path = audio.exists().then(|| audio.to_string_lossy().into_owned());
     Ok(HistoryRead { meta, audio_path })
 }
 

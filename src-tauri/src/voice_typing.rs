@@ -92,7 +92,8 @@ pub fn start_voice_typing(
         });
 
         if let Err(e) =
-            transcription::run_session(provider, app.clone(), config, "voice-typing", count_rx).await
+            transcription::run_session(provider, app.clone(), config, "voice-typing", count_rx)
+                .await
         {
             log::warn!("voice-typing: session ended: {e}");
         }
@@ -243,8 +244,11 @@ mod imp {
 
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
-        fn CGEventCreateKeyboardEvent(source: *const c_void, keycode: u16, keydown: bool)
-            -> CGEventRef;
+        fn CGEventCreateKeyboardEvent(
+            source: *const c_void,
+            keycode: u16,
+            keydown: bool,
+        ) -> CGEventRef;
         fn CGEventSetFlags(event: CGEventRef, flags: u64);
         fn CGEventPost(tap: u32, event: CGEventRef);
     }
@@ -360,10 +364,7 @@ mod imp {
             use core_foundation::dictionary::CFDictionary;
             let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt as _);
             let value = CFBoolean::true_value();
-            let dict = CFDictionary::from_CFType_pairs(&[(
-                key.as_CFType(),
-                value.as_CFType(),
-            )]);
+            let dict = CFDictionary::from_CFType_pairs(&[(key.as_CFType(), value.as_CFType())]);
             AXIsProcessTrustedWithOptions(dict.as_concrete_TypeRef() as CFDictionaryRef)
         }
     }

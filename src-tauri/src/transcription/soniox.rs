@@ -10,6 +10,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
     connect_with_headers, ensure_crypto_provider, LevelMeter, SegmentBuilder, TranscribeConfig,
+    LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
@@ -125,7 +126,7 @@ pub async fn run_session(
 
     // Forward captured PCM, emit a level meter, keep the session alive, then
     // finalize and close.
-    let mut meter = LevelMeter::new(app.clone(), source);
+    let mut meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
     let is_relay = config.relay_endpoint.is_some();
     let forward = async move {
         let mut total: u64 = 0;
@@ -174,7 +175,7 @@ pub async fn run_session(
 
     // Read tokens → speaker-runs via the shared SegmentBuilder.
     let read_loop = async move {
-        let mut builder = SegmentBuilder::new(app.clone(), source);
+        let mut builder = SegmentBuilder::new(app.clone(), source, TRANSCRIPT_EVENT);
         let mut msg_count: u64 = 0;
 
         while let Some(msg) = read.next().await {

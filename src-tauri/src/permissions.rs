@@ -6,6 +6,7 @@
 #![allow(unexpected_cfgs)]
 
 use serde::Serialize;
+use tauri::AppHandle;
 
 #[cfg(target_os = "macos")]
 mod imp {
@@ -70,14 +71,19 @@ mod imp {
                 let pid_ref = CFDictionaryGetValue(dict, kCGWindowOwnerPID as *const c_void);
                 let mut pid: i32 = 0;
                 if pid_ref.is_null()
-                    || !CFNumberGetValue(pid_ref, KCF_NUMBER_SINT32, &mut pid as *mut i32 as *mut c_void)
+                    || !CFNumberGetValue(
+                        pid_ref,
+                        KCF_NUMBER_SINT32,
+                        &mut pid as *mut i32 as *mut c_void,
+                    )
                 {
                     continue;
                 }
                 if pid == our_pid {
                     continue; // our own windows always expose their title
                 }
-                let name = CFDictionaryGetValue(dict, kCGWindowName as *const c_void) as CFStringRef;
+                let name =
+                    CFDictionaryGetValue(dict, kCGWindowName as *const c_void) as CFStringRef;
                 if !name.is_null() && CFStringGetLength(name) > 0 {
                     granted = true;
                     break;
@@ -154,11 +160,40 @@ pub struct Permissions {
     pub screen_recording: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppIdentity {
+    pub bundle_identifier: String,
+    pub executable_path: String,
+    pub running_from_app_bundle: bool,
+    pub likely_dev_binary: bool,
+}
+
 #[tauri::command]
 pub fn check_permissions() -> Permissions {
     Permissions {
         microphone: imp::microphone_status().to_string(),
         screen_recording: imp::screen_recording_authorized(),
+    }
+}
+
+#[tauri::command]
+pub fn app_identity(app: AppHandle) -> AppIdentity {
+    let executable_path = std::env::current_exe()
+        .ok()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let running_from_app_bundle = executable_path.contains(".app/Contents/MacOS/");
+    let likely_dev_binary = !running_from_app_bundle
+        && (executable_path.contains("/target/debug/")
+            || executable_path.contains("/cargo-target/debug/")
+            || executable_path.contains("/cursor-sandbox-cache/"));
+
+    AppIdentity {
+        bundle_identifier: app.config().identifier.clone(),
+        executable_path,
+        running_from_app_bundle,
+        likely_dev_binary,
     }
 }
 

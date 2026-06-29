@@ -583,7 +583,9 @@ fn append_command(path: &PathBuf, action: &str, args: Value) -> anyhow::Result<V
 /// no meeting has written one yet). The schema is owned by the frontend.
 fn read_session(path: &PathBuf) -> Value {
     match std::fs::read_to_string(path) {
-        Ok(raw) if !raw.trim().is_empty() => serde_json::from_str(&raw).unwrap_or_else(|_| json!({})),
+        Ok(raw) if !raw.trim().is_empty() => {
+            serde_json::from_str(&raw).unwrap_or_else(|_| json!({}))
+        }
         _ => json!({}),
     }
 }

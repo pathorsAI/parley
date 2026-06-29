@@ -18,25 +18,50 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let view_logs = MenuItem::with_id(handle, "view_logs", "View Logs", true, None::<&str>)?;
 
-    let clear_tx =
-        MenuItem::with_id(handle, "clear_cache_transcription", "Transcription Cache", true, None::<&str>)?;
-    let clear_dz =
-        MenuItem::with_id(handle, "clear_cache_diarization", "Diarization Cache", true, None::<&str>)?;
-    let clear_an =
-        MenuItem::with_id(handle, "clear_cache_analysis", "Analysis Cache", true, None::<&str>)?;
+    let clear_tx = MenuItem::with_id(
+        handle,
+        "clear_cache_transcription",
+        "Transcription Cache",
+        true,
+        None::<&str>,
+    )?;
+    let clear_dz = MenuItem::with_id(
+        handle,
+        "clear_cache_diarization",
+        "Diarization Cache",
+        true,
+        None::<&str>,
+    )?;
+    let clear_an = MenuItem::with_id(
+        handle,
+        "clear_cache_analysis",
+        "Analysis Cache",
+        true,
+        None::<&str>,
+    )?;
     let clear_all = MenuItem::with_id(handle, "clear_cache_all", "All Caches", true, None::<&str>)?;
     let clear_sub = Submenu::with_items(
         handle,
         "Clear Cache",
         true,
-        &[&clear_tx, &clear_dz, &clear_an, &PredefinedMenuItem::separator(handle)?, &clear_all],
+        &[
+            &clear_tx,
+            &clear_dz,
+            &clear_an,
+            &PredefinedMenuItem::separator(handle)?,
+            &clear_all,
+        ],
     )?;
 
     let diagnostics = Submenu::with_items(
         handle,
         "Diagnostics",
         true,
-        &[&view_logs, &PredefinedMenuItem::separator(handle)?, &clear_sub],
+        &[
+            &view_logs,
+            &PredefinedMenuItem::separator(handle)?,
+            &clear_sub,
+        ],
     )?;
 
     menu.append(&diagnostics)?;

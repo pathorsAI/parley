@@ -66,7 +66,7 @@ function useFullscreen(): boolean {
   return fullscreen;
 }
 
-function App() {
+const App = () => {
   useThemePreference();
   const appMode = useStore((s) => s.appMode);
   const onboarded = useStore((s) => s.settings.onboarded);
@@ -190,6 +190,6 @@ function App() {
       {appMode === "replay" ? <ReplayScreen /> : <LiveScreen />}
     </div>
   );
-}
+};
 
 export default App;

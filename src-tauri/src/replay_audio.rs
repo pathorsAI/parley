@@ -239,8 +239,7 @@ fn downmix_into(buf: &AudioBufferRef<'_>, out: &mut Vec<f32>) {
         return;
     }
 
-    let mut sample_buf =
-        symphonia::core::audio::SampleBuffer::<f32>::new(frames as u64, spec);
+    let mut sample_buf = symphonia::core::audio::SampleBuffer::<f32>::new(frames as u64, spec);
     sample_buf.copy_interleaved_ref(buf.clone());
     let interleaved = sample_buf.samples();
 
@@ -361,9 +360,7 @@ mod tests {
     use std::process::Command;
 
     fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        haystack
-            .windows(needle.len())
-            .position(|w| w == needle)
+        haystack.windows(needle.len()).position(|w| w == needle)
     }
 
     /// Synthesize a WAV with ffmpeg, compress it, and validate the output with
@@ -378,8 +375,16 @@ mod tests {
         let wav = dir.join(format!("parley-test-{}.wav", uuid::Uuid::new_v4()));
         let made = Command::new("ffmpeg")
             .args([
-                "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=5", "-ac", "2", "-ar",
-                "44100", wav.to_str().unwrap(),
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=5",
+                "-ac",
+                "2",
+                "-ar",
+                "44100",
+                wav.to_str().unwrap(),
             ])
             .status();
         let Ok(status) = made else {
@@ -391,10 +396,7 @@ mod tests {
         // Derive mp3 + m4a variants to cover more decoders.
         let mp3 = dir.join(format!("parley-test-{}.mp3", uuid::Uuid::new_v4()));
         let m4a = dir.join(format!("parley-test-{}.m4a", uuid::Uuid::new_v4()));
-        for (out, args) in [
-            (&mp3, ["-c:a", "libmp3lame"]),
-            (&m4a, ["-c:a", "aac"]),
-        ] {
+        for (out, args) in [(&mp3, ["-c:a", "libmp3lame"]), (&m4a, ["-c:a", "aac"])] {
             let ok = Command::new("ffmpeg")
                 .args(["-y", "-i", wav.to_str().unwrap()])
                 .args(args)
@@ -422,7 +424,10 @@ mod tests {
     /// smaller than the reference WAV.
     fn validate_opus_ogg(out: &Path, ref_wav_size: u64) {
         let ogg_size = std::fs::metadata(out).unwrap().len();
-        eprintln!("ref_wav={ref_wav_size} bytes, ogg={ogg_size} bytes ({})", out.display());
+        eprintln!(
+            "ref_wav={ref_wav_size} bytes, ogg={ogg_size} bytes ({})",
+            out.display()
+        );
         assert!(ogg_size * 4 < ref_wav_size, "output should be much smaller");
 
         // ffprobe: opus + mono. (Opus stream sample_rate is ALWAYS 48000 by
@@ -431,8 +436,13 @@ mod tests {
         // below rather than via ffprobe's stream rate.)
         let probe = Command::new("ffprobe")
             .args([
-                "-hide_banner", "-v", "error", "-show_entries",
-                "stream=codec_name,sample_rate,channels,duration", "-of", "default=nw=1",
+                "-hide_banner",
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_name,sample_rate,channels,duration",
+                "-of",
+                "default=nw=1",
                 out.to_str().unwrap(),
             ])
             .output()
@@ -455,7 +465,15 @@ mod tests {
 
         // ffmpeg must decode it cleanly (empty stderr at error level).
         let decode = Command::new("ffmpeg")
-            .args(["-v", "error", "-i", out.to_str().unwrap(), "-f", "null", "-"])
+            .args([
+                "-v",
+                "error",
+                "-i",
+                out.to_str().unwrap(),
+                "-f",
+                "null",
+                "-",
+            ])
             .output()
             .expect("ffmpeg decode");
         let errs = String::from_utf8_lossy(&decode.stderr);

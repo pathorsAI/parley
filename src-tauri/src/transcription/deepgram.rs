@@ -8,7 +8,10 @@ use tauri::AppHandle;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
-use super::common::{connect_with_headers, LevelMeter, SegmentBuilder, TranscribeConfig};
+use super::common::{
+    connect_with_headers, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
+    TRANSCRIPT_EVENT,
+};
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
 
@@ -89,7 +92,7 @@ pub async fn run_session(
     );
 
     // Forward PCM as binary frames; keep alive; close cleanly.
-    let mut meter = LevelMeter::new(app.clone(), source);
+    let mut meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
     let forward = async move {
         let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(5));
         keepalive.tick().await;
@@ -111,15 +114,13 @@ pub async fn run_session(
             }
         }
         let _ = write
-            .send(Message::Text(
-                "{\"type\":\"CloseStream\"}".to_string(),
-            ))
+            .send(Message::Text("{\"type\":\"CloseStream\"}".to_string()))
             .await;
         let _ = write.close().await;
     };
 
     let read_loop = async move {
-        let mut builder = SegmentBuilder::new(app.clone(), source);
+        let mut builder = SegmentBuilder::new(app.clone(), source, TRANSCRIPT_EVENT);
         let mut msg_count: u64 = 0;
         while let Some(msg) = read.next().await {
             let payload = match msg {

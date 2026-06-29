@@ -11,7 +11,10 @@ use tauri::AppHandle;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
-use super::common::{connect_with_headers, LevelMeter, SegmentBuilder, TranscribeConfig};
+use super::common::{
+    connect_with_headers, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
+    TRANSCRIPT_EVENT,
+};
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
 
@@ -56,7 +59,7 @@ pub async fn run_session(
     let (mut write, mut read) = ws.split();
     eprintln!("[assemblyai:{source}] connected (diarization unsupported → speaker 0)");
 
-    let mut meter = LevelMeter::new(app.clone(), source);
+    let mut meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
     let forward = async move {
         while let Some(chunk) = pcm_rx.recv().await {
             meter.push(&chunk);
@@ -72,7 +75,7 @@ pub async fn run_session(
     };
 
     let read_loop = async move {
-        let mut builder = SegmentBuilder::new(app.clone(), source);
+        let mut builder = SegmentBuilder::new(app.clone(), source, TRANSCRIPT_EVENT);
         let mut msg_count: u64 = 0;
         while let Some(msg) = read.next().await {
             let payload = match msg {
