@@ -114,6 +114,11 @@ jobs:
           # re-locks after the default ~5min idle. The Rust build before codesign runs
           # takes far longer than that, so without this the keychain re-locks mid-build
           # and codesign then hangs on a keychain-auth prompt at signing time.
+          # Remember the existing search-list keychains (login/System) BEFORE we touch
+          # anything — they carry the trusted Apple Root anchor needed to validate the
+          # signing identity.
+          ORIGINAL_KEYCHAINS=$(security list-keychains -d user | sed 's/[\" ]//g')
+
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
@@ -139,6 +144,14 @@ jobs:
           security import "${{ runner.temp }}/AppleRoot.cer" -k "$KEYCHAIN_PATH"
 
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # THE key fix for "no identity found" mid-build: `default-keychain -s` does
+          # NOT add the keychain to the search list, but codesign resolves identities
+          # via the SEARCH LIST. Add the build keychain to the search list while keeping
+          # the original keychains (login/System) so the Apple Root trust anchor still
+          # resolves. (Verified locally: build keychain as sole default → codesign "no
+          # identity found"; build keychain + login in search list → codesign OK.)
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $ORIGINAL_KEYCHAINS
 
           # Assert a usable signing identity exists. `find-identity` exits 0 even with
           # "0 valid identities found", so grep for an actual match — otherwise fail
