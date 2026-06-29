@@ -109,15 +109,56 @@ jobs:
           KEYCHAIN_PATH="${{ runner.temp }}/build.keychain"
           KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
 
-          # Create keychain
+          # Create keychain. Disable the auto-lock timeout (-lut 21600 = 6h, and no
+          # -l so it does not lock on sleep): a freshly created keychain otherwise
+          # re-locks after the default ~5min idle. The Rust build before codesign runs
+          # takes far longer than that, so without this the keychain re-locks mid-build
+          # and codesign then hangs on a keychain-auth prompt at signing time.
+          # Remember the existing search-list keychains (login/System) BEFORE we touch
+          # anything — they carry the trusted Apple Root anchor needed to validate the
+          # signing identity.
+          ORIGINAL_KEYCHAINS=$(security list-keychains -d user | sed 's/[\" ]//g')
+
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
 
-          # Import certificate
+          # Import certificate. Grant /usr/bin/codesign (and productsign) explicit
+          # access to the imported private key via -T, then add `codesign:` to the
+          # key partition list so codesign can use the key non-interactively. Without
+          # the codesign partition, codesign blocks on a GUI keychain-auth prompt that
+          # can never appear on CI, hanging the build at "replacing existing signature".
           echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
-          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -t cert -f pkcs12 -k "$KEYCHAIN_PATH" -T /usr/bin/codesign -T /usr/bin/productsign
+
+          # The exported .p12 contains only the leaf "Developer ID Application" cert,
+          # not Apple's intermediate/root. Best-effort import Apple's Developer ID G2
+          # intermediate + Apple Root so the chain resolves on runners that lack them.
+          # GitHub runners usually already have these, in which case `security import`
+          # reports "already exists" (non-zero) — tolerate that (and any curl hiccup) so
+          # the step does not abort under `bash -e`.
+          curl -fsSL -o "${{ runner.temp }}/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer || true
+          curl -fsSL -o "${{ runner.temp }}/AppleRoot.cer" https://www.apple.com/appleca/AppleIncRootCertificate.cer || true
+          security import "${{ runner.temp }}/DeveloperIDG2CA.cer" -k "$KEYCHAIN_PATH" 2>/dev/null || true
+          security import "${{ runner.temp }}/AppleRoot.cer" -k "$KEYCHAIN_PATH" 2>/dev/null || true
+
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # THE key fix for "no identity found" mid-build: `default-keychain -s` does
+          # NOT add the keychain to the search list, but codesign resolves identities
+          # via the SEARCH LIST. Add the build keychain to the search list while keeping
+          # the original keychains (login/System) so the Apple Root trust anchor still
+          # resolves. (Verified locally: build keychain as sole default → codesign "no
+          # identity found"; build keychain + login in search list → codesign OK.)
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $ORIGINAL_KEYCHAINS
+
+          # Assert a usable signing identity exists. `find-identity` exits 0 even with
+          # "0 valid identities found", so grep for an actual match — otherwise fail
+          # loudly here instead of ambiguously mid-build at codesign time.
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" | tee /tmp/identities.txt
+          grep -q '1 valid identities found\|[1-9][0-9]* valid identities found' /tmp/identities.txt \
+            || { echo "::error::No valid code-signing identity in keychain (cert chain incomplete?)"; exit 1; }
 
       - name: Prepare Apple API Key
         if: ${{ env.APPLE_API_KEY != '' && env.APPLE_API_ISSUER != '' && env.APPLE_API_KEY_CONTENT != '' }}
@@ -126,6 +167,21 @@ jobs:
           printf '%s' "$APPLE_API_KEY_CONTENT" > "${{ runner.temp }}/private_keys/AuthKey_${{ env.APPLE_API_KEY }}.p8"
           chmod 600 "${{ runner.temp }}/private_keys/AuthKey_${{ env.APPLE_API_KEY }}.p8"
           echo "APPLE_API_KEY_PATH=${{ runner.temp }}/private_keys/AuthKey_${{ env.APPLE_API_KEY }}.p8" >> $GITHUB_ENV
+
+      - name: Sign bundled ONNX Runtime dylib
+        if: ${{ env.APPLE_SIGNING_IDENTITY != '' }}
+        run: |
+          # libonnxruntime.dylib ships as a bundle resource (loaded at runtime via
+          # ORT_DYLIB_PATH). Tauri signs the main binary + .app shell but NOT this
+          # nested dylib, so notarization rejects the archive with "The binary is not
+          # signed" for Contents/Resources/onnxruntime/libonnxruntime.dylib. Sign it
+          # with Developer ID + hardened runtime + secure timestamp BEFORE the build —
+          # the signature survives being copied into the .app and the .app re-sign
+          # (verified locally: bundled dylib keeps the full Developer ID chain + timestamp).
+          codesign --force --options runtime --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            src-tauri/onnxruntime/libonnxruntime.dylib
+          codesign --verify --strict --verbose=2 src-tauri/onnxruntime/libonnxruntime.dylib
 
       - name: Build and upload Tauri bundles
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
