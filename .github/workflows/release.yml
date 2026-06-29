@@ -133,15 +133,15 @@ jobs:
           security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -t cert -f pkcs12 -k "$KEYCHAIN_PATH" -T /usr/bin/codesign -T /usr/bin/productsign
 
           # The exported .p12 contains only the leaf "Developer ID Application" cert,
-          # not Apple's intermediate/root. Without the full chain, codesign fails with
-          # `errSecInternalComponent` ("unable to build chain to self-signed root") and
-          # the Tauri build exits 1 at signing time. Import Apple's Developer ID G2
-          # intermediate + Apple Root so the chain resolves. (Verified locally: leaf
-          # alone → 0 valid identities + sign failure; leaf + these two → 1 valid + sign OK.)
-          curl -fsSL -o "${{ runner.temp }}/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
-          curl -fsSL -o "${{ runner.temp }}/AppleRoot.cer" https://www.apple.com/appleca/AppleIncRootCertificate.cer
-          security import "${{ runner.temp }}/DeveloperIDG2CA.cer" -k "$KEYCHAIN_PATH"
-          security import "${{ runner.temp }}/AppleRoot.cer" -k "$KEYCHAIN_PATH"
+          # not Apple's intermediate/root. Best-effort import Apple's Developer ID G2
+          # intermediate + Apple Root so the chain resolves on runners that lack them.
+          # GitHub runners usually already have these, in which case `security import`
+          # reports "already exists" (non-zero) — tolerate that (and any curl hiccup) so
+          # the step does not abort under `bash -e`.
+          curl -fsSL -o "${{ runner.temp }}/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer || true
+          curl -fsSL -o "${{ runner.temp }}/AppleRoot.cer" https://www.apple.com/appleca/AppleIncRootCertificate.cer || true
+          security import "${{ runner.temp }}/DeveloperIDG2CA.cer" -k "$KEYCHAIN_PATH" 2>/dev/null || true
+          security import "${{ runner.temp }}/AppleRoot.cer" -k "$KEYCHAIN_PATH" 2>/dev/null || true
 
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
