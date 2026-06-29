@@ -30,6 +30,15 @@ mod imp {
     extern "C" {
         fn CGPreflightScreenCaptureAccess() -> bool;
         fn CGRequestScreenCaptureAccess() -> bool;
+        fn CGMainDisplayID() -> u32;
+        fn CGDisplayStreamCreate(
+            display: u32,
+            output_width: usize,
+            output_height: usize,
+            pixel_format: i32,
+            properties: CFDictionaryRef,
+            handler: *const c_void,
+        ) -> CFTypeRef;
         fn CGWindowListCopyWindowInfo(option: u32, relative_to_window: u32) -> CFArrayRef;
         static kCGWindowName: CFStringRef;
         static kCGWindowOwnerPID: CFStringRef;
@@ -48,6 +57,34 @@ mod imp {
     const KCG_ON_SCREEN_ONLY: u32 = 1;
     const KCG_EXCLUDE_DESKTOP: u32 = 16;
     const KCF_NUMBER_SINT32: isize = 3;
+    const PIXEL_FORMAT_BGRA: i32 = i32::from_be_bytes(*b"BGRA");
+
+    /// Screen Recording grants are ultimately about being allowed to capture the
+    /// display, not about whether any other app currently has a titled window.
+    /// Creating a tiny display stream is a stronger probe than the window-list
+    /// heuristic below and does not need the stream to be started.
+    fn can_create_display_stream() -> bool {
+        unsafe {
+            let handler = ConcreteBlock::new(
+                |_status: i32, _time: u64, _surface: *const c_void, _update: *const c_void| {},
+            );
+            let handler = handler.copy();
+            let stream = CGDisplayStreamCreate(
+                CGMainDisplayID(),
+                1,
+                1,
+                PIXEL_FORMAT_BGRA,
+                std::ptr::null(),
+                &*handler as *const _ as *const c_void,
+            );
+            if !stream.is_null() {
+                CFRelease(stream);
+                true
+            } else {
+                false
+            }
+        }
+    }
 
     /// Robust Screen-Recording check: `CGPreflightScreenCaptureAccess` is
     /// unreliable on recent macOS (returns false even when granted), so fall back
@@ -70,14 +107,19 @@ mod imp {
                 let pid_ref = CFDictionaryGetValue(dict, kCGWindowOwnerPID as *const c_void);
                 let mut pid: i32 = 0;
                 if pid_ref.is_null()
-                    || !CFNumberGetValue(pid_ref, KCF_NUMBER_SINT32, &mut pid as *mut i32 as *mut c_void)
+                    || !CFNumberGetValue(
+                        pid_ref,
+                        KCF_NUMBER_SINT32,
+                        &mut pid as *mut i32 as *mut c_void,
+                    )
                 {
                     continue;
                 }
                 if pid == our_pid {
                     continue; // our own windows always expose their title
                 }
-                let name = CFDictionaryGetValue(dict, kCGWindowName as *const c_void) as CFStringRef;
+                let name =
+                    CFDictionaryGetValue(dict, kCGWindowName as *const c_void) as CFStringRef;
                 if !name.is_null() && CFStringGetLength(name) > 0 {
                     granted = true;
                     break;
@@ -120,6 +162,9 @@ mod imp {
 
     pub fn screen_recording_authorized() -> bool {
         if unsafe { CGPreflightScreenCaptureAccess() } {
+            return true;
+        }
+        if can_create_display_stream() {
             return true;
         }
         can_read_other_window_titles()
