@@ -178,7 +178,10 @@ pub async fn diarize_audio(
 /// (stage `downloading-model`) while fetching.
 #[tauri::command]
 pub async fn download_diarize_model(app: AppHandle) -> Result<(), String> {
-    ensure_model(&app).await.map(|_| ()).map_err(|e| format!("{e:#}"))
+    ensure_model(&app)
+        .await
+        .map(|_| ())
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// Whether the on-device speaker model is present, for the Settings UI. A cheap
@@ -216,7 +219,10 @@ pub fn diarize_model_status(app: AppHandle) -> Result<DiarizeModelStatus, String
 /// reuse the cached assignment. `None` if the file can't be stat'd.
 fn cache_key(audio_path: &str, spans: &[SegSpan], num_speakers: Option<usize>) -> Option<String> {
     let size = std::fs::metadata(audio_path).ok()?.len();
-    let name = Path::new(audio_path).file_name()?.to_string_lossy().into_owned();
+    let name = Path::new(audio_path)
+        .file_name()?
+        .to_string_lossy()
+        .into_owned();
     let mut hasher = Sha256::new();
     hasher.update(CACHE_VERSION.as_bytes());
     hasher.update(format!("\0{name}\0{size}\0{num_speakers:?}\0").as_bytes());
@@ -249,7 +255,14 @@ fn run_pipeline(
 ) -> Result<Vec<SegSpeaker>> {
     // Staged progress for the UI. `total == 0` means an indeterminate stage.
     let emit = |stage: &'static str, received: u64, total: u64| {
-        let _ = app.emit("diarize://progress", Progress { stage, received, total });
+        let _ = app.emit(
+            "diarize://progress",
+            Progress {
+                stage,
+                received,
+                total,
+            },
+        );
     };
 
     // Decode the whole file once to 16 kHz mono f32 [-1,1]; slice in memory.
@@ -270,8 +283,14 @@ fn run_pipeline(
     // small jobs where the spin-up isn't worth it.
     let n = spans.len();
     let step = (n / 100).max(1); // throttle to ~100 progress events total
-    let cores = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(1);
-    let workers = if n < 24 { 1 } else { cores.min(8).min(n).max(1) };
+    let cores = std::thread::available_parallelism()
+        .map(|c| c.get())
+        .unwrap_or(1);
+    let workers = if n < 24 {
+        1
+    } else {
+        cores.min(8).min(n).max(1)
+    };
     log::info!("diarize: embedding {n} slices across {workers} worker(s)");
 
     let next = AtomicUsize::new(0); // shared work cursor — the rolling queue
@@ -298,7 +317,9 @@ fn run_pipeline(
                         if end > start && end - start >= MIN_SLICE_SAMPLES {
                             match embed_segment(&mut session, &audio[start..end]) {
                                 Ok(v) => out.push((i, v)),
-                                Err(e) => log::warn!("diarize: embed failed for segment {i}: {e:#}"),
+                                Err(e) => {
+                                    log::warn!("diarize: embed failed for segment {i}: {e:#}")
+                                }
                             }
                         }
                         // else: too short / out of range — filled from a neighbour later.
@@ -306,7 +327,11 @@ fn run_pipeline(
                         if done % step == 0 || done == n {
                             let _ = app.emit(
                                 "diarize://progress",
-                                Progress { stage: "embedding", received: done as u64, total: n as u64 },
+                                Progress {
+                                    stage: "embedding",
+                                    received: done as u64,
+                                    total: n as u64,
+                                },
                             );
                         }
                     }
@@ -733,7 +758,11 @@ fn nme_spectral(matrix: &[Vec<f32>], known_k: Option<usize>) -> Vec<usize> {
                             lap.symmetric_eigenvalues().iter().copied().collect();
                         evals.sort_by(|a, b| a.total_cmp(b));
                         let (g, k_est) = nme_and_count(&evals, max_k);
-                        let r = if g > 0.0 { p as f32 / g as f32 } else { f32::INFINITY };
+                        let r = if g > 0.0 {
+                            p as f32 / g as f32
+                        } else {
+                            f32::INFINITY
+                        };
                         local.push((p, r, k_est));
                     }
                     local
@@ -852,7 +881,10 @@ fn spectral_embedding(se: &SymmetricEigen<f64, nalgebra::Dyn>, k: usize) -> Vec<
     let cols = &order[..k.min(n)];
     (0..n)
         .map(|i| {
-            let mut row: Vec<f32> = cols.iter().map(|&c| se.eigenvectors[(i, c)] as f32).collect();
+            let mut row: Vec<f32> = cols
+                .iter()
+                .map(|&c| se.eigenvectors[(i, c)] as f32)
+                .collect();
             let norm = dot(&row, &row).sqrt();
             if norm > f32::EPSILON {
                 for v in &mut row {
@@ -874,7 +906,10 @@ fn kmeans_euclidean(points: &[Vec<f32>], k: usize) -> Vec<usize> {
         let mut best_i = 0;
         let mut best_d = f32::MIN;
         for (i, pt) in points.iter().enumerate() {
-            let d = centroids.iter().map(|c| sqdist(pt, c)).fold(f32::INFINITY, f32::min);
+            let d = centroids
+                .iter()
+                .map(|c| sqdist(pt, c))
+                .fold(f32::INFINITY, f32::min);
             if d > best_d {
                 best_d = d;
                 best_i = i;
@@ -1034,7 +1069,11 @@ async fn ensure_model(app: &AppHandle) -> Result<PathBuf> {
         received += chunk.len() as u64;
         let _ = app.emit(
             "diarize://progress",
-            Progress { stage: "downloading-model", received, total },
+            Progress {
+                stage: "downloading-model",
+                received,
+                total,
+            },
         );
     }
     drop(file);
@@ -1077,7 +1116,9 @@ mod tests {
         let mut v: Vec<f32> = center
             .iter()
             .map(|&c| {
-                *rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                *rng = rng
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let u = ((*rng >> 40) as f32 / (1u64 << 23) as f32) - 1.0; // ~[-1,1)
                 c + noise * u
             })
@@ -1110,8 +1151,14 @@ mod tests {
         let labels = nme_spectral(&matrix, None);
         let k = labels.iter().copied().max().unwrap() + 1;
         assert_eq!(k, 2, "should auto-detect 2 speakers, got {k}");
-        assert!(labels[..20].iter().all(|&l| l == labels[0]), "blob A should be one cluster");
-        assert!(labels[20..].iter().all(|&l| l == labels[20]), "blob B should be one cluster");
+        assert!(
+            labels[..20].iter().all(|&l| l == labels[0]),
+            "blob A should be one cluster"
+        );
+        assert!(
+            labels[20..].iter().all(|&l| l == labels[20]),
+            "blob B should be one cluster"
+        );
         assert_ne!(labels[0], labels[20], "the two blobs must differ");
 
         let forced = nme_spectral(&matrix, Some(2));
@@ -1172,7 +1219,10 @@ mod tests {
 
         assert_eq!(a.len(), 192, "embedding must be 192-dim");
         assert!(a.iter().all(|x| x.is_finite()), "embedding must be finite");
-        assert!((dot(&a, &a) - 1.0).abs() < 1e-3, "L2-normalized → self-cosine ~1");
+        assert!(
+            (dot(&a, &a) - 1.0).abs() < 1e-3,
+            "L2-normalized → self-cosine ~1"
+        );
 
         // Identical input is more similar to itself than a different tone is.
         let sim_same = dot(&a, &a2);
@@ -1182,8 +1232,14 @@ mod tests {
 
         // K=2 over {A, A, B, B} must put the two A's together, apart from the B's.
         let labels = spherical_kmeans(&[a, a2, b, b2], 2);
-        assert_eq!(labels[0], labels[1], "the two A slices should share a cluster");
-        assert_eq!(labels[2], labels[3], "the two B slices should share a cluster");
+        assert_eq!(
+            labels[0], labels[1],
+            "the two A slices should share a cluster"
+        );
+        assert_eq!(
+            labels[2], labels[3],
+            "the two B slices should share a cluster"
+        );
         assert_ne!(labels[0], labels[2], "A and B should be different clusters");
     }
 }

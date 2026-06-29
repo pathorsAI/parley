@@ -12,7 +12,8 @@ mod transcription;
 mod usage;
 mod voice_typing;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
 use commands::MeetingState;
@@ -20,6 +21,21 @@ use voice_typing::VoiceTypingState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let shortcut_plugin = tauri_plugin_global_shortcut::Builder::new()
+        .with_shortcut(Shortcut::new(Some(Modifiers::ALT), Code::Space))
+        .expect("register dictation shortcut")
+        .with_handler(|app, shortcut, event| {
+            if !shortcut.matches(Modifiers::ALT, Code::Space) {
+                return;
+            }
+            let down = match event.state {
+                ShortcutState::Pressed => true,
+                ShortcutState::Released => false,
+            };
+            let _ = app.emit("voicetyping://ptt", serde_json::json!({ "down": down }));
+        })
+        .build();
+
     tauri::Builder::default()
         // Registered FIRST so other plugins' logs are captured. Writes a rotating
         // file to the OS app-log dir (macOS: ~/Library/Logs/com.pathors.parley/),
@@ -28,7 +44,9 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 .targets([
-                    Target::new(TargetKind::LogDir { file_name: Some("parley".into()) }),
+                    Target::new(TargetKind::LogDir {
+                        file_name: Some("parley".into()),
+                    }),
                     Target::new(TargetKind::Stdout),
                     Target::new(TargetKind::Webview),
                 ])
@@ -42,6 +60,7 @@ pub fn run() {
                 .timezone_strategy(TimezoneStrategy::UseLocal)
                 .build(),
         )
+        .plugin(shortcut_plugin)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -79,6 +98,7 @@ pub fn run() {
             usage::append_usage_event,
             usage::read_usage_events,
             permissions::check_permissions,
+            permissions::app_identity,
             permissions::request_screen_recording,
             permissions::request_microphone,
             permissions::open_privacy_settings,

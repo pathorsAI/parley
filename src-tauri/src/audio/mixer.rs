@@ -9,7 +9,7 @@ use tauri::AppHandle;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use super::TARGET_SAMPLE_RATE;
-use crate::transcription::common::LevelMeter;
+use crate::transcription::common::{LevelMeter, LEVEL_EVENT};
 
 /// Drop the oldest samples once a side backs up beyond this (the other side
 /// stalled). Bounds memory and keeps the two streams roughly time-aligned.
@@ -26,7 +26,7 @@ pub async fn mix_streams(
     mut rx_b: UnboundedReceiver<Vec<i16>>,
     tx_out: UnboundedSender<Vec<i16>>,
 ) {
-    let mut mic_meter = LevelMeter::new(app, "me");
+    let mut mic_meter = LevelMeter::new(app, "me", LEVEL_EVENT);
     let mut a: VecDeque<i16> = VecDeque::new();
     let mut b: VecDeque<i16> = VecDeque::new();
     let mut a_open = true;

@@ -276,7 +276,11 @@ impl ProsodyAnalyzer {
         if run.len() < 3 {
             return false;
         }
-        let dur_ms = run.last().unwrap().t_ms.saturating_sub(run.first().unwrap().t_ms);
+        let dur_ms = run
+            .last()
+            .unwrap()
+            .t_ms
+            .saturating_sub(run.first().unwrap().t_ms);
         if dur_ms < FILLED_MIN_MS {
             return false;
         }
@@ -658,11 +662,16 @@ mod tests {
     fn filled_pause_rejects_short_and_pitch_varied() {
         // Too short (~200 ms) — a normal syllable, not a held filler.
         let short: Vec<FrameStat> = (0..13).map(|i| frame_at(i, 0.0, 0.2)).collect();
-        assert!(!ProsodyAnalyzer::is_filled_pause_run(&short.iter().collect::<Vec<_>>()));
+        assert!(!ProsodyAnalyzer::is_filled_pause_run(
+            &short.iter().collect::<Vec<_>>()
+        ));
         // Long but pitch swings widely — a real word, not a flat "um".
-        let varied: Vec<FrameStat> =
-            (0..30).map(|i| frame_at(i, (i as f32 * 0.5).sin() * 3.0, 0.2)).collect();
-        assert!(!ProsodyAnalyzer::is_filled_pause_run(&varied.iter().collect::<Vec<_>>()));
+        let varied: Vec<FrameStat> = (0..30)
+            .map(|i| frame_at(i, (i as f32 * 0.5).sin() * 3.0, 0.2))
+            .collect();
+        assert!(!ProsodyAnalyzer::is_filled_pause_run(
+            &varied.iter().collect::<Vec<_>>()
+        ));
     }
 
     #[test]

@@ -11,18 +11,26 @@ interface LevelPayload {
  * Live input-level meter fed by the backend `audio://level` event. Speech peaks
  * are numerically small, so we map with sqrt for a perceptually useful bar.
  */
-export function LevelMeter({ source, className }: { source: string; className?: string }) {
+export const LevelMeter = ({
+  source,
+  className,
+  eventName = "audio://level",
+}: {
+  source: string;
+  className?: string;
+  eventName?: string;
+}) => {
   const [level, setLevel] = useState(0);
   const decayRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!isTauri()) return;
     let unlisten: (() => void) | undefined;
-    listen<LevelPayload>("audio://level", (e) => {
+    listen<LevelPayload>(eventName, (e) => {
       if (e.payload.source === source) setLevel(e.payload.level);
     }).then((fn) => (unlisten = fn));
     return () => unlisten?.();
-  }, [source]);
+  }, [eventName, source]);
 
   // Smoothly decay toward 0 when events stop arriving.
   useEffect(() => {
@@ -47,4 +55,4 @@ export function LevelMeter({ source, className }: { source: string; className?: 
       />
     </div>
   );
-}
+};

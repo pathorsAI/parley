@@ -68,6 +68,7 @@ async function onPtt(isDown: boolean) {
 async function startSession() {
   if (busy) return;
   const { settings } = useStore.getState();
+  if (!settings.voiceTypingEnabled) return;
   const provider = settings.transcriptionProvider;
   const apiKey = sttApiKey(settings, provider);
   if (!apiKey.trim()) {
@@ -89,7 +90,7 @@ async function startSession() {
       provider,
       apiKey,
       languageHints: [],
-      inputDevice: settings.inputDevice || null,
+      inputDevice: settings.inputDevice ?? null,
     });
     log.info("voice-typing: session started", { provider });
   } catch (e) {

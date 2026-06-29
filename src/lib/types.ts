@@ -263,6 +263,9 @@ export interface Settings {
   assemblyaiApiKey: string;
   /** Microphone input device name; empty = system default. */
   inputDevice: string;
+  /** Voice typing: whether push-to-talk dictation is active. Option+Space works
+   *  without extra permission; fn/Globe additionally needs Input Monitoring. */
+  voiceTypingEnabled: boolean;
   /** Voice typing: after releasing the push-to-talk key, also paste the text
    *  into the frontmost app (simulated ⌘V). Off by default; needs Accessibility. */
   voiceTypingAutoPaste: boolean;

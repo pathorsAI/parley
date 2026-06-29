@@ -87,6 +87,7 @@ const DEFAULT_SETTINGS: Settings = {
   deepgramApiKey: "",
   assemblyaiApiKey: "",
   inputDevice: "",
+  voiceTypingEnabled: true,
   voiceTypingAutoPaste: false,
   evaluations: buildPresetEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),
@@ -824,14 +825,15 @@ export function isTrimmed(
  * not just remote speakers on the system-audio side.
  */
 export function speakerKey(s: Pick<TranscriptSegment, "source" | "speaker">): string {
-  return `${s.source}-${s.speaker || 0}`;
+  return `${s.source}-${s.speaker ?? 0}`;
 }
 
 /** Default label (no custom name). The primary mic voice is "You". */
 export function defaultSpeakerLabel(s: Pick<TranscriptSegment, "source" | "speaker">): string {
+  const displaySpeaker = s.speaker === 0 ? 1 : s.speaker ?? 1;
   // Mixed stream: no deterministic me/them — label purely by diarized speaker.
-  if (s.source === "mix") return `Speaker ${s.speaker || 1}`;
-  if (s.source === "me") return (s.speaker || 1) <= 1 ? "You" : `Speaker ${s.speaker}`;
+  if (s.source === "mix") return `Speaker ${displaySpeaker}`;
+  if (s.source === "me") return displaySpeaker <= 1 ? "You" : `Speaker ${displaySpeaker}`;
   return s.speaker > 0 ? `Remote ${s.speaker}` : "Them";
 }
 
@@ -840,7 +842,7 @@ export function speakerLabel(
   s: Pick<TranscriptSegment, "source" | "speaker">,
   names?: Record<string, string>
 ): string {
-  return names?.[speakerKey(s)] || defaultSpeakerLabel(s);
+  return names?.[speakerKey(s)] ?? defaultSpeakerLabel(s);
 }
 
 /** Final-only transcript text, labelled by speaker (with custom names) — LLM context. */

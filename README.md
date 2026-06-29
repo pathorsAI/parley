@@ -129,3 +129,9 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 ## 📄 License
 
 Licensed under the [Apache License 2.0](LICENSE). Copyright 2026 Pathors AI.
+
+## Press-And-Hold Dictation
+
+Parley does not use macOS Dictation. It uses its own microphone capture and the configured realtime STT provider. In the Tauri desktop app, hold `Option+Space` to record a short dictation, release to transcribe, and Parley copies the completed text to the system clipboard for pasting.
+
+macOS does not expose the `fn` key as a reliable official global shortcut for third-party apps, so `Option+Space` is the default stable shortcut instead of `fn`-hold.

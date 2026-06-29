@@ -18,7 +18,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::audio::TARGET_SAMPLE_RATE;
 
-/// Event the frontend listens on for transcript updates (see tauriEvents.ts).
+/// Event the frontend listens on for meeting transcript updates (see tauriEvents.ts).
 pub const TRANSCRIPT_EVENT: &str = "transcript://segment";
 /// Event the frontend listens on for the live input-level meter.
 pub const LEVEL_EVENT: &str = "audio://level";
@@ -81,6 +81,7 @@ struct LevelEvent {
 #[allow(clippy::too_many_arguments)]
 pub fn emit_segment(
     app: &AppHandle,
+    event: &str,
     source: &str,
     id: String,
     speaker: i64,
@@ -90,7 +91,7 @@ pub fn emit_segment(
     end_ms: u64,
 ) {
     let _ = app.emit(
-        TRANSCRIPT_EVENT,
+        event,
         TranscriptEvent {
             id,
             source: source.to_string(),
@@ -137,16 +138,18 @@ pub async fn connect_with_headers(
 pub struct LevelMeter {
     app: AppHandle,
     source: &'static str,
+    event: &'static str,
     peak: i32,
     samples: u64,
     window: u64,
 }
 
 impl LevelMeter {
-    pub fn new(app: AppHandle, source: &'static str) -> Self {
+    pub fn new(app: AppHandle, source: &'static str, event: &'static str) -> Self {
         Self {
             app,
             source,
+            event,
             peak: 0,
             samples: 0,
             // 16 kHz / 1600 = 10 windows per second.
@@ -162,7 +165,7 @@ impl LevelMeter {
         if self.samples >= self.window {
             let level = (self.peak as f32 / 32767.0).clamp(0.0, 1.0);
             let _ = self.app.emit(
-                LEVEL_EVENT,
+                self.event,
                 LevelEvent {
                     source: self.source.to_string(),
                     level,
@@ -187,6 +190,7 @@ impl LevelMeter {
 pub struct SegmentBuilder {
     app: AppHandle,
     source: &'static str,
+    event: &'static str,
     seg_index: u64,
     /// Speaker of the open run, or `None` when no run is open.
     cur_speaker: Option<i64>,
@@ -196,10 +200,11 @@ pub struct SegmentBuilder {
 }
 
 impl SegmentBuilder {
-    pub fn new(app: AppHandle, source: &'static str) -> Self {
+    pub fn new(app: AppHandle, source: &'static str, event: &'static str) -> Self {
         Self {
             app,
             source,
+            event,
             seg_index: 0,
             cur_speaker: None,
             cur_final: String::new(),
@@ -245,6 +250,7 @@ impl SegmentBuilder {
     fn commit(&mut self) {
         emit_segment(
             &self.app,
+            self.event,
             self.source,
             format!("{}-{}", self.source, self.seg_index),
             self.current_speaker(),
@@ -262,6 +268,7 @@ impl SegmentBuilder {
         if !self.cur_final.trim().is_empty() {
             emit_segment(
                 &self.app,
+                self.event,
                 self.source,
                 format!("{}-{}", self.source, self.seg_index),
                 self.current_speaker(),
@@ -278,6 +285,7 @@ impl SegmentBuilder {
     pub fn emit_tail(&self, text: &str, speaker: i64, start_ms: u64) {
         emit_segment(
             &self.app,
+            self.event,
             self.source,
             format!("{}-tail", self.source),
             speaker,

@@ -68,6 +68,15 @@ pub struct MeetingState {
     recorder: RecorderBuf,
 }
 
+/// State for Typeless-style press-and-hold dictation. This is intentionally
+/// separate from meeting recording so a short dictation never touches the live
+/// meeting transcript or system-audio capture.
+#[derive(Default)]
+pub struct DictationState {
+    running: Arc<AtomicBool>,
+    threads: Mutex<Vec<JoinHandle<()>>>,
+}
+
 /// List available microphone input device names (for the Settings picker).
 #[tauri::command]
 pub fn list_input_devices() -> Vec<String> {
@@ -103,7 +112,7 @@ pub fn start_mic_test(
 
     tauri::async_runtime::spawn(async move {
         // Reuse the shared metering primitive so peak/window logic lives in one place.
-        let mut meter = LevelMeter::new(app.clone(), "test");
+        let mut meter = LevelMeter::new(app.clone(), "test", LEVEL_EVENT);
         while let Some(chunk) = rx.recv().await {
             meter.push(&chunk);
         }
@@ -196,35 +205,62 @@ pub fn start_meeting(
         if diarization {
             // Tap the PRE-MIX mic for delivery coaching (issue #22): the prosody
             // analyzer must see raw mic, never the mixed/diarized stream.
-            let rx_me = spawn_capture(&state, mic, running.clone(), "me")
+            let rx_me = spawn_capture(&state.threads, mic, running.clone(), "me")
                 .map(|rx| spawn_mic_prosody_tap(&app, rx));
-            let rx_them = spawn_capture(&state, sys, running.clone(), "them");
+            let rx_them = spawn_capture(&state.threads, sys, running.clone(), "them");
             let mut tasks = state.tasks.lock().unwrap();
             match (rx_me, rx_them) {
                 (Some(a), Some(b)) => {
                     let (tx_mix, rx_mix) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-                    tauri::async_runtime::spawn(crate::audio::mixer::mix_streams(app.clone(), a, b, tx_mix));
+                    tauri::async_runtime::spawn(crate::audio::mixer::mix_streams(
+                        app.clone(),
+                        a,
+                        b,
+                        tx_mix,
+                    ));
                     // Record the mixed stream → the saved file holds both sides.
-                    tasks.push(run_metered_session(&app, provider, make_config(), "mix", rx_mix, Some(recorder)));
+                    tasks.push(run_metered_session(
+                        &app,
+                        provider,
+                        make_config(),
+                        "mix",
+                        rx_mix,
+                        Some(recorder),
+                    ));
                 }
                 // If one capture failed, transcribe + record whichever started.
                 (Some(a), None) => {
-                    tasks.push(run_metered_session(&app, provider, make_config(), "me", a, Some(recorder)));
+                    tasks.push(run_metered_session(
+                        &app,
+                        provider,
+                        make_config(),
+                        "me",
+                        a,
+                        Some(recorder),
+                    ));
                 }
                 (None, Some(b)) => {
-                    tasks.push(run_metered_session(&app, provider, make_config(), "them", b, Some(recorder)));
+                    tasks.push(run_metered_session(
+                        &app,
+                        provider,
+                        make_config(),
+                        "them",
+                        b,
+                        Some(recorder),
+                    ));
                 }
                 (None, None) => {}
             }
         } else {
             // No diarization → two sessions. Record the mic only (mixing two
             // un-aligned streams into one file would garble it); see plan note.
-            if let Some(rx) = spawn_capture(&state, mic, running.clone(), "me") {
+            if let Some(rx) = spawn_capture(&state.threads, mic, running.clone(), "me") {
                 let rx = spawn_mic_prosody_tap(&app, rx);
-                let task = run_metered_session(&app, provider, make_config(), "me", rx, Some(recorder));
+                let task =
+                    run_metered_session(&app, provider, make_config(), "me", rx, Some(recorder));
                 state.tasks.lock().unwrap().push(task);
             }
-            if let Some(rx) = spawn_capture(&state, sys, running.clone(), "them") {
+            if let Some(rx) = spawn_capture(&state.threads, sys, running.clone(), "them") {
                 let task = run_metered_session(&app, provider, make_config(), "them", rx, None);
                 state.tasks.lock().unwrap().push(task);
             }
@@ -236,7 +272,7 @@ pub fn start_meeting(
         let mic = Microphone {
             device_name: input_device,
         };
-        if let Some(rx) = spawn_capture(&state, mic, running.clone(), "me") {
+        if let Some(rx) = spawn_capture(&state.threads, mic, running.clone(), "me") {
             let rx = spawn_mic_prosody_tap(&app, rx);
             let task = run_metered_session(&app, provider, make_config(), "me", rx, Some(recorder));
             state.tasks.lock().unwrap().push(task);
@@ -463,12 +499,16 @@ pub fn start_oauth_loopback(app: AppHandle) -> Result<u16, String> {
                     );
                     let _ = stream.write_all(resp.as_bytes());
                     let _ = stream.flush();
-                    let _ = app.emit("auth://callback", serde_json::json!({ "token": token, "error": error }));
+                    let _ = app.emit(
+                        "auth://callback",
+                        serde_json::json!({ "token": token, "error": error }),
+                    );
                     break;
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     if std::time::Instant::now() > deadline {
-                        let _ = app.emit("auth://callback", serde_json::json!({ "error": "timeout" }));
+                        let _ =
+                            app.emit("auth://callback", serde_json::json!({ "error": "timeout" }));
                         break;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -484,7 +524,7 @@ pub fn start_oauth_loopback(app: AppHandle) -> Result<u16, String> {
 /// Start one capture backend on its own thread, returning the PCM receiver.
 /// Returns `None` if the device failed to start.
 fn spawn_capture<S: AudioSource>(
-    state: &State<MeetingState>,
+    threads: &Mutex<Vec<JoinHandle<()>>>,
     source: S,
     running: Arc<AtomicBool>,
     label: &'static str,
@@ -492,7 +532,7 @@ fn spawn_capture<S: AudioSource>(
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
     match source.start(tx, running) {
         Ok(handle) => {
-            state.threads.lock().unwrap().push(handle);
+            threads.lock().unwrap().push(handle);
             Some(rx)
         }
         Err(e) => {
@@ -625,7 +665,8 @@ pub fn read_log_tail(app: AppHandle, max_bytes: u64) -> Result<String, String> {
     let len = file.metadata().map_err(|e| e.to_string())?.len();
     let cap = max_bytes.max(1);
     let start = len.saturating_sub(cap);
-    file.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
+    file.seek(SeekFrom::Start(start))
+        .map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf).map_err(|e| e.to_string())?;
 

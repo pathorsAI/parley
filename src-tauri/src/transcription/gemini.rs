@@ -14,7 +14,10 @@ use tauri::AppHandle;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
-use super::common::{connect_with_headers, LevelMeter, SegmentBuilder, TranscribeConfig};
+use super::common::{
+    connect_with_headers, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
+    TRANSCRIPT_EVENT,
+};
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
 
@@ -73,7 +76,7 @@ pub async fn run_session(
     eprintln!("[gemini:{source}] connected, model={model} (diarization unsupported → speaker 0)");
 
     let mime = format!("audio/pcm;rate={}", TARGET_SAMPLE_RATE);
-    let mut meter = LevelMeter::new(app.clone(), source);
+    let mut meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
     let forward = async move {
         let b64 = base64::engine::general_purpose::STANDARD;
         while let Some(chunk) = pcm_rx.recv().await {
@@ -83,11 +86,7 @@ pub async fn run_session(
             let msg = json!({
                 "realtimeInput": { "mediaChunks": [ { "mimeType": mime, "data": data } ] }
             });
-            if write
-                .send(Message::Text(msg.to_string()))
-                .await
-                .is_err()
-            {
+            if write.send(Message::Text(msg.to_string())).await.is_err() {
                 break;
             }
         }
@@ -95,7 +94,7 @@ pub async fn run_session(
     };
 
     let read_loop = async move {
-        let mut builder = SegmentBuilder::new(app.clone(), source);
+        let mut builder = SegmentBuilder::new(app.clone(), source, TRANSCRIPT_EVENT);
         let mut interim = String::new();
         let mut msg_count: u64 = 0;
         while let Some(msg) = read.next().await {
