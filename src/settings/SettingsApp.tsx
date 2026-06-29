@@ -66,6 +66,7 @@ type Category =
   | "account"
   | "provider"
   | "transcription"
+  | "voiceTyping"
   | "permissions"
   | "evaluations"
   | "todos"
@@ -85,6 +86,7 @@ const NAV: { id: Category; labelKey: TranslationKey; cloudOnly?: boolean }[] = [
   { id: "account", labelKey: "settings.nav.account", cloudOnly: true },
   { id: "provider", labelKey: "settings.nav.provider" },
   { id: "transcription", labelKey: "settings.nav.transcription" },
+  { id: "voiceTyping", labelKey: "settings.nav.voiceTyping" },
   { id: "permissions", labelKey: "settings.nav.permissions" },
   { id: "evaluations", labelKey: "settings.nav.evaluations" },
   { id: "todos", labelKey: "settings.nav.todos" },
@@ -705,6 +707,11 @@ export function SettingsApp() {
                 </label>
               ))}
             </div>
+          </Section>
+        )}
+
+        {cat === "voiceTyping" && (
+          <Section title={t("settings.voiceTyping.title")}>
             <VoiceTypingSettings />
           </Section>
         )}

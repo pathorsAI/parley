@@ -2,14 +2,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "../lib/store";
 import { useI18n } from "../i18n";
 import { isTauri } from "../lib/tauriEvents";
+import { broadcastSettings } from "../lib/settingsSync";
 
 /**
- * Voice-typing options inside Transcription settings: a short description plus
- * the auto-paste opt-in. The macOS permissions it needs (Input Monitoring for
- * the global fn key, Accessibility for auto-paste) are granted from the
- * dedicated Permissions tab.
+ * Voice-typing options. The macOS permissions it needs (Input Monitoring for
+ * the global fn key, Accessibility for auto-paste) are granted from the dedicated
+ * Permissions tab.
  */
-export function VoiceTypingSettings() {
+export const VoiceTypingSettings = () => {
   const { t } = useI18n();
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
@@ -17,8 +17,7 @@ export function VoiceTypingSettings() {
   if (!isTauri()) return null;
 
   return (
-    <div className="mt-2 flex max-w-md flex-col gap-3 rounded-lg border p-3">
-      <div className="text-sm font-medium">{t("settings.voiceTyping.title")}</div>
+    <div className="flex max-w-md flex-col gap-3 rounded-lg border p-3">
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         {t("settings.voiceTyping.hint")}
       </p>
@@ -38,6 +37,7 @@ export function VoiceTypingSettings() {
           onChange={async (e) => {
             const on = e.target.checked;
             updateSettings({ voiceTypingAutoPaste: on });
+            void broadcastSettings({ ...useStore.getState().settings });
             // Auto-paste needs Accessibility — prompt the moment it's enabled.
             if (on) await invoke("accessibility_status", { prompt: true }).catch(() => {});
           }}
@@ -45,4 +45,4 @@ export function VoiceTypingSettings() {
       </label>
     </div>
   );
-}
+};
