@@ -68,15 +68,6 @@ pub struct MeetingState {
     recorder: RecorderBuf,
 }
 
-/// State for Typeless-style press-and-hold dictation. This is intentionally
-/// separate from meeting recording so a short dictation never touches the live
-/// meeting transcript or system-audio capture.
-#[derive(Default)]
-pub struct DictationState {
-    running: Arc<AtomicBool>,
-    threads: Mutex<Vec<JoinHandle<()>>>,
-}
-
 /// List available microphone input device names (for the Settings picker).
 #[tauri::command]
 pub fn list_input_devices() -> Vec<String> {
