@@ -255,7 +255,9 @@ fn downmix_into(buf: &AudioBufferRef<'_>, out: &mut Vec<f32>) {
 }
 
 /// Encode 16 kHz mono `pcm16` as Opus in an Ogg container, written to `out_path`.
-fn encode_opus_ogg(pcm16: &[i16], out_path: &Path) -> Result<()> {
+/// `pub(crate)` so the live-meeting recorder can reuse it to persist a captured
+/// session (the realtime path already produces 16 kHz mono PCM).
+pub(crate) fn encode_opus_ogg(pcm16: &[i16], out_path: &Path) -> Result<()> {
     let mut encoder = Encoder::new(SampleRate::Hz16000, Channels::Mono, Application::Voip)
         .map_err(|e| anyhow!("opus encoder init: {e}"))?;
     encoder
@@ -338,6 +340,13 @@ fn build_opus_tags() -> Vec<u8> {
 /// A unique temp path for the compressed output.
 fn unique_temp_path() -> PathBuf {
     std::env::temp_dir().join(format!("parley-compressed-{}.ogg", uuid::Uuid::new_v4()))
+}
+
+/// A unique temp path for a freshly encoded live recording. The caller (stop
+/// meeting) hands this path to `save_history_entry`, which moves it into the
+/// entry folder, so it only ever lives in the temp dir briefly.
+pub(crate) fn unique_recording_path() -> PathBuf {
+    std::env::temp_dir().join(format!("parley-recording-{}.ogg", uuid::Uuid::new_v4()))
 }
 
 /// A pseudo-unique Ogg stream serial derived from a fresh UUID.

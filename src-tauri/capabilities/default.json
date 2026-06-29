@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main and secondary (settings / finding-solution / diagnostics) windows",
-  "windows": ["main", "settings", "finding-solution", "diagnostics"],
+  "description": "Capability for the main and secondary (settings / finding-solution / diagnostics / history / voice-typing) windows",
+  "windows": ["main", "settings", "finding-solution", "diagnostics", "history", "voice-typing"],
   "permissions": [
     "core:default",
     "opener:default",
@@ -13,10 +13,21 @@
     "core:window:allow-destroy",
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
+    "core:window:allow-set-fullscreen",
     "core:window:allow-set-focus",
     "core:window:allow-start-dragging",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-current-monitor",
+    "core:window:allow-primary-monitor",
+    "core:window:allow-scale-factor",
     "core:event:allow-emit",
     "core:event:allow-emit-to",
-    "core:event:allow-listen"
+    "core:event:allow-listen",
+    "updater:default",
+    "process:default"
   ]
 }

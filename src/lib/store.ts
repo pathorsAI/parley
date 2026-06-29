@@ -3,19 +3,24 @@ import { persist } from "zustand/middleware";
 import type {
   ActionItem,
   AppLanguage,
+  DeliveryNudge,
   Evaluation,
   FindingSolutionEntry,
   MeetingStatus,
+  ProsodyMetrics,
   Settings,
   TimelineEvent,
   TodoItem,
   TranscriptSegment,
 } from "./types";
 import type { ReplaySession } from "./replay/types";
+import type { CloudAuth } from "./cloud/types";
+import type { HistoryEntry } from "./history/types";
 import {
   buildBuiltinEvalLabels,
   buildPresetEvalDefs,
   buildPresetEvalTemplates,
+  evalSignature,
   evalsFromDefs,
 } from "./evaluations/presets";
 import { reconcileTemplates } from "./templates";
@@ -48,27 +53,6 @@ function relocalizeBuiltins(settings: Settings): Settings {
   };
 }
 
-/**
- * Optional dev convenience: API keys from a gitignored `.env` (VITE_* vars).
- * Empty/undefined in any published build (no .env), so nothing is baked in.
- * Only defined keys are included, so they overlay without clobbering UI values.
- */
-const ENV_KEYS: Partial<Settings> = Object.fromEntries(
-  (
-    [
-      ["sonioxApiKey", import.meta.env.VITE_SONIOX_API_KEY],
-      ["anthropicApiKey", import.meta.env.VITE_ANTHROPIC_API_KEY],
-      ["openaiApiKey", import.meta.env.VITE_OPENAI_API_KEY],
-      ["geminiApiKey", import.meta.env.VITE_GEMINI_API_KEY],
-      ["openrouterApiKey", import.meta.env.VITE_OPENROUTER_API_KEY],
-      ["groqApiKey", import.meta.env.VITE_GROQ_API_KEY],
-      ["qwenApiKey", import.meta.env.VITE_QWEN_API_KEY],
-      ["kimiApiKey", import.meta.env.VITE_KIMI_API_KEY],
-      ["ollamaApiKey", import.meta.env.VITE_OLLAMA_API_KEY],
-    ] as const
-  ).filter(([, v]) => !!v)
-) as Partial<Settings>;
-
 // Built-in templates are seeded in the default language; the persist `merge`
 // (rehydrate) and `relocalizeBuiltins` (on language change) re-resolve them to
 // the active language afterward.
@@ -79,6 +63,7 @@ const DEFAULT_SETTINGS: Settings = {
   theme: "system",
   layout: "full",
   onboarded: false,
+  onboardingStep: 0,
   userName: "",
   userRole: "",
   userCompany: "",
@@ -93,6 +78,7 @@ const DEFAULT_SETTINGS: Settings = {
   qwenApiKey: "",
   kimiApiKey: "",
   ollamaApiKey: "",
+  parleyApiKey: "",
   reasoningEffort: { ask: "low", eval: "medium" },
   models: DEFAULT_MODELS,
   transcriptionProvider: "soniox",
@@ -100,10 +86,17 @@ const DEFAULT_SETTINGS: Settings = {
   deepgramApiKey: "",
   assemblyaiApiKey: "",
   inputDevice: "",
+  voiceTypingAutoPaste: false,
   evaluations: buildPresetEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),
   todoTemplates: buildPresetTodoTemplates(tDefault),
-  ...ENV_KEYS,
+  // Pace + pauses are free (timing/DSP) so default on; pitch + tone (LLM cost)
+  // are opt-in. See DeliveryToggles.
+  delivery: { pace: true, pitch: false, pauses: true, tone: false },
+  // Signed-in accounts sync by default (prior behavior); the toggle lets a user
+  // keep this device local-only. Finished meetings save to the personal root.
+  syncEnabled: true,
+  defaultSaveLocation: { scope: "personal", folderId: null },
 };
 
 /** Whether the app is capturing a live meeting or analyzing an uploaded one. */
@@ -130,10 +123,26 @@ interface ParleyState {
   appMode: AppMode;
   /** The uploaded recording under analysis (null in live mode). */
   replay: ReplaySession | null;
+  /** Id of the saved History entry currently loaded into replay — set by
+   *  {@link loadHistory}, and after a fresh upload auto-saves. When set, re-running
+   *  the analysis OVERWRITES that entry on disk instead of the result being lost.
+   *  null for a not-yet-saved upload or in live mode. */
+  loadedHistoryId: string | null;
+  setLoadedHistoryId: (id: string | null) => void;
   /** Scrub position (ms) in replay mode — drives audio + transcript highlight. */
   replayPlayheadMs: number;
   /** Load an uploaded recording and switch into replay mode. */
   enterReplay: (session: ReplaySession) => void;
+  /** Load a saved history entry into replay mode, RESTORING its analysis (unlike
+   *  {@link enterReplay}, which clears findings so a fresh pass can run). Pass
+   *  `{ readOnly: true }` for an ORG recording viewed from the cloud — it leaves
+   *  {@link loadedHistoryId} null so the personal re-analysis-persist subscription
+   *  never tries to write someone else's shared recording into the local dir. */
+  loadHistory: (
+    entry: HistoryEntry,
+    session: ReplaySession,
+    opts?: { readOnly?: boolean },
+  ) => void;
   /** Leave replay mode and return to a clean live/idle state. */
   exitReplay: () => void;
   /** Move the replay playhead (drives both audio position and the transcript). */
@@ -191,6 +200,14 @@ interface ParleyState {
    *  When it differs from the active eval set, the findings are stale → re-analyze. */
   analyzedEvalSig: string;
   setFindings: (events: TimelineEvent[]) => void;
+  /** Insert one finding (MCP/external add) without replacing the list, keeping it
+   *  ordered by atMs. A colliding id is reassigned so existing findings are safe. */
+  addFinding: (event: TimelineEvent) => void;
+  /** Patch a single finding by id (MCP/external edit). The id stays fixed. */
+  updateFinding: (id: string, patch: Partial<TimelineEvent>) => void;
+  /** Delete a single finding by id (MCP/external edit), clearing any selection
+   *  or cached solution that pointed at it. */
+  removeFinding: (id: string) => void;
   setAnalysisStatus: (status: ParleyState["analysisStatus"]) => void;
   setAnalysisError: (error: string | null) => void;
   /** Drop findings + action items outside the replay keep-window. Applied when a
@@ -217,6 +234,16 @@ interface ParleyState {
   autoAnalyzeSec: number;
   setAutoAnalyze: (on: boolean) => void;
   setAutoAnalyzeSec: (sec: number) => void;
+
+  // ── Live delivery coaching (LIVE only; "me" mic, issue #22) ─────────────────
+  /** Latest prosody metrics from the backend; null until the first event. */
+  prosody: ProsodyMetrics | null;
+  setProsody: (m: ProsodyMetrics | null) => void;
+  /** The transient coaching nudge currently shown (null = none). */
+  deliveryNudge: DeliveryNudge | null;
+  /** Show a nudge (replaces any current one); the UI auto-dismisses it. */
+  pushDeliveryNudge: (n: DeliveryNudge) => void;
+  clearDeliveryNudge: () => void;
 
   // ── Action items (REPLAY post-meeting follow-ups) ───────────────────────────
   /** Generated from the analysis findings + transcript; ephemeral, replay-only. */
@@ -255,6 +282,10 @@ interface ParleyState {
   highlightMs: number | null;
   setHighlightMs: (ms: number | null) => void;
 
+  /** Parley Cloud sign-in (Google). Persisted so you stay signed in. null = signed out. */
+  cloudAuth: CloudAuth | null;
+  setCloudAuth: (auth: CloudAuth | null) => void;
+
   // todos
   addTodo: (text: string) => void;
   toggleTodo: (id: string) => void;
@@ -290,6 +321,7 @@ export const useStore = create<ParleyState>()(
     (set) => ({
       appMode: "live",
       replay: null,
+      loadedHistoryId: null,
       replayPlayheadMs: 0,
       replaySeekNonce: 0,
       replayTrim: null,
@@ -307,6 +339,8 @@ export const useStore = create<ParleyState>()(
       findingSolutions: {},
       autoAnalyze: false,
       autoAnalyzeSec: 45,
+      prosody: null,
+      deliveryNudge: null,
       actionItems: [],
       actionItemsStatus: "idle",
       actionItemsError: null,
@@ -322,10 +356,23 @@ export const useStore = create<ParleyState>()(
       meetingTarget: "",
       meetingFloor: "",
       highlightMs: null,
+      cloudAuth: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
+  setCloudAuth: (cloudAuth) =>
+    set((s) => {
+      // Signing out (or an expired session): a stale hosted "parley" STT
+      // selection can no longer authenticate. Fall back to a BYOK default so the
+      // next meeting fails loud (or works) instead of silently starting a mock
+      // stream, and so the Settings picker doesn't render blank.
+      if (!cloudAuth && s.settings.transcriptionProvider === "parley") {
+        return { cloudAuth, settings: { ...s.settings, transcriptionProvider: "soniox" } };
+      }
+      return { cloudAuth };
+    }),
+  setLoadedHistoryId: (loadedHistoryId) => set({ loadedHistoryId }),
 
   enterReplay: (session) => {
     log.info("store: enter replay", {
@@ -336,6 +383,8 @@ export const useStore = create<ParleyState>()(
     set({
       appMode: "replay",
       replay: session,
+      // A fresh upload isn't a saved entry yet — cleared until its auto-save.
+      loadedHistoryId: null,
       // Start at the beginning of the recording (the full transcript always
       // shows now — no masking); the playhead is just for playback/navigation.
       replayPlayheadMs: 0,
@@ -357,11 +406,60 @@ export const useStore = create<ParleyState>()(
     });
   },
 
+  loadHistory: (entry, session, opts) => {
+    log.info("store: load history", {
+      id: entry.id,
+      source: entry.source,
+      segments: entry.segments.length,
+      findings: entry.findings.length,
+      readOnly: !!opts?.readOnly,
+    });
+    set((state) => ({
+      appMode: "replay",
+      replay: session,
+      // Re-running the analysis overwrites THIS saved entry on disk — but only for
+      // an own/local entry. A read-only org recording leaves this null so the
+      // re-analysis-persist subscription doesn't try to write it to the local dir.
+      loadedHistoryId: opts?.readOnly ? null : entry.id,
+      replayPlayheadMs: 0,
+      replaySeekNonce: state.replaySeekNonce + 1,
+      replayTrim: null,
+      ingestWizardOpen: false,
+      ingestAudioPath: null,
+      // Open so playback/seeking works, but the analysis below is already "done"
+      // (see useReplayAnalysis: it only runs when status is "idle"), so loading a
+      // saved entry never re-spends a generation.
+      analysisGate: "open",
+      segments: entry.segments,
+      speakerNames: entry.speakerNames,
+      meetingStatus: "stopped",
+      highlightMs: null,
+      // Restore the saved analysis verbatim.
+      findings: entry.findings,
+      analysisStatus: "done",
+      analysisError: null,
+      analyzedEvalSig: evalSignature(state.evaluations),
+      actionItems: entry.actionItems,
+      actionItemsStatus: "done",
+      actionItemsError: null,
+      // Restore the per-meeting context + negotiation setup.
+      meetingContext: entry.meetingContext,
+      meetingBatna: entry.meetingBatna,
+      meetingTarget: entry.meetingTarget,
+      meetingFloor: entry.meetingFloor,
+      // Nothing selected / open yet.
+      selectedFindingId: null,
+      solutionFindingId: null,
+      findingSolutions: {},
+    }));
+  },
+
   exitReplay: () => {
     log.info("store: exit replay");
     set({
       appMode: "live",
       replay: null,
+      loadedHistoryId: null,
       replayPlayheadMs: 0,
       replayTrim: null,
       ingestWizardOpen: false,
@@ -425,6 +523,34 @@ export const useStore = create<ParleyState>()(
       };
     }),
 
+  addFinding: (event) =>
+    set((s) => {
+      // Never clobber an existing finding's id (it keys selection + solutions).
+      const id = s.findings.some((f) => f.id === event.id) ? crypto.randomUUID() : event.id;
+      // Re-sort by atMs to preserve the chronological invariant the analysis
+      // pipeline establishes (timeline.ts) and the findings list renders in.
+      return {
+        findings: [...s.findings, { ...event, id }].sort((a, b) => a.atMs - b.atMs),
+      };
+    }),
+
+  updateFinding: (id, patch) =>
+    set((s) => ({
+      // Spread patch first, then pin id back so an external edit can never
+      // rewrite the id (which keys selection + the solution cache).
+      findings: s.findings.map((f) => (f.id === id ? { ...f, ...patch, id: f.id } : f)),
+    })),
+
+  removeFinding: (id) =>
+    set((s) => ({
+      findings: s.findings.filter((f) => f.id !== id),
+      selectedFindingId: s.selectedFindingId === id ? null : s.selectedFindingId,
+      solutionFindingId: s.solutionFindingId === id ? null : s.solutionFindingId,
+      findingSolutions: Object.fromEntries(
+        Object.entries(s.findingSolutions).filter(([k]) => k !== id),
+      ),
+    })),
+
   dropFindingsOutsideTrim: () =>
     set((s) => {
       const trim = s.replayTrim;
@@ -450,6 +576,15 @@ export const useStore = create<ParleyState>()(
     }),
   setAutoAnalyze: (on) => set({ autoAnalyze: on }),
   setAutoAnalyzeSec: (sec) => set({ autoAnalyzeSec: Math.max(20, sec || 45) }),
+
+  // Prosody is a live-only signal. Ignore non-null updates outside a recording so a
+  // leaked/duplicate listener (e.g. a dev StrictMode re-subscribe, or a backend
+  // frame slipping through stop_meeting's teardown grace) can't move the gauges
+  // after stop. A null reset always applies.
+  setProsody: (m) =>
+    set((state) => (m && state.meetingStatus !== "recording" ? {} : { prosody: m })),
+  pushDeliveryNudge: (n) => set({ deliveryNudge: n }),
+  clearDeliveryNudge: () => set({ deliveryNudge: null }),
 
   setActionItems: (items) => set({ actionItems: items }),
   setActionItemsStatus: (status) => set({ actionItemsStatus: status }),
@@ -491,6 +626,7 @@ export const useStore = create<ParleyState>()(
     set({
       meetingStatus: "recording",
       meetingStartedAt: Date.now(),
+      loadedHistoryId: null,
       segments: [],
       speakerNames: {},
       findings: [],
@@ -500,6 +636,8 @@ export const useStore = create<ParleyState>()(
       selectedFindingId: null,
       solutionFindingId: null,
       findingSolutions: {},
+      prosody: null,
+      deliveryNudge: null,
     });
   },
 
@@ -520,11 +658,15 @@ export const useStore = create<ParleyState>()(
 
   stopMeeting: () => {
     log.info("store: meeting stopped");
-    set({ meetingStatus: "stopped" });
+    set({ meetingStatus: "stopped", prosody: null, deliveryNudge: null });
   },
 
   upsertSegment: (segment) =>
     set((state) => {
+      // Live transcript events must never mutate a loaded REPLAY recording — drop a
+      // stray live event (e.g. a leaked listener) while viewing a saved session.
+      // (Live finalize after stop is appMode "live"/"stopped", so it's unaffected.)
+      if (state.appMode === "replay") return {};
       const idx = state.segments.findIndex((s) => s.id === segment.id);
       if (idx === -1) {
         return { segments: [...state.segments, segment] };
@@ -562,8 +704,8 @@ export const useStore = create<ParleyState>()(
     {
       name: "parley-settings",
       version: 3,
-      // Persist only settings — transcript and eval state are per-session.
-      partialize: (state) => ({ settings: state.settings }),
+      // Persist settings + the cloud sign-in — transcript/eval state is per-session.
+      partialize: (state) => ({ settings: state.settings, cloudAuth: state.cloudAuth }),
       // Backfill any settings fields missing from older persisted state.
       merge: (persisted, current) => {
         const p = (persisted as { settings?: Partial<Settings> } | undefined)?.settings ?? {};
@@ -604,6 +746,8 @@ export const useStore = create<ParleyState>()(
             // Deep-merge models so a new provider (e.g. groq) isn't dropped by
             // older persisted state that only had anthropic/openrouter.
             models: { ...DEFAULT_SETTINGS.models, ...(p.models ?? {}) },
+            // Backfill delivery-coaching toggles for states saved before they existed.
+            delivery: { ...DEFAULT_SETTINGS.delivery, ...(p.delivery ?? {}) },
             reasoningEffort,
             // Fold latest built-in templates over persisted ones, keeping customs.
             todoTemplates: reconcileTemplates(
@@ -614,10 +758,10 @@ export const useStore = create<ParleyState>()(
               buildPresetEvalTemplates(t),
               validEvalTpls ? p.evalTemplates! : []
             ),
-            // Dev .env keys win over persisted-empty values (no-op in prod).
-            ...ENV_KEYS,
           },
           evaluations: evalsFromDefs(relabeledEvals),
+          // Restore the persisted cloud sign-in (re-validated on startup).
+          cloudAuth: (persisted as { cloudAuth?: CloudAuth } | undefined)?.cloudAuth ?? null,
         };
       },
     }

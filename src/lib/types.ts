@@ -8,7 +8,7 @@
 export type Source = "me" | "them" | "mix";
 
 /** Speech-to-text providers (mirrors the Rust `SttProvider` ids). */
-export type SttProviderId = "soniox" | "deepgram" | "assemblyai" | "openai" | "gemini";
+export type SttProviderId = "soniox" | "deepgram" | "assemblyai" | "openai" | "gemini" | "parley";
 
 /**
  * A single transcript segment from a Soniox realtime session.
@@ -136,9 +136,6 @@ export interface TimelineEvent {
   title: string;
   /** One or two sentences explaining the moment. */
   detail: string;
-  /** Supporting verbatim quotes — several when they belong together (e.g. BOTH
-   *  sides of a contradiction, or a promise and its walk-back). */
-  quotes?: string[];
   /** REPLAY/post-eval: true when ME LATER addressed / defused / answered this
    *  moment elsewhere in the conversation. Rendered GREEN ("resolved") instead of
    *  the severity colour, and its {@link resolution} is fed to the reply coach so
@@ -196,7 +193,8 @@ export type LlmProvider =
   | "qwen"
   | "kimi"
   | "ollama"
-  | "openrouter";
+  | "openrouter"
+  | "parley";
 
 /** Reasoning depth for reasoning-capable models (e.g. Groq gpt-oss). */
 export type ReasoningEffort = "low" | "medium" | "high";
@@ -228,6 +226,9 @@ export interface Settings {
   layout: AppLayout;
   /** False until the first-run onboarding wizard is completed or skipped. */
   onboarded: boolean;
+  /** Current onboarding wizard step, persisted so granting a permission (which
+   *  often needs an app restart) resumes where you left off instead of step 1. */
+  onboardingStep: number;
   /** Your name — helps the AI recognize when you're speaking or addressed. */
   userName: string;
   /** Your role / title — tailors the assistance to your seat at the table. */
@@ -247,6 +248,10 @@ export interface Settings {
   /** Optional — only needed for a remote/secured Ollama; local needs none. */
   ollamaApiKey: string;
   openrouterApiKey: string;
+  /** Unused — the hosted "parley" provider authenticates with the Better Auth
+   *  session token, not an API key. Present so it satisfies the closed
+   *  apiKeyField union (every provider has a key field). */
+  parleyApiKey: string;
   /** Reasoning depth per model role for reasoning-capable models. */
   reasoningEffort: ModelReasoningEfforts;
   /** Per-provider model ids (ids differ between Anthropic and OpenRouter). */
@@ -258,10 +263,89 @@ export interface Settings {
   assemblyaiApiKey: string;
   /** Microphone input device name; empty = system default. */
   inputDevice: string;
+  /** Voice typing: after releasing the push-to-talk key, also paste the text
+   *  into the frontmost app (simulated ⌘V). Off by default; needs Accessibility. */
+  voiceTypingAutoPaste: boolean;
   /** The active evaluation set used in meetings (the runtime copy lives in the store). */
   evaluations: EvalDef[];
   /** Library of evaluation templates (built-in + custom) you can apply. */
   evalTemplates: EvalTemplate[];
   /** Library of TODO/agenda templates (built-in + custom) you can apply. */
   todoTemplates: TodoTemplate[];
+  /** Per-metric opt-in for live delivery coaching (see DeliveryToggles). */
+  delivery: DeliveryToggles;
+  /** Whether to sync personal recordings + folders to Parley Cloud while signed in.
+   *  Off → this device keeps everything local (no automatic push/pull); explicit
+   *  org sharing still works. Default on (preserves the prior signed-in behavior). */
+  syncEnabled: boolean;
+  /** Where a finished meeting is saved by default. */
+  defaultSaveLocation: DefaultSaveLocation;
+}
+
+/**
+ * The default destination for auto-saved meetings. A personal folder (or the
+ * personal root), or an org folder — in which case the meeting is saved locally at
+ * the personal root AND auto-shared (copied) into that org folder after analysis
+ * settles, so teammates see it immediately while the user keeps their own copy.
+ */
+export interface DefaultSaveLocation {
+  scope: "personal" | "org";
+  /** Target org id when scope === "org". */
+  orgId?: string | null;
+  /** Target folder id within the scope, or null for the scope's root. */
+  folderId: string | null;
+}
+
+/**
+ * Which live delivery-coaching signals are active. All scored on the user's own
+ * mic ("me") only (issue #22). Pace + pauses are free (timing/DSP) so default on;
+ * pitch (monotony) and tone (an LLM call) are opt-in.
+ */
+export interface DeliveryToggles {
+  /** Speech-rate gauge + "slow down" nudge (derived from transcript timing). */
+  pace: boolean;
+  /** Pitch-variation gauge + "you've gone flat" nudge (Rust F0 DSP). */
+  pitch: boolean;
+  /** Pause / silence / talk-time signals + steamroll / dead-air nudges. */
+  pauses: boolean;
+  /** LLM-judged aggressive/rude tone nudge (an extra, cheap eval call). */
+  tone: boolean;
+}
+
+/**
+ * Live prosody metrics for the "me" mic stream, mapped from the backend
+ * `audio://prosody` event. Pitch/pause fields come from the Rust DSP analyzer;
+ * `null` in the store until the first event of a meeting arrives.
+ */
+export interface ProsodyMetrics {
+  /** Latest voiced pitch in Hz (0 while unvoiced). */
+  f0Hz: number;
+  /** Std-dev of F0 (semitones) over the rolling window — the monotony signal. */
+  pitchVarSemitones: number;
+  /** Convenience 0..1 (1 = very monotone); 0 until enough voiced frames. */
+  monotonyScore: number;
+  /** Mic-anchored speech rate (syllable nuclei per second) over the window. */
+  speechRateHz: number;
+  /** Fraction of the window that was voiced (0..1). */
+  voicedRatio: number;
+  /** Current trailing silence in ms (0 while speaking). */
+  silenceMs: number;
+  /** Longest pause within the window in ms. */
+  longestPauseMs: number;
+  /** Whether the most recent frame was voiced. */
+  speaking: boolean;
+}
+
+/** Kind of live delivery nudge surfaced to the speaker (see DeliveryNudge). */
+export type DeliveryNudgeKind = "pace" | "monotone" | "steamroll" | "deadair" | "tone";
+
+/** A transient, peripheral coaching nudge shown mid-call. */
+export interface DeliveryNudge {
+  kind: DeliveryNudgeKind;
+  /** Localized one-liner, e.g. "Slow down" / "Your tone is sharpening". */
+  message: string;
+  /** Severity drives the accent color (info = gentle, warn = stronger). */
+  severity: "info" | "warn";
+  /** Optional short evidence (used by the tone nudge: the quoted phrase). */
+  evidence?: string;
 }

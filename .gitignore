@@ -32,3 +32,5 @@ src-tauri/gen/schemas
 
 # ONNX Runtime dylib (fetched at build time, not committed — see src-tauri/scripts/fetch-onnxruntime.sh)
 src-tauri/onnxruntime/*.dylib
+src-tauri/tauri.dev.conf.json
+.gstack/

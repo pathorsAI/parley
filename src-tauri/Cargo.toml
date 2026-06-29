@@ -1,11 +1,18 @@
 [package]
 name = "parley"
-version = "0.6.1"
+version = "0.8.7"
 description = "Parley — realtime meeting copilot for interviews and negotiations"
 authors = ["you"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lints.rust]
+# `objc` 0.2's `msg_send!` / `class!` macros expand to `cfg(feature = "cargo-clippy")`,
+# which Rust's `unexpected_cfgs` lint flags in THIS crate (the cfg is evaluated in the
+# destination crate). Declare it expected so the build stays warning-clean, without
+# blanket-suppressing genuinely-unexpected cfgs.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
@@ -18,10 +25,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
 log = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
@@ -57,3 +66,4 @@ nalgebra = "0.35"
 coreaudio-sys = "0.2"
 core-foundation = "0.10"
 objc = "0.2"
+block = "0.1"

@@ -26,6 +26,9 @@ function snapshot() {
       lastRunAt: e.lastRunAt,
       result: e.result ?? null,
     })),
+    // Timeline-analysis findings, exposed verbatim so an MCP client can read,
+    // overwrite, or edit them (see the *_finding tools / sessionCommands).
+    findings: s.findings,
   };
 }
 

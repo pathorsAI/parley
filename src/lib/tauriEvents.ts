@@ -1,6 +1,9 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 import { useStore } from "./store";
 import { toTraditional } from "./zhConvert";
+import { translate, type TranslationKey } from "../i18n/messages";
 import type { Source } from "./types";
 
 /** Shape of the `transcript://segment` payload emitted by the Rust backend. */
@@ -25,6 +28,9 @@ export async function listenForTranscript(): Promise<UnlistenFn> {
   }
   return listen<TranscriptEventPayload>("transcript://segment", (event) => {
     const p = event.payload;
+    // Voice-typing dictation streams over the same event but belongs to the
+    // floating overlay, not the meeting transcript — keep it out of the store.
+    if ((p.source as string) === "voice-typing") return;
     void toTraditional(p.text).then((text) => {
       useStore.getState().upsertSegment({
         id: p.id,
@@ -36,6 +42,78 @@ export async function listenForTranscript(): Promise<UnlistenFn> {
         endMs: p.end_ms,
       });
     });
+  });
+}
+
+/** Shape of the `audio://prosody` payload (snake_case on the wire). */
+interface ProsodyEventPayload {
+  source: Source;
+  f0_hz: number;
+  pitch_var_semitones: number;
+  monotony_score: number;
+  speech_rate_hz: number;
+  voiced_ratio: number;
+  silence_ms: number;
+  longest_pause_ms: number;
+  speaking: boolean;
+}
+
+/**
+ * Subscribe to backend prosody events (live delivery coaching on the "me" mic)
+ * and feed them into the store. Mirrors {@link listenForTranscript}; no-op
+ * outside Tauri. Only "me" is ever emitted, but we filter defensively.
+ */
+export async function listenForProsody(): Promise<UnlistenFn> {
+  if (!("__TAURI_INTERNALS__" in window)) {
+    return () => {};
+  }
+  return listen<ProsodyEventPayload>("audio://prosody", (event) => {
+    const p = event.payload;
+    if (p.source !== "me") return;
+    useStore.getState().setProsody({
+      f0Hz: p.f0_hz,
+      pitchVarSemitones: p.pitch_var_semitones,
+      monotonyScore: p.monotony_score,
+      speechRateHz: p.speech_rate_hz,
+      voicedRatio: p.voiced_ratio,
+      silenceMs: p.silence_ms,
+      longestPauseMs: p.longest_pause_ms,
+      speaking: p.speaking,
+    });
+  });
+}
+
+/** Shape of the `meeting://error` payload (a transcription session failed). */
+interface MeetingErrorPayload {
+  source: string;
+  /** "quota" (402) | "auth" (401) | "connect" (other). */
+  code: string;
+  message: string;
+}
+
+/**
+ * Subscribe to backend transcription-failure events. A meeting that loses its
+ * STT session would otherwise sit in "recording" with no transcript and no
+ * signal — especially in hosted mode, where 402 (out of credits) and 401
+ * (expired session) are routine. Stop the meeting and surface an actionable
+ * toast. No-op outside Tauri.
+ */
+export async function listenForMeetingError(): Promise<UnlistenFn> {
+  if (!("__TAURI_INTERNALS__" in window)) {
+    return () => {};
+  }
+  return listen<MeetingErrorPayload>("meeting://error", (event) => {
+    const { code } = event.payload;
+    // Tear the (transcript-less) meeting down so the UI leaves "recording".
+    useStore.getState().stopMeeting();
+    void invoke("stop_meeting").catch(() => {});
+    const key: TranslationKey =
+      code === "quota"
+        ? "meeting.error.quota"
+        : code === "auth"
+          ? "meeting.error.auth"
+          : "meeting.error.connect";
+    toast.error(translate(useStore.getState().settings.language, key));
   });
 }
 

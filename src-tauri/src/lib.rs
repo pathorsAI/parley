@@ -1,6 +1,8 @@
 mod audio;
 mod commands;
 mod diarize;
+mod history;
+mod hotkey;
 mod mcp;
 mod menu;
 mod permissions;
@@ -8,11 +10,13 @@ mod replay;
 mod replay_audio;
 mod transcription;
 mod usage;
+mod voice_typing;
 
 use tauri::Manager;
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
 use commands::MeetingState;
+use voice_typing::VoiceTypingState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -40,22 +44,32 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(MeetingState::default())
+        .manage(VoiceTypingState::default())
         // Native menu-bar "Diagnostics" submenu (View Logs + Clear Cache).
         .menu(|handle| menu::build(handle))
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
         .setup(|app| {
             app.manage(mcp::start(app.handle().clone()));
+            // Start the global fn-key push-to-talk listener (no-op until the
+            // user grants Input Monitoring).
+            hotkey::init(app.handle().clone());
             log::info!("app: starting up (parley {})", env!("CARGO_PKG_VERSION"));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::start_meeting,
             commands::stop_meeting,
+            commands::discard_recording,
             commands::list_input_devices,
             commands::start_mic_test,
             commands::stop_mic_test,
+            commands::meeting_active,
             commands::save_transcript,
+            commands::export_recording,
+            commands::start_oauth_loopback,
             commands::read_templates,
             commands::write_templates,
             commands::get_templates_path,
@@ -66,10 +80,32 @@ pub fn run() {
             usage::read_usage_events,
             permissions::check_permissions,
             permissions::request_screen_recording,
+            permissions::request_microphone,
             permissions::open_privacy_settings,
+            voice_typing::start_voice_typing,
+            voice_typing::stop_voice_typing,
+            voice_typing::append_voice_history,
+            voice_typing::read_voice_history,
+            voice_typing::write_voice_history,
+            voice_typing::copy_to_clipboard,
+            voice_typing::paste_to_frontmost,
+            voice_typing::accessibility_status,
+            voice_typing::present_voice_overlay,
+            voice_typing::dismiss_voice_overlay,
+            hotkey::ensure_fn_listener,
+            hotkey::input_monitoring_status,
+            hotkey::request_input_monitoring,
             replay::transcribe_file,
             diarize::diarize_audio,
+            history::save_history_entry,
+            history::save_remote_history_entry,
+            history::download_remote_audio,
+            history::list_history,
+            history::read_history_entry,
+            history::rename_history_entry,
+            history::delete_history_entry,
             diarize::download_diarize_model,
+            diarize::diarize_model_status,
             mcp::get_mcp_server_info
         ])
         .run(tauri::generate_context!())

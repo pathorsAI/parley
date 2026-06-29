@@ -49,6 +49,16 @@ body,
   margin: 0;
 }
 
+/* The main window is undecorated + transparent so the app shell can draw its
+   own rounded macOS-style corners (see App.tsx). Keep the surface transparent
+   so the corner notches reveal the desktop and macOS draws a rounded shadow.
+   Secondary windows use native decorations, so this is scoped to the main one. */
+html[data-app-window="main"],
+html[data-app-window="main"] body,
+html[data-app-window="main"] #root {
+  background: transparent;
+}
+
 body {
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
@@ -165,26 +175,14 @@ textarea,
   }
 }
 
-/* Unlayered: wins over Tailwind's `cursor-default` utilities on shadcn parts.
-   Interactive controls get a pointer; disabled ones get not-allowed. */
+/* Cursor behaviour: interactive controls (buttons, tabs, dropdown triggers
+   and items, links, and custom role="button" elements) use the pointing-hand
+   cursor. Text inputs keep their default I-beam; disabled controls do not. */
+a[href],
 button:not(:disabled),
 [role="button"]:not([aria-disabled="true"]),
-[role="combobox"],
-[role="option"],
-[role="menuitem"],
-[role="menuitemradio"],
-[role="menuitemcheckbox"],
-[role="tab"],
-[role="switch"],
-[role="radio"],
-a[href],
-summary,
-select {
+[role="tab"]:not([aria-disabled="true"]),
+[role="option"]:not([aria-disabled="true"]),
+[role="menuitem"]:not([aria-disabled="true"]) {
   cursor: pointer;
-}
-
-button:disabled,
-[aria-disabled="true"],
-[data-disabled] {
-  cursor: not-allowed;
 }

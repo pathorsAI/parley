@@ -87,6 +87,56 @@ describe("enterReplay / exitReplay", () => {
   });
 });
 
+describe("loadHistory", () => {
+  it("loads a saved entry into replay and RESTORES its analysis (no re-run)", () => {
+    const session = replaySession([seg({ id: "s1", text: "saved line" })], {
+      id: "hist-1",
+      name: "即時會議 · 2026",
+      speakerNames: { "them-1": "Bob" },
+    });
+    const entry = {
+      id: "hist-1",
+      title: "即時會議 · 2026",
+      source: "live" as const,
+      createdAt: 123,
+      durationMs: 60_000,
+      segments: session.segments,
+      speakerNames: { "them-1": "Bob" },
+      findings: [makeFinding("f1"), makeFinding("f2")],
+      actionItems: [
+        { id: "ai", text: "follow up", rationale: "why", done: false, linkedEventId: null, atMs: null },
+      ],
+      meetingContext: "context here",
+      meetingBatna: "batna",
+      meetingTarget: "target",
+      meetingFloor: "floor",
+      audio: "audio.ogg",
+    };
+
+    useStore.getState().loadHistory(entry, session);
+
+    const s = useStore.getState();
+    expect(s.appMode).toBe("replay");
+    expect(s.replay).toBe(session);
+    expect(s.segments).toEqual(session.segments);
+    expect(s.speakerNames).toEqual({ "them-1": "Bob" });
+    expect(s.meetingStatus).toBe("stopped");
+    // Analysis restored verbatim and marked done so useReplayAnalysis won't re-run.
+    expect(s.findings).toHaveLength(2);
+    expect(s.analysisStatus).toBe("done");
+    expect(s.actionItems).toHaveLength(1);
+    expect(s.actionItemsStatus).toBe("done");
+    // Per-meeting context + negotiation setup restored.
+    expect(s.meetingContext).toBe("context here");
+    expect(s.meetingBatna).toBe("batna");
+    expect(s.meetingTarget).toBe("target");
+    expect(s.meetingFloor).toBe("floor");
+    // analysisGate open + a non-stale eval signature so findings aren't flagged stale.
+    expect(s.analysisGate).toBe("open");
+    expect(s.analyzedEvalSig).not.toBe("");
+  });
+});
+
 describe("ingest wizard + analysis gate", () => {
   it("openIngestWizard arms the deferred gate and sets step/path", () => {
     expect(useStore.getState().analysisGate).toBe("open");
@@ -181,6 +231,74 @@ describe("findings selection invalidation", () => {
     expect(s.findings).toEqual(next);
     expect(s.selectedFindingId).toBe("a"); // survived the partial → still open
     expect(s.findingSolutions).toEqual({ a: { ...entry } }); // its solution preserved; "gone" cleared
+  });
+
+  it("addFinding inserts one finding in atMs order without replacing the list", () => {
+    useStore.setState({
+      findings: [
+        { ...makeFinding("a"), atMs: 1000 },
+        { ...makeFinding("c"), atMs: 3000 },
+      ],
+      selectedFindingId: "a",
+      findingSolutions: { a: { status: "done", solution: null, error: null } },
+    });
+
+    useStore.getState().addFinding({ ...makeFinding("b"), atMs: 2000 });
+
+    const s = useStore.getState();
+    expect(s.findings.map((f) => f.id)).toEqual(["a", "b", "c"]); // chronological
+    expect(s.selectedFindingId).toBe("a"); // existing selection untouched
+    expect(s.findingSolutions.a).toBeDefined(); // existing solution untouched
+  });
+
+  it("addFinding reassigns a colliding id so the existing finding is never clobbered", () => {
+    useStore.setState({ findings: [{ ...makeFinding("dup"), title: "original", atMs: 0 }] });
+
+    useStore.getState().addFinding({ ...makeFinding("dup"), title: "incoming", atMs: 5000 });
+
+    const s = useStore.getState();
+    expect(s.findings).toHaveLength(2);
+    const original = s.findings.find((f) => f.title === "original");
+    const incoming = s.findings.find((f) => f.title === "incoming");
+    expect(original?.id).toBe("dup"); // kept its id
+    expect(incoming?.id).not.toBe("dup"); // got a fresh one
+  });
+
+  it("updateFinding patches one finding in place and never rewrites its id", () => {
+    useStore.setState({ findings: [makeFinding("a"), makeFinding("b")] });
+
+    // Patch includes an id field, which must be ignored — the keyed id stays "a".
+    useStore.getState().updateFinding("a", {
+      title: "edited",
+      severity: "critical",
+      id: "hijack",
+    } as Partial<TimelineEvent>);
+
+    const s = useStore.getState();
+    const a = s.findings.find((f) => f.title === "edited");
+    expect(a?.id).toBe("a");
+    expect(a?.severity).toBe("critical");
+    expect(a?.detail).toBe("something happened"); // untouched field preserved
+    expect(s.findings.find((f) => f.id === "b")?.title).toBe("moment"); // sibling untouched
+    expect(s.findings.some((f) => f.id === "hijack")).toBe(false);
+  });
+
+  it("removeFinding deletes one finding and clears its selection + solution", () => {
+    const entry = { status: "done", solution: null, error: null } as const;
+    useStore.setState({
+      findings: [makeFinding("a"), makeFinding("b")],
+      selectedFindingId: "a",
+      solutionFindingId: "a",
+      findingSolutions: { a: { ...entry }, b: { ...entry } },
+    });
+
+    useStore.getState().removeFinding("a");
+
+    const s = useStore.getState();
+    expect(s.findings.map((f) => f.id)).toEqual(["b"]);
+    expect(s.selectedFindingId).toBeNull();
+    expect(s.solutionFindingId).toBeNull();
+    expect(s.findingSolutions).toEqual({ b: { ...entry } });
   });
 
   it("setFindingSolution merges a patch into the per-finding entry", () => {
