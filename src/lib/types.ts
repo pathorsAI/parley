@@ -308,7 +308,8 @@ export interface DeliveryToggles {
   pitch: boolean;
   /** Pause / silence / talk-time signals + steamroll / dead-air nudges. */
   pauses: boolean;
-  /** LLM-judged aggressive/rude tone nudge (an extra, cheap eval call). */
+  /** LLM-judged delivery: aggressive/rude tone + over-frequent filler words.
+   *  An extra, cheap eval call; also drives the post-call delivery section. */
   tone: boolean;
 }
 
@@ -334,10 +335,20 @@ export interface ProsodyMetrics {
   longestPauseMs: number;
   /** Whether the most recent frame was voiced. */
   speaking: boolean;
+  /** One-shot edge: a filled pause ("um/uh/呃/痾") was just detected acoustically
+   *  (STT drops these, so this mic-derived flag is the only source). */
+  filledPause: boolean;
 }
 
 /** Kind of live delivery nudge surfaced to the speaker (see DeliveryNudge). */
-export type DeliveryNudgeKind = "pace" | "monotone" | "steamroll" | "deadair" | "tone";
+export type DeliveryNudgeKind =
+  | "pace"
+  | "monotone"
+  | "steamroll"
+  | "deadair"
+  | "tone"
+  | "filler"
+  | "filledpause";
 
 /** A transient, peripheral coaching nudge shown mid-call. */
 export interface DeliveryNudge {
@@ -348,4 +359,37 @@ export interface DeliveryNudge {
   severity: "info" | "warn";
   /** Optional short evidence (used by the tone nudge: the quoted phrase). */
   evidence?: string;
+}
+
+/** Tone bands, ordered mild → hostile. "firm" is healthy pushback, not a problem. */
+export type ToneVerdict = "neutral" | "warm" | "firm" | "sharp" | "aggressive" | "rude";
+
+/**
+ * Filler-word / verbal-tic assessment of the user's own speech. By design we only
+ * distinguish "ok" from "frequent": everyone uses some fillers, so mere presence
+ * is never flagged — only an unusually dense stretch is.
+ */
+export interface FillerAssessment {
+  /** "frequent" only when fillers are dense enough to distract; else "ok". */
+  level: "ok" | "frequent";
+  /** The actual tics observed (e.g. ["就是", "然後"] / ["um", "like"]). */
+  examples: string[];
+  /** Short human note about the dense stretch; empty when level is "ok". */
+  note: string;
+}
+
+/**
+ * The user's delivery assessment from the LLM pass — tone + filler frequency +
+ * an overall one-liner. Computed live (rolling, over recent speech) and once
+ * post-call (whole transcript). Always about the USER's own speech (issue #22).
+ */
+export interface DeliveryAssessment {
+  tone: ToneVerdict;
+  /** A short verbatim quote backing the tone read; empty if none. */
+  toneEvidence: string;
+  fillers: FillerAssessment;
+  /** Overall speaking pace read (mainly meaningful post-call). */
+  pace?: "slow" | "comfortable" | "fast";
+  /** One-line plain-language summary of how the user is coming across. */
+  summary: string;
 }

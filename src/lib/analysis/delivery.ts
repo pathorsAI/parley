@@ -51,7 +51,9 @@ export interface DeliveryThresholds {
   /** How many std-devs above the speaker's own baseline counts as "rushing". */
   paceZ: number;
   /** Absolute syllables/sec ceiling — a floor under the relative test so a slow
-   *  baseline can't make any speed acceptable (~5/s ≈ fast conversational). */
+   *  baseline can't make any speed acceptable. On the live speaking-rate signal
+   *  ~4.0/s ≈ 240 字/分 reads as fast; kept in step with the DeliveryPanel gauge's
+   *  FAST_HZ so the nudge and the meter agree. */
   paceAbsHz: number;
   /** F0 spread (semitones) below which sustained speech reads as monotone. */
   monotoneSemitones: number;
@@ -72,7 +74,7 @@ export interface DeliveryThresholds {
 export const DEFAULT_THRESHOLDS: DeliveryThresholds = {
   calibrationSec: 30,
   paceZ: 1.5,
-  paceAbsHz: 5.0,
+  paceAbsHz: 4.0,
   monotoneSemitones: 1.2,
   monotoneMinVoiced: 0.55,
   deadAirMs: 6000,
@@ -138,6 +140,18 @@ export class DeliveryCoach {
       this.speakingSince !== null &&
       nowMs - this.speakingSince >= this.th.steamrollMs;
     if (this.gate("steamroll", steamroll, nowMs)) return { kind: "steamroll", severity: "warn" };
+
+    // Filled pause ("um/uh/呃/痾"): a one-shot edge from the mic DSP, already
+    // de-duped per occurrence in Rust — so gate on cooldown ONLY (no sustain;
+    // `gate` would never fire on a single-sample edge). A burst of ums yields one
+    // gentle nudge; the running count surfaces every one. Grouped under `pauses`.
+    if (this.toggles.pauses && m.filledPause) {
+      const last = this.lastFiredAt.filledpause ?? -Infinity;
+      if (nowMs - last >= this.th.cooldownMs) {
+        this.lastFiredAt.filledpause = nowMs;
+        return { kind: "filledpause", severity: "info" };
+      }
+    }
 
     const paceCeiling = Math.max(
       this.th.paceAbsHz,

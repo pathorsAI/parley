@@ -10,12 +10,14 @@ export function useProsody(): ProsodyMetrics | null {
   return useStore((s) => s.prosody);
 }
 
-/** i18n key for each mic-derived nudge kind ("tone" is supplied by the LLM). */
-const NUDGE_KEY: Record<Exclude<DeliveryNudgeKind, "tone">, TranslationKey> = {
+/** i18n key for each mic-derived nudge kind. "tone" and "filler" are supplied by
+ *  the LLM-driven analysis engine, which pushes its own localized message. */
+const NUDGE_KEY: Record<Exclude<DeliveryNudgeKind, "tone" | "filler">, TranslationKey> = {
   pace: "delivery.nudge.pace",
   monotone: "delivery.nudge.monotone",
   steamroll: "delivery.nudge.steamroll",
   deadair: "delivery.nudge.deadair",
+  filledpause: "delivery.nudge.filledpause",
 };
 
 /**
@@ -44,7 +46,7 @@ export function useDeliveryCoach(): void {
   const coachRef = useRef<DeliveryCoach | null>(null);
   // Keep the latest translator in a ref so the prosody effect needn't depend on
   // `t` (whose identity changes every render) and re-subscribe constantly.
-  const messageRef = useRef<(k: Exclude<DeliveryNudgeKind, "tone">) => string>(() => "");
+  const messageRef = useRef<(k: Exclude<DeliveryNudgeKind, "tone" | "filler">) => string>(() => "");
   messageRef.current = (k) => t(NUDGE_KEY[k]);
 
   // (Re)create the coach per meeting and only when an actual delivery flag flips
@@ -54,6 +56,12 @@ export function useDeliveryCoach(): void {
       meetingStatus === "recording" ? new DeliveryCoach({ pace, pitch, pauses, tone }) : null;
   }, [meetingStatus, startedAt, pace, pitch, pauses, tone]);
 
+  // Drop any stored assessment when the tone/filler toggle flips, so re-enabling
+  // shows the waiting state until a fresh pass populates it (never a stale read).
+  useEffect(() => {
+    useStore.getState().setDeliveryAssessment(null);
+  }, [tone]);
+
   // Feed each new prosody sample to the coach; surface any resulting nudge.
   useEffect(() => {
     if (meetingStatus !== "recording" || !prosody) return;
@@ -61,7 +69,8 @@ export function useDeliveryCoach(): void {
     if (!coach) return;
     const nowMs = startedAt ? Date.now() - startedAt : 0;
     const trigger = coach.observe(prosody, nowMs);
-    if (!trigger || trigger.kind === "tone") return;
+    // The coach only emits mic-derived kinds; tone/filler are LLM-pushed elsewhere.
+    if (!trigger || trigger.kind === "tone" || trigger.kind === "filler") return;
     useStore.getState().pushDeliveryNudge({
       kind: trigger.kind,
       severity: trigger.severity,

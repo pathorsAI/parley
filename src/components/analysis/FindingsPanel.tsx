@@ -10,6 +10,7 @@ import { useI18n } from "../../i18n";
 import { FindingRow } from "./FindingRow";
 import { openSolution, selectAndSeek } from "./useAnalysis";
 import { ReportContent } from "../sidebar/ReportContent";
+import { DeliveryPanel } from "../delivery/DeliveryPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -171,6 +172,8 @@ export function FindingsPanel({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-2 px-3 pb-3">
+          {/* Persistent delivery assessment (tone + fillers), above the findings. */}
+          <DeliveryPanel mode={mode} />
           {reportStatus !== "idle" && (
             <div className="rounded-lg border bg-muted/20 p-3">
               <div className="mb-1.5 flex items-center justify-between">

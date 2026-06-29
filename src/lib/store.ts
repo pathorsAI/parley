@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import type {
   ActionItem,
   AppLanguage,
+  DeliveryAssessment,
   DeliveryNudge,
   Evaluation,
   FindingSolutionEntry,
@@ -239,11 +240,21 @@ interface ParleyState {
   /** Latest prosody metrics from the backend; null until the first event. */
   prosody: ProsodyMetrics | null;
   setProsody: (m: ProsodyMetrics | null) => void;
+  /** Running count of filled pauses ("um/uh/呃/痾") detected acoustically this
+   *  meeting (STT drops them, so this is the only tally). Reset on meeting start. */
+  filledPauseCount: number;
   /** The transient coaching nudge currently shown (null = none). */
   deliveryNudge: DeliveryNudge | null;
   /** Show a nudge (replaces any current one); the UI auto-dismisses it. */
   pushDeliveryNudge: (n: DeliveryNudge) => void;
   clearDeliveryNudge: () => void;
+  /** The current delivery assessment (tone + filler frequency). LIVE updates it
+   *  on a rolling cadence; REPLAY computes it once over the whole recording. */
+  deliveryAssessment: DeliveryAssessment | null;
+  /** Mainly for REPLAY: drives the post-call delivery section's spinner. */
+  deliveryStatus: "idle" | "running" | "done" | "error";
+  setDeliveryAssessment: (a: DeliveryAssessment | null) => void;
+  setDeliveryStatus: (s: ParleyState["deliveryStatus"]) => void;
 
   // ── Action items (REPLAY post-meeting follow-ups) ───────────────────────────
   /** Generated from the analysis findings + transcript; ephemeral, replay-only. */
@@ -340,7 +351,10 @@ export const useStore = create<ParleyState>()(
       autoAnalyze: false,
       autoAnalyzeSec: 45,
       prosody: null,
+      filledPauseCount: 0,
       deliveryNudge: null,
+      deliveryAssessment: null,
+      deliveryStatus: "idle",
       actionItems: [],
       actionItemsStatus: "idle",
       actionItemsError: null,
@@ -403,6 +417,8 @@ export const useStore = create<ParleyState>()(
       actionItems: [],
       actionItemsStatus: "idle",
       actionItemsError: null,
+      deliveryAssessment: null,
+      deliveryStatus: "idle",
     });
   },
 
@@ -451,6 +467,11 @@ export const useStore = create<ParleyState>()(
       selectedFindingId: null,
       solutionFindingId: null,
       findingSolutions: {},
+      // Restore the saved delivery assessment when present (older entries predate
+      // it → recompute once on open via useReplayAnalysis, which only runs when
+      // status is "idle"). The measured pace rides on `session.speechRateHz`.
+      deliveryAssessment: entry.deliveryAssessment ?? null,
+      deliveryStatus: entry.deliveryAssessment ? "done" : "idle",
     }));
   },
 
@@ -479,6 +500,8 @@ export const useStore = create<ParleyState>()(
       actionItems: [],
       actionItemsStatus: "idle",
       actionItemsError: null,
+      deliveryAssessment: null,
+      deliveryStatus: "idle",
     });
   },
 
@@ -580,11 +603,21 @@ export const useStore = create<ParleyState>()(
   // Prosody is a live-only signal. Ignore non-null updates outside a recording so a
   // leaked/duplicate listener (e.g. a dev StrictMode re-subscribe, or a backend
   // frame slipping through stop_meeting's teardown grace) can't move the gauges
-  // after stop. A null reset always applies.
+  // after stop. A null reset always applies. While recording, also bump the
+  // filled-pause counter when the DSP flags a held-vowel hesitation.
   setProsody: (m) =>
-    set((state) => (m && state.meetingStatus !== "recording" ? {} : { prosody: m })),
+    set((state) => {
+      if (!m) return { prosody: null };
+      if (state.meetingStatus !== "recording") return {};
+      return {
+        prosody: m,
+        filledPauseCount: m.filledPause ? state.filledPauseCount + 1 : state.filledPauseCount,
+      };
+    }),
   pushDeliveryNudge: (n) => set({ deliveryNudge: n }),
   clearDeliveryNudge: () => set({ deliveryNudge: null }),
+  setDeliveryAssessment: (a) => set({ deliveryAssessment: a }),
+  setDeliveryStatus: (s) => set({ deliveryStatus: s }),
 
   setActionItems: (items) => set({ actionItems: items }),
   setActionItemsStatus: (status) => set({ actionItemsStatus: status }),
@@ -637,7 +670,10 @@ export const useStore = create<ParleyState>()(
       solutionFindingId: null,
       findingSolutions: {},
       prosody: null,
+      filledPauseCount: 0,
       deliveryNudge: null,
+      deliveryAssessment: null,
+      deliveryStatus: "idle",
     });
   },
 

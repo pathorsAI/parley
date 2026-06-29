@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Activity, Gauge, Mic, TriangleAlert, Volume2 } from "lucide-react";
+import { Activity, Gauge, MessageSquareDashed, Mic, TriangleAlert, Volume2 } from "lucide-react";
 import { useStore } from "../../lib/store";
 import type { DeliveryNudgeKind } from "../../lib/types";
 
@@ -12,6 +12,8 @@ const ICON: Record<DeliveryNudgeKind, typeof Gauge> = {
   steamroll: Mic,
   deadair: Volume2,
   tone: TriangleAlert,
+  filler: MessageSquareDashed,
+  filledpause: MessageSquareDashed,
 };
 
 /**

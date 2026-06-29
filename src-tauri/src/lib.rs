@@ -96,6 +96,7 @@ pub fn run() {
             hotkey::input_monitoring_status,
             hotkey::request_input_monitoring,
             replay::transcribe_file,
+            replay::measure_audio_speech_rate,
             diarize::diarize_audio,
             history::save_history_entry,
             history::save_remote_history_entry,
