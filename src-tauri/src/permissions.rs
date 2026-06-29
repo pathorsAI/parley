@@ -10,7 +10,7 @@ use tauri::AppHandle;
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use block::ConcreteBlock;
+    use block2::RcBlock;
     use core_foundation::base::TCFType;
     use core_foundation::string::CFString;
     use objc::runtime::Object;
@@ -116,8 +116,7 @@ mod imp {
         unsafe {
             let media_type = CFString::new("soun");
             let mt: *const Object = media_type.as_concrete_TypeRef() as *const Object;
-            let handler = ConcreteBlock::new(|_granted: bool| {});
-            let handler = handler.copy();
+            let handler = RcBlock::<dyn Fn(i8)>::new(|_granted| {});
             let cls = class!(AVCaptureDevice);
             let _: () = msg_send![cls, requestAccessForMediaType: mt completionHandler: &*handler];
             std::mem::forget(handler);
