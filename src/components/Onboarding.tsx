@@ -31,6 +31,7 @@ export function Onboarding() {
     return s >= 0 && s < STEP_COUNT ? s : 0;
   });
   const [perms, setPerms] = useState<Perms | null>(null);
+  const [inputMonitoringOk, setInputMonitoringOk] = useState(false);
   const [accessibilityOk, setAccessibilityOk] = useState(false);
 
   // Persist the step so granting a permission (which often needs an app restart)
@@ -46,6 +47,7 @@ export function Onboarding() {
     if (!isTauri()) return;
     try {
       setPerms(await invoke<Perms>("check_permissions"));
+      setInputMonitoringOk(await invoke<boolean>("input_monitoring_status"));
       setAccessibilityOk(await invoke<boolean>("accessibility_status", { prompt: false }));
     } catch {
       /* non-macOS or unavailable */
@@ -248,13 +250,23 @@ export function Onboarding() {
               />
               <PermRow
                 icon={<Keyboard className="size-4" />}
+                label={t("onboarding.perms.inputMonitoring")}
+                ok={inputMonitoringOk}
+                actionLabel={t("onboarding.perms.grant")}
+                onAction={async () => {
+                  await invoke("request_input_monitoring").catch(() => {});
+                  await invoke("set_voice_typing_shortcut", { shortcut: settings.voiceTypingShortcut }).catch(() => {});
+                  void recheck();
+                }}
+              />
+              <PermRow
+                icon={<Keyboard className="size-4" />}
                 label={t("onboarding.perms.accessibility")}
                 ok={accessibilityOk}
                 actionLabel={t("onboarding.perms.grant")}
                 onAction={async () => {
                   // Single native prompt (it offers its own "Open System Settings").
                   await invoke("accessibility_status", { prompt: true }).catch(() => {});
-                  await invoke("ensure_fn_listener").catch(() => {});
                   void recheck();
                 }}
               />
