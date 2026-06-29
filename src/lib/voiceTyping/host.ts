@@ -49,13 +49,25 @@ export function initVoiceTyping(): () => void {
     .then((u) => (unText = u))
     .catch(() => {});
   // Warm the overlay window so it's listening before the first key press.
-  // (The native fn listener is started by Rust at launch; the Settings panel
-  // re-arms it after the user grants Accessibility.)
+  // The native listener is started by Rust at launch; this applies the user's
+  // persisted trigger key and keeps Rust in sync when Settings changes it.
+  syncShortcut(useStore.getState().settings.voiceTypingShortcut).catch(() => {});
+  const unShortcut = useStore.subscribe((state, prev) => {
+    const next = state.settings.voiceTypingShortcut;
+    if (next !== prev.settings.voiceTypingShortcut) syncShortcut(next).catch(() => {});
+  });
   prewarmOverlay().catch(() => {});
   return () => {
     unPtt();
     unText();
+    unShortcut();
   };
+}
+
+async function syncShortcut(shortcut: string) {
+  await invoke("set_voice_typing_shortcut", { shortcut }).catch((e) => {
+    log.warn("voice-typing: hotkey listener not active", { error: String(e), shortcut });
+  });
 }
 
 async function onPtt(isDown: boolean) {

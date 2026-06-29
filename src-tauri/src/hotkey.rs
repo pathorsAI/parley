@@ -1,18 +1,26 @@
 //! Global push-to-talk key listener for voice typing.
 //!
-//! The trigger is the macOS `fn` (Globe) key. When "Press 🌐 to" is bound to a
-//! system action, the key is consumed before it reaches `NSEvent` monitors — so
-//! we tap at the HID level (`kCGHIDEventTap`), which sees the raw key first. We
-//! watch `flagsChanged` for the fn key (keyCode 63) and emit
-//! `voicetyping://ptt { down }` on each transition.
+//! The default trigger is the macOS `fn` (Globe) key. Users can switch to a
+//! right-side modifier when another app already owns Globe/fn. We tap at the HID
+//! level (`kCGHIDEventTap`), which sees modifier transitions before AppKit
+//! monitors and lets us swallow the selected push-to-talk key.
 //!
-//! An HID keyboard tap requires Input Monitoring (TCC). We request it at launch;
-//! the grant takes effect on the next run. (Auto-paste separately needs
-//! Accessibility — see voice_typing.rs.)
+//! An HID keyboard tap requires Input Monitoring (TCC). Settings/onboarding can
+//! request it explicitly; the grant may take effect on the next run. Auto-paste
+//! separately needs Accessibility — see voice_typing.rs.
 
 #![allow(unexpected_cfgs)]
 
+use serde::Serialize;
 use tauri::AppHandle;
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HotkeyStatus {
+    authorized: bool,
+    active: bool,
+    shortcut: String,
+}
 
 /// Whether Input Monitoring is granted (needed to see the fn key globally).
 #[tauri::command]
@@ -34,6 +42,29 @@ pub fn ensure_fn_listener(app: AppHandle) -> bool {
     imp::ensure_started(app)
 }
 
+/// Apply the user's selected voice-typing shortcut and ensure the global
+/// listener is running. Returns the effective listener status.
+#[tauri::command]
+pub fn set_voice_typing_shortcut(app: AppHandle, shortcut: String) -> HotkeyStatus {
+    imp::set_shortcut(&shortcut);
+    let active = imp::ensure_started(app);
+    HotkeyStatus {
+        authorized: imp::listen_event_authorized(),
+        active,
+        shortcut: imp::shortcut_id().to_string(),
+    }
+}
+
+/// Current listener status for Settings.
+#[tauri::command]
+pub fn voice_typing_hotkey_status() -> HotkeyStatus {
+    HotkeyStatus {
+        authorized: imp::listen_event_authorized(),
+        active: imp::is_started(),
+        shortcut: imp::shortcut_id().to_string(),
+    }
+}
+
 /// Start the listener at app launch (requests Input Monitoring if needed).
 pub fn init(app: AppHandle) {
     imp::ensure_started(app);
@@ -42,7 +73,7 @@ pub fn init(app: AppHandle) {
 #[cfg(target_os = "macos")]
 mod imp {
     use std::ffi::c_void;
-    use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, Ordering};
 
     use tauri::{AppHandle, Emitter};
 
@@ -54,17 +85,27 @@ mod imp {
     type CFStringRef = *const c_void;
     type CGEventType = u32;
 
+    // Active tap (NOT listen-only) so we can swallow the selected key before
+    // macOS or the frontmost app also reacts to it.
     const KCG_HID_EVENT_TAP: u32 = 0; // kCGHIDEventTap — earliest point in the pipeline
     const KCG_HEAD_INSERT: u32 = 0; // kCGHeadInsertEventTap
-    // Active tap (NOT listen-only) so we can SWALLOW the fn key and stop macOS's
-    // own "Press 🌐 to" action (emoji / dictation / input-source) from firing.
     const KCG_TAP_OPTION_DEFAULT: u32 = 0; // kCGEventTapOptionDefault
     const KCG_EVENT_FLAGS_CHANGED: CGEventType = 12;
     const KCG_KEYBOARD_EVENT_KEYCODE: u32 = 9; // CGEventField
+    const FLAG_MASK_CONTROL: u64 = 0x0004_0000; // kCGEventFlagMaskControl
+    const FLAG_MASK_ALTERNATE: u64 = 0x0008_0000; // kCGEventFlagMaskAlternate
+    const FLAG_MASK_COMMAND: u64 = 0x0010_0000; // kCGEventFlagMaskCommand
     const FLAG_MASK_SECONDARY_FN: u64 = 0x0080_0000; // kCGEventFlagMaskSecondaryFn
     const KVK_FUNCTION: i64 = 63; // the fn/Globe key
+    const KVK_RIGHT_COMMAND: i64 = 54;
+    const KVK_RIGHT_OPTION: i64 = 61;
+    const KVK_RIGHT_CONTROL: i64 = 62;
     const TAP_DISABLED_BY_TIMEOUT: CGEventType = 0xFFFF_FFFE;
     const TAP_DISABLED_BY_USER_INPUT: CGEventType = 0xFFFF_FFFF;
+    const SHORTCUT_FN: u8 = 0;
+    const SHORTCUT_RIGHT_OPTION: u8 = 1;
+    const SHORTCUT_RIGHT_COMMAND: u8 = 2;
+    const SHORTCUT_RIGHT_CONTROL: u8 = 3;
 
     type CGEventTapCallBack =
         extern "C" fn(CGEventTapProxy, CGEventType, CGEventRef, *mut c_void) -> CGEventRef;
@@ -99,8 +140,9 @@ mod imp {
         static kCFRunLoopCommonModes: CFStringRef;
     }
 
-    static FN_DOWN: AtomicBool = AtomicBool::new(false);
+    static KEY_DOWN: AtomicBool = AtomicBool::new(false);
     static STARTED: AtomicBool = AtomicBool::new(false);
+    static SHORTCUT: AtomicU8 = AtomicU8::new(SHORTCUT_FN);
     /// The live tap port, so the callback can re-enable it when macOS disables it.
     static TAP_PORT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
@@ -110,6 +152,46 @@ mod imp {
 
     pub fn request_listen_event() -> bool {
         unsafe { CGRequestListenEventAccess() }
+    }
+
+    pub fn is_started() -> bool {
+        STARTED.load(Ordering::SeqCst)
+    }
+
+    pub fn set_shortcut(id: &str) {
+        let next = match id {
+            "right-option" => SHORTCUT_RIGHT_OPTION,
+            "right-command" => SHORTCUT_RIGHT_COMMAND,
+            "right-control" => SHORTCUT_RIGHT_CONTROL,
+            _ => SHORTCUT_FN,
+        };
+        SHORTCUT.store(next, Ordering::SeqCst);
+        KEY_DOWN.store(false, Ordering::SeqCst);
+    }
+
+    pub fn shortcut_id() -> &'static str {
+        match SHORTCUT.load(Ordering::SeqCst) {
+            SHORTCUT_RIGHT_OPTION => "right-option",
+            SHORTCUT_RIGHT_COMMAND => "right-command",
+            SHORTCUT_RIGHT_CONTROL => "right-control",
+            _ => "fn",
+        }
+    }
+
+    fn trigger_state(key_code: i64, flags: u64) -> Option<bool> {
+        match SHORTCUT.load(Ordering::SeqCst) {
+            SHORTCUT_RIGHT_OPTION if key_code == KVK_RIGHT_OPTION => {
+                Some((flags & FLAG_MASK_ALTERNATE) != 0)
+            }
+            SHORTCUT_RIGHT_COMMAND if key_code == KVK_RIGHT_COMMAND => {
+                Some((flags & FLAG_MASK_COMMAND) != 0)
+            }
+            SHORTCUT_RIGHT_CONTROL if key_code == KVK_RIGHT_CONTROL => {
+                Some((flags & FLAG_MASK_CONTROL) != 0)
+            }
+            SHORTCUT_FN if key_code == KVK_FUNCTION => Some((flags & FLAG_MASK_SECONDARY_FN) != 0),
+            _ => None,
+        }
     }
 
     extern "C" fn callback(
@@ -126,18 +208,21 @@ mod imp {
             return event;
         }
         if etype == KCG_EVENT_FLAGS_CHANGED && !user.is_null() {
-            let key_code = unsafe { CGEventGetIntegerValueField(event, KCG_KEYBOARD_EVENT_KEYCODE) };
-            // Only the fn/Globe key drives push-to-talk.
-            if key_code == KVK_FUNCTION {
-                let flags = unsafe { CGEventGetFlags(event) };
-                let fn_now = (flags & FLAG_MASK_SECONDARY_FN) != 0;
-                if FN_DOWN.swap(fn_now, Ordering::SeqCst) != fn_now {
+            let key_code =
+                unsafe { CGEventGetIntegerValueField(event, KCG_KEYBOARD_EVENT_KEYCODE) };
+            let flags = unsafe { CGEventGetFlags(event) };
+            if let Some(now) = trigger_state(key_code, flags) {
+                if KEY_DOWN.swap(now, Ordering::SeqCst) != now {
                     let app = unsafe { &*(user as *const AppHandle) };
-                    log::info!("voice-typing: fn {}", if fn_now { "down" } else { "up" });
-                    let _ = app.emit("voicetyping://ptt", serde_json::json!({ "down": fn_now }));
+                    log::info!(
+                        "voice-typing: {} {}",
+                        shortcut_id(),
+                        if now { "down" } else { "up" }
+                    );
+                    let _ = app.emit("voicetyping://ptt", serde_json::json!({ "down": now }));
                 }
-                // Swallow the fn key so the system's "Press 🌐 to" action doesn't
-                // also fire (emoji viewer / dictation / input-source switch).
+                // Swallow the selected push-to-talk key so the system or another
+                // frontmost app doesn't also react to the modifier transition.
                 return std::ptr::null();
             }
         }
@@ -197,5 +282,12 @@ mod imp {
     }
     pub fn ensure_started(_app: AppHandle) -> bool {
         false
+    }
+    pub fn is_started() -> bool {
+        false
+    }
+    pub fn set_shortcut(_id: &str) {}
+    pub fn shortcut_id() -> &'static str {
+        "fn"
     }
 }
