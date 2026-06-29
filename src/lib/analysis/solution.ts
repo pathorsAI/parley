@@ -6,12 +6,12 @@ import { generateFindingSolution } from "../ai/findingSolution";
  * Lazily generate the "how it should have been done" solution for one finding
  * and cache it in the store keyed by finding id. No-ops if the finding is gone,
  * already running/done, or there's no LLM key (the UI guards the no-key case).
- * Reads the FULL transcript (no playhead masking), so it behaves identically in
- * LIVE and REPLAY.
+ * LIVE advice is generated from the transcript known at the finding's turn;
+ * REPLAY additionally gets full-transcript hindsight, explicitly labeled.
  */
 export async function runFindingSolution(findingId: string): Promise<void> {
   const state = useStore.getState();
-  const { settings, segments, speakerNames, findings, findingSolutions, setFindingSolution } = state;
+  const { settings, segments, speakerNames, findings, findingSolutions, setFindingSolution, appMode } = state;
   const meetingContext = meetingBriefText(state);
 
   const entry = findingSolutions[findingId];
@@ -28,6 +28,7 @@ export async function runFindingSolution(findingId: string): Promise<void> {
       segments,
       meetingContext,
       names: speakerNames,
+      mode: appMode,
     });
     useStore.getState().setFindingSolution(findingId, { status: "done", solution, error: null });
   } catch (err) {

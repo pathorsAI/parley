@@ -42,9 +42,9 @@ const eventSchema = z.object({
   resolved: z
     .boolean()
     .describe(
-      "true when, LATER in the conversation, ME actually responded to / addressed this moment — answered the " +
-        "question, countered the pressure, corrected the misstep, or defused the risk. (Whether ME did it WELL is " +
-        "judged elsewhere; here only whether ME took it on.) false if it was left unaddressed or you are unsure."
+      "true ONLY when ME meaningfully mitigated / repaired this moment — explored the concern, protected leverage, " +
+        "traded for value, corrected the misstep, or otherwise reduced the risk. A reply by itself is NOT resolution; " +
+        "a weak answer, unexplored concession, or ignored concern stays unresolved."
     ),
   resolution: z
     .string()
@@ -65,7 +65,7 @@ const SYSTEM_BODY = `
 
 You are given the user's ACTIVE EVALUATIONS (each with an id, a name, and what to look for) and the full timestamped transcript (every line is prefixed with its [m:ss] start time).
 
-Work at the level of MEANINGFUL EXCHANGES, not individual sentences. Read the WHOLE conversation, then surface only the handful of moments that genuinely shaped the negotiation — a position taken, leverage, a constraint or concern raised, a concession, a real risk, a mistake/missed move by ME, OR a real challenge/objection/pressure/risk from THEM that ME then TOOK ON and handled (a WIN worth recording — surface it as a resolved moment; see RESOLVED MOMENTS). A win counts ONLY when there was genuine tension for ME to defuse — never ME merely answering a neutral question, being agreeable, or saying something pleasant. GROUP a back-and-forth on one topic into ONE moment, anchored at its most representative timestamp; do NOT emit a separate finding for each sentence or minor turn — a mistake by ME and ME's own later correction of it are ONE resolved moment, never two. Prefer a few high-signal findings over many granular ones, and surface open/unresolved problems and risks FIRST: wins are ADDITIONAL, never a substitute for an open problem and never take its slot.
+Work at the level of MEANINGFUL EXCHANGES, not individual sentences. Read the conversation, then surface only the handful of moments that genuinely shaped the negotiation — a position taken, leverage, a constraint or concern raised, a concession, a real risk, a mistake/missed move by ME, OR a real challenge/objection/pressure/risk from THEM that ME meaningfully handled (a WIN worth recording — surface it as a resolved moment; see RESOLVED MOMENTS). A win counts ONLY when there was genuine tension for ME to defuse AND ME actually reduced the risk — never ME merely replying, answering a neutral question, being agreeable, or saying something pleasant. GROUP a back-and-forth on one topic into ONE moment, anchored at its most representative timestamp; do NOT emit a separate finding for each sentence or minor turn — a mistake by ME and ME's own later meaningful repair are ONE resolved moment, never two. Prefer a few high-signal findings over many granular ones, and surface open/unresolved problems and risks FIRST: wins are ADDITIONAL, never a substitute for an open problem and never take its slot.
 
 For EACH moment provide:
 - time: the [m:ss] it is best anchored to — copy a REAL timestamp EXACTLY from the transcript line it refers to. This is the ONLY anchor (there are no quotes), so it must be accurate enough for ME to jump straight to that line.
@@ -74,8 +74,8 @@ For EACH moment provide:
 - source: "eval" when the moment matches one OR MORE configured evaluations — also set evalIds to EVERY eval id it genuinely matches. A single moment can match SEVERAL (e.g. a grand over-promise can be both "pushback" and "deception"). Do NOT force-fit: if it doesn't clearly fit any eval, use "extra" with evalIds [].
 - evalIds: the matching evaluation ids (array — one, several, or [] for "extra").
 - title: a short label for the dynamic (not a quote).
-- detail: 1-2 sentences on the STRATEGIC substance — what is really going on (the underlying interest, leverage, risk, or move) and why it matters — so ME knows how to think about and negotiate it, not merely what was said.
-- resolved: true ONLY when, LATER in the transcript, ME actually responded to / addressed this moment — answered the question, countered the pressure, corrected MY own misstep, or defused the risk. false if it was left hanging, ignored, or you are unsure. (Mainly a "them" pressure/objection/risk that ME took on, but also a "me" misstep ME later fixed.)
+- detail: 1-2 sentences on the STRATEGIC substance — what is really going on (the underlying interest, leverage, risk, missed exploration, or move) and why it matters — so ME knows how to think about and negotiate it, not merely what was said.
+- resolved: true ONLY when ME meaningfully mitigated / repaired this moment — explored the concern, protected leverage, traded for value, corrected MY own misstep, or otherwise reduced the risk. false if ME merely replied, gave an unexplored concession, accepted the premise, left it hanging, ignored it, or you are unsure. (Mainly a "them" pressure/objection/risk that ME handled well enough to reduce, but also a "me" misstep ME later fixed.)
 - resolution: when resolved, ONE short line naming MY actual move and quoting/paraphrasing MY key words; "" when not resolved.
 
 INTERPRET IN FULL CONTEXT — accuracy matters more than coverage:
@@ -84,9 +84,23 @@ INTERPRET IN FULL CONTEXT — accuracy matters more than coverage:
 - When THEM makes a strong point or a good proposal, surface it as a "them" moment so ME can think about how to respond — even if no eval targets it.
 - If MY negotiation setup (BATNA / target / bottom line) is provided in the context, USE it: judge leverage and the ZOPA (zone of possible agreement) against it, separate interests from positions, prefer objective criteria over pressure, and flag when ME is being pushed toward MY bottom line.
 
-RESOLVED MOMENTS — record what ME handled, do NOT drop it. A real challenge ME took on is a WIN worth showing precisely BECAUSE handling it is what ME should see; when ME later answers, counters, corrects, or defuses a moment, set resolved + resolution and it renders GREEN. Keep its side by WHOSE move it was, never by who came out ahead: a THEM objection/pressure/risk ME rebutted stays "them" + resolved; a ME misstep ME later fixed stays "me" + resolved. Be honest — mark resolved ONLY when the transcript really shows ME addressing it; you need NOT judge whether the response was strong (that is judged separately), but you DO need a concrete "how": if you cannot name MY actual move in the resolution line, it is not a win — omit the moment, do NOT emit it as an unresolved warn/critical instead. In a still-in-progress meeting, mark resolved ONLY once ME has clearly finished addressing it; a reply still unfolding stays unresolved. A moment ME ignored or never came back to stays unresolved.
+RESOLVED MOMENTS — record what ME meaningfully handled, do NOT drop it. A real challenge ME reduced is a WIN worth showing precisely BECAUSE handling it is what ME should see; when ME later explores, counters with substance, trades for value, corrects, repairs, or defuses a moment, set resolved + resolution and it renders GREEN. Keep its side by WHOSE move it was, never by who came out ahead: a THEM objection/pressure/risk ME mitigated stays "them" + resolved; a ME misstep ME repaired stays "me" + resolved. Be strict — a reply alone is NOT resolution. Do NOT mark resolved when ME simply answered, changed the number/position, conceded, accepted pressure, or moved on without exploring the other side's interest/rationale. You MUST judge whether MY response meaningfully reduced the risk; if it did not, keep the underlying problem unresolved and set severity by its stakes. For example, if THEM says "6000 is too high" and ME immediately drops to 4500 without probing budget, criteria, priorities, or a trade, that is likely a serious unresolved ME concession/missed-exploration issue, NOT resolved. If you cannot name MY meaningful mitigating move in the resolution line, it is not resolved. In a still-in-progress meeting, mark resolved ONLY once ME has clearly finished a meaningful mitigation; a reply still unfolding stays unresolved. A moment ME ignored or never came back to stays unresolved.
 
 Be selective and ACCURATE. A short list of well-judged, strategic findings is far better than many literal ones. Ground everything in what was actually said; never fabricate timestamps — every time must be copied from a real transcript line.`;
+
+const LIVE_MODE_INSTRUCTIONS = `
+
+MODE: REALTIME / IN-PROGRESS ANALYSIS.
+- Treat this as coaching while ME can still change the conversation. Highlight red/critical risks when warranted, but write detail so it points to the NEXT useful move: what ME should ask, clarify, slow down, protect, or trade next.
+- Prefer open, actionable findings over retrospective praise. A severe live issue should remain visible until ME has meaningfully mitigated it.
+- Do not use hindsight language; this transcript contains only what has been said so far.`;
+
+const REPLAY_MODE_INSTRUCTIONS = `
+
+MODE: POST-EVALUATION / RETROSPECTIVE ANALYSIS.
+- The conversation is over. Be direct about what went wrong, where MY response was weak, what leverage or information ME failed to explore, and what ME should learn for next time.
+- You may use later counterparty behavior as hindsight evidence, but label it as hindsight in the detail when it matters (for example: "In hindsight, their later budget comment suggests this should have been probed here.").
+- Do not convert a bad response into a green/resolved card merely because ME replied; unresolved mistakes and weak concessions should stay warn/critical.`;
 
 /** Parse a model-supplied "[m:ss]" / "m:ss" / "h:mm:ss" time into milliseconds. */
 export function parseClockMs(raw: string | undefined): number | null {
@@ -215,7 +229,10 @@ export async function analyzeTimeline(opts: {
   const list = evals.length
     ? evals.map((e) => `### id: ${e.id}\nname: ${e.name}\nwatch for: ${e.prompt}`).join("\n\n")
     : "(none configured)";
-  const system = (mode === "live" ? SYSTEM_INTRO_LIVE : SYSTEM_INTRO_REPLAY) + SYSTEM_BODY;
+  const system =
+    (mode === "live" ? SYSTEM_INTRO_LIVE : SYSTEM_INTRO_REPLAY) +
+    SYSTEM_BODY +
+    (mode === "live" ? LIVE_MODE_INSTRUCTIONS : REPLAY_MODE_INSTRUCTIONS);
   const transcriptLabel = mode === "live" ? "Transcript so far" : "Full transcript";
 
   const provider = settings.provider;
