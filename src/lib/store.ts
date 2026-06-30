@@ -898,3 +898,13 @@ export function transcriptWithTimestamps(
     .map((s) => `[${formatClock(s.startMs)}] [${speakerLabel(s, names)}] ${s.text.trim()}`)
     .join("\n");
 }
+
+/** Final-only transcript as plain spoken text — one segment per line, no speaker
+ *  or timestamp labels. The bare-bones copy variant for pasting elsewhere. */
+export function transcriptPlainText(segments: TranscriptSegment[]): string {
+  return [...segments]
+    .filter((s) => s.isFinal && s.text.trim())
+    .sort((a, b) => a.startMs - b.startMs)
+    .map((s) => s.text.trim())
+    .join("\n");
+}

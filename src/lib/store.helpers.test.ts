@@ -6,6 +6,7 @@ import {
   speakerLabel,
   transcriptAsText,
   transcriptWithTimestamps,
+  transcriptPlainText,
   formatClock,
 } from "./store";
 import { seg } from "./test/fixtures";
@@ -137,5 +138,17 @@ describe("transcriptWithTimestamps", () => {
       seg({ id: "b", source: "them", speaker: 1, text: "world", startMs: 65_000 }),
     ];
     expect(transcriptWithTimestamps(segs)).toBe("[0:05] [You] hello\n[1:05] [Remote 1] world");
+  });
+});
+
+describe("transcriptPlainText", () => {
+  it("emits spoken text only — final non-empty segments, sorted, no labels", () => {
+    const segs = [
+      seg({ id: "b", source: "them", speaker: 1, text: "second", startMs: 2000 }),
+      seg({ id: "a", source: "me", speaker: 1, text: "first", startMs: 1000 }),
+      seg({ id: "p", source: "them", speaker: 1, text: "partial", startMs: 3000, isFinal: false }),
+      seg({ id: "e", source: "them", speaker: 1, text: "   ", startMs: 4000 }),
+    ];
+    expect(transcriptPlainText(segs)).toBe("first\nsecond");
   });
 });
