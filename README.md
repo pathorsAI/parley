@@ -15,6 +15,10 @@
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey.svg" alt="Platform: macOS">
 </p>
 
+<p align="center">
+  <img src="website/assets/showcase-hero.png" alt="Parley — live transcript, grounded Q&amp;A, and evidence-backed flags during a call" width="900" />
+</p>
+
 Parley is a native, local-first **AI coach for high-stakes conversations** — built first for **sales calls and negotiations**, though it works just as well for interviews, diligence calls, or any conversation you want to walk into prepared and walk out of having learned from. It's for the person in the seat: a rep, a founder, anyone closing a deal.
 
 It runs in two complementary modes:
@@ -113,6 +117,10 @@ Parley is currently unsigned, so on first launch macOS Gatekeeper may block it. 
 
 
 ## 🎙️ Voice Typing
+
+<p align="center">
+  <img src="website/assets/showcase-voicetyping.png" alt="Parley voice typing overlay — hold to talk, release to paste" width="640" />
+</p>
 
 Beyond meetings, Parley doubles as a **system-wide push-to-talk dictation tool** that works in any app. It doesn't use macOS Dictation — it runs its own microphone capture and realtime STT pipeline, so the output uses whichever transcription provider you configured in Settings.
 
