@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 interface Perms {
   microphone: string;
   // The Rust struct serializes camelCase (#[serde(rename_all = "camelCase")]).
-  screenRecording: boolean;
+  // unknown | granted | denied | unsupported (macOS < 14.2).
+  systemAudio: string;
 }
 
 interface AppIdentity {
@@ -35,17 +36,30 @@ function toneFor(status: Status): string {
 }
 
 /**
- * Overview of every macOS permission Parley uses, with live grant status. Each
- * row's button triggers the native permission prompt (which itself offers an
- * "Open System Settings" button), so we never stack a prompt + a settings window.
+ * Overview of every macOS permission Parley uses, with live grant status. This
+ * panel (plus onboarding) is the ONLY place that fires permission requests —
+ * the rest of the app just checks status. Each row's button triggers the native
+ * prompt on first click and opens the right System Settings pane afterwards.
+ *
+ * Required: microphone (meetings + voice typing) and System Audio Recording
+ * (the meeting's "other party" capture — a Core Audio process tap with its own
+ * TCC service; there is no passive status API, so its state is last-observed
+ * and "Test & grant" runs a real probe). Optional: Input Monitoring (only the
+ * fn / right-modifier push-to-talk keys) and Accessibility (only auto-paste).
  */
 export function PermissionsPanel() {
   const { t } = useI18n();
   const [microphone, setMicrophone] = useState<Status>("pending");
+  const [systemAudio, setSystemAudio] = useState<Status>("pending");
+  const [systemAudioSupported, setSystemAudioSupported] = useState(true);
   const [inputMonitoring, setInputMonitoring] = useState<Status>("pending");
   const [accessibility, setAccessibility] = useState<Status>("pending");
-  const [screen, setScreen] = useState<Status>("pending");
   const [identity, setIdentity] = useState<AppIdentity | null>(null);
+
+  function applySystemAudio(raw: string) {
+    setSystemAudioSupported(raw !== "unsupported");
+    setSystemAudio(raw === "granted" ? "granted" : raw === "denied" ? "denied" : "pending");
+  }
 
   async function refresh() {
     if (!isTauri()) return;
@@ -53,7 +67,7 @@ export function PermissionsPanel() {
       const p = await invoke<Perms>("check_permissions");
       const id = await invoke<AppIdentity>("app_identity");
       setMicrophone(micStatus(p.microphone));
-      setScreen(p.screenRecording ? "granted" : "pending");
+      applySystemAudio(p.systemAudio);
       setInputMonitoring((await invoke<boolean>("input_monitoring_status")) ? "granted" : "pending");
       setAccessibility((await invoke<boolean>("accessibility_status", { prompt: false })) ? "granted" : "pending");
       setIdentity(id);
@@ -65,10 +79,10 @@ export function PermissionsPanel() {
     refresh().catch(() => {});
   }, []);
 
-  // The native request prompts (mic / accessibility / screen) only show once per
-  // app launch. So the first click triggers the prompt (which itself offers an
-  // "Open System Settings" button); every click after that opens the relevant
-  // Privacy pane directly — otherwise repeat clicks would do nothing.
+  // The native request prompts only show once per app launch. So the first click
+  // triggers the prompt (which itself offers an "Open System Settings" button);
+  // every click after that opens the relevant Privacy pane directly — otherwise
+  // repeat clicks would do nothing.
   const requested = useRef<Set<string>>(new Set());
   async function grant(key: string, pane: string, request: () => Promise<void>) {
     if (requested.current.has(key)) {
@@ -105,6 +119,21 @@ export function PermissionsPanel() {
         status={microphone}
         onGrant={() => grant("mic", "microphone", () => invoke("request_microphone"))}
       />
+      {systemAudioSupported && (
+        <Row
+          label={t("settings.permissions.systemAudio")}
+          desc={t("settings.permissions.systemAudioDesc")}
+          status={systemAudio}
+          onGrant={() =>
+            grant("system-audio", "system-audio", async () => {
+              // Real probe: creates (and tears down) a process tap. First run
+              // shows the native "record system audio" consent prompt.
+              applySystemAudio(await invoke<string>("probe_system_audio"));
+            })
+          }
+          help={systemAudio === "pending" ? t("settings.permissions.systemAudioHelp") : undefined}
+        />
+      )}
       <Row
         label={t("settings.permissions.inputMonitoring")}
         desc={t("settings.permissions.inputMonitoringDesc")}
@@ -131,12 +160,6 @@ export function PermissionsPanel() {
             await invoke("accessibility_status", { prompt: true });
           })
         }
-      />
-      <Row
-        label={t("settings.permissions.screen")}
-        desc={t("settings.permissions.screenDesc")}
-        status={screen}
-        onGrant={() => grant("screen", "screen", () => invoke("request_screen_recording").then(() => {}))}
       />
     </div>
   );

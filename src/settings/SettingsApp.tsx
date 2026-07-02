@@ -707,7 +707,7 @@ export function SettingsApp() {
 
         {cat === "voiceTyping" && (
           <Section title={t("settings.voiceTyping.title")}>
-            <VoiceTypingSettings />
+            <VoiceTypingSettings onOpenPermissions={() => setCat("permissions")} />
           </Section>
         )}
 

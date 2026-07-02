@@ -4,6 +4,8 @@
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Parley transcribes your microphone to provide live meeting assistance.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Parley captures system audio so the other meeting participants can be transcribed alongside your microphone.</string>
 	<key>NSAccessibilityUsageDescription</key>
 	<string>Parley needs Accessibility to detect the push-to-talk key from any app and to paste the dictated text.</string>
 </dict>

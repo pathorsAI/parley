@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Keyboard, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, Circle, Keyboard, Loader2, RotateCcw } from "lucide-react";
 import { useStore } from "../lib/store";
 import { useI18n, type TranslationKey } from "../i18n";
 import { isTauri } from "../lib/tauriEvents";
@@ -11,77 +11,257 @@ import { Button } from "@/components/ui/button";
 interface HotkeyStatus {
   authorized: boolean;
   active: boolean;
-  shortcut: VoiceTypingShortcut;
+  shortcut: string;
+  /** How the trigger is wired: "combo" (OS global shortcut) | "tap-active"
+   *  (HID tap, can swallow the key) | "tap-listen" (HID tap can only observe
+   *  the key — matters for fn, whose native 🌐 action still fires) | "none". */
+  mode: string;
 }
 
-const SHORTCUTS: VoiceTypingShortcut[] = [
-  "alt-space",
-  "fn",
-  "right-option",
-  "right-command",
-  "right-control",
-];
+/** The hold-friendly single modifier keys watched by the HID tap (need Input
+ *  Monitoring). Everything else is an OS global shortcut (no permission). */
+const MODIFIER_IDS = ["fn", "right-option", "right-command", "right-control"] as const;
+type ModifierId = (typeof MODIFIER_IDS)[number];
 
-const SHORTCUT_LABEL_KEYS: Record<VoiceTypingShortcut, TranslationKey> = {
-  "alt-space": "settings.voiceTyping.shortcut.alt-space",
+const MODIFIER_LABEL_KEYS: Record<ModifierId, TranslationKey> = {
   fn: "settings.voiceTyping.shortcut.fn",
   "right-option": "settings.voiceTyping.shortcut.right-option",
   "right-command": "settings.voiceTyping.shortcut.right-command",
   "right-control": "settings.voiceTyping.shortcut.right-control",
 };
 
+const isModifierId = (s: string): s is ModifierId =>
+  (MODIFIER_IDS as readonly string[]).includes(s);
+
+/** Keys that never end a recording on their own — we wait for the main key. */
+const MODIFIER_CODES = new Set([
+  "MetaLeft",
+  "MetaRight",
+  "AltLeft",
+  "AltRight",
+  "ControlLeft",
+  "ControlRight",
+  "ShiftLeft",
+  "ShiftRight",
+  "CapsLock",
+  "Fn",
+  "FnLock",
+]);
+
+/** Right-side modifiers double as hold-to-talk keys: releasing one alone while
+ *  recording selects the matching HID-tap option instead of a combo. */
+const RIGHT_MODIFIER_BY_CODE: Record<string, ModifierId> = {
+  MetaRight: "right-command",
+  AltRight: "right-option",
+  ControlRight: "right-control",
+};
+
+/** Lone left-side/Shift releases are deliberately NOT selectable — they fire
+ *  during every ordinary shortcut (⌘C, ⇧-typing…), so holding one would
+ *  constantly collide. The recorder shows a hint pointing at the right-side
+ *  chips instead. (fn never reaches the DOM at all; its chip is the only way.) */
+const LEFT_MODIFIER_CODES = new Set([
+  "MetaLeft",
+  "AltLeft",
+  "ControlLeft",
+  "ShiftLeft",
+  "ShiftRight",
+]);
+
+const MOD_SYMBOL: Record<string, string> = {
+  super: "⌘",
+  control: "⌃",
+  alt: "⌥",
+  shift: "⇧",
+};
+
+/** Human label for a W3C KeyboardEvent.code token. */
+function keyLabel(code: string): string {
+  if (code.startsWith("Key")) return code.slice(3);
+  if (code.startsWith("Digit")) return code.slice(5);
+  if (code.startsWith("Numpad")) return `Num ${code.slice(6)}`;
+  const MAP: Record<string, string> = {
+    Space: "Space",
+    Minus: "-",
+    Equal: "=",
+    BracketLeft: "[",
+    BracketRight: "]",
+    Backslash: "\\",
+    Semicolon: ";",
+    Quote: "'",
+    Comma: ",",
+    Period: ".",
+    Slash: "/",
+    Backquote: "`",
+    ArrowUp: "↑",
+    ArrowDown: "↓",
+    ArrowLeft: "←",
+    ArrowRight: "→",
+    Enter: "↩",
+    Tab: "⇥",
+    Backspace: "⌫",
+    Delete: "⌦",
+    Home: "↖",
+    End: "↘",
+    PageUp: "⇞",
+    PageDown: "⇟",
+  };
+  return MAP[code] ?? code;
+}
+
+/** Render the stored shortcut id as mac-style key caps, e.g. "⌃ ⇧ D". */
+export function shortcutCaps(shortcut: string, t: (k: TranslationKey) => string): string {
+  if (shortcut === "alt-space") return "⌥ Space";
+  if (isModifierId(shortcut)) return t(MODIFIER_LABEL_KEYS[shortcut]);
+  if (shortcut.startsWith("combo:")) {
+    return shortcut
+      .slice("combo:".length)
+      .split("+")
+      .map((part) => MOD_SYMBOL[part] ?? keyLabel(part))
+      .join(" ");
+  }
+  return shortcut;
+}
+
 /**
- * Voice-typing options: a push-to-talk key picker (the single source of truth —
- * exactly one trigger is live at a time) plus the auto-paste opt-in. Modifier
- * keys need Input Monitoring; Option+Space needs no extra permission. Accessibility
- * (for auto-paste) is granted from the dedicated Permissions tab.
+ * Voice-typing options. The push-to-talk trigger is picked one of two ways —
+ * exactly one trigger is live at a time (the backend unregisters everything
+ * before applying a change):
+ *   - Record any key combo (modifiers + key, or an F-key): registered as an OS
+ *     global shortcut, works with NO extra permission. This is the default path
+ *     (⌥ Space out of the box).
+ *   - Hold a single modifier key (fn / right ⌥⌘⌃): needs Input Monitoring; the
+ *     grant lives on the Permissions tab (`onOpenPermissions` jumps there) —
+ *     this panel never fires an OS prompt itself.
+ * Auto-paste needs Accessibility and prompts when enabled (explicit opt-in).
  */
-export const VoiceTypingSettings = () => {
+export const VoiceTypingSettings = ({ onOpenPermissions }: { onOpenPermissions?: () => void }) => {
   const { t } = useI18n();
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
   const [status, setStatus] = useState<HotkeyStatus | null>(null);
-  const [saving, setSaving] = useState<VoiceTypingShortcut | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recordHint, setRecordHint] = useState<TranslationKey | null>(null);
+  /** Set once any non-modifier keydown happens in the current recording
+   *  session — a later lone-modifier keyup then no longer picks a hold-key. */
+  const sawNonModifierRef = useRef(false);
 
+  const refreshStatus = useCallback(() => {
+    invoke<HotkeyStatus>("voice_typing_hotkey_status")
+      .then((s) => setStatus(s))
+      .catch(() => {});
+  }, []);
+
+  // Fetch on mount, and re-check whenever the window regains focus or becomes
+  // visible again — the user may have just granted a permission on the
+  // Permissions tab or in System Settings, which changes the badge and mode.
   useEffect(() => {
     if (!isTauri()) return;
-    let alive = true;
-    invoke<HotkeyStatus>("voice_typing_hotkey_status")
-      .then((s) => {
-        if (alive) setStatus(s);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
+    refreshStatus();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refreshStatus();
     };
-  }, []);
+    window.addEventListener("focus", refreshStatus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", refreshStatus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [refreshStatus]);
+
+  const chooseShortcut = async (shortcut: VoiceTypingShortcut) => {
+    setSaving(true);
+    updateSettings({ voiceTypingShortcut: shortcut });
+    broadcastSettings({ ...useStore.getState().settings }).catch(() => {});
+    const s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(
+      () => null,
+    );
+    if (s) setStatus(s);
+    setSaving(false);
+  };
+
+  // Key-capture mode: the settings window is focused, so plain DOM key events
+  // are enough — no global listener, no extra permission. Esc cancels; a combo
+  // must include a modifier (or be an F-key) so a bare letter can't be armed as
+  // a system-wide hotkey that swallows normal typing.
+  useEffect(() => {
+    if (!recording) return;
+    sawNonModifierRef.current = false;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.code === "Escape") {
+        setRecording(false);
+        setRecordHint(null);
+        return;
+      }
+      if (MODIFIER_CODES.has(e.code)) return; // still holding — wait for the key
+      sawNonModifierRef.current = true; // a combo was attempted
+      const mods = [
+        e.metaKey ? "super" : null,
+        e.ctrlKey ? "control" : null,
+        e.altKey ? "alt" : null,
+        e.shiftKey ? "shift" : null,
+      ].filter((m): m is string => m !== null);
+      const isFKey = /^F([1-9]|1\d|2[0-4])$/.test(e.code);
+      if (mods.length === 0 && !isFKey) {
+        setRecordHint("settings.voiceTyping.recorder.needModifier");
+        return;
+      }
+      setRecording(false);
+      setRecordHint(null);
+      void chooseShortcut(`combo:${[...mods, e.code].join("+")}` as VoiceTypingShortcut);
+    };
+    // Users routinely press a lone modifier here hoping to pick it as a
+    // hold-key. A tap only becomes distinguishable from "start of a combo" at
+    // keyup, so react there: a lone right-side modifier is selected directly
+    // (same as clicking its chip below); left-side/Shift get an explanatory
+    // hint. Skipped as soon as any non-modifier key was involved.
+    const onKeyUp = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (sawNonModifierRef.current) return;
+      const rightId = RIGHT_MODIFIER_BY_CODE[e.code];
+      if (rightId) {
+        setRecording(false);
+        setRecordHint(null);
+        void chooseShortcut(rightId);
+        return;
+      }
+      if (LEFT_MODIFIER_CODES.has(e.code)) {
+        setRecordHint("settings.voiceTyping.recorder.leftModifier");
+      }
+    };
+    const cancel = () => {
+      setRecording(false);
+      setRecordHint(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", cancel);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", cancel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recording]);
 
   if (!isTauri()) return null;
 
   const selected = settings.voiceTypingShortcut;
-  const needsPermission = selected !== "alt-space" && status != null && !status.authorized;
+  const selectedIsModifier = isModifierId(selected);
+  const needsPermission = selectedIsModifier && status != null && !status.authorized;
+  const comboConflict = !selectedIsModifier && status != null && !status.active;
   const active = !!status?.active;
+  // The tap can observe fn but not swallow it, so macOS still runs the 🌐
+  // action (emoji picker/dictation) on every press — worth a heads-up.
+  const fnListenOnly = selected === "fn" && status?.mode === "tap-listen";
 
   const setVoiceTypingEnabled = (enabled: boolean) => {
     updateSettings({ voiceTypingEnabled: enabled });
     broadcastSettings({ ...useStore.getState().settings }).catch(() => {});
-  };
-
-  const chooseShortcut = async (shortcut: VoiceTypingShortcut) => {
-    setSaving(shortcut);
-    updateSettings({ voiceTypingShortcut: shortcut });
-    broadcastSettings({ ...useStore.getState().settings }).catch(() => {});
-    let s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(
-      () => null,
-    );
-    // A modifier key can only be listened for globally with Input Monitoring —
-    // prompt for it the moment the user picks one without the grant.
-    if (s && shortcut !== "alt-space" && !s.authorized) {
-      await invoke("request_input_monitoring").catch(() => {});
-      s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(() => s);
-    }
-    if (s) setStatus(s);
-    setSaving(null);
   };
 
   return (
@@ -128,41 +308,113 @@ export const VoiceTypingSettings = () => {
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {SHORTCUTS.map((shortcut) => (
+        {/* Recorder: click, then press the combo you want. */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setRecordHint(null);
+              setRecording((r) => !r);
+            }}
+            className={`flex h-10 flex-1 items-center justify-center gap-2 rounded-md border text-sm transition-colors ${
+              recording
+                ? "border-primary bg-primary/10 text-primary"
+                : "hover:bg-muted/50"
+            }`}
+          >
+            {saving ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : recording ? (
+              <Circle className="size-2.5 animate-pulse fill-current" />
+            ) : (
+              <Keyboard className="size-3.5" />
+            )}
+            {recording ? (
+              <span className="text-xs">{t("settings.voiceTyping.recorder.listening")}</span>
+            ) : (
+              <span className="font-mono tracking-wide">{shortcutCaps(selected, t)}</span>
+            )}
+          </button>
+          {selected !== "alt-space" && !recording && (
             <Button
-              key={shortcut}
-              variant={selected === shortcut ? "secondary" : "outline"}
+              variant="ghost"
               size="sm"
-              className="h-9 justify-start gap-2 px-2 text-xs"
-              onClick={() => {
-                chooseShortcut(shortcut).catch(() => {});
-              }}
+              className="h-10 shrink-0 gap-1 px-2 text-[11px] text-muted-foreground"
+              title={t("settings.voiceTyping.recorder.reset")}
+              onClick={() => void chooseShortcut("alt-space")}
             >
-              {saving === shortcut ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Keyboard className="size-3.5" />
-              )}
-              {t(SHORTCUT_LABEL_KEYS[shortcut])}
+              <RotateCcw className="size-3.5" />
+              ⌥ Space
+            </Button>
+          )}
+        </div>
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          {recording
+            ? t("settings.voiceTyping.recorder.cancelHint")
+            : t("settings.voiceTyping.recorder.help")}
+        </p>
+        {recordHint && (
+          <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+            {t(recordHint)}
+          </p>
+        )}
+        {comboConflict && (
+          <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+            {t("settings.voiceTyping.recorder.conflict")}
+          </p>
+        )}
+
+        {/* Hold-a-modifier alternative (HID tap; needs Input Monitoring). */}
+        <span className="mt-1 text-[11px] font-medium text-muted-foreground">
+          {t("settings.voiceTyping.modifierSection")}
+        </span>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {MODIFIER_IDS.map((id) => (
+            <Button
+              key={id}
+              variant={selected === id ? "secondary" : "outline"}
+              size="sm"
+              className="h-8 justify-center px-2 text-xs"
+              onClick={() => void chooseShortcut(id)}
+            >
+              {t(MODIFIER_LABEL_KEYS[id])}
             </Button>
           ))}
         </div>
-
         <p className="text-[11px] leading-relaxed text-muted-foreground">
           {t("settings.voiceTyping.conflictHint")}
         </p>
 
         {needsPermission && (
-          <button
-            type="button"
-            className="self-start text-[11px] font-medium text-primary underline-offset-2 hover:underline"
-            onClick={() => {
-              invoke("open_privacy_settings", { pane: "input-monitoring" }).catch(() => {});
-            }}
-          >
-            {t("settings.voiceTyping.openInputMonitoring")}
-          </button>
+          <div className="flex flex-col gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2">
+            <span className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
+              {t("settings.voiceTyping.needsInputMonitoring")}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 w-fit px-2 text-[11px]"
+              onClick={() => onOpenPermissions?.()}
+            >
+              {t("settings.voiceTyping.goToPermissions")}
+            </Button>
+          </div>
+        )}
+
+        {fnListenOnly && (
+          <div className="flex flex-col gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-2.5 py-2">
+            <span className="text-[11px] leading-relaxed text-sky-700 dark:text-sky-300">
+              {t("settings.voiceTyping.fnListenOnly")}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 w-fit px-2 text-[11px]"
+              onClick={() => onOpenPermissions?.()}
+            >
+              {t("settings.voiceTyping.goToPermissions")}
+            </Button>
+          </div>
         )}
       </div>
 

@@ -1,12 +1,47 @@
-//! macOS permission checks for onboarding. Two permissions gate a real
-//! meeting: the microphone (your voice) and screen recording (required for the
-//! Core Audio system-audio tap that captures the other party).
+//! macOS permission checks for onboarding + the Settings Permissions panel.
+//! Two permissions gate a real meeting: the microphone (your voice) and System
+//! Audio Recording (the Core Audio process tap that captures the other party —
+//! NOT Screen Recording; the tap has its own TCC service, prompted via
+//! `NSAudioCaptureUsageDescription`).
+//!
+//! Status checks here must be side-effect free: `check_permissions` is polled by
+//! onboarding, so it must never trigger an OS consent prompt. Anything that can
+//! prompt (`request_microphone`, `probe_system_audio`) is a separate command
+//! wired to an explicit user click.
 
 // The `objc` 0.2 macros emit `cfg(cargo-clippy)` checks newer compilers warn on.
 #![allow(unexpected_cfgs)]
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use serde::Serialize;
 use tauri::AppHandle;
+
+/// Last known System Audio Recording state. There is no public side-effect-free
+/// TCC query for the process tap, so we cache what the probes and real meeting
+/// captures observe: 0 = unknown (never probed), 1 = granted, 2 = denied,
+/// 3 = unsupported (macOS < 14.2).
+static SYSTEM_AUDIO: AtomicU8 = AtomicU8::new(SA_UNKNOWN);
+
+const SA_UNKNOWN: u8 = 0;
+const SA_GRANTED: u8 = 1;
+const SA_DENIED: u8 = 2;
+const SA_UNSUPPORTED: u8 = 3;
+
+fn system_audio_str() -> &'static str {
+    match SYSTEM_AUDIO.load(Ordering::SeqCst) {
+        SA_GRANTED => "granted",
+        SA_DENIED => "denied",
+        SA_UNSUPPORTED => "unsupported",
+        _ => "unknown",
+    }
+}
+
+/// Called from the meeting's system-audio capture when tapped frames actually
+/// arrive — the strongest possible "granted" signal.
+pub fn note_system_audio_granted() {
+    SYSTEM_AUDIO.store(SA_GRANTED, Ordering::SeqCst);
+}
 
 #[cfg(target_os = "macos")]
 mod imp {
@@ -16,83 +51,9 @@ mod imp {
     use objc::runtime::Object;
     use objc::{class, msg_send, sel, sel_impl};
 
-    // Link the frameworks so AVCaptureDevice and the CG functions resolve.
+    // Link the framework so AVCaptureDevice resolves.
     #[link(name = "AVFoundation", kind = "framework")]
     extern "C" {}
-
-    use std::ffi::c_void;
-
-    type CFArrayRef = *const c_void;
-    type CFDictionaryRef = *const c_void;
-    type CFStringRef = *const c_void;
-    type CFTypeRef = *const c_void;
-
-    #[link(name = "CoreGraphics", kind = "framework")]
-    extern "C" {
-        fn CGPreflightScreenCaptureAccess() -> bool;
-        fn CGRequestScreenCaptureAccess() -> bool;
-        fn CGWindowListCopyWindowInfo(option: u32, relative_to_window: u32) -> CFArrayRef;
-        static kCGWindowName: CFStringRef;
-        static kCGWindowOwnerPID: CFStringRef;
-    }
-
-    #[link(name = "CoreFoundation", kind = "framework")]
-    extern "C" {
-        fn CFArrayGetCount(arr: CFArrayRef) -> isize;
-        fn CFArrayGetValueAtIndex(arr: CFArrayRef, idx: isize) -> CFTypeRef;
-        fn CFDictionaryGetValue(dict: CFDictionaryRef, key: *const c_void) -> CFTypeRef;
-        fn CFStringGetLength(s: CFStringRef) -> isize;
-        fn CFNumberGetValue(num: *const c_void, the_type: isize, value: *mut c_void) -> bool;
-        fn CFRelease(cf: *const c_void);
-    }
-
-    const KCG_ON_SCREEN_ONLY: u32 = 1;
-    const KCG_EXCLUDE_DESKTOP: u32 = 16;
-    const KCF_NUMBER_SINT32: isize = 3;
-
-    /// Robust Screen-Recording check: `CGPreflightScreenCaptureAccess` is
-    /// unreliable on recent macOS (returns false even when granted), so fall back
-    /// to probing whether we can read ANOTHER app's window title — only possible
-    /// when Screen Recording is actually granted.
-    fn can_read_other_window_titles() -> bool {
-        unsafe {
-            let list = CGWindowListCopyWindowInfo(KCG_ON_SCREEN_ONLY | KCG_EXCLUDE_DESKTOP, 0);
-            if list.is_null() {
-                return false;
-            }
-            let our_pid = std::process::id() as i32;
-            let count = CFArrayGetCount(list);
-            let mut granted = false;
-            for i in 0..count {
-                let dict = CFArrayGetValueAtIndex(list, i) as CFDictionaryRef;
-                if dict.is_null() {
-                    continue;
-                }
-                let pid_ref = CFDictionaryGetValue(dict, kCGWindowOwnerPID as *const c_void);
-                let mut pid: i32 = 0;
-                if pid_ref.is_null()
-                    || !CFNumberGetValue(
-                        pid_ref,
-                        KCF_NUMBER_SINT32,
-                        &mut pid as *mut i32 as *mut c_void,
-                    )
-                {
-                    continue;
-                }
-                if pid == our_pid {
-                    continue; // our own windows always expose their title
-                }
-                let name =
-                    CFDictionaryGetValue(dict, kCGWindowName as *const c_void) as CFStringRef;
-                if !name.is_null() && CFStringGetLength(name) > 0 {
-                    granted = true;
-                    break;
-                }
-            }
-            CFRelease(list);
-            granted
-        }
-    }
 
     /// Microphone authorization via AVFoundation (AVMediaTypeAudio == "soun").
     pub fn microphone_status() -> &'static str {
@@ -123,17 +84,14 @@ mod imp {
         }
     }
 
-    pub fn screen_recording_authorized() -> bool {
-        if unsafe { CGPreflightScreenCaptureAccess() } {
-            return true;
+    /// Probe the process-tap authorization (may show the consent prompt).
+    pub fn probe_system_audio() -> u8 {
+        use crate::audio::system_macos::TapAccess;
+        match crate::audio::system_macos::probe_access() {
+            TapAccess::Granted => super::SA_GRANTED,
+            TapAccess::Denied => super::SA_DENIED,
+            TapAccess::Unsupported => super::SA_UNSUPPORTED,
         }
-        can_read_other_window_titles()
-    }
-
-    /// Prompt for screen-recording access. Returns the (possibly stale) status;
-    /// macOS often only reflects the grant after the app restarts.
-    pub fn request_screen_recording() -> bool {
-        unsafe { CGRequestScreenCaptureAccess() }
     }
 }
 
@@ -143,11 +101,8 @@ mod imp {
         "unknown"
     }
     pub fn request_microphone() {}
-    pub fn screen_recording_authorized() -> bool {
-        true
-    }
-    pub fn request_screen_recording() -> bool {
-        true
+    pub fn probe_system_audio() -> u8 {
+        super::SA_UNSUPPORTED
     }
 }
 
@@ -156,7 +111,9 @@ mod imp {
 pub struct Permissions {
     /// notDetermined | restricted | denied | authorized | unknown
     pub microphone: String,
-    pub screen_recording: bool,
+    /// unknown | granted | denied | unsupported — last observed process-tap
+    /// state (see SYSTEM_AUDIO). "unknown" until a probe or meeting runs.
+    pub system_audio: String,
 }
 
 #[derive(Serialize)]
@@ -168,11 +125,12 @@ pub struct AppIdentity {
     pub likely_dev_binary: bool,
 }
 
+/// Side-effect-free status snapshot (safe to poll — never prompts).
 #[tauri::command]
 pub fn check_permissions() -> Permissions {
     Permissions {
         microphone: imp::microphone_status().to_string(),
-        screen_recording: imp::screen_recording_authorized(),
+        system_audio: system_audio_str().to_string(),
     }
 }
 
@@ -196,10 +154,18 @@ pub fn app_identity(app: AppHandle) -> AppIdentity {
     }
 }
 
-/// Prompt the OS for screen-recording access (used by onboarding).
+/// Explicitly test/request System Audio Recording by creating (and immediately
+/// destroying) a process tap. First call with TCC undetermined → macOS shows the
+/// consent prompt. Returns the resulting status string. Wire this to a user
+/// click only. Async + spawn_blocking: tap creation can block on the TCC XPC
+/// while the consent prompt is up, and that must not freeze the main thread.
 #[tauri::command]
-pub fn request_screen_recording() -> bool {
-    imp::request_screen_recording()
+pub async fn probe_system_audio() -> String {
+    let state = tauri::async_runtime::spawn_blocking(imp::probe_system_audio)
+        .await
+        .unwrap_or(SA_UNKNOWN);
+    SYSTEM_AUDIO.store(state, Ordering::SeqCst);
+    system_audio_str().to_string()
 }
 
 /// Show the native microphone permission prompt.
@@ -209,13 +175,15 @@ pub fn request_microphone() {
 }
 
 /// Open the relevant macOS Privacy settings pane so the user can grant access
-/// manually (the native prompts only fire once and need an app restart).
+/// manually (the native prompts only fire once and may need an app restart).
+/// "system-audio" and "screen" both land on the Screen & System Audio Recording
+/// pane — that's where the tap's "System Audio Recording Only" entry lives.
 #[tauri::command]
 pub fn open_privacy_settings(pane: String) {
     #[cfg(target_os = "macos")]
     {
         let anchor = match pane.as_str() {
-            "screen" => "Privacy_ScreenCapture",
+            "screen" | "system-audio" => "Privacy_ScreenCapture",
             "microphone" => "Privacy_Microphone",
             "accessibility" => "Privacy_Accessibility",
             "input-monitoring" => "Privacy_ListenEvent",

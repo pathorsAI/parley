@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Check, ChevronLeft, ChevronRight, Download, Keyboard, Loader2, Mic, Monitor, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Download, Loader2, Mic, Volume2, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isTauri } from "../lib/tauriEvents";
 import { PROVIDERS, PROVIDER_BY_ID } from "../lib/ai/providers";
@@ -18,7 +18,8 @@ import {
 } from "@/components/ui/select";
 import type { AppLanguage, LlmProvider, Settings, SttProviderId } from "../lib/types";
 
-type Perms = { microphone: string; screenRecording: boolean };
+// systemAudio: unknown | granted | denied | unsupported (macOS < 14.2).
+type Perms = { microphone: string; systemAudio: string };
 
 const STEP_COUNT = 8;
 
@@ -31,7 +32,6 @@ export function Onboarding() {
     return s >= 0 && s < STEP_COUNT ? s : 0;
   });
   const [perms, setPerms] = useState<Perms | null>(null);
-  const [accessibilityOk, setAccessibilityOk] = useState(false);
 
   // Persist the step so granting a permission (which often needs an app restart)
   // resumes here instead of bouncing back to step 1.
@@ -45,8 +45,9 @@ export function Onboarding() {
   async function recheck() {
     if (!isTauri()) return;
     try {
+      // Side-effect free: check_permissions never triggers an OS prompt, so
+      // polling it below is safe.
       setPerms(await invoke<Perms>("check_permissions"));
-      setAccessibilityOk(await invoke<boolean>("accessibility_status", { prompt: false }));
     } catch {
       /* non-macOS or unavailable */
     }
@@ -77,7 +78,7 @@ export function Onboarding() {
   }
 
   const micOk = perms?.microphone === "authorized";
-  const screenOk = perms?.screenRecording === true;
+  const systemAudioOk = perms?.systemAudio === "granted";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
@@ -229,35 +230,34 @@ export function Onboarding() {
                 ok={micOk}
                 actionLabel={t("onboarding.perms.grant")}
                 onAction={async () => {
-                  await invoke("start_mic_test", { inputDevice: settings.inputDevice }).catch(() => {});
-                  await invoke("stop_mic_test").catch(() => {});
-                  await invoke("open_privacy_settings", { pane: "microphone" }).catch(() => {});
+                  // Not yet determined → the native prompt is enough; only jump
+                  // to System Settings when it was explicitly denied (the OS
+                  // won't re-prompt in that case).
+                  if (perms?.microphone === "denied") {
+                    await invoke("open_privacy_settings", { pane: "microphone" }).catch(() => {});
+                  } else {
+                    await invoke("request_microphone").catch(() => {});
+                  }
                   void recheck();
                 }}
               />
-              <PermRow
-                icon={<Monitor className="size-4" />}
-                label={t("onboarding.perms.screen")}
-                ok={screenOk}
-                actionLabel={t("onboarding.perms.grant")}
-                onAction={async () => {
-                  await invoke("request_screen_recording").catch(() => {});
-                  await invoke("open_privacy_settings", { pane: "screen" }).catch(() => {});
-                  void recheck();
-                }}
-              />
-              <PermRow
-                icon={<Keyboard className="size-4" />}
-                label={t("onboarding.perms.accessibility")}
-                ok={accessibilityOk}
-                actionLabel={t("onboarding.perms.grant")}
-                onAction={async () => {
-                  // Single native prompt (it offers its own "Open System Settings").
-                  await invoke("accessibility_status", { prompt: true }).catch(() => {});
-                  await invoke("ensure_fn_listener").catch(() => {});
-                  void recheck();
-                }}
-              />
+              {perms?.systemAudio !== "unsupported" && (
+                <PermRow
+                  icon={<Volume2 className="size-4" />}
+                  label={t("onboarding.perms.systemAudio")}
+                  ok={systemAudioOk}
+                  actionLabel={t("onboarding.perms.grant")}
+                  onAction={async () => {
+                    // Probes a real Core Audio process tap; the first probe makes
+                    // macOS show the "record system audio" consent prompt.
+                    const s = await invoke<string>("probe_system_audio").catch(() => null);
+                    if (s === "denied") {
+                      await invoke("open_privacy_settings", { pane: "system-audio" }).catch(() => {});
+                    }
+                    void recheck();
+                  }}
+                />
+              )}
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => void recheck()}>
                   {t("onboarding.perms.recheck")}

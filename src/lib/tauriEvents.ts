@@ -88,7 +88,7 @@ export async function listenForProsody(): Promise<UnlistenFn> {
 /** Shape of the `meeting://error` payload (a transcription session failed). */
 interface MeetingErrorPayload {
   source: string;
-  /** "quota" (402) | "auth" (401) | "connect" (other). */
+  /** "quota" (402) | "auth" (401) | "capture" (no audio source) | "connect" (other). */
   code: string;
   message: string;
 }
@@ -114,9 +114,49 @@ export async function listenForMeetingError(): Promise<UnlistenFn> {
         ? "meeting.error.quota"
         : code === "auth"
           ? "meeting.error.auth"
-          : "meeting.error.connect";
+          : code === "capture"
+            ? "meeting.error.capture"
+            : "meeting.error.connect";
     toast.error(translate(useStore.getState().settings.language, key));
   });
+}
+
+/** Shape of the `meeting://warning` payload (meeting keeps running). */
+interface MeetingWarningPayload {
+  /** "system-audio-silent" | "system-audio-unavailable" */
+  code: string;
+  message?: string;
+}
+
+/**
+ * Subscribe to NON-fatal meeting warnings. Today that's the system-audio tap
+ * reporting it can't deliver the other party's audio (usually the "System Audio
+ * Recording" permission is missing) — the meeting continues mic-only, but the
+ * user should know why the remote side produces no transcript. De-duped per
+ * meeting via a module flag reset on each `meeting://status` change.
+ */
+let warnedSystemAudio = false;
+export async function listenForMeetingWarning(): Promise<UnlistenFn> {
+  if (!("__TAURI_INTERNALS__" in window)) {
+    return () => {};
+  }
+  const unStatus = await listen<string>("meeting://status", () => {
+    warnedSystemAudio = false;
+  });
+  const unWarn = await listen<MeetingWarningPayload>("meeting://warning", (event) => {
+    const { code } = event.payload;
+    if (code !== "system-audio-silent" && code !== "system-audio-unavailable") return;
+    if (warnedSystemAudio) return;
+    warnedSystemAudio = true;
+    toast.warning(
+      translate(useStore.getState().settings.language, "meeting.warning.systemAudio"),
+      { duration: 10000 },
+    );
+  });
+  return () => {
+    unStatus();
+    unWarn();
+  };
 }
 
 /** True when running inside the Tauri shell (vs a plain browser dev session). */
