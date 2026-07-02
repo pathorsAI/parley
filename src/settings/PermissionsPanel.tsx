@@ -12,13 +12,6 @@ interface Perms {
   systemAudio: string;
 }
 
-interface AppIdentity {
-  bundleIdentifier: string;
-  executablePath: string;
-  runningFromAppBundle: boolean;
-  likelyDevBinary: boolean;
-}
-
 type Status = "granted" | "denied" | "pending";
 
 /** Map the native microphone authorization string to our tri-state status. */
@@ -36,25 +29,20 @@ function toneFor(status: Status): string {
 }
 
 /**
- * Overview of every macOS permission Parley uses, with live grant status. This
- * panel (plus onboarding) is the ONLY place that fires permission requests —
- * the rest of the app just checks status. Each row's button triggers the native
- * prompt on first click and opens the right System Settings pane afterwards.
- *
- * Required: microphone (meetings + voice typing) and System Audio Recording
- * (the meeting's "other party" capture — a Core Audio process tap with its own
- * TCC service; there is no passive status API, so its state is last-observed
- * and "Test & grant" runs a real probe). Optional: Input Monitoring (only the
- * fn / right-modifier push-to-talk keys) and Accessibility (only auto-paste).
+ * The two meeting-critical macOS permissions (microphone + System Audio
+ * Recording) with live grant status. Feature-scoped permissions are NOT listed
+ * here — Input Monitoring is requested by the voice-typing key picker and
+ * Accessibility by enabling voice typing (auto-paste), each at the moment the
+ * feature needs it. Each row's button triggers the native prompt on first
+ * click and opens the right System Settings pane afterwards. System Audio has
+ * no passive status API, so its state is last-observed and "Grant" runs a real
+ * one-off capture probe.
  */
 export function PermissionsPanel() {
   const { t } = useI18n();
   const [microphone, setMicrophone] = useState<Status>("pending");
   const [systemAudio, setSystemAudio] = useState<Status>("pending");
   const [systemAudioSupported, setSystemAudioSupported] = useState(true);
-  const [inputMonitoring, setInputMonitoring] = useState<Status>("pending");
-  const [accessibility, setAccessibility] = useState<Status>("pending");
-  const [identity, setIdentity] = useState<AppIdentity | null>(null);
 
   function applySystemAudio(raw: string) {
     setSystemAudioSupported(raw !== "unsupported");
@@ -65,12 +53,8 @@ export function PermissionsPanel() {
     if (!isTauri()) return;
     try {
       const p = await invoke<Perms>("check_permissions");
-      const id = await invoke<AppIdentity>("app_identity");
       setMicrophone(micStatus(p.microphone));
       applySystemAudio(p.systemAudio);
-      setInputMonitoring((await invoke<boolean>("input_monitoring_status")) ? "granted" : "pending");
-      setAccessibility((await invoke<boolean>("accessibility_status", { prompt: false })) ? "granted" : "pending");
-      setIdentity(id);
     } catch {
       /* non-macOS */
     }
@@ -134,33 +118,6 @@ export function PermissionsPanel() {
           help={systemAudio === "pending" ? t("settings.permissions.systemAudioHelp") : undefined}
         />
       )}
-      <Row
-        label={t("settings.permissions.inputMonitoring")}
-        desc={t("settings.permissions.inputMonitoringDesc")}
-        status={inputMonitoring}
-        onGrant={() =>
-          grant("input-monitoring", "input-monitoring", async () => {
-            await invoke("request_input_monitoring");
-            await invoke("open_privacy_settings", { pane: "input-monitoring" });
-            await invoke("ensure_fn_listener");
-          })
-        }
-        help={
-          identity?.likelyDevBinary
-            ? `${t("settings.permissions.inputMonitoringDevHelp")} ${identity.executablePath}`
-            : t("settings.permissions.inputMonitoringHelp")
-        }
-      />
-      <Row
-        label={t("settings.voiceTyping.accessibility")}
-        desc={t("settings.permissions.accessibilityDesc")}
-        status={accessibility}
-        onGrant={() =>
-          grant("accessibility", "accessibility", async () => {
-            await invoke("accessibility_status", { prompt: true });
-          })
-        }
-      />
     </div>
   );
 }

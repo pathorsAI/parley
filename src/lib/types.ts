@@ -279,11 +279,10 @@ export interface Settings {
   /** Microphone input device name; empty = system default. */
   inputDevice: string;
   /** Voice typing: whether push-to-talk dictation is active. Option+Space works
-   *  without extra permission; fn/Globe additionally needs Input Monitoring. */
+   *  without extra permission; fn/Globe additionally needs Input Monitoring.
+   *  While enabled, releasing the key always auto-pastes (simulated ⌘V, needs
+   *  Accessibility) with the clipboard as fallback — not a separate setting. */
   voiceTypingEnabled: boolean;
-  /** Voice typing: after releasing the push-to-talk key, also paste the text
-   *  into the frontmost app (simulated ⌘V). Off by default; needs Accessibility. */
-  voiceTypingAutoPaste: boolean;
   /** Voice typing push-to-talk key. Defaults to Option+Space (no extra
    *  permission); can be switched to a hold-friendly modifier key. */
   voiceTypingShortcut: VoiceTypingShortcut;

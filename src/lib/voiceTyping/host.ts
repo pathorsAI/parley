@@ -54,6 +54,17 @@ export function initVoiceTyping(): () => void {
   invoke("set_voice_typing_shortcut", {
     shortcut: useStore.getState().settings.voiceTypingShortcut,
   }).catch(() => {});
+  // Voice typing always auto-pastes on release, which needs Accessibility —
+  // while the feature is enabled, ask for that grant up front (once per
+  // launch) instead of failing quietly on the first dictation. The prompt is
+  // the native macOS dialog; already-trusted runs never see it.
+  if (useStore.getState().settings.voiceTypingEnabled) {
+    invoke<boolean>("accessibility_status", { prompt: false })
+      .then((trusted) => {
+        if (!trusted) return invoke("accessibility_status", { prompt: true }).then(() => {});
+      })
+      .catch(() => {});
+  }
   // Warm the overlay window so it's listening before the first key press.
   prewarmOverlay().catch(() => {});
   return () => {
@@ -140,11 +151,11 @@ async function finalize() {
   if (text) {
     try {
       await invoke("copy_to_clipboard", { text });
-      if (useStore.getState().settings.voiceTypingAutoPaste) {
-        const pasted = await invoke<boolean>("paste_to_frontmost");
-        if (!pasted) log.warn("voice-typing: auto-paste skipped (Accessibility not granted)");
-      }
-      log.info("voice-typing: copied", { chars: text.length });
+      // Auto-paste is the default behaviour (no setting): simulate ⌘V into the
+      // frontmost app; without Accessibility it degrades to clipboard-only.
+      const pasted = await invoke<boolean>("paste_to_frontmost");
+      if (!pasted) log.warn("voice-typing: auto-paste skipped (Accessibility not granted)");
+      log.info("voice-typing: copied", { chars: text.length, pasted });
     } catch (e) {
       log.error("voice-typing: copy/paste failed", { error: String(e) });
     }

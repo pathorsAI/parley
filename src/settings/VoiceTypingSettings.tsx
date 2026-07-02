@@ -123,6 +123,13 @@ export function shortcutCaps(shortcut: string, t: (k: TranslationKey) => string)
   return shortcut;
 }
 
+interface AppIdentity {
+  bundleIdentifier: string;
+  executablePath: string;
+  runningFromAppBundle: boolean;
+  likelyDevBinary: boolean;
+}
+
 /**
  * Voice-typing options. The push-to-talk trigger is picked one of two ways —
  * exactly one trigger is live at a time (the backend unregisters everything
@@ -130,16 +137,19 @@ export function shortcutCaps(shortcut: string, t: (k: TranslationKey) => string)
  *   - Record any key combo (modifiers + key, or an F-key): registered as an OS
  *     global shortcut, works with NO extra permission. This is the default path
  *     (⌥ Space out of the box).
- *   - Hold a single modifier key (fn / right ⌥⌘⌃): needs Input Monitoring; the
- *     grant lives on the Permissions tab (`onOpenPermissions` jumps there) —
- *     this panel never fires an OS prompt itself.
- * Auto-paste needs Accessibility and prompts when enabled (explicit opt-in).
+ *   - Hold a single modifier key (fn / right ⌥⌘⌃): needs Input Monitoring —
+ *     requested HERE, at the moment of picking the key (permissions follow the
+ *     feature; the Permissions tab only carries the meeting-critical ones).
+ * Releasing the key always auto-pastes (no separate setting); the Accessibility
+ * grant that needs is requested when voice typing is enabled (host.ts also asks
+ * at launch while the feature is on).
  */
-export const VoiceTypingSettings = ({ onOpenPermissions }: { onOpenPermissions?: () => void }) => {
+export const VoiceTypingSettings = () => {
   const { t } = useI18n();
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
   const [status, setStatus] = useState<HotkeyStatus | null>(null);
+  const [identity, setIdentity] = useState<AppIdentity | null>(null);
   const [saving, setSaving] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordHint, setRecordHint] = useState<TranslationKey | null>(null);
@@ -159,6 +169,9 @@ export const VoiceTypingSettings = ({ onOpenPermissions }: { onOpenPermissions?:
   useEffect(() => {
     if (!isTauri()) return;
     refreshStatus();
+    invoke<AppIdentity>("app_identity")
+      .then(setIdentity)
+      .catch(() => {});
     const onVisibility = () => {
       if (document.visibilityState === "visible") refreshStatus();
     };
@@ -174,11 +187,27 @@ export const VoiceTypingSettings = ({ onOpenPermissions }: { onOpenPermissions?:
     setSaving(true);
     updateSettings({ voiceTypingShortcut: shortcut });
     broadcastSettings({ ...useStore.getState().settings }).catch(() => {});
-    const s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(
+    let s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(
       () => null,
     );
+    // A single-key trigger needs Input Monitoring — request it right when the
+    // user picks one (the permission follows the feature), then re-apply so the
+    // tap arms immediately if macOS granted without a relaunch.
+    if (s && isModifierId(shortcut) && !s.authorized) {
+      await invoke("request_input_monitoring").catch(() => {});
+      s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(() => s);
+    }
     if (s) setStatus(s);
     setSaving(false);
+  };
+
+  /** Re-request Input Monitoring from the inline warning (repeat clicks land in
+   *  the right System Settings pane since the OS prompt only fires once). */
+  const grantInputMonitoring = async () => {
+    await invoke("request_input_monitoring").catch(() => {});
+    await invoke("open_privacy_settings", { pane: "input-monitoring" }).catch(() => {});
+    await invoke("ensure_fn_listener").catch(() => {});
+    refreshStatus();
   };
 
   // Key-capture mode: the settings window is focused, so plain DOM key events
@@ -262,6 +291,9 @@ export const VoiceTypingSettings = ({ onOpenPermissions }: { onOpenPermissions?:
   const setVoiceTypingEnabled = (enabled: boolean) => {
     updateSettings({ voiceTypingEnabled: enabled });
     broadcastSettings({ ...useStore.getState().settings }).catch(() => {});
+    // Voice typing always auto-pastes, which needs Accessibility — enabling the
+    // feature is the moment to ask for its permission.
+    if (enabled) void invoke("accessibility_status", { prompt: true }).catch(() => {});
   };
 
   // Guidance renders as single inline lines (no nested boxes) and only when
@@ -393,10 +425,15 @@ export const VoiceTypingSettings = ({ onOpenPermissions }: { onOpenPermissions?:
             <button
               type="button"
               className="font-medium underline underline-offset-2"
-              onClick={() => onOpenPermissions?.()}
+              onClick={() => void grantInputMonitoring()}
             >
-              {t("settings.voiceTyping.goToPermissions")}
+              {t("settings.voiceTyping.grant")}
             </button>
+          </p>
+        )}
+        {needsPermission && identity?.likelyDevBinary && (
+          <p className="break-all text-[11px] text-muted-foreground">
+            {t("settings.voiceTyping.devBinaryHint", { path: identity.executablePath })}
           </p>
         )}
         {fnListenOnly && (
@@ -415,35 +452,17 @@ export const VoiceTypingSettings = ({ onOpenPermissions }: { onOpenPermissions?:
             <button
               type="button"
               className="font-medium text-foreground underline underline-offset-2"
-              onClick={() => onOpenPermissions?.()}
+              onClick={() => {
+                invoke("accessibility_status", { prompt: true })
+                  .then(() => refreshStatus())
+                  .catch(() => {});
+              }}
             >
-              {t("settings.voiceTyping.goToPermissions")}
+              {t("settings.voiceTyping.grantAccessibility")}
             </button>
           </p>
         )}
       </div>
-
-      <label htmlFor="voice-typing-auto-paste" className="flex items-center justify-between gap-3">
-        <span className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium">{t("settings.voiceTyping.autoPaste")}</span>
-          <span className="text-[11px] text-muted-foreground">
-            {t("settings.voiceTyping.autoPasteHint")}
-          </span>
-        </span>
-        <input
-          id="voice-typing-auto-paste"
-          type="checkbox"
-          className="size-4 shrink-0"
-          checked={settings.voiceTypingAutoPaste}
-          onChange={async (e) => {
-            const on = e.target.checked;
-            updateSettings({ voiceTypingAutoPaste: on });
-            broadcastSettings({ ...useStore.getState().settings }).catch(() => {});
-            // Auto-paste needs Accessibility — prompt the moment it's enabled.
-            if (on) await invoke("accessibility_status", { prompt: true }).catch(() => {});
-          }}
-        />
-      </label>
     </div>
   );
 };
