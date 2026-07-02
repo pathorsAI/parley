@@ -174,22 +174,31 @@ pub fn request_microphone() {
     imp::request_microphone();
 }
 
-/// Open the relevant macOS Privacy settings pane so the user can grant access
-/// manually (the native prompts only fire once and may need an app restart).
+/// Open the relevant macOS Settings pane so the user can grant access manually
+/// (the native prompts only fire once and may need an app restart).
 /// "system-audio" and "screen" both land on the Screen & System Audio Recording
 /// pane — that's where the tap's "System Audio Recording Only" entry lives.
+/// "keyboard" opens the Keyboard pane (for setting the 🌐/fn key to "Do
+/// Nothing" when Parley can only listen to it, not swallow it).
 #[tauri::command]
 pub fn open_privacy_settings(pane: String) {
     #[cfg(target_os = "macos")]
     {
-        let anchor = match pane.as_str() {
-            "screen" | "system-audio" => "Privacy_ScreenCapture",
-            "microphone" => "Privacy_Microphone",
-            "accessibility" => "Privacy_Accessibility",
-            "input-monitoring" => "Privacy_ListenEvent",
-            _ => "Privacy",
+        let url = match pane.as_str() {
+            "keyboard" => {
+                "x-apple.systempreferences:com.apple.Keyboard-Settings.extension".to_string()
+            }
+            _ => {
+                let anchor = match pane.as_str() {
+                    "screen" | "system-audio" => "Privacy_ScreenCapture",
+                    "microphone" => "Privacy_Microphone",
+                    "accessibility" => "Privacy_Accessibility",
+                    "input-monitoring" => "Privacy_ListenEvent",
+                    _ => "Privacy",
+                };
+                format!("x-apple.systempreferences:com.apple.preference.security?{anchor}")
+            }
         };
-        let url = format!("x-apple.systempreferences:com.apple.preference.security?{anchor}");
         let _ = std::process::Command::new("open").arg(url).spawn();
     }
     #[cfg(not(target_os = "macos"))]

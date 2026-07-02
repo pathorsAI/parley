@@ -7,7 +7,7 @@
 //!     (Carbon `RegisterEventHotKey` on macOS). Needs NO extra permission —
 //!     this is the out-of-the-box path.
 //!   - `fn` / `right-option` / `right-command` / `right-control` — hold-friendly
-//!     single modifier keys handled by a macOS HID event tap (`kCGHIDEventTap`),
+//!     single modifier keys handled by a macOS event tap (`kCGSessionEventTap`),
 //!     which sees modifier transitions before AppKit monitors. The tap is
 //!     created ACTIVE first (on modern macOS that pairs with the Accessibility
 //!     permission) so the selected key can be swallowed before the OS /
@@ -201,8 +201,12 @@ mod imp {
     type CFStringRef = *const c_void;
     type CGEventType = u32;
 
-    // kCGHIDEventTap: earliest point in the pipeline.
-    const KCG_HID_EVENT_TAP: u32 = 0;
+    // kCGSessionEventTap: events at the login-session level. Apple documents
+    // the HID level (kCGHIDEventTap = 0) as root-only — non-root creation may
+    // return NULL — and shipping event-tap apps (Hammerspoon, VoiceInk) all tap
+    // at session level. Head-insert placement below still sees the modifier
+    // before the frontmost app does.
+    const KCG_SESSION_EVENT_TAP: u32 = 1;
     // kCGHeadInsertEventTap.
     const KCG_HEAD_INSERT: u32 = 0;
     // Active tap (NOT listen-only) so we can SWALLOW the selected key and stop
@@ -428,7 +432,7 @@ mod imp {
             // LISTEN-ONLY (observes but can't swallow) when it fails.
             let mut mode = TAP_MODE_ACTIVE;
             let mut port = CGEventTapCreate(
-                KCG_HID_EVENT_TAP,
+                KCG_SESSION_EVENT_TAP,
                 KCG_HEAD_INSERT,
                 KCG_TAP_OPTION_DEFAULT,
                 mask,
@@ -438,7 +442,7 @@ mod imp {
             if port.is_null() {
                 mode = TAP_MODE_LISTEN;
                 port = CGEventTapCreate(
-                    KCG_HID_EVENT_TAP,
+                    KCG_SESSION_EVENT_TAP,
                     KCG_HEAD_INSERT,
                     KCG_TAP_OPTION_LISTEN_ONLY,
                     mask,
