@@ -63,17 +63,9 @@ It runs in two complementary modes:
 - **Bring your own providers** — pick your transcription vendor and LLM (Claude, OpenAI, Gemini, Groq, Ollama, OpenRouter, and more).
 - **Local-first** — audio and transcripts go straight to the providers you configure; no Pathors AI proxy in between.
 - **Built-in MCP server** — connect Claude (or any MCP client) to the live meeting while the app is open: read the transcript, manage agenda TODOs, and read/add/overwrite/edit the timeline analysis, plus manage evaluation/agenda templates.
+- **Voice typing** — system-wide push-to-talk dictation in any app: hold your key, speak, release, and the text auto-pastes where your cursor is (see [Voice Typing](#-voice-typing)).
 - **Traditional Chinese** — on-the-fly conversion of transcribed text.
 - **Native macOS UI** — clean, custom window chrome.
-
-### 🎤 Voice typing — system-wide dictation
-
-Beyond meetings, Parley doubles as a push-to-talk dictation tool that works in **any** app:
-
-- **Hold to talk** — press and hold your push-to-talk key anywhere, speak, and release to transcribe.
-- **Your shortcut** — default `Option+Space` (needs no extra permission), or record any custom combo, or hold a single modifier key (`fn`/Globe, right `⌘`/`⌥`/`⌃`).
-- **Lands where your cursor is** — the result is copied to the clipboard and auto-pasted into the frontmost app.
-- **Your own provider** — the same bring-your-own transcription as meetings; audio never routes through Pathors AI.
 
 ---
 
@@ -122,9 +114,17 @@ Parley is currently unsigned, so on first launch macOS Gatekeeper may block it. 
 
 ## 🎙️ Voice Typing
 
-Parley does not use macOS Dictation. It runs its own microphone capture and realtime STT pipeline, so the output uses whichever transcription provider you configured in Settings.
+Beyond meetings, Parley doubles as a **system-wide push-to-talk dictation tool** that works in any app. It doesn't use macOS Dictation — it runs its own microphone capture and realtime STT pipeline, so the output uses whichever transcription provider you configured in Settings.
 
-On macOS, hold the push-to-talk key to record a short voice typing session and release it to finish transcription. The key is selectable in **Settings → Voice typing**: `Option+Space` (the default, no extra permission) or a hold-friendly modifier — `fn`/Globe, Right Option, Right Command, or Right Control. Parley copies the completed text to the system clipboard; if you enable auto-paste, it also sends Cmd+V to the frontmost app. The modifier keys require Input Monitoring permission, and auto-paste requires Accessibility permission.
+Hold your push-to-talk key anywhere, speak, and release to transcribe. On release, Parley copies the text to the clipboard and auto-pastes it into the frontmost app (clipboard stays the fallback when Accessibility isn't granted).
+
+Pick the trigger in **Settings → Voice typing**:
+
+- **`Option+Space`** — the default; needs no extra permission.
+- **Any recorded combo** — click the recorder and press the shortcut you want (e.g. `⌃⌥Space`, `⌘⇧D`, or an F-key). Also permission-free.
+- **A single hold-to-talk key** — `fn`/Globe or a right-side `⌘`/`⌥`/`⌃`. These need Input Monitoring (grant it, then relaunch).
+
+Auto-paste needs Accessibility; Parley requests it when you enable voice typing.
 
 ---
 
@@ -137,9 +137,3 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 ## 📄 License
 
 Licensed under the [Apache License 2.0](LICENSE). Copyright 2026 Pathors AI.
-
-## Press-And-Hold Dictation
-
-Parley does not use macOS Dictation. It uses its own microphone capture and the configured realtime STT provider. In the Tauri desktop app, hold the push-to-talk key to record a short dictation, release to transcribe, and Parley copies the completed text to the system clipboard for pasting.
-
-`Option+Space` is the default because macOS does not expose the `fn` key as a reliable official global shortcut for third-party apps. If you'd rather use `fn`/Globe or a right-side modifier, pick it in **Settings → Voice typing**; those keys are captured via a low-level event tap and need Input Monitoring permission.
