@@ -192,7 +192,7 @@ pub fn start_meeting(
         let mic = Microphone {
             device_name: input_device,
         };
-        let sys = crate::audio::system_macos::SystemAudio;
+        let sys = crate::audio::system_macos::SystemAudio { app: app.clone() };
         if diarization {
             // Tap the PRE-MIX mic for delivery coaching (issue #22): the prosody
             // analyzer must see raw mic, never the mixed/diarized stream.
@@ -200,6 +200,11 @@ pub fn start_meeting(
                 .map(|rx| spawn_mic_prosody_tap(&app, rx));
             let rx_them = spawn_capture(&state.threads, sys, running.clone(), "them");
             let mut tasks = state.tasks.lock().unwrap();
+            log::info!(
+                "meeting: capture started (mic: {}, system: {})",
+                rx_me.is_some(),
+                rx_them.is_some()
+            );
             match (rx_me, rx_them) {
                 (Some(a), Some(b)) => {
                     let (tx_mix, rx_mix) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
@@ -240,7 +245,19 @@ pub fn start_meeting(
                         Some(recorder),
                     ));
                 }
-                (None, None) => {}
+                (None, None) => {
+                    // No capture at all — without this the meeting would sit in
+                    // "recording" forever with an empty transcript.
+                    log::error!("meeting: no audio source could be started");
+                    let _ = app.emit(
+                        "meeting://error",
+                        serde_json::json!({
+                            "source": "meeting",
+                            "code": "capture",
+                            "message": "no audio source could be started",
+                        }),
+                    );
+                }
             }
         } else {
             // No diarization → two sessions. Record the mic only (mixing two
@@ -527,7 +544,7 @@ fn spawn_capture<S: AudioSource>(
             Some(rx)
         }
         Err(e) => {
-            eprintln!("[{label}] capture failed to start: {e}");
+            log::error!("[{label}] capture failed to start: {e}");
             None
         }
     }
@@ -599,7 +616,7 @@ fn run_metered_session(
             transcription::run_session(provider, app.clone(), config, label, count_rx).await
         {
             let msg = e.to_string();
-            eprintln!("[stt:{label}] session ended: {e}");
+            log::warn!("[stt:{label}] session ended: {e}");
             // Surface the failure to the UI instead of silently leaving the
             // meeting in "recording" with no transcript. Hosted mode hits this
             // routinely (402 out of credits / 401 expired session at connect);

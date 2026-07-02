@@ -13,7 +13,13 @@ import { useFindingSolutionHost } from "./components/analysis/useFindingSolution
 import { DeliveryNudgeHost } from "./components/delivery/DeliveryNudgeHost";
 import { useDeliveryCoach } from "./lib/analysis/useDelivery";
 import { useStore } from "./lib/store";
-import { isTauri, listenForMeetingError, listenForProsody, listenForTranscript } from "./lib/tauriEvents";
+import {
+  isTauri,
+  listenForMeetingError,
+  listenForMeetingWarning,
+  listenForProsody,
+  listenForTranscript,
+} from "./lib/tauriEvents";
 import { listenForSettings } from "./lib/settingsSync";
 import { listenForViewLogsMenu } from "./lib/diagnostics";
 import { listenForSttUsage } from "./lib/usage/log";
@@ -92,6 +98,7 @@ const App = () => {
     track(listenForTranscript());
     track(listenForProsody());
     track(listenForMeetingError());
+    track(listenForMeetingWarning());
     track(listenForSettings());
     track(listenForSttUsage());
     track(listenForCacheClear());

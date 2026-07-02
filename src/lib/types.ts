@@ -215,14 +215,19 @@ export type AppTheme = "light" | "dark" | "system";
 export type AppLayout = "full" | "assistant" | "transcript";
 
 /** Push-to-talk key for the global voice-typing listener on macOS. The picker is
- *  the single source of truth — exactly one is live at a time. `alt-space` needs
- *  no extra permission; the modifier keys need Input Monitoring. */
+ *  the single source of truth — exactly one is live at a time.
+ *  - `alt-space` (legacy id) and `combo:<mods+Key>` (a user-recorded combo, e.g.
+ *    `combo:control+shift+KeyD` — tokens are W3C KeyboardEvent.code names) are
+ *    registered as OS global shortcuts and need NO extra permission.
+ *  - The single hold-friendly modifier keys (`fn` / `right-*`) are watched by a
+ *    HID event tap and need Input Monitoring. */
 export type VoiceTypingShortcut =
   | "alt-space"
   | "fn"
   | "right-option"
   | "right-command"
-  | "right-control";
+  | "right-control"
+  | `combo:${string}`;
 
 /** Model ids for one provider: a fast model for Q&A, a stronger one for evals. */
 export interface ProviderModels {
@@ -274,11 +279,10 @@ export interface Settings {
   /** Microphone input device name; empty = system default. */
   inputDevice: string;
   /** Voice typing: whether push-to-talk dictation is active. Option+Space works
-   *  without extra permission; fn/Globe additionally needs Input Monitoring. */
+   *  without extra permission; fn/Globe additionally needs Input Monitoring.
+   *  While enabled, releasing the key always auto-pastes (simulated ⌘V, needs
+   *  Accessibility) with the clipboard as fallback — not a separate setting. */
   voiceTypingEnabled: boolean;
-  /** Voice typing: after releasing the push-to-talk key, also paste the text
-   *  into the frontmost app (simulated ⌘V). Off by default; needs Accessibility. */
-  voiceTypingAutoPaste: boolean;
   /** Voice typing push-to-talk key. Defaults to Option+Space (no extra
    *  permission); can be switched to a hold-friendly modifier key. */
   voiceTypingShortcut: VoiceTypingShortcut;

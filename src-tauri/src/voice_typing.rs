@@ -186,6 +186,13 @@ pub fn accessibility_status(prompt: bool) -> bool {
     imp::accessibility_trusted(prompt)
 }
 
+/// Crate-internal Accessibility check (never prompts), used by hotkey.rs: an
+/// ACTIVE CGEventTap runs under Accessibility even when Input Monitoring is
+/// missing, so the push-to-talk tap consults both permissions.
+pub(crate) fn is_accessibility_trusted() -> bool {
+    imp::accessibility_trusted(false)
+}
+
 /// Show the overlay above ALL apps without activating Parley or stealing focus
 /// (`orderFrontRegardless` + a floating level + all-spaces / full-screen
 /// collection behaviour). Driving visibility natively avoids Tauri's `show()`,

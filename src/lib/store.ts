@@ -88,7 +88,6 @@ const DEFAULT_SETTINGS: Settings = {
   assemblyaiApiKey: "",
   inputDevice: "",
   voiceTypingEnabled: true,
-  voiceTypingAutoPaste: false,
   voiceTypingShortcut: "alt-space",
   evaluations: buildPresetEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),

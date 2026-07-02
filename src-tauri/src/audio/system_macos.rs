@@ -10,7 +10,10 @@
 //! without touching the rest of the app.
 //!
 //! NOTE: runtime capture requires the `com.apple.security.device.audio-input`
-//! entitlement (see src-tauri/entitlements.plist) and TCC approval. If tap setup
+//! entitlement (see src-tauri/entitlements.plist) and the "System Audio
+//! Recording Only" TCC grant (macOS 14.4+, prompted via
+//! `NSAudioCaptureUsageDescription` in Info.plist — it lists Parley under
+//! System Settings → Privacy → Screen & System Audio Recording). If tap setup
 //! fails, this source logs and exits cleanly — the meeting continues mic-only.
 
 // The `objc` 0.2 macros emit `cfg(cargo-clippy)` checks the modern compiler
@@ -19,10 +22,12 @@
 
 use std::ffi::{c_void, CStr};
 use std::os::raw::c_char;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use tauri::{AppHandle, Emitter};
 
 use anyhow::{anyhow, Result};
 use core_foundation::array::CFArray;
@@ -67,8 +72,53 @@ extern "C" {
     fn AudioHardwareDestroyAggregateDevice(in_device_id: AudioObjectID) -> OSStatus;
 }
 
-/// System-audio capture ("them").
-pub struct SystemAudio;
+/// Result of probing the process-tap TCC authorization (System Audio Recording).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TapAccess {
+    Granted,
+    Denied,
+    /// CATapDescription unavailable — macOS < 14.2 can't capture system audio.
+    Unsupported,
+}
+
+/// Probe whether Parley may capture system audio, without capturing: create a
+/// global tap, try to read its stream format, tear it down. The very first call
+/// while TCC is "not determined" makes macOS show the native "record system
+/// audio" consent prompt (text from `NSAudioCaptureUsageDescription`) — so only
+/// call this from an explicit user action (onboarding / the Permissions panel)
+/// or when a meeting actually starts the tap.
+pub fn probe_access() -> TapAccess {
+    unsafe {
+        let empty: *mut Object = msg_send![class!(NSArray), array];
+        let desc: *mut Object = msg_send![class!(CATapDescription), alloc];
+        if desc.is_null() {
+            return TapAccess::Unsupported;
+        }
+        let desc: *mut Object = msg_send![desc, initStereoGlobalTapButExcludeProcesses: empty];
+        let mut tap_id: AudioObjectID = 0;
+        let status = AudioHardwareCreateProcessTap(desc, &mut tap_id);
+        if status != 0 || tap_id == 0 {
+            let _: () = msg_send![desc, release];
+            log::warn!("[system] probe: tap creation failed ({status}) — not authorized");
+            return TapAccess::Denied;
+        }
+        // An unauthorized tap can exist but exposes no usable stream format.
+        let access = if tap_sample_rate(tap_id).is_some() {
+            TapAccess::Granted
+        } else {
+            TapAccess::Denied
+        };
+        AudioHardwareDestroyProcessTap(tap_id);
+        let _: () = msg_send![desc, release];
+        access
+    }
+}
+
+/// System-audio capture ("them"). Holds an [`AppHandle`] so the capture thread
+/// can surface "tap started but no audio is arriving" to the frontend.
+pub struct SystemAudio {
+    pub app: AppHandle,
+}
 
 impl AudioSource for SystemAudio {
     fn start(
@@ -76,9 +126,21 @@ impl AudioSource for SystemAudio {
         tx: UnboundedSender<Vec<i16>>,
         running: Arc<AtomicBool>,
     ) -> Result<JoinHandle<()>> {
+        let app = self.app.clone();
         let handle = std::thread::spawn(move || {
-            if let Err(e) = run(tx, running) {
-                eprintln!("[system] tap capture unavailable, continuing mic-only: {e}");
+            if let Err(e) = run(tx, running, &app) {
+                log::warn!("[system] tap capture unavailable, continuing mic-only: {e}");
+                // Old macOS (< 14.2) simply has no tap API — the frontend shows
+                // no toast for "unsupported" (nothing the user can grant).
+                let code = if e.to_string().contains("CATapDescription") {
+                    "system-audio-unsupported"
+                } else {
+                    "system-audio-unavailable"
+                };
+                let _ = app.emit(
+                    "meeting://warning",
+                    serde_json::json!({ "code": code, "message": e.to_string() }),
+                );
             }
         });
         Ok(handle)
@@ -89,9 +151,12 @@ impl AudioSource for SystemAudio {
 struct TapContext {
     tx: UnboundedSender<Vec<i16>>,
     resampler: LinearResampler,
+    /// Frames delivered so far — read by the watchdog in `run` (separate Arc
+    /// clone, so no aliasing with the IOProc's &mut TapContext).
+    frames: Arc<AtomicU64>,
 }
 
-fn run(tx: UnboundedSender<Vec<i16>>, running: Arc<AtomicBool>) -> Result<()> {
+fn run(tx: UnboundedSender<Vec<i16>>, running: Arc<AtomicBool>, app: &AppHandle) -> Result<()> {
     unsafe {
         // 1. Describe a global stereo tap of all system output.
         let empty: *mut Object = msg_send![class!(NSArray), array];
@@ -159,14 +224,27 @@ fn run(tx: UnboundedSender<Vec<i16>>, running: Arc<AtomicBool>) -> Result<()> {
             ));
         }
 
-        // 4. Read the tap's audio format to configure the resampler.
-        let in_rate = tap_sample_rate(tap_id).unwrap_or(48_000.0);
-        eprintln!("[system] tap @ {in_rate} Hz → {TARGET_SAMPLE_RATE} Hz mono");
+        // 4. Read the tap's audio format to configure the resampler. Failing to
+        // read it is the "created but unauthorized" signature — keep going (the
+        // watchdog below reports if no frames ever arrive), but say why.
+        let in_rate = match tap_sample_rate(tap_id) {
+            Some(r) => r,
+            None => {
+                log::warn!(
+                    "[system] tap exposes no stream format — System Audio Recording permission \
+                     likely missing; assuming 48 kHz"
+                );
+                48_000.0
+            }
+        };
+        log::info!("[system] tap @ {in_rate} Hz → {TARGET_SAMPLE_RATE} Hz mono");
 
         // 5. Install + start the IOProc.
+        let frames = Arc::new(AtomicU64::new(0));
         let ctx = Box::new(TapContext {
             tx,
             resampler: LinearResampler::new(in_rate as u32, TARGET_SAMPLE_RATE),
+            frames: frames.clone(),
         });
         let ctx_ptr = Box::into_raw(ctx) as *mut c_void;
 
@@ -181,9 +259,29 @@ fn run(tx: UnboundedSender<Vec<i16>>, running: Arc<AtomicBool>) -> Result<()> {
         }
         AudioDeviceStart(agg_id, proc_id);
 
-        // 6. Hold the device open until the meeting stops, then tear everything down.
+        // 6. Hold the device open until the meeting stops, then tear everything
+        // down. Watchdog: an unauthorized tap "starts" fine but its IOProc never
+        // fires — detect that (zero frames a few seconds in) and tell the UI, so
+        // a permission problem doesn't just look like a silent remote party.
+        let started_at = Instant::now();
+        let mut checked = false;
         while running.load(Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(100));
+            if !checked && started_at.elapsed() >= Duration::from_secs(3) {
+                checked = true;
+                if frames.load(Ordering::Relaxed) == 0 {
+                    log::warn!(
+                        "[system] tap delivered no frames in 3s — grant \"System Audio \
+                         Recording\" (Settings → Permissions) and restart the meeting"
+                    );
+                    let _ = app.emit(
+                        "meeting://warning",
+                        serde_json::json!({ "code": "system-audio-silent" }),
+                    );
+                } else {
+                    crate::permissions::note_system_audio_granted();
+                }
+            }
         }
         AudioDeviceStop(agg_id, proc_id);
         AudioDeviceDestroyIOProcID(agg_id, proc_id);
@@ -223,6 +321,7 @@ unsafe extern "C" fn io_proc(
     let samples = std::slice::from_raw_parts(buf.mData as *const f32, sample_count);
 
     let frames = sample_count / channels;
+    ctx.frames.fetch_add(frames as u64, Ordering::Relaxed);
     let mut mono = Vec::with_capacity(frames);
     for f in 0..frames {
         let mut acc = 0.0f32;
