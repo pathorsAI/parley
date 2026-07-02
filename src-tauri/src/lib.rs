@@ -1,4 +1,5 @@
 mod audio;
+mod capture;
 mod commands;
 mod diarize;
 mod history;
@@ -16,8 +17,8 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
+use capture::MicCoordinator;
 use commands::MeetingState;
-use voice_typing::VoiceTypingState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -67,10 +68,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Single source of truth for "who owns the mic" (meeting / mic test /
+        // voice typing) — guarantees at most one live capture session.
+        .manage(MicCoordinator::default())
         .manage(MeetingState::default())
-        .manage(VoiceTypingState::default())
         // Native menu-bar "Diagnostics" submenu (View Logs + Clear Cache).
-        .menu(|handle| menu::build(handle))
+        .menu(menu::build)
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
         .setup(|app| {
             app.manage(mcp::start(app.handle().clone()));
