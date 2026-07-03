@@ -84,8 +84,9 @@ export function FindingsPanel({
         // Exclude trimmed (intro/post-meeting) lines from the debrief too.
         segments: s.segments.filter((seg) => !isTrimmed(seg, s.replayTrim)),
         evaluations: s.evaluations,
-        // Replay has its own action-items surface; don't fold (stale) live todos in.
-        todos: mode === "replay" ? [] : s.todos,
+        // The debrief is replay-only, and replay has its own action-items
+        // surface — so it never folds the (stale) live todos in.
+        todos: [],
         names: s.speakerNames,
         meetingContext: meetingBriefText(s),
         onDelta: (chunk) => setReport((prev) => prev + chunk),
