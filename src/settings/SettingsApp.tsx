@@ -375,7 +375,6 @@ export function SettingsApp() {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="max-w-sm text-[11px] text-muted-foreground">{t("settings.basic.languageHelp")}</p>
             </Field>
             <Field label={t("settings.basic.theme")}>
               <div className="grid max-w-sm grid-cols-3 rounded-md bg-muted p-0.5">
@@ -616,16 +615,24 @@ export function SettingsApp() {
                 </SelectContent>
               </Select>
             </Field>
-            <Field label={t("settings.transcription.apiKey", { provider: sttInfo.label })}>
-              <Input
-                type="password"
-                autoComplete="off"
-                placeholder={sttInfo.keyPlaceholder}
-                className="max-w-sm"
-                value={settings[sttInfo.apiKeyField] as string}
-                onChange={(e) => patch({ [sttInfo.apiKeyField]: e.target.value } as Partial<Settings>)}
-              />
-            </Field>
+            {/* Hosted "parley" authenticates with the cloud session token, not a
+                user-entered key — show whose account it bills to instead. */}
+            {settings.transcriptionProvider === "parley" ? (
+              <p className="max-w-md text-[11px] text-muted-foreground">
+                {t("settings.account.useParley.note", { email: cloudAuth?.user.email ?? "" })}
+              </p>
+            ) : (
+              <Field label={t("settings.transcription.apiKey", { provider: sttInfo.label })}>
+                <Input
+                  type="password"
+                  autoComplete="off"
+                  placeholder={sttInfo.keyPlaceholder}
+                  className="max-w-sm"
+                  value={settings[sttInfo.apiKeyField] as string}
+                  onChange={(e) => patch({ [sttInfo.apiKeyField]: e.target.value } as Partial<Settings>)}
+                />
+              </Field>
+            )}
             {!sttInfo.diarization && (
               <p className="max-w-md rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
                 {t("settings.transcription.noDiarizationWarning")}
@@ -671,11 +678,13 @@ export function SettingsApp() {
                     {t("settings.transcription.lockedWhileRecording")}
                   </p>
                 )}
+                {/* Mic troubleshooting lives with the mic field, not as a
+                    section-wide footnote. */}
+                <p className="text-[11px] text-muted-foreground">
+                  {t("settings.transcription.help")}
+                </p>
               </div>
             </Field>
-            <p className="max-w-md text-[11px] text-muted-foreground">
-              {t("settings.transcription.help")}
-            </p>
 
             {/* Live delivery coaching (issue #22): mic-only pace/pitch/pause/tone. */}
             <div className="flex max-w-md flex-col gap-2 rounded-lg border p-3">

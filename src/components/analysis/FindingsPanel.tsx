@@ -84,8 +84,9 @@ export function FindingsPanel({
         // Exclude trimmed (intro/post-meeting) lines from the debrief too.
         segments: s.segments.filter((seg) => !isTrimmed(seg, s.replayTrim)),
         evaluations: s.evaluations,
-        // Replay has its own action-items surface; don't fold (stale) live todos in.
-        todos: mode === "replay" ? [] : s.todos,
+        // The debrief is replay-only, and replay has its own action-items
+        // surface — so it never folds the (stale) live todos in.
+        todos: [],
         names: s.speakerNames,
         meetingContext: meetingBriefText(s),
         onDelta: (chunk) => setReport((prev) => prev + chunk),
@@ -132,17 +133,21 @@ export function FindingsPanel({
             {running ? t("analysis.analyzing") : t("analysis.run")}
           </Button>
         )}
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 px-2.5 text-[11px]"
-          disabled={reportStatus === "generating" || keyMissing}
-          onClick={() => void generateReport()}
-          title={t("evaluations.reportHint")}
-        >
-          <FileText className={`size-3 ${reportStatus === "generating" ? "animate-pulse" : ""}`} />
-          {t("evaluations.report")}
-        </Button>
+        {/* Debrief is a post-meeting artifact — surfacing it mid-meeting is
+            premature, so it only exists in REPLAY. */}
+        {mode === "replay" && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2.5 text-[11px]"
+            disabled={reportStatus === "generating" || keyMissing}
+            onClick={() => void generateReport()}
+            title={t("evaluations.reportHint")}
+          >
+            <FileText className={`size-3 ${reportStatus === "generating" ? "animate-pulse" : ""}`} />
+            {t("evaluations.report")}
+          </Button>
+        )}
         {mode === "live" && (
           <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
             <input
