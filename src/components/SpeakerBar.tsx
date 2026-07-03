@@ -51,7 +51,7 @@ export function SpeakerBar() {
       <MeetingContextButton />
       {speakers.length > 0 && (
         <>
-          <span className="text-[11px] text-muted-foreground">{t("meeting.speakers")}</span>
+          {/* No "Speakers:" label — the colored-dot inputs are self-explanatory. */}
           {speakers.map((sp) => (
             <div key={sp.key} className="flex items-center gap-1.5">
               <span className={`size-2 shrink-0 rounded-full ${speakerDotClass(sp)}`} />

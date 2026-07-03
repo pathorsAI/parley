@@ -132,17 +132,21 @@ export function FindingsPanel({
             {running ? t("analysis.analyzing") : t("analysis.run")}
           </Button>
         )}
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 px-2.5 text-[11px]"
-          disabled={reportStatus === "generating" || keyMissing}
-          onClick={() => void generateReport()}
-          title={t("evaluations.reportHint")}
-        >
-          <FileText className={`size-3 ${reportStatus === "generating" ? "animate-pulse" : ""}`} />
-          {t("evaluations.report")}
-        </Button>
+        {/* Debrief is a post-meeting artifact — surfacing it mid-meeting is
+            premature, so it only exists in REPLAY. */}
+        {mode === "replay" && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2.5 text-[11px]"
+            disabled={reportStatus === "generating" || keyMissing}
+            onClick={() => void generateReport()}
+            title={t("evaluations.reportHint")}
+          >
+            <FileText className={`size-3 ${reportStatus === "generating" ? "animate-pulse" : ""}`} />
+            {t("evaluations.report")}
+          </Button>
+        )}
         {mode === "live" && (
           <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
             <input
