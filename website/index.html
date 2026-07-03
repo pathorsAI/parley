@@ -90,6 +90,7 @@
         <a href="#how">Workflow</a>
         <a href="#showcase">Showcase</a>
         <a href="#voice-typing">Voice typing</a>
+        <a href="#mcp">MCP</a>
         <a href="#stack">Open source</a>
         <a href="https://pathors.com" target="_blank" rel="noopener">Pathors AI ↗</a>
       </nav>
@@ -366,6 +367,37 @@
             </figure>
           </div>
         </div>
+      </section>
+
+      <!-- MCP: connect your own AI client to the live meeting -->
+      <section class="section" id="mcp">
+        <div class="section__head reveal">
+          <span class="eyebrow">Built-in MCP server</span>
+          <h2>Ask the meeting from your own AI</h2>
+          <p>Parley runs a local Model Context Protocol server. Point Claude — or any MCP client — at it and query the live call as it happens, with the AI app you already use.</p>
+        </div>
+
+        <div class="feature-rows">
+          <div class="feature-row reveal">
+            <div class="feature-row__copy">
+              <span class="eyebrow eyebrow--sm">Model Context Protocol</span>
+              <h3>Your AI, wired into the live call</h3>
+              <p>No extra key inside Parley — connect the assistant you already pay for and let it read the running transcript, then ask <em>"what did they commit to?"</em> or <em>"what haven't I asked yet?"</em> grounded in the meeting.</p>
+              <ul class="checklist">
+                <li>Reads the live, speaker-labelled transcript</li>
+                <li>Can drive the agenda, evaluations, and timeline</li>
+                <li>Works with Claude, Cursor, and any MCP client</li>
+              </ul>
+            </div>
+            <div class="codeblock reveal">
+              <button class="copy" data-copy="claude mcp add --transport http parley http://127.0.0.1:3011/mcp">Copy</button>
+              <pre><code><span class="c-cmt"># Connect your MCP client — keep Parley open</span>
+claude mcp add --transport http parley \
+  http://127.0.0.1:3011/mcp</code></pre>
+            </div>
+          </div>
+        </div>
+        <p class="mcp-note">The exact endpoint (and a ready-to-paste command) lives in <strong>Settings → MCP Server</strong>.</p>
       </section>
 
       <!-- Impact / provider support -->
