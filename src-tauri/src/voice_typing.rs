@@ -12,28 +12,25 @@
 // The `objc` 0.2 macros emit `cfg(cargo-clippy)` checks newer compilers warn on.
 #![allow(unexpected_cfgs)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
+use tauri::{AppHandle, State};
 
-use tauri::{AppHandle, Emitter, Manager, State};
+use crate::audio::microphone::Microphone;
+use crate::capture::{run_metered_session, spawn_capture, Begin, MicCoordinator, MicUser};
+use crate::commands::{read_config_file, write_config_file};
+use crate::transcription::{SttProvider, TranscribeConfig};
 
-use crate::audio::{microphone::Microphone, AudioSource};
-use crate::transcription::{self, SttProvider, TranscribeConfig};
-
-/// Shared state for the single in-flight voice-typing session. `running` gates
-/// the mic capture thread; clearing it ends capture, which closes the STT WS.
-#[derive(Default)]
-pub struct VoiceTypingState {
-    running: Arc<AtomicBool>,
-    threads: Mutex<Vec<JoinHandle<()>>>,
-}
-
-/// Start a mic-only streaming transcription. Idempotent while already running.
+/// Start a mic-only streaming transcription. Idempotent while already running;
+/// refused while a meeting owns the mic (a second input stream could kill the
+/// meeting's capture — see [`MicCoordinator`]).
+///
+/// Streams mic -> provider, emitting `transcript://segment` + `audio://level`
+/// with source "voice-typing"; the overlay window listens for both. The shared
+/// metered session bills the streamed audio under the distinct
+/// `source: "voice-typing"` label (kept separate from meeting usage).
 #[tauri::command]
 pub fn start_voice_typing(
     app: AppHandle,
-    state: State<VoiceTypingState>,
+    coord: State<MicCoordinator>,
     provider: String,
     api_key: String,
     model: Option<String>,
@@ -44,10 +41,11 @@ pub fn start_voice_typing(
     if api_key.trim().is_empty() {
         return Err("missing transcription API key".into());
     }
-    if state.running.swap(true, Ordering::SeqCst) {
-        return Ok(());
-    }
-    let running = state.running.clone();
+    let gate = match coord.begin(MicUser::VoiceTyping) {
+        Begin::Started(gate) => gate,
+        Begin::AlreadyActive => return Ok(()),
+        Begin::Busy(_) => return Err("microphone is in use by the meeting".into()),
+    };
     let model = model
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| provider.default_model().to_string());
@@ -60,69 +58,29 @@ pub fn start_voice_typing(
         relay_endpoint: None,
     };
 
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-    match (Microphone {
+    let mic = Microphone {
         device_name: input_device,
-    })
-    .start(tx, running.clone())
-    {
-        Ok(handle) => state.threads.lock().unwrap().push(handle),
+    };
+    let rx = match spawn_capture(&coord, MicUser::VoiceTyping, mic, gate, "voice-typing") {
+        Ok(rx) => rx,
         Err(e) => {
-            state.running.store(false, Ordering::SeqCst);
+            coord.stop(MicUser::VoiceTyping);
             return Err(format!("microphone failed to start: {e}"));
         }
-    }
-
-    // Stream mic -> provider. Emits `transcript://segment` + `audio://level`
-    // with source "voice-typing"; the overlay window listens for both. A sample
-    // counter is interposed so we can bill the streamed audio under a distinct
-    // `source: "voice-typing"` label (kept separate from meeting usage).
-    tauri::async_runtime::spawn(async move {
-        let (count_tx, count_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-        let counter = tauri::async_runtime::spawn(async move {
-            let mut rx = rx;
-            let mut samples: u64 = 0;
-            while let Some(chunk) = rx.recv().await {
-                samples += chunk.len() as u64;
-                if count_tx.send(chunk).is_err() {
-                    break;
-                }
-            }
-            samples
-        });
-
-        if let Err(e) =
-            transcription::run_session(provider, app.clone(), config, "voice-typing", count_rx)
-                .await
-        {
-            log::warn!("voice-typing: session ended: {e}");
-        }
-
-        let samples = counter.await.unwrap_or(0);
-        let seconds = samples as f64 / crate::audio::TARGET_SAMPLE_RATE as f64;
-        let _ = app.emit(
-            "usage://stt",
-            serde_json::json!({
-                "provider": provider.id(),
-                "source": "voice-typing",
-                "seconds": seconds,
-            }),
-        );
-    });
+    };
+    run_metered_session(&app, provider, config, "voice-typing", rx, None, false);
     Ok(())
 }
 
-/// Path to the voice-typing history file (one JSON object per line).
-fn voice_history_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    Ok(dir.join("voice_typing_history.jsonl"))
-}
+/// Name of the voice-typing history file (one JSON object per line) in the app
+/// config dir.
+const HISTORY_FILE: &str = "voice_typing_history.jsonl";
 
 /// Append one history entry (a JSON line: `{ id, text, ts }`).
 #[tauri::command]
 pub fn append_voice_history(app: AppHandle, line: String) -> Result<(), String> {
     use std::io::Write;
-    let path = voice_history_path(&app)?;
+    let path = crate::commands::app_config_file(&app, HISTORY_FILE)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -138,31 +96,21 @@ pub fn append_voice_history(app: AppHandle, line: String) -> Result<(), String> 
 /// the JSONL and owns filtering for delete/clear (which write the file back).
 #[tauri::command]
 pub fn read_voice_history(app: AppHandle) -> Result<String, String> {
-    match std::fs::read_to_string(voice_history_path(&app)?) {
-        Ok(s) => Ok(s),
-        Err(_) => Ok(String::new()),
-    }
+    read_config_file(&app, HISTORY_FILE)
 }
 
 /// Overwrite the history file (used by delete-one / clear-all).
 #[tauri::command]
 pub fn write_voice_history(app: AppHandle, content: String) -> Result<(), String> {
-    let path = voice_history_path(&app)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&path, content).map_err(|e| e.to_string())
+    write_config_file(&app, HISTORY_FILE, &content)
 }
 
-/// Stop the session: clear `running` and join the mic thread (which drops its
-/// PCM sender, closing the STT session cleanly).
+/// Stop the session: clear its gate and join the mic thread with a bounded
+/// grace (which drops its PCM sender, closing the STT session cleanly). No-op
+/// if voice typing doesn't own the mic.
 #[tauri::command]
-pub fn stop_voice_typing(state: State<VoiceTypingState>) {
-    state.running.store(false, Ordering::SeqCst);
-    let handles: Vec<JoinHandle<()>> = state.threads.lock().unwrap().drain(..).collect();
-    for h in handles {
-        let _ = h.join();
-    }
+pub fn stop_voice_typing(coord: State<MicCoordinator>) {
+    coord.stop(MicUser::VoiceTyping);
 }
 
 /// Copy text to the system clipboard via the native pasteboard. Needed because
