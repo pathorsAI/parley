@@ -31,6 +31,10 @@ let down = false;
 let busy = false;
 /** The backend reported the STT session dead (voicetyping://error). */
 let failed = false;
+/** Session generation. A finalize that was still awaiting its copy/paste when
+ *  a NEW session started must not run its tail (emit "done" + schedule hide)
+ *  against the new session's overlay. */
+let gen = 0;
 let settleTimer: ReturnType<typeof setTimeout> | undefined;
 let hideTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -40,8 +44,15 @@ export function initVoiceTyping(): () => void {
   let unPtt: UnlistenFn = () => {};
   let unText: UnlistenFn = () => {};
   let unErr: UnlistenFn = () => {};
+  // Serialize press/release handling: a quick tap used to run endSession's
+  // `stop_voice_typing` while startSession's invoke was still in flight, so
+  // the stop reached Rust FIRST and no-op'd — leaving a live, ownerless
+  // backend session (mic claimed, socket open) behind. Chaining guarantees
+  // start has resolved before its matching stop is issued.
+  let pttChain: Promise<void> = Promise.resolve();
   listen<{ down: boolean }>("voicetyping://ptt", (e) => {
-    onPtt(e.payload.down).catch(() => {});
+    const isDown = e.payload.down;
+    pttChain = pttChain.then(() => onPtt(isDown)).catch(() => {});
   })
     .then((u) => (unPtt = u))
     .catch(() => {});
@@ -100,7 +111,15 @@ async function onPtt(isDown: boolean) {
 }
 
 async function startSession() {
-  if (busy) return;
+  if (busy) {
+    // A press during the previous dictation's settle window. Swallowing it
+    // (the old behavior) left the user talking into nothing — instead deliver
+    // the pending text now and fall through to a fresh session. The backend
+    // start also aborts any session task still flushing, so the old session
+    // cannot leak tokens into the new overlay.
+    clearTimeout(settleTimer);
+    await finalize().catch(() => {});
+  }
   const { settings } = useStore.getState();
   if (!settings.voiceTypingEnabled) return;
   const provider = settings.transcriptionProvider;
@@ -114,6 +133,7 @@ async function startSession() {
   }
   busy = true;
   failed = false;
+  gen += 1;
   latestText = "";
   lastTextAt = Date.now();
   clearTimeout(settleTimer);
@@ -174,6 +194,7 @@ function waitForSettle() {
 }
 
 async function finalize() {
+  const myGen = gen;
   busy = false;
   const text = latestText.trim();
   if (text) {
@@ -189,6 +210,11 @@ async function finalize() {
     }
     appendVoiceEntry(text).catch(() => {});
   }
+  // A new press may have started a session while the copy/paste above was in
+  // flight — its overlay is live, and this finalize's tail must not flip it to
+  // "done" or hide it. The text above was still delivered (it predates the
+  // new session).
+  if (gen !== myGen) return;
   await emit("voicetyping://session", { phase: "done", message: text ? "ok" : "empty" });
   scheduleHide();
 }
