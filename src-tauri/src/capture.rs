@@ -182,9 +182,10 @@ pub type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
 /// frontend can bill it. Emits a `usage://stt` event when the session ends.
 /// When `recorder` is `Some`, every chunk is also appended to it so the meeting
 /// can be saved to history (only the designated session passes a recorder).
-/// `emit_error_event` controls whether a failed session raises `meeting://error`
-/// (the meeting UI tears down on it); voice typing passes `false` and surfaces
-/// errors through its own overlay instead.
+/// `error_event` is the event a failed session raises, payload
+/// `{ source, code, message }`: meetings pass `meeting://error` (the meeting UI
+/// tears down on it), voice typing passes `voicetyping://error` (the host
+/// forwards it to the overlay's error state).
 pub fn run_metered_session(
     app: &AppHandle,
     provider: SttProvider,
@@ -192,7 +193,7 @@ pub fn run_metered_session(
     label: &'static str,
     rx: UnboundedReceiver<Vec<i16>>,
     recorder: Option<RecorderBuf>,
-    emit_error_event: bool,
+    error_event: &'static str,
 ) -> tauri::async_runtime::JoinHandle<()> {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -223,24 +224,22 @@ pub fn run_metered_session(
         {
             let msg = e.to_string();
             log::warn!("[stt:{label}] session ended: {msg}");
-            if emit_error_event {
-                // Surface the failure to the UI instead of silently leaving the
-                // meeting in "recording" with no transcript. Hosted mode hits
-                // this routinely (402 out of credits / 401 expired session at
-                // connect); BYOK hits it on a bad key. Classify so the frontend
-                // can show an actionable message.
-                let code = if msg.contains("402") {
-                    "quota"
-                } else if msg.contains("401") {
-                    "auth"
-                } else {
-                    "connect"
-                };
-                let _ = app.emit(
-                    "meeting://error",
-                    serde_json::json!({ "source": label, "code": code, "message": msg }),
-                );
-            }
+            // Surface the failure to the UI instead of silently leaving the
+            // meeting in "recording" (or the dictation overlay listening) with
+            // no transcript. Hosted mode hits this routinely (402 out of
+            // credits / 401 expired session at connect); BYOK hits it on a bad
+            // key. Classify so the frontend can show an actionable message.
+            let code = if msg.contains("402") {
+                "quota"
+            } else if msg.contains("401") {
+                "auth"
+            } else {
+                "connect"
+            };
+            let _ = app.emit(
+                error_event,
+                serde_json::json!({ "source": label, "code": code, "message": msg }),
+            );
         }
 
         let samples = counter.await.unwrap_or(0);

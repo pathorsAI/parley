@@ -155,6 +155,13 @@ pub fn start_meeting(
         return Err("missing transcription API key".into());
     }
     let relay_endpoint = relay_url.filter(|u| !u.trim().is_empty());
+    // Hosted mode's api_key is the cloud session token, which only the relay
+    // accepts — streaming it straight to the vendor dies with an opaque
+    // in-band auth error. Refuse loudly instead (a call site that forgot
+    // relayUrl is a frontend bug).
+    if provider == SttProvider::Parley && relay_endpoint.is_none() {
+        return Err("hosted transcription requires the cloud relay URL".into());
+    }
     // Claim the mic. A meeting outranks the Settings mic test and voice typing,
     // so the coordinator stops either one first (device released before our
     // capture opens); a second start while a meeting runs is an idempotent no-op.
@@ -226,7 +233,7 @@ pub fn start_meeting(
                         "mix",
                         rx_mix,
                         Some(recorder),
-                        true,
+                        "meeting://error",
                     ));
                 }
                 // If one capture failed, transcribe + record whichever started.
@@ -238,7 +245,7 @@ pub fn start_meeting(
                         "me",
                         a,
                         Some(recorder),
-                        true,
+                        "meeting://error",
                     ));
                 }
                 (None, Some(b)) => {
@@ -249,7 +256,7 @@ pub fn start_meeting(
                         "them",
                         b,
                         Some(recorder),
-                        true,
+                        "meeting://error",
                     ));
                 }
                 (None, None) => {
@@ -283,7 +290,7 @@ pub fn start_meeting(
                     "me",
                     rx,
                     Some(recorder),
-                    true,
+                    "meeting://error",
                 ));
             }
             if let Ok(rx) = spawn_capture(&coord, MicUser::Meeting, sys, gate.clone(), "them") {
@@ -294,7 +301,7 @@ pub fn start_meeting(
                     "them",
                     rx,
                     None,
-                    true,
+                    "meeting://error",
                 ));
             }
         }
@@ -314,7 +321,7 @@ pub fn start_meeting(
                 "me",
                 rx,
                 Some(recorder),
-                true,
+                "meeting://error",
             );
             state.tasks.lock().unwrap().push(task);
         }

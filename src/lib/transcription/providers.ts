@@ -1,6 +1,6 @@
 import type { Settings, SttProviderId } from "../types";
 import { PROVIDER_BY_ID } from "../ai/providers";
-import { cloudToken } from "../cloud/client";
+import { CLOUD_URL, cloudToken } from "../cloud/client";
 
 /**
  * Single source of truth for speech-to-text providers, mirroring the Rust
@@ -63,4 +63,15 @@ export const STT_BY_ID = Object.fromEntries(STT_PROVIDERS.map((p) => [p.id, p]))
 export function sttApiKey(settings: Settings, id: SttProviderId): string {
   if (id === "parley") return cloudToken() ?? "";
   return (settings[STT_BY_ID[id].apiKeyField] as string) ?? "";
+}
+
+/**
+ * The STT relay endpoint for a provider: hosted "parley" streams audio through
+ * Parley Cloud (a `wss://` URL, authenticated with the session token from
+ * `sttApiKey`), so the vendor key never lives on the client. BYOK providers
+ * connect straight to their vendor — no relay. Every streaming start command
+ * (meeting AND voice typing) must pass this alongside the key.
+ */
+export function sttRelayUrl(id: SttProviderId): string | undefined {
+  return id === "parley" ? `${CLOUD_URL.replace(/^http/, "ws")}/stt/stream` : undefined;
 }

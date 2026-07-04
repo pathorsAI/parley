@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { listen, emit } from "@tauri-apps/api/event";
 import { Check, Loader2, Mic } from "lucide-react";
 import { toTraditional } from "../lib/zhConvert";
-import { useI18n } from "../i18n";
+import { useI18n, type TranslationKey } from "../i18n";
 import { useThemePreference } from "../lib/theme";
 
 const BAR_COUNT = 20;
@@ -26,6 +26,15 @@ interface SessionPayload {
   phase: "start" | "stop" | "done" | "error";
   message?: string;
 }
+
+/** Overlay message per error phase `message`: the host's own "no-key", or a
+ *  backend failure code from `voicetyping://error` (see capture.rs). Anything
+ *  unrecognized falls back to the generic error string. */
+const ERROR_KEYS: Record<string, TranslationKey> = {
+  "no-key": "voiceTyping.noKey",
+  quota: "voiceTyping.error.quota",
+  auth: "voiceTyping.error.auth",
+};
 
 /** listening = recording; finalizing = waiting for the STT final flush; done =
  *  copied. */
@@ -139,7 +148,7 @@ export const VoiceTypingApp = () => {
       } else if (p === "done") {
         setPhase("done");
       } else if (p === "error") {
-        setError(message === "no-key" ? "noKey" : "error");
+        setError(message || "error");
         setPhase("done");
       }
     })
@@ -156,7 +165,7 @@ export const VoiceTypingApp = () => {
     return () => clearInterval(id);
   }, [phase]);
 
-  const errorKey = error === "noKey" ? "voiceTyping.noKey" : "voiceTyping.error";
+  const errorKey = (error && ERROR_KEYS[error]) || "voiceTyping.error";
   const bubble = error ? t(errorKey) : text;
 
   let phaseIcon = <Mic className="size-2.5" />;

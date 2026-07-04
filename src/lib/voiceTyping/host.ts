@@ -11,7 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "../tauriEvents";
 import { useStore } from "../store";
-import { sttApiKey } from "../transcription/providers";
+import { sttApiKey, sttRelayUrl } from "../transcription/providers";
 import { log } from "../log";
 import { showOverlay, hideOverlay, prewarmOverlay } from "./overlay";
 import { appendVoiceEntry } from "./history";
@@ -29,6 +29,8 @@ let lastTextAt = 0;
 let releasedAt = 0;
 let down = false;
 let busy = false;
+/** The backend reported the STT session dead (voicetyping://error). */
+let failed = false;
 let settleTimer: ReturnType<typeof setTimeout> | undefined;
 let hideTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -37,6 +39,7 @@ export function initVoiceTyping(): () => void {
   if (!isTauri()) return () => {};
   let unPtt: UnlistenFn = () => {};
   let unText: UnlistenFn = () => {};
+  let unErr: UnlistenFn = () => {};
   listen<{ down: boolean }>("voicetyping://ptt", (e) => {
     onPtt(e.payload.down).catch(() => {});
   })
@@ -47,6 +50,21 @@ export function initVoiceTyping(): () => void {
     lastTextAt = Date.now();
   })
     .then((u) => (unText = u))
+    .catch(() => {});
+  // Backend STT failure (rejected key, expired hosted session, out of
+  // credits). The host owns the session lifecycle, so it bridges the event
+  // into the overlay's one error surface (`voicetyping://session`) — the code
+  // picks the overlay message (quota/auth/…). Without this, a dead session
+  // looks like successful silence: frozen waveform, no transcript, no
+  // explanation. The mic stays claimed until release; endSession still stops
+  // it, and finalize still delivers whatever text arrived before the death.
+  listen<{ code: string }>("voicetyping://error", (e) => {
+    if (!busy) return; // stale event from an already-finished session
+    failed = true;
+    log.warn("voice-typing: session failed", { code: e.payload.code });
+    emit("voicetyping://session", { phase: "error", message: e.payload.code }).catch(() => {});
+  })
+    .then((u) => (unErr = u))
     .catch(() => {});
   // Apply the saved push-to-talk key so the right trigger is live from launch
   // (registers Option+Space, or arms the HID tap for a modifier key). The
@@ -70,6 +88,7 @@ export function initVoiceTyping(): () => void {
   return () => {
     unPtt();
     unText();
+    unErr();
   };
 }
 
@@ -94,6 +113,7 @@ async function startSession() {
     return;
   }
   busy = true;
+  failed = false;
   latestText = "";
   lastTextAt = Date.now();
   clearTimeout(settleTimer);
@@ -106,6 +126,7 @@ async function startSession() {
       apiKey,
       languageHints: [],
       inputDevice: settings.inputDevice ?? null,
+      relayUrl: sttRelayUrl(provider),
     });
     log.info("voice-typing: session started", { provider });
   } catch (e) {
@@ -125,6 +146,13 @@ async function endSession() {
     await invoke("stop_voice_typing");
   } catch (e) {
     log.warn("voice-typing: stop failed", { error: String(e) });
+  }
+  if (failed) {
+    // The session already died — no final flush is coming, and emitting
+    // "stop" would replace the overlay's error state with a spinner. Deliver
+    // whatever text arrived before the death right away.
+    finalize().catch(() => {});
+    return;
   }
   await emit("voicetyping://session", { phase: "stop" });
   waitForSettle();
