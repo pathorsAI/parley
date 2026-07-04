@@ -173,7 +173,10 @@ pub async fn run_session(
         }
     };
 
-    // Read tokens → speaker-runs via the shared SegmentBuilder.
+    // Read tokens → speaker-runs via the shared SegmentBuilder. Resolves to
+    // Err on an in-band error frame (e.g. a rejected api key) so the caller's
+    // error surface fires — the session is dead from that point, and returning
+    // Ok would leave the UI listening to nothing.
     let read_loop = async move {
         let mut builder = SegmentBuilder::new(app.clone(), source, TRANSCRIPT_EVENT);
         let mut msg_count: u64 = 0;
@@ -209,11 +212,9 @@ pub async fn run_session(
             };
 
             if let Some(code) = resp.error_code {
-                eprintln!(
-                    "[soniox:{source}] error {code}: {}",
-                    resp.error_message.unwrap_or_default()
-                );
-                break;
+                let detail = resp.error_message.unwrap_or_default();
+                eprintln!("[soniox:{source}] error {code}: {detail}");
+                return Err(anyhow!("server error {code}: {detail}"));
             }
 
             let mut tail = String::new();
@@ -247,8 +248,19 @@ pub async fn run_session(
                 break;
             }
         }
+        Ok(())
     };
 
-    tokio::join!(forward, read_loop);
-    Ok(())
+    // Normal end: `forward` finishes first (input drained, finalize sent), then
+    // the read half is awaited for the flushed tail. If `read_loop` resolves
+    // FIRST the session is dead (error frame or server close) while audio is
+    // still flowing — return immediately, dropping `forward`: keeping it alive
+    // would stream mic audio (and meter billable seconds) into a dead socket
+    // until the user releases the key, delaying the error event the whole time.
+    tokio::pin!(forward);
+    tokio::pin!(read_loop);
+    tokio::select! {
+        _ = &mut forward => read_loop.await,
+        result = &mut read_loop => result,
+    }
 }

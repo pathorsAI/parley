@@ -26,8 +26,11 @@ use crate::transcription::{SttProvider, TranscribeConfig};
 /// Streams mic -> provider, emitting `transcript://segment` + `audio://level`
 /// with source "voice-typing"; the overlay window listens for both. The shared
 /// metered session bills the streamed audio under the distinct
-/// `source: "voice-typing"` label (kept separate from meeting usage).
+/// `source: "voice-typing"` label (kept separate from meeting usage). A failed
+/// session raises `voicetyping://error`, which the overlay renders (voice
+/// typing has no other error surface — see `run_metered_session`).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn start_voice_typing(
     app: AppHandle,
     coord: State<MicCoordinator>,
@@ -36,10 +39,20 @@ pub fn start_voice_typing(
     model: Option<String>,
     language_hints: Option<Vec<String>>,
     input_device: Option<String>,
+    // Hosted "parley" mode: the cloud STT relay's `wss://` URL. When set,
+    // `api_key` is the cloud Bearer token (not a vendor key) and the adapter
+    // relays through this URL. Absent for BYOK providers. Same contract as
+    // `start_meeting`.
+    relay_url: Option<String>,
 ) -> Result<(), String> {
     let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
     if api_key.trim().is_empty() {
         return Err("missing transcription API key".into());
+    }
+    let relay_endpoint = relay_url.filter(|u| !u.trim().is_empty());
+    // Same guard as start_meeting: the hosted token only works via the relay.
+    if provider == SttProvider::Parley && relay_endpoint.is_none() {
+        return Err("hosted transcription requires the cloud relay URL".into());
     }
     let gate = match coord.begin(MicUser::VoiceTyping) {
         Begin::Started(gate) => gate,
@@ -54,8 +67,7 @@ pub fn start_voice_typing(
         model,
         language_hints: language_hints.unwrap_or_default(),
         diarization: false,
-        // Voice typing is BYOK-only (no hosted relay).
-        relay_endpoint: None,
+        relay_endpoint,
     };
 
     let mic = Microphone {
@@ -68,7 +80,15 @@ pub fn start_voice_typing(
             return Err(format!("microphone failed to start: {e}"));
         }
     };
-    run_metered_session(&app, provider, config, "voice-typing", rx, None, false);
+    run_metered_session(
+        &app,
+        provider,
+        config,
+        "voice-typing",
+        rx,
+        None,
+        "voicetyping://error",
+    );
     Ok(())
 }
 
