@@ -34,6 +34,7 @@ const ERROR_KEYS: Record<string, TranslationKey> = {
   "no-key": "voiceTyping.noKey",
   quota: "voiceTyping.error.quota",
   auth: "voiceTyping.error.auth",
+  key: "voiceTyping.error.key",
 };
 
 /** listening = recording; finalizing = waiting for the STT final flush; done =

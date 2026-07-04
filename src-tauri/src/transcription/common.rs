@@ -133,6 +133,58 @@ pub async fn connect_with_headers(
     Ok(ws)
 }
 
+/// Drive a realtime session's two halves to completion and classify the
+/// outcome. Every adapter hands over:
+/// - `forward`: pumps PCM to the socket; resolves `true` when it drained its
+///   input (the capture side closed — a normal stop) and `false` when a send
+///   failed mid-stream (the socket died under it).
+/// - `read_loop`: parses server frames; resolves `Err` on a terminal in-band
+///   error, `Ok` when the stream ends any other way.
+///
+/// The classification rule: a session that ends while audio is still flowing
+/// is a failure even when no explicit error frame arrived — otherwise a
+/// mid-session disconnect is indistinguishable from successful silence
+/// (frozen level meter, no transcript, no event; see `run_metered_session`'s
+/// error surface). A normal stop instead awaits the read half so the
+/// provider's final-token flush is delivered before the session resolves.
+pub async fn drive_session<F, R>(provider: &'static str, forward: F, read_loop: R) -> Result<()>
+where
+    F: std::future::Future<Output = bool>,
+    R: std::future::Future<Output = Result<()>>,
+{
+    tokio::pin!(forward);
+    tokio::pin!(read_loop);
+    tokio::select! {
+        drained = &mut forward => {
+            if drained {
+                // Normal stop: wait for the final flush. A terminal in-band
+                // error during the flush still surfaces.
+                read_loop.await
+            } else {
+                // A send failed, so the socket is gone. Give the read half a
+                // short grace to deliver the server's explanation (an in-band
+                // error frame beats a generic message) — but bounded, because
+                // a half-dead connection can leave the read side hanging far
+                // longer than the failure took.
+                let death = || anyhow!("{provider} stream died mid-session (send failed)");
+                match tokio::time::timeout(std::time::Duration::from_secs(5), read_loop).await {
+                    Ok(read_result) => {
+                        read_result?;
+                        Err(death())
+                    }
+                    Err(_elapsed) => Err(death()),
+                }
+            }
+        }
+        result = &mut read_loop => {
+            // The server ended the stream while audio was still flowing:
+            // propagate its error frame, or report the unexplained death.
+            result?;
+            Err(anyhow!("{provider} stream ended mid-session"))
+        }
+    }
+}
+
 /// Tracks the peak of the captured PCM and emits a ~10 Hz level event. Adapters
 /// call [`LevelMeter::push`] for every PCM chunk they forward.
 pub struct LevelMeter {

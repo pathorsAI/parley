@@ -219,6 +219,10 @@ pub fn run_metered_session(
             samples
         });
 
+        // Hosted mode and BYOK fail for different reasons and need different
+        // guidance, so classify against the mode (captured before `config` is
+        // moved into the session).
+        let hosted = config.relay_endpoint.is_some();
         if let Err(e) =
             transcription::run_session(provider, app.clone(), config, label, count_rx).await
         {
@@ -226,13 +230,23 @@ pub fn run_metered_session(
             log::warn!("[stt:{label}] session ended: {msg}");
             // Surface the failure to the UI instead of silently leaving the
             // meeting in "recording" (or the dictation overlay listening) with
-            // no transcript. Hosted mode hits this routinely (402 out of
-            // credits / 401 expired session at connect); BYOK hits it on a bad
-            // key. Classify so the frontend can show an actionable message.
-            let code = if msg.contains("402") {
+            // no transcript. Classify so the frontend can show an actionable
+            // message. Hosted mode routinely hits 402 (out of credits) / 401
+            // (expired cloud session) — the fix is billing or re-login. BYOK
+            // instead fails on a rejected vendor key (401/403/"unauthorized"),
+            // where telling the user to "sign in" is wrong — the fix is the key
+            // in Settings.
+            let low = msg.to_lowercase();
+            let bad_key = msg.contains("401")
+                || msg.contains("403")
+                || low.contains("unauthorized")
+                || low.contains("api key");
+            let code = if hosted && msg.contains("402") {
                 "quota"
-            } else if msg.contains("401") {
+            } else if hosted && msg.contains("401") {
                 "auth"
+            } else if !hosted && bad_key {
+                "key"
             } else {
                 "connect"
             };

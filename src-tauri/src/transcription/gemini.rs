@@ -5,17 +5,18 @@
 //! Note: Gemini Live does not diarize input audio and gives no per-word
 //! timestamps, so segments are emitted under speaker 0 with zeroed timings.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
 use tauri::AppHandle;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    connect_with_headers, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
+    connect_with_headers, drive_session, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
     TRANSCRIPT_EVENT,
 };
 use crate::audio::resample::pcm_to_le_bytes;
@@ -77,9 +78,14 @@ pub async fn run_session(
 
     let mime = format!("audio/pcm;rate={}", TARGET_SAMPLE_RATE);
     let mut meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
+    // Resolves with whether the input drained (normal stop) or a send failed
+    // (dead socket) — drive_session reports the latter as a failure.
     let forward = async move {
         let b64 = base64::engine::general_purpose::STANDARD;
-        while let Some(chunk) = pcm_rx.recv().await {
+        let drained = loop {
+            let Some(chunk) = pcm_rx.recv().await else {
+                break true;
+            };
             meter.push(&chunk);
             let bytes = pcm_to_le_bytes(&chunk);
             let data = b64.encode(&bytes);
@@ -87,10 +93,11 @@ pub async fn run_session(
                 "realtimeInput": { "mediaChunks": [ { "mimeType": mime, "data": data } ] }
             });
             if write.send(Message::Text(msg.to_string())).await.is_err() {
-                break;
+                break false;
             }
-        }
+        };
         let _ = write.close().await;
+        drained
     };
 
     let read_loop = async move {
@@ -103,6 +110,19 @@ pub async fn run_session(
                 Ok(Message::Binary(b)) => String::from_utf8_lossy(&b).into_owned(),
                 Ok(Message::Close(frame)) => {
                     eprintln!("[gemini:{source}] closed by server: {frame:?}");
+                    // Gemini Live signals terminal errors (bad key, quota,
+                    // invalid setup) by closing with an abnormal code + reason
+                    // rather than an in-band message. A normal close (1000)
+                    // follows our own close.
+                    if let Some(f) = frame {
+                        if f.code != CloseCode::Normal {
+                            return Err(anyhow!(
+                                "closed by server: {} {}",
+                                u16::from(f.code),
+                                f.reason
+                            ));
+                        }
+                    }
                     break;
                 }
                 Ok(_) => continue,
@@ -134,8 +154,8 @@ pub async fn run_session(
                 builder.emit_tail("", 0, 0); // clear the tail
             }
         }
+        Ok(())
     };
 
-    tokio::join!(forward, read_loop);
-    Ok(())
+    drive_session("gemini", forward, read_loop).await
 }

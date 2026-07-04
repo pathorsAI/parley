@@ -88,7 +88,8 @@ export async function listenForProsody(): Promise<UnlistenFn> {
 /** Shape of the `meeting://error` payload (a transcription session failed). */
 interface MeetingErrorPayload {
   source: string;
-  /** "quota" (402) | "auth" (401) | "capture" (no audio source) | "connect" (other). */
+  /** Hosted: "quota" (402) | "auth" (401 expired session). BYOK: "key"
+   *  (rejected vendor key). Either: "capture" (no audio source) | "connect". */
   code: string;
   message: string;
 }
@@ -114,9 +115,11 @@ export async function listenForMeetingError(): Promise<UnlistenFn> {
         ? "meeting.error.quota"
         : code === "auth"
           ? "meeting.error.auth"
-          : code === "capture"
-            ? "meeting.error.capture"
-            : "meeting.error.connect";
+          : code === "key"
+            ? "meeting.error.key"
+            : code === "capture"
+              ? "meeting.error.capture"
+              : "meeting.error.connect";
     toast.error(translate(useStore.getState().settings.language, key));
   });
 }
