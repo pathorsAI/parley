@@ -72,6 +72,9 @@ pub fn run() {
         // voice typing) — guarantees at most one live capture session.
         .manage(MicCoordinator::default())
         .manage(MeetingState::default())
+        // Singleton guard for the voice-typing session task (abort-on-restart
+        // + bounded post-release flush) — see voice_typing::VoiceTypingState.
+        .manage(voice_typing::VoiceTypingState::default())
         // Native menu-bar "Diagnostics" submenu (View Logs + Clear Cache).
         .menu(menu::build)
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))

@@ -40,8 +40,15 @@ export function initVoiceTyping(): () => void {
   let unPtt: UnlistenFn = () => {};
   let unText: UnlistenFn = () => {};
   let unErr: UnlistenFn = () => {};
+  // Serialize press/release handling: a quick tap used to run endSession's
+  // `stop_voice_typing` while startSession's invoke was still in flight, so
+  // the stop reached Rust FIRST and no-op'd — leaving a live, ownerless
+  // backend session (mic claimed, socket open) behind. Chaining guarantees
+  // start has resolved before its matching stop is issued.
+  let pttChain: Promise<void> = Promise.resolve();
   listen<{ down: boolean }>("voicetyping://ptt", (e) => {
-    onPtt(e.payload.down).catch(() => {});
+    const isDown = e.payload.down;
+    pttChain = pttChain.then(() => onPtt(isDown)).catch(() => {});
   })
     .then((u) => (unPtt = u))
     .catch(() => {});
@@ -100,7 +107,15 @@ async function onPtt(isDown: boolean) {
 }
 
 async function startSession() {
-  if (busy) return;
+  if (busy) {
+    // A press during the previous dictation's settle window. Swallowing it
+    // (the old behavior) left the user talking into nothing — instead deliver
+    // the pending text now and fall through to a fresh session. The backend
+    // start also aborts any session task still flushing, so the old session
+    // cannot leak tokens into the new overlay.
+    clearTimeout(settleTimer);
+    await finalize().catch(() => {});
+  }
   const { settings } = useStore.getState();
   if (!settings.voiceTypingEnabled) return;
   const provider = settings.transcriptionProvider;

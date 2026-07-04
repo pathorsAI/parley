@@ -12,12 +12,40 @@
 // The `objc` 0.2 macros emit `cfg(cargo-clippy)` checks newer compilers warn on.
 #![allow(unexpected_cfgs)]
 
+use std::sync::{Arc, Mutex};
+
 use tauri::{AppHandle, State};
 
 use crate::audio::microphone::Microphone;
 use crate::capture::{run_metered_session, spawn_capture, Begin, MicCoordinator, MicUser};
 use crate::commands::{read_config_file, write_config_file};
 use crate::transcription::{SttProvider, TranscribeConfig};
+
+/// Grace for the post-release final flush before a lingering session task is
+/// force-aborted (mirrors `stop_meeting`'s backstop). The frontend waits at
+/// most ~3 s for the flush, so 8 s cuts only genuine zombies.
+const FLUSH_ABORT_GRACE: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Singleton guard for the voice-typing STT session task. [`MicCoordinator`]
+/// already guarantees at most one CAPTURE, but the session task it feeds (the
+/// provider WebSocket) used to be fire-and-forget: after release it lingers to
+/// flush the final tokens, and a server that never closes leaves it parked
+/// forever with an open socket. Each new press then opened ANOTHER socket
+/// while the old session kept emitting into the same `voice-typing-{n}` /
+/// `voice-typing-tail` segment-id namespace — the overlay showed both
+/// sessions' tokens interleaved (transcript "stacking"). This state pins the
+/// one live task so a new start aborts the old socket first and a stop bounds
+/// its flush.
+#[derive(Default)]
+pub struct VoiceTypingState(Arc<Mutex<VtInner>>);
+
+#[derive(Default)]
+struct VtInner {
+    /// Bumped on every start; stale backstops/starts compare against it so
+    /// they can never abort a NEWER session than the one they belong to.
+    seq: u64,
+    task: Option<tauri::async_runtime::JoinHandle<()>>,
+}
 
 /// Start a mic-only streaming transcription. Idempotent while already running;
 /// refused while a meeting owns the mic (a second input stream could kill the
@@ -34,6 +62,7 @@ use crate::transcription::{SttProvider, TranscribeConfig};
 pub fn start_voice_typing(
     app: AppHandle,
     coord: State<MicCoordinator>,
+    state: State<VoiceTypingState>,
     provider: String,
     api_key: String,
     model: Option<String>,
@@ -54,8 +83,24 @@ pub fn start_voice_typing(
     if provider == SttProvider::Parley && relay_endpoint.is_none() {
         return Err("hosted transcription requires the cloud relay URL".into());
     }
+    // A press must always yield a FRESH session. Release any voice-typing mic
+    // claim left by a desynced frontend (no-op when idle), and abort the
+    // previous session task outright — if it is still flushing, its late
+    // tokens would interleave with the new session's in the overlay, and its
+    // socket must close before we open the next one. Aborting a finished task
+    // is a no-op.
+    coord.stop(MicUser::VoiceTyping);
+    let my_seq = {
+        let mut vt = state.0.lock().unwrap();
+        vt.seq += 1;
+        if let Some(task) = vt.task.take() {
+            task.abort();
+        }
+        vt.seq
+    };
     let gate = match coord.begin(MicUser::VoiceTyping) {
         Begin::Started(gate) => gate,
+        // Unreachable (we just released the claim), kept for safety.
         Begin::AlreadyActive => return Ok(()),
         Begin::Busy(_) => return Err("microphone is in use by the meeting".into()),
     };
@@ -80,7 +125,7 @@ pub fn start_voice_typing(
             return Err(format!("microphone failed to start: {e}"));
         }
     };
-    run_metered_session(
+    let task = run_metered_session(
         &app,
         provider,
         config,
@@ -89,6 +134,16 @@ pub fn start_voice_typing(
         None,
         "voicetyping://error",
     );
+    // Pin the session task so the next start (or stop's backstop) can abort
+    // it. If a newer start won the race while we were spawning, ours is the
+    // stale one — kill our own task instead of clobbering the newer handle
+    // (the newer start already stopped our capture and owns the mic claim).
+    let mut vt = state.0.lock().unwrap();
+    if vt.seq == my_seq {
+        vt.task = Some(task);
+    } else {
+        task.abort();
+    }
     Ok(())
 }
 
@@ -126,11 +181,29 @@ pub fn write_voice_history(app: AppHandle, content: String) -> Result<(), String
 }
 
 /// Stop the session: clear its gate and join the mic thread with a bounded
-/// grace (which drops its PCM sender, closing the STT session cleanly). No-op
-/// if voice typing doesn't own the mic.
+/// grace (which drops its PCM sender, closing the STT session cleanly — the
+/// graceful path that lets the provider flush its final tokens). No-op if
+/// voice typing doesn't own the mic.
+///
+/// Backstop: a provider/relay that never closes the socket would leave the
+/// session task parked on its read half forever. Mirror `stop_meeting`'s
+/// direct-cancel safety net — abort the task once the flush window has long
+/// passed. Guarded by `seq` so a backstop from THIS session can never abort a
+/// newer one started during the grace.
 #[tauri::command]
-pub fn stop_voice_typing(coord: State<MicCoordinator>) {
+pub fn stop_voice_typing(coord: State<MicCoordinator>, state: State<VoiceTypingState>) {
     coord.stop(MicUser::VoiceTyping);
+    let my_seq = state.0.lock().unwrap().seq;
+    let inner = state.0.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(FLUSH_ABORT_GRACE).await;
+        let mut vt = inner.lock().unwrap();
+        if vt.seq == my_seq {
+            if let Some(task) = vt.task.take() {
+                task.abort();
+            }
+        }
+    });
 }
 
 /// Copy text to the system clipboard via the native pasteboard. Needed because
