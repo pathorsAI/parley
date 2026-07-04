@@ -88,7 +88,10 @@ pub fn start_voice_typing(
     // previous session task outright — if it is still flushing, its late
     // tokens would interleave with the new session's in the overlay, and its
     // socket must close before we open the next one. Aborting a finished task
-    // is a no-op.
+    // is a no-op. Trade-off: aborting a mid-flush session also drops its
+    // `usage://stt` emit, undercounting the local cost display for that
+    // session's last seconds — acceptable (relay billing is server-side, and
+    // the alternative is the transcript stacking this fixes).
     coord.stop(MicUser::VoiceTyping);
     let my_seq = {
         let mut vt = state.0.lock().unwrap();
@@ -100,7 +103,9 @@ pub fn start_voice_typing(
     };
     let gate = match coord.begin(MicUser::VoiceTyping) {
         Begin::Started(gate) => gate,
-        // Unreachable (we just released the claim), kept for safety.
+        // Unreachable in practice: the host serializes press/release, so no
+        // second voice-typing start can land between the stop above and this
+        // begin. Kept for safety.
         Begin::AlreadyActive => return Ok(()),
         Begin::Busy(_) => return Err("microphone is in use by the meeting".into()),
     };

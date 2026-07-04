@@ -31,6 +31,10 @@ let down = false;
 let busy = false;
 /** The backend reported the STT session dead (voicetyping://error). */
 let failed = false;
+/** Session generation. A finalize that was still awaiting its copy/paste when
+ *  a NEW session started must not run its tail (emit "done" + schedule hide)
+ *  against the new session's overlay. */
+let gen = 0;
 let settleTimer: ReturnType<typeof setTimeout> | undefined;
 let hideTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -129,6 +133,7 @@ async function startSession() {
   }
   busy = true;
   failed = false;
+  gen += 1;
   latestText = "";
   lastTextAt = Date.now();
   clearTimeout(settleTimer);
@@ -189,6 +194,7 @@ function waitForSettle() {
 }
 
 async function finalize() {
+  const myGen = gen;
   busy = false;
   const text = latestText.trim();
   if (text) {
@@ -204,6 +210,11 @@ async function finalize() {
     }
     appendVoiceEntry(text).catch(() => {});
   }
+  // A new press may have started a session while the copy/paste above was in
+  // flight — its overlay is live, and this finalize's tail must not flip it to
+  // "done" or hide it. The text above was still delivered (it predates the
+  // new session).
+  if (gen !== myGen) return;
   await emit("voicetyping://session", { phase: "done", message: text ? "ok" : "empty" });
   scheduleHide();
 }
