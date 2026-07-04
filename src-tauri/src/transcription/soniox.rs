@@ -9,8 +9,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    connect_with_headers, ensure_crypto_provider, LevelMeter, SegmentBuilder, TranscribeConfig,
-    LEVEL_EVENT, TRANSCRIPT_EVENT,
+    connect_with_headers, drive_session, ensure_crypto_provider, LevelMeter, SegmentBuilder,
+    TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
@@ -136,10 +136,12 @@ pub async fn run_session(
         let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(2));
         keepalive.tick().await;
 
-        loop {
+        // `true` = input drained (normal stop); `false` = a send failed, i.e.
+        // the socket died under us — drive_session reports that as a failure.
+        let drained = loop {
             tokio::select! {
                 maybe_chunk = pcm_rx.recv() => {
-                    let Some(chunk) = maybe_chunk else { break };
+                    let Some(chunk) = maybe_chunk else { break true };
                     meter.push(&chunk);
                     total += chunk.len() as u64;
                     if total >= next_log {
@@ -148,16 +150,16 @@ pub async fn run_session(
                     }
                     let bytes = pcm_to_le_bytes(&chunk);
                     if write.send(Message::Binary(bytes)).await.is_err() {
-                        break;
+                        break false;
                     }
                 }
                 _ = keepalive.tick() => {
                     if write.send(Message::Text("{\"type\":\"keepalive\"}".to_string())).await.is_err() {
-                        break;
+                        break false;
                     }
                 }
             }
-        }
+        };
         let _ = write
             .send(Message::Text("{\"type\":\"finalize\"}".to_string()))
             .await;
@@ -171,6 +173,7 @@ pub async fn run_session(
         if !is_relay {
             let _ = write.close().await;
         }
+        drained
     };
 
     // Read tokens → speaker-runs via the shared SegmentBuilder. Resolves to
@@ -251,16 +254,5 @@ pub async fn run_session(
         Ok(())
     };
 
-    // Normal end: `forward` finishes first (input drained, finalize sent), then
-    // the read half is awaited for the flushed tail. If `read_loop` resolves
-    // FIRST the session is dead (error frame or server close) while audio is
-    // still flowing — return immediately, dropping `forward`: keeping it alive
-    // would stream mic audio (and meter billable seconds) into a dead socket
-    // until the user releases the key, delaying the error event the whole time.
-    tokio::pin!(forward);
-    tokio::pin!(read_loop);
-    tokio::select! {
-        _ = &mut forward => read_loop.await,
-        result = &mut read_loop => result,
-    }
+    drive_session("soniox", forward, read_loop).await
 }
