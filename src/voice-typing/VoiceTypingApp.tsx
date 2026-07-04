@@ -7,6 +7,12 @@ import { useThemePreference } from "../lib/theme";
 
 const BAR_COUNT = 20;
 const BAR_FLOOR = 0.05;
+/** Perceptual gain on the mic level before it drives the bars. `level` is a raw
+ *  peak ratio (peak / 32767) that sits low for normal speech, so without a lift
+ *  the bars barely leave the floor. Applied on top of the sqrt curve. */
+const LEVEL_GAIN = 1.7;
+/** Tallest a bar can draw, in px (the pill grows to fit — see the bars row). */
+const BAR_MAX_PX = 22;
 const WAVE_PROFILE = [
   0.28, 0.44, 0.62, 0.38, 0.72, 0.5, 0.86, 0.64, 0.95, 0.74, 0.74, 0.95, 0.64, 0.86, 0.5, 0.72,
   0.38, 0.62, 0.44, 0.28,
@@ -54,7 +60,7 @@ function decayBars(bars: number[]): number[] {
 
 /** Convert the current mic level into a full instantaneous waveform, not history. */
 function instantWaveform(level: number): number[] {
-  const energy = Math.min(1, Math.sqrt(Math.max(0, level)));
+  const energy = Math.min(1, Math.sqrt(Math.max(0, level)) * LEVEL_GAIN);
   const lift = BAR_FLOOR + energy * (1 - BAR_FLOOR);
 
   return WAVE_PROFILE.map((shape, index) => {
@@ -200,12 +206,12 @@ export const VoiceTypingApp = () => {
         >
           {phaseIcon}
         </div>
-        <div className="flex h-4 items-center gap-[2px]">
+        <div className="flex h-6 items-center gap-[2px]">
           {bars.map((b, i) => (
             <span
               key={barKeys.current[i]}
               className="w-[2px] rounded-full bg-sky-500"
-              style={{ height: `${Math.max(2, Math.round(b * 16))}px` }}
+              style={{ height: `${Math.max(2, Math.round(b * BAR_MAX_PX))}px` }}
             />
           ))}
         </div>

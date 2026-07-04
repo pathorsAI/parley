@@ -25,17 +25,18 @@ const STALL: Duration = Duration::from_millis(600);
 
 /// Sum `rx_a` and `rx_b` sample-by-sample into `tx_out` until both close.
 /// Mixes where both sides have data; a side that ends (or stalls — see [STALL])
-/// stops gating the other, whose audio then passes through untouched. The mic
-/// side (`rx_a`) is metered and emitted as the "me" input level so the header
-/// mic meter still moves even though mic + system are merged into a single
-/// (diarized) transcription session.
+/// stops gating the other, whose audio then passes through untouched. The mixed
+/// OUTPUT is metered and emitted as the "me" input level, so the header meter
+/// reflects everything being captured (mic + system) rather than the mic alone
+/// — otherwise system audio playing with no mic input would leave the meter
+/// flat even though it is being recorded and transcribed.
 pub async fn mix_streams(
     app: AppHandle,
     mut rx_a: UnboundedReceiver<Vec<i16>>,
     mut rx_b: UnboundedReceiver<Vec<i16>>,
     tx_out: UnboundedSender<Vec<i16>>,
 ) {
-    let mut mic_meter = LevelMeter::new(app, "me", LEVEL_EVENT);
+    let mut meter = LevelMeter::new(app, "me", LEVEL_EVENT);
     let mut a: VecDeque<i16> = VecDeque::new();
     let mut b: VecDeque<i16> = VecDeque::new();
     let mut a_open = true;
@@ -48,11 +49,18 @@ pub async fn mix_streams(
     let mut tick = tokio::time::interval(Duration::from_millis(200));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
+    // Meter then forward one output chunk. Every send routes through here so the
+    // "me" level reflects the exact mixed audio and no emit path is missed.
+    // Returns `false` once the consumer is gone, so the caller can stop.
+    let mut emit = |out: Vec<i16>| -> bool {
+        meter.push(&out);
+        tx_out.send(out).is_ok()
+    };
+
     while a_open || b_open {
         tokio::select! {
             chunk = rx_a.recv(), if a_open => match chunk {
                 Some(c) => {
-                    mic_meter.push(&c);
                     a.extend(c);
                     last_a = Instant::now();
                 }
@@ -76,7 +84,7 @@ pub async fn mix_streams(
                 let s = a.pop_front().unwrap() as i32 + b.pop_front().unwrap() as i32;
                 out.push(s.clamp(i16::MIN as i32, i16::MAX as i32) as i16);
             }
-            if tx_out.send(out).is_err() {
+            if !emit(out) {
                 return;
             }
         }
@@ -87,12 +95,12 @@ pub async fn mix_streams(
         if a_open && b_open {
             if !a.is_empty() && b.is_empty() && last_b.elapsed() >= STALL {
                 let out: Vec<i16> = a.drain(..).collect();
-                if tx_out.send(out).is_err() {
+                if !emit(out) {
                     return;
                 }
             } else if !b.is_empty() && a.is_empty() && last_a.elapsed() >= STALL {
                 let out: Vec<i16> = b.drain(..).collect();
-                if tx_out.send(out).is_err() {
+                if !emit(out) {
                     return;
                 }
             }
@@ -101,13 +109,13 @@ pub async fn mix_streams(
         // When one side has permanently ended, flush the other directly.
         if !a_open && !b.is_empty() {
             let out: Vec<i16> = b.drain(..).collect();
-            if tx_out.send(out).is_err() {
+            if !emit(out) {
                 return;
             }
         }
         if !b_open && !a.is_empty() {
             let out: Vec<i16> = a.drain(..).collect();
-            if tx_out.send(out).is_err() {
+            if !emit(out) {
                 return;
             }
         }
