@@ -16,6 +16,10 @@ import { log } from "../log";
 import { showOverlay, hideOverlay, prewarmOverlay } from "./overlay";
 import { appendVoiceEntry } from "./history";
 
+/** localStorage flag: the boot-time Accessibility prompt has been shown once
+ *  for this install (see initVoiceTyping — later launches must not re-nag). */
+const AX_BOOT_PROMPTED_KEY = "parley:ax-boot-prompted";
+
 // After the key is released we keep the session open and wait for the STT to
 // flush its final tokens — finalizing only once the text has been quiet for
 // SETTLE_MS (so the last words aren't cut off), capped at MAX_WAIT_MS.
@@ -84,13 +88,23 @@ export function initVoiceTyping(): () => void {
     shortcut: useStore.getState().settings.voiceTypingShortcut,
   }).catch(() => {});
   // Voice typing always auto-pastes on release, which needs Accessibility —
-  // while the feature is enabled, ask for that grant up front (once per
-  // launch) instead of failing quietly on the first dictation. The prompt is
-  // the native macOS dialog; already-trusted runs never see it.
+  // while the feature is enabled (it defaults on), ask for that grant on the
+  // FIRST launch instead of failing quietly on the first dictation. At most
+  // once per install: an untrusted result here does not mean "never asked" —
+  // the user may have declined, or the grant went stale because the TCC
+  // identity changed (every dev rebuild, a moved or re-signed app) — and
+  // re-prompting on every launch nags exactly those users forever. Later
+  // launches only log; Settings keeps the explicit re-grant paths (the enable
+  // toggle and the grant button), and auto-paste degrades to clipboard-only
+  // meanwhile.
   if (useStore.getState().settings.voiceTypingEnabled) {
     invoke<boolean>("accessibility_status", { prompt: false })
       .then((trusted) => {
-        if (!trusted) return invoke("accessibility_status", { prompt: true }).then(() => {});
+        if (trusted) return;
+        log.warn("voice-typing: Accessibility not granted; auto-paste falls back to clipboard");
+        if (localStorage.getItem(AX_BOOT_PROMPTED_KEY)) return;
+        localStorage.setItem(AX_BOOT_PROMPTED_KEY, "1");
+        return invoke("accessibility_status", { prompt: true }).then(() => {});
       })
       .catch(() => {});
   }
