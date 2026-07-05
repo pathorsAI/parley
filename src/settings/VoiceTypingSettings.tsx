@@ -150,6 +150,8 @@ export const VoiceTypingSettings = () => {
   const updateSettings = useStore((s) => s.updateSettings);
   const [status, setStatus] = useState<HotkeyStatus | null>(null);
   const [identity, setIdentity] = useState<AppIdentity | null>(null);
+  /** Accessibility (auto-paste) trust — null until the first check resolves. */
+  const [axTrusted, setAxTrusted] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordHint, setRecordHint] = useState<TranslationKey | null>(null);
@@ -160,6 +162,12 @@ export const VoiceTypingSettings = () => {
   const refreshStatus = useCallback(() => {
     invoke<HotkeyStatus>("voice_typing_hotkey_status")
       .then((s) => setStatus(s))
+      .catch(() => {});
+    // Auto-paste needs Accessibility; the boot-time prompt asks at most once
+    // per install, so this panel is the visible surface for a missing/stale
+    // grant (stale = the TCC identity changed: dev rebuilds, re-signing).
+    invoke<boolean>("accessibility_status", { prompt: false })
+      .then(setAxTrusted)
       .catch(() => {});
   }, []);
 
@@ -207,6 +215,16 @@ export const VoiceTypingSettings = () => {
     await invoke("request_input_monitoring").catch(() => {});
     await invoke("open_privacy_settings", { pane: "input-monitoring" }).catch(() => {});
     await invoke("ensure_fn_listener").catch(() => {});
+    refreshStatus();
+  };
+
+  /** Re-request Accessibility from the inline warning. Same shape as
+   *  grantInputMonitoring: the native dialog only fires once per identity, so
+   *  repeat clicks land the user in the right System Settings pane instead of
+   *  appearing dead. */
+  const grantAccessibility = async () => {
+    await invoke("accessibility_status", { prompt: true }).catch(() => {});
+    await invoke("open_privacy_settings", { pane: "accessibility" }).catch(() => {});
     refreshStatus();
   };
 
@@ -436,6 +454,18 @@ export const VoiceTypingSettings = () => {
             {t("settings.voiceTyping.devBinaryHint", { path: identity.executablePath })}
           </p>
         )}
+        {settings.voiceTypingEnabled && axTrusted === false && (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400">
+            {t("settings.voiceTyping.needsAccessibility")}{" "}
+            <button
+              type="button"
+              className="font-medium underline underline-offset-2"
+              onClick={() => void grantAccessibility()}
+            >
+              {t("settings.voiceTyping.grantAccessibility")}
+            </button>
+          </p>
+        )}
         {fnListenOnly && (
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             {t("settings.voiceTyping.fnListenOnly")}{" "}
@@ -452,11 +482,7 @@ export const VoiceTypingSettings = () => {
             <button
               type="button"
               className="font-medium text-foreground underline underline-offset-2"
-              onClick={() => {
-                invoke("accessibility_status", { prompt: true })
-                  .then(() => refreshStatus())
-                  .catch(() => {});
-              }}
+              onClick={() => void grantAccessibility()}
             >
               {t("settings.voiceTyping.grantAccessibility")}
             </button>
