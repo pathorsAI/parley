@@ -266,5 +266,12 @@ pub fn run_metered_session(
                 "seconds": seconds,
             }),
         );
+        // The session is fully over: the socket is closed and every final
+        // token has been emitted. The voice-typing host finalizes (pastes) on
+        // this signal instead of polling for the transcript to go quiet —
+        // meetings have their own teardown and ignore it. Deliberately NOT
+        // reached when the task is aborted (a superseded session must never
+        // finalize its successor's overlay).
+        let _ = app.emit("stt://closed", serde_json::json!({ "source": label }));
     })
 }
