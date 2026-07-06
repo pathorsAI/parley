@@ -87,6 +87,9 @@ export const VoiceTypingApp = () => {
 
   const finalsRef = useRef<Map<string, string>>(new Map());
   const interimRef = useRef("");
+  // Cache the Simplified→Traditional conversion per final segment so a long
+  // dictation doesn't re-convert the whole transcript on every incoming token.
+  const convertedRef = useRef<Map<string, { raw: string; conv: string }>>(new Map());
   // Stable per-position keys for the waveform bars (values shift, positions don't).
   const barKeys = useRef(Array.from({ length: BAR_COUNT }, (_, i) => `bar-${i}`));
 
@@ -107,15 +110,27 @@ export const VoiceTypingApp = () => {
   }, []);
 
   // Recompute display text from the raw refs, convert, and publish to the host.
+  // Final segments are converted once and cached; only the live interim tail is
+  // converted every token, so cost stays flat no matter how long the dictation.
   const publish = useRef(async () => {});
   publish.current = async () => {
-    const ordered = [...finalsRef.current.entries()]
-      .sort((a, b) => idIndex(a[0]) - idIndex(b[0]))
-      .map(([, v]) => v);
-    const raw = ordered.join("") + interimRef.current;
-    const converted = (await toTraditional(raw)).trim();
-    setText(converted);
-    emit("voicetyping://text", { text: converted }).catch(() => {});
+    const entries = [...finalsRef.current.entries()].sort((a, b) => idIndex(a[0]) - idIndex(b[0]));
+    let finals = "";
+    for (const [id, raw] of entries) {
+      const cached = convertedRef.current.get(id);
+      let conv: string;
+      if (cached && cached.raw === raw) {
+        conv = cached.conv;
+      } else {
+        conv = await toTraditional(raw);
+        convertedRef.current.set(id, { raw, conv });
+      }
+      finals += conv;
+    }
+    const interim = interimRef.current ? await toTraditional(interimRef.current) : "";
+    const full = (finals + interim).trim();
+    setText(full);
+    emit("voicetyping://text", { text: full }).catch(() => {});
   };
 
   useEffect(() => {
@@ -164,6 +179,7 @@ export const VoiceTypingApp = () => {
         const { phase: p, message } = e.payload;
         if (p === "start") {
           finalsRef.current.clear();
+          convertedRef.current.clear();
           interimRef.current = "";
           setText("");
           setError(null);
@@ -208,11 +224,14 @@ export const VoiceTypingApp = () => {
           text) for high contrast against whatever's behind the overlay. */}
       {bubble && (
         <div
-          className={`max-w-[420px] rounded-[14px] px-3.5 py-1.5 text-center text-[14px] font-medium leading-snug shadow-md ${
+          className={`flex max-h-[84px] max-w-[420px] flex-col justify-end overflow-hidden rounded-[14px] px-3.5 py-1.5 text-center text-[14px] font-medium leading-snug shadow-md ${
             error ? "bg-red-600 text-white" : "bg-foreground text-background"
           }`}
         >
-          {bubble}
+          {/* Bottom-anchored + clipped: the newest words stay visible while a
+              long dictation scrolls older lines off the top, so the preview
+              never outgrows the fixed overlay window. */}
+          <span>{bubble}</span>
         </div>
       )}
 
