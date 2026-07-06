@@ -203,13 +203,19 @@ pub fn start_meeting(
             device_name: input_device,
         };
         let sys = crate::audio::system_macos::SystemAudio { app: app.clone() };
+        // Shared far-end state: the system-audio tap feeds it, the mic prosody
+        // tap reads it to reject the counterpart's voice bleeding through the
+        // speakers into the mic (pace/intonation must score "me" only).
+        let far = std::sync::Arc::new(crate::audio::prosody::FarEndState::new());
         if diarization {
             // Tap the PRE-MIX mic for delivery coaching (issue #22): the prosody
             // analyzer must see raw mic, never the mixed/diarized stream.
             let rx_me = spawn_capture(&coord, MicUser::Meeting, mic, gate.clone(), "me")
                 .ok()
-                .map(|rx| spawn_mic_prosody_tap(&app, rx));
-            let rx_them = spawn_capture(&coord, MicUser::Meeting, sys, gate.clone(), "them").ok();
+                .map(|rx| spawn_mic_prosody_tap(&app, rx, Some(far.clone())));
+            let rx_them = spawn_capture(&coord, MicUser::Meeting, sys, gate.clone(), "them")
+                .ok()
+                .map(|rx| spawn_farend_tap(rx, far));
             let mut tasks = state.tasks.lock().unwrap();
             log::info!(
                 "meeting: capture started (mic: {}, system: {})",
@@ -282,7 +288,7 @@ pub fn start_meeting(
             // un-aligned streams into one file would garble it); see plan note.
             let mut tasks = state.tasks.lock().unwrap();
             if let Ok(rx) = spawn_capture(&coord, MicUser::Meeting, mic, gate.clone(), "me") {
-                let rx = spawn_mic_prosody_tap(&app, rx);
+                let rx = spawn_mic_prosody_tap(&app, rx, Some(far.clone()));
                 tasks.push(run_metered_session(
                     &app,
                     provider,
@@ -294,6 +300,7 @@ pub fn start_meeting(
                 ));
             }
             if let Ok(rx) = spawn_capture(&coord, MicUser::Meeting, sys, gate.clone(), "them") {
+                let rx = spawn_farend_tap(rx, far);
                 tasks.push(run_metered_session(
                     &app,
                     provider,
@@ -313,7 +320,8 @@ pub fn start_meeting(
             device_name: input_device,
         };
         if let Ok(rx) = spawn_capture(&coord, MicUser::Meeting, mic, gate.clone(), "me") {
-            let rx = spawn_mic_prosody_tap(&app, rx);
+            // No system capture on this platform → no far-end reference to gate on.
+            let rx = spawn_mic_prosody_tap(&app, rx, None);
             let task = run_metered_session(
                 &app,
                 provider,
@@ -558,15 +566,41 @@ pub fn start_oauth_loopback(app: AppHandle) -> Result<u16, String> {
 ///
 /// This is the single mic tap point and it sits BEFORE the mixer, so with
 /// diarization on we analyze raw mic — never the mixed/diarized stream (the
-/// issue #22 hard constraint: delivery is scored on "me" only).
+/// issue #22 hard constraint: delivery is scored on "me" only). `far` is the
+/// counterpart's shared acoustic state (from [`spawn_farend_tap`]) used to
+/// reject the far voice leaking through the SPEAKERS into the mic — without it,
+/// a speakers-only setup scores the other side's pace/intonation as the user's.
 fn spawn_mic_prosody_tap(
     app: &AppHandle,
     mut rx: UnboundedReceiver<Vec<i16>>,
+    far: Option<std::sync::Arc<crate::audio::prosody::FarEndState>>,
 ) -> UnboundedReceiver<Vec<i16>> {
     let (tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let mut analyzer = crate::audio::prosody::ProsodyAnalyzer::new(app, "me");
+        let mut analyzer = crate::audio::prosody::ProsodyAnalyzer::new(app, "me", far);
+        while let Some(chunk) = rx.recv().await {
+            analyzer.push(&chunk);
+            if tx.send(chunk).is_err() {
+                break;
+            }
+        }
+    });
+    out_rx
+}
+
+/// Tee the system-audio ("them") PCM through a
+/// [`FarEndAnalyzer`](crate::audio::prosody::FarEndAnalyzer) that feeds the
+/// shared far-end state for speaker-bleed rejection, forwarding every chunk
+/// untouched downstream. Counterpart of [`spawn_mic_prosody_tap`].
+#[cfg(target_os = "macos")]
+fn spawn_farend_tap(
+    mut rx: UnboundedReceiver<Vec<i16>>,
+    far: std::sync::Arc<crate::audio::prosody::FarEndState>,
+) -> UnboundedReceiver<Vec<i16>> {
+    let (tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+    tauri::async_runtime::spawn(async move {
+        let mut analyzer = crate::audio::prosody::FarEndAnalyzer::new(far);
         while let Some(chunk) = rx.recv().await {
             analyzer.push(&chunk);
             if tx.send(chunk).is_err() {

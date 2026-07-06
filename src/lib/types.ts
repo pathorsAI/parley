@@ -347,6 +347,10 @@ export interface ProsodyMetrics {
   monotonyScore: number;
   /** Mic-anchored speech rate (syllable nuclei per second) over the window. */
   speechRateHz: number;
+  /** Whole-session articulation rate (nuclei per voiced second) over the mic so
+   *  far — the mic-only stand-in for measuring the saved recording, which in
+   *  diarized meetings is a mix of both sides. 0 until any voiced speech. */
+  sessionRateHz: number;
   /** Fraction of the window that was voiced (0..1). */
   voicedRatio: number;
   /** Current trailing silence in ms (0 while speaking). */
@@ -358,6 +362,10 @@ export interface ProsodyMetrics {
   /** One-shot edge: a filled pause ("um/uh/呃/痾") was just detected acoustically
    *  (STT drops these, so this mic-derived flag is the only source). */
   filledPause: boolean;
+  /** Whether the counterpart's (system-audio) stream is currently audible —
+   *  dead air means NOBODY is talking, so the nudge must hold while they speak.
+   *  Always false when there's no system capture. */
+  farendActive: boolean;
 }
 
 /** Kind of live delivery nudge surfaced to the speaker (see DeliveryNudge). */

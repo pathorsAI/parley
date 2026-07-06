@@ -52,11 +52,13 @@ interface ProsodyEventPayload {
   pitch_var_semitones: number;
   monotony_score: number;
   speech_rate_hz: number;
+  session_rate_hz: number;
   voiced_ratio: number;
   silence_ms: number;
   longest_pause_ms: number;
   speaking: boolean;
   filled_pause: boolean;
+  farend_active: boolean;
 }
 
 /**
@@ -76,11 +78,13 @@ export async function listenForProsody(): Promise<UnlistenFn> {
       pitchVarSemitones: p.pitch_var_semitones,
       monotonyScore: p.monotony_score,
       speechRateHz: p.speech_rate_hz,
+      sessionRateHz: p.session_rate_hz,
       voicedRatio: p.voiced_ratio,
       silenceMs: p.silence_ms,
       longestPauseMs: p.longest_pause_ms,
       speaking: p.speaking,
       filledPause: p.filled_pause,
+      farendActive: p.farend_active,
     });
   });
 }

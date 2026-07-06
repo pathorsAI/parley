@@ -5,10 +5,13 @@
 //! signals — pitch variation (monotony) and pausing — from the same 16 kHz mono
 //! PCM, and emits an `audio://prosody` event ~2×/s for the frontend gauges/nudges.
 //!
-//! HARD CONSTRAINT (issue #22): this runs on the **mic ("me") stream only**, never
-//! the counterpart. The caller taps the pre-mix mic receiver *before* the mixer
-//! (see `spawn_mic_prosody_tap` in `commands.rs`), so with diarization on we still
-//! analyze raw mic, not the mixed/diarized stream.
+//! HARD CONSTRAINT (issue #22): delivery is scored on the **mic ("me") stream
+//! only**, never the counterpart. The caller taps the pre-mix mic receiver
+//! *before* the mixer (see `spawn_mic_prosody_tap` in `commands.rs`), so with
+//! diarization on we still analyze raw mic, not the mixed/diarized stream. The
+//! system-audio stream IS analyzed too ([`FarEndAnalyzer`]) — but only as a
+//! reference for rejecting the far voice bleeding through the speakers into the
+//! mic; it feeds no user-facing stat of its own.
 //!
 //! F0 is estimated with a self-contained YIN detector (no extra crates, in keeping
 //! with the project's no-native-deps posture). Monotony is the spread of F0 *in
@@ -16,6 +19,8 @@
 //! the reference pitch, so it calibrates to the speaker rather than to absolute Hz.
 
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -56,6 +61,39 @@ const F0_MAX_HZ: f32 = 400.0;
 /// thing monotony uses) is invariant to it.
 const SEMITONE_REF_HZ: f32 = 100.0;
 
+/// Far-end ("them") bleed rejection: with the counterpart played over SPEAKERS,
+/// the mic physically hears them, and their speech would otherwise pollute every
+/// "me" statistic (pace baseline, pitch spread, filled pauses). The system-audio
+/// stream gives us the clean far-end signal, so a mic frame is rejected as bleed
+/// when it is pitch-matched to a recent far-end frame — a purely acoustic test
+/// (never STT). Headphone users are unaffected: without bleed the mic only ever
+/// carries the user's own pitch.
+///
+/// How long a far-end frame stays queryable. Covers capture/chunking skew between
+/// the two streams plus the match window below.
+const FAR_RETAIN_MS: u64 = 600;
+/// A mic frame is compared against far-end frames at most this much older. Wide
+/// enough to absorb the ~100 ms chunk cadence + speaker→mic acoustic delay.
+const FAR_MATCH_WINDOW_MS: u64 = 350;
+/// "The counterpart is (still) talking" for the dead-air gate — wider than the
+/// match window so brief inter-word gaps don't read as the far side going quiet.
+const FAR_ACTIVE_WINDOW_MS: u64 = 800;
+/// Max pitch distance (semitones, octave-tolerant) for a mic frame to count as
+/// the far voice leaking through the speakers. YIN octave errors on the
+/// reverberant bleed path are common, hence the octave folding.
+const BLEED_SEMITONE_TOL: f32 = 1.0;
+/// Bleed must not be dramatically LOUDER than the far-end digital signal; direct
+/// speech into the mic usually is. Loose (mic AGC makes levels incomparable) —
+/// the pitch match is the primary discriminator, this only rescues the case of
+/// the user talking over the far side at a coincidentally matching pitch.
+const BLEED_LEVEL_CEIL: f32 = 1.5;
+
+/// Trailing silence (ms) after which the emitted pitch-spread reads as "no
+/// signal" (0) instead of lingering on the rolling window's stale frames — the
+/// intonation gauge should clear promptly once the user stops talking, not ~7 s
+/// later when the window drains.
+const PITCH_CLEAR_SILENCE_MS: u64 = 2_000;
+
 /// Filled-pause ("um/uh/呃/痾/嗯") detection. A filled pause is one sustained,
 /// flat, vowel-like sound — distinct from connected speech (which has syllable
 /// structure) and from a normal syllable (which is short). STT drops these and the
@@ -86,6 +124,12 @@ struct ProsodyEvent {
     /// pace estimate that (unlike transcript WPM) works in diarized mode too, and
     /// is "me"-only by construction. The frontend baselines it per session.
     speech_rate_hz: f32,
+    /// Whole-session articulation rate (nuclei per *voiced* second) accumulated
+    /// over the mic stream — the streaming twin of [`measure_speech_rate_hz`].
+    /// The retro's measured-pace read uses the last value of this instead of
+    /// measuring the saved recording, which in diarized meetings is the MIX of
+    /// both sides and would score the counterpart's pace too (issue #22).
+    session_rate_hz: f32,
     /// Fraction of frames in the window that were voiced (0..1).
     voiced_ratio: f32,
     /// Current trailing silence in ms (0 while speaking).
@@ -98,6 +142,10 @@ struct ProsodyEvent {
     /// just been recognized (a sustained, flat, single held vowel). The frontend
     /// counts these + nudges; STT can't see them so this is the only source.
     filled_pause: bool,
+    /// Whether the counterpart's (system-audio) stream is currently audible —
+    /// the dead-air nudge must not fire while the other side is talking. Always
+    /// false when there is no system capture (non-macOS / capture failed).
+    farend_active: bool,
 }
 
 /// One analyzed frame's contribution to the rolling stats.
@@ -130,10 +178,15 @@ pub struct ProsodyAnalyzer {
     /// True while the current trailing voiced run already qualifies as a filled
     /// pause, so it's reported once (rising edge) rather than every emit it's held.
     in_filled_pause: bool,
+    /// Cumulative whole-session articulation rate over this (mic-only) stream.
+    session_rate: SessionRateMeter,
+    /// The counterpart's recent acoustic state, for speaker-bleed rejection.
+    /// `None` when there is no system-audio capture to compare against.
+    far: Option<Arc<FarEndState>>,
 }
 
 impl ProsodyAnalyzer {
-    pub fn new(app: AppHandle, source: &'static str) -> Self {
+    pub fn new(app: AppHandle, source: &'static str, far: Option<Arc<FarEndState>>) -> Self {
         Self {
             app,
             source,
@@ -143,6 +196,8 @@ impl ProsodyAnalyzer {
             last_emit_ms: 0,
             last_voiced_ms: None,
             in_filled_pause: false,
+            session_rate: SessionRateMeter::new(),
+            far,
         }
     }
 
@@ -160,10 +215,21 @@ impl ProsodyAnalyzer {
             } else {
                 None
             };
+            // Speaker-bleed rejection: a voiced frame that is really the far
+            // side leaking through the speakers is dropped from EVERY "me"
+            // statistic — zeroed rms so it can't seed syllable nuclei or raise
+            // the per-window loudness floor, and unvoiced so it can't feed the
+            // pitch/pace/filled-pause stats or reset the silence clock.
+            let bleed = self
+                .far
+                .as_ref()
+                .is_some_and(|f| f.is_bleed_at(Instant::now(), rms, semitones));
+            let (rms, semitones) = if bleed { (0.0, None) } else { (rms, semitones) };
             let voiced = semitones.is_some();
             if voiced {
                 self.last_voiced_ms = Some(t_ms);
             }
+            self.session_rate.push(rms);
             self.frames.push_back(FrameStat {
                 t_ms,
                 voiced,
@@ -203,20 +269,6 @@ impl ProsodyAnalyzer {
         let total = self.frames.len().max(1);
         let voiced_ratio = voiced_semitones.len() as f32 / total as f32;
 
-        let (pitch_var_semitones, monotony_score) = if voiced_semitones.len() >= MIN_VOICED_FRAMES {
-            let mean = voiced_semitones.iter().sum::<f32>() / voiced_semitones.len() as f32;
-            let var = voiced_semitones
-                .iter()
-                .map(|x| (x - mean) * (x - mean))
-                .sum::<f32>()
-                / voiced_semitones.len() as f32;
-            let sd = var.sqrt();
-            // Expressive speech varies ~2.5+ semitones; < ~1 reads as monotone.
-            (sd, (1.0 - sd / 2.5).clamp(0.0, 1.0))
-        } else {
-            (0.0, 0.0)
-        };
-
         let speaking = self.frames.back().is_some_and(|f| f.voiced);
         let f0_hz = self
             .frames
@@ -231,6 +283,25 @@ impl ProsodyAnalyzer {
             None => 0,
         };
 
+        // Once the user has been quiet for a bit, the intonation read is over —
+        // report "no signal" instead of letting the rolling window's stale
+        // frames hold the gauge at its last value for ~WINDOW_MS.
+        let pitch_done = silence_ms >= PITCH_CLEAR_SILENCE_MS;
+        let (pitch_var_semitones, monotony_score) =
+            if !pitch_done && voiced_semitones.len() >= MIN_VOICED_FRAMES {
+                let mean = voiced_semitones.iter().sum::<f32>() / voiced_semitones.len() as f32;
+                let var = voiced_semitones
+                    .iter()
+                    .map(|x| (x - mean) * (x - mean))
+                    .sum::<f32>()
+                    / voiced_semitones.len() as f32;
+                let sd = var.sqrt();
+                // Expressive speech varies ~2.5+ semitones; < ~1 reads as monotone.
+                (sd, (1.0 - sd / 2.5).clamp(0.0, 1.0))
+            } else {
+                (0.0, 0.0)
+            };
+
         let _ = self.app.emit(
             PROSODY_EVENT,
             ProsodyEvent {
@@ -239,11 +310,16 @@ impl ProsodyAnalyzer {
                 pitch_var_semitones,
                 monotony_score,
                 speech_rate_hz: self.speech_rate_hz(),
+                session_rate_hz: self.session_rate.rate_hz(),
                 voiced_ratio,
                 silence_ms,
                 longest_pause_ms: self.longest_pause(now_ms),
                 speaking,
                 filled_pause,
+                farend_active: self
+                    .far
+                    .as_ref()
+                    .is_some_and(|f| f.is_active_at(Instant::now())),
             },
         );
     }
@@ -464,6 +540,171 @@ pub fn measure_speech_rate_hz(pcm: &[f32], sample_rate: u32) -> f32 {
     nuclei as f32 / voiced_sec
 }
 
+/// Streaming twin of [`measure_speech_rate_hz`]: accumulates the whole-session
+/// articulation rate frame-by-frame as the live mic is analyzed, so the retro can
+/// report the USER'S pace without ever decoding the saved recording — which in
+/// diarized meetings is the mic+system MIX and would fold the counterpart's speech
+/// into the number. Framing, per-`WINDOW_MS`-block loudness floor, RMS-based
+/// voicing, and the voiced-time denominator all mirror the batch function, so the
+/// two quantities stay comparable (upload entries still use the batch measure).
+struct SessionRateMeter {
+    /// Frames per nuclei-counting block (~`WINDOW_MS`), matching the batch fn.
+    block: usize,
+    /// Current (partial) block's per-frame RMS envelope + voicing flags.
+    rms: Vec<f32>,
+    voiced: Vec<bool>,
+    /// Totals over all completed blocks.
+    nuclei: usize,
+    voiced_frames: u64,
+}
+
+impl SessionRateMeter {
+    fn new() -> Self {
+        let hop_sec = HOP as f32 / TARGET_SAMPLE_RATE as f32;
+        Self {
+            block: (((WINDOW_MS as f32 / 1000.0) / hop_sec).round() as usize).max(8),
+            rms: Vec::new(),
+            voiced: Vec::new(),
+            nuclei: 0,
+            voiced_frames: 0,
+        }
+    }
+
+    /// Feed one analysis frame's RMS. Voicing is RMS-based like the batch measure
+    /// (not YIN-gated like the live windowed rate) to keep the quantities aligned.
+    fn push(&mut self, rms: f32) {
+        self.rms.push(rms);
+        self.voiced.push(rms >= VOICING_RMS_FLOOR);
+        if self.rms.len() >= self.block {
+            self.nuclei += count_syllable_nuclei(&self.rms, &self.voiced);
+            self.voiced_frames += self.voiced.iter().filter(|&&v| v).count() as u64;
+            self.rms.clear();
+            self.voiced.clear();
+        }
+    }
+
+    /// Articulation rate (nuclei per voiced second) over everything seen so far,
+    /// including the current partial block; 0.0 until any voiced speech.
+    fn rate_hz(&self) -> f32 {
+        let partial_voiced = self.voiced.iter().filter(|&&v| v).count() as u64;
+        let voiced_sec =
+            (self.voiced_frames + partial_voiced) as f32 * HOP as f32 / TARGET_SAMPLE_RATE as f32;
+        if voiced_sec <= 0.0 {
+            return 0.0;
+        }
+        (self.nuclei + count_syllable_nuclei(&self.rms, &self.voiced)) as f32 / voiced_sec
+    }
+}
+
+/// One analyzed far-end frame, timestamped at analysis time. Wall-clock (not
+/// sample-clock) because the mic and system streams are captured by independent
+/// tasks whose sample counters aren't aligned.
+struct FarFrame {
+    at: Instant,
+    rms: f32,
+    semitones: Option<f32>,
+}
+
+/// Shared view of the counterpart's ("them") recent acoustic state. Written by
+/// [`FarEndAnalyzer`] on the system-audio task, read by [`ProsodyAnalyzer`] on
+/// the mic task to reject speaker bleed — see the `FAR_*`/`BLEED_*` constants.
+pub struct FarEndState {
+    frames: Mutex<VecDeque<FarFrame>>,
+}
+
+impl FarEndState {
+    pub fn new() -> Self {
+        Self {
+            frames: Mutex::new(VecDeque::new()),
+        }
+    }
+
+    fn push_frame_at(&self, at: Instant, rms: f32, semitones: Option<f32>) {
+        let mut frames = self.frames.lock().unwrap();
+        frames.push_back(FarFrame { at, rms, semitones });
+        while frames
+            .front()
+            .is_some_and(|f| at.duration_since(f.at).as_millis() as u64 > FAR_RETAIN_MS)
+        {
+            frames.pop_front();
+        }
+    }
+
+    /// Whether a VOICED mic frame is the far voice leaking through the speakers:
+    /// a recent far-end frame is pitch-matched (octave-tolerant) and the mic
+    /// level is plausibly bleed rather than direct speech. Unvoiced mic frames
+    /// are never bleed — they carry no pitch and are excluded from stats anyway.
+    fn is_bleed_at(&self, now: Instant, mic_rms: f32, mic_semitones: Option<f32>) -> bool {
+        let Some(mic_st) = mic_semitones else {
+            return false;
+        };
+        let frames = self.frames.lock().unwrap();
+        let mut far_max_rms = 0.0f32;
+        let mut pitch_match = false;
+        for f in frames.iter().rev() {
+            if now.duration_since(f.at).as_millis() as u64 > FAR_MATCH_WINDOW_MS {
+                break;
+            }
+            if f.rms < VOICING_RMS_FLOOR {
+                continue;
+            }
+            far_max_rms = far_max_rms.max(f.rms);
+            if let Some(far_st) = f.semitones {
+                let d = (far_st - mic_st).abs();
+                // Octave-fold: bleed through a speaker+room often YIN-detects an
+                // octave off; treat ±12 st as the same voice.
+                let d = d.min((d - 12.0).abs());
+                if d <= BLEED_SEMITONE_TOL {
+                    pitch_match = true;
+                }
+            }
+        }
+        pitch_match && mic_rms < far_max_rms * BLEED_LEVEL_CEIL
+    }
+
+    /// Whether the far side has produced audible signal within
+    /// [`FAR_ACTIVE_WINDOW_MS`] — gates the dead-air nudge ("nobody talking"),
+    /// which must not fire in the middle of the counterpart's monologue.
+    fn is_active_at(&self, now: Instant) -> bool {
+        self.frames.lock().unwrap().iter().rev().any(|f| {
+            now.duration_since(f.at).as_millis() as u64 <= FAR_ACTIVE_WINDOW_MS
+                && f.rms >= VOICING_RMS_FLOOR
+        })
+    }
+}
+
+/// Streaming analyzer for the SYSTEM-AUDIO ("them") stream: same FRAME/HOP
+/// framing and YIN pitch as the mic analyzer, but it only feeds the shared
+/// [`FarEndState`] — it emits no events and keeps no windows of its own.
+pub struct FarEndAnalyzer {
+    buf: Vec<f32>,
+    state: Arc<FarEndState>,
+}
+
+impl FarEndAnalyzer {
+    pub fn new(state: Arc<FarEndState>) -> Self {
+        Self {
+            buf: Vec::with_capacity(FRAME * 2),
+            state,
+        }
+    }
+
+    /// Feed one PCM chunk (16 kHz mono i16) of the counterpart's audio.
+    pub fn push(&mut self, chunk: &[i16]) {
+        self.buf.extend(chunk.iter().map(|&s| s as f32 / 32768.0));
+        while self.buf.len() >= FRAME {
+            let rms = rms_of(&self.buf[..FRAME]);
+            let semitones = if rms >= VOICING_RMS_FLOOR {
+                yin_f0(&self.buf[..FRAME], TARGET_SAMPLE_RATE as f32).map(hz_to_semitones)
+            } else {
+                None
+            };
+            self.state.push_frame_at(Instant::now(), rms, semitones);
+            self.buf.drain(..HOP);
+        }
+    }
+}
+
 /// Root-mean-square amplitude of a frame (samples already in −1..1).
 fn rms_of(frame: &[f32]) -> f32 {
     if frame.is_empty() {
@@ -672,6 +913,84 @@ mod tests {
         assert!(!ProsodyAnalyzer::is_filled_pause_run(
             &varied.iter().collect::<Vec<_>>()
         ));
+    }
+
+    #[test]
+    fn session_rate_meter_matches_batch_measure() {
+        // The streaming meter must report the same articulation rate the batch
+        // function measures over identical audio — it replaces the batch measure
+        // for live meetings (where the saved file may be a mix of both sides).
+        let rate = TARGET_SAMPLE_RATE;
+        let dur_s = 9.0f32; // spans >1 block (~7 s) so completed + partial paths run
+        let bumps = 27.0f32; // 3 syllables/s
+        let n = (rate as f32 * dur_s) as usize;
+        let mut pcm = vec![0f32; n];
+        for (k, s) in pcm.iter_mut().enumerate() {
+            let t = k as f32 / rate as f32;
+            let carrier = (2.0 * PI * 150.0 * t).sin();
+            let frac = ((t / dur_s) * bumps).fract();
+            let env = 0.5 - 0.5 * (2.0 * PI * frac).cos();
+            *s = carrier * (0.05 + 0.5 * env);
+        }
+
+        let mut meter = SessionRateMeter::new();
+        let mut i = 0;
+        while i + FRAME <= pcm.len() {
+            meter.push(rms_of(&pcm[i..i + FRAME]));
+            i += HOP;
+        }
+
+        let batch = measure_speech_rate_hz(&pcm, rate);
+        let streaming = meter.rate_hz();
+        assert!(batch > 0.0, "batch measure should see the bumps");
+        assert!(
+            (streaming - batch).abs() < 0.3,
+            "streaming {streaming} should match batch {batch}"
+        );
+    }
+
+    #[test]
+    fn farend_pitch_match_rejects_bleed() {
+        let far = FarEndState::new();
+        let now = Instant::now();
+        // Far side spoke ~100 ms ago at 10 st, moderately loud.
+        far.push_frame_at(now - std::time::Duration::from_millis(100), 0.2, Some(10.0));
+
+        // Mic frame at the same pitch, quieter → speaker bleed.
+        assert!(far.is_bleed_at(now, 0.05, Some(10.3)));
+        // Octave-folded match (10 + 12 = 22 st) is still the same voice.
+        assert!(far.is_bleed_at(now, 0.05, Some(22.0)));
+        // Same pitch but mic much LOUDER than the far signal → the user talking.
+        assert!(!far.is_bleed_at(now, 0.5, Some(10.0)));
+        // Clearly different pitch → the user talking over the far side.
+        assert!(!far.is_bleed_at(now, 0.05, Some(4.0)));
+        // Unvoiced mic frames are never bleed.
+        assert!(!far.is_bleed_at(now, 0.05, None));
+    }
+
+    #[test]
+    fn farend_stale_frames_do_not_match() {
+        let far = FarEndState::new();
+        let now = Instant::now();
+        far.push_frame_at(now - std::time::Duration::from_millis(500), 0.2, Some(10.0));
+        // Outside FAR_MATCH_WINDOW_MS → no bleed verdict…
+        assert!(!far.is_bleed_at(now, 0.05, Some(10.0)));
+        // …but still inside FAR_ACTIVE_WINDOW_MS → the far side counts as talking.
+        assert!(far.is_active_at(now));
+        // And silence far frames never make it active.
+        let quiet = FarEndState::new();
+        quiet.push_frame_at(now, 0.001, None);
+        assert!(!quiet.is_active_at(now));
+    }
+
+    #[test]
+    fn session_rate_meter_zero_on_silence() {
+        let mut meter = SessionRateMeter::new();
+        assert_eq!(meter.rate_hz(), 0.0);
+        for _ in 0..1000 {
+            meter.push(0.0);
+        }
+        assert_eq!(meter.rate_hz(), 0.0);
     }
 
     #[test]
