@@ -18,20 +18,29 @@ export interface CloudAuth {
 
 /**
  * The signed-in user's hosted-plan usage for the current billing period, as
- * returned by GET {CLOUD_URL}/me/usage. STT fields are reserved for Phase 2; the
- * LLM token meter drives the "parley" provider's quota bar in Settings.
+ * returned by GET {CLOUD_URL}/me/usage. Drives the "parley" provider's quota
+ * bars in Settings. Two independent meters:
+ *  - STT seconds: meeting transcription AND voice typing share one pool (both
+ *    stream through the same cloud relay). Free tier: 20h/month.
+ *  - LLM credits: a credit is a USD-denominated unit, debited by the actual
+ *    backend model cost. Free tier default: 10 credits/month.
  */
 export interface HostedQuota {
   /** Plan id, e.g. "free". */
   plan: string;
-  /** Speech-to-text seconds consumed this period (Phase 2). */
+  /** Speech-to-text seconds consumed this period (meeting + voice typing). */
   sttSecondsUsed: number;
-  /** Speech-to-text seconds allowed this period (Phase 2). */
+  /** Speech-to-text seconds allowed this period (free tier: 20h = 72000). */
   sttSecondsLimit: number;
-  /** LLM tokens (prompt + completion) consumed this period. */
-  llmTokensUsed: number;
-  /** LLM tokens allowed this period. */
-  llmTokensLimit: number;
+  /** LLM credits consumed this period. */
+  llmCreditsUsed: number;
+  /** LLM credits allowed this period (free tier default: 10). */
+  llmCreditsLimit: number;
+  /** @deprecated Superseded by the credit meter; kept optional so an older
+   *  backend response still parses. Prefer `llmCredits*`. */
+  llmTokensUsed?: number;
+  /** @deprecated Superseded by the credit meter. */
+  llmTokensLimit?: number;
   /** Epoch ms when the period resets and counters roll back to zero. */
   periodResetTs: number;
 }

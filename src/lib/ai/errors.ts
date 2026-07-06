@@ -44,6 +44,32 @@ function truncate(s: string, max = 600): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
+/**
+ * Classify a hosted-"parley" LLM failure into a stable code so the UI can show
+ * an actionable message instead of a raw "HTTP 402". Mirrors the STT classifier
+ * in capture.rs: 402 = out of credits, 401 / expired session = auth. Returns
+ * null for any other provider or an unrelated failure, so callers fall back to
+ * the generic {@link describeAiError} string. Walks the SDK's `cause` chain
+ * because the real status usually sits on a nested APICallError.
+ */
+export function hostedLlmErrorCode(err: unknown, provider: string): "credits" | "auth" | null {
+  if (provider !== "parley") return null;
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  let depth = 0;
+  while (cur && typeof cur === "object" && !seen.has(cur) && depth < 5) {
+    seen.add(cur);
+    const e = cur as Record<string, unknown>;
+    const status = typeof e.statusCode === "number" ? e.statusCode : undefined;
+    const msg = typeof e.message === "string" ? e.message.toLowerCase() : "";
+    if (status === 402 || msg.includes("402")) return "credits";
+    if (status === 401 || msg.includes("401") || msg.includes("unauthorized")) return "auth";
+    cur = e.cause;
+    depth++;
+  }
+  return null;
+}
+
 function parseJson(s: unknown): Record<string, unknown> | undefined {
   if (typeof s !== "string") return undefined;
   try {

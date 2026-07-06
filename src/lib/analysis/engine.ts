@@ -162,8 +162,17 @@ export async function runAnalysis(opts?: { mode?: AppMode; force?: boolean }): P
     useStore.setState({ analyzedEvalSig: evalSig });
   } catch (err) {
     console.error("[analysis]", err);
-    const { describeAiError } = await import("../ai/errors");
-    useStore.getState().setAnalysisError(describeAiError(err));
+    const { describeAiError, hostedLlmErrorCode } = await import("../ai/errors");
+    const { translate } = await import("../../i18n/messages");
+    const code = hostedLlmErrorCode(err, settings.provider);
+    const lang = useStore.getState().settings.language;
+    const message =
+      code === "credits"
+        ? translate(lang, "analysis.error.credits")
+        : code === "auth"
+          ? translate(lang, "analysis.error.auth")
+          : describeAiError(err);
+    useStore.getState().setAnalysisError(message);
     useStore.getState().setAnalysisStatus("error");
   } finally {
     analysisBusy = false;
