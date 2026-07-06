@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Copy, FileText, Maximize2, Sparkles, X } from "lucide-react";
+import { Check, Copy, FileText, Loader2, Maximize2, Sparkles, X } from "lucide-react";
 import { isTrimmed, meetingBriefText, useStore } from "../../lib/store";
 import { findActiveTemplate } from "../../lib/evaluations/presets";
 import { runAnalysis } from "../../lib/analysis/engine";
@@ -129,7 +129,7 @@ export function FindingsPanel({
             onClick={() => void runAnalysis({ mode: "live" })}
             title={t("analysis.hint")}
           >
-            <Sparkles className={`size-3 ${running ? "animate-pulse" : ""}`} />
+            {running ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
             {running ? t("analysis.analyzing") : t("analysis.run")}
           </Button>
         )}
