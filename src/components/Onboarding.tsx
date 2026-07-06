@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Check, ChevronLeft, ChevronRight, Download, Loader2, Mic, Volume2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Download, Keyboard, Loader2, Mic, Volume2, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isTauri } from "../lib/tauriEvents";
+import { broadcastSettings } from "../lib/settingsSync";
+import { shortcutCaps } from "../settings/VoiceTypingSettings";
 import { PROVIDERS, PROVIDER_BY_ID } from "../lib/ai/providers";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
 import { useI18n, LANGUAGE_OPTIONS } from "../i18n";
@@ -21,7 +23,7 @@ import type { AppLanguage, LlmProvider, Settings, SttProviderId } from "../lib/t
 // systemAudio: unknown | granted | denied | unsupported (macOS < 14.2).
 type Perms = { microphone: string; systemAudio: string };
 
-const STEP_COUNT = 8;
+const STEP_COUNT = 9;
 
 export function Onboarding() {
   const { t } = useI18n();
@@ -292,6 +294,43 @@ export function Onboarding() {
           {step === 6 && <DiarizeModelStep />}
 
           {step === 7 && (
+            <div className="flex flex-col gap-3">
+              <h2 className="text-base font-semibold tracking-tight">{t("onboarding.voiceTyping.title")}</h2>
+              <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.voiceTyping.body")}</p>
+              <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2.5">
+                <span className="text-muted-foreground">
+                  <Keyboard className="size-4" />
+                </span>
+                <span className="flex-1 text-sm">
+                  {t("onboarding.voiceTyping.holdPrefix")}{" "}
+                  <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px]">
+                    {shortcutCaps(settings.voiceTypingShortcut, t)}
+                  </kbd>{" "}
+                  {t("onboarding.voiceTyping.holdSuffix")}
+                </span>
+                <Button
+                  variant={settings.voiceTypingEnabled ? "outline" : "default"}
+                  size="sm"
+                  className="h-7 shrink-0 text-[11px]"
+                  onClick={() => {
+                    const enabled = !settings.voiceTypingEnabled;
+                    patch({ voiceTypingEnabled: enabled });
+                    broadcastSettings({ ...useStore.getState().settings }).catch(() => {});
+                    // Auto-paste needs Accessibility — enabling is the moment to
+                    // ask (same as the Settings toggle).
+                    if (enabled) void invoke("accessibility_status", { prompt: true }).catch(() => {});
+                  }}
+                >
+                  {settings.voiceTypingEnabled
+                    ? t("settings.voiceTyping.disable")
+                    : t("settings.voiceTyping.enable")}
+                </Button>
+              </div>
+              <span className="text-[11px] text-muted-foreground">{t("onboarding.voiceTyping.hint")}</span>
+            </div>
+          )}
+
+          {step === 8 && (
             <div className="flex flex-col items-center gap-3 py-6 text-center">
               <div className="flex size-12 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
                 <Check className="size-6" />
