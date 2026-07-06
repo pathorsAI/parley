@@ -52,28 +52,35 @@ let hideTimer: ReturnType<typeof setTimeout> | undefined;
 /** Wire up the host. Returns a cleanup function. No-op outside Tauri. */
 export function initVoiceTyping(): () => void {
   if (!isTauri()) return () => {};
-  let unPtt: UnlistenFn = () => {};
-  let unText: UnlistenFn = () => {};
-  let unErr: UnlistenFn = () => {};
-  let unClosed: UnlistenFn = () => {};
+  // listen() resolves asynchronously — a cleanup that runs before it resolves
+  // (StrictMode's dev double-mount of App) must still unlisten the late
+  // arrival, or the second init's handlers double up for the app's lifetime.
+  let cancelled = false;
+  const unsubs: UnlistenFn[] = [];
+  const track = (p: Promise<UnlistenFn>) => {
+    p.then((u) => {
+      if (cancelled) u();
+      else unsubs.push(u);
+    }).catch(() => {});
+  };
   // Serialize press/release handling: a quick tap used to run endSession's
   // `stop_voice_typing` while startSession's invoke was still in flight, so
   // the stop reached Rust FIRST and no-op'd — leaving a live, ownerless
   // backend session (mic claimed, socket open) behind. Chaining guarantees
   // start has resolved before its matching stop is issued.
   let pttChain: Promise<void> = Promise.resolve();
-  listen<{ down: boolean }>("voicetyping://ptt", (e) => {
-    const isDown = e.payload.down;
-    pttChain = pttChain.then(() => onPtt(isDown)).catch(() => {});
-  })
-    .then((u) => (unPtt = u))
-    .catch(() => {});
-  listen<{ text: string }>("voicetyping://text", (e) => {
-    latestText = e.payload.text;
-    lastTextAt = Date.now();
-  })
-    .then((u) => (unText = u))
-    .catch(() => {});
+  track(
+    listen<{ down: boolean }>("voicetyping://ptt", (e) => {
+      const isDown = e.payload.down;
+      pttChain = pttChain.then(() => onPtt(isDown)).catch(() => {});
+    }),
+  );
+  track(
+    listen<{ text: string }>("voicetyping://text", (e) => {
+      latestText = e.payload.text;
+      lastTextAt = Date.now();
+    }),
+  );
   // Backend STT failure (rejected key, expired hosted session, out of
   // credits). The host owns the session lifecycle, so it bridges the event
   // into the overlay's one error surface (`voicetyping://session`) — the code
@@ -81,14 +88,14 @@ export function initVoiceTyping(): () => void {
   // looks like successful silence: frozen waveform, no transcript, no
   // explanation. The mic stays claimed until release; endSession still stops
   // it, and finalize still delivers whatever text arrived before the death.
-  listen<{ code: string }>("voicetyping://error", (e) => {
-    if (!busy) return; // stale event from an already-finished session
-    failed = true;
-    log.warn("voice-typing: session failed", { code: e.payload.code });
-    emit("voicetyping://session", { phase: "error", message: e.payload.code }).catch(() => {});
-  })
-    .then((u) => (unErr = u))
-    .catch(() => {});
+  track(
+    listen<{ code: string }>("voicetyping://error", (e) => {
+      if (!busy) return; // stale event from an already-finished session
+      failed = true;
+      log.warn("voice-typing: session failed", { code: e.payload.code });
+      emit("voicetyping://session", { phase: "error", message: e.payload.code }).catch(() => {});
+    }),
+  );
   // The backend session is fully over — every final token has been emitted.
   // Re-arm the settle loop: it sees `closedAt` and finalizes after the short
   // CLOSE_DRAIN_MS instead of the SETTLE_MS quiet poll. Ignored unless we're
@@ -98,14 +105,14 @@ export function initVoiceTyping(): () => void {
   // whose delivery slipped past startSession's `closedAt = 0` reset, and
   // honoring that one would cut the new session's flush short. Failed
   // sessions are finalized immediately by endSession already.
-  listen<{ source: string }>("stt://closed", (e) => {
-    if (e.payload.source !== "voice-typing") return;
-    if (!busy || down || failed) return;
-    closedAt = Date.now();
-    waitForSettle();
-  })
-    .then((u) => (unClosed = u))
-    .catch(() => {});
+  track(
+    listen<{ source: string }>("stt://closed", (e) => {
+      if (e.payload.source !== "voice-typing") return;
+      if (!busy || down || failed) return;
+      closedAt = Date.now();
+      waitForSettle();
+    }),
+  );
   // Apply the saved push-to-talk key so the right trigger is live from launch
   // (registers Option+Space, or arms the HID tap for a modifier key). The
   // Settings panel re-applies it whenever the user changes the selection.
@@ -136,10 +143,8 @@ export function initVoiceTyping(): () => void {
   // Warm the overlay window so it's listening before the first key press.
   prewarmOverlay().catch(() => {});
   return () => {
-    unPtt();
-    unText();
-    unErr();
-    unClosed();
+    cancelled = true;
+    unsubs.forEach((u) => u());
   };
 }
 

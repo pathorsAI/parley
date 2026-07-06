@@ -65,6 +65,11 @@ pub struct MeetingState {
     /// closes the socket even if the capture→channel-close cascade stalls, instead
     /// of letting the session linger and keep emitting transcript after stop.
     tasks: Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>,
+    /// This meeting's `meeting://error` mute (fresh per start, set on stop).
+    /// Session tasks outlive `stop_meeting` by the flush/abort grace; a failure
+    /// in that window must not tear down whatever meeting runs NEXT — see
+    /// `run_metered_session`.
+    error_mute: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
     /// Buffers the recorded audio of the in-progress live meeting (see RecorderBuf).
     recorder: RecorderBuf,
 }
@@ -179,6 +184,10 @@ pub fn start_meeting(
     *state.recorder.lock().unwrap() = Some(Vec::new());
     // Drop any (finished) session handles from a prior meeting before this one fills in.
     state.tasks.lock().unwrap().clear();
+    // Arm THIS meeting's error mute (unset). The previous meeting's sessions
+    // hold the previous Arc — already muted by its stop.
+    let error_mute = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    *state.error_mute.lock().unwrap() = Some(error_mute.clone());
     let recorder = state.recorder.clone();
     let model = model
         .filter(|m| !m.trim().is_empty())
@@ -240,6 +249,7 @@ pub fn start_meeting(
                         rx_mix,
                         Some(recorder),
                         "meeting://error",
+                        Some(error_mute.clone()),
                     ));
                 }
                 // If one capture failed, transcribe + record whichever started.
@@ -252,6 +262,7 @@ pub fn start_meeting(
                         a,
                         Some(recorder),
                         "meeting://error",
+                        Some(error_mute.clone()),
                     ));
                 }
                 (None, Some(b)) => {
@@ -263,6 +274,7 @@ pub fn start_meeting(
                         b,
                         Some(recorder),
                         "meeting://error",
+                        Some(error_mute.clone()),
                     ));
                 }
                 (None, None) => {
@@ -297,6 +309,7 @@ pub fn start_meeting(
                     rx,
                     Some(recorder),
                     "meeting://error",
+                    Some(error_mute.clone()),
                 ));
             }
             if let Ok(rx) = spawn_capture(&coord, MicUser::Meeting, sys, gate.clone(), "them") {
@@ -309,6 +322,7 @@ pub fn start_meeting(
                     rx,
                     None,
                     "meeting://error",
+                    Some(error_mute.clone()),
                 ));
             }
         }
@@ -330,6 +344,7 @@ pub fn start_meeting(
                 rx,
                 Some(recorder),
                 "meeting://error",
+                Some(error_mute.clone()),
             );
             state.tasks.lock().unwrap().push(task);
         }
@@ -353,6 +368,14 @@ pub fn stop_meeting(
     // is a no-op, and after stop no new audio flows, so the extra idle wait
     // produces no new transcript. (A short grace would cut a slow finalize and
     // lose the last segment + usage event.)
+    // From this point the meeting is over: a failure inside the flush/abort
+    // grace below belongs to THIS (ended) meeting, and raising meeting://error
+    // for it would tear down whatever meeting the user starts next (or toast a
+    // spurious failure). Mute FIRST — before anything below can make a session
+    // fail — then release the tasks; run_metered_session logs instead.
+    if let Some(mute) = state.error_mute.lock().unwrap().as_ref() {
+        mute.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
     let tasks: Vec<tauri::async_runtime::JoinHandle<()>> =
         state.tasks.lock().unwrap().drain(..).collect();
     if !tasks.is_empty() {

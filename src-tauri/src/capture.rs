@@ -186,6 +186,16 @@ pub type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
 /// `{ source, code, message }`: meetings pass `meeting://error` (the meeting UI
 /// tears down on it), voice typing passes `voicetyping://error` (the host
 /// forwards it to the overlay's error state).
+///
+/// `error_mute`: session tasks outlive `stop_meeting` by up to the flush/abort
+/// grace, and the meeting UI tears down on `meeting://error` unconditionally —
+/// so a failure inside that window (it belongs to a meeting the user already
+/// ended) would kill the NEXT meeting the user just started, or toast a
+/// spurious failure for one that completed fine. `stop_meeting` sets the flag
+/// when it releases its tasks; a muted failure is logged only. Voice typing
+/// passes `None` — its stale-error guards are abort-on-restart plus the
+/// host-side busy/generation checks.
+#[allow(clippy::too_many_arguments)]
 pub fn run_metered_session(
     app: &AppHandle,
     provider: SttProvider,
@@ -194,6 +204,7 @@ pub fn run_metered_session(
     rx: UnboundedReceiver<Vec<i16>>,
     recorder: Option<RecorderBuf>,
     error_event: &'static str,
+    error_mute: Option<Arc<AtomicBool>>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -250,10 +261,20 @@ pub fn run_metered_session(
             } else {
                 "connect"
             };
-            let _ = app.emit(
-                error_event,
-                serde_json::json!({ "source": label, "code": code, "message": msg }),
-            );
+            if error_mute
+                .as_ref()
+                .is_some_and(|m| m.load(Ordering::SeqCst))
+            {
+                // The owning meeting was already stopped: the failure has no
+                // actionable surface and the teardown it triggers would hit
+                // whatever meeting is CURRENTLY running instead.
+                log::info!("[stt:{label}] failure after stop — suppressing {error_event}");
+            } else {
+                let _ = app.emit(
+                    error_event,
+                    serde_json::json!({ "source": label, "code": code, "message": msg }),
+                );
+            }
         }
 
         let samples = counter.await.unwrap_or(0);
