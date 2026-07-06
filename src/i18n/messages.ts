@@ -514,6 +514,7 @@ export const zhTW = {
   "speakers.voiceStageClustering": "分群中…",
   "speakers.voiceFound": "辨識出 {speakers} 位說話者，幫他們命名：",
   "speakers.voiceDone": "完成",
+  "speakers.postRefined": "已依錄音聲紋重新校正說話者",
 
   "replay.upload": "上傳錄音",
   "ingest.title": "分析錄音",
@@ -1264,6 +1265,7 @@ export const en = {
   "speakers.voiceStageClustering": "Clustering…",
   "speakers.voiceFound": "Found {speakers} speakers — name them:",
   "speakers.voiceDone": "Done",
+  "speakers.postRefined": "Speaker labels refined from the recording",
 
   "replay.upload": "Upload recording",
   "ingest.title": "Analyze recording",
