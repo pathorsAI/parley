@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { ArrowUp } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowUp, ChevronDown, ChevronUp } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useStore, meetingBriefText } from "../../lib/store";
@@ -12,6 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  reasoning?: string;
 }
 
 const SUGGESTIONS: TranslationKey[] = [
@@ -27,8 +28,20 @@ export function AskPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showThinking, setShowThinking] = useState(true);
+  const [suggestionIdx, setSuggestionIdx] = useState(0);
   const segmentCount = useStore((s) => s.segments.length);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Rotate the ghost suggestion in the input while it's empty.
+  useEffect(() => {
+    if (input) return;
+    const id = setInterval(
+      () => setSuggestionIdx((i) => (i + 1) % SUGGESTIONS.length),
+      4000
+    );
+    return () => clearInterval(id);
+  }, [input]);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -53,6 +66,7 @@ export function AskPanel() {
     }
 
     setMessages((m) => [...m, { role: "assistant", content: "" }]);
+    setShowThinking(true);
     setBusy(true);
     try {
       const { askAboutMeeting } = await import("../../lib/ai/ask");
@@ -65,10 +79,17 @@ export function AskPanel() {
         onDelta: (chunk) => {
           setMessages((m) => {
             const next = m.slice();
-            next[next.length - 1] = {
-              role: "assistant",
-              content: next[next.length - 1].content + chunk,
-            };
+            const last = next[next.length - 1];
+            next[next.length - 1] = { ...last, content: last.content + chunk };
+            return next;
+          });
+          scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+        },
+        onReasoningDelta: (chunk) => {
+          setMessages((m) => {
+            const next = m.slice();
+            const last = next[next.length - 1];
+            next[next.length - 1] = { ...last, reasoning: (last.reasoning ?? "") + chunk };
             return next;
           });
           scrollRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -125,14 +146,34 @@ export function AskPanel() {
                     {m.content}
                   </div>
                 ) : (
-                  <div
-                    key={i}
-                    className="prose prose-invert prose-sm select-text mr-auto max-w-[92%] rounded-lg bg-muted px-3 py-2 text-foreground prose-p:my-1.5 prose-pre:my-2 prose-pre:bg-neutral-900 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5"
-                  >
+                  <div key={i} className="w-full">
+                    {busy && i === messages.length - 1 && !m.content && m.reasoning ? (
+                      <div className="mb-1">
+                        <button
+                          type="button"
+                          onClick={() => setShowThinking((v) => !v)}
+                          className="flex items-center gap-1 text-[11px] text-muted-foreground/80 transition-colors hover:text-foreground"
+                        >
+                          <span className="animate-pulse">{t("ask.thinking")}</span>
+                          {showThinking ? (
+                            <ChevronUp className="size-3" />
+                          ) : (
+                            <ChevronDown className="size-3" />
+                          )}
+                        </button>
+                        {showThinking && (
+                          <p className="select-text mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground/60">
+                            {m.reasoning}
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
                     {m.content ? (
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-                    ) : busy && i === messages.length - 1 ? (
-                      "…"
+                      <div className="prose prose-invert prose-sm select-text max-w-none text-foreground prose-p:my-1.5 prose-pre:my-2 prose-pre:bg-neutral-900 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                      </div>
+                    ) : busy && i === messages.length - 1 && !m.reasoning ? (
+                      <p className="text-sm text-muted-foreground">…</p>
                     ) : null}
                   </div>
                 )
@@ -144,35 +185,51 @@ export function AskPanel() {
       </ScrollArea>
 
       <form onSubmit={submit} className="border-t p-2.5">
-        {messages.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {SUGGESTIONS.map((s) => (
-              <button
-                key={s}
-                type="button"
-                disabled={busy}
-                onClick={() => void ask(t(s))}
-                className="rounded-full border bg-muted/40 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
-              >
-                {t(s)}
-              </button>
-            ))}
-          </div>
-        )}
         <div className="flex items-end gap-2">
-          <Textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void submit(e);
-              }
-            }}
-            rows={1}
-            placeholder={t("ask.placeholder")}
-            className="max-h-32 min-h-9 resize-none"
-          />
+          <div className="relative min-w-0 flex-1">
+            <Textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                // Don't hijack keys while an IME composition is active — Enter
+                // commits the candidate, arrows navigate it, Tab picks it.
+                if (e.nativeEvent.isComposing) return;
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void submit(e);
+                  return;
+                }
+                if (input) return;
+                if (e.key === "Tab" || e.key === "ArrowRight") {
+                  e.preventDefault();
+                  setInput(t(SUGGESTIONS[suggestionIdx]));
+                } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setSuggestionIdx(
+                    (i) =>
+                      (i + (e.key === "ArrowDown" ? 1 : SUGGESTIONS.length - 1)) %
+                      SUGGESTIONS.length
+                  );
+                }
+              }}
+              rows={1}
+              aria-label={t("ask.placeholder")}
+              className="max-h-32 min-h-9 resize-none"
+            />
+            {!input && (
+              <div
+                key={suggestionIdx}
+                className="pointer-events-none absolute inset-x-2.5 top-2 flex items-center gap-1.5 overflow-hidden animate-in fade-in slide-in-from-bottom-1 duration-300"
+              >
+                <span className="truncate text-base text-muted-foreground/60 md:text-sm">
+                  {t(SUGGESTIONS[suggestionIdx])}
+                </span>
+                <kbd className="shrink-0 rounded border px-1 font-sans text-[9px] text-muted-foreground/70">
+                  Tab
+                </kbd>
+              </div>
+            )}
+          </div>
           <Button type="submit" size="icon" className="size-9 shrink-0" disabled={!input.trim() || busy}>
             <ArrowUp className="size-4" />
           </Button>

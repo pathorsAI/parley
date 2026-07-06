@@ -12,7 +12,8 @@ You are given the running transcript so far, labelled by speaker. Answer the use
 
 /**
  * Stream an answer to a question about the live meeting. `onDelta` is called
- * with each text chunk; the promise resolves with the full answer.
+ * with each text chunk, `onReasoningDelta` with each reasoning chunk from
+ * reasoning-capable models; the promise resolves with the full answer.
  */
 export async function askAboutMeeting(opts: {
   settings: Settings;
@@ -21,9 +22,11 @@ export async function askAboutMeeting(opts: {
   meetingContext?: string;
   names?: Record<string, string>;
   onDelta: (chunk: string) => void;
+  onReasoningDelta?: (chunk: string) => void;
   signal?: AbortSignal;
 }): Promise<string> {
-  const { settings, segments, question, meetingContext, names, onDelta, signal } = opts;
+  const { settings, segments, question, meetingContext, names, onDelta, onReasoningDelta, signal } =
+    opts;
 
   const transcript = transcriptAsText(segments, names) || "(no speech transcribed yet)";
   const contextLine =
@@ -49,9 +52,17 @@ export async function askAboutMeeting(opts: {
       prompt: `${contextLine}Transcript so far:\n${transcript}\n\nQuestion: ${question}`,
     });
 
-    for await (const delta of result.textStream) {
-      full += delta;
-      onDelta(delta);
+    // fullStream surfaces errors as parts instead of throwing — re-throw them
+    // so callers keep a single error path.
+    for await (const part of result.fullStream) {
+      if (part.type === "text-delta") {
+        full += part.text;
+        onDelta(part.text);
+      } else if (part.type === "reasoning-delta") {
+        onReasoningDelta?.(part.text);
+      } else if (part.type === "error") {
+        throw part.error;
+      }
     }
     // Usage resolves once the stream finishes; log it without blocking the return.
     void (async () => {
