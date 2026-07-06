@@ -18,6 +18,7 @@ import { CLOUD_ENABLED } from "../flags";
 import { markDirty } from "../cloud/syncState";
 import { CLOUD_URL, cloudFetch, cloudToken, syncEnabled } from "../cloud/client";
 import { listLocalFolders } from "./folders";
+import { rediarizeSegments } from "../speakers/postDiarize";
 import { translate } from "../../i18n/messages";
 import type { ReplaySession } from "../replay/types";
 import type { HistoryEntry, HistoryEntrySummary } from "./types";
@@ -236,7 +237,60 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
     speechRateHz,
   };
   await persist(entry, audioTempPath, /* compress */ false);
+  // With the recording now on disk, fix the provider's drifted speaker labels
+  // from the audio BEFORE the org copy is made, so a shared copy isn't stale.
+  // Best-effort: any failure keeps the provider labels.
+  await applyPostSaveDiarization(entry).catch((e) =>
+    log.warn("history: post-save re-diarization failed", { id: entry.id, error: String(e) }),
+  );
   await applyDefaultOrgShare(entry.id, save);
+}
+
+/**
+ * After a live save: re-derive the speakers from the recording's AUDIO and patch
+ * the just-saved entry. Provider streaming diarization drifts over long meetings
+ * (swapped labels, spurious late speakers); the on-device voice pipeline fixes
+ * that once the full recording exists, remapping the new clusters onto the
+ * provider's numbering so names assigned during the meeting stay attached (see
+ * postDiarize.ts). No-op for mic-only meetings and when nothing changes.
+ */
+async function applyPostSaveDiarization(entry: HistoryEntry): Promise<void> {
+  const { audioPath } = await invoke<HistoryReadResult>("read_history_entry", { id: entry.id });
+  if (!audioPath) return;
+  const result = await rediarizeSegments(entry.segments, audioPath);
+  if (!result) return;
+
+  const updated: HistoryEntry = { ...entry, segments: result.segments };
+  await invoke("save_history_entry", {
+    id: entry.id,
+    summaryJson: JSON.stringify(buildSummary(updated)),
+    metaJson: JSON.stringify(updated),
+    audioSourcePath: null, // leave the recording untouched
+    compress: false,
+  });
+  await emitHistoryUpdated(entry.id);
+  pushToCloud(entry.id); // refresh the cloud copy with the corrected labels
+
+  // The finished meeting is usually still on screen — retag those lines too.
+  // Live segment ids REPEAT across sessions ("mix-0", "mix-1", …), so an id
+  // match alone could hit a different meeting's lines. Only touch the store
+  // when it provably still shows THIS meeting: the just-ended live session
+  // (same start timestamp) or this very entry re-opened from history.
+  const st = useStore.getState();
+  const showsThisMeeting =
+    st.loadedHistoryId === entry.id ||
+    (st.appMode === "live" && st.loadedHistoryId === null && st.meetingStartedAt === entry.createdAt);
+  if (showsThisMeeting) {
+    const bySegId = new Map(result.segments.map((s) => [s.id, s.speaker]));
+    useStore.setState({
+      segments: st.segments.map((s) => {
+        const sp = bySegId.get(s.id);
+        return sp === undefined || sp === s.speaker ? s : { ...s, speaker: sp };
+      }),
+    });
+    toast.message(translate(st.settings.language, "speakers.postRefined"));
+  }
+  log.info("history: post-save re-diarization applied", { id: entry.id, changed: result.changed });
 }
 
 /**
