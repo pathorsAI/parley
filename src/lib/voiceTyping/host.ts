@@ -12,6 +12,7 @@ import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "../tauriEvents";
 import { useStore } from "../store";
 import { sttApiKey, sttRelayUrl } from "../transcription/providers";
+import { HOSTED_VOICE_TYPING_MAX_SECONDS } from "../limits";
 import { log } from "../log";
 import { showOverlay, hideOverlay, prewarmOverlay } from "./overlay";
 import { appendVoiceEntry } from "./history";
@@ -48,6 +49,10 @@ let failed = false;
 let gen = 0;
 let settleTimer: ReturnType<typeof setTimeout> | undefined;
 let hideTimer: ReturnType<typeof setTimeout> | undefined;
+/** Hosted-only: fires HOSTED_VOICE_TYPING_MAX_SECONDS after a "parley" session
+ *  starts to auto-finalize it (the free plan caps a single dictation). Cleared
+ *  whenever the session ends by any other path. */
+let capTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Wire up the host. Returns a cleanup function. No-op outside Tauri. */
 export function initVoiceTyping(): () => void {
@@ -144,6 +149,7 @@ export function initVoiceTyping(): () => void {
   prewarmOverlay().catch(() => {});
   return () => {
     cancelled = true;
+    clearTimeout(capTimer);
     unsubs.forEach((u) => u());
   };
 }
@@ -184,8 +190,14 @@ async function startSession() {
   closedAt = 0;
   clearTimeout(settleTimer);
   clearTimeout(hideTimer);
+  clearTimeout(capTimer);
   await showOverlay();
   await emit("voicetyping://session", { phase: "start" });
+  // The hosted "parley" plan caps a single dictation; BYOK is uncapped. Pass
+  // the cap to the backend as a safety net (a hung webview can't stream the
+  // paid relay forever) and mirror it with a frontend timer that finalizes
+  // gracefully (delivering the transcript). null = no cap for BYOK.
+  const hosted = provider === "parley";
   try {
     await invoke("start_voice_typing", {
       provider,
@@ -193,8 +205,14 @@ async function startSession() {
       languageHints: [],
       inputDevice: settings.inputDevice ?? null,
       relayUrl: sttRelayUrl(provider),
+      maxDurationSecs: hosted ? HOSTED_VOICE_TYPING_MAX_SECONDS : null,
     });
     log.info("voice-typing: session started", { provider });
+    if (hosted) {
+      capTimer = setTimeout(() => {
+        onCapReached().catch(() => {});
+      }, HOSTED_VOICE_TYPING_MAX_SECONDS * 1000);
+    }
   } catch (e) {
     log.error("voice-typing: start failed", { error: String(e) });
     busy = false;
@@ -205,6 +223,7 @@ async function startSession() {
 
 async function endSession() {
   if (!busy) return;
+  clearTimeout(capTimer);
   releasedAt = Date.now();
   // Closing the mic tells the STT adapter to finalize; the trailing final tokens
   // arrive over the next moments and keep updating the text. We wait for them.
@@ -221,6 +240,29 @@ async function endSession() {
     return;
   }
   await emit("voicetyping://session", { phase: "stop" });
+  waitForSettle();
+}
+
+/** The hosted single-dictation cap elapsed while the key was still held. Treat
+ *  it as a release: stop the backend session, mark the key up so the real
+ *  key-up is a no-op, tell the overlay the limit ended it, then finalize (the
+ *  transcript captured so far is still copied/pasted). */
+async function onCapReached() {
+  if (!busy) return;
+  clearTimeout(capTimer);
+  log.info("voice-typing: hosted single-session cap reached; finalizing");
+  down = false;
+  releasedAt = Date.now();
+  try {
+    await invoke("stop_voice_typing");
+  } catch (e) {
+    log.warn("voice-typing: stop failed at cap", { error: String(e) });
+  }
+  await emit("voicetyping://session", { phase: "limit" }).catch(() => {});
+  if (failed) {
+    finalize().catch(() => {});
+    return;
+  }
   waitForSettle();
 }
 
@@ -248,6 +290,7 @@ function waitForSettle() {
 async function finalize() {
   const myGen = gen;
   busy = false;
+  clearTimeout(capTimer);
   const text = latestText.trim();
   if (text) {
     try {

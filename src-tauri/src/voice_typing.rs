@@ -14,7 +14,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::audio::microphone::Microphone;
 use crate::capture::{run_metered_session, spawn_capture, Begin, MicCoordinator, MicUser};
@@ -25,6 +25,12 @@ use crate::transcription::{SttProvider, TranscribeConfig};
 /// force-aborted (mirrors `stop_meeting`'s backstop). The frontend waits at
 /// most ~3 s for the flush, so 8 s cuts only genuine zombies.
 const FLUSH_ABORT_GRACE: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Extra grace on top of the hosted single-session cap before the backend
+/// force-stops the mic. The frontend caps and stops the session at exactly the
+/// limit; this watchdog only fires when the webview never did (hung/crashed),
+/// so it must not race the normal frontend stop.
+const CAP_BACKEND_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Singleton guard for the voice-typing STT session task. [`MicCoordinator`]
 /// already guarantees at most one CAPTURE, but the session task it feeds (the
@@ -73,6 +79,11 @@ pub fn start_voice_typing(
     // relays through this URL. Absent for BYOK providers. Same contract as
     // `start_meeting`.
     relay_url: Option<String>,
+    // Hosted "parley" mode only: the free plan's per-dictation cap, in seconds.
+    // The frontend caps and stops the session at the limit; this arms a backend
+    // watchdog that force-stops the mic if the webview never did, so the paid
+    // relay can't stream forever. `None`/`0` (BYOK) = uncapped.
+    max_duration_secs: Option<u64>,
 ) -> Result<(), String> {
     let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
     if api_key.trim().is_empty() {
@@ -149,6 +160,33 @@ pub fn start_voice_typing(
         vt.task = Some(task);
     } else {
         task.abort();
+    }
+    drop(vt);
+
+    // Backend safety net for the hosted single-session cap: if the frontend
+    // never stops this session (webview hung/crashed), tear the mic down after
+    // the cap + grace so the paid relay stops streaming. Guarded by `seq` so it
+    // can never stop a newer session started in the meantime. No-op if that
+    // session already ended (mic not owned, task already taken).
+    if let Some(secs) = max_duration_secs.filter(|s| *s > 0) {
+        let app = app.clone();
+        let inner = state.0.clone();
+        let deadline = std::time::Duration::from_secs(secs) + CAP_BACKEND_GRACE;
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(deadline).await;
+            let still_current = { inner.lock().unwrap().seq == my_seq };
+            if !still_current {
+                return;
+            }
+            log::warn!("voice-typing: hosted session exceeded {secs}s cap; backend safety-stop");
+            app.state::<MicCoordinator>().stop(MicUser::VoiceTyping);
+            let mut vt = inner.lock().unwrap();
+            if vt.seq == my_seq {
+                if let Some(task) = vt.task.take() {
+                    task.abort();
+                }
+            }
+        });
     }
     Ok(())
 }

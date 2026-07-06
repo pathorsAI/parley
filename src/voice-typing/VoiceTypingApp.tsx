@@ -29,7 +29,7 @@ interface LevelPayload {
   level: number;
 }
 interface SessionPayload {
-  phase: "start" | "stop" | "done" | "error";
+  phase: "start" | "stop" | "done" | "error" | "limit";
   message?: string;
 }
 
@@ -81,6 +81,9 @@ export const VoiceTypingApp = () => {
   const [text, setText] = useState("");
   const [phase, setPhase] = useState<Phase>("listening");
   const [error, setError] = useState<string | null>(null);
+  // Set when the hosted single-dictation cap ended the session: a note shown
+  // alongside the (still delivered) transcript so the abrupt stop is explained.
+  const [limited, setLimited] = useState(false);
   const [bars, setBars] = useState<number[]>(() =>
     Array.from({ length: BAR_COUNT }, () => BAR_FLOOR),
   );
@@ -183,8 +186,14 @@ export const VoiceTypingApp = () => {
           interimRef.current = "";
           setText("");
           setError(null);
+          setLimited(false);
           setPhase("listening");
         } else if (p === "stop") {
+          setPhase("finalizing");
+        } else if (p === "limit") {
+          // Cap hit while the key was held: the transcript still flushes and
+          // pastes; flag the note and fall through the normal finalize path.
+          setLimited(true);
           setPhase("finalizing");
         } else if (p === "done") {
           setPhase("done");
@@ -220,6 +229,14 @@ export const VoiceTypingApp = () => {
 
   return (
     <div className="flex h-screen w-screen select-none flex-col items-center justify-end gap-2 pb-4">
+      {/* Hosted single-dictation cap note: shown above the transcript, which is
+          still delivered. Amber to read as a limit, not an error. */}
+      {limited && !error && (
+        <div className="rounded-full bg-amber-500 px-3 py-1 text-center text-[12px] font-medium text-white shadow-md">
+          {t("voiceTyping.limit")}
+        </div>
+      )}
+
       {/* Layer 1 — transcript. Inverted theme colours (foreground bg / background
           text) for high contrast against whatever's behind the overlay. */}
       {bubble && (

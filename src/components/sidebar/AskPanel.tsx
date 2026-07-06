@@ -75,12 +75,17 @@ export function AskPanel() {
         },
       });
     } catch (err) {
+      const { hostedLlmErrorCode } = await import("../../lib/ai/errors");
+      const code = hostedLlmErrorCode(err, settings.provider);
+      const content =
+        code === "credits"
+          ? t("ask.error.credits")
+          : code === "auth"
+            ? t("ask.error.auth")
+            : t("ask.failed", { error: err instanceof Error ? err.message : String(err) });
       setMessages((m) => {
         const next = m.slice();
-        next[next.length - 1] = {
-          role: "assistant",
-          content: t("ask.failed", { error: err instanceof Error ? err.message : String(err) }),
-        };
+        next[next.length - 1] = { role: "assistant", content };
         return next;
       });
     } finally {

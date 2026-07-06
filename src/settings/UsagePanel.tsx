@@ -139,20 +139,56 @@ export function UsagePanel() {
   );
 }
 
+/** One labeled usage bar: `used / limit` in the caller's units, with a fill that
+ *  turns red once the meter is spent. `used`/`limit` are compared raw (same
+ *  unit); `format` only prettifies the displayed numbers. */
+function QuotaBar({
+  label,
+  used,
+  limit,
+  format,
+}: {
+  label: string;
+  used: number;
+  limit: number;
+  format: (n: number) => string;
+}) {
+  const { t } = useI18n();
+  const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline justify-between text-[11px]">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="tabular-nums">
+          {format(used)} / {limit > 0 ? format(limit) : t("settings.usage.quota.unlimited")}
+        </span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+        <div
+          className={`h-full rounded-full transition-all ${pct >= 100 ? "bg-destructive" : "bg-primary"}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 /**
- * Hosted-plan quota for the "parley" provider: a progress bar of LLM tokens
- * used vs the monthly limit, plus the reset date. Fetched from {CLOUD_URL}/me/usage
- * on mount. Renders nothing unless signed in AND the active provider is "parley"
- * (the only mode where this allowance is spent). Whole block is gated by
- * CLOUD_ENABLED at the call site.
+ * Hosted-plan quota for the "parley" provider: two bars — the shared STT pool
+ * (meeting + voice typing, in hours) and the LLM credit balance — plus the
+ * reset date. Fetched from {CLOUD_URL}/me/usage on mount. Renders nothing unless
+ * signed in AND the LLM or STT provider is "parley" (the only mode where this
+ * allowance is spent). Whole block is gated by CLOUD_ENABLED at the call site.
  */
 function HostedQuotaMeter() {
   const { t } = useI18n();
   const cloudAuth = useStore((s) => s.cloudAuth);
-  const provider = useStore((s) => s.settings.provider);
+  const llmProvider = useStore((s) => s.settings.provider);
+  const sttProvider = useStore((s) => s.settings.transcriptionProvider);
   const [quota, setQuota] = useState<HostedQuota | null>(null);
 
-  const show = !!cloudAuth && provider === "parley";
+  // The hosted allowance is spent whenever EITHER provider is "parley".
+  const show = !!cloudAuth && (llmProvider === "parley" || sttProvider === "parley");
 
   useEffect(() => {
     if (!show) return;
@@ -172,34 +208,39 @@ function HostedQuotaMeter() {
 
   if (!show || !quota) return null;
 
-  const limit = quota.llmTokensLimit;
-  const used = quota.llmTokensUsed;
-  const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
-  const fmtTokens = (n: number) => `${(n / 1_000_000).toFixed(1)}M`;
   const resetLabel = quota.periodResetTs
     ? new Date(quota.periodResetTs).toLocaleDateString()
     : t("settings.usage.quota.unlimited");
+  // Guard against an older backend that hasn't shipped a given meter yet.
+  const hasStt = typeof quota.sttSecondsLimit === "number";
+  const hasCredits = typeof quota.llmCreditsLimit === "number";
+  const fmtHours = (seconds: number) => `${(seconds / 3600).toFixed(1)}h`;
+  const fmtCredits = (n: number) => n.toFixed(n >= 10 ? 0 : 1);
 
   return (
-    <div className="flex flex-col gap-2.5 rounded-lg border bg-muted/20 p-4">
+    <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4">
       <div className="flex items-baseline justify-between">
         <h3 className="text-xs font-semibold tracking-tight">{t("settings.usage.quota.title")}</h3>
         <span className="text-[11px] text-muted-foreground tabular-nums">
           {t("settings.usage.quota.reset")}: {resetLabel}
         </span>
       </div>
-      <div className="flex items-baseline justify-between text-[11px]">
-        <span className="text-muted-foreground">{t("settings.usage.quota.llm")}</span>
-        <span className="tabular-nums">
-          {fmtTokens(used)} / {limit > 0 ? fmtTokens(limit) : t("settings.usage.quota.unlimited")}
-        </span>
-      </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-        <div
-          className={`h-full rounded-full transition-all ${pct >= 100 ? "bg-destructive" : "bg-primary"}`}
-          style={{ width: `${pct}%` }}
+      {hasStt && (
+        <QuotaBar
+          label={t("settings.usage.quota.stt")}
+          used={quota.sttSecondsUsed}
+          limit={quota.sttSecondsLimit}
+          format={fmtHours}
         />
-      </div>
+      )}
+      {hasCredits && (
+        <QuotaBar
+          label={t("settings.usage.quota.credits")}
+          used={quota.llmCreditsUsed}
+          limit={quota.llmCreditsLimit}
+          format={fmtCredits}
+        />
+      )}
     </div>
   );
 }
