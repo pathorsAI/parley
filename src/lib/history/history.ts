@@ -82,9 +82,9 @@ function snapshotAnalysis() {
 }
 
 /** Measure a recording's articulation rate (syllables/sec) via Rust; null on any
- *  failure. Lets the live-save path produce the SAME measured-pace quantity the
- *  upload path does (both run the DSP over the stored 16 kHz audio), instead of an
- *  LLM guess or the live windowed rate (which includes pauses). */
+ *  failure. Same DSP quantity the upload path computes. For live saves this is
+ *  only a FALLBACK for mic-only recordings — the primary source is the mic-derived
+ *  session rate (store.micSessionRateHz), which never includes the other side. */
 async function measureRecordingRate(path: string): Promise<number | null> {
   if (!isTauri()) return null;
   try {
@@ -215,9 +215,14 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
   const s = useStore.getState();
   const createdAt = s.meetingStartedAt ?? Date.now();
   const dateLabel = new Date(createdAt).toLocaleString(localeOf());
-  // Measure the captured recording's pace with the same DSP the upload path uses,
-  // so a reopened live meeting shows a real (comparable) measured pace.
-  const speechRateHz = await measureRecordingRate(audioTempPath);
+  // Mic-only measured pace (issue #22): prefer the whole-session articulation rate
+  // the live prosody tap accumulated from the user's OWN mic. Only fall back to
+  // measuring the saved file when the mic rate is missing AND the file can't
+  // contain the other side — in diarized meetings the recording is the mic+system
+  // MIX, and measuring it would fold the counterpart's pace into the number.
+  const micOnlyRecording = !s.segments.some((seg) => seg.source === "mix");
+  const speechRateHz =
+    s.micSessionRateHz ?? (micOnlyRecording ? await measureRecordingRate(audioTempPath) : null);
   const save = resolveDefaultSave();
   const entry: HistoryEntry = {
     id: crypto.randomUUID(),

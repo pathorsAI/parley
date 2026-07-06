@@ -17,11 +17,13 @@ function sample(over: Partial<ProsodyMetrics> = {}): ProsodyMetrics {
     pitchVarSemitones: 3,
     monotonyScore: 0,
     speechRateHz: 3,
+    sessionRateHz: 3,
     voicedRatio: 0.7,
     silenceMs: 0,
     longestPauseMs: 400,
     speaking: true,
     filledPause: false,
+    farendActive: false,
     ...over,
   };
 }
@@ -106,6 +108,34 @@ describe("DeliveryCoach", () => {
     expect(
       coach.observe(sample({ filledPause: true }), 1000 + DEFAULT_THRESHOLDS.cooldownMs + 1)?.kind
     ).toBe("filledpause");
+  });
+
+  it("does NOT flag dead air while the counterpart is talking", () => {
+    const coach = new DeliveryCoach(ALL_ON);
+    for (let t = 0; t <= 3000; t += 500) {
+      coach.observe(sample({ speaking: true, speechRateHz: 3 }), t);
+    }
+    // The user goes quiet but the far side keeps talking: with speaker-bleed
+    // rejection the mic reads silent, yet this is a monologue — not dead air.
+    let fired = false;
+    for (let t = 3500; t <= 30000; t += 500) {
+      const r = coach.observe(
+        sample({ speaking: false, silenceMs: t - 3000, voicedRatio: 0, farendActive: true }),
+        t
+      );
+      if (r?.kind === "deadair") fired = true;
+    }
+    expect(fired).toBe(false);
+    // Once the far side also goes quiet, dead air resumes firing.
+    let kind: string | null = null;
+    for (let t = 30500; t <= 45000; t += 500) {
+      const r = coach.observe(
+        sample({ speaking: false, silenceMs: t - 3000, voicedRatio: 0, farendActive: false }),
+        t
+      );
+      if (r) kind = r.kind;
+    }
+    expect(kind).toBe("deadair");
   });
 
   it("does NOT flag dead air on opening silence before any speech", () => {

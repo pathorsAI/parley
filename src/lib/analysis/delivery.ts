@@ -131,8 +131,15 @@ export class DeliveryCoach {
 
     // Evaluate every candidate; the first that is allowed to fire wins. Order is
     // priority: dead air and steamrolling are the most actionable mid-call.
+    // Dead air means NOBODY is talking: the mic is silent AND the counterpart's
+    // stream is quiet — with speaker-bleed rejection the mic no longer "hears"
+    // the far side, so their monologue must not read as dead air.
     const deadAir =
-      this.toggles.pauses && this.hasSpoken && !m.speaking && m.silenceMs >= this.th.deadAirMs;
+      this.toggles.pauses &&
+      this.hasSpoken &&
+      !m.speaking &&
+      !m.farendActive &&
+      m.silenceMs >= this.th.deadAirMs;
     if (this.gate("deadair", deadAir, nowMs)) return { kind: "deadair", severity: "info" };
 
     const steamroll =

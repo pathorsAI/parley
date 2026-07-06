@@ -241,6 +241,11 @@ interface ParleyState {
   /** Latest prosody metrics from the backend; null until the first event. */
   prosody: ProsodyMetrics | null;
   setProsody: (m: ProsodyMetrics | null) => void;
+  /** Whole-session articulation rate of the USER'S MIC (last `sessionRateHz`
+   *  seen). Unlike `prosody`, this survives stop so the history save can record
+   *  a mic-only measured pace — never the counterpart's (issue #22). Reset on
+   *  meeting start. */
+  micSessionRateHz: number | null;
   /** Running count of filled pauses ("um/uh/呃/痾") detected acoustically this
    *  meeting (STT drops them, so this is the only tally). Reset on meeting start. */
   filledPauseCount: number;
@@ -352,6 +357,7 @@ export const useStore = create<ParleyState>()(
       autoAnalyze: false,
       autoAnalyzeSec: 45,
       prosody: null,
+      micSessionRateHz: null,
       filledPauseCount: 0,
       deliveryNudge: null,
       deliveryAssessment: null,
@@ -612,6 +618,9 @@ export const useStore = create<ParleyState>()(
       if (state.meetingStatus !== "recording") return {};
       return {
         prosody: m,
+        // Kept outside `prosody` so it survives the stop-time reset: the history
+        // save reads it as the mic-only measured pace (issue #22).
+        micSessionRateHz: m.sessionRateHz > 0 ? m.sessionRateHz : state.micSessionRateHz,
         filledPauseCount: m.filledPause ? state.filledPauseCount + 1 : state.filledPauseCount,
       };
     }),
@@ -671,6 +680,7 @@ export const useStore = create<ParleyState>()(
       solutionFindingId: null,
       findingSolutions: {},
       prosody: null,
+      micSessionRateHz: null,
       filledPauseCount: 0,
       deliveryNudge: null,
       deliveryAssessment: null,
