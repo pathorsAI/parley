@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { useProsody } from "../../lib/analysis/useDelivery";
@@ -42,9 +43,22 @@ function paceBand(hz: number): { key: TranslationKey; watch: boolean } {
   return { key: "delivery.pace.slow", watch: false };
 }
 
+/** Shared label | bar | value grid for stacked {@link MeterRow}s. The label and
+ *  value columns size to their longest content (no more hard-coded label width —
+ *  "Intonation" overflowed it and ran into the bar), and subgrid keeps the
+ *  columns aligned across rows. */
+function MeterGroup({ children }: { children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1.5">
+      {children}
+    </div>
+  );
+}
+
 /** One labeled meter row: name on the left, a bar in the middle, a number on the
- *  right. Unifies the gauges that used to float unlabeled in the title bar — green
- *  reads "fine", amber reads "worth a look", muted grey reads "no signal yet". */
+ *  right. Must render inside a {@link MeterGroup}. Unifies the gauges that used to
+ *  float unlabeled in the title bar — green reads "fine", amber reads "worth a
+ *  look", muted grey reads "no signal yet". */
 function MeterRow({
   label,
   pct,
@@ -60,16 +74,16 @@ function MeterRow({
 }) {
   const bar = muted ? "bg-muted-foreground/30" : watch ? "bg-amber-400" : "bg-emerald-500";
   return (
-    <div className="flex items-center gap-2">
-      <span className="w-9 shrink-0 text-muted-foreground">{label}</span>
-      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+    <div className="col-span-3 grid grid-cols-subgrid items-center">
+      <span className="whitespace-nowrap text-muted-foreground">{label}</span>
+      <span className="h-1.5 overflow-hidden rounded-full bg-muted">
         <span
           className={`block h-full rounded-full transition-[width] duration-200 ${bar}`}
           style={{ width: `${pct}%` }}
         />
       </span>
       <span
-        className={`shrink-0 whitespace-nowrap text-right tabular-nums ${
+        className={`whitespace-nowrap text-right tabular-nums ${
           watch ? "font-medium text-amber-400" : "text-foreground/80"
         }`}
       >
@@ -90,9 +104,10 @@ function MeterRow({
  * from each other; they live here now with labels, numbers, and one consistent
  * green/amber language.
  *
- * REPLAY: the pace number is the acoustically MEASURED articulation rate over the
- * whole recording (from Rust), not an LLM guess from STT-timed text — plus the
- * post-call tone/filler read.
+ * REPLAY: the pace number is an acoustically MEASURED articulation rate (from
+ * Rust), not an LLM guess from STT-timed text — plus the post-call tone/filler
+ * read. For live-recorded meetings it's accumulated from the user's OWN mic
+ * (issue #22: never the counterpart); for uploads it's measured over the file.
  *
  * Gated so it stays out of the way when delivery coaching isn't in play.
  */
@@ -137,33 +152,37 @@ export function DeliveryPanel({ mode }: { mode: "live" | "replay" }) {
 
       <div className="flex flex-col gap-1.5 text-[11px]">
         {/* Live ambient meters (mic-anchored). */}
-        {mode === "live" && paceOn && (
-          <MeterRow
-            label={t("delivery.card.pace")}
-            pct={Math.min(100, Math.round((paceHz / 6) * 100))}
-            watch={liveBand.watch}
-            muted={!prosody || paceHz <= 1}
-            value={
-              prosody && paceHz > 1
-                ? `${syllablesPerMin(paceHz)} ${t("delivery.unit.sylPerMin")} · ${t(liveBand.key)}`
-                : "—"
-            }
-          />
-        )}
-        {mode === "live" && pitchOn && (
-          <MeterRow
-            label={t("delivery.card.intonation")}
-            pct={Math.min(100, Math.round((sd / 3) * 100))}
-            watch={sd > 0 && sd < 1.2}
-            muted={!prosody || sd <= 0}
-            value={
-              prosody && sd > 0
-                ? `±${sd.toFixed(1)} ${t("delivery.unit.semitones")} · ${t(
-                    sd < 1.2 ? "delivery.intonation.flat" : "delivery.intonation.lively"
-                  )}`
-                : "—"
-            }
-          />
+        {mode === "live" && (paceOn || pitchOn) && (
+          <MeterGroup>
+            {paceOn && (
+              <MeterRow
+                label={t("delivery.card.pace")}
+                pct={Math.min(100, Math.round((paceHz / 6) * 100))}
+                watch={liveBand.watch}
+                muted={!prosody || paceHz <= 1}
+                value={
+                  prosody && paceHz > 1
+                    ? `${syllablesPerMin(paceHz)} ${t("delivery.unit.sylPerMin")} · ${t(liveBand.key)}`
+                    : "—"
+                }
+              />
+            )}
+            {pitchOn && (
+              <MeterRow
+                label={t("delivery.card.intonation")}
+                pct={Math.min(100, Math.round((sd / 3) * 100))}
+                watch={sd > 0 && sd < 1.2}
+                muted={!prosody || sd <= 0}
+                value={
+                  prosody && sd > 0
+                    ? `±${sd.toFixed(1)} ${t("delivery.unit.semitones")} · ${t(
+                        sd < 1.2 ? "delivery.intonation.flat" : "delivery.intonation.lively"
+                      )}`
+                    : "—"
+                }
+              />
+            )}
+          </MeterGroup>
         )}
         {/* Live filled-pause ("um/uh") tally — detected acoustically (STT drops
             these), so this is the only place they surface. */}
@@ -180,15 +199,17 @@ export function DeliveryPanel({ mode }: { mode: "live" | "replay" }) {
           </div>
         )}
 
-        {/* Replay: the measured (not guessed) whole-recording pace. */}
+        {/* Replay: the measured (not guessed) pace. */}
         {hasMeasured && mBand && (
-          <MeterRow
-            label={t("delivery.card.pace")}
-            pct={Math.min(100, Math.round((measuredRate! / 6) * 100))}
-            watch={mBand.watch}
-            muted={false}
-            value={`${syllablesPerMin(measuredRate!)} ${t("delivery.unit.sylPerMin")} · ${t(mBand.key)}`}
-          />
+          <MeterGroup>
+            <MeterRow
+              label={t("delivery.card.pace")}
+              pct={Math.min(100, Math.round((measuredRate! / 6) * 100))}
+              watch={mBand.watch}
+              muted={false}
+              value={`${syllablesPerMin(measuredRate!)} ${t("delivery.unit.sylPerMin")} · ${t(mBand.key)}`}
+            />
+          </MeterGroup>
         )}
 
         {/* LLM read: tone (+ evidence) and over-frequent fillers. */}
