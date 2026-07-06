@@ -1,15 +1,18 @@
 // Recording upload + batch transcription.
 //
-// Lets the user pick an audio file, sends it through Soniox's async/batch API
-// (diarized, with word/segment timestamps), and returns a `ReplaySession` the
-// replay UI can play and scrub. Only Soniox is supported today; other providers
-// throw a clear "switch to Soniox" error.
+// Lets the user pick an audio file, sends it through the selected provider's
+// batch transcription API (diarized where the provider supports it, with
+// word/segment timestamps), and returns a `ReplaySession` the replay UI can play
+// and scrub. Which providers are eligible is gated by `supportsFileUpload` in the
+// STT registry — the backend dispatch (`replay.rs::transcribe_file`) must
+// implement each one before its flag flips on. Today that's Soniox only.
 
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import type { Settings, TranscriptSegment } from "../types";
 import type { ReplaySession } from "./types";
+import { STT_BY_ID, sttApiKey } from "../transcription/providers";
 import { toTraditional } from "../zhConvert";
 import { log } from "../log";
 import { recordUsage } from "../usage/log";
@@ -52,7 +55,7 @@ interface RustSegment {
 interface RustTranscriptionResult {
   segments: RustSegment[];
   durationMs: number;
-  /** True when served from the on-disk cache (no Soniox call → don't bill it). */
+  /** True when served from the on-disk cache (no provider call → don't bill it). */
   cached: boolean;
   /** Acoustically measured articulation rate (syllables/sec); 0 if unmeasurable. */
   speechRateHz: number;
@@ -67,20 +70,22 @@ interface RustTranscriptionResult {
  */
 /**
  * Validate the provider + open the native file picker. Returns the chosen audio
- * path, or `null` if the user cancelled. Throws if Soniox isn't configured. Split
- * out from transcription so the ingest wizard can ask the speaker count BEFORE
- * the (slow) transcription runs.
+ * path, or `null` if the user cancelled. Throws if the selected provider can't do
+ * file uploads, or has no key configured. Split out from transcription so the
+ * ingest wizard can ask the speaker count BEFORE the (slow) transcription runs.
  */
 export async function pickRecordingFile(settings: Settings): Promise<string | null> {
-  if (settings.transcriptionProvider !== "soniox") {
-    log.warn("ingest: rejected, provider not soniox", { provider: settings.transcriptionProvider });
+  const provider = settings.transcriptionProvider;
+  const info = STT_BY_ID[provider];
+  if (!info.supportsFileUpload) {
+    log.warn("ingest: rejected, provider has no file-upload support", { provider });
     throw new Error(
-      "Replay currently supports Soniox only — switch transcription provider to Soniox in Settings",
+      `Uploading a recording isn't supported for ${info.label} yet — switch the transcription provider to Soniox in Settings.`,
     );
   }
-  if (!settings.sonioxApiKey?.trim()) {
-    log.warn("ingest: missing soniox key");
-    throw new Error("Add your Soniox API key in Settings to transcribe recordings");
+  if (!sttApiKey(settings, provider).trim()) {
+    log.warn("ingest: missing stt key", { provider });
+    throw new Error(`Add your ${info.label} API key in Settings to transcribe recordings.`);
   }
 
   const selected = await open({
@@ -103,9 +108,11 @@ export async function transcribeRecording(
   audioPath: string,
   opts: IngestOptions = {},
 ): Promise<ReplaySession> {
-  const apiKey = settings.sonioxApiKey?.trim();
+  const provider = settings.transcriptionProvider;
+  const info = STT_BY_ID[provider];
+  const apiKey = sttApiKey(settings, provider).trim();
   if (!apiKey) {
-    throw new Error("Add your Soniox API key in Settings to transcribe recordings");
+    throw new Error(`Add your ${info.label} API key in Settings to transcribe recordings.`);
   }
 
   const name = fileNameOf(audioPath);
@@ -121,13 +128,14 @@ export async function transcribeRecording(
   // The Rust command uploads the file, creates the async job, polls to
   // completion, then fetches the diarized tokens. It owns the network + secrets.
   reportStage(opts, { stage: "transcribing" });
-  log.info("ingest: transcribe invoke", { languageHints, diarization: true });
+  log.info("ingest: transcribe invoke", { provider, languageHints, diarization: info.diarization });
   const result = await invoke<RustTranscriptionResult>("transcribe_file", {
     path: audioPath,
+    provider,
     apiKey,
     model: null,
     languageHints,
-    diarization: true,
+    diarization: info.diarization,
   });
   log.info("ingest: transcription ok", {
     segments: result.segments.length,
@@ -153,17 +161,17 @@ export async function transcribeRecording(
     result.durationMs ||
     segments.reduce((max, s) => Math.max(max, s.endMs), 0);
 
-  // Bill the audio transcription — but only when it actually hit Soniox. A cache
-  // hit cost nothing, so recording it would over-count. (LLM costs for evals etc.
-  // are billed separately via recordLlmUsage.)
+  // Bill the audio transcription — but only when it actually hit the provider. A
+  // cache hit cost nothing, so recording it would over-count. (LLM costs for evals
+  // etc. are billed separately via recordLlmUsage.)
   if (!result.cached && durationMs > 0) {
     const seconds = durationMs / 1000;
-    const costUsd = sttCostUsd("soniox", seconds);
-    log.debug("ingest: stt usage recorded", { seconds, costUsd, cached: false });
+    const costUsd = sttCostUsd(provider, seconds);
+    log.debug("ingest: stt usage recorded", { provider, seconds, costUsd, cached: false });
     void recordUsage({
       kind: "stt",
       category: "transcription",
-      provider: "soniox",
+      provider,
       model: "",
       seconds,
       costUsd,

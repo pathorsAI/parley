@@ -134,6 +134,7 @@ struct TranscriptResponse {
 pub async fn transcribe_file(
     app: AppHandle,
     path: String,
+    provider: String,
     api_key: String,
     model: Option<String>,
     language_hints: Vec<String>,
@@ -141,15 +142,29 @@ pub async fn transcribe_file(
 ) -> Result<TranscriptionResult, String> {
     ensure_crypto_provider();
 
-    if api_key.trim().is_empty() {
-        log::warn!("replay: missing soniox api key");
-        return Err("Missing Soniox API key".to_string());
+    // File (batch) transcription dispatch. The frontend only offers providers
+    // whose `supportsFileUpload` flag is on (transcription/providers.ts), but the
+    // backend is the source of truth, so re-check here. Adding a provider:
+    // implement its batch adapter, add a match arm at the transcription call
+    // below, and flip its flag in the registry — only after a live smoke test.
+    let provider = provider.trim().to_ascii_lowercase();
+    if provider != "soniox" {
+        log::warn!("replay: unsupported batch provider provider={}", provider);
+        return Err(format!(
+            "File transcription for '{provider}' is not supported yet — switch to Soniox in Settings."
+        ));
     }
 
-    // Cache: an identical re-upload (same file name + byte size) reuses the prior
-    // SUCCESSFUL transcription — no compression, no Soniox call, no billing.
-    // Failures are never cached, so a previously-failed file re-transcribes.
-    let cache_path = cache_file_path(&app, &path);
+    if api_key.trim().is_empty() {
+        log::warn!("replay: missing api key provider={}", provider);
+        return Err("Missing transcription API key".to_string());
+    }
+
+    // Cache: an identical re-upload (same file name + byte size, same provider)
+    // reuses the prior SUCCESSFUL transcription — no compression, no provider
+    // call, no billing. Failures are never cached, so a previously-failed file
+    // re-transcribes.
+    let cache_path = cache_file_path(&app, &path, &provider);
     if let Some(cp) = &cache_path {
         if let Some(cached) = try_read_cache(cp).await {
             log::info!(
@@ -236,9 +251,10 @@ pub async fn transcribe_file(
 }
 
 /// Cache file path for an uploaded recording, keyed by file name + byte size (per
-/// the user's "same name, same size" rule). Lives in the app cache dir. `None` if
-/// the file can't be stat'd or there's no cache dir.
-fn cache_file_path(app: &AppHandle, path: &str) -> Option<std::path::PathBuf> {
+/// the user's "same name, same size" rule) and the provider (so a Soniox result
+/// isn't served for, say, a Deepgram request — different diarization). Lives in
+/// the app cache dir. `None` if the file can't be stat'd or there's no cache dir.
+fn cache_file_path(app: &AppHandle, path: &str, provider: &str) -> Option<std::path::PathBuf> {
     let size = std::fs::metadata(path).ok()?.len();
     let name = std::path::Path::new(path)
         .file_name()?
@@ -256,7 +272,14 @@ fn cache_file_path(app: &AppHandle, path: &str) -> Option<std::path::PathBuf> {
         })
         .collect();
     let dir = app.path().app_cache_dir().ok()?.join("transcriptions");
-    Some(dir.join(format!("{safe}-{size}.json")))
+    // Soniox keeps its original (provider-less) filename so existing caches stay
+    // valid; new providers get a suffixed key.
+    let file = if provider == "soniox" {
+        format!("{safe}-{size}.json")
+    } else {
+        format!("{safe}-{size}-{provider}.json")
+    };
+    Some(dir.join(file))
 }
 
 /// Read a cached transcription if present and parseable; otherwise `None`.
