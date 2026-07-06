@@ -33,6 +33,7 @@ import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -525,8 +526,7 @@ export function SettingsApp() {
               </Select>
             </Field>
             <Field label={t("settings.provider.apiKey", { provider: providerLabel })}>
-              <Input
-                type="password"
+              <PasswordInput
                 autoComplete="off"
                 placeholder={info.requiresKey === false ? t("settings.provider.noKeyNeeded") : info.keyPlaceholder}
                 className="max-w-sm"
@@ -623,8 +623,7 @@ export function SettingsApp() {
               </p>
             ) : (
               <Field label={t("settings.transcription.apiKey", { provider: sttInfo.label })}>
-                <Input
-                  type="password"
+                <PasswordInput
                   autoComplete="off"
                   placeholder={sttInfo.keyPlaceholder}
                   className="max-w-sm"

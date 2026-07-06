@@ -71,6 +71,8 @@ export const zhTW = {
   "common.saved": "已儲存",
   "common.settings": "設定",
   "common.template": "模板",
+  "common.showKey": "顯示金鑰",
+  "common.hideKey": "隱藏金鑰",
 
   "titlebar.status.recording": "錄音中",
   "titlebar.status.stopped": "已停止",
@@ -837,6 +839,8 @@ export const en = {
   "common.saved": "Saved",
   "common.settings": "Settings",
   "common.template": "Template",
+  "common.showKey": "Show key",
+  "common.hideKey": "Hide key",
 
   "titlebar.status.recording": "Recording",
   "titlebar.status.stopped": "Stopped",

@@ -12,6 +12,7 @@ import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
 import { useI18n, LANGUAGE_OPTIONS } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import {
   Select,
   SelectContent,
@@ -202,8 +203,7 @@ export function Onboarding() {
                   {llm.id === "parley" ? t("onboarding.login.signedIn") : t("onboarding.llm.noKey")}
                 </p>
               ) : (
-                <Input
-                  type="password"
+                <PasswordInput
                   autoComplete="off"
                   placeholder={llm.keyPlaceholder}
                   value={(settings[llm.apiKeyField] as string) ?? ""}
@@ -249,8 +249,7 @@ export function Onboarding() {
               {stt.id === "parley" ? (
                 <p className="text-[11px] text-muted-foreground">{t("onboarding.login.signedIn")}</p>
               ) : (
-                <Input
-                  type="password"
+                <PasswordInput
                   autoComplete="off"
                   placeholder={stt.keyPlaceholder}
                   value={(settings[stt.apiKeyField] as string) ?? ""}
