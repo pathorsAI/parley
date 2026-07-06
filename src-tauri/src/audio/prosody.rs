@@ -3,7 +3,7 @@
 //! This is the live-coaching counterpart to [`LevelMeter`](crate::transcription::common::LevelMeter):
 //! where the level meter shows raw loudness, [`ProsodyAnalyzer`] derives *delivery*
 //! signals — pitch variation (monotony) and pausing — from the same 16 kHz mono
-//! PCM, and emits an `audio://prosody` event ~2×/s for the frontend gauges/nudges.
+//! PCM, and emits an `audio://prosody` event ~6–7×/s for the frontend gauges/nudges.
 //!
 //! HARD CONSTRAINT (issue #22): delivery is scored on the **mic ("me") stream
 //! only**, never the counterpart. The caller taps the pre-mix mic receiver
@@ -38,11 +38,16 @@ const HOP: usize = 256;
 /// Rolling window over which monotony / pause stats are computed.
 const WINDOW_MS: u64 = 7_000;
 /// Shorter rolling window for the SPEECH-RATE read specifically: the 7 s monotony
-/// window made pace lag by seconds (slow to react, slow to clear). ~3 s still holds
-/// enough syllables to be stable at a normal pace while tracking changes ~2× faster.
-const RATE_WINDOW_MS: u64 = 3_000;
-/// Emit cadence (~2 Hz), matching the level meter's "glanceable" rate.
-const EMIT_EVERY_MS: u64 = 500;
+/// window made pace lag by seconds (slow to react, slow to clear). ~2 s (6–10
+/// syllables at conversational pace) is the floor where the count still reads
+/// stable; the `< 8` frame / `< 800 ms` span guards below it keep startup sane.
+const RATE_WINDOW_MS: u64 = 2_000;
+/// Emit cadence (~6–7 Hz). Was 500 ms to match the level meter's "glanceable"
+/// rate, but that alone put up to half a second between a behavior change and
+/// the gauges/nudge logic seeing it — the single largest incidental lag in the
+/// delivery path. The DSP work per emit is trivial, so emit near-continuously
+/// and let the UI's 200 ms width transition do the visual smoothing.
+const EMIT_EVERY_MS: u64 = 150;
 /// Minimum voiced (pitched) frames in the window before monotony is meaningful
 /// (scaled to the ~16 ms hop so it still means ~0.4 s of real voicing).
 const MIN_VOICED_FRAMES: usize = 24;
@@ -105,7 +110,7 @@ const FILLED_MIN_MS: u64 = 400;
 /// real words carry more pitch movement.
 const FILLED_FLAT_SEMITONES: f32 = 1.2;
 
-/// Payload emitted to the frontend ~2×/s. Snake-case on the wire; the frontend
+/// Payload emitted to the frontend ~6–7×/s. Snake-case on the wire; the frontend
 /// maps it to camelCase (see `tauriEvents.ts`), mirroring `transcript://segment`.
 #[derive(Clone, Serialize)]
 struct ProsodyEvent {
