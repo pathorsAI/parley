@@ -639,12 +639,11 @@ fn group_tokens(tokens: &[Token]) -> Vec<ReplaySegment> {
 // ── Other batch providers ─────────────────────────────────────────────────────
 // Each mirrors Soniox's contract: read the (already compressed) upload file, call
 // the provider's pre-recorded/batch API, and return diarized-where-supported
-// `ReplaySegment`s plus a duration. They're wired into the `transcribe_file`
-// dispatch but GATED OFF in the registry (`supportsFileUpload: false`) until each
-// is smoke-tested against the live API with a real key — the request/response
-// shapes below come from each vendor's docs and are NOT yet verified end-to-end.
-//
-// NEEDS LIVE SMOKE TEST before flipping any `supportsFileUpload` flag on.
+// `ReplaySegment`s plus a duration. The request/response shapes below are verified
+// against each vendor's current API docs (endpoints, params, response fields) —
+// but NOT via a live call from here. Deepgram / AssemblyAI / OpenAI are enabled in
+// the registry; Gemini stays off (`supportsFileUpload: false`) because inline
+// Ogg-Opus support + model naming are unconfirmed and it yields no timestamps.
 
 /// A speaker-tagged word with millisecond timings — the common currency for the
 /// word-stream providers (Deepgram). Grouped into speaker-runs by `group_words`.
@@ -773,7 +772,7 @@ struct DgWord {
 }
 
 /// Deepgram pre-recorded API: POST the raw (compressed) bytes to /v1/listen and
-/// group the returned diarized word stream. NEEDS LIVE SMOKE TEST.
+/// group the returned diarized word stream. Shape verified vs docs, not live-tested.
 async fn deepgram_batch(
     client: &reqwest::Client,
     api_key: &str,
@@ -874,7 +873,7 @@ fn assemblyai_speaker_index(s: &str) -> i64 {
 
 /// AssemblyAI batch: upload the bytes, create a transcript job (optionally with
 /// speaker labels), poll to completion, then map utterances to speaker-runs.
-/// NEEDS LIVE SMOKE TEST.
+/// Shape verified vs docs, not live-tested.
 async fn assemblyai_batch(
     client: &reqwest::Client,
     api_key: &str,
@@ -1014,9 +1013,9 @@ struct OaiSegment {
     text: String,
 }
 
-/// OpenAI transcription with `verbose_json` for segment timestamps. No
-/// diarization → a single speaker. 25 MB request limit (compression helps).
-/// NEEDS LIVE SMOKE TEST.
+/// OpenAI transcription with `verbose_json` for segment timestamps (whisper-1 —
+/// the gpt-4o transcribe models reject verbose_json). No diarization → a single
+/// speaker. 25 MB request limit (compression helps). Shape verified vs docs.
 async fn openai_batch(
     client: &reqwest::Client,
     api_key: &str,

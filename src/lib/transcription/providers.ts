@@ -16,11 +16,12 @@ export interface SttProviderInfo {
   /**
    * Can transcribe an UPLOADED audio file (the batch "replay" path in
    * `replay.rs`), not just live streaming. Gates the upload button + ingest
-   * wizard. Only providers with an implemented AND live-verified batch path are
-   * `true` — every listed vendor has a pre-recorded API, but each needs its own
-   * Rust batch adapter and a smoke test with a real key before it flips on (see
-   * the dispatch in `replay.rs::transcribe_file`). Keep this in sync with which
-   * providers that dispatch actually handles.
+   * wizard, and must stay in sync with which providers the `transcribe_file`
+   * dispatch actually implements. `true` = an implemented batch adapter whose
+   * request/response shape is verified against the vendor's API docs (Soniox,
+   * Deepgram, AssemblyAI, OpenAI). Gemini stays `false` — its inline Ogg-Opus
+   * support + model naming are unconfirmed and it returns no timestamps or
+   * diarization; hosted Parley stays `false` until a cloud batch endpoint exists.
    */
   supportsFileUpload: boolean;
   /** Settings field holding this provider's API key. */
@@ -42,9 +43,9 @@ function fromLlm(id: "openai" | "gemini"): Omit<SttProviderInfo, "diarization" |
 
 export const STT_PROVIDERS: SttProviderInfo[] = [
   { id: "soniox", label: "Soniox", diarization: true, supportsFileUpload: true, apiKeyField: "sonioxApiKey", keyPlaceholder: "…", icon: "/providers/soniox.png" },
-  { id: "deepgram", label: "Deepgram", diarization: true, supportsFileUpload: false, apiKeyField: "deepgramApiKey", keyPlaceholder: "…", icon: "/providers/deepgram.png" },
-  { id: "assemblyai", label: "AssemblyAI", diarization: false, supportsFileUpload: false, apiKeyField: "assemblyaiApiKey", keyPlaceholder: "…", icon: "/providers/assemblyai.png" },
-  { ...fromLlm("openai"), diarization: false, supportsFileUpload: false },
+  { id: "deepgram", label: "Deepgram", diarization: true, supportsFileUpload: true, apiKeyField: "deepgramApiKey", keyPlaceholder: "…", icon: "/providers/deepgram.png" },
+  { id: "assemblyai", label: "AssemblyAI", diarization: false, supportsFileUpload: true, apiKeyField: "assemblyaiApiKey", keyPlaceholder: "…", icon: "/providers/assemblyai.png" },
+  { ...fromLlm("openai"), diarization: false, supportsFileUpload: true },
   { ...fromLlm("gemini"), diarization: false, supportsFileUpload: false },
   // Hosted account mode: audio is relayed through Parley Cloud to Soniox (which
   // diarizes), so no vendor is exposed and no key field is used — auth is the
