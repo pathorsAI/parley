@@ -184,8 +184,8 @@ export function DeliveryPanel({ mode }: { mode: "live" | "replay" }) {
             )}
           </MeterGroup>
         )}
-        {/* Live filled-pause ("um/uh") tally — detected acoustically (STT drops
-            these), so this is the only place they surface. */}
+        {/* Live filler-sound ("um/uh/嗯/呃") tally — counted from your own
+            transcript against a global, cross-language filler map, in real time. */}
         {mode === "live" && pausesOn && (
           <div className="flex items-baseline justify-between gap-2">
             <span className="text-muted-foreground">{t("delivery.card.fillerSounds")}</span>

@@ -61,10 +61,20 @@ export function getModel(
   // "parley-fast"/"parley-smart" ids. Guarded by CLOUD_ENABLED so the OSS build's
   // dead-code elimination drops this branch entirely (it ships no cloud account).
   if (CLOUD_ENABLED && info.id === "parley") {
+    const token = cloudToken();
+    // Without a session the SDK would send an empty `Authorization: Bearer`,
+    // which the cloud rejects with no usable body — the stream just yields
+    // nothing, so the UI shows "no response" with no explanation. Fail loud with
+    // an actionable message instead of that silent no-op.
+    if (!token) {
+      throw new Error(
+        "Parley Cloud sign-in required — sign in from Settings → Account to use the Parley provider",
+      );
+    }
     const parley = createOpenAICompatible({
       name: info.id,
       baseURL: `${CLOUD_URL}/v1`,
-      apiKey: cloudToken() ?? "",
+      apiKey: token,
       supportsStructuredOutputs: opts?.forceJsonObject ? false : info.supportsStructuredOutputs ?? false,
     });
     return parley.chatModel(modelId);

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Check, ChevronLeft, ChevronRight, Download, Keyboard, Loader2, Mic, Volume2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Download, Keyboard, Loader2, LogIn, Mic, Volume2, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
+import { CLOUD_ENABLED } from "../lib/flags";
 import { shortcutCaps } from "../settings/VoiceTypingSettings";
 import { PROVIDERS, PROVIDER_BY_ID } from "../lib/ai/providers";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
@@ -23,16 +24,45 @@ import type { AppLanguage, LlmProvider, Settings, SttProviderId } from "../lib/t
 // systemAudio: unknown | granted | denied | unsupported (macOS < 14.2).
 type Perms = { microphone: string; systemAudio: string };
 
-const STEP_COUNT = 9;
+type StepId =
+  | "lang"
+  | "welcome"
+  | "login"
+  | "llm"
+  | "stt"
+  | "perms"
+  | "profile"
+  | "diarize"
+  | "voiceTyping"
+  | "done";
+
+// Ordered onboarding steps. The Parley sign-in step only exists in the official
+// (cloud) build — it offers the free hosted STT + LLM. CLOUD_ENABLED is a
+// compile-time constant, so the OSS build never ships the step at all.
+const STEPS: StepId[] = [
+  "lang",
+  "welcome",
+  ...(CLOUD_ENABLED ? (["login"] as StepId[]) : []),
+  "llm",
+  "stt",
+  "perms",
+  "profile",
+  "diarize",
+  "voiceTyping",
+  "done",
+];
+const STEP_COUNT = STEPS.length;
 
 export function Onboarding() {
   const { t } = useI18n();
   const settings = useStore((s) => s.settings);
   const patch = useStore((s) => s.updateSettings);
+  const cloudAuth = useStore((s) => s.cloudAuth);
   const [step, setStep] = useState(() => {
     const s = settings.onboardingStep ?? 0;
     return s >= 0 && s < STEP_COUNT ? s : 0;
   });
+  const current = STEPS[step];
   const [perms, setPerms] = useState<Perms | null>(null);
 
   // Persist the step so granting a permission (which often needs an app restart)
@@ -62,7 +92,7 @@ export function Onboarding() {
   // focus events aren't fully reliable across the app-switch to System Settings,
   // hence the 2 s poll; it stops when the user leaves the step.)
   useEffect(() => {
-    if (step !== 4) return;
+    if (STEPS[step] !== "perms") return;
     void recheck();
     const recheckNow = () => void recheck();
     window.addEventListener("focus", recheckNow);
@@ -105,7 +135,7 @@ export function Onboarding() {
 
         {/* Body */}
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-          {step === 0 && (
+          {current === "lang" && (
             <div className="flex flex-col gap-3">
               <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.lang.title")}</h2>
               <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.lang.body")}</p>
@@ -129,7 +159,7 @@ export function Onboarding() {
             </div>
           )}
 
-          {step === 1 && (
+          {current === "welcome" && (
             <div className="flex flex-col gap-3">
               <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.welcome.title")}</h2>
               <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.welcome.body")}</p>
@@ -141,7 +171,9 @@ export function Onboarding() {
             </div>
           )}
 
-          {step === 2 && (
+          {current === "login" && <LoginStep />}
+
+          {current === "llm" && (
             <StepKey
               title={t("onboarding.llm.title")}
               body={t("onboarding.llm.body")}
@@ -152,11 +184,10 @@ export function Onboarding() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {/* The hosted "parley" provider requires a signed-in cloud session,
-                      which is set up from Settings → Account, not first-run onboarding.
-                      Exclude it here so OSS/signed-out users can't pick an unusable
-                      provider (Settings gates it on CLOUD_ENABLED && cloudAuth). */}
-                  {PROVIDERS.filter((p) => p.id !== "parley").map((p) => (
+                  {/* The hosted "parley" provider needs a signed-in cloud session:
+                      offer it only in the official build once the user signed in at
+                      the login step (mirrors the Settings gate). */}
+                  {PROVIDERS.filter((p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth)).map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       <span className="flex items-center gap-2">
                         <img src={p.icon} alt="" className="size-4 rounded-sm" />
@@ -167,7 +198,9 @@ export function Onboarding() {
                 </SelectContent>
               </Select>
               {llm.requiresKey === false ? (
-                <p className="text-[11px] text-muted-foreground">{t("onboarding.llm.noKey")}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {llm.id === "parley" ? t("onboarding.login.signedIn") : t("onboarding.llm.noKey")}
+                </p>
               ) : (
                 <Input
                   type="password"
@@ -180,7 +213,7 @@ export function Onboarding() {
             </StepKey>
           )}
 
-          {step === 3 && (
+          {current === "stt" && (
             <StepKey
               title={t("onboarding.stt.title")}
               body={t("onboarding.stt.body")}
@@ -194,9 +227,9 @@ export function Onboarding() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {/* Onboarding runs before sign-in, so the hosted "parley" STT
-                      (which needs a cloud session) is never offered here. */}
-                  {STT_PROVIDERS.filter((p) => p.id !== "parley").map((p) => (
+                  {/* Hosted "parley" STT (relayed to Soniox) shows only in the
+                      official build once signed in — mirrors the LLM step. */}
+                  {STT_PROVIDERS.filter((p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth)).map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       <span className="flex items-center gap-2">
                         <img src={p.icon} alt="" className="size-4 rounded-sm" />
@@ -211,17 +244,23 @@ export function Onboarding() {
                   ))}
                 </SelectContent>
               </Select>
-              <Input
-                type="password"
-                autoComplete="off"
-                placeholder={stt.keyPlaceholder}
-                value={(settings[stt.apiKeyField] as string) ?? ""}
-                onChange={(e) => patch({ [stt.apiKeyField]: e.target.value } as Partial<Settings>)}
-              />
+              {/* The hosted provider authenticates with the signed-in session, not
+                  an API key — so no key field for it. */}
+              {stt.id === "parley" ? (
+                <p className="text-[11px] text-muted-foreground">{t("onboarding.login.signedIn")}</p>
+              ) : (
+                <Input
+                  type="password"
+                  autoComplete="off"
+                  placeholder={stt.keyPlaceholder}
+                  value={(settings[stt.apiKeyField] as string) ?? ""}
+                  onChange={(e) => patch({ [stt.apiKeyField]: e.target.value } as Partial<Settings>)}
+                />
+              )}
             </StepKey>
           )}
 
-          {step === 4 && (
+          {current === "perms" && (
             <div className="flex flex-col gap-3">
               <h2 className="text-base font-semibold tracking-tight">{t("onboarding.perms.title")}</h2>
               <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.perms.body")}</p>
@@ -269,7 +308,7 @@ export function Onboarding() {
             </div>
           )}
 
-          {step === 5 && (
+          {current === "profile" && (
             <div className="flex flex-col gap-3">
               <h2 className="text-base font-semibold tracking-tight">{t("onboarding.profile.title")}</h2>
               <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.profile.body")}</p>
@@ -291,9 +330,9 @@ export function Onboarding() {
             </div>
           )}
 
-          {step === 6 && <DiarizeModelStep />}
+          {current === "diarize" && <DiarizeModelStep />}
 
-          {step === 7 && (
+          {current === "voiceTyping" && (
             <div className="flex flex-col gap-3">
               <h2 className="text-base font-semibold tracking-tight">{t("onboarding.voiceTyping.title")}</h2>
               <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.voiceTyping.body")}</p>
@@ -330,7 +369,7 @@ export function Onboarding() {
             </div>
           )}
 
-          {step === 8 && (
+          {current === "done" && (
             <div className="flex flex-col items-center gap-3 py-6 text-center">
               <div className="flex size-12 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
                 <Check className="size-6" />
@@ -365,6 +404,77 @@ export function Onboarding() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Official-build-only sign-in step. Signing in unlocks Parley's free hosted STT
+ * + LLM; on success we default both providers to "parley" so the next two steps
+ * come pre-configured (and now list "parley" as an option). Fully skippable —
+ * Next advances regardless, and BYOK keys still work.
+ */
+function LoginStep() {
+  const { t } = useI18n();
+  const patch = useStore((s) => s.updateSettings);
+  const cloudAuth = useStore((s) => s.cloudAuth);
+  const [signingIn, setSigningIn] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function doSignIn() {
+    setSigningIn(true);
+    setError(null);
+    try {
+      const { signInWithGoogle } = await import("../lib/cloud/client");
+      await signInWithGoogle();
+      // Signed in → default to Parley's free hosted STT + LLM so onboarding is
+      // done in one tap; the LLM/STT pickers now surface "parley" too.
+      patch({ provider: "parley", transcriptionProvider: "parley" });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSigningIn(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <h2 className="text-base font-semibold tracking-tight">{t("onboarding.login.title")}</h2>
+      <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.login.body")}</p>
+      <ul className="flex flex-col gap-1.5 text-sm text-muted-foreground">
+        <li className="flex items-center gap-2">
+          <Check className="size-3.5 shrink-0 text-emerald-500" />
+          {t("onboarding.login.benefit1")}
+        </li>
+        <li className="flex items-center gap-2">
+          <Check className="size-3.5 shrink-0 text-emerald-500" />
+          {t("onboarding.login.benefit2")}
+        </li>
+      </ul>
+      {cloudAuth ? (
+        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-500">
+          <Check className="size-4 shrink-0" />
+          {t("onboarding.login.signedIn")}
+        </div>
+      ) : (
+        <>
+          <Button
+            size="sm"
+            className="h-9 w-fit gap-2 text-xs"
+            disabled={signingIn || !isTauri()}
+            onClick={() => void doSignIn()}
+          >
+            {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+            {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
+          </Button>
+          {error && (
+            <p className="rounded-md bg-orange-500/10 px-2.5 py-1.5 text-[11px] text-orange-400">
+              {t("onboarding.login.failed", { error })}
+            </p>
+          )}
+          <p className="text-[11px] text-muted-foreground">{t("onboarding.login.skipHint")}</p>
+        </>
+      )}
     </div>
   );
 }

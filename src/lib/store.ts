@@ -28,6 +28,7 @@ import { reconcileTemplates } from "./templates";
 import { buildPresetTodoTemplates } from "./todoTemplates";
 import { translate, type TranslationKey } from "../i18n/messages";
 import { DEFAULT_MODELS } from "./ai/providers";
+import { countFillerSounds } from "./analysis/fillerWords";
 import { log } from "./log";
 
 /** A translate function bound to a language, for resolving built-in templates. */
@@ -246,9 +247,15 @@ interface ParleyState {
    *  a mic-only measured pace — never the counterpart's (issue #22). Reset on
    *  meeting start. */
   micSessionRateHz: number | null;
-  /** Running count of filled pauses ("um/uh/呃/痾") detected acoustically this
-   *  meeting (STT drops them, so this is the only tally). Reset on meeting start. */
+  /** Running count of filler SOUNDS ("um/uh/嗯/呃") heard this meeting. Counted
+   *  from the USER'S live transcript ("me" segments) against a global filler map
+   *  (see countFillerSounds) so it updates in real time and works across
+   *  languages. Reset on meeting start. */
   filledPauseCount: number;
+  /** Per-segment filler-sound tally already folded into `filledPauseCount`.
+   *  Interim segments grow/rewrite as they finalize, so we re-count each segment
+   *  and add only the delta — keyed by segment id. Reset on meeting start. */
+  filledPauseCounted: Record<string, number>;
   /** The transient coaching nudge currently shown (null = none). */
   deliveryNudge: DeliveryNudge | null;
   /** Show a nudge (replaces any current one); the UI auto-dismisses it. */
@@ -359,6 +366,7 @@ export const useStore = create<ParleyState>()(
       prosody: null,
       micSessionRateHz: null,
       filledPauseCount: 0,
+      filledPauseCounted: {},
       deliveryNudge: null,
       deliveryAssessment: null,
       deliveryStatus: "idle",
@@ -610,8 +618,9 @@ export const useStore = create<ParleyState>()(
   // Prosody is a live-only signal. Ignore non-null updates outside a recording so a
   // leaked/duplicate listener (e.g. a dev StrictMode re-subscribe, or a backend
   // frame slipping through stop_meeting's teardown grace) can't move the gauges
-  // after stop. A null reset always applies. While recording, also bump the
-  // filled-pause counter when the DSP flags a held-vowel hesitation.
+  // after stop. A null reset always applies. (Filler SOUNDS are no longer tallied
+  // here — the acoustic DSP flag missed too many; they're counted from the live
+  // transcript in `upsertSegment` instead.)
   setProsody: (m) =>
     set((state) => {
       if (!m) return { prosody: null };
@@ -621,7 +630,6 @@ export const useStore = create<ParleyState>()(
         // Kept outside `prosody` so it survives the stop-time reset: the history
         // save reads it as the mic-only measured pace (issue #22).
         micSessionRateHz: m.sessionRateHz > 0 ? m.sessionRateHz : state.micSessionRateHz,
-        filledPauseCount: m.filledPause ? state.filledPauseCount + 1 : state.filledPauseCount,
       };
     }),
   pushDeliveryNudge: (n) => set({ deliveryNudge: n }),
@@ -682,6 +690,7 @@ export const useStore = create<ParleyState>()(
       prosody: null,
       micSessionRateHz: null,
       filledPauseCount: 0,
+      filledPauseCounted: {},
       deliveryNudge: null,
       deliveryAssessment: null,
       deliveryStatus: "idle",
@@ -714,13 +723,29 @@ export const useStore = create<ParleyState>()(
       // stray live event (e.g. a leaked listener) while viewing a saved session.
       // (Live finalize after stop is appMode "live"/"stopped", so it's unaffected.)
       if (state.appMode === "replay") return {};
+
+      // Tally filler sounds ("um/嗯…") from the USER'S OWN speech, live. Interim
+      // segments grow and rewrite as they finalize, so re-count this segment and
+      // fold in only the delta versus what we already counted for its id.
+      let fillerPatch: Partial<ParleyState> = {};
+      if (segment.source === "me") {
+        const prev = state.filledPauseCounted[segment.id] ?? 0;
+        const now = countFillerSounds(segment.text);
+        if (now !== prev) {
+          fillerPatch = {
+            filledPauseCount: Math.max(0, state.filledPauseCount + (now - prev)),
+            filledPauseCounted: { ...state.filledPauseCounted, [segment.id]: now },
+          };
+        }
+      }
+
       const idx = state.segments.findIndex((s) => s.id === segment.id);
       if (idx === -1) {
-        return { segments: [...state.segments, segment] };
+        return { segments: [...state.segments, segment], ...fillerPatch };
       }
       const next = state.segments.slice();
       next[idx] = segment;
-      return { segments: next };
+      return { segments: next, ...fillerPatch };
     }),
 
   clearTranscript: () => set({ segments: [] }),

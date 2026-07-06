@@ -235,6 +235,17 @@ export const VoiceTypingApp = () => {
         </div>
       )}
 
+      {/* Copied-to-clipboard confirmation. The transcript is already on the
+          clipboard (and pasted at the cursor when Accessibility is granted), so
+          the "done" state announces it near the overlay — the user knows they
+          can paste it anywhere even if auto-paste was blocked. */}
+      {phase === "done" && !error && text && (
+        <div className="flex items-center gap-1 rounded-full bg-emerald-500 px-2.5 py-0.5 text-[11px] font-medium text-white shadow-md">
+          <Check className="size-2.5" strokeWidth={3} />
+          {t("voiceTyping.copied")}
+        </div>
+      )}
+
       {/* Layer 2 — audio waver pill: same inverted bg as the transcript, blue
           bars, with a small state indicator. */}
       <div className="flex items-center gap-2 rounded-full bg-foreground px-3 py-1.5 shadow-md">
