@@ -368,15 +368,16 @@ pub fn stop_meeting(
     // is a no-op, and after stop no new audio flows, so the extra idle wait
     // produces no new transcript. (A short grace would cut a slow finalize and
     // lose the last segment + usage event.)
-    let tasks: Vec<tauri::async_runtime::JoinHandle<()>> =
-        state.tasks.lock().unwrap().drain(..).collect();
     // From this point the meeting is over: a failure inside the flush/abort
     // grace below belongs to THIS (ended) meeting, and raising meeting://error
     // for it would tear down whatever meeting the user starts next (or toast a
-    // spurious failure). Mute it — run_metered_session logs instead.
+    // spurious failure). Mute FIRST — before anything below can make a session
+    // fail — then release the tasks; run_metered_session logs instead.
     if let Some(mute) = state.error_mute.lock().unwrap().as_ref() {
         mute.store(true, std::sync::atomic::Ordering::SeqCst);
     }
+    let tasks: Vec<tauri::async_runtime::JoinHandle<()>> =
+        state.tasks.lock().unwrap().drain(..).collect();
     if !tasks.is_empty() {
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(8000)).await;
