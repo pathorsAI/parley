@@ -13,6 +13,17 @@ export interface SttProviderInfo {
   label: string;
   /** Can separate speakers on its own (Soniox / Deepgram). */
   diarization: boolean;
+  /**
+   * Can transcribe an UPLOADED audio file (the batch "replay" path in
+   * `replay.rs`), not just live streaming. Gates the upload button + ingest
+   * wizard, and must stay in sync with which providers the `transcribe_file`
+   * dispatch actually implements. `true` = an implemented batch adapter whose
+   * request/response shape is verified against the vendor's API docs (Soniox,
+   * Deepgram, AssemblyAI, OpenAI). Gemini stays `false` — its inline Ogg-Opus
+   * support + model naming are unconfirmed and it returns no timestamps or
+   * diarization; hosted Parley stays `false` until a cloud batch endpoint exists.
+   */
+  supportsFileUpload: boolean;
   /** Settings field holding this provider's API key. */
   apiKeyField: keyof Settings;
   keyPlaceholder: string;
@@ -25,25 +36,28 @@ export interface SttProviderInfo {
  * provider (same brand, same API key), so borrow their identity from the single
  * LLM registry instead of duplicating it here.
  */
-function fromLlm(id: "openai" | "gemini"): Omit<SttProviderInfo, "diarization"> {
+function fromLlm(id: "openai" | "gemini"): Omit<SttProviderInfo, "diarization" | "supportsFileUpload"> {
   const p = PROVIDER_BY_ID[id];
   return { id, label: p.label, apiKeyField: p.apiKeyField, keyPlaceholder: p.keyPlaceholder, icon: p.icon };
 }
 
 export const STT_PROVIDERS: SttProviderInfo[] = [
-  { id: "soniox", label: "Soniox", diarization: true, apiKeyField: "sonioxApiKey", keyPlaceholder: "…", icon: "/providers/soniox.png" },
-  { id: "deepgram", label: "Deepgram", diarization: true, apiKeyField: "deepgramApiKey", keyPlaceholder: "…", icon: "/providers/deepgram.png" },
-  { id: "assemblyai", label: "AssemblyAI", diarization: false, apiKeyField: "assemblyaiApiKey", keyPlaceholder: "…", icon: "/providers/assemblyai.png" },
-  { ...fromLlm("openai"), diarization: false },
-  { ...fromLlm("gemini"), diarization: false },
+  { id: "soniox", label: "Soniox", diarization: true, supportsFileUpload: true, apiKeyField: "sonioxApiKey", keyPlaceholder: "…", icon: "/providers/soniox.png" },
+  { id: "deepgram", label: "Deepgram", diarization: true, supportsFileUpload: true, apiKeyField: "deepgramApiKey", keyPlaceholder: "…", icon: "/providers/deepgram.png" },
+  { id: "assemblyai", label: "AssemblyAI", diarization: false, supportsFileUpload: true, apiKeyField: "assemblyaiApiKey", keyPlaceholder: "…", icon: "/providers/assemblyai.png" },
+  { ...fromLlm("openai"), diarization: false, supportsFileUpload: true },
+  { ...fromLlm("gemini"), diarization: false, supportsFileUpload: false },
   // Hosted account mode: audio is relayed through Parley Cloud to Soniox (which
   // diarizes), so no vendor is exposed and no key field is used — auth is the
   // signed-in cloud session (see sttApiKey). Borrows the Parley brand from the
   // LLM registry. The picker only offers it in the cloud build when signed in.
+  // File upload needs a cloud batch endpoint (relaying to Soniox async) that
+  // isn't wired yet — off until that exists and is verified.
   {
     id: "parley",
     label: PROVIDER_BY_ID["parley"].label,
     diarization: true,
+    supportsFileUpload: false,
     apiKeyField: "parleyApiKey",
     keyPlaceholder: "",
     icon: PROVIDER_BY_ID["parley"].icon,
