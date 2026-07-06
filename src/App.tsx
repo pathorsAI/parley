@@ -39,6 +39,7 @@ import { checkForUpdate } from "./lib/update";
 import { refreshSession } from "./lib/cloud/client";
 import { CLOUD_ENABLED } from "./lib/flags";
 import { initVoiceTyping } from "./lib/voiceTyping/host";
+import { preloadZhConverter } from "./lib/zhConvert";
 
 /**
  * Track main-window fullscreen state. Drives both the rounded corners (a
@@ -95,6 +96,9 @@ const App = () => {
         else fn();
       });
     };
+    // Warm the S→T dictionary now: paying its load on the FIRST transcript
+    // event delayed the opening caption of every meeting by the parse time.
+    preloadZhConverter();
     track(listenForTranscript());
     track(listenForProsody());
     track(listenForMeetingError());

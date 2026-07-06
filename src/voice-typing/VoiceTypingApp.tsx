@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listen, emit } from "@tauri-apps/api/event";
 import { Check, Loader2, Mic } from "lucide-react";
-import { toTraditional } from "../lib/zhConvert";
+import { preloadZhConverter, toTraditional } from "../lib/zhConvert";
 import { useI18n, type TranslationKey } from "../i18n";
 import { useThemePreference } from "../lib/theme";
 
@@ -120,6 +120,10 @@ export const VoiceTypingApp = () => {
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
+
+    // Warm the S→T dictionary while the overlay is prewarmed/idle, so the
+    // first dictation's publish doesn't stall on the dictionary parse.
+    preloadZhConverter();
 
     listen<SegPayload>("transcript://segment", (e) => {
       const p = e.payload;
