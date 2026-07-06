@@ -21,8 +21,13 @@ import { appendVoiceEntry } from "./history";
 const AX_BOOT_PROMPTED_KEY = "parley:ax-boot-prompted";
 
 // After the key is released we keep the session open and wait for the STT to
-// flush its final tokens — finalizing only once the text has been quiet for
-// SETTLE_MS (so the last words aren't cut off), capped at MAX_WAIT_MS.
+// flush its final tokens. FAST PATH: the backend emits `stt://closed` once the
+// session is fully over (socket closed, every final token emitted) — from
+// there we only wait CLOSE_DRAIN_MS for those last tokens to cross the
+// overlay's S→T convert-and-report hop before pasting. FALLBACK (a provider or
+// relay that never closes the socket): finalize once the text has been quiet
+// for SETTLE_MS, capped at MAX_WAIT_MS after release.
+const CLOSE_DRAIN_MS = 150;
 const SETTLE_MS = 500;
 const MAX_WAIT_MS = 3000;
 /** Keep the result visible briefly before hiding the overlay. */
@@ -31,6 +36,8 @@ const HIDE_DELAY_MS = 1100;
 let latestText = "";
 let lastTextAt = 0;
 let releasedAt = 0;
+/** When `stt://closed` arrived for the current session (0 = not yet). */
+let closedAt = 0;
 let down = false;
 let busy = false;
 /** The backend reported the STT session dead (voicetyping://error). */
@@ -48,6 +55,7 @@ export function initVoiceTyping(): () => void {
   let unPtt: UnlistenFn = () => {};
   let unText: UnlistenFn = () => {};
   let unErr: UnlistenFn = () => {};
+  let unClosed: UnlistenFn = () => {};
   // Serialize press/release handling: a quick tap used to run endSession's
   // `stop_voice_typing` while startSession's invoke was still in flight, so
   // the stop reached Rust FIRST and no-op'd — leaving a live, ownerless
@@ -80,6 +88,20 @@ export function initVoiceTyping(): () => void {
     emit("voicetyping://session", { phase: "error", message: e.payload.code }).catch(() => {});
   })
     .then((u) => (unErr = u))
+    .catch(() => {});
+  // The backend session is fully over — every final token has been emitted.
+  // If the key is already up, re-arm the settle loop: it sees `closedAt` and
+  // finalizes after the short CLOSE_DRAIN_MS instead of the SETTLE_MS quiet
+  // poll. Ignored while the key is still down (a server-side close mid-hold
+  // ends on the normal release path) and after a failure (endSession already
+  // finalizes failed sessions immediately).
+  listen<{ source: string }>("stt://closed", (e) => {
+    if (e.payload.source !== "voice-typing") return;
+    if (!busy) return; // stale close from a superseded/finished session
+    closedAt = Date.now();
+    if (!down && !failed) waitForSettle();
+  })
+    .then((u) => (unClosed = u))
     .catch(() => {});
   // Apply the saved push-to-talk key so the right trigger is live from launch
   // (registers Option+Space, or arms the HID tap for a modifier key). The
@@ -114,6 +136,7 @@ export function initVoiceTyping(): () => void {
     unPtt();
     unText();
     unErr();
+    unClosed();
   };
 }
 
@@ -150,6 +173,7 @@ async function startSession() {
   gen += 1;
   latestText = "";
   lastTextAt = Date.now();
+  closedAt = 0;
   clearTimeout(settleTimer);
   clearTimeout(hideTimer);
   await showOverlay();
@@ -192,19 +216,25 @@ async function endSession() {
   waitForSettle();
 }
 
-/** Finalize once the transcript has been quiet for SETTLE_MS (final flush done),
- *  or MAX_WAIT_MS after release as a hard stop. */
+/** Finalize as soon as the flush is provably over: CLOSE_DRAIN_MS after the
+ *  backend's `stt://closed` (fast path), else once the transcript has been
+ *  quiet for SETTLE_MS, else MAX_WAIT_MS after release as a hard stop. */
 function waitForSettle() {
   clearTimeout(settleTimer);
+  // Once closed, one short drain tick is all that's left; while still waiting
+  // on the STT flush, poll on a small interval so no path adds avoidable lag.
+  const delay = closedAt > 0 ? CLOSE_DRAIN_MS : 60;
   settleTimer = setTimeout(() => {
-    const quietFor = Date.now() - lastTextAt;
-    const elapsed = Date.now() - releasedAt;
-    if (quietFor >= SETTLE_MS || elapsed >= MAX_WAIT_MS) {
+    const now = Date.now();
+    const drained = closedAt > 0 && now - closedAt >= CLOSE_DRAIN_MS;
+    const quietFor = now - lastTextAt;
+    const elapsed = now - releasedAt;
+    if (drained || quietFor >= SETTLE_MS || elapsed >= MAX_WAIT_MS) {
       finalize().catch(() => {});
     } else {
       waitForSettle();
     }
-  }, 120);
+  }, delay);
 }
 
 async function finalize() {
