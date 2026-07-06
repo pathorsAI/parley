@@ -66,6 +66,7 @@ export function AskPanel() {
     }
 
     setMessages((m) => [...m, { role: "assistant", content: "" }]);
+    setShowThinking(true);
     setBusy(true);
     try {
       const { askAboutMeeting } = await import("../../lib/ai/ask");
@@ -190,6 +191,9 @@ export function AskPanel() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
+                // Don't hijack keys while an IME composition is active — Enter
+                // commits the candidate, arrows navigate it, Tab picks it.
+                if (e.nativeEvent.isComposing) return;
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   void submit(e);
