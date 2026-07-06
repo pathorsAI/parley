@@ -138,6 +138,7 @@ pub fn start_voice_typing(
         rx,
         None,
         "voicetyping://error",
+        None,
     );
     // Pin the session task so the next start (or stop's backstop) can abort
     // it. If a newer start won the race while we were spawning, ours is the

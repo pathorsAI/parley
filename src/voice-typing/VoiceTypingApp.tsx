@@ -120,53 +120,69 @@ export const VoiceTypingApp = () => {
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
+    // listen() resolves asynchronously, so an unmount that lands before it
+    // resolves (StrictMode's dev double-mount, any overlay remount) would push
+    // the unlisten into an already-drained array — a leaked duplicate listener
+    // that double-fires setState for the lifetime of this long-lived window.
+    // Track through a cancellation flag instead: late arrivals unlisten
+    // themselves immediately.
+    let cancelled = false;
+    const track = (p: Promise<() => void>) => {
+      p.then((u) => {
+        if (cancelled) u();
+        else unsubs.push(u);
+      }).catch(() => {});
+    };
 
     // Warm the S→T dictionary while the overlay is prewarmed/idle, so the
     // first dictation's publish doesn't stall on the dictionary parse.
     preloadZhConverter();
 
-    listen<SegPayload>("transcript://segment", (e) => {
-      const p = e.payload;
-      if (p.source !== "voice-typing") return;
-      if (p.is_final) {
-        finalsRef.current.set(p.id, p.text);
-        interimRef.current = ""; // the committed run supersedes the tail
-      } else {
-        interimRef.current = p.text;
-      }
-      publish.current().catch(() => {});
-    })
-      .then((u) => unsubs.push(u))
-      .catch(() => {});
+    track(
+      listen<SegPayload>("transcript://segment", (e) => {
+        const p = e.payload;
+        if (p.source !== "voice-typing") return;
+        if (p.is_final) {
+          finalsRef.current.set(p.id, p.text);
+          interimRef.current = ""; // the committed run supersedes the tail
+        } else {
+          interimRef.current = p.text;
+        }
+        publish.current().catch(() => {});
+      }),
+    );
 
-    listen<LevelPayload>("audio://level", (e) => {
-      if (e.payload.source !== "voice-typing") return;
-      setBars(instantWaveform(e.payload.level));
-    })
-      .then((u) => unsubs.push(u))
-      .catch(() => {});
+    track(
+      listen<LevelPayload>("audio://level", (e) => {
+        if (e.payload.source !== "voice-typing") return;
+        setBars(instantWaveform(e.payload.level));
+      }),
+    );
 
-    listen<SessionPayload>("voicetyping://session", (e) => {
-      const { phase: p, message } = e.payload;
-      if (p === "start") {
-        finalsRef.current.clear();
-        interimRef.current = "";
-        setText("");
-        setError(null);
-        setPhase("listening");
-      } else if (p === "stop") {
-        setPhase("finalizing");
-      } else if (p === "done") {
-        setPhase("done");
-      } else if (p === "error") {
-        setError(message || "error");
-        setPhase("done");
-      }
-    })
-      .then((u) => unsubs.push(u))
-      .catch(() => {});
+    track(
+      listen<SessionPayload>("voicetyping://session", (e) => {
+        const { phase: p, message } = e.payload;
+        if (p === "start") {
+          finalsRef.current.clear();
+          interimRef.current = "";
+          setText("");
+          setError(null);
+          setPhase("listening");
+        } else if (p === "stop") {
+          setPhase("finalizing");
+        } else if (p === "done") {
+          setPhase("done");
+        } else if (p === "error") {
+          setError(message || "error");
+          setPhase("done");
+        }
+      }),
+    );
 
-    return () => unsubs.forEach((u) => u());
+    return () => {
+      cancelled = true;
+      unsubs.forEach((u) => u());
+    };
   }, []);
 
   // Let the waveform settle back to the floor when not actively listening.
