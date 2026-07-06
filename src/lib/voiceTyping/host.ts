@@ -90,16 +90,19 @@ export function initVoiceTyping(): () => void {
     .then((u) => (unErr = u))
     .catch(() => {});
   // The backend session is fully over — every final token has been emitted.
-  // If the key is already up, re-arm the settle loop: it sees `closedAt` and
-  // finalizes after the short CLOSE_DRAIN_MS instead of the SETTLE_MS quiet
-  // poll. Ignored while the key is still down (a server-side close mid-hold
-  // ends on the normal release path) and after a failure (endSession already
-  // finalizes failed sessions immediately).
+  // Re-arm the settle loop: it sees `closedAt` and finalizes after the short
+  // CLOSE_DRAIN_MS instead of the SETTLE_MS quiet poll. Ignored unless we're
+  // between release and finalize: while the key is DOWN the event is either a
+  // server-side close mid-hold (which then ends on the normal release path)
+  // or — after a fast re-press — a STALE close from the previous session
+  // whose delivery slipped past startSession's `closedAt = 0` reset, and
+  // honoring that one would cut the new session's flush short. Failed
+  // sessions are finalized immediately by endSession already.
   listen<{ source: string }>("stt://closed", (e) => {
     if (e.payload.source !== "voice-typing") return;
-    if (!busy) return; // stale close from a superseded/finished session
+    if (!busy || down || failed) return;
     closedAt = Date.now();
-    if (!down && !failed) waitForSettle();
+    waitForSettle();
   })
     .then((u) => (unClosed = u))
     .catch(() => {});
