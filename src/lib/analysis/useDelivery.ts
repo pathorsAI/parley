@@ -27,7 +27,7 @@ const NUDGE_KEY: Record<Exclude<DeliveryNudgeKind, "tone" | "filler">, Translati
  * *tone* nudge is pushed separately by the analysis engine. No-op off-air.
  *
  * The coach is rebuilt per meeting and whenever the toggles change (which resets
- * its baselines); it's driven off the `prosody` slice, which updates ~2×/s.
+ * its baselines); it's driven off the `prosody` slice, which updates ~6–7×/s.
  */
 export function useDeliveryCoach(): void {
   const meetingStatus = useStore((s) => s.meetingStatus);
