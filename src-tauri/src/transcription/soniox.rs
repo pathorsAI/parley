@@ -9,8 +9,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    connect_with_headers, ensure_crypto_provider, LevelMeter, SegmentBuilder, TranscribeConfig,
-    LEVEL_EVENT, TRANSCRIPT_EVENT,
+    connect_with_headers, drive_session, ensure_crypto_provider, LevelMeter, SegmentBuilder,
+    TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
@@ -136,10 +136,12 @@ pub async fn run_session(
         let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(2));
         keepalive.tick().await;
 
-        loop {
+        // `true` = input drained (normal stop); `false` = a send failed, i.e.
+        // the socket died under us — drive_session reports that as a failure.
+        let drained = loop {
             tokio::select! {
                 maybe_chunk = pcm_rx.recv() => {
-                    let Some(chunk) = maybe_chunk else { break };
+                    let Some(chunk) = maybe_chunk else { break true };
                     meter.push(&chunk);
                     total += chunk.len() as u64;
                     if total >= next_log {
@@ -148,16 +150,16 @@ pub async fn run_session(
                     }
                     let bytes = pcm_to_le_bytes(&chunk);
                     if write.send(Message::Binary(bytes)).await.is_err() {
-                        break;
+                        break false;
                     }
                 }
                 _ = keepalive.tick() => {
                     if write.send(Message::Text("{\"type\":\"keepalive\"}".to_string())).await.is_err() {
-                        break;
+                        break false;
                     }
                 }
             }
-        }
+        };
         let _ = write
             .send(Message::Text("{\"type\":\"finalize\"}".to_string()))
             .await;
@@ -171,9 +173,13 @@ pub async fn run_session(
         if !is_relay {
             let _ = write.close().await;
         }
+        drained
     };
 
-    // Read tokens → speaker-runs via the shared SegmentBuilder.
+    // Read tokens → speaker-runs via the shared SegmentBuilder. Resolves to
+    // Err on an in-band error frame (e.g. a rejected api key) so the caller's
+    // error surface fires — the session is dead from that point, and returning
+    // Ok would leave the UI listening to nothing.
     let read_loop = async move {
         let mut builder = SegmentBuilder::new(app.clone(), source, TRANSCRIPT_EVENT);
         let mut msg_count: u64 = 0;
@@ -209,11 +215,9 @@ pub async fn run_session(
             };
 
             if let Some(code) = resp.error_code {
-                eprintln!(
-                    "[soniox:{source}] error {code}: {}",
-                    resp.error_message.unwrap_or_default()
-                );
-                break;
+                let detail = resp.error_message.unwrap_or_default();
+                eprintln!("[soniox:{source}] error {code}: {detail}");
+                return Err(anyhow!("server error {code}: {detail}"));
             }
 
             let mut tail = String::new();
@@ -247,8 +251,8 @@ pub async fn run_session(
                 break;
             }
         }
+        Ok(())
     };
 
-    tokio::join!(forward, read_loop);
-    Ok(())
+    drive_session("soniox", forward, read_loop).await
 }

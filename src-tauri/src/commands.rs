@@ -1,69 +1,75 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
+use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::audio::{microphone::Microphone, AudioSource};
+use crate::audio::microphone::Microphone;
+use crate::capture::{
+    run_metered_session, spawn_capture, Begin, MicCoordinator, MicUser, RecorderBuf,
+};
 use crate::transcription::common::{LevelMeter, LEVEL_EVENT};
-use crate::transcription::{self, SttProvider, TranscribeConfig};
+use crate::transcription::{SttProvider, TranscribeConfig};
 
-/// Path to the shared templates file (app config dir). The local MCP server
-/// reads/writes the same file so templates can be managed outside the app.
-pub(crate) fn templates_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+/// Path to `name` inside the app config dir, where all of the app's small
+/// config/state files (templates, session snapshot, command queue, voice
+/// history) live.
+pub(crate) fn app_config_file(app: &AppHandle, name: &str) -> Result<std::path::PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    Ok(dir.join("templates.json"))
+    Ok(dir.join(name))
 }
 
-/// Read the shared templates JSON (empty string if the file doesn't exist yet).
-#[tauri::command]
-pub fn read_templates(app: AppHandle) -> Result<String, String> {
-    let path = templates_path(&app)?;
-    match std::fs::read_to_string(&path) {
+/// Read an app-config file as a string, treating a missing file as empty (the
+/// convention for every optional JSON/JSONL state file).
+pub(crate) fn read_config_file(app: &AppHandle, name: &str) -> Result<String, String> {
+    match std::fs::read_to_string(app_config_file(app, name)?) {
         Ok(s) => Ok(s),
         Err(_) => Ok(String::new()),
     }
 }
 
-/// Write the shared templates JSON, creating the config dir if needed.
-#[tauri::command]
-pub fn write_templates(app: AppHandle, json: String) -> Result<(), String> {
-    let path = templates_path(&app)?;
+/// Write an app-config file, creating the config dir on first use.
+pub(crate) fn write_config_file(app: &AppHandle, name: &str, contents: &str) -> Result<(), String> {
+    let path = app_config_file(app, name)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(&path, json).map_err(|e| e.to_string())
+    std::fs::write(&path, contents).map_err(|e| e.to_string())
 }
 
-/// Accumulates the live meeting's recorded PCM (16 kHz mono i16) so it can be
-/// encoded to Ogg/Opus on stop and saved into the local history. `None` between
-/// meetings; armed (`Some(empty)`) by `start_meeting` and drained by `stop_meeting`.
-pub(crate) type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
+/// Path to the shared templates file (app config dir). The local MCP server
+/// reads/writes the same file so templates can be managed outside the app.
+pub(crate) fn templates_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app_config_file(app, "templates.json")
+}
 
-/// Shared meeting state held in Tauri's managed state. `running` is the global
-/// "a meeting is active" status (queried by the mic-test + UI). Capture threads,
-/// however, watch a PER-SESSION `capture_gate` (not `running`) so a thread from a
-/// previous meeting can never be revived by the next `start_meeting` flipping a
-/// shared flag back to true — each meeting gets a fresh gate, and stop clears it.
+/// Read the shared templates JSON (empty string if the file doesn't exist yet).
+#[tauri::command]
+pub fn read_templates(app: AppHandle) -> Result<String, String> {
+    read_config_file(&app, "templates.json")
+}
+
+/// Write the shared templates JSON, creating the config dir if needed.
+#[tauri::command]
+pub fn write_templates(app: AppHandle, json: String) -> Result<(), String> {
+    write_config_file(&app, "templates.json", &json)
+}
+
+/// Meeting-specific state held in Tauri's managed state. Who owns the mic (and
+/// the capture threads/gate of the live session) lives in [`MicCoordinator`];
+/// only what a meeting needs beyond its capture stays here.
 #[derive(Default)]
 pub struct MeetingState {
-    running: Arc<AtomicBool>,
-    /// Per-meeting capture flag handed to every capture thread of the CURRENT
-    /// session. `start_meeting` installs a fresh one; `stop_meeting` clears it to
-    /// tell exactly this session's threads to exit. A detached/wedged thread from
-    /// an old session holds its own (already-false) gate, so a later meeting can't
-    /// adopt or revive it. `None` between meetings.
-    capture_gate: Mutex<Option<Arc<AtomicBool>>>,
-    threads: Mutex<Vec<JoinHandle<()>>>,
     /// Live transcription session tasks (the per-source Soniox/etc. WebSocket
     /// loops). Held so `stop_meeting` can `abort()` them — a direct cancel that
     /// closes the socket even if the capture→channel-close cascade stalls, instead
     /// of letting the session linger and keep emitting transcript after stop.
     tasks: Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>,
-    /// Separate flag for the Settings "test mic" preview (no Soniox).
-    test_running: Arc<AtomicBool>,
+    /// This meeting's `meeting://error` mute (fresh per start, set on stop).
+    /// Session tasks outlive `stop_meeting` by the flush/abort grace; a failure
+    /// in that window must not tear down whatever meeting runs NEXT — see
+    /// `run_metered_session`.
+    error_mute: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
     /// Buffers the recorded audio of the in-progress live meeting (see RecorderBuf).
     recorder: RecorderBuf,
 }
@@ -80,26 +86,29 @@ pub fn list_input_devices() -> Vec<String> {
 #[tauri::command]
 pub fn start_mic_test(
     app: AppHandle,
-    state: State<MeetingState>,
+    coord: State<MicCoordinator>,
     input_device: Option<String>,
 ) -> Result<(), String> {
-    // The meeting owns the mic until it ends — never open a competing input stream
-    // while recording. On macOS a second stream can make CoreAudio renegotiate the
-    // device and silently kill the meeting's capture (transcription stops). The UI
-    // also disables the test while recording; this is the reliable backstop.
-    if state.running.load(Ordering::SeqCst) {
-        return Ok(());
-    }
-    if state.test_running.swap(true, Ordering::SeqCst) {
-        return Ok(());
-    }
-    let running = state.test_running.clone();
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-    Microphone {
+    // A meeting (or dictation) owns the mic until it ends — never open a
+    // competing input stream while recording. On macOS a second stream can make
+    // CoreAudio renegotiate the device and silently kill the live capture
+    // (transcription stops). The UI also disables the test while recording; the
+    // coordinator is the reliable backstop.
+    let gate = match coord.begin(MicUser::MicTest) {
+        Begin::Started(gate) => gate,
+        Begin::AlreadyActive | Begin::Busy(_) => return Ok(()),
+    };
+    let mic = Microphone {
         device_name: input_device,
-    }
-    .start(tx, running)
-    .map_err(|e| e.to_string())?;
+    };
+    let mut rx = match spawn_capture(&coord, MicUser::MicTest, mic, gate, "test") {
+        Ok(rx) => rx,
+        Err(e) => {
+            // Free the claim so the next test isn't refused forever.
+            coord.stop(MicUser::MicTest);
+            return Err(e);
+        }
+    };
 
     tauri::async_runtime::spawn(async move {
         // Reuse the shared metering primitive so peak/window logic lives in one place.
@@ -117,16 +126,16 @@ pub fn start_mic_test(
 }
 
 #[tauri::command]
-pub fn stop_mic_test(state: State<MeetingState>) {
-    state.test_running.store(false, Ordering::SeqCst);
+pub fn stop_mic_test(coord: State<MicCoordinator>) {
+    coord.stop(MicUser::MicTest);
 }
 
 /// Whether a live meeting is currently recording. The Settings UI uses this to
 /// disable the mic test + device picker while recording (switching the input
 /// mid-meeting can disrupt the meeting's capture).
 #[tauri::command]
-pub fn meeting_active(state: State<MeetingState>) -> bool {
-    state.running.load(Ordering::SeqCst)
+pub fn meeting_active(coord: State<MicCoordinator>) -> bool {
+    coord.owner() == Some(MicUser::Meeting)
 }
 
 #[tauri::command]
@@ -134,6 +143,7 @@ pub fn meeting_active(state: State<MeetingState>) -> bool {
 pub fn start_meeting(
     app: AppHandle,
     state: State<MeetingState>,
+    coord: State<MicCoordinator>,
     provider: String,
     api_key: String,
     model: Option<String>,
@@ -150,25 +160,34 @@ pub fn start_meeting(
         return Err("missing transcription API key".into());
     }
     let relay_endpoint = relay_url.filter(|u| !u.trim().is_empty());
-    // Ignore if already running.
-    if state.running.swap(true, Ordering::SeqCst) {
-        return Ok(());
+    // Hosted mode's api_key is the cloud session token, which only the relay
+    // accepts — streaming it straight to the vendor dies with an opaque
+    // in-band auth error. Refuse loudly instead (a call site that forgot
+    // relayUrl is a frontend bug).
+    if provider == SttProvider::Parley && relay_endpoint.is_none() {
+        return Err("hosted transcription requires the cloud relay URL".into());
     }
-    // Tear down any Settings "test mic" stream so it can't contend with the
-    // meeting's capture (its thread exits when this flag clears).
-    state.test_running.store(false, Ordering::SeqCst);
-    // Per-session capture gate: a FRESH flag owned by THIS meeting's capture threads
-    // (not the global `state.running`). Installed in state so stop_meeting can clear
-    // exactly this session's threads; a later start_meeting installs a new one, so a
-    // detached/wedged thread from a prior session can never be revived. The var is
-    // named `running` so the capture call sites below read naturally.
-    let running = Arc::new(AtomicBool::new(true));
-    *state.capture_gate.lock().unwrap() = Some(running.clone());
+    // Claim the mic. A meeting outranks the Settings mic test and voice typing,
+    // so the coordinator stops either one first (device released before our
+    // capture opens); a second start while a meeting runs is an idempotent no-op.
+    // The gate is per-session: stop_meeting clears exactly this session's
+    // threads, and a detached/wedged thread from a prior session (holding its
+    // own dead gate) can never be revived by a later start.
+    let gate = match coord.begin(MicUser::Meeting) {
+        Begin::Started(gate) => gate,
+        Begin::AlreadyActive => return Ok(()),
+        // Unreachable today (Meeting outranks everything), kept for safety.
+        Begin::Busy(owner) => return Err(format!("microphone is in use by {owner:?}")),
+    };
     // Arm a fresh recording buffer for this meeting (the designated session below
     // tees its PCM into it; stop_meeting encodes + clears it).
     *state.recorder.lock().unwrap() = Some(Vec::new());
     // Drop any (finished) session handles from a prior meeting before this one fills in.
     state.tasks.lock().unwrap().clear();
+    // Arm THIS meeting's error mute (unset). The previous meeting's sessions
+    // hold the previous Arc — already muted by its stop.
+    let error_mute = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    *state.error_mute.lock().unwrap() = Some(error_mute.clone());
     let recorder = state.recorder.clone();
     let model = model
         .filter(|m| !m.trim().is_empty())
@@ -192,14 +211,26 @@ pub fn start_meeting(
         let mic = Microphone {
             device_name: input_device,
         };
-        let sys = crate::audio::system_macos::SystemAudio;
+        let sys = crate::audio::system_macos::SystemAudio { app: app.clone() };
+        // Shared far-end state: the system-audio tap feeds it, the mic prosody
+        // tap reads it to reject the counterpart's voice bleeding through the
+        // speakers into the mic (pace/intonation must score "me" only).
+        let far = std::sync::Arc::new(crate::audio::prosody::FarEndState::new());
         if diarization {
             // Tap the PRE-MIX mic for delivery coaching (issue #22): the prosody
             // analyzer must see raw mic, never the mixed/diarized stream.
-            let rx_me = spawn_capture(&state.threads, mic, running.clone(), "me")
-                .map(|rx| spawn_mic_prosody_tap(&app, rx));
-            let rx_them = spawn_capture(&state.threads, sys, running.clone(), "them");
+            let rx_me = spawn_capture(&coord, MicUser::Meeting, mic, gate.clone(), "me")
+                .ok()
+                .map(|rx| spawn_mic_prosody_tap(&app, rx, Some(far.clone())));
+            let rx_them = spawn_capture(&coord, MicUser::Meeting, sys, gate.clone(), "them")
+                .ok()
+                .map(|rx| spawn_farend_tap(rx, far));
             let mut tasks = state.tasks.lock().unwrap();
+            log::info!(
+                "meeting: capture started (mic: {}, system: {})",
+                rx_me.is_some(),
+                rx_them.is_some()
+            );
             match (rx_me, rx_them) {
                 (Some(a), Some(b)) => {
                     let (tx_mix, rx_mix) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
@@ -217,6 +248,8 @@ pub fn start_meeting(
                         "mix",
                         rx_mix,
                         Some(recorder),
+                        "meeting://error",
+                        Some(error_mute.clone()),
                     ));
                 }
                 // If one capture failed, transcribe + record whichever started.
@@ -228,6 +261,8 @@ pub fn start_meeting(
                         "me",
                         a,
                         Some(recorder),
+                        "meeting://error",
+                        Some(error_mute.clone()),
                     ));
                 }
                 (None, Some(b)) => {
@@ -238,22 +273,57 @@ pub fn start_meeting(
                         "them",
                         b,
                         Some(recorder),
+                        "meeting://error",
+                        Some(error_mute.clone()),
                     ));
                 }
-                (None, None) => {}
+                (None, None) => {
+                    // No capture at all — without this the meeting would sit in
+                    // "recording" forever with an empty transcript. Release the
+                    // mic claim too: nothing is capturing, so voice typing / the
+                    // mic test shouldn't stay locked out until the frontend
+                    // reacts to the error (its stop_meeting is a no-op by then).
+                    coord.stop(MicUser::Meeting);
+                    log::error!("meeting: no audio source could be started");
+                    let _ = app.emit(
+                        "meeting://error",
+                        serde_json::json!({
+                            "source": "meeting",
+                            "code": "capture",
+                            "message": "no audio source could be started",
+                        }),
+                    );
+                }
             }
         } else {
             // No diarization → two sessions. Record the mic only (mixing two
             // un-aligned streams into one file would garble it); see plan note.
-            if let Some(rx) = spawn_capture(&state.threads, mic, running.clone(), "me") {
-                let rx = spawn_mic_prosody_tap(&app, rx);
-                let task =
-                    run_metered_session(&app, provider, make_config(), "me", rx, Some(recorder));
-                state.tasks.lock().unwrap().push(task);
+            let mut tasks = state.tasks.lock().unwrap();
+            if let Ok(rx) = spawn_capture(&coord, MicUser::Meeting, mic, gate.clone(), "me") {
+                let rx = spawn_mic_prosody_tap(&app, rx, Some(far.clone()));
+                tasks.push(run_metered_session(
+                    &app,
+                    provider,
+                    make_config(),
+                    "me",
+                    rx,
+                    Some(recorder),
+                    "meeting://error",
+                    Some(error_mute.clone()),
+                ));
             }
-            if let Some(rx) = spawn_capture(&state.threads, sys, running.clone(), "them") {
-                let task = run_metered_session(&app, provider, make_config(), "them", rx, None);
-                state.tasks.lock().unwrap().push(task);
+            if let Ok(rx) = spawn_capture(&coord, MicUser::Meeting, sys, gate.clone(), "them") {
+                let rx = spawn_farend_tap(rx, far);
+                tasks.push(run_metered_session(
+                    &app,
+                    provider,
+                    make_config(),
+                    "them",
+                    rx,
+                    None,
+                    "meeting://error",
+                    Some(error_mute.clone()),
+                ));
             }
         }
     }
@@ -263,9 +333,19 @@ pub fn start_meeting(
         let mic = Microphone {
             device_name: input_device,
         };
-        if let Some(rx) = spawn_capture(&state.threads, mic, running.clone(), "me") {
-            let rx = spawn_mic_prosody_tap(&app, rx);
-            let task = run_metered_session(&app, provider, make_config(), "me", rx, Some(recorder));
+        if let Ok(rx) = spawn_capture(&coord, MicUser::Meeting, mic, gate.clone(), "me") {
+            // No system capture on this platform → no far-end reference to gate on.
+            let rx = spawn_mic_prosody_tap(&app, rx, None);
+            let task = run_metered_session(
+                &app,
+                provider,
+                make_config(),
+                "me",
+                rx,
+                Some(recorder),
+                "meeting://error",
+                Some(error_mute.clone()),
+            );
             state.tasks.lock().unwrap().push(task);
         }
     }
@@ -275,22 +355,27 @@ pub fn start_meeting(
 }
 
 #[tauri::command]
-pub fn stop_meeting(app: AppHandle, state: State<MeetingState>) -> Result<(), String> {
-    state.running.store(false, Ordering::SeqCst);
-    // Tell THIS session's capture threads to exit. They watch the per-session gate,
-    // not the global `running`; `take()` so the next meeting installs a fresh one and
-    // can never reuse/revive this session's gate.
-    if let Some(gate) = state.capture_gate.lock().unwrap().take() {
-        gate.store(false, Ordering::SeqCst);
+pub fn stop_meeting(
+    app: AppHandle,
+    state: State<MeetingState>,
+    coord: State<MicCoordinator>,
+) -> Result<(), String> {
+    // Direct-cancel safety net for the transcription sessions. Stopping the
+    // capture below starts the graceful capture→channel-close cascade, which
+    // closes the socket and emits final usage. The abort is ONLY a backstop for a
+    // socket that never closes (a stalled provider/network): wait a generous grace
+    // so even a slow finalize completes first — aborting an already-finished task
+    // is a no-op, and after stop no new audio flows, so the extra idle wait
+    // produces no new transcript. (A short grace would cut a slow finalize and
+    // lose the last segment + usage event.)
+    // From this point the meeting is over: a failure inside the flush/abort
+    // grace below belongs to THIS (ended) meeting, and raising meeting://error
+    // for it would tear down whatever meeting the user starts next (or toast a
+    // spurious failure). Mute FIRST — before anything below can make a session
+    // fail — then release the tasks; run_metered_session logs instead.
+    if let Some(mute) = state.error_mute.lock().unwrap().as_ref() {
+        mute.store(true, std::sync::atomic::Ordering::SeqCst);
     }
-
-    // Direct-cancel safety net for the transcription sessions. Clearing the gate
-    // above starts the graceful capture→channel-close cascade, which closes the
-    // socket and emits final usage. The abort is ONLY a backstop for a socket that
-    // never closes (a stalled provider/network): wait a generous grace so even a slow
-    // finalize completes first — aborting an already-finished task is a no-op, and
-    // after stop no new audio flows, so the extra idle wait produces no new transcript.
-    // (A short grace would cut a slow finalize and lose the last segment + usage event.)
     let tasks: Vec<tauri::async_runtime::JoinHandle<()>> =
         state.tasks.lock().unwrap().drain(..).collect();
     if !tasks.is_empty() {
@@ -302,25 +387,10 @@ pub fn stop_meeting(app: AppHandle, state: State<MeetingState>) -> Result<(), St
         });
     }
 
-    // Joining lets each capture thread release its device (drops its PCM sender,
-    // which in turn ends the Soniox session via channel close). Capture threads
-    // self-exit within ~100 ms of the gate clearing, but bound the wait so a wedged
-    // thread (e.g. a stuck CoreAudio teardown) can't hang the stop command itself;
-    // the session WebSocket is force-closed separately by the watchdog above. A
-    // detached wedged thread is harmless: it holds a now-dead per-session gate, so a
-    // later meeting (fresh gate) never adopts or revives it.
-    let handles: Vec<JoinHandle<()>> = state.threads.lock().unwrap().drain(..).collect();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
-    for h in handles {
-        while !h.is_finished() && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        if h.is_finished() {
-            let _ = h.join();
-        } else {
-            log::warn!("stop_meeting: capture thread didn't exit within grace; detaching");
-        }
-    }
+    // Clear this session's gate and join its capture threads (bounded grace) so
+    // each releases its device — dropping its PCM sender, which ends the STT
+    // session via channel close. See MicCoordinator for the gate/detach story.
+    coord.stop(MicUser::Meeting);
     let _ = app.emit("meeting://status", "stopped");
 
     // Encode the captured audio off-thread and tell the frontend where it landed
@@ -469,7 +539,7 @@ pub fn start_oauth_loopback(app: AppHandle) -> Result<u16, String> {
                         .next()
                         .and_then(|l| l.split_whitespace().nth(1))
                         .unwrap_or("");
-                    let query = path.splitn(2, '?').nth(1).unwrap_or("");
+                    let query = path.split_once('?').map_or("", |(_, q)| q);
                     let (mut token, mut error) = (None::<String>, None::<String>);
                     for pair in query.split('&') {
                         let mut kv = pair.splitn(2, '=');
@@ -512,27 +582,6 @@ pub fn start_oauth_loopback(app: AppHandle) -> Result<u16, String> {
     Ok(port)
 }
 
-/// Start one capture backend on its own thread, returning the PCM receiver.
-/// Returns `None` if the device failed to start.
-fn spawn_capture<S: AudioSource>(
-    threads: &Mutex<Vec<JoinHandle<()>>>,
-    source: S,
-    running: Arc<AtomicBool>,
-    label: &'static str,
-) -> Option<UnboundedReceiver<Vec<i16>>> {
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-    match source.start(tx, running) {
-        Ok(handle) => {
-            threads.lock().unwrap().push(handle);
-            Some(rx)
-        }
-        Err(e) => {
-            eprintln!("[{label}] capture failed to start: {e}");
-            None
-        }
-    }
-}
-
 /// Tee the mic ("me") PCM through a [`ProsodyAnalyzer`](crate::audio::prosody::ProsodyAnalyzer)
 /// for live delivery coaching, forwarding every chunk untouched downstream.
 /// Mirrors the sample `counter` in [`run_metered_session`]: one extra `Vec` move
@@ -540,15 +589,19 @@ fn spawn_capture<S: AudioSource>(
 ///
 /// This is the single mic tap point and it sits BEFORE the mixer, so with
 /// diarization on we analyze raw mic — never the mixed/diarized stream (the
-/// issue #22 hard constraint: delivery is scored on "me" only).
+/// issue #22 hard constraint: delivery is scored on "me" only). `far` is the
+/// counterpart's shared acoustic state (from [`spawn_farend_tap`]) used to
+/// reject the far voice leaking through the SPEAKERS into the mic — without it,
+/// a speakers-only setup scores the other side's pace/intonation as the user's.
 fn spawn_mic_prosody_tap(
     app: &AppHandle,
     mut rx: UnboundedReceiver<Vec<i16>>,
+    far: Option<std::sync::Arc<crate::audio::prosody::FarEndState>>,
 ) -> UnboundedReceiver<Vec<i16>> {
     let (tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let mut analyzer = crate::audio::prosody::ProsodyAnalyzer::new(app, "me");
+        let mut analyzer = crate::audio::prosody::ProsodyAnalyzer::new(app, "me", far);
         while let Some(chunk) = rx.recv().await {
             analyzer.push(&chunk);
             if tx.send(chunk).is_err() {
@@ -559,76 +612,26 @@ fn spawn_mic_prosody_tap(
     out_rx
 }
 
-/// Run a transcription session over `rx`, counting the audio streamed so the
-/// frontend can bill it. Emits a `usage://stt` event when the session ends.
-/// When `recorder` is `Some`, every chunk is also appended to it so the meeting
-/// can be saved to history (only the designated session passes a recorder).
-fn run_metered_session(
-    app: &AppHandle,
-    provider: SttProvider,
-    config: TranscribeConfig,
-    label: &'static str,
-    rx: UnboundedReceiver<Vec<i16>>,
-    recorder: Option<RecorderBuf>,
-) -> tauri::async_runtime::JoinHandle<()> {
-    let app = app.clone();
+/// Tee the system-audio ("them") PCM through a
+/// [`FarEndAnalyzer`](crate::audio::prosody::FarEndAnalyzer) that feeds the
+/// shared far-end state for speaker-bleed rejection, forwarding every chunk
+/// untouched downstream. Counterpart of [`spawn_mic_prosody_tap`].
+#[cfg(target_os = "macos")]
+fn spawn_farend_tap(
+    mut rx: UnboundedReceiver<Vec<i16>>,
+    far: std::sync::Arc<crate::audio::prosody::FarEndState>,
+) -> UnboundedReceiver<Vec<i16>> {
+    let (tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
     tauri::async_runtime::spawn(async move {
-        // Interpose a sample counter between capture and the STT adapter: it
-        // forwards every chunk untouched, then yields the total once the input
-        // closes so we can bill the audio duration actually streamed.
-        let (count_tx, count_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-        let counter = tauri::async_runtime::spawn(async move {
-            let mut rx = rx;
-            let mut samples: u64 = 0;
-            while let Some(chunk) = rx.recv().await {
-                samples += chunk.len() as u64;
-                // Tee into the recording buffer (kept while the meeting is armed).
-                if let Some(rec) = &recorder {
-                    if let Some(buf) = rec.lock().unwrap().as_mut() {
-                        buf.extend_from_slice(&chunk);
-                    }
-                }
-                if count_tx.send(chunk).is_err() {
-                    break;
-                }
+        let mut analyzer = crate::audio::prosody::FarEndAnalyzer::new(far);
+        while let Some(chunk) = rx.recv().await {
+            analyzer.push(&chunk);
+            if tx.send(chunk).is_err() {
+                break;
             }
-            samples
-        });
-
-        if let Err(e) =
-            transcription::run_session(provider, app.clone(), config, label, count_rx).await
-        {
-            let msg = e.to_string();
-            eprintln!("[stt:{label}] session ended: {e}");
-            // Surface the failure to the UI instead of silently leaving the
-            // meeting in "recording" with no transcript. Hosted mode hits this
-            // routinely (402 out of credits / 401 expired session at connect);
-            // BYOK hits it on a bad key. Classify so the frontend can show an
-            // actionable message.
-            let code = if msg.contains("402") {
-                "quota"
-            } else if msg.contains("401") {
-                "auth"
-            } else {
-                "connect"
-            };
-            let _ = app.emit(
-                "meeting://error",
-                serde_json::json!({ "source": label, "code": code, "message": msg }),
-            );
         }
-
-        let samples = counter.await.unwrap_or(0);
-        let seconds = samples as f64 / crate::audio::TARGET_SAMPLE_RATE as f64;
-        let _ = app.emit(
-            "usage://stt",
-            serde_json::json!({
-                "provider": provider.id(),
-                "source": label,
-                "seconds": seconds,
-            }),
-        );
-    })
+    });
+    out_rx
 }
 
 /// Get the absolute path to the templates.json file.
@@ -673,36 +676,25 @@ pub fn read_log_tail(app: AppHandle, max_bytes: u64) -> Result<String, String> {
 
 /// Path to the live session snapshot the built-in MCP server reads.
 pub(crate) fn session_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    Ok(dir.join("session.json"))
+    app_config_file(app, "session.json")
 }
 
 /// Write the live session snapshot (meeting status, transcript, todos,
 /// evaluations) so MCP clients can read the current meeting state.
 #[tauri::command]
 pub fn write_session(app: AppHandle, json: String) -> Result<(), String> {
-    let path = session_path(&app)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&path, json).map_err(|e| e.to_string())?;
-    Ok(())
+    write_config_file(&app, "session.json", &json)
 }
 
 /// Append-only queue of mutation commands the MCP server writes and the
 /// frontend applies (add/check/remove todo, add/remove evaluation).
 pub(crate) fn session_commands_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    Ok(dir.join("session_commands.jsonl"))
+    app_config_file(app, "session_commands.jsonl")
 }
 
 /// Read the pending session-command queue (one JSON object per line). The
 /// frontend polls this and applies commands it hasn't seen yet.
 #[tauri::command]
 pub fn read_session_commands(app: AppHandle) -> Result<String, String> {
-    let path = session_commands_path(&app)?;
-    match std::fs::read_to_string(&path) {
-        Ok(s) => Ok(s),
-        Err(_) => Ok(String::new()),
-    }
+    read_config_file(&app, "session_commands.jsonl")
 }

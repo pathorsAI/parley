@@ -1,6 +1,6 @@
 [package]
 name = "parley"
-version = "0.8.12"
+version = "0.8.23"
 description = "Parley — realtime meeting copilot for interviews and negotiations"
 authors = ["you"]
 edition = "2021"

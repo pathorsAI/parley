@@ -105,7 +105,7 @@ export async function analyzeDelivery(opts: {
     ? `Your delivery signals: ~${prosody.speechRateHz.toFixed(1)} syllables/sec, ` +
       `pitch variation ${prosody.pitchVarSemitones.toFixed(1)} semitones.\n\n`
     : measuredRateHz
-      ? `Measured speaking rate over this recording: ~${measuredRateHz.toFixed(1)} ` +
+      ? `Acoustically measured speaking rate for this session: ~${measuredRateHz.toFixed(1)} ` +
         `syllables/sec (≈ ${Math.round(measuredRateHz * 60)} syllables/min). ` +
         `Use this for the pace read rather than guessing from the text.\n\n`
       : "";

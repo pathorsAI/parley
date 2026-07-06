@@ -244,6 +244,10 @@ fn diarize_cache_path(app: &AppHandle, key: &str) -> Option<PathBuf> {
     )
 }
 
+/// One embedded slice: the segment's index paired with its speaker-embedding
+/// vector (workers return these out of order; the index restores placement).
+type IndexedEmbedding = (usize, Vec<f32>);
+
 /// Decode → embed every long-enough slice → cluster → assign one speaker per
 /// segment. Synchronous; intended for `spawn_blocking`.
 fn run_pipeline(
@@ -297,14 +301,14 @@ fn run_pipeline(
     let processed = AtomicUsize::new(0); // completed count, for progress only
     let mut embeds: Vec<Option<Vec<f32>>> = vec![None; n];
 
-    let worker_results: Vec<Result<Vec<(usize, Vec<f32>)>>> = std::thread::scope(|scope| {
+    let worker_results: Vec<Result<Vec<IndexedEmbedding>>> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..workers)
             .map(|_| {
                 let (spans, audio, model, next, processed, app) =
                     (&spans, &audio, &model, &next, &processed, &app);
-                scope.spawn(move || -> Result<Vec<(usize, Vec<f32>)>> {
+                scope.spawn(move || -> Result<Vec<IndexedEmbedding>> {
                     let mut session = build_session(model)?;
-                    let mut out: Vec<(usize, Vec<f32>)> = Vec::new();
+                    let mut out: Vec<IndexedEmbedding> = Vec::new();
                     loop {
                         // Claim the next segment; stop when the queue is drained.
                         let i = next.fetch_add(1, Ordering::Relaxed);

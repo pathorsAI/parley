@@ -5,7 +5,7 @@
 //! Note: the realtime transcription API does not diarize, so every segment is
 //! emitted under speaker 0.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -15,13 +15,19 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    connect_with_headers, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
+    connect_with_headers, drive_session, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
     TRANSCRIPT_EVENT,
 };
 use crate::audio::resample::pcm_to_le_bytes;
 
 const OPENAI_RT_URL: &str = "wss://api.openai.com/v1/realtime?intent=transcription";
 const DEFAULT_MODEL: &str = "gpt-4o-transcribe";
+
+#[derive(Deserialize, Default)]
+struct OaiError {
+    #[serde(default)]
+    message: String,
+}
 
 #[derive(Deserialize, Default)]
 struct OaiEvent {
@@ -31,6 +37,9 @@ struct OaiEvent {
     delta: String,
     #[serde(default)]
     transcript: String,
+    /// Present on `error` events — the session-level failure detail.
+    #[serde(default)]
+    error: Option<OaiError>,
 }
 
 pub async fn run_session(
@@ -70,24 +79,31 @@ pub async fn run_session(
     eprintln!("[openai:{source}] connected, model={model} (diarization unsupported → speaker 0)");
 
     let mut meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
+    // Resolves with whether the input drained (normal stop) or a send failed
+    // (dead socket) — drive_session reports the latter as a failure.
     let forward = async move {
         let b64 = base64::engine::general_purpose::STANDARD;
-        while let Some(chunk) = pcm_rx.recv().await {
+        let drained = loop {
+            let Some(chunk) = pcm_rx.recv().await else {
+                break true;
+            };
             meter.push(&chunk);
             let bytes = pcm_to_le_bytes(&chunk);
             let audio = b64.encode(&bytes);
             let msg = json!({ "type": "input_audio_buffer.append", "audio": audio });
             if write.send(Message::Text(msg.to_string())).await.is_err() {
-                break;
+                break false;
             }
-        }
+        };
         let _ = write.close().await;
+        drained
     };
 
     let read_loop = async move {
         let mut builder = SegmentBuilder::new(app.clone(), source, TRANSCRIPT_EVENT);
         let mut interim = String::new();
         let mut msg_count: u64 = 0;
+        let mut result: Result<()> = Ok(());
         while let Some(msg) = read.next().await {
             let payload = match msg {
                 Ok(Message::Text(t)) => t.to_string(),
@@ -130,13 +146,23 @@ pub async fn run_session(
                     builder.emit_tail("", 0, 0); // clear the tail
                 }
                 "error" => {
+                    // A session-level error event is terminal — the server
+                    // stops transcribing after it. Surface it (see
+                    // run_metered_session) instead of logging into the void.
                     eprintln!("[openai:{source}] error event: {payload}");
+                    let detail = ev
+                        .error
+                        .map(|e| e.message)
+                        .filter(|m| !m.is_empty())
+                        .unwrap_or_else(|| "server error".to_string());
+                    result = Err(anyhow!("{detail}"));
+                    break;
                 }
                 _ => {}
             }
         }
+        result
     };
 
-    tokio::join!(forward, read_loop);
-    Ok(())
+    drive_session("openai", forward, read_loop).await
 }

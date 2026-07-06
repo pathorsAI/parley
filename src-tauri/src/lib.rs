@@ -1,4 +1,5 @@
 mod audio;
+mod capture;
 mod commands;
 mod diarize;
 mod history;
@@ -16,18 +17,20 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
+use capture::MicCoordinator;
 use commands::MeetingState;
-use voice_typing::VoiceTypingState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let shortcut_plugin = tauri_plugin_global_shortcut::Builder::new()
+        // Boot default until the frontend applies the saved selection (see
+        // hotkey::set_voice_typing_shortcut, called from the voice-typing host).
         .with_shortcut(Shortcut::new(Some(Modifiers::ALT), Code::Space))
         .expect("register dictation shortcut")
-        .with_handler(|app, shortcut, event| {
-            if !shortcut.matches(Modifiers::ALT, Code::Space) {
-                return;
-            }
+        .with_handler(|app, _shortcut, event| {
+            // Exactly one voice-typing trigger is ever registered (the picker
+            // unregisters everything before applying a change), so any firing
+            // shortcut is the push-to-talk key — including user-recorded combos.
             let down = match event.state {
                 ShortcutState::Pressed => true,
                 ShortcutState::Released => false,
@@ -65,10 +68,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Single source of truth for "who owns the mic" (meeting / mic test /
+        // voice typing) — guarantees at most one live capture session.
+        .manage(MicCoordinator::default())
         .manage(MeetingState::default())
-        .manage(VoiceTypingState::default())
+        // Singleton guard for the voice-typing session task (abort-on-restart
+        // + bounded post-release flush) — see voice_typing::VoiceTypingState.
+        .manage(voice_typing::VoiceTypingState::default())
         // Native menu-bar "Diagnostics" submenu (View Logs + Clear Cache).
-        .menu(|handle| menu::build(handle))
+        .menu(menu::build)
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
         .setup(|app| {
             app.manage(mcp::start(app.handle().clone()));
@@ -99,7 +107,7 @@ pub fn run() {
             usage::read_usage_events,
             permissions::check_permissions,
             permissions::app_identity,
-            permissions::request_screen_recording,
+            permissions::probe_system_audio,
             permissions::request_microphone,
             permissions::open_privacy_settings,
             voice_typing::start_voice_typing,

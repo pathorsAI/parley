@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { listen, emit } from "@tauri-apps/api/event";
 import { Check, Loader2, Mic } from "lucide-react";
-import { toTraditional } from "../lib/zhConvert";
-import { useI18n } from "../i18n";
+import { preloadZhConverter, toTraditional } from "../lib/zhConvert";
+import { useI18n, type TranslationKey } from "../i18n";
 import { useThemePreference } from "../lib/theme";
 
 const BAR_COUNT = 20;
 const BAR_FLOOR = 0.05;
+/** Perceptual gain on the mic level before it drives the bars. `level` is a raw
+ *  peak ratio (peak / 32767) that sits low for normal speech, so without a lift
+ *  the bars barely leave the floor. Applied on top of the sqrt curve. */
+const LEVEL_GAIN = 1.7;
+/** Tallest a bar can draw, in px (the pill grows to fit — see the bars row). */
+const BAR_MAX_PX = 22;
 const WAVE_PROFILE = [
   0.28, 0.44, 0.62, 0.38, 0.72, 0.5, 0.86, 0.64, 0.95, 0.74, 0.74, 0.95, 0.64, 0.86, 0.5, 0.72,
   0.38, 0.62, 0.44, 0.28,
@@ -27,6 +33,16 @@ interface SessionPayload {
   message?: string;
 }
 
+/** Overlay message per error phase `message`: the host's own "no-key", or a
+ *  backend failure code from `voicetyping://error` (see capture.rs). Anything
+ *  unrecognized falls back to the generic error string. */
+const ERROR_KEYS: Record<string, TranslationKey> = {
+  "no-key": "voiceTyping.noKey",
+  quota: "voiceTyping.error.quota",
+  auth: "voiceTyping.error.auth",
+  key: "voiceTyping.error.key",
+};
+
 /** listening = recording; finalizing = waiting for the STT final flush; done =
  *  copied. */
 type Phase = "listening" | "finalizing" | "done";
@@ -44,7 +60,7 @@ function decayBars(bars: number[]): number[] {
 
 /** Convert the current mic level into a full instantaneous waveform, not history. */
 function instantWaveform(level: number): number[] {
-  const energy = Math.min(1, Math.sqrt(Math.max(0, level)));
+  const energy = Math.min(1, Math.sqrt(Math.max(0, level)) * LEVEL_GAIN);
   const lift = BAR_FLOOR + energy * (1 - BAR_FLOOR);
 
   return WAVE_PROFILE.map((shape, index) => {
@@ -119,50 +135,70 @@ export const VoiceTypingApp = () => {
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
+    // listen() resolves asynchronously, so an unmount that lands before it
+    // resolves (StrictMode's dev double-mount, any overlay remount) would push
+    // the unlisten into an already-drained array — a leaked duplicate listener
+    // that double-fires setState for the lifetime of this long-lived window.
+    // Track through a cancellation flag instead: late arrivals unlisten
+    // themselves immediately.
+    let cancelled = false;
+    const track = (p: Promise<() => void>) => {
+      p.then((u) => {
+        if (cancelled) u();
+        else unsubs.push(u);
+      }).catch(() => {});
+    };
 
-    listen<SegPayload>("transcript://segment", (e) => {
-      const p = e.payload;
-      if (p.source !== "voice-typing") return;
-      if (p.is_final) {
-        finalsRef.current.set(p.id, p.text);
-        interimRef.current = ""; // the committed run supersedes the tail
-      } else {
-        interimRef.current = p.text;
-      }
-      publish.current().catch(() => {});
-    })
-      .then((u) => unsubs.push(u))
-      .catch(() => {});
+    // Warm the S→T dictionary while the overlay is prewarmed/idle, so the
+    // first dictation's publish doesn't stall on the dictionary parse.
+    preloadZhConverter();
 
-    listen<LevelPayload>("audio://level", (e) => {
-      if (e.payload.source !== "voice-typing") return;
-      setBars(instantWaveform(e.payload.level));
-    })
-      .then((u) => unsubs.push(u))
-      .catch(() => {});
+    track(
+      listen<SegPayload>("transcript://segment", (e) => {
+        const p = e.payload;
+        if (p.source !== "voice-typing") return;
+        if (p.is_final) {
+          finalsRef.current.set(p.id, p.text);
+          interimRef.current = ""; // the committed run supersedes the tail
+        } else {
+          interimRef.current = p.text;
+        }
+        publish.current().catch(() => {});
+      }),
+    );
 
-    listen<SessionPayload>("voicetyping://session", (e) => {
-      const { phase: p, message } = e.payload;
-      if (p === "start") {
-        finalsRef.current.clear();
-        convertedRef.current.clear();
-        interimRef.current = "";
-        setText("");
-        setError(null);
-        setPhase("listening");
-      } else if (p === "stop") {
-        setPhase("finalizing");
-      } else if (p === "done") {
-        setPhase("done");
-      } else if (p === "error") {
-        setError(message === "no-key" ? "noKey" : "error");
-        setPhase("done");
-      }
-    })
-      .then((u) => unsubs.push(u))
-      .catch(() => {});
+    track(
+      listen<LevelPayload>("audio://level", (e) => {
+        if (e.payload.source !== "voice-typing") return;
+        setBars(instantWaveform(e.payload.level));
+      }),
+    );
 
-    return () => unsubs.forEach((u) => u());
+    track(
+      listen<SessionPayload>("voicetyping://session", (e) => {
+        const { phase: p, message } = e.payload;
+        if (p === "start") {
+          finalsRef.current.clear();
+          convertedRef.current.clear();
+          interimRef.current = "";
+          setText("");
+          setError(null);
+          setPhase("listening");
+        } else if (p === "stop") {
+          setPhase("finalizing");
+        } else if (p === "done") {
+          setPhase("done");
+        } else if (p === "error") {
+          setError(message || "error");
+          setPhase("done");
+        }
+      }),
+    );
+
+    return () => {
+      cancelled = true;
+      unsubs.forEach((u) => u());
+    };
   }, []);
 
   // Let the waveform settle back to the floor when not actively listening.
@@ -172,7 +208,7 @@ export const VoiceTypingApp = () => {
     return () => clearInterval(id);
   }, [phase]);
 
-  const errorKey = error === "noKey" ? "voiceTyping.noKey" : "voiceTyping.error";
+  const errorKey = (error && ERROR_KEYS[error]) || "voiceTyping.error";
   const bubble = error ? t(errorKey) : text;
 
   let phaseIcon = <Mic className="size-2.5" />;
@@ -209,12 +245,12 @@ export const VoiceTypingApp = () => {
         >
           {phaseIcon}
         </div>
-        <div className="flex h-4 items-center gap-[2px]">
+        <div className="flex h-6 items-center gap-[2px]">
           {bars.map((b, i) => (
             <span
               key={barKeys.current[i]}
               className="w-[2px] rounded-full bg-sky-500"
-              style={{ height: `${Math.max(2, Math.round(b * 16))}px` }}
+              style={{ height: `${Math.max(2, Math.round(b * BAR_MAX_PX))}px` }}
             />
           ))}
         </div>

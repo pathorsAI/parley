@@ -4,8 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Circle, FileAudio, History, Loader2, LogOut, Mic, Minus, Settings, Square, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { log } from "../lib/log";
-import { STT_BY_ID, sttApiKey } from "../lib/transcription/providers";
-import { CLOUD_URL } from "../lib/cloud/client";
+import { STT_BY_ID, sttApiKey, sttRelayUrl } from "../lib/transcription/providers";
 import { toast } from "sonner";
 import { startMockStream, stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
@@ -137,10 +136,7 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
           // Hosted "parley" STT: relay audio through Parley Cloud (cloud WSS URL
           // + the session token as apiKey, via sttApiKey). BYOK providers send no
           // relay URL and connect straight to their vendor.
-          const relayUrl =
-            transcriptionProvider === "parley"
-              ? `${CLOUD_URL.replace(/^http/, "ws")}/stt/stream`
-              : undefined;
+          const relayUrl = sttRelayUrl(transcriptionProvider);
           await invoke("start_meeting", {
             provider: transcriptionProvider,
             apiKey: sttKey,

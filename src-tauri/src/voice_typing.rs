@@ -12,42 +12,103 @@
 // The `objc` 0.2 macros emit `cfg(cargo-clippy)` checks newer compilers warn on.
 #![allow(unexpected_cfgs)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, State};
 
-use crate::audio::{microphone::Microphone, AudioSource};
-use crate::transcription::{self, SttProvider, TranscribeConfig};
+use crate::audio::microphone::Microphone;
+use crate::capture::{run_metered_session, spawn_capture, Begin, MicCoordinator, MicUser};
+use crate::commands::{read_config_file, write_config_file};
+use crate::transcription::{SttProvider, TranscribeConfig};
 
-/// Shared state for the single in-flight voice-typing session. `running` gates
-/// the mic capture thread; clearing it ends capture, which closes the STT WS.
+/// Grace for the post-release final flush before a lingering session task is
+/// force-aborted (mirrors `stop_meeting`'s backstop). The frontend waits at
+/// most ~3 s for the flush, so 8 s cuts only genuine zombies.
+const FLUSH_ABORT_GRACE: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Singleton guard for the voice-typing STT session task. [`MicCoordinator`]
+/// already guarantees at most one CAPTURE, but the session task it feeds (the
+/// provider WebSocket) used to be fire-and-forget: after release it lingers to
+/// flush the final tokens, and a server that never closes leaves it parked
+/// forever with an open socket. Each new press then opened ANOTHER socket
+/// while the old session kept emitting into the same `voice-typing-{n}` /
+/// `voice-typing-tail` segment-id namespace — the overlay showed both
+/// sessions' tokens interleaved (transcript "stacking"). This state pins the
+/// one live task so a new start aborts the old socket first and a stop bounds
+/// its flush.
 #[derive(Default)]
-pub struct VoiceTypingState {
-    running: Arc<AtomicBool>,
-    threads: Mutex<Vec<JoinHandle<()>>>,
+pub struct VoiceTypingState(Arc<Mutex<VtInner>>);
+
+#[derive(Default)]
+struct VtInner {
+    /// Bumped on every start; stale backstops/starts compare against it so
+    /// they can never abort a NEWER session than the one they belong to.
+    seq: u64,
+    task: Option<tauri::async_runtime::JoinHandle<()>>,
 }
 
-/// Start a mic-only streaming transcription. Idempotent while already running.
+/// Start a mic-only streaming transcription. Idempotent while already running;
+/// refused while a meeting owns the mic (a second input stream could kill the
+/// meeting's capture — see [`MicCoordinator`]).
+///
+/// Streams mic -> provider, emitting `transcript://segment` + `audio://level`
+/// with source "voice-typing"; the overlay window listens for both. The shared
+/// metered session bills the streamed audio under the distinct
+/// `source: "voice-typing"` label (kept separate from meeting usage). A failed
+/// session raises `voicetyping://error`, which the overlay renders (voice
+/// typing has no other error surface — see `run_metered_session`).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn start_voice_typing(
     app: AppHandle,
+    coord: State<MicCoordinator>,
     state: State<VoiceTypingState>,
     provider: String,
     api_key: String,
     model: Option<String>,
     language_hints: Option<Vec<String>>,
     input_device: Option<String>,
+    // Hosted "parley" mode: the cloud STT relay's `wss://` URL. When set,
+    // `api_key` is the cloud Bearer token (not a vendor key) and the adapter
+    // relays through this URL. Absent for BYOK providers. Same contract as
+    // `start_meeting`.
+    relay_url: Option<String>,
 ) -> Result<(), String> {
     let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
     if api_key.trim().is_empty() {
         return Err("missing transcription API key".into());
     }
-    if state.running.swap(true, Ordering::SeqCst) {
-        return Ok(());
+    let relay_endpoint = relay_url.filter(|u| !u.trim().is_empty());
+    // Same guard as start_meeting: the hosted token only works via the relay.
+    if provider == SttProvider::Parley && relay_endpoint.is_none() {
+        return Err("hosted transcription requires the cloud relay URL".into());
     }
-    let running = state.running.clone();
+    // A press must always yield a FRESH session. Release any voice-typing mic
+    // claim left by a desynced frontend (no-op when idle), and abort the
+    // previous session task outright — if it is still flushing, its late
+    // tokens would interleave with the new session's in the overlay, and its
+    // socket must close before we open the next one. Aborting a finished task
+    // is a no-op. Trade-off: aborting a mid-flush session also drops its
+    // `usage://stt` emit, undercounting the local cost display for that
+    // session's last seconds — acceptable (relay billing is server-side, and
+    // the alternative is the transcript stacking this fixes).
+    coord.stop(MicUser::VoiceTyping);
+    let my_seq = {
+        let mut vt = state.0.lock().unwrap();
+        vt.seq += 1;
+        if let Some(task) = vt.task.take() {
+            task.abort();
+        }
+        vt.seq
+    };
+    let gate = match coord.begin(MicUser::VoiceTyping) {
+        Begin::Started(gate) => gate,
+        // Unreachable in practice: the host serializes press/release, so no
+        // second voice-typing start can land between the stop above and this
+        // begin. Kept for safety.
+        Begin::AlreadyActive => return Ok(()),
+        Begin::Busy(_) => return Err("microphone is in use by the meeting".into()),
+    };
     let model = model
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| provider.default_model().to_string());
@@ -56,73 +117,51 @@ pub fn start_voice_typing(
         model,
         language_hints: language_hints.unwrap_or_default(),
         diarization: false,
-        // Voice typing is BYOK-only (no hosted relay).
-        relay_endpoint: None,
+        relay_endpoint,
     };
 
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-    match (Microphone {
+    let mic = Microphone {
         device_name: input_device,
-    })
-    .start(tx, running.clone())
-    {
-        Ok(handle) => state.threads.lock().unwrap().push(handle),
+    };
+    let rx = match spawn_capture(&coord, MicUser::VoiceTyping, mic, gate, "voice-typing") {
+        Ok(rx) => rx,
         Err(e) => {
-            state.running.store(false, Ordering::SeqCst);
+            coord.stop(MicUser::VoiceTyping);
             return Err(format!("microphone failed to start: {e}"));
         }
+    };
+    let task = run_metered_session(
+        &app,
+        provider,
+        config,
+        "voice-typing",
+        rx,
+        None,
+        "voicetyping://error",
+        None,
+    );
+    // Pin the session task so the next start (or stop's backstop) can abort
+    // it. If a newer start won the race while we were spawning, ours is the
+    // stale one — kill our own task instead of clobbering the newer handle
+    // (the newer start already stopped our capture and owns the mic claim).
+    let mut vt = state.0.lock().unwrap();
+    if vt.seq == my_seq {
+        vt.task = Some(task);
+    } else {
+        task.abort();
     }
-
-    // Stream mic -> provider. Emits `transcript://segment` + `audio://level`
-    // with source "voice-typing"; the overlay window listens for both. A sample
-    // counter is interposed so we can bill the streamed audio under a distinct
-    // `source: "voice-typing"` label (kept separate from meeting usage).
-    tauri::async_runtime::spawn(async move {
-        let (count_tx, count_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-        let counter = tauri::async_runtime::spawn(async move {
-            let mut rx = rx;
-            let mut samples: u64 = 0;
-            while let Some(chunk) = rx.recv().await {
-                samples += chunk.len() as u64;
-                if count_tx.send(chunk).is_err() {
-                    break;
-                }
-            }
-            samples
-        });
-
-        if let Err(e) =
-            transcription::run_session(provider, app.clone(), config, "voice-typing", count_rx)
-                .await
-        {
-            log::warn!("voice-typing: session ended: {e}");
-        }
-
-        let samples = counter.await.unwrap_or(0);
-        let seconds = samples as f64 / crate::audio::TARGET_SAMPLE_RATE as f64;
-        let _ = app.emit(
-            "usage://stt",
-            serde_json::json!({
-                "provider": provider.id(),
-                "source": "voice-typing",
-                "seconds": seconds,
-            }),
-        );
-    });
     Ok(())
 }
 
-/// Path to the voice-typing history file (one JSON object per line).
-fn voice_history_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    Ok(dir.join("voice_typing_history.jsonl"))
-}
+/// Name of the voice-typing history file (one JSON object per line) in the app
+/// config dir.
+const HISTORY_FILE: &str = "voice_typing_history.jsonl";
 
 /// Append one history entry (a JSON line: `{ id, text, ts }`).
 #[tauri::command]
 pub fn append_voice_history(app: AppHandle, line: String) -> Result<(), String> {
     use std::io::Write;
-    let path = voice_history_path(&app)?;
+    let path = crate::commands::app_config_file(&app, HISTORY_FILE)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -138,31 +177,39 @@ pub fn append_voice_history(app: AppHandle, line: String) -> Result<(), String> 
 /// the JSONL and owns filtering for delete/clear (which write the file back).
 #[tauri::command]
 pub fn read_voice_history(app: AppHandle) -> Result<String, String> {
-    match std::fs::read_to_string(voice_history_path(&app)?) {
-        Ok(s) => Ok(s),
-        Err(_) => Ok(String::new()),
-    }
+    read_config_file(&app, HISTORY_FILE)
 }
 
 /// Overwrite the history file (used by delete-one / clear-all).
 #[tauri::command]
 pub fn write_voice_history(app: AppHandle, content: String) -> Result<(), String> {
-    let path = voice_history_path(&app)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&path, content).map_err(|e| e.to_string())
+    write_config_file(&app, HISTORY_FILE, &content)
 }
 
-/// Stop the session: clear `running` and join the mic thread (which drops its
-/// PCM sender, closing the STT session cleanly).
+/// Stop the session: clear its gate and join the mic thread with a bounded
+/// grace (which drops its PCM sender, closing the STT session cleanly — the
+/// graceful path that lets the provider flush its final tokens). No-op if
+/// voice typing doesn't own the mic.
+///
+/// Backstop: a provider/relay that never closes the socket would leave the
+/// session task parked on its read half forever. Mirror `stop_meeting`'s
+/// direct-cancel safety net — abort the task once the flush window has long
+/// passed. Guarded by `seq` so a backstop from THIS session can never abort a
+/// newer one started during the grace.
 #[tauri::command]
-pub fn stop_voice_typing(state: State<VoiceTypingState>) {
-    state.running.store(false, Ordering::SeqCst);
-    let handles: Vec<JoinHandle<()>> = state.threads.lock().unwrap().drain(..).collect();
-    for h in handles {
-        let _ = h.join();
-    }
+pub fn stop_voice_typing(coord: State<MicCoordinator>, state: State<VoiceTypingState>) {
+    coord.stop(MicUser::VoiceTyping);
+    let my_seq = state.0.lock().unwrap().seq;
+    let inner = state.0.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(FLUSH_ABORT_GRACE).await;
+        let mut vt = inner.lock().unwrap();
+        if vt.seq == my_seq {
+            if let Some(task) = vt.task.take() {
+                task.abort();
+            }
+        }
+    });
 }
 
 /// Copy text to the system clipboard via the native pasteboard. Needed because
@@ -184,6 +231,13 @@ pub fn paste_to_frontmost() -> bool {
 #[tauri::command]
 pub fn accessibility_status(prompt: bool) -> bool {
     imp::accessibility_trusted(prompt)
+}
+
+/// Crate-internal Accessibility check (never prompts), used by hotkey.rs: an
+/// ACTIVE CGEventTap runs under Accessibility even when Input Monitoring is
+/// missing, so the push-to-talk tap consults both permissions.
+pub(crate) fn is_accessibility_trusted() -> bool {
+    imp::accessibility_trusted(false)
 }
 
 /// Show the overlay above ALL apps without activating Parley or stealing focus

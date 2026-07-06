@@ -372,7 +372,7 @@ img { max-width: 100%; display: block; }
 
 /* ---------- Steps ---------- */
 .steps {
-  list-style: none; padding: 0; margin: 0;
+  list-style: none; padding: 0; margin: 0 auto;
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px;
   counter-reset: step;
 }
@@ -485,6 +485,10 @@ img { max-width: 100%; display: block; }
 }
 .copy:hover { color: var(--text); border-color: var(--line-2); }
 .copy.is-done { color: var(--teal); border-color: rgba(94,234,212,0.4); }
+.mcp-note { text-align: center; color: var(--muted-2); font-size: 13px; margin-top: 30px; }
+.mcp-note strong { color: var(--muted); font-weight: 600; }
+/* In the MCP feature-row the codeblock is the right-hand element, not a centred block. */
+.feature-row .codeblock { margin: 0; max-width: 100%; }
 .cta__actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 30px; }
 .cta__note { color: var(--muted-2); font-size: 13px; margin-top: 22px; }
 

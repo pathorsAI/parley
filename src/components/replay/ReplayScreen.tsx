@@ -10,6 +10,7 @@ import { useI18n } from "../../i18n";
 import { useStore } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
 import { evalSignature, findActiveTemplate } from "../../lib/evaluations/presets";
+import { TranscriptCopyMenu } from "../TranscriptCopyMenu";
 import { AnalysisTimeline } from "../analysis/AnalysisTimeline";
 import { AnalyzeMenu } from "../analysis/AnalyzeMenu";
 import { FindingsPanel } from "../analysis/FindingsPanel";
@@ -157,8 +158,13 @@ export function ReplayScreen() {
       >
         <ResizablePanel id="transcript" defaultSize={42} minSize={24}>
           <div className="flex h-full min-h-0 flex-col">
-            <div className="flex h-9 shrink-0 items-center border-b px-4">
+            <div className="flex h-9 shrink-0 items-center justify-between border-b px-4">
               <span className="text-xs font-medium text-foreground">{t("replay.transcript")}</span>
+              <TranscriptCopyMenu
+                segments={segments}
+                speakerNames={speakerNames}
+                disabled={!segments.some((s) => s.isFinal && s.text.trim())}
+              />
             </div>
             <ReplaySpeakerTags segments={segments} names={speakerNames} label={t("meeting.speakers")} />
             <div className="min-h-0 flex-1">
