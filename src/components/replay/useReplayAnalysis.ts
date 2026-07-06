@@ -97,6 +97,13 @@ export function useReplayAnalysis(): void {
 
     const session = useStore.getState().replay;
     if (!session) return;
+    // Already persisted (the ingest wizard saved it transcript-only when analysis
+    // was skipped/cancelled) — creating a second entry here would duplicate it.
+    // A manual re-analysis overwrites the existing one via initHistoryPersistSync.
+    if (useStore.getState().loadedHistoryId) {
+      savedFor.current = replayId;
+      return;
+    }
     savedFor.current = replayId;
     // saveUploadToHistory marks the new entry as loaded BEFORE its slow compress,
     // so a re-analysis during that window overwrites it (initHistoryPersistSync)

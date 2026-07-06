@@ -5,6 +5,7 @@ import { useStore, speakerKey, defaultSpeakerLabel, formatClock, type ReplayTrim
 import { speakerDotClass } from "../lib/speakerColors";
 import { hasProviderKey } from "../lib/ai/settings";
 import { runAnalysis } from "../lib/analysis/engine";
+import { saveUploadToHistory } from "../lib/history/history";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,7 +55,6 @@ export function IngestWizard() {
   const setStep = useStore((s) => s.setIngestWizardStep);
   const close = useStore((s) => s.closeIngestWizard);
   const enterReplay = useStore((s) => s.enterReplay);
-  const exitReplay = useStore((s) => s.exitReplay);
   const segments = useStore((s) => s.segments);
   const speakerNames = useStore((s) => s.speakerNames);
   const setSpeakerName = useStore((s) => s.setSpeakerName);
@@ -189,10 +189,33 @@ export function IngestWizard() {
     setTemplateId(id);
   }
 
+  /**
+   * Land on the results page WITHOUT running analysis, keeping the transcribed
+   * recording as a transcript-only history entry so the upload is never lost.
+   * Used by "analyze later", the no-LLM-key path, and Cancel once a transcript
+   * exists. Skips the save when the analysis pipeline is already running/done (it
+   * auto-saves WITH findings via useReplayAnalysis) or when the session was
+   * already persisted.
+   */
+  function finishTranscriptOnly() {
+    const st = useStore.getState();
+    const { replay, loadedHistoryId, analysisStatus } = st;
+    const hasSpoken = st.segments.some((s) => s.isFinal && s.text.trim());
+    if (replay && hasSpoken && !loadedHistoryId && analysisStatus !== "running" && analysisStatus !== "done") {
+      // Fire-and-forget: saveUploadToHistory marks the entry loaded before its slow
+      // Opus compress, so a later manual re-analysis overwrites it in place.
+      void saveUploadToHistory(replay).catch((e) =>
+        console.error("[ingest] transcript-only save failed", e),
+      );
+    }
+    close();
+  }
+
   function confirmAnalyze() {
-    // No LLM key → skip analysis, just land on the (diarized) results page.
+    // No LLM key → can't analyze; keep the transcript-only recording and land on
+    // the (diarized) results page.
     if (!hasProviderKey(useStore.getState().settings)) {
-      close();
+      finishTranscriptOnly();
       return;
     }
     setStep("analyzing");
@@ -219,15 +242,17 @@ export function IngestWizard() {
   function cancel() {
     startedRef.current = null;
     failedRef.current = null;
-    // Only tear down replay if we actually entered it (transcription step done).
-    // On count/transcribing the app is still LIVE — exitReplay would wipe a
-    // stopped live meeting's transcript/findings. Just disarm the gate instead.
+    // Once a transcript exists (we entered replay after transcription), NEVER
+    // discard it — persist it transcript-only and land on the results page so the
+    // upload isn't lost. Before that (count/transcribing, app still LIVE) there's
+    // nothing to save; exitReplay would wipe a stopped live meeting's transcript,
+    // so just disarm the deferred gate and close.
     if (useStore.getState().appMode === "replay") {
-      exitReplay();
+      finishTranscriptOnly();
     } else {
       useStore.setState({ analysisGate: "open" });
+      close();
     }
-    close();
   }
 
   const wide = step === "review" || step === "trim";
@@ -521,9 +546,9 @@ export function IngestWizard() {
                 {t("ingest.confirm")}
               </Button>
             ) : (
-              // No template picked → don't force analysis; land on the results
-              // page and let them analyze later from the timeline.
-              <Button size="sm" variant="outline" className="h-8" onClick={() => close()}>
+              // No template picked → don't force analysis; save transcript-only and
+              // land on the results page, letting them analyze later from the timeline.
+              <Button size="sm" variant="outline" className="h-8" onClick={finishTranscriptOnly}>
                 {t("ingest.skipAnalysis")}
               </Button>
             ))}
