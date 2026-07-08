@@ -6,7 +6,7 @@ import { appLogDir, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { log } from "../lib/log";
-import { Check, Copy, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, Plus, Sun, Trash2 } from "lucide-react";
+import { Check, Copy, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, Plus, ScrollText, Sun, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
@@ -25,8 +25,10 @@ import type { CloudInvitation, CloudOrg, CloudOrgMember } from "../lib/cloud/typ
 import { listCloudFolders, listOrgFolders, type CloudFolder } from "../lib/cloud/folders";
 import { listLocalFolders, listenForFoldersUpdated, type Folder as LocalFolder } from "../lib/history/folders";
 import { isTauri } from "../lib/tauriEvents";
+import { fetchLatestReleaseNotes, markReleaseNotesSeen, type ReleaseNotes } from "../lib/releaseNotes";
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
+import { ReleaseNotesDialog } from "../components/ReleaseNotesDialog";
 import { UsagePanel } from "./UsagePanel";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
 import { Button } from "@/components/ui/button";
@@ -111,6 +113,8 @@ export function SettingsApp() {
   const [mcpInfo, setMcpInfo] = useState<McpServerInfo | null>(null);
   const [logPath, setLogPath] = useState("");
   const [updateChecking, setUpdateChecking] = useState(false);
+  const [releaseNotesLoading, setReleaseNotesLoading] = useState(false);
+  const [releaseNotes, setReleaseNotes] = useState<ReleaseNotes | null>(null);
   const [updateMsg, setUpdateMsg] = useState("");
   const [appVersion, setAppVersion] = useState("");
   const cloudAuth = useStore((s) => s.cloudAuth);
@@ -232,6 +236,15 @@ export function SettingsApp() {
   return (
     <div className="flex h-screen bg-background text-foreground">
       <Toaster />
+      {releaseNotes && (
+        <ReleaseNotesDialog
+          notes={releaseNotes}
+          onClose={() => {
+            markReleaseNotesSeen(releaseNotes.version);
+            setReleaseNotes(null);
+          }}
+        />
+      )}
       {/* Left nav */}
       <nav className="flex w-48 shrink-0 flex-col gap-0.5 border-r bg-muted/30 p-2">
         <div className="px-2 pb-2 pt-1 text-sm font-semibold tracking-tight">{t("common.settings")}</div>
@@ -509,14 +522,36 @@ export function SettingsApp() {
                   onClick={async () => {
                     setUpdateChecking(true);
                     setUpdateMsg("");
-                    const { checkForUpdate } = await import("../lib/update");
-                    const r = await checkForUpdate({ silent: false });
-                    setUpdateMsg(r ? t("update.found", { version: r.version }) : t("update.upToDate"));
-                    setUpdateChecking(false);
+                    try {
+                      const { checkForUpdate } = await import("../lib/update");
+                      const r = await checkForUpdate({ silent: false });
+                      setUpdateMsg(r ? t("update.found", { version: r.version }) : t("update.upToDate"));
+                    } finally {
+                      setUpdateChecking(false);
+                    }
                   }}
                 >
                   {updateChecking ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
                   {t("settings.update.check")}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-fit text-xs"
+                  disabled={releaseNotesLoading}
+                  onClick={async () => {
+                    setReleaseNotesLoading(true);
+                    try {
+                      setReleaseNotes(await fetchLatestReleaseNotes());
+                    } catch (error) {
+                      toast.error(t("releaseNotes.loadFailed", { error: error instanceof Error ? error.message : String(error) }));
+                    } finally {
+                      setReleaseNotesLoading(false);
+                    }
+                  }}
+                >
+                  {releaseNotesLoading ? <Loader2 className="size-3.5 animate-spin" /> : <ScrollText className="size-3.5" />}
+                  {t("settings.update.releaseLogs")}
                 </Button>
                 {updateMsg && <span className="text-[11px] text-muted-foreground">{updateMsg}</span>}
               </div>

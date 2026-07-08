@@ -5,6 +5,7 @@ import { isTauri } from "./tauriEvents";
 import { useStore } from "./store";
 import { translate, type TranslationKey } from "../i18n/messages";
 import { log } from "./log";
+import { rememberPendingReleaseNotes } from "./releaseNotes";
 
 /**
  * In-app auto-updater. Checks the GitHub releases endpoint (see
@@ -65,6 +66,7 @@ async function runUpdate(): Promise<void> {
   let got = 0;
   log.info("update: downloading + installing", { version: pending.version });
   try {
+    rememberPendingReleaseNotes({ version: pending.version, body: pending.body ?? "" });
     toast.loading(t("update.updating"), { id: TOAST_ID, duration: Infinity });
     await pending.downloadAndInstall((e) => {
       if (e.event === "Started") total = e.data.contentLength ?? 0;
