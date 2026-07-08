@@ -113,7 +113,9 @@ export function ReplayScreen() {
         onPause={player.onPause}
         onEnded={player.onEnded}
         className="hidden"
-      />
+      >
+        <track kind="captions" />
+      </audio>
 
       <ReplayPlayerBar
         name={session.name}

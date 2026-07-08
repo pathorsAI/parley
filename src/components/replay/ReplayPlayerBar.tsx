@@ -44,7 +44,14 @@ interface ReplayPlayerBarProps {
  * outside is removed. Re-uploading the original restores it (cached). The draft
  * lives locally until Apply, so nothing happens until you confirm.
  */
-export function ReplayPlayerBar({ name, durationMs, player, rightSlot, onExport, labels }: ReplayPlayerBarProps) {
+export function ReplayPlayerBar({
+  name,
+  durationMs,
+  player,
+  rightSlot,
+  onExport,
+  labels,
+}: Readonly<ReplayPlayerBarProps>) {
   const [trimOpen, setTrimOpen] = useState(false);
   const [draft, setDraft] = useState<ReplayTrim | null>(null);
   const [trimming, setTrimming] = useState(false);

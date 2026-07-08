@@ -159,7 +159,7 @@ function orgCard(c: CloudRecordingSummary): HistoryCardItem {
 }
 
 /** Per-card cloud-sync indicator. Hidden when signed out (sync not in use). */
-function SyncIcon({ sync, signedIn }: { sync: HistorySyncState; signedIn: boolean }) {
+function SyncIcon({ sync, signedIn }: Readonly<{ sync: HistorySyncState; signedIn: boolean }>) {
   const { t } = useI18n();
   if (!signedIn) return null;
   if (sync === "synced")
@@ -318,14 +318,17 @@ export function HistoryApp() {
   }, [loadPersonalFolders]);
 
   // ── Org folders (lazy per org) ────────────────────────────────────────────────
+  // Latest org-folder cache, reachable from the fetch guard without re-creating the
+  // callback on every folder change (reading it inside the state updater would make
+  // that updater impure — it must only fetch when the cache is cold or a refresh is
+  // forced, and otherwise leave state untouched).
+  const orgFoldersRef = useRef(orgFolders);
+  orgFoldersRef.current = orgFolders;
   const ensureOrgFolders = useCallback((orgId: string, force = false) => {
-    setOrgFolders((prev) => {
-      if (!force && prev[orgId]) return prev;
-      listOrgFolders(orgId)
-        .then((fs) => setOrgFolders((p) => ({ ...p, [orgId]: fs.map(toLocalFolder).sort(byCreatedAt) })))
-        .catch((e) => log.warn("history: org folders failed", { orgId, error: String(e) }));
-      return prev;
-    });
+    if (!force && orgFoldersRef.current[orgId]) return;
+    listOrgFolders(orgId)
+      .then((fs) => setOrgFolders((p) => ({ ...p, [orgId]: fs.map(toLocalFolder).sort(byCreatedAt) })))
+      .catch((e) => log.warn("history: org folders failed", { orgId, error: String(e) }));
   }, []);
 
   const toggleOrg = useCallback(
@@ -605,6 +608,47 @@ export function HistoryApp() {
   );
 
   // ── Drag-and-drop ───────────────────────────────────────────────────────────────
+  // Retag a personal card to a folder / root (a folderId reassignment on disk).
+  const movePersonalCard = useCallback(
+    async (item: HistoryCardItem, folderId: string | null) => {
+      if ((item.folderId ?? null) === folderId) return;
+      // A cloud-only card has no local meta to retag; a "stale" card would re-push
+      // its OLDER local meta and clobber the newer cloud re-analysis. In both cases
+      // tell the user to open it first (which downloads / pulls the latest).
+      if (item.sync === "cloud" || item.sync === "stale") {
+        toast.message(t("history.move.needsDownload"));
+        return;
+      }
+      try {
+        await setEntryFolder(item.id, folderId);
+        setEntries((prev) =>
+          prev?.map((e) => (e.id === item.id ? { ...e, folderId } : e)) ?? null,
+        );
+      } catch (e) {
+        log.error("history: move failed", { id: item.id, error: String(e) });
+        toast.error(t("history.move.failed", { error: errText(e) }));
+      }
+    },
+    [t],
+  );
+
+  // Retag an org card to a folder / root within the same org.
+  const moveOrgCard = useCallback(
+    async (orgId: string, item: HistoryCardItem, folderId: string | null) => {
+      if ((item.folderId ?? null) === folderId) return;
+      try {
+        await setOrgRecordingFolder(orgId, item.id, folderId);
+        setEntries((prev) =>
+          prev?.map((e) => (e.id === item.id ? { ...e, folderId } : e)) ?? null,
+        );
+      } catch (e) {
+        log.error("history: org move failed", { id: item.id, error: String(e) });
+        toast.error(t("history.move.failed", { error: errText(e) }));
+      }
+    },
+    [t],
+  );
+
   const handleDrop = useCallback(
     async (target: DropTarget) => {
       const item = dragItem;
@@ -614,24 +658,7 @@ export function HistoryApp() {
 
       if (selection.kind === "personal") {
         if (target.scope === "personal") {
-          // Move between personal folders / root — a folderId reassignment on disk.
-          if ((item.folderId ?? null) === target.folderId) return;
-          // A cloud-only card has no local meta to retag; a "stale" card would re-push
-          // its OLDER local meta and clobber the newer cloud re-analysis. In both cases
-          // tell the user to open it first (which downloads / pulls the latest).
-          if (item.sync === "cloud" || item.sync === "stale") {
-            toast.message(t("history.move.needsDownload"));
-            return;
-          }
-          try {
-            await setEntryFolder(item.id, target.folderId);
-            setEntries((prev) =>
-              prev?.map((e) => (e.id === item.id ? { ...e, folderId: target.folderId } : e)) ?? null,
-            );
-          } catch (e) {
-            log.error("history: move failed", { id: item.id, error: String(e) });
-            toast.error(t("history.move.failed", { error: errText(e) }));
-          }
+          await movePersonalCard(item, target.folderId);
         } else {
           // Personal → org: ask copy-or-move.
           const org = orgs.find((o) => o.id === target.orgId);
@@ -642,19 +669,10 @@ export function HistoryApp() {
 
       // Source is an org. Only same-org folder reassignment is supported (v1).
       if (target.scope === "org" && target.orgId === selection.id) {
-        if ((item.folderId ?? null) === target.folderId) return;
-        try {
-          await setOrgRecordingFolder(selection.id, item.id, target.folderId);
-          setEntries((prev) =>
-            prev?.map((e) => (e.id === item.id ? { ...e, folderId: target.folderId } : e)) ?? null,
-          );
-        } catch (e) {
-          log.error("history: org move failed", { id: item.id, error: String(e) });
-          toast.error(t("history.move.failed", { error: errText(e) }));
-        }
+        await moveOrgCard(selection.id, item, target.folderId);
       }
     },
-    [dragItem, selection, orgs, t],
+    [dragItem, selection, orgs, movePersonalCard, moveOrgCard],
   );
 
   const resolveMove = useCallback(
@@ -708,12 +726,14 @@ export function HistoryApp() {
     );
   }
 
-  const headerLabel =
-    selection.kind === "org"
-      ? selection.name
-      : selection.folderId
-        ? personalFolders.find((f) => f.id === selection.folderId)?.name ?? t("history.title")
-        : t("history.title");
+  let headerLabel: string;
+  if (selection.kind === "org") {
+    headerLabel = selection.name;
+  } else if (selection.folderId) {
+    headerLabel = personalFolders.find((f) => f.id === selection.folderId)?.name ?? t("history.title");
+  } else {
+    headerLabel = t("history.title");
+  }
   const selectedFolderName =
     selection.folderId != null
       ? scopeFolders.find((f) => f.id === selection.folderId)?.name ?? null
@@ -1057,7 +1077,7 @@ function SidebarRow({
   onDrop,
   onRename,
   onDelete,
-}: {
+}: Readonly<{
   icon: ReactNode;
   label: string;
   depth?: number;
@@ -1072,7 +1092,7 @@ function SidebarRow({
   onDrop?: (ev: React.DragEvent) => void;
   onRename?: (name: string) => void;
   onDelete?: () => void;
-}) {
+}>) {
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(label);
@@ -1188,11 +1208,11 @@ function NewFolderInput({
   depth = 0,
   onCommit,
   onCancel,
-}: {
+}: Readonly<{
   depth?: number;
   onCommit: (name: string) => void;
   onCancel: () => void;
-}) {
+}>) {
   const { t } = useI18n();
   const [value, setValue] = useState("");
   const ref = useRef<HTMLInputElement>(null);
@@ -1255,11 +1275,11 @@ function ShareMenu({
   orgs,
   sharing,
   onShare,
-}: {
+}: Readonly<{
   orgs: CloudOrg[];
   sharing: boolean;
   onShare: (org: CloudOrg) => void;
-}) {
+}>) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   return (
@@ -1280,15 +1300,27 @@ function ShareMenu({
       {open && (
         <>
           <div
+            role="button"
+            tabIndex={0}
+            aria-label={t("common.cancel")}
             className="fixed inset-0 z-30"
             onClick={(ev) => {
               ev.stopPropagation();
               setOpen(false);
             }}
+            onKeyDown={(ev) => {
+              if (ev.key === "Enter" || ev.key === " " || ev.key === "Escape") {
+                ev.preventDefault();
+                ev.stopPropagation();
+                setOpen(false);
+              }
+            }}
           />
           <div
+            role="presentation"
             className="absolute right-0 top-7 z-40 min-w-40 rounded-md border bg-popover p-1 shadow-md"
             onClick={(ev) => ev.stopPropagation()}
+            onKeyDown={(ev) => ev.stopPropagation()}
           >
             <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
               {t("history.share.menuTitle")}
@@ -1322,19 +1354,33 @@ function MoveDialog({
   onCopy,
   onMove,
   onCancel,
-}: {
+}: Readonly<{
   orgName: string;
   target: string;
   onCopy: () => void;
   onMove: () => void;
   onCancel: () => void;
-}) {
+}>) {
   const { t } = useI18n();
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-6" onClick={onCancel}>
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={t("history.move.cancel")}
+      className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-6"
+      onClick={onCancel}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " " || e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+    >
       <div
+        role="presentation"
         className="w-full max-w-sm rounded-lg border bg-popover p-4 shadow-lg"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
       >
         <div className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
           <UsersRound className="size-4 text-sky-500" />
@@ -1375,7 +1421,7 @@ function HistoryCard({
   onShare,
   onDragStart,
   onDragEnd,
-}: {
+}: Readonly<{
   entry: HistoryCardItem;
   locale: string;
   signedIn: boolean;
@@ -1390,7 +1436,7 @@ function HistoryCard({
   onShare: (org: CloudOrg) => void;
   onDragStart: () => void;
   onDragEnd: () => void;
-}) {
+}>) {
   const { t } = useI18n();
   const isLive = entry.source === "live";
   const isCloudOnly = !isOrgContext && entry.sync === "cloud";

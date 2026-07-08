@@ -16,6 +16,35 @@ import {
   type FindingSolutionState,
 } from "../lib/findingSolutionSync";
 
+// Handles the native window close (frame X) event: mirror it back to the main
+// window's selection by emitting the close signal. Hoisted to module scope
+// (rather than nested inside the subscribing effect) so the effect below does
+// not nest functions more than four levels deep.
+function handleWindowCloseRequested() {
+  closeFindingSolution().catch((error) =>
+    log.warn("finding-solution: close emit from window close failed", { error: String(error) }),
+  );
+}
+
+// Close the window. Await the FS_CLOSE emit FIRST (so the main window clears its
+// selection and the same finding can be reopened later — the emit must reach the
+// backend before we tear the webview down), then DESTROY the window. destroy()
+// is a hard close that bypasses the close-request flow, which `close()` did not
+// reliably complete from inside the window. Failures are logged, not swallowed.
+async function dismiss() {
+  try {
+    await closeFindingSolution();
+  } catch (e) {
+    log.warn("finding-solution: close-emit failed", { error: String(e) });
+  }
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().destroy();
+  } catch (e) {
+    log.error("finding-solution: window destroy failed", { error: String(e) });
+  }
+}
+
 /**
  * Standalone OS window (Tauri multi-window, like Settings) for the "how should I
  * reply" drilldown. Driven entirely by state pushed from the main window — it
@@ -57,13 +86,7 @@ export function FindingSolutionApp() {
   useEffect(() => {
     let un: (() => void) | undefined;
     import("@tauri-apps/api/window")
-      .then(({ getCurrentWindow }) =>
-        getCurrentWindow().onCloseRequested(() => {
-          closeFindingSolution().catch((error) =>
-            log.warn("finding-solution: close emit from window close failed", { error: String(error) }),
-          );
-        }),
-      )
+      .then(({ getCurrentWindow }) => getCurrentWindow().onCloseRequested(handleWindowCloseRequested))
       .then((fn) => {
         un = fn;
       })
@@ -91,25 +114,6 @@ export function FindingSolutionApp() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finding?.id, entry?.status, keyMissing]);
-
-  // Close the window. Await the FS_CLOSE emit FIRST (so the main window clears its
-  // selection and the same finding can be reopened later — the emit must reach the
-  // backend before we tear the webview down), then DESTROY the window. destroy()
-  // is a hard close that bypasses the close-request flow, which `close()` did not
-  // reliably complete from inside the window. Failures are logged, not swallowed.
-  async function dismiss() {
-    try {
-      await closeFindingSolution();
-    } catch (e) {
-      log.warn("finding-solution: close-emit failed", { error: String(e) });
-    }
-    try {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      await getCurrentWindow().destroy();
-    } catch (e) {
-      log.error("finding-solution: window destroy failed", { error: String(e) });
-    }
-  }
 
   if (!finding) {
     return (

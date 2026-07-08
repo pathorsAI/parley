@@ -74,7 +74,7 @@ export function clearSpeakerNamesCache(): number {
   try {
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const k = localStorage.key(i);
-      if (k && k.startsWith(PREFIX)) {
+      if (k?.startsWith(PREFIX)) {
         localStorage.removeItem(k);
         removed++;
       }

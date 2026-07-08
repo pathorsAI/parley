@@ -55,6 +55,14 @@ function parseLevel(line: string): Level {
   }
 }
 
+/** Split a raw log tail into non-empty, level-tagged lines. */
+function parseLogLines(text: string): LogLine[] {
+  return text
+    .split("\n")
+    .filter((l) => l.trim().length > 0)
+    .map((raw) => ({ raw, level: parseLevel(raw) }));
+}
+
 /**
  * Standalone, movable Field Log window (Tauri multi-window, like Settings).
  * Tails the rotating `parley.log` written by tauri-plugin-log, with a level
@@ -99,11 +107,7 @@ export function DiagnosticsApp() {
       invoke<string>("read_log_tail", { maxBytes: TAIL_BYTES })
         .then((text) => {
           if (!alive) return;
-          const parsed = text
-            .split("\n")
-            .filter((l) => l.trim().length > 0)
-            .map((raw) => ({ raw, level: parseLevel(raw) }));
-          setLines(parsed);
+          setLines(parseLogLines(text));
         })
         .catch((e) => log.warn("diagnostics: read_log_tail failed", { error: String(e) }));
     };

@@ -1,7 +1,6 @@
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useStore } from "../../lib/store";
-import { formatClock } from "../../lib/store";
+import { useStore, formatClock } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import { FindingSolutionCard } from "./FindingSolutionCard";
 

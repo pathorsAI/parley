@@ -146,7 +146,7 @@ export function VoiceDiarizeDialog({ onClose }: Readonly<{ onClose: () => void }
                             : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        {opt === null ? t("speakers.voiceAuto") : opt}
+                        {opt ?? t("speakers.voiceAuto")}
                       </button>
                     );
                   })}

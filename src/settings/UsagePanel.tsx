@@ -153,12 +153,12 @@ function QuotaBar({
   used,
   limit,
   format,
-}: {
+}: Readonly<{
   label: string;
   used: number;
   limit: number;
   format: (n: number) => string;
-}) {
+}>) {
   const { t } = useI18n();
   const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
   return (

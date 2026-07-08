@@ -105,6 +105,9 @@ const DEFAULT_SETTINGS: Settings = {
 /** Whether the app is capturing a live meeting or analyzing an uploaded one. */
 export type AppMode = "live" | "replay";
 
+/** Lifecycle status of an async pass (analysis, delivery assessment, action items). */
+export type AsyncTaskStatus = "idle" | "running" | "done" | "error";
+
 /**
  * Replay keep-window. Segments that fall entirely OUTSIDE [startMs, endMs] are
  * trimmed: greyed in the transcript and excluded from every analysis (evals,
@@ -197,7 +200,7 @@ interface ParleyState {
    * REPLACES the whole list (and clears selection + solutions); REPLAY runs once.
    */
   findings: TimelineEvent[];
-  analysisStatus: "idle" | "running" | "done" | "error";
+  analysisStatus: AsyncTaskStatus;
   analysisError: string | null;
   /** Signature of the eval set the current `findings` reflect (set by runAnalysis).
    *  When it differs from the active eval set, the findings are stale → re-analyze. */
@@ -265,14 +268,14 @@ interface ParleyState {
    *  on a rolling cadence; REPLAY computes it once over the whole recording. */
   deliveryAssessment: DeliveryAssessment | null;
   /** Mainly for REPLAY: drives the post-call delivery section's spinner. */
-  deliveryStatus: "idle" | "running" | "done" | "error";
+  deliveryStatus: AsyncTaskStatus;
   setDeliveryAssessment: (a: DeliveryAssessment | null) => void;
   setDeliveryStatus: (s: ParleyState["deliveryStatus"]) => void;
 
   // ── Action items (REPLAY post-meeting follow-ups) ───────────────────────────
   /** Generated from the analysis findings + transcript; ephemeral, replay-only. */
   actionItems: ActionItem[];
-  actionItemsStatus: "idle" | "running" | "done" | "error";
+  actionItemsStatus: AsyncTaskStatus;
   actionItemsError: string | null;
   setActionItems: (items: ActionItem[]) => void;
   setActionItemsStatus: (status: ParleyState["actionItemsStatus"]) => void;
@@ -793,7 +796,7 @@ export const useStore = create<ParleyState>()(
         const reasoningEffort =
           typeof persistedReasoning === "string"
             ? { ask: persistedReasoning, eval: persistedReasoning }
-            : { ...DEFAULT_SETTINGS.reasoningEffort, ...(persistedReasoning ?? {}) };
+            : { ...DEFAULT_SETTINGS.reasoningEffort, ...persistedReasoning };
 
         // Resolve built-in templates into the persisted language so they match
         // the UI on rehydrate.
@@ -817,9 +820,9 @@ export const useStore = create<ParleyState>()(
             ...p,
             // Deep-merge models so a new provider (e.g. groq) isn't dropped by
             // older persisted state that only had anthropic/openrouter.
-            models: { ...DEFAULT_SETTINGS.models, ...(p.models ?? {}) },
+            models: { ...DEFAULT_SETTINGS.models, ...p.models },
             // Backfill delivery-coaching toggles for states saved before they existed.
-            delivery: { ...DEFAULT_SETTINGS.delivery, ...(p.delivery ?? {}) },
+            delivery: { ...DEFAULT_SETTINGS.delivery, ...p.delivery },
             reasoningEffort,
             // Fold latest built-in templates over persisted ones, keeping customs.
             todoTemplates: reconcileTemplates(

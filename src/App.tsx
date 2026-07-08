@@ -50,6 +50,18 @@ import { preloadZhConverter } from "./lib/zhConvert";
 import { log } from "./lib/log";
 
 /**
+ * Build the window-resize handler that re-syncs fullscreen state. Extracted to
+ * module scope (rather than defined inline inside `connectFullscreenEvents`)
+ * so the resize/catch callbacks don't push the surrounding closures past the
+ * nested-function depth limit.
+ */
+function createFullscreenResizeHandler(sync: () => Promise<void>): () => void {
+  return () => {
+    sync().catch((error) => log.warn("window: fullscreen sync failed", { error: String(error) }));
+  };
+}
+
+/**
  * Track main-window fullscreen state. Drives both the rounded corners (a
  * fullscreen window fills the display edge-to-edge, so it squares off; a
  * zoomed/maximized window is still a floating window and stays rounded) and the
@@ -69,9 +81,7 @@ function useFullscreen(): boolean {
         if (active) setFullscreen(fs);
       };
       await sync();
-      const un = await win.onResized(() => {
-        sync().catch((error) => log.warn("window: fullscreen sync failed", { error: String(error) }));
-      });
+      const un = await win.onResized(createFullscreenResizeHandler(sync));
       if (active) unlisten = un;
       else un();
     }

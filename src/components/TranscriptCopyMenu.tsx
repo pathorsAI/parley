@@ -22,11 +22,11 @@ export function TranscriptCopyMenu({
   segments,
   speakerNames,
   disabled,
-}: {
+}: Readonly<{
   segments: TranscriptSegment[];
   speakerNames: Record<string, string>;
   disabled?: boolean;
-}) {
+}>) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -90,11 +90,11 @@ function Item({
   label,
   hint,
   onSelect,
-}: {
+}: Readonly<{
   label: string;
   hint?: string;
   onSelect: () => void;
-}) {
+}>) {
   return (
     <DropdownMenu.Item
       onSelect={onSelect}

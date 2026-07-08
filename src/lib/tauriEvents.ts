@@ -103,6 +103,14 @@ interface MeetingErrorPayload {
   message: string;
 }
 
+/** Maps a `meeting://error` `code` to its toast translation key; unmapped codes fall back to "connect". */
+const MEETING_ERROR_KEY_BY_CODE: Partial<Record<string, TranslationKey>> = {
+  quota: "meeting.error.quota",
+  auth: "meeting.error.auth",
+  key: "meeting.error.key",
+  capture: "meeting.error.capture",
+};
+
 /**
  * Subscribe to backend transcription-failure events. A meeting that loses its
  * STT session would otherwise sit in "recording" with no transcript and no
@@ -121,16 +129,7 @@ export async function listenForMeetingError(): Promise<UnlistenFn> {
     invoke("stop_meeting").catch((error) =>
       log.warn("meeting: stop after backend error failed", { code, error: String(error) }),
     );
-    const key: TranslationKey =
-      code === "quota"
-        ? "meeting.error.quota"
-        : code === "auth"
-          ? "meeting.error.auth"
-          : code === "key"
-            ? "meeting.error.key"
-            : code === "capture"
-              ? "meeting.error.capture"
-              : "meeting.error.connect";
+    const key: TranslationKey = MEETING_ERROR_KEY_BY_CODE[code] ?? "meeting.error.connect";
     toast.error(translate(useStore.getState().settings.language, key));
   });
 }

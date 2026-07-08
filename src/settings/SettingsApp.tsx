@@ -21,7 +21,7 @@ import {
   acceptInvitation,
   deleteOrg,
 } from "../lib/cloud/orgs";
-import type { CloudInvitation, CloudOrg, CloudOrgMember } from "../lib/cloud/types";
+import type { CloudAuth, CloudInvitation, CloudOrg, CloudOrgMember } from "../lib/cloud/types";
 import { listCloudFolders, listOrgFolders, type CloudFolder } from "../lib/cloud/folders";
 import { listLocalFolders, listenForFoldersUpdated, type Folder as LocalFolder } from "../lib/history/folders";
 import { isTauri } from "../lib/tauriEvents";
@@ -267,59 +267,12 @@ export function SettingsApp() {
 
         {cat === "account" && CLOUD_ENABLED && (
           <Section title={t("settings.nav.account")}>
-            <Field label={t("settings.account.signIn")}>
-              {cloudAuth ? (
-                <div className="flex max-w-sm items-center gap-3 rounded-lg border p-2.5">
-                  {cloudAuth.user.image ? (
-                    <img src={cloudAuth.user.image} alt="" className="size-9 shrink-0 rounded-full" />
-                  ) : (
-                    <div className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-sm font-medium">
-                      {(cloudAuth.user.name || cloudAuth.user.email).slice(0, 1).toUpperCase()}
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{cloudAuth.user.name || cloudAuth.user.email}</div>
-                    <div className="truncate text-[11px] text-muted-foreground">{cloudAuth.user.email}</div>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="shrink-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => signOut().catch((error) => log.error("settings: sign-out failed", { error: String(error) }))}
-                    title={t("settings.account.signOut")}
-                    aria-label={t("settings.account.signOut")}
-                  >
-                    <LogOut className="size-4" />
-                  </Button>
-                </div>
-              ) : (
-                <div className="flex max-w-sm flex-col gap-2">
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      className="h-9 w-fit gap-2 text-xs"
-                      disabled={signingIn || !isTauri()}
-                      onClick={() => doSignIn().catch((error) => log.error("settings: sign-in failed", { error: String(error) }))}
-                    >
-                      {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
-                      {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
-                    </Button>
-                    {signingIn && (
-                      <button
-                        type="button"
-                        onClick={() => signInAbort.current?.abort()}
-                        className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                      >
-                        {t("settings.account.cancel")}
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-muted-foreground">
-                    {isTauri() ? t("settings.account.signedOutHelp") : t("settings.account.desktopOnly")}
-                  </p>
-                </div>
-              )}
-            </Field>
+            <AccountSignInField
+              cloudAuth={cloudAuth}
+              signingIn={signingIn}
+              signInAbort={signInAbort}
+              onSignIn={doSignIn}
+            />
             {cloudAuth && (
               <Field label={t("settings.account.sync.title")}>
                 <div className="flex max-w-md flex-col gap-2 rounded-lg border p-3">
@@ -505,12 +458,7 @@ export function SettingsApp() {
               {appVersion && (
                 <p className="flex items-center gap-2 text-sm">
                   {t("settings.update.current", { version: appVersion })}
-                  <span
-                    className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground"
-                    title={CLOUD_ENABLED ? t("settings.edition.official.hint") : t("settings.edition.oss.hint")}
-                  >
-                    {CLOUD_ENABLED ? t("settings.edition.official") : t("settings.edition.oss")}
-                  </span>
+                  <EditionBadge />
                 </p>
               )}
               <div className="flex items-center gap-2">
@@ -1081,6 +1029,89 @@ export function SettingsApp() {
   );
 }
 
+/** Build-edition tag (Official vs OSS) shown next to the current version. */
+function EditionBadge() {
+  const { t } = useI18n();
+  return (
+    <span
+      className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground"
+      title={CLOUD_ENABLED ? t("settings.edition.official.hint") : t("settings.edition.oss.hint")}
+    >
+      {CLOUD_ENABLED ? t("settings.edition.official") : t("settings.edition.oss")}
+    </span>
+  );
+}
+
+/** Account sign-in field: the signed-in profile card, or the Google sign-in form. */
+function AccountSignInField({
+  cloudAuth,
+  signingIn,
+  signInAbort,
+  onSignIn,
+}: Readonly<{
+  cloudAuth: CloudAuth | null;
+  signingIn: boolean;
+  signInAbort: React.RefObject<AbortController | null>;
+  onSignIn: () => Promise<void>;
+}>) {
+  const { t } = useI18n();
+  return (
+    <Field label={t("settings.account.signIn")}>
+      {cloudAuth ? (
+        <div className="flex max-w-sm items-center gap-3 rounded-lg border p-2.5">
+          {cloudAuth.user.image ? (
+            <img src={cloudAuth.user.image} alt="" className="size-9 shrink-0 rounded-full" />
+          ) : (
+            <div className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-sm font-medium">
+              {(cloudAuth.user.name || cloudAuth.user.email).slice(0, 1).toUpperCase()}
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">{cloudAuth.user.name || cloudAuth.user.email}</div>
+            <div className="truncate text-[11px] text-muted-foreground">{cloudAuth.user.email}</div>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={() => signOut().catch((error) => log.error("settings: sign-out failed", { error: String(error) }))}
+            title={t("settings.account.signOut")}
+            aria-label={t("settings.account.signOut")}
+          >
+            <LogOut className="size-4" />
+          </Button>
+        </div>
+      ) : (
+        <div className="flex max-w-sm flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              className="h-9 w-fit gap-2 text-xs"
+              disabled={signingIn || !isTauri()}
+              onClick={() => onSignIn().catch((error) => log.error("settings: sign-in failed", { error: String(error) }))}
+            >
+              {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+              {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
+            </Button>
+            {signingIn && (
+              <button
+                type="button"
+                onClick={() => signInAbort.current?.abort()}
+                className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              >
+                {t("settings.account.cancel")}
+              </button>
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            {isTauri() ? t("settings.account.signedOutHelp") : t("settings.account.desktopOnly")}
+          </p>
+        </div>
+      )}
+    </Field>
+  );
+}
+
 /** Copy-to-clipboard button with a 2s "copied" confirmation. */
 function CopyButton({
   value,
@@ -1089,7 +1120,7 @@ function CopyButton({
   className,
   iconOnly,
   disabled,
-}: {
+}: Readonly<{
   /** Text to copy, or a thunk evaluated at click time for computed values. */
   value: string | (() => string);
   label?: string;
@@ -1097,7 +1128,7 @@ function CopyButton({
   className?: string;
   iconOnly?: boolean;
   disabled?: boolean;
-}) {
+}>) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const copy = () => {
@@ -1146,11 +1177,11 @@ function ModelSelect({
   provider,
   value,
   onChange,
-}: {
+}: Readonly<{
   provider: LlmProvider;
   value: string;
   onChange: (v: string) => void;
-}) {
+}>) {
   const { t } = useI18n();
   const presets = PROVIDER_BY_ID[provider].models;
   // Custom (free-text) mode: on by default when the saved id isn't a listed
@@ -1215,11 +1246,11 @@ function ReasoningEffortSelect({
   label,
   value,
   onChange,
-}: {
+}: Readonly<{
   label: string;
   value: ReasoningEffort;
   onChange: (value: ReasoningEffort) => void;
-}) {
+}>) {
   const { t } = useI18n();
 
   return (
@@ -1243,11 +1274,11 @@ function EvalEditor({
   ev,
   onChange,
   onDelete,
-}: {
+}: Readonly<{
   ev: EvalDef;
   onChange: (p: Partial<EvalDef>) => void;
   onDelete: () => void;
-}) {
+}>) {
   const { t } = useI18n();
 
   return (
@@ -1268,11 +1299,11 @@ function TodoTemplateEditor({
   tpl,
   onChange,
   onDelete,
-}: {
+}: Readonly<{
   tpl: import("../lib/types").TodoTemplate;
   onChange: (p: Partial<import("../lib/types").TodoTemplate>) => void;
   onDelete: () => void;
-}) {
+}>) {
   const { t } = useI18n();
 
   return (
@@ -1426,13 +1457,20 @@ function DiarizeModelField() {
  * ../lib/cloud/orgs. Rendered only when signed in (its parent gates on `cloudAuth`).
  */
 /** Button label while an action is in flight: a spinner + the text (no "…"). */
-function Spinning({ label }: { label: string }) {
+function Spinning({ label }: Readonly<{ label: string }>) {
   return (
     <span className="flex items-center gap-1">
       <Loader2 className="size-3 animate-spin" />
       {label}
     </span>
   );
+}
+
+/** Translation key for an org member's role badge. */
+function orgRoleLabelKey(role: string): TranslationKey {
+  if (role === "owner") return "settings.account.org.roleOwner";
+  if (role === "admin") return "settings.account.org.roleAdmin";
+  return "settings.account.org.roleMember";
 }
 
 function OrgPanel() {
@@ -1606,11 +1644,7 @@ function OrgPanel() {
                         )}
                       </span>
                       <span className="shrink-0 text-[10px] text-muted-foreground">
-                        {mem.role === "owner"
-                          ? t("settings.account.org.roleOwner")
-                          : mem.role === "admin"
-                            ? t("settings.account.org.roleAdmin")
-                            : t("settings.account.org.roleMember")}
+                        {t(orgRoleLabelKey(mem.role))}
                       </span>
                     </li>
                   ))}
@@ -1771,15 +1805,21 @@ function OrgPanel() {
  * itself so the Settings window stays self-contained. Choosing an org folder makes
  * finished meetings auto-share into that team space (see history.ts resolveDefaultSave).
  */
+/** Fetch one org's folders as an [orgId, folders] entry, tolerating per-org failures. */
+async function loadOrgFoldersEntry(orgId: string): Promise<readonly [string, CloudFolder[]]> {
+  const folders = await listOrgFolders(orgId).catch(() => [] as CloudFolder[]);
+  return [orgId, folders] as const;
+}
+
 function DefaultSavePicker({
   value,
   syncOn,
   onChange,
-}: {
+}: Readonly<{
   value: DefaultSaveLocation;
   syncOn: boolean;
   onChange: (loc: DefaultSaveLocation) => void;
-}) {
+}>) {
   const { t } = useI18n();
   const [personal, setPersonal] = useState<LocalFolder[]>(() => listLocalFolders());
   const [orgs, setOrgs] = useState<CloudOrg[]>([]);
@@ -1822,9 +1862,7 @@ function DefaultSavePicker({
         const mine = await listMyOrgs();
         if (!alive) return;
         setOrgs(mine);
-        const pairs = await Promise.all(
-          mine.map(async (o) => [o.id, await listOrgFolders(o.id).catch(() => [])] as const),
-        );
+        const pairs = await Promise.all(mine.map((o) => loadOrgFoldersEntry(o.id)));
         if (alive) setOrgFolders(Object.fromEntries(pairs));
       } catch {
         /* leave orgs empty */
@@ -1836,14 +1874,12 @@ function DefaultSavePicker({
     };
   }, [syncOn]);
 
-  const serialize = (loc: DefaultSaveLocation): string =>
-    loc.scope === "personal"
-      ? loc.folderId
-        ? `personal:${loc.folderId}`
-        : "personal"
-      : loc.folderId
-        ? `org:${loc.orgId}:${loc.folderId}`
-        : `org:${loc.orgId}`;
+  const serialize = (loc: DefaultSaveLocation): string => {
+    if (loc.scope === "personal") {
+      return loc.folderId ? `personal:${loc.folderId}` : "personal";
+    }
+    return loc.folderId ? `org:${loc.orgId}:${loc.folderId}` : `org:${loc.orgId}`;
+  };
 
   const parse = (v: string): DefaultSaveLocation => {
     if (v === "personal") return { scope: "personal", folderId: null };
@@ -1884,7 +1920,7 @@ function DefaultSavePicker({
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, children }: Readonly<{ title: string; children: React.ReactNode }>) {
   return (
     <section className="flex max-w-2xl flex-col gap-4">
       <h2 className="text-base font-semibold tracking-tight">{title}</h2>
@@ -1893,7 +1929,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: Readonly<{ label: string; children: React.ReactNode }>) {
   return (
     <div className="flex flex-col gap-1.5">
       <Label className="text-xs text-muted-foreground">{label}</Label>

@@ -25,14 +25,14 @@ export function FindingRow({
   selected,
   onSelect,
   onOpenSolution,
-}: {
+}: Readonly<{
   event: TimelineEvent;
   selected: boolean;
   /** Row click: highlight + seek (no window). */
   onSelect: (event: TimelineEvent) => void;
   /** "how to reply" button: open the reply window (the only generation trigger). */
   onOpenSolution: (event: TimelineEvent) => void;
-}) {
+}>) {
   const { t } = useI18n();
   const evalNames = useEvalNames();
   const evalLabels =

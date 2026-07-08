@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, Circle, Keyboard, Loader2, RotateCcw } from "lucide-react";
 import { useStore } from "../lib/store";
 import { useI18n, type TranslationKey } from "../i18n";
@@ -374,6 +374,15 @@ export const VoiceTypingSettings = () => {
   // Guidance renders as single inline lines (no nested boxes) and only when
   // actionable — the default state is just the recorder, the chips and one
   // caption.
+  let recorderIcon: ReactNode;
+  if (saving) {
+    recorderIcon = <Loader2 className="size-3.5 animate-spin" />;
+  } else if (recording) {
+    recorderIcon = <Circle className="size-2.5 animate-pulse fill-current" />;
+  } else {
+    recorderIcon = <Keyboard className="size-3.5" />;
+  }
+
   return (
     <div className="flex max-w-md flex-col gap-6">
       <div className="flex items-center justify-between gap-3">
@@ -432,13 +441,7 @@ export const VoiceTypingSettings = () => {
                 : "hover:bg-muted/50"
             }`}
           >
-            {saving ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : recording ? (
-              <Circle className="size-2.5 animate-pulse fill-current" />
-            ) : (
-              <Keyboard className="size-3.5" />
-            )}
+            {recorderIcon}
             {recording ? (
               <span className="text-xs">{t("settings.voiceTyping.recorder.listening")}</span>
             ) : (
