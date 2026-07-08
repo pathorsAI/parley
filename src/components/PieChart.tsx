@@ -35,8 +35,8 @@ export function PieChart({
   thickness = 0.62,
   centerLabel,
   centerSub,
-  formatValue = (v) => String(v),
-}: PieChartProps) {
+  formatValue = String,
+}: Readonly<PieChartProps>) {
   const data = slices.filter((s) => s.value > 0);
   const total = data.reduce((sum, s) => sum + s.value, 0);
   const cx = size / 2;
@@ -61,7 +61,7 @@ export function PieChart({
           `L ${cx - 0.01} ${cy - innerR} A ${innerR} ${innerR} 0 1 0 ${cx} ${cy - innerR} Z`
         : `M ${p0.x} ${p0.y} A ${r} ${r} 0 ${large} 1 ${p1.x} ${p1.y} ` +
           `L ${i0.x} ${i0.y} A ${innerR} ${innerR} 0 ${large} 0 ${i1.x} ${i1.y} Z`;
-    return { d, color: s.color };
+    return { d, color: s.color, label: s.label };
   });
 
   return (
@@ -69,8 +69,8 @@ export function PieChart({
       {total > 0 ? (
         <div className="relative shrink-0" style={{ width: size, height: size }}>
           <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-            {arcs.map((a, i) => (
-              <path key={i} d={a.d} fill={a.color} />
+            {arcs.map((a) => (
+              <path key={a.label} d={a.d} fill={a.color} />
             ))}
           </svg>
           {(centerLabel || centerSub) && (

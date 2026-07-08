@@ -88,12 +88,16 @@ export async function showOverlay(): Promise<void> {
   if (!win) return;
   await positionBottomCenter(win);
   const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("present_voice_overlay").catch(() => {});
+  await invoke("present_voice_overlay").catch((error) =>
+    log.warn("voice-typing: present overlay failed", { error: String(error) }),
+  );
 }
 
 /** Hide the overlay (kept around for the next dictation). */
 export async function hideOverlay(): Promise<void> {
   if (!isTauri()) return;
   const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("dismiss_voice_overlay").catch(() => {});
+  await invoke("dismiss_voice_overlay").catch((error) =>
+    log.warn("voice-typing: dismiss overlay failed", { error: String(error) }),
+  );
 }

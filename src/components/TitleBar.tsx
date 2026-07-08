@@ -14,6 +14,9 @@ import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
 
+type TFn = ReturnType<typeof useI18n>["t"];
+type WindowAction = "close" | "minimize" | "fullscreen";
+
 /**
  * Track main-window focus so the traffic lights can dim to grey when the window
  * is inactive — matching native macOS behaviour. Defaults to focused (and stays
@@ -25,7 +28,7 @@ function useWindowFocused(): boolean {
     if (!isTauri()) return;
     let active = true;
     let unlisten: (() => void) | undefined;
-    void (async () => {
+    async function connectFocusEvents() {
       const win = getCurrentWindow();
       try {
         const initial = await win.isFocused();
@@ -38,13 +41,77 @@ function useWindowFocused(): boolean {
       });
       if (active) unlisten = un;
       else un();
-    })();
+    }
+    connectFocusEvents().catch((error) => log.warn("window: focus listener failed", { error: String(error) }));
     return () => {
       active = false;
       unlisten?.();
     };
   }, []);
   return focused;
+}
+
+function meetingStatusText(t: TFn, recording: boolean, status: string): string {
+  if (recording) return t("titlebar.status.recording");
+  if (status === "stopped") return t("titlebar.status.stopped");
+  return t("titlebar.status.idle");
+}
+
+function TrafficLights({
+  focused,
+  onAction,
+  t,
+}: Readonly<{
+  focused: boolean;
+  onAction: (action: WindowAction) => void;
+  t: TFn;
+}>) {
+  const closeColor = focused ? "bg-[#FF5F57]" : "bg-[#c7c7c9] group-hover/traffic:bg-[#FF5F57] dark:bg-[#565658]";
+  const minimizeColor = focused ? "bg-[#FEBC2E]" : "bg-[#c7c7c9] group-hover/traffic:bg-[#FEBC2E] dark:bg-[#565658]";
+  const fullscreenColor = focused ? "bg-[#28C840]" : "bg-[#c7c7c9] group-hover/traffic:bg-[#28C840] dark:bg-[#565658]";
+
+  return (
+    <div className="group/traffic absolute left-4 top-1/2 flex -translate-y-1/2 items-center gap-2">
+      <button
+        type="button"
+        aria-label={t("titlebar.closeWindow")}
+        onClick={() => onAction("close")}
+        className={`grid size-3 place-items-center rounded-full shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.14)] transition-colors ${closeColor}`}
+      >
+        <X
+          className="size-2 text-black/55 opacity-0 transition-opacity group-hover/traffic:opacity-100"
+          strokeWidth={3}
+        />
+      </button>
+      <button
+        type="button"
+        aria-label={t("titlebar.minimizeWindow")}
+        onClick={() => onAction("minimize")}
+        className={`grid size-3 place-items-center rounded-full shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.14)] transition-colors ${minimizeColor}`}
+      >
+        <Minus
+          className="size-2 text-black/55 opacity-0 transition-opacity group-hover/traffic:opacity-100"
+          strokeWidth={3}
+        />
+      </button>
+      <button
+        type="button"
+        aria-label={t("titlebar.fullscreenWindow")}
+        onClick={() => onAction("fullscreen")}
+        className={`grid size-3 place-items-center rounded-full shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.14)] transition-colors ${fullscreenColor}`}
+      >
+        {/* Native zoom/fullscreen glyph: two filled triangles tucked into opposite corners. */}
+        <svg
+          viewBox="0 0 10 10"
+          aria-hidden
+          className="size-2 fill-current text-black/55 opacity-0 transition-opacity group-hover/traffic:opacity-100"
+        >
+          <path d="M1.4 1.4H6L1.4 6Z" />
+          <path d="M8.6 8.6H4L8.6 4Z" />
+        </svg>
+      </button>
+    </div>
+  );
 }
 
 /**
@@ -55,7 +122,7 @@ function useWindowFocused(): boolean {
  * reveals its own menu bar at the top edge), so we drop our traffic lights and
  * let the logo + brand sit at the leading edge.
  */
-export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
+export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean }>) {
   const { t } = useI18n();
   const focused = useWindowFocused();
   const status = useStore((s) => s.meetingStatus);
@@ -168,7 +235,7 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
     }
   }
 
-  async function controlWindow(action: "close" | "minimize" | "fullscreen") {
+  async function controlWindow(action: WindowAction) {
     if (!isTauri()) return;
     const appWindow = getCurrentWindow();
     try {
@@ -192,56 +259,7 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
           the whole cluster (not per-button), and the trio dims to grey when the
           window loses focus — matching the system buttons. Hidden in fullscreen,
           where macOS shows no window controls. */}
-      {!fullscreen && (
-      <div className="group/traffic absolute left-4 top-1/2 flex -translate-y-1/2 items-center gap-2">
-        <button
-          type="button"
-          aria-label={t("titlebar.closeWindow")}
-          onClick={() => void controlWindow("close")}
-          className={`grid size-3 place-items-center rounded-full shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.14)] transition-colors ${
-            focused ? "bg-[#FF5F57]" : "bg-[#c7c7c9] group-hover/traffic:bg-[#FF5F57] dark:bg-[#565658]"
-          }`}
-        >
-          <X
-            className="size-2 text-black/55 opacity-0 transition-opacity group-hover/traffic:opacity-100"
-            strokeWidth={3}
-          />
-        </button>
-        <button
-          type="button"
-          aria-label={t("titlebar.minimizeWindow")}
-          onClick={() => void controlWindow("minimize")}
-          className={`grid size-3 place-items-center rounded-full shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.14)] transition-colors ${
-            focused ? "bg-[#FEBC2E]" : "bg-[#c7c7c9] group-hover/traffic:bg-[#FEBC2E] dark:bg-[#565658]"
-          }`}
-        >
-          <Minus
-            className="size-2 text-black/55 opacity-0 transition-opacity group-hover/traffic:opacity-100"
-            strokeWidth={3}
-          />
-        </button>
-        <button
-          type="button"
-          aria-label={t("titlebar.fullscreenWindow")}
-          onClick={() => void controlWindow("fullscreen")}
-          className={`grid size-3 place-items-center rounded-full shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.14)] transition-colors ${
-            focused ? "bg-[#28C840]" : "bg-[#c7c7c9] group-hover/traffic:bg-[#28C840] dark:bg-[#565658]"
-          }`}
-        >
-          {/* Native zoom/fullscreen glyph: two filled triangles tucked into
-              opposite corners, leaving a diagonal gap — not lucide's thin
-              double-arrow, which reads wrong at this size. */}
-          <svg
-            viewBox="0 0 10 10"
-            aria-hidden
-            className="size-2 fill-current text-black/55 opacity-0 transition-opacity group-hover/traffic:opacity-100"
-          >
-            <path d="M1.4 1.4H6L1.4 6Z" />
-            <path d="M8.6 8.6H4L8.6 4Z" />
-          </svg>
-        </button>
-      </div>
-      )}
+      {!fullscreen && <TrafficLights focused={focused} onAction={controlWindow} t={t} />}
 
       <div data-tauri-drag-region className="flex items-center gap-2.5">
         <img src="/parley.svg" alt="" className="h-5 w-5 rounded-[5px]" />
@@ -271,18 +289,14 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
                   recording ? "animate-pulse fill-red-500 text-red-500" : "fill-muted-foreground/40 text-muted-foreground/40"
                 }`}
               />
-              {recording
-                ? t("titlebar.status.recording")
-                : status === "stopped"
-                ? t("titlebar.status.stopped")
-                : t("titlebar.status.idle")}
+              {meetingStatusText(t, recording, status)}
             </div>
             {recording && <LevelMeter source="me" className="h-1.5 w-14" />}
             {!recording && isTauri() && (
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => void uploadRecording()}
+                onClick={() => uploadRecording()}
                 disabled={!!ingestMsg}
                 className="h-8"
               >
@@ -310,12 +324,17 @@ export function TitleBar({ fullscreen = false }: { fullscreen?: boolean }) {
           className="h-8 w-8"
           aria-label={t("titlebar.history")}
           title={t("titlebar.history")}
-          onClick={() => void openHistoryWindow()}
+          onClick={() => openHistoryWindow().catch((error) => log.error("history: open window failed", { error: String(error) }))}
         >
           <History className="size-4" />
         </Button>
 
-        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => void openSettingsWindow()}>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-8 w-8"
+          onClick={() => openSettingsWindow().catch((error) => log.error("settings: open window failed", { error: String(error) }))}
+        >
           <Settings className="size-4" />
         </Button>
       </div>

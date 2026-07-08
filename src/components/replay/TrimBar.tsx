@@ -20,7 +20,7 @@ interface TrimBarProps {
  * window is dimmed (and excluded from the transcript + all analysis upstream).
  * Reuses the same client-x → ms mapping the scrubber uses.
  */
-export function TrimBar({ durationMs, trim, onChange, startLabel, endLabel }: TrimBarProps) {
+export function TrimBar({ durationMs, trim, onChange, startLabel, endLabel }: Readonly<TrimBarProps>) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const dragging = useRef<"start" | "end" | null>(null);
 
@@ -70,6 +70,14 @@ export function TrimBar({ durationMs, trim, onChange, startLabel, endLabel }: Tr
     },
     [durationMs, emit, endMs, startMs]
   );
+  const setPct = useCallback(
+    (which: "start" | "end", pct: number) => {
+      const ms = (Math.max(0, Math.min(100, pct)) / 100) * durationMs;
+      if (which === "start") emit(Math.min(ms, endMs - MIN_GAP_MS), endMs);
+      else emit(startMs, Math.max(ms, startMs + MIN_GAP_MS));
+    },
+    [durationMs, emit, endMs, startMs]
+  );
 
   const startPct = durationMs > 0 ? (startMs / durationMs) * 100 : 0;
   const endPct = durationMs > 0 ? (endMs / durationMs) * 100 : 100;
@@ -98,8 +106,20 @@ export function TrimBar({ durationMs, trim, onChange, startLabel, endLabel }: Tr
         className="absolute top-1/2 h-1.5 -translate-y-1/2 bg-primary/40"
         style={{ left: `${startPct}%`, right: `${100 - endPct}%` }}
       />
-      <Handle pct={startPct} label={startLabel} onDown={() => (dragging.current = "start")} onNudge={(d) => nudge("start", d)} />
-      <Handle pct={endPct} label={endLabel} onDown={() => (dragging.current = "end")} onNudge={(d) => nudge("end", d)} />
+      <Handle
+        pct={startPct}
+        label={startLabel}
+        onDown={() => (dragging.current = "start")}
+        onNudge={(d) => nudge("start", d)}
+        onSetPct={(pct) => setPct("start", pct)}
+      />
+      <Handle
+        pct={endPct}
+        label={endLabel}
+        onDown={() => (dragging.current = "end")}
+        onNudge={(d) => nudge("end", d)}
+        onSetPct={(pct) => setPct("end", pct)}
+      />
     </div>
   );
 }
@@ -109,36 +129,50 @@ function Handle({
   label,
   onDown,
   onNudge,
-}: {
+  onSetPct,
+}: Readonly<{
   pct: number;
   label: string;
   onDown: () => void;
   onNudge: (deltaMs: number) => void;
-}) {
+  onSetPct: (pct: number) => void;
+}>) {
   return (
-    <div
-      role="slider"
-      tabIndex={0}
-      aria-label={label}
-      aria-valuenow={Math.round(pct)}
-      onPointerDown={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        (e.target as Element).setPointerCapture?.(e.pointerId);
-        onDown();
-      }}
-      onKeyDown={(e) => {
-        const step = e.shiftKey ? 10_000 : 5_000;
-        if (e.key === "ArrowLeft") {
+    <>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        value={Math.round(pct)}
+        aria-label={label}
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          onDown();
+        }}
+        onKeyDown={(e) => {
+          const step = e.shiftKey ? 10_000 : 5_000;
+          if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            onNudge(-step);
+          } else if (e.key === "ArrowRight") {
+            e.preventDefault();
+            onNudge(step);
+          }
+        }}
+        onChange={(e) => onSetPct(Number(e.target.value))}
+        className="pointer-events-none absolute inset-x-0 top-1/2 z-10 h-4 -translate-y-1/2 cursor-ew-resize opacity-0"
+      />
+      <div
+        aria-hidden="true"
+        onPointerDown={(e) => {
           e.preventDefault();
-          onNudge(-step);
-        } else if (e.key === "ArrowRight") {
-          e.preventDefault();
-          onNudge(step);
-        }
-      }}
-      className="absolute top-1/2 h-4 w-2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-sm border border-background bg-primary shadow-sm outline-none transition-transform hover:scale-110 focus-visible:ring-1 focus-visible:ring-ring"
-      style={{ left: `${pct}%` }}
-    />
+          e.stopPropagation();
+          (e.target as Element).setPointerCapture?.(e.pointerId);
+          onDown();
+        }}
+        className="absolute top-1/2 h-4 w-2 -translate-x-1/2 -translate-y-1/2 rounded-sm border border-background bg-primary shadow-sm transition-transform hover:scale-110"
+        style={{ left: `${pct}%` }}
+      />
+    </>
   );
 }

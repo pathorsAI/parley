@@ -292,18 +292,28 @@ export function HistoryApp() {
   }, []);
 
   useEffect(() => {
-    void loadPersonalFolders();
+    loadPersonalFolders().catch((error) => log.warn("history: personal folders load failed", { error: String(error) }));
   }, [loadPersonalFolders, signedIn]);
 
   // Personal folder list can change in another window (or this one) — re-read on the
   // cross-window event and on focus so the sidebar stays in sync.
   useEffect(() => {
-    const un = listenForFoldersUpdated(() => void loadPersonalFolders());
-    const onFocus = () => void loadPersonalFolders();
+    const un = listenForFoldersUpdated(() => {
+      loadPersonalFolders().catch((error) =>
+        log.warn("history: personal folders reload failed", { error: String(error) }),
+      );
+    });
+    const onFocus = () => {
+      loadPersonalFolders().catch((error) =>
+        log.warn("history: personal folders focus reload failed", { error: String(error) }),
+      );
+    };
     window.addEventListener("focus", onFocus);
     return () => {
       window.removeEventListener("focus", onFocus);
-      void un.then((fn) => fn());
+      un.then((fn) => fn()).catch((error) =>
+        log.warn("history: folders listener cleanup failed", { error: String(error) }),
+      );
     };
   }, [loadPersonalFolders]);
 
@@ -369,7 +379,7 @@ export function HistoryApp() {
     if (isOrg) return;
     let alive = true;
     setSyncing(true);
-    void (async () => {
+    async function syncInBackground() {
       // loadPersonalFolders push-uploads local-only folders, then mirrors the cloud
       // list down — so a synced recording's folderId always resolves to a live folder.
       await loadPersonalFolders();
@@ -378,7 +388,8 @@ export function HistoryApp() {
         return 0;
       });
       if (alive && n) refreshRef.current();
-    })().finally(() => {
+    }
+    syncInBackground().finally(() => {
       if (alive) setSyncing(false);
     });
     return () => {
@@ -389,11 +400,19 @@ export function HistoryApp() {
   // Cross-window: settings (theme/language) + entry re-analysis updates.
   useEffect(() => {
     const un = listenForSettings();
-    return () => void un.then((fn) => fn());
+    return () => {
+      un.then((fn) => fn()).catch((error) =>
+        log.warn("history: settings listener cleanup failed", { error: String(error) }),
+      );
+    };
   }, []);
   useEffect(() => {
     const un = listenForHistoryUpdated(() => refresh());
-    return () => void un.then((fn) => fn());
+    return () => {
+      un.then((fn) => fn()).catch((error) =>
+        log.warn("history: update listener cleanup failed", { error: String(error) }),
+      );
+    };
   }, [refresh]);
 
   // ── Folder visibility (the orphan→root rule) ────────────────────────────────────
@@ -501,11 +520,11 @@ export function HistoryApp() {
     setPersonalFolders(listLocalFolders());
     setNewFolderScope(null);
     if (CLOUD_ENABLED && syncEnabled()) {
-      void createCloudFolder(f).catch((e) =>
+      createCloudFolder(f).catch((e) =>
         toast.error(t("history.folder.createFailed", { error: errText(e) })),
       );
     }
-    void emitFoldersUpdated();
+    emitFoldersUpdated().catch((error) => log.warn("history: folders update emit failed", { error: String(error) }));
   }, [t]);
 
   const renamePersonalFolder = useCallback((id: string, name: string) => {
@@ -514,11 +533,11 @@ export function HistoryApp() {
     renameLocalFolder(id, clean);
     setPersonalFolders(listLocalFolders());
     if (CLOUD_ENABLED && syncEnabled()) {
-      void renameCloudFolder(id, clean).catch((e) =>
+      renameCloudFolder(id, clean).catch((e) =>
         toast.error(t("history.folder.renameFailed", { error: errText(e) })),
       );
     }
-    void emitFoldersUpdated();
+    emitFoldersUpdated().catch((error) => log.warn("history: folders update emit failed", { error: String(error) }));
   }, [t]);
 
   const deletePersonalFolder = useCallback(
@@ -530,11 +549,11 @@ export function HistoryApp() {
         setSelection({ kind: "personal", folderId: null });
       }
       if (CLOUD_ENABLED && syncEnabled()) {
-        void deleteCloudFolder(folder.id).catch((e) =>
+        deleteCloudFolder(folder.id).catch((e) =>
           toast.error(t("history.folder.deleteFailed", { error: errText(e) })),
         );
       }
-      void emitFoldersUpdated();
+      emitFoldersUpdated().catch((error) => log.warn("history: folders update emit failed", { error: String(error) }));
     },
     [selection, t],
   );
@@ -675,7 +694,7 @@ export function HistoryApp() {
       onDragLeave: () => setDropKey((k) => (k === dropKeyOf(target) ? null : k)),
       onDrop: (ev: React.DragEvent) => {
         ev.preventDefault();
-        void handleDrop(target);
+        handleDrop(target).catch((dropError) => log.error("history: drop failed", { error: String(dropError) }));
       },
     }),
     [dragItem, dropKey, handleDrop],
@@ -777,7 +796,11 @@ export function HistoryApp() {
                   (newFolderScope === o.id ? (
                     <NewFolderInput
                       depth={2}
-                      onCommit={(name) => void createOrgFolderUI(o.id, name)}
+                      onCommit={(name) =>
+                        createOrgFolderUI(o.id, name).catch((error) =>
+                          log.error("history: org folder create failed", { error: String(error), orgId: o.id }),
+                        )
+                      }
                       onCancel={() => setNewFolderScope(null)}
                     />
                   ) : (
@@ -792,7 +815,7 @@ export function HistoryApp() {
             )}
             <button
               type="button"
-              onClick={() => void openSettingsWindow()}
+              onClick={() => openSettingsWindow().catch((error) => log.error("settings: open failed", { error: String(error) }))}
               className="mt-1 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               <Plus className="size-3.5" />
@@ -845,8 +868,8 @@ export function HistoryApp() {
                 }`
               : `${movePrompt.org.name} ${t("history.move.rootLabel")}`
           }
-          onCopy={() => void resolveMove("copy")}
-          onMove={() => void resolveMove("move")}
+          onCopy={() => resolveMove("copy").catch((error) => log.error("history: copy to org failed", { error: String(error) }))}
+          onMove={() => resolveMove("move").catch((error) => log.error("history: move to org failed", { error: String(error) }))}
           onCancel={() => setMovePrompt(null)}
         />
       )}
@@ -944,16 +967,28 @@ function LibraryContent({
             downloading={downloadingId === entry.id}
             sharing={sharingId === entry.id}
             onOpen={() => {
-              openItem(entry).catch(() => {});
+              openItem(entry).catch((error) =>
+                log.error("history: open failed", { id: entry.id, error: String(error) }),
+              );
             }}
             onDelete={() => {
-              remove(entry).catch(() => {});
+              remove(entry).catch((error) =>
+                log.error("history: delete failed", { id: entry.id, error: String(error) }),
+              );
             }}
             onRename={(title) => {
-              rename(entry.id, title).catch(() => {});
+              rename(entry.id, title).catch((error) =>
+                log.error("history: rename failed", { id: entry.id, error: String(error) }),
+              );
             }}
             onShare={(org) => {
-              share(entry, org).catch(() => {});
+              share(entry, org).catch((error) =>
+                log.error("history: share failed", {
+                  id: entry.id,
+                  orgId: org.id,
+                  error: String(error),
+                }),
+              );
             }}
             onDragStart={() => onDragStart(entry)}
             onDragEnd={onDragEnd}
@@ -1200,7 +1235,7 @@ function NewFolderInput({
 }
 
 /** The "+ 新增資料夾" trigger row. */
-function AddFolderButton({ depth = 0, onClick }: { depth?: number; onClick: () => void }) {
+function AddFolderButton({ depth = 0, onClick }: Readonly<{ depth?: number; onClick: () => void }>) {
   const { t } = useI18n();
   return (
     <button
@@ -1373,10 +1408,86 @@ function HistoryCard({
     setEditing(false);
     if (draft.trim() && draft.trim() !== entry.title) onRename(draft);
   }
+  const body = (
+    <>
+      <span
+        className={`inline-flex w-fit items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+          isLive ? "bg-red-500/15 text-red-500" : "bg-sky-500/15 text-sky-500"
+        }`}
+      >
+        {isLive ? <Mic className="size-2.5" /> : <Upload className="size-2.5" />}
+        {isLive ? t("history.badge.live") : t("history.badge.upload")}
+      </span>
+
+      {editing ? (
+        <div className="flex items-center gap-1">
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(ev) => setDraft(ev.target.value)}
+            onKeyDown={(ev) => {
+              ev.stopPropagation();
+              if (ev.key === "Enter") {
+                ev.preventDefault();
+                commit();
+              } else if (ev.key === "Escape") {
+                ev.preventDefault();
+                setDraft(entry.title);
+                setEditing(false);
+              }
+            }}
+            onBlur={commit}
+            className="min-w-0 flex-1 rounded border bg-background px-1.5 py-1 text-sm font-medium outline-none focus:border-primary"
+          />
+          <button
+            type="button"
+            aria-label={t("history.renameSave")}
+            onMouseDown={(ev) => ev.preventDefault()}
+            onClick={commit}
+            className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:text-foreground"
+          >
+            <Check className="size-3.5" />
+          </button>
+        </div>
+      ) : (
+        <div className="line-clamp-2 text-sm font-medium leading-snug">{entry.title}</div>
+      )}
+      <div className="text-[11px] text-muted-foreground">{formatDate(entry.createdAt, locale)}</div>
+
+      {entry.snippet && <p className="line-clamp-2 text-xs text-muted-foreground/80">{entry.snippet}</p>}
+
+      <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-[10px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1 tabular-nums">
+          <Clock className="size-3" />
+          {formatDuration(entry.durationMs)}
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <Users className="size-3" />
+          {entry.speakerCount}
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <Sparkles className="size-3" />
+          {t("history.findings", { count: entry.findingsCount })}
+        </span>
+        {typeof entry.actionItemsCount === "number" && (
+          <span className="inline-flex items-center gap-1">
+            <ListChecks className="size-3" />
+            {t("history.actions", { count: entry.actionItemsCount })}
+          </span>
+        )}
+        <span className="ml-auto inline-flex items-center gap-2">
+          {!isOrgContext && <SyncIcon sync={entry.sync} signedIn={signedIn} />}
+          {entry.hasAudio && (
+            <span className="inline-flex" title={t("history.hasAudio")}>
+              <Volume2 className="size-3" />
+            </span>
+          )}
+        </span>
+      </div>
+    </>
+  );
   return (
     <div
-      role="button"
-      tabIndex={0}
       draggable={!editing}
       onDragStart={(ev) => {
         // Native DnD needs payload set for a drag to begin; the actual item is held
@@ -1386,17 +1497,7 @@ function HistoryCard({
         onDragStart();
       }}
       onDragEnd={onDragEnd}
-      onClick={() => {
-        if (!editing) onOpen();
-      }}
-      onKeyDown={(ev) => {
-        if (editing) return;
-        if (ev.key === "Enter" || ev.key === " ") {
-          ev.preventDefault();
-          onOpen();
-        }
-      }}
-      className={`group relative flex cursor-pointer flex-col gap-2 rounded-lg border bg-card p-3 text-left transition hover:border-foreground/25 hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+      className={`group relative flex flex-col gap-2 rounded-lg border bg-card p-3 text-left transition hover:border-foreground/25 hover:shadow-sm ${
         isCloudOnly ? "border-dashed" : ""
       }`}
     >
@@ -1433,84 +1534,19 @@ function HistoryCard({
         </div>
       )}
 
-      <div className={isCloudOnly ? "flex flex-col gap-2 opacity-70" : "flex flex-col gap-2"}>
-        <span
-          className={`inline-flex w-fit items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-            isLive ? "bg-red-500/15 text-red-500" : "bg-sky-500/15 text-sky-500"
+      {editing ? (
+        <div className={isCloudOnly ? "flex flex-col gap-2 opacity-70" : "flex flex-col gap-2"}>{body}</div>
+      ) : (
+        <button
+          type="button"
+          onClick={onOpen}
+          className={`flex flex-col gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+            isCloudOnly ? "opacity-70" : ""
           }`}
         >
-          {isLive ? <Mic className="size-2.5" /> : <Upload className="size-2.5" />}
-          {isLive ? t("history.badge.live") : t("history.badge.upload")}
-        </span>
-
-        {editing ? (
-          <div className="flex items-center gap-1">
-            <input
-              ref={inputRef}
-              value={draft}
-              onChange={(ev) => setDraft(ev.target.value)}
-              onKeyDown={(ev) => {
-                ev.stopPropagation();
-                if (ev.key === "Enter") {
-                  ev.preventDefault();
-                  commit();
-                } else if (ev.key === "Escape") {
-                  ev.preventDefault();
-                  setDraft(entry.title);
-                  setEditing(false);
-                }
-              }}
-              onBlur={commit}
-              className="min-w-0 flex-1 rounded border bg-background px-1.5 py-1 text-sm font-medium outline-none focus:border-primary"
-            />
-            <button
-              type="button"
-              aria-label={t("history.renameSave")}
-              onMouseDown={(ev) => ev.preventDefault()}
-              onClick={commit}
-              className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:text-foreground"
-            >
-              <Check className="size-3.5" />
-            </button>
-          </div>
-        ) : (
-          <div className="line-clamp-2 text-sm font-medium leading-snug">{entry.title}</div>
-        )}
-        <div className="text-[11px] text-muted-foreground">{formatDate(entry.createdAt, locale)}</div>
-
-        {entry.snippet && (
-          <p className="line-clamp-2 text-xs text-muted-foreground/80">{entry.snippet}</p>
-        )}
-
-        <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-[10px] text-muted-foreground">
-          <span className="inline-flex items-center gap-1 tabular-nums">
-            <Clock className="size-3" />
-            {formatDuration(entry.durationMs)}
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <Users className="size-3" />
-            {entry.speakerCount}
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <Sparkles className="size-3" />
-            {t("history.findings", { count: entry.findingsCount })}
-          </span>
-          {typeof entry.actionItemsCount === "number" && (
-            <span className="inline-flex items-center gap-1">
-              <ListChecks className="size-3" />
-              {t("history.actions", { count: entry.actionItemsCount })}
-            </span>
-          )}
-          <span className="ml-auto inline-flex items-center gap-2">
-            {!isOrgContext && <SyncIcon sync={entry.sync} signedIn={signedIn} />}
-            {entry.hasAudio && (
-              <span className="inline-flex" title={t("history.hasAudio")}>
-                <Volume2 className="size-3" />
-              </span>
-            )}
-          </span>
-        </div>
-      </div>
+          {body}
+        </button>
+      )}
 
       {downloading && (
         <div className="absolute inset-0 z-20 grid place-items-center rounded-lg bg-background/60 backdrop-blur-sm">

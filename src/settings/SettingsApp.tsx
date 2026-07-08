@@ -10,7 +10,7 @@ import { Check, Copy, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, 
 import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
-import { signInWithGoogle, signOut, CloudError } from "../lib/cloud/client";
+import { signInWithGoogle, signOut, CloudError, syncEnabled as cloudSyncEnabled } from "../lib/cloud/client";
 import { CLOUD_ENABLED } from "../lib/flags";
 import {
   createOrg,
@@ -24,7 +24,6 @@ import {
 import type { CloudInvitation, CloudOrg, CloudOrgMember } from "../lib/cloud/types";
 import { listCloudFolders, listOrgFolders, type CloudFolder } from "../lib/cloud/folders";
 import { listLocalFolders, listenForFoldersUpdated, type Folder as LocalFolder } from "../lib/history/folders";
-import { syncEnabled as cloudSyncEnabled } from "../lib/cloud/client";
 import { isTauri } from "../lib/tauriEvents";
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
@@ -129,7 +128,10 @@ export function SettingsApp() {
       if (!controller.signal.aborted) {
         const error = e instanceof Error ? e.message : String(e);
         toast.error(t("settings.account.signInFailed", { error }), {
-          action: { label: t("toast.retry"), onClick: () => void doSignIn() },
+          action: {
+            label: t("toast.retry"),
+            onClick: () => doSignIn().catch((error) => log.error("settings: sign-in retry failed", { error: String(error) })),
+          },
         });
       }
     } finally {
@@ -143,23 +145,42 @@ export function SettingsApp() {
 
   function patch(p: Partial<Settings>) {
     updateSettings(p);
-    void broadcastSettings({ ...useStore.getState().settings });
+    broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
+      log.warn("settings: broadcast failed", { error: String(error) }),
+    );
   }
 
   // Enumerate mic devices only on the Transcription tab — doing it on every
   // Settings open can trip the macOS microphone permission prompt.
   useEffect(() => {
     if (!isTauri() || cat !== "transcription") return;
-    invoke<string[]>("list_input_devices").then(setDevices).catch(() => {});
+    invoke<string[]>("list_input_devices")
+      .then(setDevices)
+      .catch((error) =>
+        log.warn("settings: input device list failed", { error: String(error) }),
+      );
   }, [cat]);
 
   useEffect(() => {
     if (!isTauri()) return;
-    getVersion().then(setAppVersion).catch(() => {});
-    invoke<string>("get_templates_path").then(setTemplatesPath).catch(() => {});
-    appLogDir().then((d) => join(d, "parley.log")).then(setLogPath).catch(() => {});
+    getVersion()
+      .then(setAppVersion)
+      .catch((error) => log.warn("settings: app version lookup failed", { error: String(error) }));
+    invoke<string>("get_templates_path")
+      .then(setTemplatesPath)
+      .catch((error) =>
+        log.warn("settings: templates path lookup failed", { error: String(error) }),
+      );
+    appLogDir()
+      .then((d) => join(d, "parley.log"))
+      .then(setLogPath)
+      .catch((error) => log.warn("settings: log path lookup failed", { error: String(error) }));
     const refreshMcpInfo = () => {
-      invoke<McpServerInfo>("get_mcp_server_info").then(setMcpInfo).catch(() => {});
+      invoke<McpServerInfo>("get_mcp_server_info")
+        .then(setMcpInfo)
+        .catch((error) =>
+          log.warn("settings: MCP server info lookup failed", { error: String(error) }),
+        );
     };
     refreshMcpInfo();
     const mcpTimer = window.setInterval(() => {
@@ -167,7 +188,7 @@ export function SettingsApp() {
     }, 1000);
     return () => {
       window.clearInterval(mcpTimer);
-      void invoke("stop_mic_test").catch(() => {});
+      invoke("stop_mic_test").catch((error) => log.warn("settings: stop mic test on cleanup failed", { error: String(error) }));
     };
   }, [mcpInfo?.running]);
 
@@ -176,25 +197,34 @@ export function SettingsApp() {
   useEffect(() => {
     if (!isTauri()) return;
     let alive = true;
-    void invoke<boolean>("meeting_active")
+    invoke<boolean>("meeting_active")
       .then((a) => alive && setRecording(a))
-      .catch(() => {});
+      .catch((error) => log.warn("settings: meeting status query failed", { error: String(error) }));
     const un = listen<string>("meeting://status", (e) => {
       if (alive) setRecording(e.payload === "recording");
     });
     return () => {
       alive = false;
-      void un.then((fn) => fn());
+      un.then((fn) => fn()).catch((error) =>
+        log.warn("settings: meeting status listener cleanup failed", { error: String(error) }),
+      );
     };
   }, []);
 
   async function toggleTest() {
     if (recording) return; // the mic belongs to the meeting while recording
     if (testing) {
-      await invoke("stop_mic_test").catch(() => {});
+      await invoke("stop_mic_test").catch((error) =>
+        log.warn("settings: stop mic test failed", { error: String(error) }),
+      );
       setTesting(false);
     } else {
-      await invoke("start_mic_test", { inputDevice: settings.inputDevice }).catch(() => {});
+      await invoke("start_mic_test", { inputDevice: settings.inputDevice }).catch((error) =>
+        log.warn("settings: start mic test failed", {
+          inputDevice: settings.inputDevice,
+          error: String(error),
+        }),
+      );
       setTesting(true);
     }
   }
@@ -242,7 +272,7 @@ export function SettingsApp() {
                     variant="ghost"
                     size="icon-sm"
                     className="shrink-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => void signOut()}
+                    onClick={() => signOut().catch((error) => log.error("settings: sign-out failed", { error: String(error) }))}
                     title={t("settings.account.signOut")}
                     aria-label={t("settings.account.signOut")}
                   >
@@ -256,7 +286,7 @@ export function SettingsApp() {
                       size="sm"
                       className="h-9 w-fit gap-2 text-xs"
                       disabled={signingIn || !isTauri()}
-                      onClick={() => void doSignIn()}
+                      onClick={() => doSignIn().catch((error) => log.error("settings: sign-in failed", { error: String(error) }))}
                     >
                       {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
                       {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
@@ -421,9 +451,9 @@ export function SettingsApp() {
                     }`}
                   >
                     <div className="flex h-9 w-full gap-0.5">
-                      {cols.map((c, i) => (
+                      {cols.map((c) => (
                         <div
-                          key={i}
+                          key={`${mode}-${c}`}
                           className="flex min-w-0 flex-1 items-center justify-center truncate rounded-sm bg-muted-foreground/20 px-1 text-[8px] text-muted-foreground"
                         >
                           {c}
@@ -649,8 +679,17 @@ export function SettingsApp() {
                     const dev = v === "__default__" ? "" : v;
                     patch({ inputDevice: dev });
                     if (testing) {
-                      await invoke("stop_mic_test").catch(() => {});
-                      await invoke("start_mic_test", { inputDevice: dev }).catch(() => {});
+                      await invoke("stop_mic_test").catch((error) =>
+                        log.warn("settings: stop mic test before device switch failed", {
+                          error: String(error),
+                        }),
+                      );
+                      await invoke("start_mic_test", { inputDevice: dev }).catch((error) =>
+                        log.warn("settings: restart mic test after device switch failed", {
+                          inputDevice: dev,
+                          error: String(error),
+                        }),
+                      );
                     }
                   }}
                 >
@@ -1212,7 +1251,10 @@ function TodoTemplateEditor({
       </div>
       <div className="flex flex-col gap-1.5">
         {tpl.items.map((it, i) => (
-          <div key={i} className="flex items-center gap-2">
+          <div
+            key={`${tpl.id}-${it}-${tpl.items.slice(0, i + 1).filter((item) => item === it).length}`}
+            className="flex items-center gap-2"
+          >
             <Input
               value={it}
               onChange={(e) => onChange({ items: tpl.items.map((x, j) => (j === i ? e.target.value : x)) })}
@@ -1314,7 +1356,7 @@ function DiarizeModelField() {
               size="sm"
               className="h-7 gap-1.5 text-[11px]"
               disabled={status === "downloading" || present === null}
-              onClick={() => void download()}
+              onClick={() => download().catch((error) => log.error("settings: update download failed", { error: String(error) }))}
             >
               {status === "downloading" ? (
                 <Loader2 className="size-3.5 animate-spin" />
@@ -1401,7 +1443,9 @@ function OrgPanel() {
 
   // (Re)load whenever we have a session — including when sign-in just completed.
   useEffect(() => {
-    if (cloudAuth) void reload();
+    if (cloudAuth) {
+      reload().catch((error) => log.warn("settings: account data reload failed", { error: String(error) }));
+    }
   }, [cloudAuth, reload]);
 
   async function create() {
@@ -1553,7 +1597,7 @@ function OrgPanel() {
                     size="sm"
                     className="h-7 shrink-0 px-2 text-[11px]"
                     disabled={inviting[org.id] || !(inviteEmails[org.id] ?? "").trim()}
-                    onClick={() => void invite(org.id)}
+                    onClick={() => invite(org.id).catch((error) => log.error("settings: org invite failed", { error: String(error), orgId: org.id }))}
                   >
                     {inviting[org.id] ? (
                       <Spinning label={t("settings.account.org.inviting")} />
@@ -1602,7 +1646,7 @@ function OrgPanel() {
                           deleting[org.id] ||
                           (deleteConfirm[org.id] ?? "").trim() !== org.name.trim()
                         }
-                        onClick={() => void remove(org)}
+                        onClick={() => remove(org).catch((error) => log.error("settings: org delete failed", { error: String(error), orgId: org.id }))}
                       >
                         {deleting[org.id] ? (
                           <Spinning label={t("settings.account.org.deleting")} />
@@ -1646,7 +1690,7 @@ function OrgPanel() {
           size="sm"
           className="h-7 shrink-0 px-2 text-[11px]"
           disabled={creating || !newOrgName.trim()}
-          onClick={() => void create()}
+          onClick={() => create().catch((error) => log.error("settings: org create failed", { error: String(error) }))}
         >
           {creating ? (
             <Spinning label={t("settings.account.org.creating")} />
@@ -1670,7 +1714,7 @@ function OrgPanel() {
                 size="sm"
                 className="h-7 shrink-0 px-2 text-[11px]"
                 disabled={accepting[inv.id]}
-                onClick={() => void accept(inv)}
+                onClick={() => accept(inv).catch((error) => log.error("settings: invitation accept failed", { error: String(error), invitationId: inv.id }))}
               >
                 {accepting[inv.id] ? (
                   <Spinning label={t("settings.account.org.accepting")} />
@@ -1709,7 +1753,7 @@ function DefaultSavePicker({
   // Personal folders: prefer the cloud list when sync is on (cross-device truth).
   // Re-run when the toggle flips so enabling sync in an already-open window refreshes.
   useEffect(() => {
-    void (async () => {
+    async function loadPersonalFolders() {
       if (!syncOn || !cloudSyncEnabled()) {
         setPersonal(listLocalFolders());
         return;
@@ -1720,20 +1764,25 @@ function DefaultSavePicker({
       } catch {
         setPersonal(listLocalFolders());
       }
-    })();
+    }
+    loadPersonalFolders().catch((error) => log.warn("settings: default-save folders load failed", { error: String(error) }));
   }, [syncOn]);
 
   // Reflect personal-folder create/rename/delete done in the History window live.
   useEffect(() => {
     const un = listenForFoldersUpdated(() => setPersonal(listLocalFolders()));
-    return () => void un.then((fn) => fn());
+    return () => {
+      un.then((fn) => fn()).catch((error) =>
+        log.warn("settings: folder listener cleanup failed", { error: String(error) }),
+      );
+    };
   }, []);
 
   // Org folders only matter for an org default, which needs sync on.
   useEffect(() => {
     if (!syncOn) return;
     let alive = true;
-    void (async () => {
+    async function loadOrgFolders() {
       try {
         const mine = await listMyOrgs();
         if (!alive) return;
@@ -1745,7 +1794,8 @@ function DefaultSavePicker({
       } catch {
         /* leave orgs empty */
       }
-    })();
+    }
+    loadOrgFolders().catch((error) => log.warn("settings: default-save org folders load failed", { error: String(error) }));
     return () => {
       alive = false;
     };

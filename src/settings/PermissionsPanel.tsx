@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { RefreshCw } from "lucide-react";
 import { useI18n } from "../i18n";
 import { isTauri } from "../lib/tauriEvents";
+import { log } from "../lib/log";
 import { Button } from "@/components/ui/button";
 
 interface Perms {
@@ -46,7 +47,13 @@ export function PermissionsPanel() {
 
   function applySystemAudio(raw: string) {
     setSystemAudioSupported(raw !== "unsupported");
-    setSystemAudio(raw === "granted" ? "granted" : raw === "denied" ? "denied" : "pending");
+    if (raw === "granted") {
+      setSystemAudio("granted");
+    } else if (raw === "denied") {
+      setSystemAudio("denied");
+    } else {
+      setSystemAudio("pending");
+    }
   }
 
   async function refresh() {
@@ -60,7 +67,7 @@ export function PermissionsPanel() {
     }
   }
   useEffect(() => {
-    refresh().catch(() => {});
+    refresh().catch((error) => log.warn("permissions: refresh failed", { error: String(error) }));
   }, []);
 
   // The native request prompts only show once per app launch. So the first click
@@ -70,10 +77,12 @@ export function PermissionsPanel() {
   const requested = useRef<Set<string>>(new Set());
   async function grant(key: string, pane: string, request: () => Promise<void>) {
     if (requested.current.has(key)) {
-      await invoke("open_privacy_settings", { pane }).catch(() => {});
+      await invoke("open_privacy_settings", { pane }).catch((error) =>
+        log.warn("permissions: open privacy settings failed", { error: String(error), pane }),
+      );
     } else {
       requested.current.add(key);
-      await request().catch(() => {});
+      await request().catch((error) => log.warn("permissions: request failed", { error: String(error), key }));
     }
     await refresh();
   }
@@ -89,7 +98,9 @@ export function PermissionsPanel() {
           size="sm"
           className="h-7 gap-1.5 px-2 text-[11px]"
           onClick={() => {
-            refresh().catch(() => {});
+            refresh().catch((error) =>
+              log.warn("permissions: refresh failed", { error: String(error) }),
+            );
           }}
         >
           <RefreshCw className="size-3" />

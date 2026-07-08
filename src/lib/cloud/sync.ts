@@ -52,7 +52,14 @@ const pushChains = new Map<string, Promise<unknown>>();
 /** Push ONE local entry to the cloud (serialized per id). */
 export async function pushLocalEntry(id: string): Promise<void> {
   const prev = pushChains.get(id) ?? Promise.resolve();
-  const next = prev.catch(() => {}).then(() => pushLocalEntryNow(id));
+  const next = prev
+    .catch((error) =>
+      log.warn("cloud sync: previous push failed before queued retry", {
+        id,
+        error: String(error),
+      }),
+    )
+    .then(() => pushLocalEntryNow(id));
   pushChains.set(id, next);
   try {
     await next;

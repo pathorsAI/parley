@@ -20,8 +20,9 @@ function toSlug(name: string): string {
   const base = name
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .split(/[^a-z0-9]+/u)
+    .filter(Boolean)
+    .join("-")
     .slice(0, 32);
   // A short random suffix keeps slugs unique without a round-trip to check.
   const suffix = crypto.randomUUID().slice(0, 6);

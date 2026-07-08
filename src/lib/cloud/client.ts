@@ -164,9 +164,11 @@ export class CloudError extends Error {
 export async function cloudFetch(path: string, init?: RequestInit): Promise<Response> {
   const t = cloudToken();
   if (!t) throw new Error("not signed in");
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${t}`);
   const res = await fetch(`${CLOUD_URL}${path}`, {
     ...init,
-    headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${t}` },
+    headers,
   });
   if (res.status === 401) {
     useStore.getState().setCloudAuth(null);

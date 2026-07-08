@@ -6,6 +6,7 @@ import { useStore } from "../lib/store";
 import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
 import { CLOUD_ENABLED } from "../lib/flags";
+import { log } from "../lib/log";
 import { shortcutCaps } from "../settings/VoiceTypingSettings";
 import { PROVIDERS, PROVIDER_BY_ID } from "../lib/ai/providers";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
@@ -94,8 +95,10 @@ export function Onboarding() {
   // hence the 2 s poll; it stops when the user leaves the step.)
   useEffect(() => {
     if (STEPS[step] !== "perms") return;
-    void recheck();
-    const recheckNow = () => void recheck();
+    recheck().catch((error) => log.warn("onboarding: permission recheck failed", { error: String(error) }));
+    const recheckNow = () => {
+      recheck().catch((error) => log.warn("onboarding: permission recheck failed", { error: String(error) }));
+    };
     window.addEventListener("focus", recheckNow);
     document.addEventListener("visibilitychange", recheckNow);
     const id = window.setInterval(recheckNow, 2000);
@@ -274,11 +277,15 @@ export function Onboarding() {
                   // to System Settings when it was explicitly denied (the OS
                   // won't re-prompt in that case).
                   if (perms?.microphone === "denied") {
-                    await invoke("open_privacy_settings", { pane: "microphone" }).catch(() => {});
+                    await invoke("open_privacy_settings", { pane: "microphone" }).catch((error) =>
+                      log.warn("permissions: open microphone settings failed", { error: String(error) }),
+                    );
                   } else {
-                    await invoke("request_microphone").catch(() => {});
+                    await invoke("request_microphone").catch((error) =>
+                      log.warn("permissions: microphone request failed", { error: String(error) }),
+                    );
                   }
-                  void recheck();
+                  await recheck();
                 }}
               />
               {perms?.systemAudio !== "unsupported" && (
@@ -292,14 +299,23 @@ export function Onboarding() {
                     // macOS show the "record system audio" consent prompt.
                     const s = await invoke<string>("probe_system_audio").catch(() => null);
                     if (s === "denied") {
-                      await invoke("open_privacy_settings", { pane: "system-audio" }).catch(() => {});
+                      await invoke("open_privacy_settings", { pane: "system-audio" }).catch((error) =>
+                        log.warn("permissions: open system-audio settings failed", { error: String(error) }),
+                      );
                     }
-                    void recheck();
+                    await recheck();
                   }}
                 />
               )}
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => void recheck()}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-[11px]"
+                  onClick={() =>
+                    recheck().catch((error) => log.warn("onboarding: permission recheck failed", { error: String(error) }))
+                  }
+                >
                   {t("onboarding.perms.recheck")}
                 </Button>
                 <span className="text-[11px] text-muted-foreground">{t("onboarding.perms.hint")}</span>
@@ -353,10 +369,16 @@ export function Onboarding() {
                   onClick={() => {
                     const enabled = !settings.voiceTypingEnabled;
                     patch({ voiceTypingEnabled: enabled });
-                    broadcastSettings({ ...useStore.getState().settings }).catch(() => {});
+                    broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
+                      log.warn("settings: broadcast failed", { error: String(error) }),
+                    );
                     // Auto-paste needs Accessibility — enabling is the moment to
                     // ask (same as the Settings toggle).
-                    if (enabled) void invoke("accessibility_status", { prompt: true }).catch(() => {});
+                    if (enabled) {
+                      invoke("accessibility_status", { prompt: true }).catch((error) =>
+                        log.warn("permissions: accessibility prompt failed", { error: String(error) }),
+                      );
+                    }
                   }}
                 >
                   {settings.voiceTypingEnabled
@@ -461,7 +483,7 @@ function LoginStep() {
             size="sm"
             className="h-9 w-fit gap-2 text-xs"
             disabled={signingIn || !isTauri()}
-            onClick={() => void doSignIn()}
+            onClick={() => doSignIn().catch((error) => log.error("onboarding: sign-in failed", { error: String(error) }))}
           >
             {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
             {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
@@ -483,12 +505,12 @@ function StepKey({
   body,
   label,
   children,
-}: {
+}: Readonly<{
   title: string;
   body: string;
   label: string;
   children: React.ReactNode;
-}) {
+}>) {
   return (
     <div className="flex flex-col gap-3">
       <h2 className="text-base font-semibold tracking-tight">{title}</h2>
@@ -505,13 +527,13 @@ function PermRow({
   ok,
   actionLabel,
   onAction,
-}: {
+}: Readonly<{
   icon: React.ReactNode;
   label: string;
   ok: boolean;
   actionLabel: string;
   onAction: () => void;
-}) {
+}>) {
   return (
     <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2.5">
       <span className="text-muted-foreground">{icon}</span>
@@ -593,7 +615,7 @@ function DiarizeModelStep() {
             size="sm"
             className="h-8 gap-1.5 self-start"
             disabled={status === "downloading"}
-            onClick={() => void download()}
+            onClick={() => download().catch((error) => log.error("onboarding: diarize download failed", { error: String(error) }))}
           >
             {status === "downloading" ? (
               <Loader2 className="size-3.5 animate-spin" />

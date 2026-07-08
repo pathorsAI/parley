@@ -28,7 +28,7 @@ export function describeAiError(err: unknown): string {
     const body = e.responseBody ?? e.text ?? e.data;
     if (typeof body === "string" && body.trim()) parts.push(truncate(body.trim()));
     // Type-validation errors carry the offending value.
-    if (e.value !== undefined && typeof e.value !== "object") parts.push(`value: ${truncate(String(e.value))}`);
+    if (e.value !== undefined) parts.push(`value: ${truncate(formatUnknown(e.value))}`);
 
     cur = e.cause;
     depth++;
@@ -42,6 +42,18 @@ export function describeAiError(err: unknown): string {
 
 function truncate(s: string, max = 600): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+function formatUnknown(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
 }
 
 /**

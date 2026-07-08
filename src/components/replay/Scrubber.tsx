@@ -28,55 +28,33 @@ export function Scrubber({
   onScrubStart,
   onScrubEnd,
   ariaLabel,
-}: ScrubberProps) {
-  const trackRef = useRef<HTMLDivElement | null>(null);
+}: Readonly<ScrubberProps>) {
   const draggingRef = useRef(false);
+  const draftRef = useRef(valueMs);
 
   const pct = durationMs > 0 ? Math.max(0, Math.min(1, valueMs / durationMs)) : 0;
 
-  const msAtClientX = useCallback(
-    (clientX: number) => {
-      const el = trackRef.current;
-      if (!el || durationMs <= 0) return 0;
-      const rect = el.getBoundingClientRect();
-      const ratio = (clientX - rect.left) / rect.width;
-      return Math.max(0, Math.min(1, ratio)) * durationMs;
-    },
-    [durationMs]
-  );
-
   const handleDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      (e.target as Element).setPointerCapture?.(e.pointerId);
+    () => {
       draggingRef.current = true;
+      draftRef.current = valueMs;
       onScrubStart();
-      onScrub(msAtClientX(e.clientX));
     },
-    [msAtClientX, onScrub, onScrubStart]
-  );
-
-  const handleMove = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!draggingRef.current) return;
-      onScrub(msAtClientX(e.clientX));
-    },
-    [msAtClientX, onScrub]
+    [onScrubStart, valueMs]
   );
 
   const handleUp = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
+    () => {
       if (!draggingRef.current) return;
       draggingRef.current = false;
-      (e.target as Element).releasePointerCapture?.(e.pointerId);
-      onCommit(msAtClientX(e.clientX));
+      onCommit(draftRef.current);
       onScrubEnd();
     },
-    [msAtClientX, onCommit, onScrubEnd]
+    [onCommit, onScrubEnd]
   );
 
   const handleKey = useCallback(
-    (e: React.KeyboardEvent<HTMLDivElement>) => {
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
       const step = e.shiftKey ? 10_000 : 5_000;
       if (e.key === "ArrowLeft") {
         e.preventDefault();
@@ -97,18 +75,9 @@ export function Scrubber({
 
   return (
     <div
-      ref={trackRef}
-      role="slider"
-      tabIndex={0}
-      aria-label={ariaLabel}
-      aria-valuemin={0}
-      aria-valuemax={Math.round(durationMs)}
-      aria-valuenow={Math.round(valueMs)}
       onPointerDown={handleDown}
-      onPointerMove={handleMove}
       onPointerUp={handleUp}
       onPointerCancel={handleUp}
-      onKeyDown={handleKey}
       className={cn(
         "group relative flex h-5 w-full cursor-pointer touch-none items-center outline-none",
         "focus-visible:[&_[data-track]]:ring-1 focus-visible:[&_[data-track]]:ring-ring"
@@ -126,6 +95,20 @@ export function Scrubber({
       <div
         className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-background bg-primary shadow-sm transition-transform group-active:scale-110"
         style={{ left: `${pct * 100}%` }}
+      />
+      <input
+        type="range"
+        min={0}
+        max={Math.max(0, Math.round(durationMs))}
+        value={Math.round(valueMs)}
+        aria-label={ariaLabel}
+        onKeyDown={handleKey}
+        onChange={(e) => {
+          const next = Number(e.target.value);
+          draftRef.current = next;
+          onScrub(next);
+        }}
+        className="absolute inset-0 cursor-pointer opacity-0"
       />
     </div>
   );

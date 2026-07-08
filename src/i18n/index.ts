@@ -1,8 +1,8 @@
 import { useStore } from "../lib/store";
-import { LANGUAGE_OPTIONS, translate, type TranslationKey } from "./messages";
+import { translate, type TranslationKey } from "./messages";
 
-export { LANGUAGE_OPTIONS, translate };
-export type { TranslationKey };
+export { LANGUAGE_OPTIONS, translate } from "./messages";
+export type { TranslationKey } from "./messages";
 
 export function useI18n() {
   const language = useStore((s) => s.settings.language);

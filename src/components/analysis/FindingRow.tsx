@@ -37,20 +37,15 @@ export function FindingRow({
   const evalNames = useEvalNames();
   const evalLabels =
     event.source === "eval"
-      ? (event.evalIds ?? []).map((id) => evalNames.get(id)).filter((n): n is string => !!n)
+      ? (event.evalIds ?? [])
+          .map((id) => ({ id, name: evalNames.get(id) }))
+          .filter((label): label is { id: string; name: string } => !!label.name)
       : [];
   return (
     <li className={cn("rounded-lg border", selected ? "border-primary/50 bg-muted/30" : "border-border")}>
-      <div
-        role="button"
-        tabIndex={0}
+      <button
+        type="button"
         onClick={() => onSelect(event)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onSelect(event);
-          }
-        }}
         className="flex w-full cursor-pointer items-start gap-2 rounded-lg px-2.5 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         <span
@@ -72,9 +67,9 @@ export function FindingRow({
             {event.source === "extra" && (
               <span className="rounded bg-muted px-1 text-[9px] text-muted-foreground">{t("timeline.extra")}</span>
             )}
-            {evalLabels.map((name, i) => (
+            {evalLabels.map(({ id, name }) => (
               <span
-                key={i}
+                key={id}
                 className="truncate rounded bg-muted px-1 text-[9px] text-muted-foreground"
                 title={`${t("timeline.evalLabel")}: ${name}`}
               >
@@ -91,20 +86,16 @@ export function FindingRow({
               {t("timeline.resolvedHow")}: {event.resolution}
             </span>
           )}
-          <button
-            type="button"
-            onClick={(e) => {
-              // Don't let the open also fire the row's select/seek.
-              e.stopPropagation();
-              onOpenSolution(event);
-            }}
-            className="mt-1.5 inline-flex items-center gap-1 rounded text-[11px] font-medium text-primary hover:underline"
-          >
-            <ChevronRight className="size-3" />
-            {t("solution.show")}
-          </button>
         </span>
-      </div>
+      </button>
+      <button
+        type="button"
+        onClick={() => onOpenSolution(event)}
+        className="mb-2 ml-8 inline-flex items-center gap-1 rounded text-[11px] font-medium text-primary hover:underline"
+      >
+        <ChevronRight className="size-3" />
+        {t("solution.show")}
+      </button>
     </li>
   );
 }

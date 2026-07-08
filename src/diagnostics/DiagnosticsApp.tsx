@@ -23,6 +23,8 @@ const LEVEL_CLASS: Record<Level, string> = {
   info: "text-foreground/80",
   debug: "text-muted-foreground",
 };
+const BRACKETED_LEVEL_RE = /\[(ERROR|WARN|INFO|DEBUG|TRACE)\]/i;
+const BARE_LEVEL_RE = /\b(ERROR|WARN|INFO|DEBUG|TRACE)\b/i;
 
 /** Read the last ~200 KB of the log so the viewer stays snappy on big files. */
 const TAIL_BYTES = 200_000;
@@ -39,7 +41,7 @@ interface LogLine {
  * Pull it out for colouring + filtering; default to "info" when absent.
  */
 function parseLevel(line: string): Level {
-  const m = line.match(/\[(ERROR|WARN|INFO|DEBUG|TRACE)\]/i) ?? line.match(/\b(ERROR|WARN|INFO|DEBUG|TRACE)\b/i);
+  const m = BRACKETED_LEVEL_RE.exec(line) ?? BARE_LEVEL_RE.exec(line);
   switch (m?.[1]?.toUpperCase()) {
     case "ERROR":
       return "error";
@@ -72,7 +74,11 @@ export function DiagnosticsApp() {
   // language changed in Settings apply here live too (mirrors App.tsx).
   useEffect(() => {
     const un = listenForSettings();
-    return () => void un.then((fn) => fn());
+    return () => {
+      un.then((fn) => fn()).catch((error) =>
+        log.warn("diagnostics: settings listener cleanup failed", { error: String(error) }),
+      );
+    };
   }, []);
 
   // Resolve the on-disk log path once (for the reveal affordance).
@@ -81,7 +87,7 @@ export function DiagnosticsApp() {
     appLogDir()
       .then((d) => join(d, "parley.log"))
       .then(setLogPath)
-      .catch(() => {});
+      .catch((error) => log.warn("diagnostics: resolve log path failed", { error: String(error) }));
   }, []);
 
   // Poll the log tail. Re-reading the whole tail keeps it dead simple and is
@@ -197,8 +203,8 @@ export function DiagnosticsApp() {
         {visible.length === 0 ? (
           <div className="flex h-full items-center justify-center text-muted-foreground">{t("logs.empty")}</div>
         ) : (
-          visible.map((l, i) => (
-            <div key={i} className={`whitespace-pre-wrap break-words ${LEVEL_CLASS[l.level]}`}>
+          visible.map((l) => (
+            <div key={`${l.level}-${l.raw}`} className={`whitespace-pre-wrap break-words ${LEVEL_CLASS[l.level]}`}>
               {l.raw}
             </div>
           ))

@@ -4,6 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "../tauriEvents";
+import { log } from "../log";
 
 export interface VoiceEntry {
   id: string;
@@ -16,7 +17,9 @@ export interface VoiceEntry {
 export async function appendVoiceEntry(text: string): Promise<void> {
   if (!isTauri() || !text.trim()) return;
   const entry: VoiceEntry = { id: crypto.randomUUID(), text, ts: Date.now() };
-  await invoke("append_voice_history", { line: JSON.stringify(entry) }).catch(() => {});
+  await invoke("append_voice_history", { line: JSON.stringify(entry) }).catch((error) =>
+    log.warn("voice typing history: append failed", { id: entry.id, error: String(error) }),
+  );
 }
 
 /** All entries, newest first. */
@@ -52,7 +55,9 @@ export async function deleteVoiceEntry(id: string): Promise<void> {
 /** Remove everything. */
 export async function clearVoiceEntries(): Promise<void> {
   if (!isTauri()) return;
-  await invoke("write_voice_history", { content: "" }).catch(() => {});
+  await invoke("write_voice_history", { content: "" }).catch((error) =>
+    log.warn("voice typing history: clear failed", { error: String(error) }),
+  );
 }
 
 /** Persist chronological (newest last) so future appends stay in order. */
@@ -61,5 +66,10 @@ async function writeAll(entries: VoiceEntry[]): Promise<void> {
     .sort((a, b) => a.ts - b.ts)
     .map((e) => JSON.stringify(e))
     .join("\n");
-  await invoke("write_voice_history", { content: content ? `${content}\n` : "" }).catch(() => {});
+  await invoke("write_voice_history", { content: content ? `${content}\n` : "" }).catch((error) =>
+    log.warn("voice typing history: write failed", {
+      count: entries.length,
+      error: String(error),
+    }),
+  );
 }

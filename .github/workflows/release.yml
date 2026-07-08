@@ -68,12 +68,16 @@ jobs:
       - name: Prepare release metadata
         id: release
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_INPUT: ${{ inputs.tag }}
+          RELEASE_NOTES_INPUT: ${{ inputs.release_notes }}
         run: |
           set -euo pipefail
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            tag="${{ inputs.tag }}"
-            fallback_notes="${{ inputs.release_notes }}"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${TAG_INPUT}"
+            fallback_notes="${RELEASE_NOTES_INPUT}"
           else
             tag="${GITHUB_REF_NAME}"
             fallback_notes=""

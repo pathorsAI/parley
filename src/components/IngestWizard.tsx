@@ -84,7 +84,13 @@ export function IngestWizard() {
     let unlisten: (() => void) | undefined;
     listen<DiarizeProgress>("diarize://progress", (e) => {
       if (alive) setDz(e.payload);
-    }).then((u) => (alive ? (unlisten = u) : u()));
+    }).then((u) => {
+      if (alive) {
+        unlisten = u;
+      } else {
+        u();
+      }
+    });
     return () => {
       alive = false;
       unlisten?.();
@@ -204,7 +210,7 @@ export function IngestWizard() {
     if (replay && hasSpoken && !loadedHistoryId && analysisStatus !== "running" && analysisStatus !== "done") {
       // Fire-and-forget: saveUploadToHistory marks the entry loaded before its slow
       // Opus compress, so a later manual re-analysis overwrites it in place.
-      void saveUploadToHistory(replay).catch((e) =>
+      saveUploadToHistory(replay).catch((e) =>
         console.error("[ingest] transcript-only save failed", e),
       );
     }
@@ -321,7 +327,9 @@ export function IngestWizard() {
                 onPause={player.onPause}
                 onEnded={player.onEnded}
                 className="hidden"
-              />
+              >
+                <track kind="captions" srcLang="en" src="data:text/vtt,WEBVTT%0A" default />
+              </audio>
               {/* Transport + scrubber: listen to find the cut points. */}
               <div className="flex items-center gap-2">
                 <Button
@@ -569,12 +577,12 @@ function Stage({
   label,
   sub,
   progress,
-}: {
+}: Readonly<{
   icon: ReactNode;
   label: string;
   sub?: string;
   progress?: number | null;
-}) {
+}>) {
   return (
     <div className="flex flex-col items-center gap-2 py-6 text-center">
       {icon}
@@ -595,7 +603,7 @@ function Stage({
 }
 
 /** Tiny step progress dots (count → transcribe → diarize → review → analyze). */
-function StepDots({ step }: { step: string }) {
+function StepDots({ step }: Readonly<{ step: string }>) {
   const order = ["count", "transcribing", "trim", "diarizing", "review", "template", "analyzing"];
   const idx = order.indexOf(step);
   return (

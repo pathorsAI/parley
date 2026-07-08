@@ -13,7 +13,7 @@ DEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/onnxruntime"
 DEST="$DEST_DIR/libonnxruntime.dylib"
 
 mkdir -p "$DEST_DIR"
-if [ -f "$DEST" ] && lipo -archs "$DEST" 2>/dev/null | grep -q "x86_64" && lipo -archs "$DEST" 2>/dev/null | grep -q "arm64"; then
+if [[ -f "$DEST" ]] && lipo -archs "$DEST" 2>/dev/null | grep -q "x86_64" && lipo -archs "$DEST" 2>/dev/null | grep -q "arm64"; then
   echo "universal2 onnxruntime dylib already present: $DEST"
   exit 0
 fi

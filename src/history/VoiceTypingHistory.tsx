@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Copy, Mic, Search, Trash2 } from "lucide-react";
 import { useI18n } from "../i18n";
+import { log } from "../lib/log";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -18,7 +19,11 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
   const [query, setQuery] = useState("");
 
   const refresh = useCallback(() => {
-    listVoiceEntries().then(setEntries).catch(() => {});
+    listVoiceEntries()
+      .then(setEntries)
+      .catch((error) =>
+        log.warn("voice typing history: list failed", { error: String(error) }),
+      );
   }, []);
   useEffect(refresh, [refresh]);
 
@@ -86,7 +91,12 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
                 aria-label={t("history.voiceTyping.copy")}
                 title={t("history.voiceTyping.copy")}
                 onClick={() => {
-                  copy(e.text).catch(() => {});
+                  copy(e.text).catch((error) =>
+                    log.warn("voice typing history: copy failed", {
+                      id: e.id,
+                      error: String(error),
+                    }),
+                  );
                 }}
               >
                 <Copy className="size-3.5" />
@@ -98,7 +108,12 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
                 aria-label={t("history.voiceTyping.delete")}
                 title={t("history.voiceTyping.delete")}
                 onClick={() => {
-                  remove(e.id).catch(() => {});
+                  remove(e.id).catch((error) =>
+                    log.warn("voice typing history: delete failed", {
+                      id: e.id,
+                      error: String(error),
+                    }),
+                  );
                 }}
               >
                 <Trash2 className="size-3.5" />
@@ -128,7 +143,9 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
             variant="ghost"
             className="ml-auto h-8 gap-1.5 px-2 text-[11px] text-muted-foreground"
             onClick={() => {
-              clearAll().catch(() => {});
+              clearAll().catch((error) =>
+                log.warn("voice typing history: clear failed", { error: String(error) }),
+              );
             }}
           >
             <Trash2 className="size-3.5" />

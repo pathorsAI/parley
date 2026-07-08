@@ -5,7 +5,10 @@ import { useProsody } from "../../lib/analysis/useDelivery";
 import { syllablesPerMin } from "../../lib/analysis/delivery";
 import { useI18n } from "../../i18n";
 import type { TranslationKey } from "../../i18n";
-import type { ToneVerdict } from "../../lib/types";
+import type { DeliveryAssessment, ToneVerdict } from "../../lib/types";
+
+type TFn = ReturnType<typeof useI18n>["t"];
+type DeliveryStatus = ReturnType<typeof useStore.getState>["deliveryStatus"];
 
 /** Accent color per tone verdict — neutral/firm are fine, sharp+ warn. */
 function toneClass(tone: ToneVerdict): string {
@@ -47,7 +50,7 @@ function paceBand(hz: number): { key: TranslationKey; watch: boolean } {
  *  value columns size to their longest content (no more hard-coded label width —
  *  "Intonation" overflowed it and ran into the bar), and subgrid keeps the
  *  columns aligned across rows. */
-function MeterGroup({ children }: { children: ReactNode }) {
+function MeterGroup({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1.5">
       {children}
@@ -65,14 +68,19 @@ function MeterRow({
   watch,
   muted,
   value,
-}: {
+}: Readonly<{
   label: string;
   pct: number;
   watch: boolean;
   muted: boolean;
   value: string;
-}) {
-  const bar = muted ? "bg-muted-foreground/30" : watch ? "bg-amber-400" : "bg-emerald-500";
+}>) {
+  let bar = "bg-emerald-500";
+  if (muted) {
+    bar = "bg-muted-foreground/30";
+  } else if (watch) {
+    bar = "bg-amber-400";
+  }
   return (
     <div className="col-span-3 grid grid-cols-subgrid items-center">
       <span className="whitespace-nowrap text-muted-foreground">{label}</span>
@@ -93,6 +101,100 @@ function MeterRow({
   );
 }
 
+function livePaceValue(t: TFn, hasProsody: boolean, paceHz: number, band: ReturnType<typeof paceBand>): string {
+  if (!hasProsody || paceHz <= 1) return "—";
+  return `${syllablesPerMin(paceHz)} ${t("delivery.unit.sylPerMin")} · ${t(band.key)}`;
+}
+
+function intonationValue(t: TFn, hasProsody: boolean, sd: number): string {
+  if (!hasProsody || sd <= 0) return "—";
+  const key: TranslationKey = sd < 1.2 ? "delivery.intonation.flat" : "delivery.intonation.lively";
+  return `±${sd.toFixed(1)} ${t("delivery.unit.semitones")} · ${t(key)}`;
+}
+
+function LiveFillerCount({
+  count,
+  t,
+}: Readonly<{
+  count: number;
+  t: TFn;
+}>) {
+  const className = count >= 5 ? "font-medium text-amber-400" : "tabular-nums text-foreground/80";
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="text-muted-foreground">{t("delivery.card.fillerSounds")}</span>
+      <span className={className}>
+        {count} {t("delivery.unit.times")}
+      </span>
+    </div>
+  );
+}
+
+function DeliveryReadout({
+  mode,
+  status,
+  running,
+  assessment,
+  t,
+}: Readonly<{
+  mode: "live" | "replay";
+  status: DeliveryStatus;
+  running: boolean;
+  assessment: DeliveryAssessment | null;
+  t: TFn;
+}>) {
+  if (running) {
+    return (
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <Loader2 className="size-3 animate-spin" />
+        {t("delivery.card.analyzing")}
+      </div>
+    );
+  }
+
+  if (assessment) {
+    const frequentFillers = assessment.fillers.level === "frequent";
+    const fillerKey: TranslationKey = frequentFillers ? "delivery.filler.frequent" : "delivery.filler.ok";
+    return (
+      <>
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-muted-foreground">{t("delivery.card.tone")}</span>
+          <span className={`font-medium ${toneClass(assessment.tone)}`}>{t(TONE_KEY[assessment.tone])}</span>
+        </div>
+        {assessment.toneEvidence && (
+          <p className="-mt-1 truncate text-[10px] italic text-muted-foreground">“{assessment.toneEvidence}”</p>
+        )}
+        <p className="-mt-0.5 text-[10px] text-muted-foreground/70">{t("delivery.card.tone.advisory")}</p>
+
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-muted-foreground">{t("delivery.card.fillers")}</span>
+          <span className={frequentFillers ? "font-medium text-amber-400" : "text-muted-foreground"}>
+            {t(fillerKey)}
+            {frequentFillers && assessment.fillers.examples.length > 0 && (
+              <span className="ml-1 font-normal opacity-80">
+                ({assessment.fillers.examples.slice(0, 3).join("、")})
+              </span>
+            )}
+          </span>
+        </div>
+
+        {assessment.summary && <p className="mt-0.5 text-[11px] leading-snug text-foreground/80">{assessment.summary}</p>}
+      </>
+    );
+  }
+
+  if (mode === "replay" && status === "error") {
+    return <p className="text-muted-foreground">{t("delivery.card.error")}</p>;
+  }
+  if (mode === "replay" && status === "done") {
+    return <p className="text-muted-foreground">{t("delivery.card.none")}</p>;
+  }
+  if (mode === "live") {
+    return <p className="text-muted-foreground">{t("delivery.card.waiting")}</p>;
+  }
+  return null;
+}
+
 /**
  * Persistent "Delivery" card — the always-visible counterpart to the transient
  * nudges, rendered at the top of the findings column in BOTH live and replay.
@@ -111,7 +213,7 @@ function MeterRow({
  *
  * Gated so it stays out of the way when delivery coaching isn't in play.
  */
-export function DeliveryPanel({ mode }: { mode: "live" | "replay" }) {
+export function DeliveryPanel({ mode }: Readonly<{ mode: "live" | "replay" }>) {
   const { t } = useI18n();
   const toneOn = useStore((s) => s.settings.delivery.tone);
   const paceOn = useStore((s) => s.settings.delivery.pace);
@@ -125,18 +227,16 @@ export function DeliveryPanel({ mode }: { mode: "live" | "replay" }) {
 
   const hasMeasured = mode === "replay" && !!measuredRate;
   const showLive = toneOn || paceOn || pitchOn || pausesOn;
-  const show =
-    mode === "replay" ? status !== "idle" || !!assessment || hasMeasured : showLive;
+  const show = mode === "replay" ? status !== "idle" || !!assessment || hasMeasured : showLive;
   if (!show) return null;
 
   const running = status === "running" && !assessment;
-  const frequentFillers = assessment?.fillers.level === "frequent";
-
   // Live meter inputs (null prosody → muted "—" until the first sample).
   const paceHz = prosody?.speechRateHz ?? 0;
   const liveBand = paceBand(paceHz);
   const sd = prosody?.pitchVarSemitones ?? 0;
   const mBand = measuredRate ? paceBand(measuredRate) : null;
+  const hasProsody = !!prosody;
 
   // The LLM tone/filler block shows in replay always; live only when opted in.
   const showLlm = mode === "replay" || toneOn;
@@ -160,11 +260,7 @@ export function DeliveryPanel({ mode }: { mode: "live" | "replay" }) {
                 pct={Math.min(100, Math.round((paceHz / 6) * 100))}
                 watch={liveBand.watch}
                 muted={!prosody || paceHz <= 1}
-                value={
-                  prosody && paceHz > 1
-                    ? `${syllablesPerMin(paceHz)} ${t("delivery.unit.sylPerMin")} · ${t(liveBand.key)}`
-                    : "—"
-                }
+                value={livePaceValue(t, hasProsody, paceHz, liveBand)}
               />
             )}
             {pitchOn && (
@@ -173,31 +269,14 @@ export function DeliveryPanel({ mode }: { mode: "live" | "replay" }) {
                 pct={Math.min(100, Math.round((sd / 3) * 100))}
                 watch={sd > 0 && sd < 1.2}
                 muted={!prosody || sd <= 0}
-                value={
-                  prosody && sd > 0
-                    ? `±${sd.toFixed(1)} ${t("delivery.unit.semitones")} · ${t(
-                        sd < 1.2 ? "delivery.intonation.flat" : "delivery.intonation.lively"
-                      )}`
-                    : "—"
-                }
+                value={intonationValue(t, hasProsody, sd)}
               />
             )}
           </MeterGroup>
         )}
         {/* Live filler-sound ("um/uh/嗯/呃") tally — counted from your own
             transcript against a global, cross-language filler map, in real time. */}
-        {mode === "live" && pausesOn && (
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="text-muted-foreground">{t("delivery.card.fillerSounds")}</span>
-            <span
-              className={
-                filledPauseCount >= 5 ? "font-medium text-amber-400" : "tabular-nums text-foreground/80"
-              }
-            >
-              {filledPauseCount} {t("delivery.unit.times")}
-            </span>
-          </div>
-        )}
+        {mode === "live" && pausesOn && <LiveFillerCount count={filledPauseCount} t={t} />}
 
         {/* Replay: the measured (not guessed) pace. */}
         {hasMeasured && mBand && (
@@ -213,56 +292,9 @@ export function DeliveryPanel({ mode }: { mode: "live" | "replay" }) {
         )}
 
         {/* LLM read: tone (+ evidence) and over-frequent fillers. */}
-        {showLlm &&
-          (running ? (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="size-3 animate-spin" />
-              {t("delivery.card.analyzing")}
-            </div>
-          ) : assessment ? (
-            <>
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-muted-foreground">{t("delivery.card.tone")}</span>
-                <span className={`font-medium ${toneClass(assessment.tone)}`}>
-                  {t(TONE_KEY[assessment.tone])}
-                </span>
-              </div>
-              {assessment.toneEvidence && (
-                <p className="-mt-1 truncate text-[10px] italic text-muted-foreground">
-                  “{assessment.toneEvidence}”
-                </p>
-              )}
-              <p className="-mt-0.5 text-[10px] text-muted-foreground/70">
-                {t("delivery.card.tone.advisory")}
-              </p>
-
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-muted-foreground">{t("delivery.card.fillers")}</span>
-                <span
-                  className={frequentFillers ? "font-medium text-amber-400" : "text-muted-foreground"}
-                >
-                  {t(frequentFillers ? "delivery.filler.frequent" : "delivery.filler.ok")}
-                  {frequentFillers && assessment.fillers.examples.length > 0 && (
-                    <span className="ml-1 font-normal opacity-80">
-                      ({assessment.fillers.examples.slice(0, 3).join("、")})
-                    </span>
-                  )}
-                </span>
-              </div>
-
-              {assessment.summary && (
-                <p className="mt-0.5 text-[11px] leading-snug text-foreground/80">
-                  {assessment.summary}
-                </p>
-              )}
-            </>
-          ) : mode === "replay" && status === "error" ? (
-            <p className="text-muted-foreground">{t("delivery.card.error")}</p>
-          ) : mode === "replay" && status === "done" ? (
-            <p className="text-muted-foreground">{t("delivery.card.none")}</p>
-          ) : mode === "live" ? (
-            <p className="text-muted-foreground">{t("delivery.card.waiting")}</p>
-          ) : null)}
+        {showLlm && (
+          <DeliveryReadout mode={mode} status={status} running={running} assessment={assessment} t={t} />
+        )}
       </div>
     </div>
   );

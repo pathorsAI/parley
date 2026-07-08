@@ -7,6 +7,7 @@ import { generatePostMeetingReport } from "../../lib/ai/report";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { PROVIDER_BY_ID } from "../../lib/ai/providers";
 import { useI18n } from "../../i18n";
+import { log } from "../../lib/log";
 import { FindingRow } from "./FindingRow";
 import { openSolution, selectAndSeek } from "./useAnalysis";
 import { ReportContent } from "../sidebar/ReportContent";
@@ -32,10 +33,10 @@ import {
 export function FindingsPanel({
   mode,
   onSeek,
-}: {
+}: Readonly<{
   mode: "live" | "replay";
   onSeek: (ms: number) => void;
-}) {
+}>) {
   const { t } = useI18n();
   const findings = useStore((s) => s.findings);
   const selectedId = useStore((s) => s.selectedFindingId);
@@ -126,7 +127,7 @@ export function FindingsPanel({
             size="sm"
             className="h-7 px-2.5 text-[11px]"
             disabled={running}
-            onClick={() => void runAnalysis({ mode: "live" })}
+            onClick={() => runAnalysis({ mode: "live" }).catch((error) => log.error("analysis: live run failed", { error: String(error) }))}
             title={t("analysis.hint")}
           >
             {running ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
@@ -141,7 +142,7 @@ export function FindingsPanel({
             size="sm"
             className="h-7 px-2.5 text-[11px]"
             disabled={reportStatus === "generating" || keyMissing}
-            onClick={() => void generateReport()}
+            onClick={() => generateReport().catch((error) => log.error("report: generate failed", { error: String(error) }))}
             title={t("evaluations.reportHint")}
           >
             <FileText className={`size-3 ${reportStatus === "generating" ? "animate-pulse" : ""}`} />
@@ -246,14 +247,14 @@ export function FindingsPanel({
       </ScrollArea>
 
       {expanded && reportStatus !== "idle" && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
-          onClick={() => setExpanded(false)}
-        >
-          <div
-            className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl border bg-background shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+          <button
+            type="button"
+            aria-label={t("common.cancel")}
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setExpanded(false)}
+          />
+          <div className="relative flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl border bg-background shadow-xl">
             <div className="flex items-center justify-between border-b px-4 py-2.5">
               <span className="text-sm font-semibold">
                 {t("evaluations.report")}
@@ -267,7 +268,7 @@ export function FindingsPanel({
                 <button
                   type="button"
                   className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-                  onClick={() => void copyReport()}
+                  onClick={() => copyReport().catch((error) => log.error("report: copy failed", { error: String(error) }))}
                 >
                   {copied ? <Check className="size-3.5 text-emerald-400" /> : <Copy className="size-3.5" />}
                   {copied ? t("meeting.copied") : t("meeting.copy")}
