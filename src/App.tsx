@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TitleBar } from "./components/TitleBar";
 import { LiveScreen } from "./components/live/LiveScreen";
 import { ReplayScreen } from "./components/replay/ReplayScreen";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
+import { ReleaseNotesDialog } from "./components/ReleaseNotesDialog";
 import { Toaster } from "./components/ui/sonner";
 import { IngestWizard } from "./components/IngestWizard";
 import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWindow";
@@ -36,6 +38,11 @@ import {
   listenForRecordingSaved,
 } from "./lib/history/history";
 import { checkForUpdate } from "./lib/update";
+import {
+  getPendingInstalledReleaseNotes,
+  markReleaseNotesSeen,
+  type ReleaseNotes,
+} from "./lib/releaseNotes";
 import { refreshSession } from "./lib/cloud/client";
 import { CLOUD_ENABLED } from "./lib/flags";
 import { initVoiceTyping } from "./lib/voiceTyping/host";
@@ -83,6 +90,7 @@ const App = () => {
   const onboarded = useStore((s) => s.settings.onboarded);
   const fullscreen = useFullscreen();
   const rounded = isTauri() && !fullscreen;
+  const [releaseNotes, setReleaseNotes] = useState<ReleaseNotes | null>(null);
 
   useEffect(() => {
     // StrictMode (dev) double-invokes this effect (mount→cleanup→mount) and Vite
@@ -131,6 +139,16 @@ const App = () => {
       unHistoryPersist();
       unVoiceTyping();
     };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    getVersion()
+      .then((version) => {
+        const notes = getPendingInstalledReleaseNotes(version);
+        if (notes) setReleaseNotes(notes);
+      })
+      .catch((error) => log.warn("update: installed release notes lookup failed", { error: String(error) }));
   }, []);
 
   // Check for an app update shortly after launch, then keep re-checking on a slow
@@ -207,6 +225,15 @@ const App = () => {
     >
       {!onboarded && <Onboarding />}
       <AnalysisErrorDialog />
+      {releaseNotes && (
+        <ReleaseNotesDialog
+          notes={releaseNotes}
+          onClose={() => {
+            markReleaseNotesSeen(releaseNotes.version);
+            setReleaseNotes(null);
+          }}
+        />
+      )}
       <Toaster />
       <IngestWizard />
       {/* In the Tauri app the drilldown is its own OS window (see
