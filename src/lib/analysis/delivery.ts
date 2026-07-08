@@ -108,26 +108,8 @@ export class DeliveryCoach {
   observe(m: ProsodyMetrics, nowMs: number): DeliveryTrigger | null {
     this.startMs ??= nowMs;
     const elapsedSec = (nowMs - this.startMs) / 1000;
-
-    // Feed the pace baseline only while genuinely speaking, so silence/noise
-    // don't skew the speaker's reference. It keeps updating all session.
-    if (m.speaking && m.speechRateHz > 0) {
-      this.paceBaseline.push(m.speechRateHz);
-      this.hasSpoken = true;
-    }
+    this.updateState(m, nowMs);
     const calibrated = elapsedSec >= this.th.calibrationSec;
-
-    // Track the current talking RUN for steamroll detection. `m.speaking` is a
-    // single-frame voicing flag that flickers off on every stop / fricative /
-    // breath, so drive the run from a windowed talk signal and only reset it on
-    // a genuine inter-utterance pause — otherwise a 40s monologue (riddled with
-    // sub-pause gaps) could never accumulate and steamroll would never fire.
-    const talking = m.speaking || (m.voicedRatio >= 0.2 && m.silenceMs < this.th.deadAirMs);
-    if (m.silenceMs >= this.th.pauseResetMs) {
-      this.speakingSince = null;
-    } else if (talking && this.speakingSince === null) {
-      this.speakingSince = nowMs;
-    }
 
     // Evaluate every candidate; the first that is allowed to fire wins. Order is
     // priority: dead air and steamrolling are the most actionable mid-call.
@@ -148,17 +130,8 @@ export class DeliveryCoach {
       nowMs - this.speakingSince >= this.th.steamrollMs;
     if (this.gate("steamroll", steamroll, nowMs)) return { kind: "steamroll", severity: "warn" };
 
-    // Filled pause ("um/uh/呃/痾"): a one-shot edge from the mic DSP, already
-    // de-duped per occurrence in Rust — so gate on cooldown ONLY (no sustain;
-    // `gate` would never fire on a single-sample edge). A burst of ums yields one
-    // gentle nudge; the running count surfaces every one. Grouped under `pauses`.
-    if (this.toggles.pauses && m.filledPause) {
-      const last = this.lastFiredAt.filledpause ?? -Infinity;
-      if (nowMs - last >= this.th.cooldownMs) {
-        this.lastFiredAt.filledpause = nowMs;
-        return { kind: "filledpause", severity: "info" };
-      }
-    }
+    const filledPause = this.filledPauseNudge(m, nowMs);
+    if (filledPause) return filledPause;
 
     const paceCeiling = Math.max(
       this.th.paceAbsHz,
@@ -177,6 +150,43 @@ export class DeliveryCoach {
     if (this.gate("monotone", monotone, nowMs)) return { kind: "monotone", severity: "info" };
 
     return null;
+  }
+
+  /** Fold one prosody sample into the running baseline and the talking-run
+   *  tracker that later triggers read from. */
+  private updateState(m: ProsodyMetrics, nowMs: number): void {
+    // Feed the pace baseline only while genuinely speaking, so silence/noise
+    // don't skew the speaker's reference. It keeps updating all session.
+    if (m.speaking && m.speechRateHz > 0) {
+      this.paceBaseline.push(m.speechRateHz);
+      this.hasSpoken = true;
+    }
+
+    // Track the current talking RUN for steamroll detection. `m.speaking` is a
+    // single-frame voicing flag that flickers off on every stop / fricative /
+    // breath, so drive the run from a windowed talk signal and only reset it on
+    // a genuine inter-utterance pause — otherwise a 40s monologue (riddled with
+    // sub-pause gaps) could never accumulate and steamroll would never fire.
+    const talking = m.speaking || (m.voicedRatio >= 0.2 && m.silenceMs < this.th.deadAirMs);
+    if (m.silenceMs >= this.th.pauseResetMs) {
+      this.speakingSince = null;
+    } else if (talking && this.speakingSince === null) {
+      this.speakingSince = nowMs;
+    }
+  }
+
+  /**
+   * Filled pause ("um/uh/呃/痾"): a one-shot edge from the mic DSP, already
+   * de-duped per occurrence in Rust — so gate on cooldown ONLY (no sustain;
+   * `gate` would never fire on a single-sample edge). A burst of ums yields one
+   * gentle nudge; the running count surfaces every one. Grouped under `pauses`.
+   */
+  private filledPauseNudge(m: ProsodyMetrics, nowMs: number): DeliveryTrigger | null {
+    if (!this.toggles.pauses || !m.filledPause) return null;
+    const last = this.lastFiredAt.filledpause ?? -Infinity;
+    if (nowMs - last < this.th.cooldownMs) return null;
+    this.lastFiredAt.filledpause = nowMs;
+    return { kind: "filledpause", severity: "info" };
   }
 
   /**

@@ -61,7 +61,7 @@ export function AnalysisTimeline({
   onReanalyze,
   templateName,
   stale,
-}: AnalysisTimelineProps) {
+}: Readonly<AnalysisTimelineProps>) {
   const { t } = useI18n();
   const [hovered, setHovered] = useState<string | null>(null);
 
@@ -217,7 +217,7 @@ function Lane({
   onSelect,
   extraLabel,
   tooltipTime,
-}: LaneProps) {
+}: Readonly<LaneProps>) {
   const { t } = useI18n();
   const evalNames = useEvalNames();
   const playheadPct =

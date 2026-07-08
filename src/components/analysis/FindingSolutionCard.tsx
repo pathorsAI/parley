@@ -12,7 +12,7 @@ import type { TimelineEvent } from "../../lib/types";
  * LIVE and REPLAY (the engine reads the full transcript). The standalone OS
  * window does NOT use this — it renders FindingSolutionView from synced state.
  */
-export function FindingSolutionCard({ finding }: { finding: TimelineEvent }) {
+export function FindingSolutionCard({ finding }: Readonly<{ finding: TimelineEvent }>) {
   const entry = useStore((s) => s.findingSolutions[finding.id]);
   const keyMissing = useStore((s) => !hasProviderKey(s.settings));
   const status = entry?.status ?? "idle";

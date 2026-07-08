@@ -80,7 +80,12 @@ export async function fetchLatestReleaseNotes(): Promise<ReleaseNotes> {
     html_url?: unknown;
     published_at?: unknown;
   };
-  const rawVersion = typeof data.tag_name === "string" ? data.tag_name : typeof data.name === "string" ? data.name : "";
+  let rawVersion = "";
+  if (typeof data.tag_name === "string") {
+    rawVersion = data.tag_name;
+  } else if (typeof data.name === "string") {
+    rawVersion = data.name;
+  }
   return {
     version: normalizeVersion(rawVersion),
     body: typeof data.body === "string" ? data.body : "",

@@ -101,14 +101,17 @@ export async function analyzeDelivery(opts: {
   if (!transcript.trim()) return null;
 
   const mc = meetingBriefText(useStore.getState()).trim();
-  const delivery = prosody
-    ? `Your delivery signals: ~${prosody.speechRateHz.toFixed(1)} syllables/sec, ` +
-      `pitch variation ${prosody.pitchVarSemitones.toFixed(1)} semitones.\n\n`
-    : measuredRateHz
-      ? `Acoustically measured speaking rate for this session: ~${measuredRateHz.toFixed(1)} ` +
-        `syllables/sec (≈ ${Math.round(measuredRateHz * 60)} syllables/min). ` +
-        `Use this for the pace read rather than guessing from the text.\n\n`
-      : "";
+  let delivery = "";
+  if (prosody) {
+    delivery =
+      `Your delivery signals: ~${prosody.speechRateHz.toFixed(1)} syllables/sec, ` +
+      `pitch variation ${prosody.pitchVarSemitones.toFixed(1)} semitones.\n\n`;
+  } else if (measuredRateHz) {
+    delivery =
+      `Acoustically measured speaking rate for this session: ~${measuredRateHz.toFixed(1)} ` +
+      `syllables/sec (≈ ${Math.round(measuredRateHz * 60)} syllables/min). ` +
+      `Use this for the pace read rather than guessing from the text.\n\n`;
+  }
   const watchlist = `Filler watchlist (judge OVER-use of these as verbal crutches only — ignore meaningful uses, and ignore non-lexical um/uh sounds): ${fillerWatchlist(settings.language).join(", ")}\n\n`;
   const ctx =
     profileContext(settings) + (mc ? `Meeting context: ${mc}\n\n` : "") + delivery + watchlist;

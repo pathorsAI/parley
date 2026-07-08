@@ -19,7 +19,7 @@ const SEVERITY_DOT: Record<Severity, string> = {
  * the player's Analyze menu, not a per-panel button. `onSeek` jumps the audio to
  * a linked moment.
  */
-export function ActionItemsPanel({ onSeek }: { onSeek: (ms: number) => void }) {
+export function ActionItemsPanel({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
   const { t } = useI18n();
   const items = useStore((s) => s.actionItems);
   const status = useStore((s) => s.actionItemsStatus);

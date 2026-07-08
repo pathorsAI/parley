@@ -25,7 +25,9 @@ export function replaySession(
   return {
     id: "rec-1",
     name: "meeting.wav",
-    audioPath: "/tmp/meeting.wav",
+    // Fake, non-shared path — a fixture string only, never touched on disk.
+    // Kept out of any world-writable temp dir (e.g. /tmp) on purpose.
+    audioPath: "/recordings/meeting.wav",
     audioSrc: "asset://meeting.wav",
     durationMs: 60_000,
     createdAt: 0,

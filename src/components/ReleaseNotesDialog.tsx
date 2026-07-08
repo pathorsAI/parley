@@ -1,6 +1,8 @@
 import { ExternalLink, Sparkles, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import ReactMarkdown from "react-markdown";
+import type { ExtraProps } from "react-markdown";
+import type { ComponentPropsWithoutRef } from "react";
 import remarkGfm from "remark-gfm";
 import { useI18n } from "../i18n";
 import type { ReleaseNotes } from "../lib/releaseNotes";
@@ -13,17 +15,33 @@ interface ReleaseNotesDialogProps {
   onClose: () => void;
 }
 
+function openExternal(url: string) {
+  if (isTauri()) {
+    openUrl(url).catch((error) => log.warn("release-notes: open link failed", { error: String(error), url }));
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
+function MarkdownLink({ children, ...props }: Readonly<ComponentPropsWithoutRef<"a"> & ExtraProps>) {
+  return (
+    <a
+      {...props}
+      href={props.href}
+      onClick={(event) => {
+        if (!props.href) return;
+        event.preventDefault();
+        openExternal(props.href);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
 export function ReleaseNotesDialog({ notes, onClose }: Readonly<ReleaseNotesDialogProps>) {
   const { t } = useI18n();
   const body = notes.body.trim();
-
-  function openExternal(url: string) {
-    if (isTauri()) {
-      openUrl(url).catch((error) => log.warn("release-notes: open link failed", { error: String(error), url }));
-    } else {
-      window.open(url, "_blank", "noopener,noreferrer");
-    }
-  }
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-6">
@@ -50,21 +68,7 @@ export function ReleaseNotesDialog({ notes, onClose }: Readonly<ReleaseNotesDial
             <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-a:text-sky-600 dark:prose-a:text-sky-300">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
-                components={{
-                  a: ({ children, ...props }) => (
-                    <a
-                      {...props}
-                      href={props.href}
-                      onClick={(event) => {
-                        if (!props.href) return;
-                        event.preventDefault();
-                        openExternal(props.href);
-                      }}
-                    >
-                      {children}
-                    </a>
-                  ),
-                }}
+                components={{ a: MarkdownLink }}
               >
                 {body}
               </ReactMarkdown>

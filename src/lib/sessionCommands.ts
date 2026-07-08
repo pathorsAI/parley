@@ -23,6 +23,22 @@ function lines(raw: string): string[] {
 }
 
 /**
+ * Stringify a loosely-typed command argument. Real callers send strings; this
+ * coerces primitives exactly as `String()` did, but JSON-encodes objects/arrays
+ * instead of emitting a useless "[object Object]".
+ */
+function argStr(v: unknown): string {
+  return typeof v === "string" ? v : (JSON.stringify(v) ?? "");
+}
+
+/** Coerce a loosely-shaped severity into a valid {@link TimelineEvent} severity. */
+function normalizeSeverity(v: unknown): TimelineEvent["severity"] {
+  if (v === "critical") return "critical";
+  if (v === "warn") return "warn";
+  return "info";
+}
+
+/**
  * Coerce a loosely-shaped finding (e.g. from an MCP client) into a valid
  * {@link TimelineEvent}, filling defaults and minting an id when missing. Returns
  * null only when there is no usable content at all (no title and no detail).
@@ -37,8 +53,7 @@ function normalizeFinding(raw: unknown): TimelineEvent | null {
     id: typeof o.id === "string" && o.id ? o.id : crypto.randomUUID(),
     atMs: Number.isFinite(o.atMs) ? Number(o.atMs) : 0,
     side: o.side === "me" ? "me" : "them",
-    severity:
-      o.severity === "critical" ? "critical" : o.severity === "warn" ? "warn" : "info",
+    severity: normalizeSeverity(o.severity),
     source: o.source === "eval" ? "eval" : "extra",
     evalIds: Array.isArray(o.evalIds) ? o.evalIds.map(String) : undefined,
     title,
@@ -48,39 +63,11 @@ function normalizeFinding(raw: unknown): TimelineEvent | null {
   };
 }
 
-function applyCommand(cmd: SessionCommand): void {
-  const s = useStore.getState();
-  const a = cmd.args ?? {};
-  switch (cmd.action) {
-    case "add_todo":
-      if (a.text) s.addTodo(String(a.text));
-      break;
-    case "remove_todo":
-      if (a.id) s.removeTodo(String(a.id));
-      break;
-    case "check_todo": {
-      const todo = s.todos.find((t) => t.id === a.id);
-      const target = a.done !== false;
-      if (todo && todo.done !== target) s.toggleTodo(todo.id);
-      break;
-    }
-    case "add_evaluation": {
-      if (a.name && a.prompt) {
-        const def: EvalDef = {
-          id: crypto.randomUUID(),
-          name: String(a.name),
-          description: String(a.description ?? ""),
-          prompt: String(a.prompt),
-        };
-        s.updateSettings({ evaluations: [...s.settings.evaluations, def] });
-      }
-      break;
-    }
-    case "remove_evaluation":
-      if (a.id) {
-        s.updateSettings({ evaluations: s.settings.evaluations.filter((e) => e.id !== a.id) });
-      }
-      break;
+type Store = ReturnType<typeof useStore.getState>;
+
+/** Apply the finding-mutating commands (add/set/update/remove). */
+function applyFindingCommand(s: Store, action: string, a: Record<string, unknown>): void {
+  switch (action) {
     case "add_finding": {
       // The whole args object IS the finding to insert.
       const finding = normalizeFinding(a);
@@ -99,11 +86,53 @@ function applyCommand(cmd: SessionCommand): void {
       if (a.id) {
         // Everything except the id is treated as a partial patch.
         const { id: _id, ...patch } = a;
-        s.updateFinding(String(a.id), patch as Partial<TimelineEvent>);
+        s.updateFinding(argStr(a.id), patch as Partial<TimelineEvent>);
       }
       break;
     case "remove_finding":
-      if (a.id) s.removeFinding(String(a.id));
+      if (a.id) s.removeFinding(argStr(a.id));
+      break;
+  }
+}
+
+function applyCommand(cmd: SessionCommand): void {
+  const s = useStore.getState();
+  const a = cmd.args ?? {};
+  switch (cmd.action) {
+    case "add_todo":
+      if (a.text) s.addTodo(argStr(a.text));
+      break;
+    case "remove_todo":
+      if (a.id) s.removeTodo(argStr(a.id));
+      break;
+    case "check_todo": {
+      const todo = s.todos.find((t) => t.id === a.id);
+      const target = a.done !== false;
+      if (todo && todo.done !== target) s.toggleTodo(todo.id);
+      break;
+    }
+    case "add_evaluation": {
+      if (a.name && a.prompt) {
+        const def: EvalDef = {
+          id: crypto.randomUUID(),
+          name: argStr(a.name),
+          description: argStr(a.description ?? ""),
+          prompt: argStr(a.prompt),
+        };
+        s.updateSettings({ evaluations: [...s.settings.evaluations, def] });
+      }
+      break;
+    }
+    case "remove_evaluation":
+      if (a.id) {
+        s.updateSettings({ evaluations: s.settings.evaluations.filter((e) => e.id !== a.id) });
+      }
+      break;
+    case "add_finding":
+    case "set_findings":
+    case "update_finding":
+    case "remove_finding":
+      applyFindingCommand(s, cmd.action, a);
       break;
   }
 }

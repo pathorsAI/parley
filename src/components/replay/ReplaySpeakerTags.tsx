@@ -30,7 +30,7 @@ interface ReplaySpeakerTagsProps {
  * Ask all read the store's `speakerNames`, renaming one speaker here updates every
  * one of that speaker's transcript lines and the analysis context at once.
  */
-export function ReplaySpeakerTags({ segments, names, label }: ReplaySpeakerTagsProps) {
+export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpeakerTagsProps>) {
   const { t } = useI18n();
   const setSpeakerName = useStore((s) => s.setSpeakerName);
   const [voiceOpen, setVoiceOpen] = useState(false);

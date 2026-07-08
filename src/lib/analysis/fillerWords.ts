@@ -90,15 +90,33 @@ const CJK_FILLER_CHARS = "嗯唔呃痾疴欸誒呣";
  *  single one is almost always a meaningful sentence particle. */
 const CJK_PARTICLE_CHARS = "啊喔哦呀";
 
+// Latin hesitations, one simple shape per entry: um/umm, uh/uhh, uhm, er/erm,
+// hmm, mm(m), ah, eh. Kept as separate patterns instead of one giant
+// alternation so no single regex has the ambiguous/overlapping quantifiers that
+// risk super-linear backtracking. Every shape is `\b`-anchored to a whole word
+// (so they never match inside real words like human, yeah, ahead…) and the
+// shapes use disjoint letter sets, so a given word matches at most one shape —
+// counting them independently can never double-count. (`e+r+m*` already covers
+// "erm", so no standalone "erm" entry is needed.)
+const LATIN_FILLER_SHAPES = [
+  "u+m+", // um, umm, ummm
+  "u+h+", // uh, uhh
+  "uh+m+", // uhm, uhhm, uhmm
+  "e+r+m*", // er, err, erm, ermm
+  "h+m+", // hm, hmm
+  "m+m+", // mm, mmm
+  "a+h+", // ah, ahh
+  "e+h+", // eh, ehh
+];
+
 const FILLER_SOUND_PATTERNS: RegExp[] = [
-  // Latin hesitations: um/umm, uh/uhh, uhm, er/err, erm, hmm, mm(m), ah, eh.
-  // Both word boundaries keep them from matching inside real words (human,
-  // yeah, ahead…).
-  /\b(?:u+m+|u+h+|uh+m+|e+r+m*|erm|h+m+|m+m+|a+h+|e+h+)\b/gi,
+  ...LATIN_FILLER_SHAPES.map(
+    (shape) => new RegExp(String.raw`\b(?:${shape})\b`, "gi"),
+  ),
   // Runs of unambiguous CJK hesitation characters.
   new RegExp(`[${CJK_FILLER_CHARS}]+`, "gu"),
   // Repeated ambiguous CJK particles only (啊啊 / 喔喔喔).
-  new RegExp(`([${CJK_PARTICLE_CHARS}])\\1+`, "gu"),
+  new RegExp(String.raw`([${CJK_PARTICLE_CHARS}])\1+`, "gu"),
 ];
 
 /**

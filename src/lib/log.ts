@@ -23,9 +23,7 @@ type Plugin = typeof import("@tauri-apps/plugin-log");
 let pluginPromise: Promise<Plugin | null> | null = null;
 function plugin(): Promise<Plugin | null> {
   if (!isTauri()) return Promise.resolve(null);
-  if (!pluginPromise) {
-    pluginPromise = import("@tauri-apps/plugin-log").catch(() => null);
-  }
+  pluginPromise ??= import("@tauri-apps/plugin-log").catch(() => null);
   return pluginPromise;
 }
 
