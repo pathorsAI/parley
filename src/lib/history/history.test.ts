@@ -60,7 +60,7 @@ describe("buildSummary", () => {
   it("truncates a long snippet to 90 chars + ellipsis", () => {
     const long = "x".repeat(120);
     const s = buildSummary(entry({ segments: [seg({ text: long, startMs: 0 })] }));
-    expect(s.snippet.length).toBe(91);
+    expect(s.snippet).toHaveLength(91);
     expect(s.snippet.endsWith("…")).toBe(true);
   });
 

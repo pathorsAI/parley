@@ -31,12 +31,16 @@ function plugin(): Promise<Plugin | null> {
 
 function emit(level: "debug" | "info" | "warn" | "error", msg: string, fields?: Fields) {
   const line = fmt(msg, fields);
-  void plugin().then((p) => {
+  plugin().then((p) => {
     if (p) {
-      void p[level](line).catch(() => {});
+      p[level](line).catch((err) => {
+        console.warn("log emit failed", err);
+      });
     } else {
       (level === "debug" ? console.debug : console[level])(line);
     }
+  }).catch((err) => {
+    console.warn("log plugin unavailable", err);
   });
 }
 

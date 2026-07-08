@@ -102,10 +102,12 @@ MODE: POST-EVALUATION / RETROSPECTIVE ANALYSIS.
 - You may use later counterparty behavior as hindsight evidence, but label it as hindsight in the detail when it matters (for example: "In hindsight, their later budget comment suggests this should have been probed here.").
 - Do not convert a bad response into a green/resolved card merely because ME replied; unresolved mistakes and weak concessions should stay warn/critical.`;
 
+const CLOCK_RE = /(\d{1,2}):(\d{2})(?::(\d{2}))?/;
+
 /** Parse a model-supplied "[m:ss]" / "m:ss" / "h:mm:ss" time into milliseconds. */
 export function parseClockMs(raw: string | undefined): number | null {
   if (!raw) return null;
-  const m = raw.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  const m = CLOCK_RE.exec(raw);
   if (!m) return null;
   const a = Number(m[1]);
   const b = Number(m[2]);

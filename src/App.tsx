@@ -40,6 +40,7 @@ import { refreshSession } from "./lib/cloud/client";
 import { CLOUD_ENABLED } from "./lib/flags";
 import { initVoiceTyping } from "./lib/voiceTyping/host";
 import { preloadZhConverter } from "./lib/zhConvert";
+import { log } from "./lib/log";
 
 /**
  * Track main-window fullscreen state. Drives both the rounded corners (a
@@ -53,7 +54,7 @@ function useFullscreen(): boolean {
     if (!isTauri()) return;
     let active = true;
     let unlisten: (() => void) | undefined;
-    void (async () => {
+    async function connectFullscreenEvents() {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       const win = getCurrentWindow();
       const sync = async () => {
@@ -61,10 +62,13 @@ function useFullscreen(): boolean {
         if (active) setFullscreen(fs);
       };
       await sync();
-      const un = await win.onResized(() => void sync());
+      const un = await win.onResized(() => {
+        sync().catch((error) => log.warn("window: fullscreen sync failed", { error: String(error) }));
+      });
       if (active) unlisten = un;
       else un();
-    })();
+    }
+    connectFullscreenEvents().catch((error) => log.warn("window: fullscreen listener failed", { error: String(error) }));
     return () => {
       active = false;
       unlisten?.();
@@ -91,10 +95,10 @@ const App = () => {
     let active = true;
     const live: Array<() => void> = [];
     const track = (p: Promise<() => void>) => {
-      void p.then((fn) => {
+      p.then((fn) => {
         if (active) live.push(fn);
         else fn();
-      });
+      }).catch((error) => log.warn("app: listener registration failed", { error: String(error) }));
     };
     // Warm the S→T dictionary now: paying its load on the FIRST transcript
     // event delayed the opening caption of every meeting by the parse time.
@@ -135,13 +139,19 @@ const App = () => {
   // user-initiated, so it never interrupts a meeting. Also re-validate any stored
   // cloud sign-in on launch.
   useEffect(() => {
-    if (CLOUD_ENABLED) void refreshSession();
+    if (CLOUD_ENABLED) {
+      refreshSession().catch((error) => log.warn("cloud: session refresh failed", { error: String(error) }));
+    }
     // Skip update checks in dev — there are no updater artifacts and the banner
     // just gets in the way while iterating.
     if (import.meta.env.DEV) return;
     const RECHECK_MS = 30 * 60 * 1000; // every 30 min while the app stays open
-    const first = setTimeout(() => void checkForUpdate({ silent: true }), 3000);
-    const recheck = setInterval(() => void checkForUpdate({ silent: true }), RECHECK_MS);
+    const first = setTimeout(() => {
+      checkForUpdate({ silent: true }).catch((error) => log.warn("update: check failed", { error: String(error) }));
+    }, 3000);
+    const recheck = setInterval(() => {
+      checkForUpdate({ silent: true }).catch((error) => log.warn("update: check failed", { error: String(error) }));
+    }, RECHECK_MS);
     return () => {
       clearTimeout(first);
       clearInterval(recheck);
@@ -159,13 +169,20 @@ const App = () => {
     let unlisten: (() => void) | undefined;
     const stopIfRecording = () => {
       if (useStore.getState().meetingStatus === "recording") {
-        void invoke("stop_meeting").catch(() => {});
+        invoke("stop_meeting").catch((error) => log.warn("meeting: stop on close failed", { error: String(error) }));
       }
     };
     window.addEventListener("beforeunload", stopIfRecording);
-    void getCurrentWindow()
+    getCurrentWindow()
       .onCloseRequested(stopIfRecording)
-      .then((fn) => (active ? (unlisten = fn) : fn()));
+      .then((fn) => {
+        if (active) {
+          unlisten = fn;
+        } else {
+          fn();
+        }
+      })
+      .catch((error) => log.warn("window: close listener failed", { error: String(error) }));
     return () => {
       active = false;
       window.removeEventListener("beforeunload", stopIfRecording);
@@ -173,7 +190,7 @@ const App = () => {
     };
   }, []);
 
-  // LIVE background engine: optional auto-analyze interval + TODO agenda auto-check.
+  // LIVE background engine: optional auto-analyze interval + checklist auto-check.
   useAnalysisEngine();
 
   // LIVE delivery coach: turns the prosody stream into pace/monotone/pause nudges.

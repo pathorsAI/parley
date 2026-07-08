@@ -121,11 +121,13 @@ async function persist(
   log.info("history: entry saved", { id: entry.id, source: entry.source });
   // Best-effort push to the cloud when signed in (dynamic import avoids a static
   // cycle: sync.ts imports buildSummary/listHistory from here). No-op when signed out.
-  void pushToCloud(entry.id);
+  pushToCloud(entry.id).catch((error) =>
+    log.warn("history: cloud push failed", { id: entry.id, error: String(error) }),
+  );
 }
 
 /** Fire-and-forget cloud push (gated by the sync toggle); save paths stay simple. */
-function pushToCloud(id: string): void {
+async function pushToCloud(id: string): Promise<void> {
   // Content changed → flag dirty even when sync is off, so flipping sync ON later
   // makes the background sweep push this entry. pushLocalEntry clears dirty on a
   // confirmed push.
@@ -133,9 +135,8 @@ function pushToCloud(id: string): void {
   // Sync toggle off (or signed out / OSS) → don't push now; the sweep handles it
   // when sync is turned on. This is the save-time half of the syncEnabled chokepoint.
   if (!syncEnabled()) return;
-  void import("../cloud/sync")
-    .then((m) => m.pushLocalEntrySafe(id))
-    .catch(() => {}); // a failed chunk import must not become an unhandled rejection
+  const sync = await import("../cloud/sync");
+  await sync.pushLocalEntrySafe(id);
 }
 
 // ── Default save location ─────────────────────────────────────────────────────
@@ -210,7 +211,12 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
     // save a history entry, and discard the encoded temp recording so it doesn't
     // orphan in the temp dir (an entry would normally consume it on save).
     log.info("history: live save skipped (no transcript)");
-    await invoke("discard_recording", { path: audioTempPath }).catch(() => {});
+    await invoke("discard_recording", { path: audioTempPath }).catch((error) =>
+      log.warn("history: discard empty live recording failed", {
+        path: audioTempPath,
+        error: String(error),
+      }),
+    );
     return;
   }
   const s = useStore.getState();
@@ -534,7 +540,7 @@ export async function emitHistoryOpen(id: string): Promise<void> {
 export async function listenForHistoryOpen(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   return listen<{ id: string }>(HISTORY_OPEN_EVENT, (e) => {
-    void loadHistoryEntry(e.payload.id).catch((err) =>
+    loadHistoryEntry(e.payload.id).catch((err) =>
       log.error("history: load failed", { id: e.payload.id, error: String(err) }),
     );
   });
@@ -550,7 +556,7 @@ export async function emitHistoryOpenOrg(orgId: string, id: string): Promise<voi
 export async function listenForHistoryOpenOrg(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   return listen<{ orgId: string; id: string }>(HISTORY_OPEN_ORG_EVENT, (e) => {
-    void loadOrgEntry(e.payload.orgId, e.payload.id).catch((err) =>
+    loadOrgEntry(e.payload.orgId, e.payload.id).catch((err) =>
       log.error("history: org load failed", { id: e.payload.id, error: String(err) }),
     );
   });
@@ -560,7 +566,7 @@ export async function listenForHistoryOpenOrg(): Promise<UnlistenFn> {
 export async function listenForRecordingSaved(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   return listen<{ path: string; durationMs: number }>(RECORDING_SAVED_EVENT, (e) => {
-    void saveLiveToHistory(e.payload.path, e.payload.durationMs).catch((err) =>
+    saveLiveToHistory(e.payload.path, e.payload.durationMs).catch((err) =>
       log.error("history: live save failed", { error: String(err) }),
     );
   });
@@ -620,8 +626,13 @@ export function initHistoryPersistSync(): UnlistenFn {
     if (!p) return;
     // If an upload save is still compressing/writing this entry, wait for it so the
     // file exists before we overwrite it (the re-analyze-during-compress race).
-    void Promise.resolve(uploadSaveInFlight)
-      .catch(() => {})
+    Promise.resolve(uploadSaveInFlight)
+      .catch((error) =>
+        log.warn("history: upload save failed before re-analysis persist", {
+          id: p.id,
+          error: String(error),
+        }),
+      )
       .then(() => updateHistoryEntry(p.id, p.snapshot))
       .catch((e) => log.error("history: re-analysis save failed", { id: p.id, error: String(e) }));
   };

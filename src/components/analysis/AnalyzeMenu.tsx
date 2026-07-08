@@ -6,6 +6,7 @@ import { hasProviderKey } from "../../lib/ai/settings";
 import { reanalyzeAll, runAnalysis } from "../../lib/analysis/engine";
 import { regenerateActionItems } from "../../lib/analysis/actionItems";
 import { useI18n } from "../../i18n";
+import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import { MeetingContextField } from "../MeetingContextField";
 import { cn } from "@/lib/utils";
@@ -29,8 +30,13 @@ export function AnalyzeMenu() {
 
   function run(which: "all" | "timeline") {
     setPending(null);
-    if (which === "all") void reanalyzeAll();
-    else void runAnalysis({ mode: "replay", force: true });
+    if (which === "all") {
+      reanalyzeAll().catch((error) => log.error("analysis: reanalyze failed", { error: String(error) }));
+    } else {
+      runAnalysis({ mode: "replay", force: true }).catch((error) =>
+        log.error("analysis: replay run failed", { error: String(error) }),
+      );
+    }
   }
 
   return (
@@ -82,14 +88,14 @@ export function AnalyzeMenu() {
       </DropdownMenu.Root>
 
       {pending && (
-        <div
-          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 p-6"
-          onClick={() => setPending(null)}
-        >
-          <div
-            className="w-full max-w-md rounded-xl border bg-background p-4 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-6">
+          <button
+            type="button"
+            aria-label={t("common.cancel")}
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setPending(null)}
+          />
+          <div className="relative w-full max-w-md rounded-xl border bg-background p-4 shadow-xl">
             <MeetingContextField rows={4} autoFocus />
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -117,13 +123,13 @@ function Item({
   hint,
   disabled,
   onSelect,
-}: {
+}: Readonly<{
   icon: ReactNode;
   label: string;
   hint?: string;
   disabled?: boolean;
   onSelect: () => void;
-}) {
+}>) {
   return (
     <DropdownMenu.Item
       disabled={disabled}

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useStore } from "./store";
 import { toTraditional } from "./zhConvert";
+import { log } from "./log";
 import { translate, type TranslationKey } from "../i18n/messages";
 import type { Source } from "./types";
 
@@ -31,17 +32,21 @@ export async function listenForTranscript(): Promise<UnlistenFn> {
     // Voice-typing dictation streams over the same event but belongs to the
     // floating overlay, not the meeting transcript — keep it out of the store.
     if ((p.source as string) === "voice-typing") return;
-    void toTraditional(p.text).then((text) => {
-      useStore.getState().upsertSegment({
-        id: p.id,
-        source: p.source,
-        speaker: p.speaker,
-        text,
-        isFinal: p.is_final,
-        startMs: p.start_ms,
-        endMs: p.end_ms,
+    toTraditional(p.text)
+      .then((text) => {
+        useStore.getState().upsertSegment({
+          id: p.id,
+          source: p.source,
+          speaker: p.speaker,
+          text,
+          isFinal: p.is_final,
+          startMs: p.start_ms,
+          endMs: p.end_ms,
+        });
+      })
+      .catch((error) => {
+        log.warn("transcript: conversion failed", { segmentId: p.id, error: String(error) });
       });
-    });
   });
 }
 
@@ -113,7 +118,9 @@ export async function listenForMeetingError(): Promise<UnlistenFn> {
     const { code } = event.payload;
     // Tear the (transcript-less) meeting down so the UI leaves "recording".
     useStore.getState().stopMeeting();
-    void invoke("stop_meeting").catch(() => {});
+    invoke("stop_meeting").catch((error) =>
+      log.warn("meeting: stop after backend error failed", { code, error: String(error) }),
+    );
     const key: TranslationKey =
       code === "quota"
         ? "meeting.error.quota"

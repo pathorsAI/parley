@@ -5,6 +5,7 @@ import { useStore } from "../lib/store";
 import { useI18n, type TranslationKey } from "../i18n";
 import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
+import { log } from "../lib/log";
 import type { VoiceTypingShortcut } from "../lib/types";
 import { Button } from "@/components/ui/button";
 
@@ -162,13 +163,19 @@ export const VoiceTypingSettings = () => {
   const refreshStatus = useCallback(() => {
     invoke<HotkeyStatus>("voice_typing_hotkey_status")
       .then((s) => setStatus(s))
-      .catch(() => {});
+      .catch((error) =>
+        log.warn("voice typing settings: hotkey status refresh failed", { error: String(error) }),
+      );
     // Auto-paste needs Accessibility; the boot-time prompt asks at most once
     // per install, so this panel is the visible surface for a missing/stale
     // grant (stale = the TCC identity changed: dev rebuilds, re-signing).
     invoke<boolean>("accessibility_status", { prompt: false })
       .then(setAxTrusted)
-      .catch(() => {});
+      .catch((error) =>
+        log.warn("voice typing settings: accessibility status refresh failed", {
+          error: String(error),
+        }),
+      );
   }, []);
 
   // Fetch on mount, and re-check whenever the window regains focus or becomes
@@ -179,7 +186,9 @@ export const VoiceTypingSettings = () => {
     refreshStatus();
     invoke<AppIdentity>("app_identity")
       .then(setIdentity)
-      .catch(() => {});
+      .catch((error) =>
+        log.warn("voice typing settings: app identity lookup failed", { error: String(error) }),
+      );
     const onVisibility = () => {
       if (document.visibilityState === "visible") refreshStatus();
     };
@@ -193,28 +202,60 @@ export const VoiceTypingSettings = () => {
 
   const chooseShortcut = async (shortcut: VoiceTypingShortcut) => {
     setSaving(true);
-    updateSettings({ voiceTypingShortcut: shortcut });
-    broadcastSettings({ ...useStore.getState().settings }).catch(() => {});
-    let s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(
-      () => null,
-    );
-    // A single-key trigger needs Input Monitoring — request it right when the
-    // user picks one (the permission follows the feature), then re-apply so the
-    // tap arms immediately if macOS granted without a relaunch.
-    if (s && isModifierId(shortcut) && !s.authorized) {
-      await invoke("request_input_monitoring").catch(() => {});
-      s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(() => s);
+    try {
+      updateSettings({ voiceTypingShortcut: shortcut });
+      broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
+        log.warn("voice typing settings: broadcast failed", { error: String(error) }),
+      );
+      let s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(
+        (error) => {
+          log.warn("voice typing settings: shortcut apply failed", {
+            shortcut,
+            error: String(error),
+          });
+          return null;
+        },
+      );
+      // A single-key trigger needs Input Monitoring — request it right when the
+      // user picks one (the permission follows the feature), then re-apply so the
+      // tap arms immediately if macOS granted without a relaunch.
+      if (s && isModifierId(shortcut) && !s.authorized) {
+        await invoke("request_input_monitoring").catch((error) =>
+          log.warn("voice typing settings: input monitoring request failed", {
+            shortcut,
+            error: String(error),
+          }),
+        );
+        s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(
+          (error) => {
+            log.warn("voice typing settings: shortcut reapply failed", {
+              shortcut,
+              error: String(error),
+            });
+            return s;
+          },
+        );
+      }
+      if (s) setStatus(s);
+    } finally {
+      setSaving(false);
     }
-    if (s) setStatus(s);
-    setSaving(false);
   };
 
   /** Re-request Input Monitoring from the inline warning (repeat clicks land in
    *  the right System Settings pane since the OS prompt only fires once). */
   const grantInputMonitoring = async () => {
-    await invoke("request_input_monitoring").catch(() => {});
-    await invoke("open_privacy_settings", { pane: "input-monitoring" }).catch(() => {});
-    await invoke("ensure_fn_listener").catch(() => {});
+    await invoke("request_input_monitoring").catch((error) =>
+      log.warn("voice typing settings: input monitoring request failed", { error: String(error) }),
+    );
+    await invoke("open_privacy_settings", { pane: "input-monitoring" }).catch((error) =>
+      log.warn("voice typing settings: open input monitoring settings failed", {
+        error: String(error),
+      }),
+    );
+    await invoke("ensure_fn_listener").catch((error) =>
+      log.warn("voice typing settings: fn listener setup failed", { error: String(error) }),
+    );
     refreshStatus();
   };
 
@@ -223,8 +264,14 @@ export const VoiceTypingSettings = () => {
    *  repeat clicks land the user in the right System Settings pane instead of
    *  appearing dead. */
   const grantAccessibility = async () => {
-    await invoke("accessibility_status", { prompt: true }).catch(() => {});
-    await invoke("open_privacy_settings", { pane: "accessibility" }).catch(() => {});
+    await invoke("accessibility_status", { prompt: true }).catch((error) =>
+      log.warn("voice typing settings: accessibility request failed", { error: String(error) }),
+    );
+    await invoke("open_privacy_settings", { pane: "accessibility" }).catch((error) =>
+      log.warn("voice typing settings: open accessibility settings failed", {
+        error: String(error),
+      }),
+    );
     refreshStatus();
   };
 
@@ -258,7 +305,9 @@ export const VoiceTypingSettings = () => {
       }
       setRecording(false);
       setRecordHint(null);
-      void chooseShortcut(`combo:${[...mods, e.code].join("+")}` as VoiceTypingShortcut);
+      chooseShortcut(`combo:${[...mods, e.code].join("+")}` as VoiceTypingShortcut).catch((error) =>
+        log.error("voice-typing: choose combo shortcut failed", { error: String(error) }),
+      );
     };
     // Users routinely press a lone modifier here hoping to pick it as a
     // hold-key. A tap only becomes distinguishable from "start of a combo" at
@@ -273,7 +322,9 @@ export const VoiceTypingSettings = () => {
       if (rightId) {
         setRecording(false);
         setRecordHint(null);
-        void chooseShortcut(rightId);
+        chooseShortcut(rightId).catch((error) =>
+          log.error("voice-typing: choose modifier shortcut failed", { error: String(error), shortcut: rightId }),
+        );
         return;
       }
       if (LEFT_MODIFIER_CODES.has(e.code)) {
@@ -308,10 +359,16 @@ export const VoiceTypingSettings = () => {
 
   const setVoiceTypingEnabled = (enabled: boolean) => {
     updateSettings({ voiceTypingEnabled: enabled });
-    broadcastSettings({ ...useStore.getState().settings }).catch(() => {});
+    broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
+      log.warn("settings: broadcast failed", { error: String(error) }),
+    );
     // Voice typing always auto-pastes, which needs Accessibility — enabling the
     // feature is the moment to ask for its permission.
-    if (enabled) void invoke("accessibility_status", { prompt: true }).catch(() => {});
+    if (enabled) {
+      invoke("accessibility_status", { prompt: true }).catch((error) =>
+        log.warn("permissions: accessibility prompt failed", { error: String(error) }),
+      );
+    }
   };
 
   // Guidance renders as single inline lines (no nested boxes) and only when
@@ -394,7 +451,11 @@ export const VoiceTypingSettings = () => {
               size="sm"
               className="h-10 shrink-0 gap-1 px-2 text-[11px] text-muted-foreground"
               title={t("settings.voiceTyping.recorder.reset")}
-              onClick={() => void chooseShortcut("alt-space")}
+              onClick={() =>
+                chooseShortcut("alt-space").catch((error) =>
+                  log.error("voice-typing: reset shortcut failed", { error: String(error) }),
+                )
+              }
             >
               <RotateCcw className="size-3.5" />
               ⌥ Space
@@ -414,7 +475,11 @@ export const VoiceTypingSettings = () => {
                 variant={selected === id ? "secondary" : "outline"}
                 size="sm"
                 className="h-7 justify-center px-1.5 text-[11px]"
-                onClick={() => void chooseShortcut(id)}
+                onClick={() =>
+                  chooseShortcut(id).catch((error) =>
+                    log.error("voice-typing: choose modifier shortcut failed", { error: String(error), shortcut: id }),
+                  )
+                }
               >
                 {t(MODIFIER_LABEL_KEYS[id])}
               </Button>
@@ -443,7 +508,11 @@ export const VoiceTypingSettings = () => {
             <button
               type="button"
               className="font-medium underline underline-offset-2"
-              onClick={() => void grantInputMonitoring()}
+              onClick={() =>
+                grantInputMonitoring().catch((error) =>
+                  log.error("permissions: input monitoring grant failed", { error: String(error) }),
+                )
+              }
             >
               {t("settings.voiceTyping.grant")}
             </button>
@@ -460,7 +529,11 @@ export const VoiceTypingSettings = () => {
             <button
               type="button"
               className="font-medium underline underline-offset-2"
-              onClick={() => void grantAccessibility()}
+              onClick={() =>
+                grantAccessibility().catch((error) =>
+                  log.error("permissions: accessibility grant failed", { error: String(error) }),
+                )
+              }
             >
               {t("settings.voiceTyping.grantAccessibility")}
             </button>
@@ -473,7 +546,9 @@ export const VoiceTypingSettings = () => {
               type="button"
               className="font-medium text-foreground underline underline-offset-2"
               onClick={() => {
-                invoke("open_privacy_settings", { pane: "keyboard" }).catch(() => {});
+                invoke("open_privacy_settings", { pane: "keyboard" }).catch((error) =>
+                  log.warn("permissions: open keyboard settings failed", { error: String(error) }),
+                );
               }}
             >
               {t("settings.voiceTyping.openKeyboardSettings")}
@@ -482,7 +557,11 @@ export const VoiceTypingSettings = () => {
             <button
               type="button"
               className="font-medium text-foreground underline underline-offset-2"
-              onClick={() => void grantAccessibility()}
+              onClick={() =>
+                grantAccessibility().catch((error) =>
+                  log.error("permissions: accessibility grant failed", { error: String(error) }),
+                )
+              }
             >
               {t("settings.voiceTyping.grantAccessibility")}
             </button>

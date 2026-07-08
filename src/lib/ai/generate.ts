@@ -122,14 +122,14 @@ export async function generateObjectResilient<OBJECT>(opts: {
         prompt,
         maxOutputTokens,
       });
-    } catch (err2) {
-      logAiError("ai.generateObject json_object", tag, err2);
-      const salvaged2 = salvageObject(err2, schema);
+    } catch (error_) {
+      logAiError("ai.generateObject json_object", tag, error_);
+      const salvaged2 = salvageObject(error_, schema);
       if (salvaged2) {
         log.info("ai.generateObject: salvaged drifted output (json_object)", tag);
         return salvaged2;
       }
-      throw err2;
+      throw error_;
     }
   }
 }

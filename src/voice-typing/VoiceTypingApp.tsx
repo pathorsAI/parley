@@ -4,6 +4,7 @@ import { Check, Loader2, Mic } from "lucide-react";
 import { preloadZhConverter, toTraditional } from "../lib/zhConvert";
 import { useI18n, type TranslationKey } from "../i18n";
 import { useThemePreference } from "../lib/theme";
+import { log } from "../lib/log";
 
 const BAR_COUNT = 20;
 const BAR_FLOOR = 0.05;
@@ -133,7 +134,9 @@ export const VoiceTypingApp = () => {
     const interim = interimRef.current ? await toTraditional(interimRef.current) : "";
     const full = (finals + interim).trim();
     setText(full);
-    emit("voicetyping://text", { text: full }).catch(() => {});
+    emit("voicetyping://text", { text: full }).catch((error) =>
+      log.warn("voice typing overlay: text publish failed", { error: String(error) }),
+    );
   };
 
   useEffect(() => {
@@ -149,7 +152,9 @@ export const VoiceTypingApp = () => {
       p.then((u) => {
         if (cancelled) u();
         else unsubs.push(u);
-      }).catch(() => {});
+      }).catch((error) =>
+        log.warn("voice typing overlay: listener setup failed", { error: String(error) }),
+      );
     };
 
     // Warm the S→T dictionary while the overlay is prewarmed/idle, so the
@@ -166,7 +171,12 @@ export const VoiceTypingApp = () => {
         } else {
           interimRef.current = p.text;
         }
-        publish.current().catch(() => {});
+        publish.current().catch((error) =>
+          log.warn("voice typing overlay: transcript publish failed", {
+            segmentId: p.id,
+            error: String(error),
+          }),
+        );
       }),
     );
 

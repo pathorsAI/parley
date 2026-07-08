@@ -23,13 +23,13 @@ export function FindingSolutionView({
   error,
   keyMissing,
   onRetry,
-}: {
+}: Readonly<{
   status: FindingSolutionEntry["status"];
   solution: FindingSolution | null;
   error: string | null;
   keyMissing: boolean;
   onRetry: () => void;
-}) {
+}>) {
   const { t } = useI18n();
 
   if (keyMissing) {
@@ -60,8 +60,8 @@ export function FindingSolutionView({
 
   return (
     <div className="mt-2.5 flex flex-col gap-2">
-      {solution.replies.map((r, i) => (
-        <div key={i} className="rounded-md border bg-muted/30 px-2.5 py-2">
+      {solution.replies.map((r) => (
+        <div key={`${r.kind}-${r.reply}`} className="rounded-md border bg-muted/30 px-2.5 py-2">
           <div className={`text-[11px] font-semibold ${KIND_ACCENT[r.kind]}`}>
             {t(`wargame.kind.${r.kind}` as const)}
           </div>

@@ -67,7 +67,7 @@ describe("DeliveryCoach", () => {
     }
     expect(triggers).toContain("pace");
     // Cooldown (18s) means it should not fire repeatedly in a 12s span.
-    expect(triggers.filter((k) => k === "pace").length).toBe(1);
+    expect(triggers.filter((k) => k === "pace")).toHaveLength(1);
   });
 
   it("does not fire pace for a single brief blip (sustain requirement)", () => {

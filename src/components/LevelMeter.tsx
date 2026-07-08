@@ -15,11 +15,11 @@ export const LevelMeter = ({
   source,
   className,
   eventName = "audio://level",
-}: {
+}: Readonly<{
   source: string;
   className?: string;
   eventName?: string;
-}) => {
+}>) => {
   const [level, setLevel] = useState(0);
   const decayRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -45,7 +45,12 @@ export const LevelMeter = ({
   // used here so it reads only as "delivery worth a look" in the DeliveryPanel —
   // one consistent colour language across the meters instead of amber-means-three-
   // things (loud vs. too-fast vs. too-flat).
-  const color = pct > 92 ? "bg-red-500" : pct > 3 ? "bg-emerald-500" : "bg-muted-foreground/30";
+  let color = "bg-muted-foreground/30";
+  if (pct > 92) {
+    color = "bg-red-500";
+  } else if (pct > 3) {
+    color = "bg-emerald-500";
+  }
 
   return (
     <div className={`h-1.5 overflow-hidden rounded-full bg-muted ${className ?? "w-16"}`}>

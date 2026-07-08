@@ -7,6 +7,7 @@ import { fetchHostedQuota } from "../lib/cloud/usage";
 import type { HostedQuota } from "../lib/cloud/types";
 import { PROVIDER_BY_ID } from "../lib/ai/providers";
 import { readUsageEvents, type UsageEvent } from "../lib/usage/log";
+import { log } from "../lib/log";
 import { PRICING_NOTES } from "../lib/usage/pricing";
 import { PieChart, type PieSlice } from "../components/PieChart";
 
@@ -31,7 +32,12 @@ function formatUsd(v: number): string {
 function periodStart(period: Period): number {
   if (period === "all") return 0;
   const day = 24 * 60 * 60 * 1000;
-  const span = period === "today" ? day : period === "7d" ? 7 * day : 30 * day;
+  let span = 30 * day;
+  if (period === "today") {
+    span = day;
+  } else if (period === "7d") {
+    span = 7 * day;
+  }
   return Date.now() - span;
 }
 
@@ -55,7 +61,7 @@ export function UsagePanel() {
   const [period, setPeriod] = useState<Period>("7d");
 
   useEffect(() => {
-    void readUsageEvents().then(setEvents);
+    readUsageEvents().then(setEvents).catch((error) => log.warn("usage: read events failed", { error: String(error) }));
   }, []);
 
   const { llm, stt, llmTotal, sttTotal, tokens, minutes } = useMemo(() => {

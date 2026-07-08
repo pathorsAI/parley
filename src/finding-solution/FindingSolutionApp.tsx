@@ -34,32 +34,47 @@ export function FindingSolutionApp() {
   // language changed in Settings apply here live too (mirrors App.tsx).
   useEffect(() => {
     const un = listenForSettings();
-    return () => void un.then((fn) => fn());
+    return () => {
+      un.then((fn) => fn()).catch((error) =>
+        log.warn("finding-solution: settings listener cleanup failed", { error: String(error) }),
+      );
+    };
   }, []);
 
   // Subscribe to main-window pushes; announce ourselves to pull current state.
   useEffect(() => {
     let un: (() => void) | undefined;
-    void listenForFindingSolutionState(setState).then((fn) => (un = fn));
-    void helloFindingSolution();
+    listenForFindingSolutionState(setState)
+      .then((fn) => {
+        un = fn;
+      })
+      .catch((error) => log.warn("finding-solution: state listener failed", { error: String(error) }));
+    helloFindingSolution().catch((error) => log.warn("finding-solution: hello failed", { error: String(error) }));
     return () => un?.();
   }, []);
 
   // Mirror a native window close (frame X) back to the main window's selection.
   useEffect(() => {
     let un: (() => void) | undefined;
-    void import("@tauri-apps/api/window").then(({ getCurrentWindow }) => {
-      void getCurrentWindow()
-        .onCloseRequested(() => void closeFindingSolution())
-        .then((fn) => (un = fn));
-    });
+    import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) =>
+        getCurrentWindow().onCloseRequested(() => {
+          closeFindingSolution().catch((error) =>
+            log.warn("finding-solution: close emit from window close failed", { error: String(error) }),
+          );
+        }),
+      )
+      .then((fn) => {
+        un = fn;
+      })
+      .catch((error) => log.warn("finding-solution: close listener failed", { error: String(error) }));
     return () => un?.();
   }, []);
 
   // Esc closes the window too.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") void dismiss();
+      if (e.key === "Escape") dismiss().catch((error) => log.error("finding-solution: dismiss failed", { error: String(error) }));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -69,7 +84,11 @@ export function FindingSolutionApp() {
   // Ask the main window to generate once we have a finding but no solution yet.
   useEffect(() => {
     if (!finding || keyMissing) return;
-    if (!entry || entry.status === "idle") void requestFindingSolutionGenerate(finding.id);
+    if (!entry || entry.status === "idle") {
+      requestFindingSolutionGenerate(finding.id).catch((error) =>
+        log.error("finding-solution: generation request failed", { error: String(error), findingId: finding.id }),
+      );
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finding?.id, entry?.status, keyMissing]);
 
@@ -124,7 +143,7 @@ export function FindingSolutionApp() {
         </div>
         <button
           type="button"
-          onClick={() => void dismiss()}
+          onClick={() => dismiss().catch((error) => log.error("finding-solution: dismiss failed", { error: String(error) }))}
           className="mt-0.5 shrink-0 text-muted-foreground hover:text-foreground"
           title={t("solution.close")}
           aria-label={t("solution.close")}
@@ -141,7 +160,11 @@ export function FindingSolutionApp() {
           solution={entry?.solution ?? null}
           error={entry?.error ?? null}
           keyMissing={keyMissing}
-          onRetry={() => void requestFindingSolutionGenerate(finding.id)}
+          onRetry={() =>
+            requestFindingSolutionGenerate(finding.id).catch((error) =>
+              log.error("finding-solution: retry request failed", { error: String(error), findingId: finding.id }),
+            )
+          }
         />
       </div>
     </div>

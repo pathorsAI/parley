@@ -66,7 +66,7 @@ export function initVoiceTyping(): () => void {
     p.then((u) => {
       if (cancelled) u();
       else unsubs.push(u);
-    }).catch(() => {});
+    }).catch((error) => log.warn("voice-typing: listener setup failed", { error: String(error) }));
   };
   // Serialize press/release handling: a quick tap used to run endSession's
   // `stop_voice_typing` while startSession's invoke was still in flight, so
@@ -77,7 +77,14 @@ export function initVoiceTyping(): () => void {
   track(
     listen<{ down: boolean }>("voicetyping://ptt", (e) => {
       const isDown = e.payload.down;
-      pttChain = pttChain.then(() => onPtt(isDown)).catch(() => {});
+      pttChain = pttChain
+        .then(() => onPtt(isDown))
+        .catch((error) =>
+          log.error("voice-typing: push-to-talk handler failed", {
+            isDown,
+            error: String(error),
+          }),
+        );
     }),
   );
   track(
@@ -98,7 +105,9 @@ export function initVoiceTyping(): () => void {
       if (!busy) return; // stale event from an already-finished session
       failed = true;
       log.warn("voice-typing: session failed", { code: e.payload.code });
-      emit("voicetyping://session", { phase: "error", message: e.payload.code }).catch(() => {});
+      emit("voicetyping://session", { phase: "error", message: e.payload.code }).catch((error) =>
+        log.warn("voice-typing: error event emit failed", { error: String(error) }),
+      );
     }),
   );
   // The backend session is fully over — every final token has been emitted.
@@ -123,7 +132,9 @@ export function initVoiceTyping(): () => void {
   // Settings panel re-applies it whenever the user changes the selection.
   invoke("set_voice_typing_shortcut", {
     shortcut: useStore.getState().settings.voiceTypingShortcut,
-  }).catch(() => {});
+  }).catch((error) =>
+    log.warn("voice-typing: startup shortcut apply failed", { error: String(error) }),
+  );
   // Voice typing always auto-pastes on release, which needs Accessibility —
   // while the feature is enabled (it defaults on), ask for that grant on the
   // FIRST launch instead of failing quietly on the first dictation. At most
@@ -143,10 +154,14 @@ export function initVoiceTyping(): () => void {
         localStorage.setItem(AX_BOOT_PROMPTED_KEY, "1");
         return invoke("accessibility_status", { prompt: true }).then(() => {});
       })
-      .catch(() => {});
+      .catch((error) =>
+        log.warn("voice-typing: startup Accessibility check failed", { error: String(error) }),
+      );
   }
   // Warm the overlay window so it's listening before the first key press.
-  prewarmOverlay().catch(() => {});
+  prewarmOverlay().catch((error) =>
+    log.warn("voice-typing: overlay prewarm failed", { error: String(error) }),
+  );
   return () => {
     cancelled = true;
     clearTimeout(capTimer);
@@ -169,7 +184,9 @@ async function startSession() {
     // start also aborts any session task still flushing, so the old session
     // cannot leak tokens into the new overlay.
     clearTimeout(settleTimer);
-    await finalize().catch(() => {});
+    await finalize().catch((error) =>
+      log.error("voice-typing: finalize before restart failed", { error: String(error) }),
+    );
   }
   const { settings } = useStore.getState();
   if (!settings.voiceTypingEnabled) return;
@@ -210,7 +227,9 @@ async function startSession() {
     log.info("voice-typing: session started", { provider });
     if (hosted) {
       capTimer = setTimeout(() => {
-        onCapReached().catch(() => {});
+        onCapReached().catch((error) =>
+          log.error("voice-typing: cap handler failed", { error: String(error) }),
+        );
       }, HOSTED_VOICE_TYPING_MAX_SECONDS * 1000);
     }
   } catch (e) {
@@ -236,7 +255,9 @@ async function endSession() {
     // The session already died — no final flush is coming, and emitting
     // "stop" would replace the overlay's error state with a spinner. Deliver
     // whatever text arrived before the death right away.
-    finalize().catch(() => {});
+    finalize().catch((error) =>
+      log.error("voice-typing: finalize after failed session failed", { error: String(error) }),
+    );
     return;
   }
   await emit("voicetyping://session", { phase: "stop" });
@@ -258,9 +279,13 @@ async function onCapReached() {
   } catch (e) {
     log.warn("voice-typing: stop failed at cap", { error: String(e) });
   }
-  await emit("voicetyping://session", { phase: "limit" }).catch(() => {});
+  await emit("voicetyping://session", { phase: "limit" }).catch((error) =>
+    log.warn("voice-typing: limit event emit failed", { error: String(error) }),
+  );
   if (failed) {
-    finalize().catch(() => {});
+    finalize().catch((error) =>
+      log.error("voice-typing: finalize after cap failed", { error: String(error) }),
+    );
     return;
   }
   waitForSettle();
@@ -280,7 +305,9 @@ function waitForSettle() {
     const quietFor = now - lastTextAt;
     const elapsed = now - releasedAt;
     if (drained || quietFor >= SETTLE_MS || elapsed >= MAX_WAIT_MS) {
-      finalize().catch(() => {});
+      finalize().catch((error) =>
+        log.error("voice-typing: settle finalize failed", { error: String(error) }),
+      );
     } else {
       waitForSettle();
     }
@@ -303,7 +330,9 @@ async function finalize() {
     } catch (e) {
       log.error("voice-typing: copy/paste failed", { error: String(e) });
     }
-    appendVoiceEntry(text).catch(() => {});
+    appendVoiceEntry(text).catch((error) =>
+      log.warn("voice-typing: append history failed", { error: String(error) }),
+    );
   }
   // A new press may have started a session while the copy/paste above was in
   // flight — its overlay is live, and this finalize's tail must not flip it to
@@ -317,6 +346,8 @@ async function finalize() {
 function scheduleHide() {
   clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
-    hideOverlay().catch(() => {});
+    hideOverlay().catch((error) =>
+      log.warn("voice-typing: scheduled hide failed", { error: String(error) }),
+    );
   }, HIDE_DELAY_MS);
 }

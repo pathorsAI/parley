@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useBumpReplaySeek, useReplayPlayheadMs, useSetReplayPlayhead } from "./spine";
+import { log } from "../../lib/log";
 
 /** How often the audio's timeupdate is allowed to push into the store (~5/sec). */
 const PLAYHEAD_THROTTLE_MS = 200;
@@ -81,7 +82,7 @@ export function useReplayPlayer(durationMs: number, offsetMs = 0): ReplayPlayer 
         a.currentTime = offsetMs / 1000;
         setPlayhead(0);
       }
-      void a.play();
+      a.play().catch((error) => log.warn("replay: audio play failed", { error: String(error) }));
     } else {
       a.pause();
     }

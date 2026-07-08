@@ -41,7 +41,7 @@ if ("IntersectionObserver" in window) {
 // Copy-to-clipboard for the install snippet
 document.querySelectorAll(".copy").forEach((btn) => {
   btn.addEventListener("click", async () => {
-    const text = (btn.dataset.copy || "").replace(/&#10;/g, "\n");
+    const text = (btn.dataset.copy || "").replaceAll("&#10;", "\n");
     try {
       await navigator.clipboard.writeText(text);
       const original = btn.textContent;
@@ -98,7 +98,7 @@ function tryNext(target, name, exts, i) {
 function mountImage(target, url, name) {
   const img = document.createElement("img");
   img.src = url;
-  img.alt = `Parley — ${name.replace(/showcase-?/, "").replace(/-/g, " ")}`.trim();
+  img.alt = `Parley — ${name.replace(/showcase-?/, "").replaceAll("-", " ")}`.trim();
   img.loading = "lazy";
   target.replaceChildren(img);
   target.style.border = "0";

@@ -110,8 +110,8 @@ export function countFillerSounds(text: string): number {
   if (!text) return 0;
   let count = 0;
   for (const re of FILLER_SOUND_PATTERNS) {
-    const matches = text.match(re);
-    if (matches) count += matches.length;
+    re.lastIndex = 0;
+    while (re.exec(text) !== null) count += 1;
   }
   return count;
 }

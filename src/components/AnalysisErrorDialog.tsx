@@ -5,6 +5,7 @@ import { PROVIDER_BY_ID } from "../lib/ai/providers";
 import { openSettingsWindow } from "../lib/settingsSync";
 import { runAnalysis } from "../lib/analysis/engine";
 import { useI18n } from "../i18n";
+import { log } from "../lib/log";
 
 /**
  * A modal that surfaces a FAILED AI analysis (the unified timeline/findings
@@ -83,15 +84,18 @@ export function AnalysisErrorDialog() {
   /** Re-run the analysis (mode-aware), then close. */
   function retry() {
     dismiss();
-    void runAnalysis();
+    runAnalysis().catch((error) => log.error("analysis: retry failed", { error: String(error) }));
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-6" onClick={dismiss}>
-      <div
-        className="flex w-full max-w-md flex-col rounded-xl border bg-background shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-6">
+      <button
+        type="button"
+        aria-label={L.dismiss}
+        className="absolute inset-0 bg-black/60"
+        onClick={dismiss}
+      />
+      <div className="relative flex w-full max-w-md flex-col rounded-xl border bg-background shadow-xl">
         <div className="flex items-center gap-2 border-b px-4 py-3">
           <AlertTriangle className="size-4 text-orange-500" />
           <span className="text-sm font-semibold">{L.title}</span>
@@ -135,7 +139,7 @@ export function AnalysisErrorDialog() {
             <button
               type="button"
               onClick={() => {
-                void openSettingsWindow();
+                openSettingsWindow().catch((error) => log.error("settings: open failed", { error: String(error) }));
                 dismiss();
               }}
               className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"

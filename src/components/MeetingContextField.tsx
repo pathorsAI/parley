@@ -11,7 +11,10 @@ import { Textarea } from "@/components/ui/textarea";
  * prompts — the latter three let the analysis reason about leverage, the ZOPA,
  * and how close you are to walking away. Per-deal, NOT the global Settings profile.
  */
-export function MeetingContextField({ rows = 3, autoFocus = false }: { rows?: number; autoFocus?: boolean }) {
+export function MeetingContextField({
+  rows = 3,
+  autoFocus = false,
+}: Readonly<{ rows?: number; autoFocus?: boolean }>) {
   const { t } = useI18n();
   const meetingContext = useStore((s) => s.meetingContext);
   const setMeetingContext = useStore((s) => s.setMeetingContext);
@@ -48,12 +51,12 @@ function SetupField({
   value,
   placeholder,
   onChange,
-}: {
+}: Readonly<{
   label: string;
   value: string;
   placeholder: string;
   onChange: (v: string) => void;
-}) {
+}>) {
   return (
     <div className="flex flex-col gap-1">
       <Label className="text-[11px] text-muted-foreground">{label}</Label>

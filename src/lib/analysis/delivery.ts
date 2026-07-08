@@ -91,7 +91,7 @@ export const DEFAULT_THRESHOLDS: DeliveryThresholds = {
  * timers, no globals — `nowMs` is supplied so tests stay deterministic.
  */
 export class DeliveryCoach {
-  private paceBaseline = new RunningStats();
+  private readonly paceBaseline = new RunningStats();
   private startMs: number | null = null;
   /** True once the user has produced any speech this session. */
   private hasSpoken = false;
@@ -101,12 +101,12 @@ export class DeliveryCoach {
   private sustainedSince: Partial<Record<DeliveryNudgeKind, number>> = {};
 
   constructor(
-    private toggles: DeliveryToggles,
-    private th: DeliveryThresholds = DEFAULT_THRESHOLDS
+    private readonly toggles: DeliveryToggles,
+    private readonly th: DeliveryThresholds = DEFAULT_THRESHOLDS
   ) {}
 
   observe(m: ProsodyMetrics, nowMs: number): DeliveryTrigger | null {
-    if (this.startMs === null) this.startMs = nowMs;
+    this.startMs ??= nowMs;
     const elapsedSec = (nowMs - this.startMs) / 1000;
 
     // Feed the pace baseline only while genuinely speaking, so silence/noise

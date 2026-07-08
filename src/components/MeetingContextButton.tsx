@@ -12,7 +12,7 @@ import { MeetingContextField } from "./MeetingContextField";
  * analysis prompt. Button form so the input isn't always taking up space; a dot
  * marks when context has been entered.
  */
-export function MeetingContextButton({ className }: { className?: string }) {
+export function MeetingContextButton({ className }: Readonly<{ className?: string }>) {
   const { t } = useI18n();
   const hasContext = useStore((s) => !!s.meetingContext.trim());
   const [open, setOpen] = useState(false);
@@ -28,14 +28,14 @@ export function MeetingContextButton({ className }: { className?: string }) {
         {hasContext && <span className="size-1.5 rounded-full bg-emerald-400" />}
       </button>
       {open && (
-        <div
-          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 p-6"
-          onClick={() => setOpen(false)}
-        >
-          <div
-            className="w-full max-w-md rounded-xl border bg-background p-4 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-6">
+          <button
+            type="button"
+            aria-label={t("common.done")}
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setOpen(false)}
+          />
+          <div className="relative w-full max-w-md rounded-xl border bg-background p-4 shadow-xl">
             <MeetingContextField rows={4} autoFocus />
             <div className="mt-4 flex justify-end">
               <Button size="sm" className="h-8" onClick={() => setOpen(false)}>

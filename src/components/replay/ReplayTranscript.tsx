@@ -43,7 +43,7 @@ export function ReplayTranscript({
   onSeek,
   emptyLabel,
   preview = false,
-}: ReplayTranscriptProps) {
+}: Readonly<ReplayTranscriptProps>) {
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const setSpeakerName = useStore((s) => s.setSpeakerName);
   // Bumped on every explicit seek (scrubber, timeline finding, action item) so we
@@ -109,17 +109,8 @@ export function ReplayTranscript({
           return (
             <div
               key={seg.id}
-              role="button"
-              tabIndex={0}
               ref={(el) => {
                 rowRefs.current[seg.id] = el;
-              }}
-              onClick={() => onSeek(seg.startMs)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  onSeek(seg.startMs);
-                }
               }}
               className={cn(
                 "group flex w-full cursor-pointer select-text gap-2.5 rounded-md px-2 py-1.5 text-left text-sm leading-6 transition-colors",
@@ -129,10 +120,14 @@ export function ReplayTranscript({
                 trimmed && "opacity-50"
               )}
             >
-              <span className="mt-0.5 w-9 shrink-0 select-none text-right font-mono text-[10px] tabular-nums text-muted-foreground">
+              <button
+                type="button"
+                onClick={() => onSeek(seg.startMs)}
+                className="mt-0.5 w-9 shrink-0 select-none text-right font-mono text-[10px] tabular-nums text-muted-foreground"
+              >
                 {formatClock(seg.startMs)}
-              </span>
-              <span className="min-w-0 flex-1">
+              </button>
+              <span className="flex min-w-0 flex-1 items-start">
                 {showBadge &&
                   (editingKey === key ? (
                     <SpeakerNameInput
@@ -161,9 +156,17 @@ export function ReplayTranscript({
                       {speakerLabel(seg, speakerNames)}
                     </button>
                   ))}
-                <span className={cn(active ? "text-foreground" : "text-foreground/90", trimmed && "line-through")}>
+                <button
+                  type="button"
+                  onClick={() => onSeek(seg.startMs)}
+                  className={cn(
+                    "min-w-0 flex-1 text-left",
+                    active ? "text-foreground" : "text-foreground/90",
+                    trimmed && "line-through"
+                  )}
+                >
                   {seg.text}
-                </span>
+                </button>
               </span>
             </div>
           );
@@ -182,12 +185,12 @@ function SpeakerNameInput({
   placeholder,
   onCommit,
   onCancel,
-}: {
+}: Readonly<{
   defaultValue: string;
   placeholder: string;
   onCommit: (name: string) => void;
   onCancel: () => void;
-}) {
+}>) {
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
     ref.current?.focus();

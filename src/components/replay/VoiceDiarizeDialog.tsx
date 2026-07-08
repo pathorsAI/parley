@@ -5,6 +5,7 @@ import { useStore, speakerKey, defaultSpeakerLabel } from "../../lib/store";
 import { speakerDotClass } from "../../lib/speakerColors";
 import { runVoiceDiarize } from "../../lib/speakers/diarize";
 import { useI18n } from "../../i18n";
+import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { Source } from "../../lib/types";
@@ -37,7 +38,7 @@ interface SpeakerEntry {
  * speakers it found. No names are needed up front; naming happens after, with a
  * sample line per speaker. Applies straight to the store.
  */
-export function VoiceDiarizeDialog({ onClose }: { onClose: () => void }) {
+export function VoiceDiarizeDialog({ onClose }: Readonly<{ onClose: () => void }>) {
   const { t } = useI18n();
   const segments = useStore((s) => s.segments);
   const speakerNames = useStore((s) => s.speakerNames);
@@ -101,14 +102,15 @@ export function VoiceDiarizeDialog({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-6"
-      onClick={busy ? undefined : onClose}
-    >
-      <div
-        className="flex max-h-[85vh] w-full max-w-md flex-col rounded-xl border bg-background shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-6">
+      <button
+        type="button"
+        aria-label={t("speakers.cancel")}
+        disabled={busy}
+        className="absolute inset-0 bg-black/60 disabled:cursor-default"
+        onClick={onClose}
+      />
+      <div className="relative flex max-h-[85vh] w-full max-w-md flex-col rounded-xl border bg-background shadow-xl">
         <div className="flex items-center gap-2 border-b px-4 py-3">
           <AudioLines className="size-4 text-emerald-400" />
           <span className="text-sm font-semibold">{t("speakers.voiceTitle")}</span>
@@ -197,7 +199,12 @@ export function VoiceDiarizeDialog({ onClose }: { onClose: () => void }) {
               >
                 {t("speakers.cancel")}
               </button>
-              <Button size="sm" className="h-8 gap-1.5" disabled={busy} onClick={() => void run()}>
+              <Button
+                size="sm"
+                className="h-8 gap-1.5"
+                disabled={busy}
+                onClick={() => run().catch((error) => log.error("diarize: run failed", { error: String(error) }))}
+              >
                 {busy ? <Loader2 className="size-3.5 animate-spin" /> : <AudioLines className="size-3.5" />}
                 {busy ? t("speakers.voiceRunning") : t("speakers.voiceRun")}
               </Button>
@@ -214,7 +221,7 @@ export function VoiceDiarizeDialog({ onClose }: { onClose: () => void }) {
 }
 
 /** A labeled progress bar; renders an indeterminate pulse when `total` is 0. */
-function ProgressBar({ progress, stageLabel }: { progress: DiarizeProgress | null; stageLabel: string }) {
+function ProgressBar({ progress, stageLabel }: Readonly<{ progress: DiarizeProgress | null; stageLabel: string }>) {
   const indeterminate = !progress || progress.total === 0;
   const pct =
     progress && progress.total > 0 ? Math.min(100, Math.round((progress.received / progress.total) * 100)) : 0;

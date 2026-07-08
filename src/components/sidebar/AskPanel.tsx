@@ -5,11 +5,13 @@ import remarkGfm from "remark-gfm";
 import { useStore, meetingBriefText } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { useI18n, type TranslationKey } from "../../i18n";
+import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface ChatMessage {
+  id: string;
   role: "user" | "assistant";
   content: string;
   reasoning?: string;
@@ -45,14 +47,14 @@ export function AskPanel() {
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    void ask(input);
+    ask(input).catch((error) => log.error("ask: submit failed", { error: String(error) }));
   }
 
   async function ask(raw: string) {
     const q = raw.trim();
     if (!q || busy) return;
     setInput("");
-    setMessages((m) => [...m, { role: "user", content: q }]);
+    setMessages((m) => [...m, { id: crypto.randomUUID(), role: "user", content: q }]);
 
     const state = useStore.getState();
     const { settings, speakerNames, segments } = state;
@@ -60,12 +62,12 @@ export function AskPanel() {
     if (!hasProviderKey(settings)) {
       setMessages((m) => [
         ...m,
-        { role: "assistant", content: t("ask.missingKey") },
+        { id: crypto.randomUUID(), role: "assistant", content: t("ask.missingKey") },
       ]);
       return;
     }
 
-    setMessages((m) => [...m, { role: "assistant", content: "" }]);
+    setMessages((m) => [...m, { id: crypto.randomUUID(), role: "assistant", content: "" }]);
     setShowThinking(true);
     setBusy(true);
     try {
@@ -98,15 +100,15 @@ export function AskPanel() {
     } catch (err) {
       const { hostedLlmErrorCode } = await import("../../lib/ai/errors");
       const code = hostedLlmErrorCode(err, settings.provider);
-      const content =
-        code === "credits"
-          ? t("ask.error.credits")
-          : code === "auth"
-            ? t("ask.error.auth")
-            : t("ask.failed", { error: err instanceof Error ? err.message : String(err) });
+      let content = t("ask.failed", { error: err instanceof Error ? err.message : String(err) });
+      if (code === "credits") {
+        content = t("ask.error.credits");
+      } else if (code === "auth") {
+        content = t("ask.error.auth");
+      }
       setMessages((m) => {
         const next = m.slice();
-        next[next.length - 1] = { role: "assistant", content };
+        next[next.length - 1] = { id: crypto.randomUUID(), role: "assistant", content };
         return next;
       });
     } finally {
@@ -127,7 +129,7 @@ export function AskPanel() {
                     key={s}
                     type="button"
                     disabled={busy}
-                    onClick={() => void ask(t(s))}
+                    onClick={() => ask(t(s)).catch((error) => log.error("ask: suggestion failed", { error: String(error) }))}
                     className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-foreground/90 transition-colors hover:bg-muted disabled:opacity-40"
                   >
                     {t(s)}
@@ -137,16 +139,31 @@ export function AskPanel() {
             </div>
           ) : (
             <div className="flex flex-col gap-3">
-              {messages.map((m, i) =>
-                m.role === "user" ? (
+              {messages.map((m, i) => {
+                if (m.role === "user") {
+                  return (
                   <div
-                    key={i}
+                    key={m.id}
                     className="select-text ml-auto max-w-[92%] whitespace-pre-wrap rounded-lg bg-primary px-3 py-2 text-sm leading-relaxed text-primary-foreground"
                   >
                     {m.content}
                   </div>
-                ) : (
-                  <div key={i} className="w-full">
+                  );
+                }
+
+                let assistantBody = null;
+                if (m.content) {
+                  assistantBody = (
+                    <div className="prose prose-invert prose-sm select-text max-w-none text-foreground prose-p:my-1.5 prose-pre:my-2 prose-pre:bg-neutral-900 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                    </div>
+                  );
+                } else if (busy && i === messages.length - 1 && !m.reasoning) {
+                  assistantBody = <p className="text-sm text-muted-foreground">…</p>;
+                }
+
+                return (
+                  <div key={m.id} className="w-full">
                     {busy && i === messages.length - 1 && !m.content && m.reasoning ? (
                       <div className="mb-1">
                         <button
@@ -168,16 +185,10 @@ export function AskPanel() {
                         )}
                       </div>
                     ) : null}
-                    {m.content ? (
-                      <div className="prose prose-invert prose-sm select-text max-w-none text-foreground prose-p:my-1.5 prose-pre:my-2 prose-pre:bg-neutral-900 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-                      </div>
-                    ) : busy && i === messages.length - 1 && !m.reasoning ? (
-                      <p className="text-sm text-muted-foreground">…</p>
-                    ) : null}
+                    {assistantBody}
                   </div>
-                )
-              )}
+                );
+              })}
               <div ref={scrollRef} />
             </div>
           )}
@@ -196,7 +207,7 @@ export function AskPanel() {
                 if (e.nativeEvent.isComposing) return;
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  void submit(e);
+                  submit(e);
                   return;
                 }
                 if (input) return;
