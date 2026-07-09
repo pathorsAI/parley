@@ -12,6 +12,7 @@ mod replay_audio;
 mod transcription;
 mod translate;
 mod usage;
+mod virtual_mic;
 mod voice_typing;
 
 use tauri::{Emitter, Manager};
@@ -128,6 +129,9 @@ pub fn run() {
             translate::stop_translate,
             translate::translate_active,
             translate::list_output_devices,
+            virtual_mic::virtual_mic_status,
+            virtual_mic::install_virtual_mic,
+            virtual_mic::uninstall_virtual_mic,
             hotkey::ensure_fn_listener,
             hotkey::input_monitoring_status,
             hotkey::request_input_monitoring,

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Languages, Mic, Speaker, Loader2, AlertTriangle } from "lucide-react";
+import { Languages, Mic, Speaker, Loader2, AlertTriangle, CheckCircle2, Download } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isTauri } from "../lib/tauriEvents";
 import { log } from "../lib/log";
@@ -54,6 +54,16 @@ const STRINGS = {
     errKey: "Gemini API key 無效或被拒絕。",
     errQuota: "已達額度上限或請求過於頻繁。",
     errConnect: "連線失敗，請檢查網路後重試。",
+    vmicTitle: "Parley 虛擬麥克風",
+    vmicNotInstalled:
+      "安裝後，Google Meet / Zoom 等 app 的麥克風清單就會出現「Parley Microphone」，選它就能讓對方聽到翻譯後的聲音。",
+    vmicInstall: "安裝虛擬麥克風",
+    vmicInstalling: "安裝中…（會跳出系統的管理員授權視窗）",
+    vmicInstalled: "已安裝",
+    vmicUse: "設為輸出裝置",
+    vmicInUse: "已設為輸出裝置 — 在 Google Meet 選「Parley Microphone」當麥克風即可。",
+    vmicNoPkg: "此開發版沒有附安裝檔（請先在 repo 執行 virtual-mic/build.sh 與 make-pkg.sh）。",
+    vmicFailed: "安裝失敗：",
   },
   en: {
     title: "Live Translation",
@@ -81,6 +91,16 @@ const STRINGS = {
     errKey: "The Gemini API key is invalid or was rejected.",
     errQuota: "Quota reached or too many requests.",
     errConnect: "Connection failed — check your network and retry.",
+    vmicTitle: "Parley virtual microphone",
+    vmicNotInstalled:
+      "Once installed, “Parley Microphone” appears in Google Meet / Zoom's mic list — select it there and the other side hears the translated voice.",
+    vmicInstall: "Install virtual microphone",
+    vmicInstalling: "Installing… (macOS will ask for admin authorization)",
+    vmicInstalled: "Installed",
+    vmicUse: "Use as output device",
+    vmicInUse: "Set as output — pick “Parley Microphone” as the mic in Google Meet.",
+    vmicNoPkg: "This dev build has no installer (run virtual-mic/build.sh + make-pkg.sh in the repo first).",
+    vmicFailed: "Install failed: ",
   },
 } as const;
 
@@ -91,6 +111,12 @@ interface TranscriptPayload {
 interface ErrorPayload {
   code: string;
   message: string;
+}
+interface VirtualMicStatus {
+  deviceVisible: boolean;
+  driverInstalled: boolean;
+  pkgAvailable: boolean;
+  deviceName: string;
 }
 
 export function LiveTranslateApp() {
@@ -111,21 +137,59 @@ export function LiveTranslateApp() {
   const [error, setError] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const startedAt = useRef<number | null>(null);
+  const [micStatus, setMicStatus] = useState<VirtualMicStatus | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
 
   const hasKey = geminiApiKey.trim().length > 0;
+
+  const refreshDevices = useCallback(() => {
+    if (!isTauri()) return;
+    invoke<string[]>("list_input_devices").then(setInputDevices).catch(() => {});
+    invoke<string[]>("list_output_devices").then(setOutputDevices).catch(() => {});
+    invoke<VirtualMicStatus>("virtual_mic_status").then(setMicStatus).catch(() => {});
+  }, []);
 
   // Enumerate devices + sync running state on mount.
   useEffect(() => {
     if (!isTauri()) return;
-    invoke<string[]>("list_input_devices").then(setInputDevices).catch(() => {});
-    invoke<string[]>("list_output_devices").then(setOutputDevices).catch(() => {});
+    refreshDevices();
     invoke<boolean>("translate_active")
       .then((active) => {
         setRunning(active);
         if (active) startedAt.current = Date.now();
       })
       .catch(() => {});
-  }, []);
+  }, [refreshDevices]);
+
+  // One-click driver install: native admin prompt → installer runs → coreaudiod
+  // reloads. Poll status briefly afterwards (device registration isn't instant),
+  // then auto-select the virtual mic as the output device.
+  const installVirtualMic = useCallback(async () => {
+    if (installing) return;
+    setInstalling(true);
+    setInstallError(null);
+    try {
+      await invoke("install_virtual_mic");
+      let visible = false;
+      for (let i = 0; i < 10 && !visible; i++) {
+        await new Promise((r) => setTimeout(r, 700));
+        const s = await invoke<VirtualMicStatus>("virtual_mic_status");
+        setMicStatus(s);
+        visible = s.deviceVisible;
+        if (visible) updateSettings({ translateOutputDevice: s.deviceName });
+      }
+      refreshDevices();
+    } catch (e) {
+      const msg = String(e);
+      if (!msg.includes("cancelled")) {
+        setInstallError(msg);
+        log.error("virtual-mic: install failed", { error: msg });
+      }
+    } finally {
+      setInstalling(false);
+    }
+  }, [installing, refreshDevices, updateSettings]);
 
   // Backend status / transcript / error events.
   useEffect(() => {
@@ -309,6 +373,55 @@ export function LiveTranslateApp() {
           </Select>
           <p className="text-xs leading-relaxed text-muted-foreground">{t.outputHint}</p>
         </div>
+
+        {/* Parley virtual microphone: install card / installed state */}
+        {micStatus && !micStatus.deviceVisible && (
+          <div className="flex flex-col gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
+            <span className="text-sm font-medium">{t.vmicTitle}</span>
+            <p className="text-xs leading-relaxed text-muted-foreground">{t.vmicNotInstalled}</p>
+            {micStatus.pkgAvailable ? (
+              <Button size="sm" onClick={installVirtualMic} disabled={installing}>
+                {installing ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" /> {t.vmicInstalling}
+                  </>
+                ) : (
+                  <>
+                    <Download className="size-3.5" /> {t.vmicInstall}
+                  </>
+                )}
+              </Button>
+            ) : (
+              <p className="text-xs text-amber-600 dark:text-amber-400">{t.vmicNoPkg}</p>
+            )}
+            {installError && (
+              <p className="text-xs text-red-600 dark:text-red-400">
+                {t.vmicFailed}
+                {installError}
+              </p>
+            )}
+          </div>
+        )}
+        {micStatus?.deviceVisible && (
+          <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs">
+            <CheckCircle2 className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            <span className="font-medium">{t.vmicTitle}</span>
+            <span className="text-muted-foreground">{t.vmicInstalled}</span>
+            {outputDevice === micStatus.deviceName ? (
+              <span className="ml-auto text-right text-muted-foreground">{t.vmicInUse}</span>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto h-7"
+                disabled={running}
+                onClick={() => updateSettings({ translateOutputDevice: micStatus.deviceName })}
+              >
+                {t.vmicUse}
+              </Button>
+            )}
+          </div>
+        )}
 
         {error && (
           <div className="flex items-start gap-2 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-400">

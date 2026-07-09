@@ -78,28 +78,34 @@ Live Translation window’s **output-device picker lists it automatically** (no 
 change needed). Select it there, then in Google Meet pick **Parley Microphone**
 as the mic. Speak → Meet hears the translation.
 
-## Shipping path (Phase 2 productization — TODO)
+## How it ships (wired up end-to-end)
 
-The dev install above is not what end users should do. To ship this inside
-Parley:
+End users never run any of the scripts above — the whole flow is automated:
 
-1. **Universal build**: `ARCHS="arm64;x86_64"` so it runs on Intel + Apple
-   Silicon (Parley ships `universal-apple-darwin`).
-2. **Sign + notarize**: sign the `.driver` with the same **Developer ID
-   Application** identity Parley already uses in CI
-   (`CODESIGN_ID="Developer ID Application: … (TEAMID)" ./build.sh`), then
-   notarize. Ad-hoc signing (dev) will not pass Gatekeeper.
-3. **Bundle it** into `Parley.app` as a resource.
-4. **Installer package**: `INSTALLER_ID="Developer ID Installer: … (TEAMID)"
-   ./make-pkg.sh` (Parley’s CI already has `productsign`), then notarize the
-   `.pkg`. `make-pkg.sh` already builds the (unsigned) package + postinstall.
-5. **One-click install from inside Parley** (the goal — no Terminal for the
-   user): bundle the signed `.pkg` in `Parley.app`; when the translate feature
-   is first used and the device is absent, show an “Install Parley Microphone”
-   button that launches the `.pkg` (`open` it, or `installer` via an
-   Authorization prompt) → macOS shows its native admin-password dialog. Detect
-   “is the device present?” to gate the flow and offer repair/uninstall.
-6. **Uninstall** on app removal.
+1. **CI** (`.github/workflows/release.yml`, step “Build Parley Microphone
+   driver + installer pkg”): builds the driver **universal**
+   (`ARCHS="arm64;x86_64"`), signs the driver binary with the **Developer ID
+   Application** identity (so app notarization accepts the nested code), packs
+   it with `make-pkg.sh`, and drops the `.pkg` at
+   `src-tauri/virtualmic/ParleyMicrophone.pkg` — which `tauri.conf.json`
+   bundles into `Parley.app` as a resource.
+2. **In-app one-click install** (`src-tauri/src/virtual_mic.rs` + the install
+   card in the Live Translation window): when the device is absent, Parley
+   shows “Install virtual microphone”; clicking runs the bundled pkg via
+   `/usr/sbin/installer` under `osascript … with administrator privileges` —
+   the user sees only macOS’s **native admin/Touch ID dialog**, no Terminal, no
+   visible pkg. The pkg’s postinstall reloads coreaudiod; the UI polls until
+   “Parley Microphone” appears and auto-selects it as the output device.
+   - The `installer` CLI path doesn’t require the pkg *container* to be signed;
+     if the optional `APPLE_INSTALLER_SIGNING_IDENTITY` secret is configured,
+     CI signs it with `productsign` anyway (needed only for double-click
+     installs of a standalone pkg).
+3. **Uninstall**: the `uninstall_virtual_mic` command removes the driver (admin
+   prompt) and reloads coreaudiod.
+4. **Dev builds**: `build.rs` writes a zero-byte placeholder so tauri-build
+   doesn’t fail on the missing resource; at runtime the pkg lookup falls back
+   to `virtual-mic/build/ParleyMicrophone.pkg` (build it with the scripts
+   above), and the install card explains when neither exists.
 
-None of this needs the Rust/TS app to change how it *routes* audio — the device
-just needs to exist; the existing output picker does the rest.
+None of this changes how the app *routes* audio — the device just needs to
+exist; the output picker does the rest.
