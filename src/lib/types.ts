@@ -229,6 +229,11 @@ export type VoiceTypingShortcut =
   | "right-control"
   | `combo:${string}`;
 
+/** How the push-to-talk trigger behaves:
+ *  - `hold`: hold the key to dictate, release to finish + paste (default).
+ *  - `toggle`: tap once to start, tap again to finish + paste (release ignored). */
+export type VoiceTypingMode = "hold" | "toggle";
+
 /** Model ids for one provider: a fast model for Q&A, a stronger one for evals. */
 export interface ProviderModels {
   ask: string;
@@ -286,6 +291,8 @@ export interface Settings {
   /** Voice typing push-to-talk key. Defaults to Option+Space (no extra
    *  permission); can be switched to a hold-friendly modifier key. */
   voiceTypingShortcut: VoiceTypingShortcut;
+  /** Whether the trigger is hold-to-talk (default) or tap-to-toggle. */
+  voiceTypingMode: VoiceTypingMode;
   /** The active evaluation set used in meetings (the runtime copy lives in the store). */
   evaluations: EvalDef[];
   /** Library of evaluation templates (built-in + custom) you can apply. */
