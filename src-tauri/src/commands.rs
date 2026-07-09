@@ -301,6 +301,8 @@ pub fn start_meeting(
                     None,
                     "meeting://error",
                     Some(error_mute.clone()),
+                    // No release cutoff — meetings end via stop, not key-up.
+                    None,
                 ));
             }
         } else if diarization {
