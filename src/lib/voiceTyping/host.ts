@@ -31,8 +31,20 @@ const AX_BOOT_PROMPTED_KEY = "parley:ax-boot-prompted";
 const CLOSE_DRAIN_MS = 150;
 const SETTLE_MS = 500;
 const MAX_WAIT_MS = 3000;
-/** Keep the result visible briefly before hiding the overlay. */
-const HIDE_DELAY_MS = 1100;
+/** Keep the "Copied to clipboard" confirmation floating a beat so the user
+ *  clearly registers it before the overlay fades out. The overlay animates its
+ *  own fade in the final stretch (see VoiceTypingApp's fade timing) — this sits
+ *  comfortably AFTER that fade completes (dwell + fade ≈ 2600ms, plus event/IPC
+ *  latency before the overlay's clock even starts) so the native hide always
+ *  lands on an already-invisible window. */
+const HIDE_DELAY_MS = 2900;
+
+/** Toggle mode: a press only toggles while "armed"; each release re-arms. So a
+ *  tap is a key-down that FOLLOWS a key-up, and OS key-repeat (repeated downs
+ *  with no intervening release, which the combo path can emit while held) is
+ *  ignored — without a timing heuristic that could swallow a deliberate quick
+ *  stop. Starts armed so the very first press acts. */
+let toggleArmed = true;
 
 let latestText = "";
 let lastTextAt = 0;
@@ -170,6 +182,28 @@ export function initVoiceTyping(): () => void {
 }
 
 async function onPtt(isDown: boolean) {
+  // Toggle mode: a key PRESS starts a session and the next press ends it; the
+  // release only re-arms (see `toggleArmed`). Not relying on the release to stop
+  // also means a dropped key-up can't leave the session recording — the "still
+  // transcribing after I let go" symptom.
+  if (useStore.getState().settings.voiceTypingMode === "toggle") {
+    if (!isDown) {
+      toggleArmed = true; // release re-arms the next tap
+      return;
+    }
+    if (!toggleArmed) return; // key-repeat while held — ignore
+    toggleArmed = false;
+    if (busy) {
+      down = false; // mirror hold-mode release so the flush fast-path applies
+      await endSession();
+    } else {
+      down = true; // guard a stale stt://closed during startup, like hold mode
+      await startSession();
+      down = busy; // clear if the start didn't actually take
+    }
+    return;
+  }
+  // Hold mode (default): press starts, release ends.
   if (isDown === down) return; // ignore key repeats / duplicates
   down = isDown;
   if (isDown) await startSession();

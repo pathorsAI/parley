@@ -195,6 +195,12 @@ pub type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
 /// when it releases its tasks; a muted failure is logged only. Voice typing
 /// passes `None` — its stale-error guards are abort-on-restart plus the
 /// host-side busy/generation checks.
+///
+/// `cutoff`: voice typing sets this on release (see `stop_voice_typing`) to HARD
+/// CUT the audio the instant the key is let go — the counter stops forwarding
+/// (and billing) new chunks and drops its sender, closing the STT input NOW so
+/// only what was said before release is transcribed and flushed. Meetings pass
+/// `None` (they stop by dropping the mic sender via the gate).
 #[allow(clippy::too_many_arguments)]
 pub fn run_metered_session(
     app: &AppHandle,
@@ -205,6 +211,7 @@ pub fn run_metered_session(
     recorder: Option<RecorderBuf>,
     error_event: &'static str,
     error_mute: Option<Arc<AtomicBool>>,
+    cutoff: Option<Arc<AtomicBool>>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -216,6 +223,13 @@ pub fn run_metered_session(
             let mut rx = rx;
             let mut samples: u64 = 0;
             while let Some(chunk) = rx.recv().await {
+                // Voice-typing release: stop the instant the key is let go so no
+                // audio captured after release is forwarded (or billed). Dropping
+                // `count_tx` by leaving the loop closes the STT input now, which
+                // triggers its final flush of only the pre-release speech.
+                if cutoff.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+                    break;
+                }
                 samples += chunk.len() as u64;
                 // Tee into the recording buffer (kept while the meeting is armed).
                 if let Some(rec) = &recorder {

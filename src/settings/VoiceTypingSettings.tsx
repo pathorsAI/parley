@@ -6,7 +6,7 @@ import { useI18n, type TranslationKey } from "../i18n";
 import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
 import { log } from "../lib/log";
-import type { VoiceTypingShortcut } from "../lib/types";
+import type { VoiceTypingMode, VoiceTypingShortcut } from "../lib/types";
 import { Button } from "@/components/ui/button";
 
 interface HotkeyStatus {
@@ -371,6 +371,14 @@ export const VoiceTypingSettings = () => {
     }
   };
 
+  const setVoiceTypingMode = (mode: VoiceTypingMode) => {
+    updateSettings({ voiceTypingMode: mode });
+    broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
+      log.warn("voice typing settings: broadcast failed", { error: String(error) }),
+    );
+  };
+  const mode = settings.voiceTypingMode;
+
   // Guidance renders as single inline lines (no nested boxes) and only when
   // actionable — the default state is just the recorder, the chips and one
   // caption.
@@ -402,6 +410,38 @@ export const VoiceTypingSettings = () => {
             ? t("settings.voiceTyping.disable")
             : t("settings.voiceTyping.enable")}
         </Button>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-medium text-muted-foreground">
+            {t("settings.voiceTyping.mode")}
+          </span>
+          <div className="flex shrink-0 gap-1.5">
+            {(["hold", "toggle"] as const).map((m) => (
+              <Button
+                key={m}
+                variant={mode === m ? "secondary" : "outline"}
+                size="sm"
+                className="h-7 px-2.5 text-[11px]"
+                onClick={() => setVoiceTypingMode(m)}
+              >
+                {t(
+                  m === "hold"
+                    ? "settings.voiceTyping.mode.hold"
+                    : "settings.voiceTyping.mode.toggle",
+                )}
+              </Button>
+            ))}
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          {t(
+            mode === "toggle"
+              ? "settings.voiceTyping.mode.toggleHint"
+              : "settings.voiceTyping.mode.holdHint",
+          )}
+        </p>
       </div>
 
       <div className="flex flex-col gap-2">

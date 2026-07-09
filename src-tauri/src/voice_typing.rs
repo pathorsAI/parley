@@ -12,6 +12,7 @@
 // The `objc` 0.2 macros emit `cfg(cargo-clippy)` checks newer compilers warn on.
 #![allow(unexpected_cfgs)]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Manager, State};
@@ -51,6 +52,10 @@ struct VtInner {
     /// they can never abort a NEWER session than the one they belong to.
     seq: u64,
     task: Option<tauri::async_runtime::JoinHandle<()>>,
+    /// The current session's audio cutoff. `stop_voice_typing` sets it to hard
+    /// cut the stream on release so nothing said after the key is let go is
+    /// transcribed (see `run_metered_session`). Replaced each start.
+    cutoff: Option<Arc<AtomicBool>>,
 }
 
 /// Start a mic-only streaming transcription. Idempotent while already running;
@@ -141,6 +146,9 @@ pub fn start_voice_typing(
             return Err(format!("microphone failed to start: {e}"));
         }
     };
+    // Per-session cutoff: `stop_voice_typing` flips it to end the stream the
+    // moment the key is released, before the mic thread even notices the gate.
+    let cutoff = Arc::new(AtomicBool::new(false));
     let task = run_metered_session(
         &app,
         provider,
@@ -150,6 +158,7 @@ pub fn start_voice_typing(
         None,
         "voicetyping://error",
         None,
+        Some(cutoff.clone()),
     );
     // Pin the session task so the next start (or stop's backstop) can abort
     // it. If a newer start won the race while we were spawning, ours is the
@@ -158,6 +167,7 @@ pub fn start_voice_typing(
     let mut vt = state.0.lock().unwrap();
     if vt.seq == my_seq {
         vt.task = Some(task);
+        vt.cutoff = Some(cutoff);
     } else {
         task.abort();
     }
@@ -236,6 +246,13 @@ pub fn write_voice_history(app: AppHandle, content: String) -> Result<(), String
 /// newer one started during the grace.
 #[tauri::command]
 pub fn stop_voice_typing(coord: State<MicCoordinator>, state: State<VoiceTypingState>) {
+    // Hard cut FIRST: stop forwarding audio to the STT session immediately so
+    // nothing captured after release is transcribed, and its input closes now
+    // for a prompt final flush — set before `coord.stop` so forwarding ceases
+    // without waiting for the mic thread to observe the cleared gate.
+    if let Some(cutoff) = state.0.lock().unwrap().cutoff.as_ref() {
+        cutoff.store(true, Ordering::SeqCst);
+    }
     coord.stop(MicUser::VoiceTyping);
     let my_seq = state.0.lock().unwrap().seq;
     let inner = state.0.clone();

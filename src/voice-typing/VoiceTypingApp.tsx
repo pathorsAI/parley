@@ -19,6 +19,12 @@ const WAVE_PROFILE = [
   0.38, 0.62, 0.44, 0.28,
 ];
 
+/** Once copied, hold the confirmation fully visible this long, then fade out
+ *  over FADE_MS. The sum must land at/before the host's HIDE_DELAY_MS so the
+ *  window is already invisible when it's ordered out (no abrupt pop). */
+const DONE_DWELL_MS = 2150;
+const FADE_MS = 450;
+
 interface SegPayload {
   id: string;
   source: string;
@@ -85,6 +91,9 @@ export const VoiceTypingApp = () => {
   // Set when the hosted single-dictation cap ended the session: a note shown
   // alongside the (still delivered) transcript so the abrupt stop is explained.
   const [limited, setLimited] = useState(false);
+  // Drives the graceful fade-out of the whole overlay after the copied
+  // confirmation has dwelled — reset whenever a new session starts.
+  const [fading, setFading] = useState(false);
   const [bars, setBars] = useState<number[]>(() =>
     Array.from({ length: BAR_COUNT }, () => BAR_FLOOR),
   );
@@ -197,6 +206,7 @@ export const VoiceTypingApp = () => {
           setText("");
           setError(null);
           setLimited(false);
+          setFading(false);
           setPhase("listening");
         } else if (p === "stop") {
           setPhase("finalizing");
@@ -227,6 +237,17 @@ export const VoiceTypingApp = () => {
     return () => clearInterval(id);
   }, [phase]);
 
+  // Once copied, let the confirmation dwell, then fade the overlay out just
+  // before the host orders the window hidden. Only the genuine "copied" state
+  // fades: an error also lands on the "done" phase but must stay visible until
+  // the session is dismissed (toggle mode has no release to hide it), so never
+  // fade an error out from under the user.
+  useEffect(() => {
+    if (phase !== "done" || error) return;
+    const id = setTimeout(() => setFading(true), DONE_DWELL_MS);
+    return () => clearTimeout(id);
+  }, [phase, error]);
+
   const errorKey = (error && ERROR_KEYS[error]) || "voiceTyping.error";
   const bubble = error ? t(errorKey) : text;
 
@@ -238,7 +259,10 @@ export const VoiceTypingApp = () => {
   }
 
   return (
-    <div className="flex h-screen w-screen select-none flex-col items-center justify-end gap-2 pb-4">
+    <div
+      className="flex h-screen w-screen select-none flex-col items-center justify-end gap-2 pb-4"
+      style={{ opacity: fading ? 0 : 1, transition: `opacity ${FADE_MS}ms ease-in` }}
+    >
       {/* Hosted single-dictation cap note: shown above the transcript, which is
           still delivered. Amber to read as a limit, not an error. */}
       {limited && !error && (

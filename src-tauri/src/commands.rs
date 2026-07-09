@@ -250,6 +250,7 @@ pub fn start_meeting(
                         Some(recorder),
                         "meeting://error",
                         Some(error_mute.clone()),
+                        None,
                     ));
                 }
                 // If one capture failed, transcribe + record whichever started.
@@ -263,6 +264,7 @@ pub fn start_meeting(
                         Some(recorder),
                         "meeting://error",
                         Some(error_mute.clone()),
+                        None,
                     ));
                 }
                 (None, Some(b)) => {
@@ -275,6 +277,7 @@ pub fn start_meeting(
                         Some(recorder),
                         "meeting://error",
                         Some(error_mute.clone()),
+                        None,
                     ));
                 }
                 (None, None) => {
@@ -310,6 +313,7 @@ pub fn start_meeting(
                     Some(recorder),
                     "meeting://error",
                     Some(error_mute.clone()),
+                    None,
                 ));
             }
             if let Ok(rx) = spawn_capture(&coord, MicUser::Meeting, sys, gate.clone(), "them") {
@@ -323,6 +327,7 @@ pub fn start_meeting(
                     None,
                     "meeting://error",
                     Some(error_mute.clone()),
+                    None,
                 ));
             }
         }
@@ -345,6 +350,7 @@ pub fn start_meeting(
                 Some(recorder),
                 "meeting://error",
                 Some(error_mute.clone()),
+                None,
             );
             state.tasks.lock().unwrap().push(task);
         }
