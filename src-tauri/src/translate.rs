@@ -301,17 +301,20 @@ async fn session_inner(
     } else {
         format!("models/{}", params.model)
     };
+    // NOTE: on the raw WebSocket, the transcription + translation configs are
+    // TOP-LEVEL setup fields, NOT inside generationConfig — the server rejects
+    // the nested shape with `Unknown name … at 'setup.generation_config'`.
+    // (The docs show the Python SDK's flat `config` object, which the SDK remaps;
+    // the transcription adapter in gemini.rs uses this same setup-level shape.)
     let setup = json!({
         "setup": {
             "model": model_path,
-            "generationConfig": {
-                "responseModalities": ["AUDIO"],
-                "inputAudioTranscription": {},
-                "outputAudioTranscription": {},
-                "translationConfig": {
-                    "targetLanguageCode": params.target_language,
-                    "echoTargetLanguage": params.echo,
-                }
+            "generationConfig": { "responseModalities": ["AUDIO"] },
+            "inputAudioTranscription": {},
+            "outputAudioTranscription": {},
+            "translationConfig": {
+                "targetLanguageCode": params.target_language,
+                "echoTargetLanguage": params.echo,
             }
         }
     });
