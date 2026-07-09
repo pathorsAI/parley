@@ -301,20 +301,25 @@ async fn session_inner(
     } else {
         format!("models/{}", params.model)
     };
-    // NOTE: on the raw WebSocket, the transcription + translation configs are
-    // TOP-LEVEL setup fields, NOT inside generationConfig — the server rejects
-    // the nested shape with `Unknown name … at 'setup.generation_config'`.
-    // (The docs show the Python SDK's flat `config` object, which the SDK remaps;
-    // the transcription adapter in gemini.rs uses this same setup-level shape.)
+    // Wire format per Google's official live-translate example
+    // (github.com/google-gemini/gemini-live-translate-livekit, translation-bridge.ts):
+    // the transcription configs are TOP-LEVEL setup fields, while translationConfig
+    // lives INSIDE generationConfig. Both misplacements get a 1007 close
+    // ("Unknown name … Cannot find field") — learned the hard way, do not shuffle.
     let setup = json!({
         "setup": {
             "model": model_path,
-            "generationConfig": { "responseModalities": ["AUDIO"] },
             "inputAudioTranscription": {},
             "outputAudioTranscription": {},
-            "translationConfig": {
-                "targetLanguageCode": params.target_language,
-                "echoTargetLanguage": params.echo,
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "translationConfig": {
+                    "targetLanguageCode": params.target_language,
+                    "echoTargetLanguage": params.echo,
+                }
+            },
+            "realtimeInputConfig": {
+                "automaticActivityDetection": { "disabled": false }
             }
         }
     });
@@ -338,8 +343,11 @@ async fn session_inner(
             in_meter.push(&chunk);
             in_samples.fetch_add(chunk.len() as u64, Ordering::Relaxed);
             let data = b64.encode(pcm_to_le_bytes(&chunk));
+            // `realtimeInput.audio` (single blob) is what the official
+            // live-translate example sends — not the legacy `mediaChunks` array
+            // the transcription adapter still uses.
             let msg = json!({
-                "realtimeInput": { "mediaChunks": [ { "mimeType": mime, "data": data } ] }
+                "realtimeInput": { "audio": { "mimeType": mime, "data": data } }
             });
             if write.send(Message::Text(msg.to_string())).await.is_err() {
                 break false;
