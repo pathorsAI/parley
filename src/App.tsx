@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TitleBar } from "./components/TitleBar";
+import { TranslateStrip } from "./components/TranslateStrip";
 import { LiveScreen } from "./components/live/LiveScreen";
 import { ReplayScreen } from "./components/replay/ReplayScreen";
 import { Onboarding } from "./components/Onboarding";
@@ -255,6 +256,8 @@ const App = () => {
       <TitleBar fullscreen={fullscreen} />
       <DeliveryNudgeHost />
       {appMode === "replay" ? <ReplayScreen /> : <LiveScreen />}
+      {/* Interpreter strip: only during a translated live meeting. */}
+      <TranslateStrip />
     </div>
   );
 };

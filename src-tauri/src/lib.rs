@@ -99,6 +99,7 @@ pub fn run() {
             commands::start_mic_test,
             commands::stop_mic_test,
             commands::meeting_active,
+            commands::set_translate_paused,
             commands::save_transcript,
             commands::export_recording,
             commands::start_oauth_loopback,

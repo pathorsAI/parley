@@ -43,3 +43,8 @@ export function translateLanguageLabel(code: string): string {
   const found = TRANSLATE_LANGUAGES.find((l) => l.code === code);
   return found ? found.nativeLabel : code;
 }
+
+/** Combined audio-token price for gemini-3.5-live-translate-preview: input
+ *  $0.0053/min + output $0.0315/min (output dominates). Live estimate only —
+ *  real billing is metered server-side. */
+export const TRANSLATE_USD_PER_MINUTE = 0.0053 + 0.0315;

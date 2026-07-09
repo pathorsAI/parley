@@ -29,7 +29,10 @@ use crate::audio::playback::{start_playback, PlaybackHandle, PlaybackSink, TRANS
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
 use crate::capture::{spawn_capture, Begin, MicCoordinator, MicUser};
-use crate::transcription::common::{connect_with_headers, drive_session, LevelMeter, LEVEL_EVENT};
+use crate::transcription::common::{
+    connect_with_headers, drive_session, LevelMeter, LEVEL_EVENT,
+    TRANSCRIPT_EVENT as MEETING_TRANSCRIPT_EVENT,
+};
 
 const GEMINI_BASE: &str =
     "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
@@ -180,6 +183,9 @@ pub fn start_translate(
         model,
         target_language,
         echo,
+        meeting_source: None,
+        error_event: ERROR_EVENT,
+        paused: None,
     };
 
     let task = tauri::async_runtime::spawn(run_translate_session(
@@ -227,6 +233,56 @@ struct SessionParams {
     model: String,
     target_language: String,
     echo: bool,
+    /// `Some("me")` = this session belongs to a live MEETING: bilingual turns are
+    /// emitted as `transcript://segment` under that source (so the meeting
+    /// transcript, analysis and history pick them up) and the input level is
+    /// metered as that source (feeding the titlebar meter). `None` = the
+    /// standalone quick-interpreter window (translate://-scoped events only).
+    meeting_source: Option<&'static str>,
+    /// Where a terminal failure surfaces: `translate://error` (standalone) or
+    /// `meeting://error` (meeting mode — the meeting UI tears down on it).
+    error_event: &'static str,
+    /// Meeting-mode pause switch (the interpreter strip's ⏸): while set, mic
+    /// chunks are dropped instead of uploaded — the counterpart hears silence
+    /// and no audio tokens are billed. `None` = not pausable (standalone).
+    paused: Option<Arc<AtomicBool>>,
+}
+
+/// Wire a meeting's "me" side through Gemini live-translate: opens the output
+/// device, spawns the session (bilingual `transcript://segment` under "me",
+/// translated voice → `output_device`), and returns the session task plus the
+/// playback handle the caller must hold for the meeting's lifetime.
+///
+/// Used by `start_meeting` when the user enables meeting translation; the
+/// standalone window goes through `start_translate` instead.
+pub fn spawn_meeting_translate(
+    app: &AppHandle,
+    api_key: String,
+    target_language: String,
+    output_device: Option<String>,
+    pcm_rx: UnboundedReceiver<Vec<i16>>,
+    error_mute: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
+) -> Result<(tauri::async_runtime::JoinHandle<()>, PlaybackHandle), String> {
+    let (sink, playback) =
+        start_playback(output_device).map_err(|e| format!("could not open output device: {e}"))?;
+    let params = SessionParams {
+        api_key,
+        model: DEFAULT_MODEL.to_string(),
+        target_language,
+        echo: true,
+        meeting_source: Some("me"),
+        error_event: "meeting://error",
+        paused: Some(paused),
+    };
+    let task = tauri::async_runtime::spawn(run_translate_session(
+        app.clone(),
+        params,
+        pcm_rx,
+        sink,
+        error_mute,
+    ));
+    Ok((task, playback))
 }
 
 async fn run_translate_session(
@@ -266,7 +322,10 @@ async fn run_translate_session(
             } else {
                 "connect"
             };
-            let _ = app.emit(ERROR_EVENT, json!({ "code": code, "message": msg }));
+            let _ = app.emit(
+                params.error_event,
+                json!({ "source": "translate", "code": code, "message": msg }),
+            );
         }
     }
 
@@ -331,7 +390,11 @@ async fn session_inner(
     );
 
     let mime = format!("audio/pcm;rate={TARGET_SAMPLE_RATE}");
-    let mut in_meter = LevelMeter::new(app.clone(), "translate-in", LEVEL_EVENT);
+    // In meeting mode the mic level is metered under the meeting source ("me")
+    // so the existing titlebar meter works unchanged.
+    let in_meter_source = params.meeting_source.unwrap_or("translate-in");
+    let mut in_meter = LevelMeter::new(app.clone(), in_meter_source, LEVEL_EVENT);
+    let paused = params.paused.clone();
     // Resolves `true` when the mic drained (normal stop), `false` if a send
     // failed (dead socket) — drive_session reports the latter as a failure.
     let forward = async move {
@@ -341,6 +404,15 @@ async fn session_inner(
                 break true;
             };
             in_meter.push(&chunk);
+            // Paused (interpreter strip ⏸): keep metering so the user sees the
+            // mic is alive, but drop the upload — silence to the counterpart,
+            // zero audio tokens billed.
+            if paused
+                .as_ref()
+                .is_some_and(|p| p.load(Ordering::Relaxed))
+            {
+                continue;
+            }
             in_samples.fetch_add(chunk.len() as u64, Ordering::Relaxed);
             let data = b64.encode(pcm_to_le_bytes(&chunk));
             // `realtimeInput.audio` (single blob) is what the official
@@ -355,11 +427,19 @@ async fn session_inner(
         }
     };
 
+    let meeting_source = params.meeting_source;
     let read_loop = async move {
         let b64 = base64::engine::general_purpose::STANDARD;
         let mut out_meter = LevelMeter::new(app.clone(), "translate-out", LEVEL_EVENT);
         let mut interim_in = String::new();
         let mut interim_out = String::new();
+        // Meeting mode: bilingual turns become transcript segments. One segment
+        // per model turn (Gemini gives no per-word timings, so segments carry
+        // wall-clock offsets from session start; speaker is always 0 — "me" is a
+        // single speaker by construction).
+        let t0 = std::time::Instant::now();
+        let mut turn_index: u64 = 0;
+        let mut turn_start_ms: u64 = 0;
         while let Some(msg) = read.next().await {
             let payload = match msg {
                 Ok(Message::Text(t)) => t.to_string(),
@@ -412,6 +492,7 @@ async fn session_inner(
             }
 
             // Optional live transcripts for the UI (source + translated text).
+            let grew = sc.input_transcription.is_some() || sc.output_transcription.is_some();
             if let Some(tr) = sc.input_transcription {
                 interim_in.push_str(&tr.text);
             }
@@ -422,6 +503,32 @@ async fn session_inner(
                 TRANSCRIPT_EVENT,
                 json!({ "input": interim_in, "output": interim_out }),
             );
+            // Meeting mode: surface the growing turn as an interim segment, and
+            // commit it (fresh id next turn) on turnComplete. Skip audio-only
+            // messages so we don't spam identical interim payloads.
+            if let Some(src) = meeting_source {
+                let has_text = !interim_in.trim().is_empty() || !interim_out.trim().is_empty();
+                if (grew || sc.turn_complete) && has_text {
+                    let now_ms = t0.elapsed().as_millis() as u64;
+                    let _ = app.emit(
+                        MEETING_TRANSCRIPT_EVENT,
+                        json!({
+                            "id": format!("{src}-tr-{turn_index}"),
+                            "source": src,
+                            "speaker": 0,
+                            "text": interim_in.trim(),
+                            "translation": interim_out.trim(),
+                            "is_final": sc.turn_complete,
+                            "start_ms": turn_start_ms,
+                            "end_ms": now_ms,
+                        }),
+                    );
+                    if sc.turn_complete {
+                        turn_index += 1;
+                        turn_start_ms = now_ms;
+                    }
+                }
+            }
             if sc.turn_complete {
                 interim_in.clear();
                 interim_out.clear();

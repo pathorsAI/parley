@@ -91,6 +91,7 @@ const DEFAULT_SETTINGS: Settings = {
   translateInputDevice: "",
   translateOutputDevice: "",
   translateTargetLanguage: "en",
+  meetingTranslateEnabled: false,
   voiceTypingEnabled: true,
   voiceTypingShortcut: "alt-space",
   voiceTypingMode: "hold",

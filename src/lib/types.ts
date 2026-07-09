@@ -21,6 +21,9 @@ export interface TranscriptSegment {
   /** Diarized speaker number within the source (0 = unknown / single speaker). */
   speaker: number;
   text: string;
+  /** Translated-meeting mode: what the counterpart actually heard (the Gemini
+   *  live-translate output for this turn). Absent for untranslated segments. */
+  translation?: string;
   isFinal: boolean;
   /** Milliseconds since the meeting started. */
   startMs: number;
@@ -290,6 +293,10 @@ export interface Settings {
   translateOutputDevice: string;
   /** Live translation: BCP-47 target language code (e.g. "en", "ja"). */
   translateTargetLanguage: string;
+  /** Meeting translation: when on, starting a meeting routes "me" through
+   *  Gemini live-translate (bilingual transcript + translated voice to the
+   *  translate output device) instead of the STT provider. */
+  meetingTranslateEnabled: boolean;
   /** Voice typing: whether push-to-talk dictation is active. Option+Space works
    *  without extra permission; fn/Globe additionally needs Input Monitoring.
    *  While enabled, releasing the key always auto-pastes (simulated ⌘V, needs

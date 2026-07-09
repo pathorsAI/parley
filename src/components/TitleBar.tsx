@@ -11,6 +11,7 @@ import { isTauri } from "../lib/tauriEvents";
 import { openSettingsWindow } from "../lib/settingsSync";
 import { openHistoryWindow } from "../lib/history/history";
 import { openLiveTranslateWindow } from "../lib/liveTranslate";
+import { TranslateMenu } from "./TranslateMenu";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
@@ -132,6 +133,10 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const inputDevice = useStore((s) => s.settings.inputDevice);
   const startMeeting = useStore((s) => s.startMeeting);
   const stopMeeting = useStore((s) => s.stopMeeting);
+  const translateEnabled = useStore((s) => s.settings.meetingTranslateEnabled);
+  const translateLanguage = useStore((s) => s.settings.translateTargetLanguage);
+  const translateOutputDevice = useStore((s) => s.settings.translateOutputDevice);
+  const geminiApiKey = useStore((s) => s.settings.geminiApiKey);
   const appMode = useStore((s) => s.appMode);
   const replayName = useStore((s) => s.replay?.name ?? "");
   const exitReplay = useStore((s) => s.exitReplay);
@@ -191,6 +196,12 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
         }
         return;
       }
+      // Meeting translation needs its own (Gemini) key on top of the STT key;
+      // refuse loudly rather than silently starting an untranslated meeting.
+      if (useRealPipeline && translateEnabled && !geminiApiKey.trim()) {
+        toast.error(t("meeting.translate.noKey"));
+        return;
+      }
       startMeeting();
       if (useRealPipeline) {
         log.info("meeting: start requested", {
@@ -198,6 +209,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           model: STT_BY_ID[transcriptionProvider].label,
           diarization: STT_BY_ID[transcriptionProvider].diarization,
           inputDevice,
+          translate: translateEnabled ? translateLanguage : "off",
           pipeline: "real",
         });
         try {
@@ -211,6 +223,11 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             diarization: STT_BY_ID[transcriptionProvider].diarization,
             inputDevice,
             relayUrl,
+            // Meeting translation (off → nulls): "me" runs through Gemini
+            // live-translate; the voice goes out the translate output device.
+            translateLanguage: translateEnabled ? translateLanguage : null,
+            translateOutputDevice: translateEnabled ? translateOutputDevice || null : null,
+            translateApiKey: translateEnabled ? geminiApiKey : null,
           });
         } catch (e) {
           log.error("meeting: start failed", {
@@ -292,7 +309,14 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
               />
               {meetingStatusText(t, recording, status)}
             </div>
+            {recording && translateEnabled && (
+              <div className="mr-1 flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                <Languages className="size-3.5" />
+                {translateLanguage.toUpperCase()}
+              </div>
+            )}
             {recording && <LevelMeter source="me" className="h-1.5 w-14" />}
+            {!recording && isTauri() && <TranslateMenu />}
             {!recording && isTauri() && (
               <Button
                 size="sm"
