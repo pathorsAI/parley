@@ -238,12 +238,15 @@ export const VoiceTypingApp = () => {
   }, [phase]);
 
   // Once copied, let the confirmation dwell, then fade the overlay out just
-  // before the host orders the window hidden.
+  // before the host orders the window hidden. Only the genuine "copied" state
+  // fades: an error also lands on the "done" phase but must stay visible until
+  // the session is dismissed (toggle mode has no release to hide it), so never
+  // fade an error out from under the user.
   useEffect(() => {
-    if (phase !== "done") return;
+    if (phase !== "done" || error) return;
     const id = setTimeout(() => setFading(true), DONE_DWELL_MS);
     return () => clearTimeout(id);
-  }, [phase]);
+  }, [phase, error]);
 
   const errorKey = (error && ERROR_KEYS[error]) || "voiceTyping.error";
   const bubble = error ? t(errorKey) : text;

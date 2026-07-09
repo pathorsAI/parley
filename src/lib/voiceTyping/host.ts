@@ -33,17 +33,18 @@ const SETTLE_MS = 500;
 const MAX_WAIT_MS = 3000;
 /** Keep the "Copied to clipboard" confirmation floating a beat so the user
  *  clearly registers it before the overlay fades out. The overlay animates its
- *  own fade in the final stretch (see VoiceTypingApp's fade timing) — keep this
- *  at/after that fade completes so the native hide lands on an already-invisible
- *  window. */
-const HIDE_DELAY_MS = 2650;
+ *  own fade in the final stretch (see VoiceTypingApp's fade timing) — this sits
+ *  comfortably AFTER that fade completes (dwell + fade ≈ 2600ms, plus event/IPC
+ *  latency before the overlay's clock even starts) so the native hide always
+ *  lands on an already-invisible window. */
+const HIDE_DELAY_MS = 2900;
 
-/** Toggle mode only: ignore a second trigger within this window of the last one.
- *  The combo path can emit repeated key-down events while the key is held (OS
- *  key-repeat); without this, a repeat would immediately stop the session that
- *  the first press just started. A real "tap again to stop" always comes later. */
-const TOGGLE_DEBOUNCE_MS = 350;
-let lastToggleAt = 0;
+/** Toggle mode: a press only toggles while "armed"; each release re-arms. So a
+ *  tap is a key-down that FOLLOWS a key-up, and OS key-repeat (repeated downs
+ *  with no intervening release, which the combo path can emit while held) is
+ *  ignored — without a timing heuristic that could swallow a deliberate quick
+ *  stop. Starts armed so the very first press acts. */
+let toggleArmed = true;
 
 let latestText = "";
 let lastTextAt = 0;
@@ -181,21 +182,24 @@ export function initVoiceTyping(): () => void {
 }
 
 async function onPtt(isDown: boolean) {
-  // Toggle mode: the key PRESS starts a session and the next press ends it; the
-  // release is ignored. This also sidesteps a dropped key-up event (an event
-  // tap disabled-by-timeout can swallow one), which in hold mode would leave the
-  // session recording — the very "still transcribing after I let go" symptom.
+  // Toggle mode: a key PRESS starts a session and the next press ends it; the
+  // release only re-arms (see `toggleArmed`). Not relying on the release to stop
+  // also means a dropped key-up can't leave the session recording — the "still
+  // transcribing after I let go" symptom.
   if (useStore.getState().settings.voiceTypingMode === "toggle") {
-    if (!isDown) return; // only the press toggles
-    const now = Date.now();
-    if (now - lastToggleAt < TOGGLE_DEBOUNCE_MS) return; // swallow OS key-repeat
-    lastToggleAt = now;
+    if (!isDown) {
+      toggleArmed = true; // release re-arms the next tap
+      return;
+    }
+    if (!toggleArmed) return; // key-repeat while held — ignore
+    toggleArmed = false;
     if (busy) {
       down = false; // mirror hold-mode release so the flush fast-path applies
       await endSession();
     } else {
+      down = true; // guard a stale stt://closed during startup, like hold mode
       await startSession();
-      down = busy; // stays true only if a session actually started
+      down = busy; // clear if the start didn't actually take
     }
     return;
   }
