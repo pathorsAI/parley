@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Languages, Pause, Play } from "lucide-react";
+import { ExternalLink, Languages, Pause, Play } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isTauri } from "../lib/tauriEvents";
 import { TRANSLATE_USD_PER_MINUTE } from "../lib/translateLanguages";
+import { openInterpreterWindow } from "../lib/liveTranslate";
 import { useI18n } from "../i18n";
 import { log } from "../lib/log";
 import { LevelMeter } from "./LevelMeter";
@@ -46,28 +47,29 @@ export function TranslateStrip() {
     return () => clearInterval(id);
   }, [active]);
 
-  // Live bilingual line from the translate session.
+  // Live bilingual line + pause sync (the pause state is broadcast so the
+  // floating interpreter window and this strip always agree).
   useEffect(() => {
     if (!active) return;
-    let unlisten: (() => void) | undefined;
+    const unlisteners: Array<() => void> = [];
     let mounted = true;
-    listen<{ input: string; output: string }>("translate://transcript", (e) => {
-      setLive(e.payload);
-    }).then((fn) => {
-      if (mounted) unlisten = fn;
-      else fn();
-    });
+    const track = (p: Promise<() => void>) =>
+      p.then((fn) => (mounted ? unlisteners.push(fn) : fn())).catch(() => {});
+    track(
+      listen<{ input: string; output: string }>("translate://transcript", (e) =>
+        setLive(e.payload)
+      )
+    );
+    track(listen<boolean>("translate://paused", (e) => setPaused(e.payload)));
     return () => {
       mounted = false;
-      unlisten?.();
+      unlisteners.forEach((fn) => fn());
     };
   }, [active]);
 
   const togglePause = useCallback(() => {
-    const next = !paused;
-    setPaused(next);
-    invoke("set_translate_paused", { paused: next }).catch((e) => {
-      setPaused(!next); // roll back on failure
+    // State comes back via the translate://paused broadcast.
+    invoke("set_translate_paused", { paused: !paused }).catch((e) => {
       log.warn("translate: pause toggle failed", { error: String(e) });
     });
   }, [paused]);
@@ -123,6 +125,16 @@ export function TranslateStrip() {
       >
         {paused ? <Play className="size-3" /> : <Pause className="size-3" />}
         {paused ? t("translate.strip.resume") : t("translate.strip.pause")}
+      </button>
+
+      <button
+        type="button"
+        onClick={() => void openInterpreterWindow()}
+        title={t("translate.strip.popout")}
+        aria-label={t("translate.strip.popout")}
+        className="rounded-md border border-border p-1 text-muted-foreground hover:bg-muted"
+      >
+        <ExternalLink className="size-3" />
       </button>
     </div>
   );

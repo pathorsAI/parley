@@ -147,11 +147,14 @@ pub fn meeting_active(coord: State<MicCoordinator>) -> bool {
 
 /// Pause / resume the meeting-translate upload (the interpreter strip's ⏸).
 /// While paused the counterpart hears silence and no audio tokens are billed.
+/// Broadcasts `translate://paused` so every surface (in-window strip + floating
+/// interpreter window) stays in sync regardless of which one toggled it.
 #[tauri::command]
-pub fn set_translate_paused(state: State<MeetingState>, paused: bool) {
+pub fn set_translate_paused(app: AppHandle, state: State<MeetingState>, paused: bool) {
     state
         .translate_paused
         .store(paused, std::sync::atomic::Ordering::SeqCst);
+    let _ = app.emit("translate://paused", paused);
     log::info!("meeting-translate: paused={paused}");
 }
 

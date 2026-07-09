@@ -73,6 +73,8 @@ export const zhTW = {
   "common.template": "模板",
   "common.showKey": "顯示金鑰",
   "common.hideKey": "隱藏金鑰",
+  "common.close": "關閉",
+  "translate.strip.popout": "彈出成浮動視窗",
 
   "titlebar.status.recording": "錄音中",
   "titlebar.status.stopped": "已停止",
@@ -868,6 +870,8 @@ export const en = {
   "common.template": "Template",
   "common.showKey": "Show key",
   "common.hideKey": "Hide key",
+  "common.close": "Close",
+  "translate.strip.popout": "Pop out as floating window",
 
   "titlebar.status.recording": "Recording",
   "titlebar.status.stopped": "Stopped",

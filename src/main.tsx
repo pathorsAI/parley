@@ -17,6 +17,7 @@ const ROUTES = [
   "history",
   "voice-typing",
   "live-translate",
+  "interpreter",
 ] as const;
 const window_ = ROUTES.find((r) => route.startsWith(r)) ?? "main";
 log.info("ui: boot", { window: window_ });
@@ -44,6 +45,9 @@ const VoiceTypingApp = lazy(() =>
 const LiveTranslateApp = lazy(() =>
   import("./live-translate/LiveTranslateApp").then((module) => ({ default: module.LiveTranslateApp }))
 );
+const InterpreterApp = lazy(() =>
+  import("./interpreter/InterpreterApp").then((module) => ({ default: module.InterpreterApp }))
+);
 
 function Root() {
   switch (window_) {
@@ -59,6 +63,8 @@ function Root() {
       return <VoiceTypingApp />;
     case "live-translate":
       return <LiveTranslateApp />;
+    case "interpreter":
+      return <InterpreterApp />;
     default:
       return <App />;
   }

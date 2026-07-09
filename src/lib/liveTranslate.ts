@@ -45,3 +45,31 @@ export async function listenForLiveTranslateMenu(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   return listen(LIVE_TRANSLATE_MENU, () => void openLiveTranslateWindow());
 }
+
+/**
+ * Open (or focus) the floating interpreter HUD — the interpreter strip popped
+ * out as a compact always-on-top window, for when Google Meet is fullscreen
+ * and Parley's main window is buried. It self-closes when the meeting stops.
+ */
+export async function openInterpreterWindow(): Promise<void> {
+  if (!isTauri()) return;
+  const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+  const existing = await WebviewWindow.getByLabel("interpreter");
+  if (existing) {
+    await existing.setFocus();
+    return;
+  }
+  log.info("interpreter: open floating window");
+  const win = new WebviewWindow("interpreter", {
+    url: "index.html#interpreter",
+    title: "Parley — Interpreter",
+    width: 380,
+    height: 132,
+    minWidth: 300,
+    minHeight: 110,
+    resizable: true,
+    alwaysOnTop: true,
+    decorations: false,
+  });
+  win.once("tauri://error", (e) => log.error("interpreter: window error", { error: String(e) }));
+}
