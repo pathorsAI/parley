@@ -35,20 +35,37 @@ ARCHS="arm64;x86_64" ./build.sh   # universal (required for a shipped build)
 libASPL is fetched (pinned commit) via CMake `FetchContent`. To build offline
 against a local checkout: `LIBASPL_SRC=/path/to/libASPL ./build.sh`.
 
-## Install (local development)
+## Install
 
-⚠️ Dev path — needs `sudo` and restarts `coreaudiod` (a brief audio glitch for
-every app):
+### For users — installer package (no Terminal)
+
+```bash
+./make-pkg.sh        # → build/ParleyMicrophone.pkg
+```
+
+Double-clicking the `.pkg` runs the **native macOS Installer** — a graphical
+admin-password prompt, one click, done. No `sudo`, no Terminal. This is how
+end users (and everyday installs) should do it, the same as Krisp / Loopback /
+BlackHole. The bundled `postinstall` reloads `coreaudiod` so **Parley
+Microphone** appears immediately.
+
+> A shipped `.pkg` must be **signed** (`INSTALLER_ID=…`) with the driver inside
+> it Developer-ID signed + notarized, or Gatekeeper blocks it — see below. The
+> unsigned `.pkg` this produces installs fine locally for testing.
+
+### For development — sudo script
+
+⚠️ Iterating-on-the-driver path only. Needs `sudo` and restarts `coreaudiod`:
 
 ```bash
 ./install-dev.sh
 ```
 
-It ad-hoc signs the bundle, copies it to `/Library/Audio/Plug-Ins/HAL/`, and
-restarts coreaudiod. Then open **Audio MIDI Setup** (or any app’s mic list) and
-you should see **Parley Microphone**.
+Ad-hoc signs the bundle, copies it to `/Library/Audio/Plug-Ins/HAL/`, reloads
+coreaudiod. Then open **Audio MIDI Setup** (or any app’s mic list) — you should
+see **Parley Microphone**.
 
-Uninstall:
+Uninstall (either path):
 
 ```bash
 sudo rm -rf "/Library/Audio/Plug-Ins/HAL/ParleyMicrophone.driver" && sudo killall coreaudiod
@@ -73,11 +90,16 @@ Parley:
    (`CODESIGN_ID="Developer ID Application: … (TEAMID)" ./build.sh`), then
    notarize. Ad-hoc signing (dev) will not pass Gatekeeper.
 3. **Bundle it** into `Parley.app` as a resource.
-4. **First-run install from inside Parley**: ship a signed installer `.pkg`
-   (Parley’s CI already has `productsign`) that drops the driver into
-   `/Library/Audio/Plug-Ins/HAL/` with an admin prompt, then reloads coreaudiod.
-   Detect “is the device present?” to gate the flow and offer repair/uninstall.
-5. **Uninstall** on app removal.
+4. **Installer package**: `INSTALLER_ID="Developer ID Installer: … (TEAMID)"
+   ./make-pkg.sh` (Parley’s CI already has `productsign`), then notarize the
+   `.pkg`. `make-pkg.sh` already builds the (unsigned) package + postinstall.
+5. **One-click install from inside Parley** (the goal — no Terminal for the
+   user): bundle the signed `.pkg` in `Parley.app`; when the translate feature
+   is first used and the device is absent, show an “Install Parley Microphone”
+   button that launches the `.pkg` (`open` it, or `installer` via an
+   Authorization prompt) → macOS shows its native admin-password dialog. Detect
+   “is the device present?” to gate the flow and offer repair/uninstall.
+6. **Uninstall** on app removal.
 
 None of this needs the Rust/TS app to change how it *routes* audio — the device
 just needs to exist; the existing output picker does the rest.

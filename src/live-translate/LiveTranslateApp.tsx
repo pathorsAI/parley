@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { PasswordInput } from "@/components/ui/password-input";
 
 /** Empty device value ("") ↔ this sentinel, since Radix Select forbids "". */
 const DEFAULT_DEVICE = "__default__";
@@ -43,6 +44,8 @@ const STRINGS = {
     heard: "聽到（原文）",
     speaking: "說出（譯文）",
     noKey: "尚未設定 Gemini API key，請先到 Parley 設定頁填入。",
+    apiKey: "Gemini API key",
+    apiKeyHint: "此功能用 Gemini 翻譯，需要有 gemini-3.5-live-translate-preview 權限的金鑰（可到 Google AI Studio 取得）。填在這裡即可，會和設定頁共用。",
     outputHint:
       "翻譯後的語音會從所選輸出裝置播出。要讓 Google Meet 聽到，Phase 2 會提供「Parley 虛擬麥克風」；現在可先選耳機自行驗證。",
     costHint: "約 US${rate}/分鐘（輸出音訊佔大宗）",
@@ -68,6 +71,8 @@ const STRINGS = {
     heard: "Heard (source)",
     speaking: "Spoken (translation)",
     noKey: "No Gemini API key set — add one in Parley settings first.",
+    apiKey: "Gemini API key",
+    apiKeyHint: "This uses Gemini to translate — needs a key with access to gemini-3.5-live-translate-preview (from Google AI Studio). Enter it here; it's shared with Settings.",
     outputHint:
       "The translated voice plays out the chosen output device. To have Google Meet hear it, Phase 2 adds a “Parley virtual microphone”; for now pick your headphones to validate.",
     costHint: "≈ US${rate}/min (output audio dominates)",
@@ -216,12 +221,20 @@ export function LiveTranslateApp() {
         <p className="mt-0.5 text-xs text-muted-foreground">{t.subtitle}</p>
       </header>
 
-      {!hasKey && (
-        <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <span>{t.noKey}</span>
-        </div>
-      )}
+      {/* Gemini API key — a direct entry point to the shared geminiApiKey
+          setting, so the feature is usable without hunting through Settings. */}
+      <div className="mb-4 flex flex-col gap-1.5">
+        <label className="text-sm font-medium">{t.apiKey}</label>
+        <PasswordInput
+          value={geminiApiKey}
+          onChange={(e) => updateSettings({ geminiApiKey: e.target.value })}
+          placeholder="AIza…"
+          disabled={running}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <p className="text-xs leading-relaxed text-muted-foreground">{t.apiKeyHint}</p>
+      </div>
 
       <div className="flex flex-col gap-4">
         {/* Source microphone */}
