@@ -24,6 +24,7 @@ import {
 } from "./lib/tauriEvents";
 import { listenForSettings } from "./lib/settingsSync";
 import { listenForViewLogsMenu } from "./lib/diagnostics";
+import { listenForLiveTranslateMenu } from "./lib/liveTranslate";
 import { listenForSttUsage } from "./lib/usage/log";
 import { initTemplatesSync } from "./lib/templatesSync";
 import { initSessionSync } from "./lib/sessionSync";
@@ -130,6 +131,7 @@ const App = () => {
     track(listenForCacheClear());
     track(listenForSpeakerCacheClear());
     track(listenForViewLogsMenu());
+    track(listenForLiveTranslateMenu());
     track(listenForRecordingSaved());
     track(listenForHistoryOpen());
     if (CLOUD_ENABLED) track(listenForHistoryOpenOrg());

@@ -1,5 +1,6 @@
 pub mod microphone;
 pub mod mixer;
+pub mod playback;
 pub mod prosody;
 pub mod resample;
 #[cfg(target_os = "macos")]

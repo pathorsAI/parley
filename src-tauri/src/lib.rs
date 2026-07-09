@@ -10,6 +10,7 @@ mod permissions;
 mod replay;
 mod replay_audio;
 mod transcription;
+mod translate;
 mod usage;
 mod voice_typing;
 
@@ -75,6 +76,9 @@ pub fn run() {
         // Singleton guard for the voice-typing session task (abort-on-restart
         // + bounded post-release flush) — see voice_typing::VoiceTypingState.
         .manage(voice_typing::VoiceTypingState::default())
+        // Singleton guard for the live-translation session (mic → Gemini
+        // translate → output device) — see translate::TranslateState.
+        .manage(translate::TranslateState::default())
         // Native menu-bar "Diagnostics" submenu (View Logs + Clear Cache).
         .menu(menu::build)
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
@@ -120,6 +124,10 @@ pub fn run() {
             voice_typing::accessibility_status,
             voice_typing::present_voice_overlay,
             voice_typing::dismiss_voice_overlay,
+            translate::start_translate,
+            translate::stop_translate,
+            translate::translate_active,
+            translate::list_output_devices,
             hotkey::ensure_fn_listener,
             hotkey::input_monitoring_status,
             hotkey::request_input_monitoring,

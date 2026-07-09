@@ -283,6 +283,13 @@ export interface Settings {
   assemblyaiApiKey: string;
   /** Microphone input device name; empty = system default. */
   inputDevice: string;
+  /** Live translation: source microphone; empty = system default. */
+  translateInputDevice: string;
+  /** Live translation: output device the translated audio plays to (Phase 2:
+   *  the virtual mic); empty = system default output. */
+  translateOutputDevice: string;
+  /** Live translation: BCP-47 target language code (e.g. "en", "ja"). */
+  translateTargetLanguage: string;
   /** Voice typing: whether push-to-talk dictation is active. Option+Space works
    *  without extra permission; fn/Globe additionally needs Input Monitoring.
    *  While enabled, releasing the key always auto-pastes (simulated ⌘V, needs
