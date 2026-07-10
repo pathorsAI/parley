@@ -63,7 +63,7 @@ const tDefault = tFor("zh-TW");
 const DEFAULT_SETTINGS: Settings = {
   language: "zh-TW",
   theme: "system",
-  layout: "full",
+  layout: "coach",
   onboarded: false,
   onboardingStep: 0,
   userName: "",
@@ -818,11 +818,20 @@ export const useStore = create<ParleyState>()(
           return label ? { ...e, name: label.name, description: label.description } : e;
         });
 
+        // Layout presets were renamed in the live-screen redesign; map the old
+        // values so persisted states land on the closest new posture.
+        const rawLayout = p.layout as string | undefined;
+        const layout: Settings["layout"] =
+          rawLayout === "transcript" || rawLayout === "glance" || rawLayout === "coach"
+            ? rawLayout
+            : DEFAULT_SETTINGS.layout;
+
         return {
           ...current,
           settings: {
             ...DEFAULT_SETTINGS,
             ...p,
+            layout,
             // Deep-merge models so a new provider (e.g. groq) isn't dropped by
             // older persisted state that only had anthropic/openrouter.
             models: { ...DEFAULT_SETTINGS.models, ...p.models },

@@ -59,7 +59,7 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
   value: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
   default: "bg-muted text-muted-foreground",
 };
-import type { AppLanguage, AppLayout, AppTheme, DefaultSaveLocation, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
+import type { AppLanguage, AppTheme, DefaultSaveLocation, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 import { VoiceTypingSettings } from "./VoiceTypingSettings";
 import { PermissionsPanel } from "./PermissionsPanel";
 
@@ -395,38 +395,6 @@ export function SettingsApp() {
                   >
                     <Icon className="size-3.5" />
                     {label}
-                  </button>
-                ))}
-              </div>
-            </Field>
-            <Field label={t("settings.basic.layout")}>
-              <div className="grid max-w-md grid-cols-3 gap-2">
-                {(
-                  [
-                    ["full", t("settings.basic.layoutFull"), [t("meeting.transcript"), t("work.ask"), t("evaluations.title")]],
-                    ["assistant", t("settings.basic.layoutAssistant"), [t("work.ask"), t("evaluations.title")]],
-                    ["transcript", t("settings.basic.layoutTranscript"), [t("meeting.transcript"), t("work.ask")]],
-                  ] as const
-                ).map(([mode, label, cols]) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => patch({ layout: mode as AppLayout })}
-                    className={`flex flex-col items-center gap-1.5 rounded-lg border p-2 transition-colors ${
-                      settings.layout === mode ? "border-primary bg-secondary" : "hover:bg-muted"
-                    }`}
-                  >
-                    <div className="flex h-9 w-full gap-0.5">
-                      {cols.map((c) => (
-                        <div
-                          key={`${mode}-${c}`}
-                          className="flex min-w-0 flex-1 items-center justify-center truncate rounded-sm bg-muted-foreground/20 px-1 text-[8px] text-muted-foreground"
-                        >
-                          {c}
-                        </div>
-                      ))}
-                    </div>
-                    <span className="text-[11px]">{label}</span>
                   </button>
                 ))}
               </div>

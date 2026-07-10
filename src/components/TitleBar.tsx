@@ -137,6 +137,8 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const translateLanguage = useStore((s) => s.settings.translateTargetLanguage);
   const translateOutputDevice = useStore((s) => s.settings.translateOutputDevice);
   const geminiApiKey = useStore((s) => s.settings.geminiApiKey);
+  const layout = useStore((s) => s.settings.layout);
+  const updateSettings = useStore((s) => s.updateSettings);
   const appMode = useStore((s) => s.appMode);
   const replayName = useStore((s) => s.replay?.name ?? "");
   const exitReplay = useStore((s) => s.exitReplay);
@@ -286,6 +288,27 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           {useRealPipeline ? t("app.subtitle.real") : t("app.subtitle.demo")}
         </span>
       </div>
+
+      {/* Titlebar-center posture switcher (live only): coach / transcript /
+          glance. Replaces the layout preference buried in Settings. */}
+      {!replayMode && (
+        <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-0.5 rounded-lg bg-muted p-0.5">
+          {(["coach", "transcript", "glance"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => updateSettings({ layout: mode })}
+              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                layout === mode
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {t(`layout.${mode}`)}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
         {replayMode ? (

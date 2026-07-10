@@ -214,8 +214,12 @@ export type AppLanguage = "zh-TW" | "en";
 /** UI color theme preference. */
 export type AppTheme = "light" | "dark" | "system";
 
-/** Main window panel layout preference. */
-export type AppLayout = "full" | "assistant" | "transcript";
+/** Live-screen posture, switched from the titlebar-center segmented control:
+ *  coach = transcript rail | coach feed | intelligence board (default);
+ *  transcript = full-width transcript + findings;
+ *  glance = single narrow now-column for docking beside the meeting app.
+ *  (Pre-redesign values "full"/"assistant" migrate to "coach" on rehydrate.) */
+export type AppLayout = "coach" | "transcript" | "glance";
 
 /** Push-to-talk key for the global voice-typing listener on macOS. The picker is
  *  the single source of truth — exactly one is live at a time.
