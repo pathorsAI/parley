@@ -214,6 +214,55 @@ export type AppLanguage = "zh-TW" | "en";
 /** UI color theme preference. */
 export type AppTheme = "light" | "dark" | "system";
 
+/** What kind of meeting this is — drives which intelligence template the
+ *  board runs (extraction prompts + sections). Picked on the board itself. */
+export type MeetingType = "general" | "negotiation" | "sales" | "partnership";
+
+/** A number someone said, captured with attribution (negotiation ledger). */
+export interface IntelNumber {
+  value: string;
+  speaker: "me" | "them";
+  context: string;
+}
+
+/** An objection the counterpart raised, and whether it was answered. */
+export interface IntelObjection {
+  text: string;
+  addressed: boolean;
+}
+
+/** A commitment made during the meeting, with its side. */
+export interface IntelCommitment {
+  who: "me" | "them";
+  what: string;
+}
+
+/** Accumulated structured intelligence for the current meeting — the board's
+ *  STATE (vs. the coach feed's events). Extracted by LLM passes over the live
+ *  transcript; sections are populated per meeting type. */
+export interface IntelState {
+  meetingType: MeetingType;
+  /* negotiation */
+  numbers?: IntelNumber[];
+  concessionsMe?: string[];
+  concessionsThem?: string[];
+  agreed?: string[];
+  open?: string[];
+  /* sales */
+  budget?: string;
+  timeline?: string;
+  decisionMaker?: string;
+  objections?: IntelObjection[];
+  commitments?: IntelCommitment[];
+  competitors?: string[];
+  /* partnership */
+  theyHave?: string[];
+  theyNeed?: string[];
+  leverage?: string[];
+  give?: string[];
+  get?: string[];
+}
+
 /** Live-screen posture, switched from the titlebar-center segmented control:
  *  coach = transcript rail | coach feed | intelligence board (default);
  *  transcript = full-width transcript + findings;
@@ -301,6 +350,8 @@ export interface Settings {
    *  Gemini live-translate (bilingual transcript + translated voice to the
    *  translate output device) instead of the STT provider. */
   meetingTranslateEnabled: boolean;
+  /** Which intelligence template the board runs (remembered across meetings). */
+  meetingType: MeetingType;
   /** Voice typing: whether push-to-talk dictation is active. Option+Space works
    *  without extra permission; fn/Globe additionally needs Input Monitoring.
    *  While enabled, releasing the key always auto-pastes (simulated ⌘V, needs

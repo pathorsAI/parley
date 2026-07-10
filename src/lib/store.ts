@@ -7,6 +7,7 @@ import type {
   DeliveryNudge,
   Evaluation,
   FindingSolutionEntry,
+  IntelState,
   MeetingStatus,
   ProsodyMetrics,
   Settings,
@@ -92,6 +93,7 @@ const DEFAULT_SETTINGS: Settings = {
   translateOutputDevice: "",
   translateTargetLanguage: "en",
   meetingTranslateEnabled: false,
+  meetingType: "general",
   voiceTypingEnabled: true,
   voiceTypingShortcut: "alt-space",
   voiceTypingMode: "hold",
@@ -211,6 +213,11 @@ interface ParleyState {
    *  When it differs from the active eval set, the findings are stale → re-analyze. */
   analyzedEvalSig: string;
   setFindings: (events: TimelineEvent[]) => void;
+  /** Intelligence-board state (per meeting type) + its extraction lifecycle. */
+  intel: IntelState | null;
+  intelStatus: AsyncTaskStatus;
+  setIntel: (intel: IntelState | null) => void;
+  setIntelStatus: (status: AsyncTaskStatus) => void;
   /** Insert one finding (MCP/external add) without replacing the list, keeping it
    *  ordered by atMs. A colliding id is reassigned so existing findings are safe. */
   addFinding: (event: TimelineEvent) => void;
@@ -553,6 +560,11 @@ export const useStore = create<ParleyState>()(
   // a growing list with stable ids, so a finding the user opened mid-stream (and
   // its in-flight "how to reply" solution) survives the next partial. A fresh
   // analysis pass mints new ids, so nothing matches → selection + solutions clear.
+  intel: null,
+  intelStatus: "idle",
+  setIntel: (intel) => set({ intel }),
+  setIntelStatus: (status) => set({ intelStatus: status }),
+
   setFindings: (events) =>
     set((s) => {
       const ids = new Set(events.map((e) => e.id));
@@ -702,6 +714,8 @@ export const useStore = create<ParleyState>()(
       deliveryNudge: null,
       deliveryAssessment: null,
       deliveryStatus: "idle",
+      intel: null,
+      intelStatus: "idle",
     });
   },
 
