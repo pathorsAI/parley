@@ -10,7 +10,7 @@ import { Check, Copy, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, 
 import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
-import { signInWithGoogle, signOut, CloudError, syncEnabled as cloudSyncEnabled } from "../lib/cloud/client";
+import { signInWithGoogle, signOut, CloudError } from "../lib/cloud/client";
 import { CLOUD_ENABLED } from "../lib/flags";
 import {
   createOrg,
@@ -22,8 +22,6 @@ import {
   deleteOrg,
 } from "../lib/cloud/orgs";
 import type { CloudAuth, CloudInvitation, CloudOrg, CloudOrgMember } from "../lib/cloud/types";
-import { listCloudFolders, listOrgFolders, type CloudFolder } from "../lib/cloud/folders";
-import { listLocalFolders, listenForFoldersUpdated, type Folder as LocalFolder } from "../lib/history/folders";
 import { isTauri } from "../lib/tauriEvents";
 import { fetchLatestReleaseNotes, markReleaseNotesSeen, type ReleaseNotes } from "../lib/releaseNotes";
 import { useThemePreference } from "../lib/theme";
@@ -59,9 +57,10 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
   value: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
   default: "bg-muted text-muted-foreground",
 };
-import type { AppLanguage, AppTheme, DefaultSaveLocation, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
+import type { AppLanguage, AppTheme, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 import { VoiceTypingSettings } from "./VoiceTypingSettings";
 import { TranslateSettings } from "./TranslateSettings";
+import { SaveDestinationPicker } from "../components/SaveDestinationPicker";
 import { PermissionsPanel } from "./PermissionsPanel";
 
 type Category =
@@ -305,7 +304,7 @@ export function SettingsApp() {
             {cloudAuth && (
               <Field label={t("settings.account.defaultSave.title")}>
                 <div className="flex max-w-md flex-col gap-2">
-                  <DefaultSavePicker
+                  <SaveDestinationPicker
                     value={settings.defaultSaveLocation}
                     syncOn={settings.syncEnabled}
                     onChange={(loc) => patch({ defaultSaveLocation: loc })}
@@ -1783,120 +1782,6 @@ function OrgPanel() {
  * finished meetings auto-share into that team space (see history.ts resolveDefaultSave).
  */
 /** Fetch one org's folders as an [orgId, folders] entry, tolerating per-org failures. */
-async function loadOrgFoldersEntry(orgId: string): Promise<readonly [string, CloudFolder[]]> {
-  const folders = await listOrgFolders(orgId).catch(() => [] as CloudFolder[]);
-  return [orgId, folders] as const;
-}
-
-function DefaultSavePicker({
-  value,
-  syncOn,
-  onChange,
-}: Readonly<{
-  value: DefaultSaveLocation;
-  syncOn: boolean;
-  onChange: (loc: DefaultSaveLocation) => void;
-}>) {
-  const { t } = useI18n();
-  const [personal, setPersonal] = useState<LocalFolder[]>(() => listLocalFolders());
-  const [orgs, setOrgs] = useState<CloudOrg[]>([]);
-  const [orgFolders, setOrgFolders] = useState<Record<string, CloudFolder[]>>({});
-
-  // Personal folders: prefer the cloud list when sync is on (cross-device truth).
-  // Re-run when the toggle flips so enabling sync in an already-open window refreshes.
-  useEffect(() => {
-    async function loadPersonalFolders() {
-      if (!syncOn || !cloudSyncEnabled()) {
-        setPersonal(listLocalFolders());
-        return;
-      }
-      try {
-        const cloud = await listCloudFolders();
-        setPersonal(cloud.map((f) => ({ id: f.id, name: f.name, createdAt: f.createdAt })));
-      } catch {
-        setPersonal(listLocalFolders());
-      }
-    }
-    loadPersonalFolders().catch((error) => log.warn("settings: default-save folders load failed", { error: String(error) }));
-  }, [syncOn]);
-
-  // Reflect personal-folder create/rename/delete done in the History window live.
-  useEffect(() => {
-    const un = listenForFoldersUpdated(() => setPersonal(listLocalFolders()));
-    return () => {
-      un.then((fn) => fn()).catch((error) =>
-        log.warn("settings: folder listener cleanup failed", { error: String(error) }),
-      );
-    };
-  }, []);
-
-  // Org folders only matter for an org default, which needs sync on.
-  useEffect(() => {
-    if (!syncOn) return;
-    let alive = true;
-    async function loadOrgFolders() {
-      try {
-        const mine = await listMyOrgs();
-        if (!alive) return;
-        setOrgs(mine);
-        const pairs = await Promise.all(mine.map((o) => loadOrgFoldersEntry(o.id)));
-        if (alive) setOrgFolders(Object.fromEntries(pairs));
-      } catch {
-        /* leave orgs empty */
-      }
-    }
-    loadOrgFolders().catch((error) => log.warn("settings: default-save org folders load failed", { error: String(error) }));
-    return () => {
-      alive = false;
-    };
-  }, [syncOn]);
-
-  const serialize = (loc: DefaultSaveLocation): string => {
-    if (loc.scope === "personal") {
-      return loc.folderId ? `personal:${loc.folderId}` : "personal";
-    }
-    return loc.folderId ? `org:${loc.orgId}:${loc.folderId}` : `org:${loc.orgId}`;
-  };
-
-  const parse = (v: string): DefaultSaveLocation => {
-    if (v === "personal") return { scope: "personal", folderId: null };
-    if (v.startsWith("personal:")) return { scope: "personal", folderId: v.slice("personal:".length) };
-    const rest = v.slice("org:".length);
-    const idx = rest.indexOf(":");
-    return idx === -1
-      ? { scope: "org", orgId: rest, folderId: null }
-      : { scope: "org", orgId: rest.slice(0, idx), folderId: rest.slice(idx + 1) };
-  };
-
-  return (
-    <select
-      value={serialize(value)}
-      onChange={(e) => onChange(parse(e.target.value))}
-      className="h-9 max-w-md rounded-md border bg-background px-2 text-sm outline-none focus:border-primary"
-    >
-      <optgroup label={t("settings.account.defaultSave.personal")}>
-        <option value="personal">{t("settings.account.defaultSave.root")}</option>
-        {personal.map((f) => (
-          <option key={f.id} value={`personal:${f.id}`}>
-            {f.name}
-          </option>
-        ))}
-      </optgroup>
-      {syncOn &&
-        orgs.map((o) => (
-          <optgroup key={o.id} label={o.name}>
-            <option value={`org:${o.id}`}>{t("settings.account.defaultSave.root")}</option>
-            {(orgFolders[o.id] ?? []).map((f) => (
-              <option key={f.id} value={`org:${o.id}:${f.id}`}>
-                {f.name}
-              </option>
-            ))}
-          </optgroup>
-        ))}
-    </select>
-  );
-}
-
 function Section({ title, children }: Readonly<{ title: string; children: React.ReactNode }>) {
   return (
     <section className="flex max-w-2xl flex-col gap-4">

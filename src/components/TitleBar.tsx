@@ -14,6 +14,7 @@ import { openLiveTranslateWindow } from "../lib/liveTranslate";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
+import { SaveDestinationPicker } from "./SaveDestinationPicker";
 
 type TFn = ReturnType<typeof useI18n>["t"];
 type WindowAction = "close" | "minimize" | "fullscreen";
@@ -52,11 +53,6 @@ function useWindowFocused(): boolean {
   return focused;
 }
 
-function meetingStatusText(t: TFn, recording: boolean, status: string): string {
-  if (recording) return t("titlebar.status.recording");
-  if (status === "stopped") return t("titlebar.status.stopped");
-  return t("titlebar.status.idle");
-}
 
 function TrafficLights({
   focused,
@@ -138,6 +134,10 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const geminiApiKey = useStore((s) => s.settings.geminiApiKey);
   const layout = useStore((s) => s.settings.layout);
   const updateSettings = useStore((s) => s.updateSettings);
+  const saveLocation = useStore((s) => s.settings.defaultSaveLocation);
+  const syncEnabled = useStore((s) => s.settings.syncEnabled);
+  const meetingStartedAt = useStore((s) => s.meetingStartedAt);
+  const [elapsed, setElapsed] = useState("00:00");
   const appMode = useStore((s) => s.appMode);
   const replayName = useStore((s) => s.replay?.name ?? "");
   const exitReplay = useStore((s) => s.exitReplay);
@@ -151,6 +151,20 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
 
   const recording = status === "recording";
   const replayMode = appMode === "replay";
+
+  // Vitals timer (top-left): elapsed since the meeting started, ticking 1 Hz.
+  useEffect(() => {
+    if (!recording) return;
+    const tick = () => {
+      const sec = Math.max(0, Math.floor((Date.now() - (meetingStartedAt ?? Date.now())) / 1000));
+      setElapsed(
+        `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`
+      );
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [recording, meetingStartedAt]);
   const useRealPipeline = isTauri() && !!sttKey.trim();
 
   async function uploadRecording() {
@@ -280,12 +294,34 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           where macOS shows no window controls. */}
       {!fullscreen && <TrafficLights focused={focused} onAction={controlWindow} t={t} />}
 
-      <div data-tauri-drag-region className="flex items-center gap-2.5">
-        <img src="/parley.svg" alt="" className="h-5 w-5 rounded-[5px]" />
-        <span className="text-sm font-semibold tracking-tight">{t("app.name")}</span>
-        <span className="text-[11px] text-muted-foreground">
-          {useRealPipeline ? t("app.subtitle.real") : t("app.subtitle.demo")}
-        </span>
+      {/* Top-left: information, not brand (macOS's menu bar already says
+          Parley). Idle → where this meeting will save (org/folder menu, no
+          Settings trip); recording → the session vitals (rec + elapsed + mic
+          level + translation). */}
+      <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
+        {!replayMode && !recording && (
+          <SaveDestinationPicker
+            compact
+            value={saveLocation}
+            syncOn={syncEnabled}
+            onChange={(loc) => updateSettings({ defaultSaveLocation: loc })}
+          />
+        )}
+        {recording && (
+          <>
+            <span className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
+              <Circle className="h-2 w-2 animate-pulse fill-red-500 text-red-500" />
+              {elapsed}
+            </span>
+            <LevelMeter source="me" className="h-1.5 w-14" />
+            {translateEnabled && (
+              <span className="flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                <Languages className="size-3.5" />
+                {translateLanguage.toUpperCase()}
+              </span>
+            )}
+          </>
+        )}
       </div>
 
       {/* Titlebar-center posture switcher (live only): coach / transcript /
@@ -323,33 +359,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           </>
         ) : (
           <>
-            <div className="mr-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Circle
-                className={`h-2 w-2 ${
-                  recording ? "animate-pulse fill-red-500 text-red-500" : "fill-muted-foreground/40 text-muted-foreground/40"
-                }`}
-              />
-              {meetingStatusText(t, recording, status)}
-            </div>
-            {recording && translateEnabled && (
-              <div className="mr-1 flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                <Languages className="size-3.5" />
-                {translateLanguage.toUpperCase()}
-              </div>
-            )}
-            {recording && <LevelMeter source="me" className="h-1.5 w-14" />}
-            {!recording && isTauri() && (
-              <Button
-                size="sm"
-                variant={translateEnabled ? "secondary" : "ghost"}
-                onClick={() => updateSettings({ meetingTranslateEnabled: !translateEnabled })}
-                title={t("titlebar.translate.tooltip")}
-                className={`h-8 ${translateEnabled ? "text-emerald-600 dark:text-emerald-400" : ""}`}
-              >
-                <Languages className="size-3.5" />
-                {translateEnabled ? translateLanguage.toUpperCase() : t("titlebar.translate")}
-              </Button>
-            )}
             {!recording && isTauri() && (
               <Button
                 size="sm"

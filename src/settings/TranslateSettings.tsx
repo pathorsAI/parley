@@ -10,6 +10,7 @@ import { TRANSLATE_LANGUAGES, TRANSLATE_USD_PER_MINUTE } from "../lib/translateL
 import type { Settings } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
 import {
   Select,
   SelectContent,
@@ -47,12 +48,14 @@ export function TranslateSettings() {
   );
 
   const [outputs, setOutputs] = useState<string[]>([]);
+  const [inputs, setInputs] = useState<string[]>([]);
   const [mic, setMic] = useState<VirtualMicStatus | null>(null);
   const [installing, setInstalling] = useState(false);
 
   const refresh = useCallback(() => {
     if (!isTauri()) return;
     invoke<string[]>("list_output_devices").then(setOutputs).catch(() => {});
+    invoke<string[]>("list_input_devices").then(setInputs).catch(() => {});
     invoke<VirtualMicStatus>("virtual_mic_status").then(setMic).catch(() => {});
   }, []);
   useEffect(refresh, [refresh]);
@@ -86,6 +89,20 @@ export function TranslateSettings() {
 
   return (
     <div className="flex max-w-md flex-col gap-5">
+      {/* Gemini API key — shared with the LLM provider settings; translation
+          needs a key with gemini-3.5-live-translate-preview access. */}
+      <div className="flex flex-col gap-1.5">
+        <Label className="text-xs text-muted-foreground">{t("settings.translate.apiKey")}</Label>
+        <PasswordInput
+          value={settings.geminiApiKey}
+          onChange={(e) => patch({ geminiApiKey: e.target.value })}
+          placeholder="AIza…"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <p className="text-xs text-muted-foreground">{t("settings.translate.apiKeyHint")}</p>
+      </div>
+
       {/* Enable */}
       <div className="flex items-center justify-between">
         <div>
@@ -170,6 +187,28 @@ export function TranslateSettings() {
             )}
           </div>
         )}
+      </div>
+
+      {/* Source mic for the standalone quick-interpreter window (meetings use
+          the transcription mic). */}
+      <div className="flex flex-col gap-1.5">
+        <Label className="text-xs text-muted-foreground">{t("settings.translate.inputDevice")}</Label>
+        <Select
+          value={settings.translateInputDevice || DEFAULT_DEVICE}
+          onValueChange={(v) => patch({ translateInputDevice: v === DEFAULT_DEVICE ? "" : v })}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={DEFAULT_DEVICE}>{t("settings.transcription.systemDefault")}</SelectItem>
+            {inputs.map((d) => (
+              <SelectItem key={d} value={d}>
+                {d}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {!hasKey && (
