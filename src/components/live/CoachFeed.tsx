@@ -20,6 +20,47 @@ interface AskCard {
   busy: boolean;
 }
 
+/** Rotating ask-bar suggestions (same catalog the old Ask pane used). */
+const SUGGESTIONS = [
+  "ask.suggestion.next",
+  "ask.suggestion.agreed",
+  "ask.suggestion.unanswered",
+  "ask.suggestion.pushback",
+  "ask.suggestion.summary",
+] as const;
+
+/** Empty-state illustration: a quiet stack of coach cards waiting to arrive. */
+function FeedPlaceholder() {
+  return (
+    <svg viewBox="0 0 200 130" className="mx-auto h-28 w-44 text-muted-foreground/40" aria-hidden>
+      {/* back cards, tilted like a settled stack */}
+      <g transform="rotate(-4 100 78)">
+        <rect x="38" y="62" width="124" height="30" rx="7" fill="none" stroke="currentColor" strokeWidth="1.5" opacity=".45" />
+      </g>
+      <g transform="rotate(2 100 62)">
+        <rect x="34" y="44" width="132" height="30" rx="7" fill="none" stroke="currentColor" strokeWidth="1.5" opacity=".7" />
+        <line x1="46" y1="55" x2="112" y2="55" stroke="currentColor" strokeWidth="3" strokeLinecap="round" opacity=".5" />
+        <line x1="46" y1="63" x2="88" y2="63" stroke="currentColor" strokeWidth="3" strokeLinecap="round" opacity=".3" />
+      </g>
+      {/* front card with the coach's accent dot */}
+      <rect x="30" y="22" width="140" height="32" rx="7" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="45" cy="38" r="5" className="text-emerald-500/70" fill="currentColor" />
+      <line x1="58" y1="33" x2="140" y2="33" stroke="currentColor" strokeWidth="3" strokeLinecap="round" opacity=".6" />
+      <line x1="58" y1="42" x2="118" y2="42" stroke="currentColor" strokeWidth="3" strokeLinecap="round" opacity=".35" />
+      {/* the whistle: your coach, standing by */}
+      <g className="text-emerald-500/60" transform="translate(148 96) rotate(-18)">
+        <circle cx="0" cy="10" r="9" fill="none" stroke="currentColor" strokeWidth="2" />
+        <circle cx="0" cy="10" r="2.4" fill="currentColor" />
+        <path d="M6 3 L26 -4 L27.5 1.5 L10 8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+      </g>
+      {/* faint incoming-signal dashes */}
+      <line x1="96" y1="6" x2="104" y2="6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" opacity=".3" />
+      <line x1="82" y1="12" x2="88" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" opacity=".2" />
+      <line x1="112" y1="12" x2="118" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" opacity=".2" />
+    </svg>
+  );
+}
+
 /**
  * The LIVE center pane: one chronological coach stream — evaluation findings
  * (each drills into "how to reply") and inline Ask answers — with a single ask
@@ -36,12 +77,36 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
 
   const [askCards, setAskCards] = useState<AskCard[]>([]);
   const [input, setInput] = useState("");
+  const [suggestionIdx, setSuggestionIdx] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const busy = askCards.some((c) => c.busy);
+  const suggestion = t(SUGGESTIONS[suggestionIdx]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [findings.length, askCards]);
+
+  // Rotate the ghost suggestion while the input is empty.
+  useEffect(() => {
+    if (input) return;
+    const id = setInterval(() => setSuggestionIdx((i) => (i + 1) % SUGGESTIONS.length), 4000);
+    return () => clearInterval(id);
+  }, [input]);
+
+  // Tab / → completes the ghost suggestion into the input; ↑ / ↓ cycles it.
+  function onInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (input) return;
+    if (e.key === "Tab" || e.key === "ArrowRight") {
+      e.preventDefault();
+      setInput(suggestion);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSuggestionIdx((i) => (i + 1) % SUGGESTIONS.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSuggestionIdx((i) => (i - 1 + SUGGESTIONS.length) % SUGGESTIONS.length);
+    }
+  }
 
   async function ask(raw: string) {
     const q = raw.trim();
@@ -108,7 +173,10 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-2 px-3 pb-2">
           {empty && (
-            <p className="px-1 py-8 text-center text-sm text-muted-foreground">{t("feed.empty")}</p>
+            <div className="flex flex-col items-center gap-3 px-1 py-10">
+              <FeedPlaceholder />
+              <p className="max-w-56 text-center text-sm text-muted-foreground">{t("feed.empty")}</p>
+            </div>
           )}
           {findings.map((f) => (
             <FindingRow
@@ -143,13 +211,21 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
           void ask(input);
         }}
       >
-        <Input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={t("feed.askPlaceholder")}
-          className="h-8 text-sm"
-          disabled={busy}
-        />
+        <div className="relative min-w-0 flex-1">
+          <Input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onInputKeyDown}
+            placeholder={suggestion}
+            className="h-8 pr-12 text-sm"
+            disabled={busy}
+          />
+          {!input && (
+            <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">
+              Tab ↹
+            </kbd>
+          )}
+        </div>
         <Button type="submit" size="icon" className="h-8 w-8 shrink-0" disabled={busy || !input.trim()}>
           <ArrowUp className="size-4" />
         </Button>
