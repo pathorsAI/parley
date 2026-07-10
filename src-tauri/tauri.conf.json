@@ -47,7 +47,7 @@
     "targets": "all",
     "resources": [
       "onnxruntime/libonnxruntime.dylib",
-      "virtualmic/ParleyMicrophone.pkg"
+      "virtualmic/ParleyMicrophone.driver"
     ],
     "macOS": {
       "entitlements": "entitlements.plist",

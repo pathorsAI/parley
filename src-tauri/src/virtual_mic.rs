@@ -2,17 +2,16 @@
 //! loopback driver in `virtual-mic/`), so the live-translation output can reach
 //! Google Meet & co. as a selectable microphone.
 //!
-//! The driver ships as a `.pkg` bundled into Parley.app as a resource (built and
-//! signed by CI — see `.github/workflows/release.yml`). Installing means running
-//! `/usr/sbin/installer` with admin rights: we go through `osascript`'s
-//! `with administrator privileges`, which presents macOS's native password /
-//! Touch ID dialog — the user never sees a Terminal or the pkg itself. That CLI
-//! path also skips the Gatekeeper double-click check, so the pkg container
-//! doesn't need an Installer-identity signature (the driver binary inside is
-//! still Developer-ID signed by CI for notarization).
+//! The Developer-ID-signed `.driver` bundle ships inside Parley.app as a
+//! resource (built and signed by CI — see `.github/workflows/release.yml`).
+//! Installing is an admin copy into `/Library/Audio/Plug-Ins/HAL` via
+//! `osascript`'s `with administrator privileges` — macOS's native password /
+//! Touch ID dialog, no Terminal. (A `.pkg` container was tried first, but a
+//! pkg nested in the app fails notarization without a separate "Developer ID
+//! Installer" identity; a signed .driver resource passes.)
 //!
-//! Dev builds bundle only a zero-byte placeholder (see build.rs); the pkg lookup
-//! then falls back to the locally built `virtual-mic/build/…pkg`.
+//! Dev builds bundle only an empty placeholder dir (see build.rs); the lookup
+//! then falls back to the locally built `virtual-mic/build/…driver`.
 
 use std::path::PathBuf;
 
@@ -26,8 +25,9 @@ const DRIVER_BUNDLE: &str = "ParleyMicrophone.driver";
 /// The device name the driver publishes (matches ParleyVirtualMic.cpp).
 pub const DEVICE_NAME: &str = "Parley Microphone";
 
-/// A real bundled pkg is hundreds of KB; the dev placeholder is 0 bytes.
-const MIN_REAL_PKG_BYTES: u64 = 10_000;
+/// A usable driver bundle has its Mach-O at this relative path; the dev
+/// placeholder is an empty directory (see build.rs).
+const DRIVER_BINARY: &str = "Contents/MacOS/ParleyMicrophone";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,26 +38,25 @@ pub struct VirtualMicStatus {
     /// The driver bundle exists on disk (it may still need a coreaudiod reload
     /// to become visible — postinstall does that, so normally these agree).
     driver_installed: bool,
-    /// An installer pkg is available (bundled resource or local dev build).
+    /// An installable driver bundle is available (bundled resource or dev build).
     pkg_available: bool,
     /// The device name to look for / auto-select in the output picker.
     device_name: &'static str,
 }
 
-/// Locate a usable installer pkg: the bundled resource (release builds), else
-/// the locally built one (dev). `None` when neither exists.
-fn find_pkg(app: &AppHandle) -> Option<PathBuf> {
-    // Release: bundled resource (CI drops the real pkg into virtualmic/).
+/// Locate a usable driver bundle: the bundled resource (release builds — CI
+/// drops the signed .driver into virtualmic/), else the locally built one
+/// (dev). `None` when neither exists.
+fn find_driver(app: &AppHandle) -> Option<PathBuf> {
     if let Ok(dir) = app.path().resource_dir() {
-        let p = dir.join("virtualmic/ParleyMicrophone.pkg");
-        if std::fs::metadata(&p).is_ok_and(|m| m.len() >= MIN_REAL_PKG_BYTES) {
+        let p = dir.join("virtualmic/ParleyMicrophone.driver");
+        if p.join(DRIVER_BINARY).exists() {
             return Some(p);
         }
     }
-    // Dev: the pkg built from the repo (virtual-mic/make-pkg.sh).
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../virtual-mic/build/ParleyMicrophone.pkg");
-    if std::fs::metadata(&dev).is_ok_and(|m| m.len() >= MIN_REAL_PKG_BYTES) {
+        .join("../virtual-mic/build/ParleyMicrophone.driver");
+    if dev.join(DRIVER_BINARY).exists() {
         return Some(dev);
     }
     None
@@ -72,7 +71,7 @@ pub fn virtual_mic_status(app: AppHandle) -> VirtualMicStatus {
     VirtualMicStatus {
         device_visible,
         driver_installed,
-        pkg_available: find_pkg(&app).is_some(),
+        pkg_available: find_driver(&app).is_some(),
         device_name: DEVICE_NAME,
     }
 }
@@ -101,29 +100,35 @@ async fn run_osascript(script: String, args: &[&str]) -> Result<(), String> {
     }
 }
 
-/// Install the Parley Microphone driver: native admin prompt → `installer -pkg`
-/// → the pkg's postinstall reloads coreaudiod → the device appears. Returns once
-/// the installer exits; the frontend then re-checks `virtual_mic_status`.
+/// Install the Parley Microphone driver: native admin prompt → copy the bundled
+/// (Developer-ID signed) .driver into the HAL folder → reload coreaudiod → the
+/// device appears. A plain admin copy replaces the earlier .pkg route: a pkg
+/// nested in the app fails notarization without a separate "Developer ID
+/// Installer" identity, while a signed .driver resource passes.
 #[tauri::command]
 pub async fn install_virtual_mic(app: AppHandle) -> Result<(), String> {
-    let pkg = find_pkg(&app).ok_or_else(|| {
-        "no installer pkg available (dev build without virtual-mic/build/ParleyMicrophone.pkg)"
+    let driver = find_driver(&app).ok_or_else(|| {
+        "no driver bundle available (dev build without virtual-mic/build/ParleyMicrophone.driver)"
             .to_string()
     })?;
     // Resolve symlinks (the dev fallback path crosses the repo) before handing
-    // the path to `installer`.
-    let pkg = pkg.canonicalize().map_err(|e| e.to_string())?;
-    log::info!("virtual-mic: installing from {}", pkg.display());
+    // the path to the shell.
+    let driver = driver.canonicalize().map_err(|e| e.to_string())?;
+    log::info!("virtual-mic: installing from {}", driver.display());
 
-    // The pkg path travels through argv and AppleScript's `quoted form of`, so
-    // spaces (and anything else) in the path are safe — no shell injection.
-    let script = "on run argv\n\
-                  do shell script \"/usr/sbin/installer -pkg \" & quoted form of item 1 of argv & \" -target /\" \
-                  with prompt \"Parley needs to install the Parley Microphone audio driver.\" \
-                  with administrator privileges\n\
-                  end run"
-        .to_string();
-    match run_osascript(script, &[&pkg.to_string_lossy()]).await {
+    // The source path travels through argv and AppleScript's `quoted form of`,
+    // so spaces (and anything else) in the path are safe — no shell injection.
+    // The destination is a compile-time constant.
+    let script = format!(
+        "on run argv\n\
+         do shell script \"mkdir -p '{HAL_DIR}' && rm -rf '{HAL_DIR}/{DRIVER_BUNDLE}' && \
+         cp -R \" & quoted form of item 1 of argv & \" '{HAL_DIR}/{DRIVER_BUNDLE}' && \
+         chown -R root:wheel '{HAL_DIR}/{DRIVER_BUNDLE}' && (killall coreaudiod || true)\" \
+         with prompt \"Parley needs to install the Parley Microphone audio driver.\" \
+         with administrator privileges\n\
+         end run"
+    );
+    match run_osascript(script, &[&driver.to_string_lossy()]).await {
         Ok(()) => {
             log::info!("virtual-mic: installed");
             Ok(())
