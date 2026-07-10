@@ -35,6 +35,7 @@ import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import {
   initHistoryPersistSync,
+  listenForHistoryImport,
   listenForHistoryOpen,
   listenForHistoryOpenOrg,
   listenForRecordingSaved,
@@ -135,6 +136,7 @@ const App = () => {
     track(listenForLiveTranslateMenu());
     track(listenForRecordingSaved());
     track(listenForHistoryOpen());
+    track(listenForHistoryImport());
     if (CLOUD_ENABLED) track(listenForHistoryOpenOrg());
     // These return a synchronous UnlistenFn.
     const unTemplates = initTemplatesSync();
