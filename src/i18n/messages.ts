@@ -76,7 +76,6 @@ export const zhTW = {
   "common.close": "關閉",
   "layout.coach": "教練",
   "layout.transcript": "字幕",
-  "layout.glance": "精簡",
   "feed.title": "教練流",
   "feed.analyze": "分析現況",
   "feed.empty": "教練待命中——警示、進度與答案會出現在這裡",
@@ -104,7 +103,6 @@ export const zhTW = {
   "board.sec.theyNeed": "對方需要",
   "board.sec.leverage": "槓桿機會",
   "board.sec.giveGet": "Give / Get",
-  "glance.noSignal": "目前沒有需要注意的事",
   "translate.strip.popout": "彈出成浮動視窗",
 
   "titlebar.status.recording": "錄音中",
@@ -907,7 +905,6 @@ export const en = {
   "common.close": "Close",
   "layout.coach": "Coach",
   "layout.transcript": "Transcript",
-  "layout.glance": "Glance",
   "feed.title": "Coach feed",
   "feed.analyze": "Analyze now",
   "feed.empty": "Your coach is standing by — alerts, progress and answers land here",
@@ -935,7 +932,6 @@ export const en = {
   "board.sec.theyNeed": "They need",
   "board.sec.leverage": "Leverage plays",
   "board.sec.giveGet": "Give / Get",
-  "glance.noSignal": "Nothing needs your attention right now",
   "translate.strip.popout": "Pop out as floating window",
 
   "titlebar.status.recording": "Recording",

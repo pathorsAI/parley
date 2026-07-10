@@ -292,7 +292,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           glance. Replaces the layout preference buried in Settings. */}
       {!replayMode && (
         <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-0.5 rounded-lg bg-muted p-0.5">
-          {(["coach", "transcript", "glance"] as const).map((mode) => (
+          {(["coach", "transcript"] as const).map((mode) => (
             <button
               key={mode}
               type="button"

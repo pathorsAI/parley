@@ -836,9 +836,7 @@ export const useStore = create<ParleyState>()(
         // values so persisted states land on the closest new posture.
         const rawLayout = p.layout as string | undefined;
         const layout: Settings["layout"] =
-          rawLayout === "transcript" || rawLayout === "glance" || rawLayout === "coach"
-            ? rawLayout
-            : DEFAULT_SETTINGS.layout;
+          rawLayout === "transcript" ? "transcript" : DEFAULT_SETTINGS.layout;
 
         return {
           ...current,

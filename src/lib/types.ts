@@ -265,10 +265,9 @@ export interface IntelState {
 
 /** Live-screen posture, switched from the titlebar-center segmented control:
  *  coach = transcript rail | coach feed | intelligence board (default);
- *  transcript = full-width transcript + findings;
- *  glance = single narrow now-column for docking beside the meeting app.
- *  (Pre-redesign values "full"/"assistant" migrate to "coach" on rehydrate.) */
-export type AppLayout = "coach" | "transcript" | "glance";
+ *  transcript = full-width transcript + findings.
+ *  (Pre-redesign values, and the removed "glance", migrate to "coach".) */
+export type AppLayout = "coach" | "transcript";
 
 /** Push-to-talk key for the global voice-typing listener on macOS. The picker is
  *  the single source of truth — exactly one is live at a time.
