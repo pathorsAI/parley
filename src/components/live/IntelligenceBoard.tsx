@@ -122,8 +122,9 @@ export function IntelligenceBoard() {
   );
 }
 
-/** Render the populated sections of the current intel state. */
-function IntelSections() {
+/** Render the populated sections of the current intel state. Exported for the
+ *  study tense's 情報 page, which shows the same board over a loaded recording. */
+export function IntelSections() {
   const { t } = useI18n();
   const intel = useStore((s) => s.intel);
   if (!intel) return null;

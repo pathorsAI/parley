@@ -218,6 +218,9 @@ interface ParleyState {
   intelStatus: AsyncTaskStatus;
   setIntel: (intel: IntelState | null) => void;
   setIntelStatus: (status: AsyncTaskStatus) => void;
+  /** Which study-tense page is open while a recording is loaded. */
+  studyTab: "brief" | "intel" | "transcript" | "delivery";
+  setStudyTab: (tab: ParleyState["studyTab"]) => void;
   /** Insert one finding (MCP/external add) without replacing the list, keeping it
    *  ordered by atMs. A colliding id is reassigned so existing findings are safe. */
   addFinding: (event: TimelineEvent) => void;
@@ -564,6 +567,8 @@ export const useStore = create<ParleyState>()(
   intelStatus: "idle",
   setIntel: (intel) => set({ intel }),
   setIntelStatus: (status) => set({ intelStatus: status }),
+  studyTab: "brief",
+  setStudyTab: (tab) => set({ studyTab: tab }),
 
   setFindings: (events) =>
     set((s) => {
