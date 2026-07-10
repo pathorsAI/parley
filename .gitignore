@@ -32,5 +32,7 @@ src-tauri/gen/schemas
 
 # ONNX Runtime dylib (fetched at build time, not committed — see src-tauri/scripts/fetch-onnxruntime.sh)
 src-tauri/onnxruntime/*.dylib
+# Parley Microphone installer pkg (built by CI from virtual-mic/, or a dev placeholder from build.rs)
+src-tauri/virtualmic/
 src-tauri/tauri.dev.conf.json
 .gstack/

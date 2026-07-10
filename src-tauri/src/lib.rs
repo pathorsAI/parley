@@ -10,7 +10,9 @@ mod permissions;
 mod replay;
 mod replay_audio;
 mod transcription;
+mod translate;
 mod usage;
+mod virtual_mic;
 mod voice_typing;
 
 use tauri::{Emitter, Manager};
@@ -75,6 +77,9 @@ pub fn run() {
         // Singleton guard for the voice-typing session task (abort-on-restart
         // + bounded post-release flush) — see voice_typing::VoiceTypingState.
         .manage(voice_typing::VoiceTypingState::default())
+        // Singleton guard for the live-translation session (mic → Gemini
+        // translate → output device) — see translate::TranslateState.
+        .manage(translate::TranslateState::default())
         // Native menu-bar "Diagnostics" submenu (View Logs + Clear Cache).
         .menu(menu::build)
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
@@ -94,6 +99,7 @@ pub fn run() {
             commands::start_mic_test,
             commands::stop_mic_test,
             commands::meeting_active,
+            commands::set_translate_paused,
             commands::save_transcript,
             commands::export_recording,
             commands::start_oauth_loopback,
@@ -120,6 +126,13 @@ pub fn run() {
             voice_typing::accessibility_status,
             voice_typing::present_voice_overlay,
             voice_typing::dismiss_voice_overlay,
+            translate::start_translate,
+            translate::stop_translate,
+            translate::translate_active,
+            translate::list_output_devices,
+            virtual_mic::virtual_mic_status,
+            virtual_mic::install_virtual_mic,
+            virtual_mic::uninstall_virtual_mic,
             hotkey::ensure_fn_listener,
             hotkey::input_monitoring_status,
             hotkey::request_input_monitoring,

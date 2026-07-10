@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Circle, FileAudio, History, Loader2, LogOut, Mic, Minus, Settings, Square, X } from "lucide-react";
+import { Circle, FileAudio, History, Languages, LogOut, Mic, Minus, Settings, Square, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { log } from "../lib/log";
 import { STT_BY_ID, sttApiKey, sttRelayUrl } from "../lib/transcription/providers";
@@ -10,9 +10,11 @@ import { startMockStream, stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
 import { openSettingsWindow } from "../lib/settingsSync";
 import { openHistoryWindow } from "../lib/history/history";
+import { openLiveTranslateWindow } from "../lib/liveTranslate";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
+import { SaveDestinationPicker } from "./SaveDestinationPicker";
 
 type TFn = ReturnType<typeof useI18n>["t"];
 type WindowAction = "close" | "minimize" | "fullscreen";
@@ -51,11 +53,6 @@ function useWindowFocused(): boolean {
   return focused;
 }
 
-function meetingStatusText(t: TFn, recording: boolean, status: string): string {
-  if (recording) return t("titlebar.status.recording");
-  if (status === "stopped") return t("titlebar.status.stopped");
-  return t("titlebar.status.idle");
-}
 
 function TrafficLights({
   focused,
@@ -131,10 +128,21 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const inputDevice = useStore((s) => s.settings.inputDevice);
   const startMeeting = useStore((s) => s.startMeeting);
   const stopMeeting = useStore((s) => s.stopMeeting);
+  const translateEnabled = useStore((s) => s.settings.meetingTranslateEnabled);
+  const translateLanguage = useStore((s) => s.settings.translateTargetLanguage);
+  const translateOutputDevice = useStore((s) => s.settings.translateOutputDevice);
+  const geminiApiKey = useStore((s) => s.settings.geminiApiKey);
+  const layout = useStore((s) => s.settings.layout);
+  const updateSettings = useStore((s) => s.updateSettings);
+  const saveLocation = useStore((s) => s.settings.defaultSaveLocation);
+  const syncEnabled = useStore((s) => s.settings.syncEnabled);
+  const meetingStartedAt = useStore((s) => s.meetingStartedAt);
+  const studyTab = useStore((s) => s.studyTab);
+  const setStudyTab = useStore((s) => s.setStudyTab);
+  const [elapsed, setElapsed] = useState("00:00");
   const appMode = useStore((s) => s.appMode);
   const replayName = useStore((s) => s.replay?.name ?? "");
   const exitReplay = useStore((s) => s.exitReplay);
-  const [ingestMsg, setIngestMsg] = useState<string | null>(null);
   // Guard the start/stop toggle so a rapid double-click can't fire two overlapping
   // start/stop invokes (which is what could race two transcription sessions open,
   // or interleave a stop with a start). The ref blocks re-entry synchronously
@@ -144,31 +152,21 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
 
   const recording = status === "recording";
   const replayMode = appMode === "replay";
-  const useRealPipeline = isTauri() && !!sttKey.trim();
 
-  async function uploadRecording() {
-    if (ingestMsg) return;
-    const { settings, openIngestWizard } = useStore.getState();
-    setIngestMsg(t("replay.preparing"));
-    log.info("replay: upload started");
-    try {
-      // Only pick the file here — the ingest wizard then asks the speaker count
-      // and runs transcription → diarization → review → analysis as one pipeline.
-      const { pickRecordingFile } = await import("../lib/replay/ingest");
-      const audioPath = await pickRecordingFile(settings);
-      if (audioPath) {
-        log.info("replay: file picked, opening ingest wizard");
-        openIngestWizard(audioPath);
-      } else {
-        log.debug("replay: upload cancelled");
-      }
-    } catch (e) {
-      log.error("replay: pick failed", { error: String(e) });
-      window.alert(t("replay.failed", { error: e instanceof Error ? e.message : String(e) }));
-    } finally {
-      setIngestMsg(null);
-    }
-  }
+  // Vitals timer (top-left): elapsed since the meeting started, ticking 1 Hz.
+  useEffect(() => {
+    if (!recording) return;
+    const tick = () => {
+      const sec = Math.max(0, Math.floor((Date.now() - (meetingStartedAt ?? Date.now())) / 1000));
+      setElapsed(
+        `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`
+      );
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [recording, meetingStartedAt]);
+  const useRealPipeline = isTauri() && !!sttKey.trim();
 
   async function toggle() {
     // Re-entrancy guard: ignore clicks while a start/stop is already in flight.
@@ -190,6 +188,12 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
         }
         return;
       }
+      // Meeting translation needs its own (Gemini) key on top of the STT key;
+      // refuse loudly rather than silently starting an untranslated meeting.
+      if (useRealPipeline && translateEnabled && !geminiApiKey.trim()) {
+        toast.error(t("meeting.translate.noKey"));
+        return;
+      }
       startMeeting();
       if (useRealPipeline) {
         log.info("meeting: start requested", {
@@ -197,6 +201,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           model: STT_BY_ID[transcriptionProvider].label,
           diarization: STT_BY_ID[transcriptionProvider].diarization,
           inputDevice,
+          translate: translateEnabled ? translateLanguage : "off",
           pipeline: "real",
         });
         try {
@@ -210,6 +215,11 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             diarization: STT_BY_ID[transcriptionProvider].diarization,
             inputDevice,
             relayUrl,
+            // Meeting translation (off → nulls): "me" runs through Gemini
+            // live-translate; the voice goes out the translate output device.
+            translateLanguage: translateEnabled ? translateLanguage : null,
+            translateOutputDevice: translateEnabled ? translateOutputDevice || null : null,
+            translateApiKey: translateEnabled ? geminiApiKey : null,
           });
         } catch (e) {
           log.error("meeting: start failed", {
@@ -261,62 +271,114 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           where macOS shows no window controls. */}
       {!fullscreen && <TrafficLights focused={focused} onAction={controlWindow} t={t} />}
 
-      <div data-tauri-drag-region className="flex items-center gap-2.5">
-        <img src="/parley.svg" alt="" className="h-5 w-5 rounded-[5px]" />
-        <span className="text-sm font-semibold tracking-tight">{t("app.name")}</span>
-        <span className="text-[11px] text-muted-foreground">
-          {useRealPipeline ? t("app.subtitle.real") : t("app.subtitle.demo")}
-        </span>
+      {/* Top-left: information, not brand (macOS's menu bar already says
+          Parley). Idle → where this meeting will save (org/folder menu, no
+          Settings trip); recording → the session vitals (rec + elapsed + mic
+          level + translation). */}
+      <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
+        {replayMode && (
+          <span className="flex min-w-0 items-center gap-1.5 text-xs text-violet-600 dark:text-violet-400">
+            <FileAudio className="size-3.5 shrink-0" />
+            <span className="max-w-44 truncate">{replayName}</span>
+          </span>
+        )}
+        {!replayMode && !recording && (
+          <SaveDestinationPicker
+            compact
+            value={saveLocation}
+            syncOn={syncEnabled}
+            onChange={(loc) => updateSettings({ defaultSaveLocation: loc })}
+          />
+        )}
+        {recording && (
+          <>
+            <span className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
+              <Circle className="h-2 w-2 animate-pulse fill-red-500 text-red-500" />
+              {elapsed}
+            </span>
+            <LevelMeter source="me" className="h-1.5 w-14" />
+            {translateEnabled && (
+              <span className="flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                <Languages className="size-3.5" />
+                {translateLanguage.toUpperCase()}
+              </span>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Titlebar-center switcher — two tenses, one slot: live shows the
+          posture switch (coach/transcript); a loaded recording swaps in the
+          study tabs (brief/intel/transcript/delivery, purple accent). */}
+      <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-0.5 rounded-lg bg-muted p-0.5">
+        {replayMode
+          ? (["brief", "intel", "transcript", "delivery"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setStudyTab(tab)}
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                  studyTab === tab
+                    ? "bg-background text-violet-600 shadow-sm dark:text-violet-400"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {t(`study.${tab}`)}
+              </button>
+            ))
+          : (["coach", "transcript"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => updateSettings({ layout: mode })}
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                  layout === mode
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {t(`layout.${mode}`)}
+              </button>
+            ))}
       </div>
 
       <div className="flex items-center gap-2">
         {replayMode ? (
-          <>
-            <div className="mr-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <FileAudio className="size-3.5 text-foreground/70" />
-              <span className="max-w-[220px] truncate">{replayName}</span>
-            </div>
-            <Button size="sm" variant="outline" onClick={exitReplay} className="h-8">
-              <LogOut className="size-3.5" />
-              {t("replay.exit")}
-            </Button>
-          </>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              exitReplay();
+              setStudyTab("brief");
+            }}
+            className="h-8"
+          >
+            <LogOut className="size-3.5" />
+            {t("replay.exit")}
+          </Button>
         ) : (
-          <>
-            <div className="mr-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Circle
-                className={`h-2 w-2 ${
-                  recording ? "animate-pulse fill-red-500 text-red-500" : "fill-muted-foreground/40 text-muted-foreground/40"
-                }`}
-              />
-              {meetingStatusText(t, recording, status)}
-            </div>
-            {recording && <LevelMeter source="me" className="h-1.5 w-14" />}
-            {!recording && isTauri() && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => uploadRecording()}
-                disabled={!!ingestMsg}
-                className="h-8"
-              >
-                {ingestMsg ? <Loader2 className="size-3.5 animate-spin" /> : <FileAudio className="size-3.5" />}
-                {ingestMsg ?? t("replay.upload")}
-              </Button>
-            )}
-
-            <Button
-              size="sm"
-              variant={recording ? "destructive" : "default"}
-              onClick={toggle}
-              disabled={!!ingestMsg || toggleBusy}
-              className="h-8"
-            >
-              {recording ? <Square className="size-3.5" /> : <Mic className="size-3.5" />}
-              {recording ? t("titlebar.stop") : t("titlebar.startMeeting")}
-            </Button>
-          </>
+          <Button
+            size="sm"
+            variant={recording ? "destructive" : "default"}
+            onClick={toggle}
+            disabled={toggleBusy}
+            className="h-8"
+          >
+            {recording ? <Square className="size-3.5" /> : <Mic className="size-3.5" />}
+            {recording ? t("titlebar.stop") : t("titlebar.startMeeting")}
+          </Button>
         )}
+
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-8 w-8"
+          aria-label={t("titlebar.liveTranslate")}
+          title={t("titlebar.liveTranslate")}
+          onClick={() => openLiveTranslateWindow().catch((error) => log.error("live-translate: open window failed", { error: String(error) }))}
+        >
+          <Languages className="size-4" />
+        </Button>
 
         <Button
           size="icon"

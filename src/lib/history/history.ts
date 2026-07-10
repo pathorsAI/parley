@@ -250,6 +250,16 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
     log.warn("history: post-save re-diarization failed", { id: entry.id, error: String(e) }),
   );
   await applyDefaultOrgShare(entry.id, save);
+  // 會後 60 秒: a meeting's natural ending is its debrief — slide straight into
+  // the study tense (landing on 重點), unless the user already started another
+  // meeting or opened a different recording in the meantime.
+  const now = useStore.getState();
+  if (now.meetingStatus !== "recording" && now.appMode === "live") {
+    now.setStudyTab("brief");
+    await loadHistoryEntry(entry.id).catch((e) =>
+      log.warn("history: auto-open after stop failed", { id: entry.id, error: String(e) }),
+    );
+  }
 }
 
 /**
@@ -543,6 +553,27 @@ export async function listenForHistoryOpen(): Promise<UnlistenFn> {
     loadHistoryEntry(e.payload.id).catch((err) =>
       log.error("history: load failed", { id: e.payload.id, error: String(err) }),
     );
+  });
+}
+
+const HISTORY_IMPORT_EVENT = "history://import";
+
+/** From the History window: hand a picked audio file to the main window's ingest wizard. */
+export async function emitHistoryImport(path: string): Promise<void> {
+  if (!isTauri()) return;
+  await emit(HISTORY_IMPORT_EVENT, { path });
+}
+
+/** Main-window listener: open the ingest wizard for a file picked in History. */
+export async function listenForHistoryImport(): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<{ path: string }>(HISTORY_IMPORT_EVENT, (e) => {
+    if (useStore.getState().meetingStatus === "recording") return;
+    useStore.getState().openIngestWizard(e.payload.path);
+    import("@tauri-apps/api/webviewWindow")
+      .then(({ WebviewWindow }) => WebviewWindow.getByLabel("main"))
+      .then((w) => w?.setFocus())
+      .catch(() => {});
   });
 }
 

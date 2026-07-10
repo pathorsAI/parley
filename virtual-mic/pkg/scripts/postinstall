@@ -1,0 +1,6 @@
+#!/bin/bash
+# Runs after the driver is copied into /Library/Audio/Plug-Ins/HAL.
+# Reload coreaudiod so "Parley Microphone" appears immediately (a brief,
+# system-wide audio glitch — unavoidable when (un)loading a HAL plug-in).
+killall coreaudiod 2>/dev/null || true
+exit 0

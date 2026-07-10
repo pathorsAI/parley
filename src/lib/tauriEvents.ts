@@ -13,6 +13,8 @@ interface TranscriptEventPayload {
   source: Source;
   speaker: number;
   text: string;
+  /** Translated-meeting turns carry what the counterpart heard. */
+  translation?: string;
   is_final: boolean;
   start_ms: number;
   end_ms: number;
@@ -39,6 +41,8 @@ export async function listenForTranscript(): Promise<UnlistenFn> {
           source: p.source,
           speaker: p.speaker,
           text,
+          // The translation is in the TARGET language — never zh-convert it.
+          translation: p.translation,
           isFinal: p.is_final,
           startMs: p.start_ms,
           endMs: p.end_ms,

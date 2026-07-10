@@ -46,7 +46,8 @@
     "createUpdaterArtifacts": true,
     "targets": "all",
     "resources": [
-      "onnxruntime/libonnxruntime.dylib"
+      "onnxruntime/libonnxruntime.dylib",
+      "virtualmic/ParleyMicrophone.pkg"
     ],
     "macOS": {
       "entitlements": "entitlements.plist",

@@ -187,6 +187,29 @@ jobs:
             src-tauri/onnxruntime/libonnxruntime.dylib
           codesign --verify --strict --verbose=2 src-tauri/onnxruntime/libonnxruntime.dylib
 
+      - name: Build Parley Microphone driver + installer pkg
+        # The virtual-mic HAL driver (see virtual-mic/README.md) ships inside the
+        # app as a resource: build it universal, sign the driver binary with the
+        # Developer ID Application identity (so app notarization accepts the
+        # nested code), pack it into a .pkg, and drop it where tauri.conf's
+        # bundle.resources expects it. The in-app installer runs the pkg via
+        # `installer` CLI + admin prompt, which doesn't require an Installer-
+        # identity signature on the pkg container — but if the optional
+        # APPLE_INSTALLER_SIGNING_IDENTITY secret is set, the pkg is signed too.
+        env:
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+        run: |
+          set -euxo pipefail
+          ARCHS="arm64;x86_64" CODESIGN_ID="${APPLE_SIGNING_IDENTITY:-}" ./virtual-mic/build.sh
+          INSTALLER_ID="${APPLE_INSTALLER_SIGNING_IDENTITY:-}" ./virtual-mic/make-pkg.sh
+          mkdir -p src-tauri/virtualmic
+          if [ -f virtual-mic/build/ParleyMicrophone-signed.pkg ]; then
+            cp virtual-mic/build/ParleyMicrophone-signed.pkg src-tauri/virtualmic/ParleyMicrophone.pkg
+          else
+            cp virtual-mic/build/ParleyMicrophone.pkg src-tauri/virtualmic/ParleyMicrophone.pkg
+          fi
+          ls -la src-tauri/virtualmic/
+
       - name: Build and upload Tauri bundles
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:

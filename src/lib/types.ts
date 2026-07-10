@@ -21,6 +21,9 @@ export interface TranscriptSegment {
   /** Diarized speaker number within the source (0 = unknown / single speaker). */
   speaker: number;
   text: string;
+  /** Translated-meeting mode: what the counterpart actually heard (the Gemini
+   *  live-translate output for this turn). Absent for untranslated segments. */
+  translation?: string;
   isFinal: boolean;
   /** Milliseconds since the meeting started. */
   startMs: number;
@@ -211,8 +214,60 @@ export type AppLanguage = "zh-TW" | "en";
 /** UI color theme preference. */
 export type AppTheme = "light" | "dark" | "system";
 
-/** Main window panel layout preference. */
-export type AppLayout = "full" | "assistant" | "transcript";
+/** What kind of meeting this is — drives which intelligence template the
+ *  board runs (extraction prompts + sections). Picked on the board itself. */
+export type MeetingType = "general" | "negotiation" | "sales" | "partnership";
+
+/** A number someone said, captured with attribution (negotiation ledger). */
+export interface IntelNumber {
+  value: string;
+  speaker: "me" | "them";
+  context: string;
+}
+
+/** An objection the counterpart raised, and whether it was answered. */
+export interface IntelObjection {
+  text: string;
+  addressed: boolean;
+}
+
+/** A commitment made during the meeting, with its side. */
+export interface IntelCommitment {
+  who: "me" | "them";
+  what: string;
+}
+
+/** Accumulated structured intelligence for the current meeting — the board's
+ *  STATE (vs. the coach feed's events). Extracted by LLM passes over the live
+ *  transcript; sections are populated per meeting type. */
+export interface IntelState {
+  meetingType: MeetingType;
+  /* negotiation */
+  numbers?: IntelNumber[];
+  concessionsMe?: string[];
+  concessionsThem?: string[];
+  agreed?: string[];
+  open?: string[];
+  /* sales */
+  budget?: string;
+  timeline?: string;
+  decisionMaker?: string;
+  objections?: IntelObjection[];
+  commitments?: IntelCommitment[];
+  competitors?: string[];
+  /* partnership */
+  theyHave?: string[];
+  theyNeed?: string[];
+  leverage?: string[];
+  give?: string[];
+  get?: string[];
+}
+
+/** Live-screen posture, switched from the titlebar-center segmented control:
+ *  coach = transcript rail | coach feed | intelligence board (default);
+ *  transcript = full-width transcript + findings.
+ *  (Pre-redesign values, and the removed "glance", migrate to "coach".) */
+export type AppLayout = "coach" | "transcript";
 
 /** Push-to-talk key for the global voice-typing listener on macOS. The picker is
  *  the single source of truth — exactly one is live at a time.
@@ -283,6 +338,19 @@ export interface Settings {
   assemblyaiApiKey: string;
   /** Microphone input device name; empty = system default. */
   inputDevice: string;
+  /** Live translation: source microphone; empty = system default. */
+  translateInputDevice: string;
+  /** Live translation: output device the translated audio plays to (Phase 2:
+   *  the virtual mic); empty = system default output. */
+  translateOutputDevice: string;
+  /** Live translation: BCP-47 target language code (e.g. "en", "ja"). */
+  translateTargetLanguage: string;
+  /** Meeting translation: when on, starting a meeting routes "me" through
+   *  Gemini live-translate (bilingual transcript + translated voice to the
+   *  translate output device) instead of the STT provider. */
+  meetingTranslateEnabled: boolean;
+  /** Which intelligence template the board runs (remembered across meetings). */
+  meetingType: MeetingType;
   /** Voice typing: whether push-to-talk dictation is active. Option+Space works
    *  without extra permission; fn/Globe additionally needs Input Monitoring.
    *  While enabled, releasing the key always auto-pastes (simulated ⌘V, needs

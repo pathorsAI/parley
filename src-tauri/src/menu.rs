@@ -65,6 +65,19 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     )?;
 
     menu.append(&diagnostics)?;
+
+    // "Translate" menu: opens the standalone Live Translation window (the frontend
+    // listens for `menu://live-translate` and opens/focuses the webview).
+    let live_translate = MenuItem::with_id(
+        handle,
+        "live_translate",
+        "Live Translation…",
+        true,
+        None::<&str>,
+    )?;
+    let translate = Submenu::with_items(handle, "Translate", true, &[&live_translate])?;
+    menu.append(&translate)?;
+
     Ok(menu)
 }
 
@@ -76,6 +89,11 @@ pub fn on_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
         // "reveal in Finder" affordance for the on-disk rotating log folder.
         "view_logs" => {
             let _ = app.emit("menu://view-logs", ());
+        }
+        // Open the standalone Live Translation window (mic → Gemini translate →
+        // output device); the frontend turns this into a webview window.
+        "live_translate" => {
+            let _ = app.emit("menu://live-translate", ());
         }
         "clear_cache_transcription" => {
             clear_cache_dir(app, "transcriptions");

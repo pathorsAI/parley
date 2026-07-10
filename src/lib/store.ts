@@ -7,6 +7,7 @@ import type {
   DeliveryNudge,
   Evaluation,
   FindingSolutionEntry,
+  IntelState,
   MeetingStatus,
   ProsodyMetrics,
   Settings,
@@ -63,7 +64,7 @@ const tDefault = tFor("zh-TW");
 const DEFAULT_SETTINGS: Settings = {
   language: "zh-TW",
   theme: "system",
-  layout: "full",
+  layout: "coach",
   onboarded: false,
   onboardingStep: 0,
   userName: "",
@@ -88,6 +89,11 @@ const DEFAULT_SETTINGS: Settings = {
   deepgramApiKey: "",
   assemblyaiApiKey: "",
   inputDevice: "",
+  translateInputDevice: "",
+  translateOutputDevice: "",
+  translateTargetLanguage: "en",
+  meetingTranslateEnabled: false,
+  meetingType: "general",
   voiceTypingEnabled: true,
   voiceTypingShortcut: "alt-space",
   voiceTypingMode: "hold",
@@ -207,6 +213,14 @@ interface ParleyState {
    *  When it differs from the active eval set, the findings are stale → re-analyze. */
   analyzedEvalSig: string;
   setFindings: (events: TimelineEvent[]) => void;
+  /** Intelligence-board state (per meeting type) + its extraction lifecycle. */
+  intel: IntelState | null;
+  intelStatus: AsyncTaskStatus;
+  setIntel: (intel: IntelState | null) => void;
+  setIntelStatus: (status: AsyncTaskStatus) => void;
+  /** Which study-tense page is open while a recording is loaded. */
+  studyTab: "brief" | "intel" | "transcript" | "delivery";
+  setStudyTab: (tab: ParleyState["studyTab"]) => void;
   /** Insert one finding (MCP/external add) without replacing the list, keeping it
    *  ordered by atMs. A colliding id is reassigned so existing findings are safe. */
   addFinding: (event: TimelineEvent) => void;
@@ -549,6 +563,13 @@ export const useStore = create<ParleyState>()(
   // a growing list with stable ids, so a finding the user opened mid-stream (and
   // its in-flight "how to reply" solution) survives the next partial. A fresh
   // analysis pass mints new ids, so nothing matches → selection + solutions clear.
+  intel: null,
+  intelStatus: "idle",
+  setIntel: (intel) => set({ intel }),
+  setIntelStatus: (status) => set({ intelStatus: status }),
+  studyTab: "brief",
+  setStudyTab: (tab) => set({ studyTab: tab }),
+
   setFindings: (events) =>
     set((s) => {
       const ids = new Set(events.map((e) => e.id));
@@ -698,6 +719,8 @@ export const useStore = create<ParleyState>()(
       deliveryNudge: null,
       deliveryAssessment: null,
       deliveryStatus: "idle",
+      intel: null,
+      intelStatus: "idle",
     });
   },
 
@@ -814,11 +837,18 @@ export const useStore = create<ParleyState>()(
           return label ? { ...e, name: label.name, description: label.description } : e;
         });
 
+        // Layout presets were renamed in the live-screen redesign; map the old
+        // values so persisted states land on the closest new posture.
+        const rawLayout = p.layout as string | undefined;
+        const layout: Settings["layout"] =
+          rawLayout === "transcript" ? "transcript" : DEFAULT_SETTINGS.layout;
+
         return {
           ...current,
           settings: {
             ...DEFAULT_SETTINGS,
             ...p,
+            layout,
             // Deep-merge models so a new provider (e.g. groq) isn't dropped by
             // older persisted state that only had anthropic/openrouter.
             models: { ...DEFAULT_SETTINGS.models, ...p.models },

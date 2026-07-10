@@ -44,6 +44,7 @@ import {
   listenForHistoryUpdated,
   renameHistoryEntry,
   setEntryFolder,
+  emitHistoryImport,
 } from "../lib/history/history";
 import {
   createLocalFolder,
@@ -84,11 +85,25 @@ import { syncEnabled } from "../lib/cloud/client";
 import { listMyOrgs } from "../lib/cloud/orgs";
 import { listenForSettings, openSettingsWindow } from "../lib/settingsSync";
 import { useStore } from "../lib/store";
+
 import { CLOUD_ENABLED } from "../lib/flags";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import type { CloudOrg, CloudRecordingSummary } from "../lib/cloud/types";
 import { VoiceTypingHistory } from "./VoiceTypingHistory";
+
+/** "+ Import" in the header: pick an audio file here, hand it to the main
+ *  window's ingest wizard (which owns the transcribe→diarize→analyze flow). */
+async function importRecording(): Promise<void> {
+  const { settings } = useStore.getState();
+  try {
+    const { pickRecordingFile } = await import("../lib/replay/ingest");
+    const path = await pickRecordingFile(settings);
+    if (path) await emitHistoryImport(path);
+  } catch (e) {
+    log.error("history: import pick failed", { error: String(e) });
+  }
+}
 
 /**
  * Which context (left sidebar) is selected. Both kinds carry a `folderId`: null is
@@ -1044,8 +1059,16 @@ function LibraryContent({
         {!isOrg && syncing && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
         <button
           type="button"
-          onClick={onRefresh}
+          onClick={() => void importRecording()}
           className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <Plus className="size-3.5" />
+          {t("history.import")}
+        </button>
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <RefreshCw className="size-3.5" />
           {t("history.refresh")}

@@ -37,7 +37,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "mul
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 cpal = "0.15"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+# `process` drives the privileged osascript installer for the virtual mic (virtual_mic.rs).
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "process"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 futures-util = "0.3"

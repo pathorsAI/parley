@@ -3,8 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TitleBar } from "./components/TitleBar";
+import { TranslateStrip } from "./components/TranslateStrip";
 import { LiveScreen } from "./components/live/LiveScreen";
-import { ReplayScreen } from "./components/replay/ReplayScreen";
+import { StudyScreen } from "./components/study/StudyScreen";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import { ReleaseNotesDialog } from "./components/ReleaseNotesDialog";
@@ -24,6 +25,7 @@ import {
 } from "./lib/tauriEvents";
 import { listenForSettings } from "./lib/settingsSync";
 import { listenForViewLogsMenu } from "./lib/diagnostics";
+import { listenForLiveTranslateMenu } from "./lib/liveTranslate";
 import { listenForSttUsage } from "./lib/usage/log";
 import { initTemplatesSync } from "./lib/templatesSync";
 import { initSessionSync } from "./lib/sessionSync";
@@ -33,6 +35,7 @@ import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import {
   initHistoryPersistSync,
+  listenForHistoryImport,
   listenForHistoryOpen,
   listenForHistoryOpenOrg,
   listenForRecordingSaved,
@@ -130,8 +133,10 @@ const App = () => {
     track(listenForCacheClear());
     track(listenForSpeakerCacheClear());
     track(listenForViewLogsMenu());
+    track(listenForLiveTranslateMenu());
     track(listenForRecordingSaved());
     track(listenForHistoryOpen());
+    track(listenForHistoryImport());
     if (CLOUD_ENABLED) track(listenForHistoryOpenOrg());
     // These return a synchronous UnlistenFn.
     const unTemplates = initTemplatesSync();
@@ -218,6 +223,36 @@ const App = () => {
     };
   }, []);
 
+  // Drop an audio file anywhere on the window → straight into the ingest
+  // wizard (the header upload button's replacement).
+  useEffect(() => {
+    if (!isTauri()) return;
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    import("@tauri-apps/api/webview")
+      .then(({ getCurrentWebview }) =>
+        getCurrentWebview().onDragDropEvent((e) => {
+          if (e.payload.type !== "drop") return;
+          const audio = e.payload.paths.find((p) =>
+            /\.(mp3|m4a|wav|ogg|oga|flac|aac|mp4|webm|opus)$/i.test(p)
+          );
+          if (audio && useStore.getState().meetingStatus !== "recording") {
+            log.info("replay: file dropped, opening ingest wizard");
+            useStore.getState().openIngestWizard(audio);
+          }
+        })
+      )
+      .then((fn) => {
+        if (active) unlisten = fn;
+        else fn();
+      })
+      .catch((error) => log.warn("app: drag-drop listener failed", { error: String(error) }));
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+
   // LIVE background engine: optional auto-analyze interval + checklist auto-check.
   useAnalysisEngine();
 
@@ -252,7 +287,9 @@ const App = () => {
       {!isTauri() && <FindingSolutionWindow />}
       <TitleBar fullscreen={fullscreen} />
       <DeliveryNudgeHost />
-      {appMode === "replay" ? <ReplayScreen /> : <LiveScreen />}
+      {appMode === "replay" ? <StudyScreen /> : <LiveScreen />}
+      {/* Interpreter strip: only during a translated live meeting. */}
+      <TranslateStrip />
     </div>
   );
 };

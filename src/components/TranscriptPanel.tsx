@@ -89,6 +89,13 @@ export function TranscriptPanel() {
                 }`}
               >
                 {seg.text}
+                {/* Translated meeting: show what the counterpart actually heard
+                    (the Gemini voice output) as a quieter inline echo. */}
+                {seg.translation && (
+                  <span className="mx-1 text-[0.9em] italic text-emerald-700/70 dark:text-emerald-400/70">
+                    → {seg.translation}
+                  </span>
+                )}
                 {!seg.isFinal && <span className="animate-pulse">▍</span>}
               </span>{" "}
             </Fragment>
