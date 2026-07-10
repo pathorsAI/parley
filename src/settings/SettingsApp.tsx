@@ -61,6 +61,7 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
 };
 import type { AppLanguage, AppTheme, DefaultSaveLocation, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 import { VoiceTypingSettings } from "./VoiceTypingSettings";
+import { TranslateSettings } from "./TranslateSettings";
 import { PermissionsPanel } from "./PermissionsPanel";
 
 type Category =
@@ -68,6 +69,7 @@ type Category =
   | "account"
   | "provider"
   | "transcription"
+  | "translate"
   | "voiceTyping"
   | "permissions"
   | "evaluations"
@@ -88,6 +90,7 @@ const NAV: { id: Category; labelKey: TranslationKey; cloudOnly?: boolean }[] = [
   { id: "account", labelKey: "settings.nav.account", cloudOnly: true },
   { id: "provider", labelKey: "settings.nav.provider" },
   { id: "transcription", labelKey: "settings.nav.transcription" },
+  { id: "translate", labelKey: "settings.nav.translate" },
   { id: "voiceTyping", labelKey: "settings.nav.voiceTyping" },
   { id: "permissions", labelKey: "settings.nav.permissions" },
   { id: "evaluations", labelKey: "settings.nav.evaluations" },
@@ -700,6 +703,12 @@ export function SettingsApp() {
                 </label>
               ))}
             </div>
+          </Section>
+        )}
+
+        {cat === "translate" && (
+          <Section title={t("settings.translate.title")}>
+            <TranslateSettings />
           </Section>
         )}
 

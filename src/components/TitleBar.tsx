@@ -11,7 +11,6 @@ import { isTauri } from "../lib/tauriEvents";
 import { openSettingsWindow } from "../lib/settingsSync";
 import { openHistoryWindow } from "../lib/history/history";
 import { openLiveTranslateWindow } from "../lib/liveTranslate";
-import { TranslateMenu } from "./TranslateMenu";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
@@ -339,7 +338,18 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
               </div>
             )}
             {recording && <LevelMeter source="me" className="h-1.5 w-14" />}
-            {!recording && isTauri() && <TranslateMenu />}
+            {!recording && isTauri() && (
+              <Button
+                size="sm"
+                variant={translateEnabled ? "secondary" : "ghost"}
+                onClick={() => updateSettings({ meetingTranslateEnabled: !translateEnabled })}
+                title={t("titlebar.translate.tooltip")}
+                className={`h-8 ${translateEnabled ? "text-emerald-600 dark:text-emerald-400" : ""}`}
+              >
+                <Languages className="size-3.5" />
+                {translateEnabled ? translateLanguage.toUpperCase() : t("titlebar.translate")}
+              </Button>
+            )}
             {!recording && isTauri() && (
               <Button
                 size="sm"
