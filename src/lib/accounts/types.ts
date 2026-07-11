@@ -54,8 +54,14 @@ export interface Person {
 /** What kind of battle a thread is (design D3). Only "sales" carries a pipeline stage. */
 export type ThreadKind = "sales" | "channel" | "investment" | "other";
 
-/** Sales-pipeline stage for sales-kind threads. */
-export type SalesStage = "discovery" | "demo" | "proposal" | "negotiation" | "closing";
+/** Sales-pipeline stage for sales-kind threads (six stages, S18). */
+export type SalesStage =
+  | "prospecting"
+  | "discovery"
+  | "demo"
+  | "proposal"
+  | "negotiation"
+  | "closing";
 
 /** A thread (戰線): one of possibly several parallel battles under a company. */
 export interface Thread {
@@ -78,6 +84,8 @@ export interface Thread {
   expectedCloseAt?: number;
   /** Buying committee on THIS thread (may differ from Person.committeeRole). */
   committee: { personId: string; role: CommitteeRole }[];
+  /** Why the deal was lost (S18) — prompted when status flips to "lost". */
+  lostReason?: string;
   createdAt: number;
 }
 
@@ -176,6 +184,7 @@ export const COMMITTEE_ROLES: CommitteeRole[] = [
 ];
 
 export const SALES_STAGES: SalesStage[] = [
+  "prospecting",
   "discovery",
   "demo",
   "proposal",

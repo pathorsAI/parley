@@ -68,6 +68,14 @@ pub fn write_accounts(app: AppHandle, json: String) -> Result<(), String> {
     write_config_file(&app, "accounts.json", &json)
 }
 
+/// Read the stage-bundle overrides JSON (empty string if the file doesn't
+/// exist). Builtin bundles live in the frontend; this file only carries user
+/// overrides (whole-stage replace, see docs/design/stage-bundles.md S9).
+#[tauri::command]
+pub fn read_stage_bundles(app: AppHandle) -> Result<String, String> {
+    read_config_file(&app, "stage-bundles.json")
+}
+
 /// Meeting-specific state held in Tauri's managed state. Who owns the mic (and
 /// the capture threads/gate of the live session) lives in [`MicCoordinator`];
 /// only what a meeting needs beyond its capture stays here.
