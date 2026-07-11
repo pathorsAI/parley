@@ -4,6 +4,7 @@ import { useStore } from "../lib/store";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { MeetingContextField } from "./MeetingContextField";
+import { MeetingLinkSection } from "./accounts/MeetingLinkSection";
 
 /**
  * Compact button that opens a dialog to edit the PER-MEETING context — background
@@ -15,6 +16,8 @@ import { MeetingContextField } from "./MeetingContextField";
 export function MeetingContextButton({ className }: Readonly<{ className?: string }>) {
   const { t } = useI18n();
   const hasContext = useStore((s) => !!s.meetingContext.trim());
+  const meetingType = useStore((s) => s.settings.meetingType);
+  const businessType = meetingType === "sales" || meetingType === "negotiation" || meetingType === "partnership";
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -36,6 +39,7 @@ export function MeetingContextButton({ className }: Readonly<{ className?: strin
             onClick={() => setOpen(false)}
           />
           <div className="relative w-full max-w-md rounded-xl border bg-background p-4 shadow-xl">
+            {businessType && <MeetingLinkSection />}
             <MeetingContextField rows={4} autoFocus />
             <div className="mt-4 flex justify-end">
               <Button size="sm" className="h-8" onClick={() => setOpen(false)}>

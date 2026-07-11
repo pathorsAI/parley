@@ -67,6 +67,8 @@ export interface HistoryEntrySummary {
   hasAudio: boolean;
   /** First spoken line of the transcript, for a preview. */
   snippet: string;
+  /** Accounts link, for the company page's meeting timeline. */
+  companyId?: string | null;
   /** Personal folder this entry lives in; null/absent = the personal root. */
   folderId?: string | null;
 }

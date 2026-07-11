@@ -60,6 +60,7 @@ export function buildSummary(entry: HistoryEntry): HistoryEntrySummary {
     hasAudio: entry.audio != null,
     snippet: snippetOf(entry),
     folderId: entry.folderId ?? null,
+    companyId: entry.companyId ?? null,
   };
 }
 

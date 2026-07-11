@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -6,6 +6,10 @@ import { TitleBar } from "./components/TitleBar";
 import { TranslateStrip } from "./components/TranslateStrip";
 import { LiveScreen } from "./components/live/LiveScreen";
 import { StudyScreen } from "./components/study/StudyScreen";
+
+const AccountsScreen = lazy(() =>
+  import("./components/accounts/AccountsScreen").then((m) => ({ default: m.AccountsScreen }))
+);
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import { ReleaseNotesDialog } from "./components/ReleaseNotesDialog";
@@ -32,6 +36,7 @@ import { initSessionSync } from "./lib/sessionSync";
 import { initSessionCommands } from "./lib/sessionCommands";
 import { useThemePreference } from "./lib/theme";
 import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
+import { initAccounts } from "./lib/accounts/store";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import {
   initHistoryPersistSync,
@@ -253,6 +258,11 @@ const App = () => {
     };
   }, []);
 
+  // Accounts (mini-CRM): hydrate from accounts.json once, then persist changes.
+  useEffect(() => {
+    initAccounts();
+  }, []);
+
   // LIVE background engine: optional auto-analyze interval + checklist auto-check.
   useAnalysisEngine();
 
@@ -287,7 +297,15 @@ const App = () => {
       {!isTauri() && <FindingSolutionWindow />}
       <TitleBar fullscreen={fullscreen} />
       <DeliveryNudgeHost />
-      {appMode === "replay" ? <StudyScreen /> : <LiveScreen />}
+      {appMode === "replay" ? (
+        <StudyScreen />
+      ) : appMode === "accounts" ? (
+        <Suspense fallback={null}>
+          <AccountsScreen />
+        </Suspense>
+      ) : (
+        <LiveScreen />
+      )}
       {/* Interpreter strip: only during a translated live meeting. */}
       <TranslateStrip />
     </div>
