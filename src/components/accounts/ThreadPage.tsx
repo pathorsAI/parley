@@ -1,11 +1,11 @@
 import { ArrowLeft } from "lucide-react";
 import { useAccounts, claimsOfThread, personsOf } from "../../lib/accounts/store";
 import type { Thread } from "../../lib/accounts/types";
-import { COMMITTEE_ROLES, SALES_STAGES } from "../../lib/accounts/types";
+import { COMMITTEE_ROLES } from "../../lib/accounts/types";
 import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
 import { ClaimList } from "./ClaimCard";
-import { InlineEdit } from "./bits";
+import { InlineEdit, StageStepper } from "./bits";
 
 const STATUSES: Thread["status"][] = ["active", "won", "lost", "parked"];
 
@@ -40,19 +40,10 @@ export function ThreadPage({
             <div className="flex flex-wrap items-center gap-2 pt-1.5 text-xs">
               <span className="rounded bg-muted px-1.5 py-0.5">{t(`accounts.kind.${thread.kind}`)}</span>
               {thread.kind === "sales" ? (
-                <select
-                  value={thread.stage ?? "discovery"}
-                  onChange={(e) =>
-                    acc.updateThread(thread.id, { stage: e.target.value as Thread["stage"] })
-                  }
-                  className="h-6 rounded border bg-background px-1"
-                >
-                  {SALES_STAGES.map((s) => (
-                    <option key={s} value={s}>
-                      {t(`accounts.stage.${s}`)}
-                    </option>
-                  ))}
-                </select>
+                <StageStepper
+                  stage={thread.stage ?? "discovery"}
+                  onChange={(stage) => acc.updateThread(thread.id, { stage })}
+                />
               ) : (
                 <input
                   value={thread.customStatus ?? ""}

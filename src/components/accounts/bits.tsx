@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Archive } from "lucide-react";
 import { useI18n } from "../../i18n";
+import { SALES_STAGES, type SalesStage } from "../../lib/accounts/types";
 
 /** Tiny shared account-area primitives. */
 
@@ -85,6 +86,59 @@ export function AliasesEdit({
       placeholder={t("accounts.aliasesPlaceholder")}
       className="h-6 text-xs text-muted-foreground"
     />
+  );
+}
+
+/**
+ * The pipeline as a clickable stepper — the sales mental model is a conveyor
+ * (Discovery → … → Closing), not a dropdown. Click a step to move the deal.
+ */
+export function StageStepper({
+  stage,
+  onChange,
+}: Readonly<{ stage: SalesStage; onChange: (s: SalesStage) => void }>) {
+  const { t } = useI18n();
+  const idx = SALES_STAGES.indexOf(stage);
+  return (
+    <div className="flex flex-wrap items-center gap-y-1">
+      {SALES_STAGES.map((s, i) => (
+        <Fragment key={s}>
+          {i > 0 && <div className={`h-px w-3 ${i <= idx ? "bg-sky-500" : "bg-border"}`} />}
+          <button
+            type="button"
+            onClick={() => onChange(s)}
+            className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
+              i === idx
+                ? "border-sky-500/60 bg-sky-500/15 font-semibold text-sky-700 dark:text-sky-300"
+                : i < idx
+                  ? "border-transparent bg-muted text-muted-foreground"
+                  : "border-border text-muted-foreground hover:bg-muted/60"
+            }`}
+          >
+            {t(`accounts.stage.${s}`)}
+          </button>
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+/** Compact read-only pipeline position: five dots + the current stage label. */
+export function MiniStages({ stage }: Readonly<{ stage: SalesStage }>) {
+  const { t } = useI18n();
+  const idx = SALES_STAGES.indexOf(stage);
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      {SALES_STAGES.map((s, i) => (
+        <span
+          key={s}
+          className={`size-1.5 rounded-full ${i <= idx ? "bg-sky-500" : "bg-border"}`}
+        />
+      ))}
+      <span className="pl-1 text-[10px] font-semibold text-sky-700 dark:text-sky-300">
+        {t(`accounts.stage.${stage}`)}
+      </span>
+    </span>
   );
 }
 

@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { ClaimCard, ClaimList } from "./ClaimCard";
 import { FeedDataDialog } from "./FeedDataDialog";
 import { BriefingDialog } from "./BriefingDialog";
-import { AliasesEdit, ArchiveButton, InlineEdit, StanceDot } from "./bits";
+import { AliasesEdit, ArchiveButton, InlineEdit, MiniStages, StanceDot } from "./bits";
 
 /**
  * The company war room (design §4.2): triage first (conflicts + open
@@ -125,6 +125,70 @@ export function CompanyPage({
           </Section>
         )}
 
+        {/* Threads */}
+        <Section title={t("accounts.threads")}>
+          {threads.map(
+            (th) =>
+              th && (
+                <button
+                  key={th.id}
+                  type="button"
+                  onClick={() => onOpenThread(th.id)}
+                  className="flex items-center gap-2 rounded-lg border px-3 py-2 text-left hover:bg-muted/50"
+                >
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{th.name}</span>
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
+                    {t(`accounts.kind.${th.kind}`)}
+                  </span>
+                  {th.kind === "sales" && th.stage && <MiniStages stage={th.stage} />}
+                  <span className="text-[10px] text-muted-foreground">
+                    {t(`accounts.status.${th.status}`)}
+                  </span>
+                </button>
+              )
+          )}
+          {threads.length === 0 && (
+            <p className="rounded-lg border border-dashed px-3 py-3 text-center text-xs text-muted-foreground">
+              {t("accounts.threads.empty")}
+            </p>
+          )}
+          <form
+            className="flex items-center gap-1.5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!threadName.trim()) return;
+              acc.addThread({ companyId: company.id, kind: threadKind, name: threadName });
+              setThreadName("");
+            }}
+          >
+            <select
+              value={threadKind}
+              onChange={(e) => setThreadKind(e.target.value as ThreadKind)}
+              className="h-7 shrink-0 rounded-md border bg-background px-1.5 text-xs"
+            >
+              {THREAD_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {t(`accounts.kind.${k}`)}
+                </option>
+              ))}
+            </select>
+            <input
+              value={threadName}
+              onChange={(e) => setThreadName(e.target.value)}
+              placeholder={t("accounts.threadName")}
+              className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+            />
+            <button
+              type="submit"
+              disabled={!threadName.trim()}
+              className="flex h-7 items-center gap-1 rounded-md border px-2 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
+            >
+              <Plus className="size-3" />
+              {t("accounts.newThread")}
+            </button>
+          </form>
+        </Section>
+
         {/* People */}
         <Section title={t("accounts.people")}>
           <div className="flex flex-wrap gap-2">
@@ -175,69 +239,6 @@ export function CompanyPage({
             >
               <Plus className="size-3" />
               {t("accounts.newPerson")}
-            </button>
-          </form>
-        </Section>
-
-        {/* Threads */}
-        <Section title={t("accounts.threads")}>
-          {threads.map(
-            (th) =>
-              th && (
-                <button
-                  key={th.id}
-                  type="button"
-                  onClick={() => onOpenThread(th.id)}
-                  className="flex items-center gap-2 rounded-lg border px-3 py-2 text-left hover:bg-muted/50"
-                >
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{th.name}</span>
-                  <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
-                    {t(`accounts.kind.${th.kind}`)}
-                  </span>
-                  {th.kind === "sales" && th.stage && (
-                    <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:text-sky-300">
-                      {t(`accounts.stage.${th.stage}`)}
-                    </span>
-                  )}
-                  <span className="text-[10px] text-muted-foreground">
-                    {t(`accounts.status.${th.status}`)}
-                  </span>
-                </button>
-              )
-          )}
-          <form
-            className="flex items-center gap-1.5"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!threadName.trim()) return;
-              acc.addThread({ companyId: company.id, kind: threadKind, name: threadName });
-              setThreadName("");
-            }}
-          >
-            <select
-              value={threadKind}
-              onChange={(e) => setThreadKind(e.target.value as ThreadKind)}
-              className="h-7 shrink-0 rounded-md border bg-background px-1.5 text-xs"
-            >
-              {THREAD_KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {t(`accounts.kind.${k}`)}
-                </option>
-              ))}
-            </select>
-            <input
-              value={threadName}
-              onChange={(e) => setThreadName(e.target.value)}
-              placeholder={t("accounts.threadName")}
-              className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
-            />
-            <button
-              type="submit"
-              disabled={!threadName.trim()}
-              className="flex h-7 items-center gap-1 rounded-md border px-2 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
-            >
-              <Plus className="size-3" />
-              {t("accounts.newThread")}
             </button>
           </form>
         </Section>
