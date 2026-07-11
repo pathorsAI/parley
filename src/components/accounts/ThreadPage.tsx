@@ -5,7 +5,7 @@ import { COMMITTEE_ROLES } from "../../lib/accounts/types";
 import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
 import { ClaimList } from "./ClaimCard";
-import { InlineEdit, StageStepper } from "./bits";
+import { InlineEdit, StageStepper, useRecentIngestHighlight } from "./bits";
 
 const STATUSES: Thread["status"][] = ["active", "won", "lost", "parked"];
 
@@ -18,6 +18,7 @@ export function ThreadPage({
   const acc = useAccounts();
   const claims = claimsOfThread(acc, thread.id);
   const persons = personsOf(acc, thread.companyId);
+  const highlightIds = useRecentIngestHighlight(thread.companyId);
 
   const expected = thread.expectedCloseAt
     ? new Date(thread.expectedCloseAt).toISOString().slice(0, 10)
@@ -158,6 +159,7 @@ export function ThreadPage({
 
         <ClaimList
           claims={claims}
+          highlightIds={highlightIds}
           onAdd={(category, text) =>
             acc.addClaim({
               companyId: thread.companyId,

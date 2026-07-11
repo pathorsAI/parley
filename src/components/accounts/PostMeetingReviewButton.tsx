@@ -7,6 +7,7 @@ import type { ExtractedOps } from "../../lib/accounts/store";
 import { extractClaimOps } from "../../lib/accounts/extract";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { useI18n } from "../../i18n";
+import { toast } from "sonner";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import { ReviewOpsPanel } from "./ReviewOpsPanel";
@@ -62,6 +63,9 @@ export function PostMeetingReviewButton() {
       ops: approved,
       provenance: { kind: "meeting", historyId, quote: "" },
     });
+    const n =
+      approved.newPersons.length + approved.newClaims.length + approved.claimUpdates.length;
+    toast.success(t("accounts.review.applied", { n }));
     setOps(null);
     setOpen(false);
   }

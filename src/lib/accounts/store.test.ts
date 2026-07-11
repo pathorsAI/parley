@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useAccounts } from "./store";
+import { conflictPairs, useAccounts } from "./store";
 import { EMPTY_ACCOUNTS } from "./types";
 
 /** Reset the accounts store between tests (bypasses persistence entirely). */
 function reset() {
-  useAccounts.setState({ ...EMPTY_ACCOUNTS, loaded: true });
+  useAccounts.setState({ ...EMPTY_ACCOUNTS, loaded: true, recentIngest: null });
 }
 
 describe("accounts store", () => {
@@ -130,5 +130,81 @@ describe("accounts store", () => {
     const survivor = state.claims.find((c) => c.id === b.id)!;
     expect(survivor.conflictsWith).toEqual([]);
     expect(survivor.confidence).toBe("inferred");
+  });
+
+  it("archive → unarchive round-trips for companies and persons", () => {
+    const s = useAccounts.getState();
+    const company = s.addCompany({ name: "AI3" });
+    const person = s.addPerson({ companyId: company.id, name: "Will" });
+
+    s.archiveCompany(company.id);
+    s.archivePerson(person.id);
+    let state = useAccounts.getState();
+    expect(state.companies[0].archived).toBe(true);
+    expect(state.persons[0].archived).toBe(true);
+
+    state.unarchiveCompany(company.id);
+    state.unarchivePerson(person.id);
+    state = useAccounts.getState();
+    expect(state.companies[0].archived).toBe(false);
+    expect(state.persons[0].archived).toBe(false);
+  });
+
+  it("conflictPairs pairs both sides once, older claim first", () => {
+    const s = useAccounts.getState();
+    const company = s.addCompany({ name: "喜來登" });
+    const original = s.addClaim({
+      companyId: company.id,
+      subjects: [],
+      category: "openq",
+      text: "會議是週四早上 11 點",
+      provenance: [{ kind: "user" }],
+      confidence: "confirmed",
+    });
+    s.applyExtractedOps({
+      companyId: company.id,
+      ops: {
+        newPersons: [],
+        newClaims: [],
+        claimUpdates: [
+          { claimId: original.id, action: "conflict", newText: "是週四下午 1 點半", quote: "" },
+        ],
+      },
+      provenance: { kind: "meeting", historyId: "m1", quote: "" },
+    });
+    let state = useAccounts.getState();
+    const pairs = conflictPairs(state, company.id);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].a.id).toBe(original.id); // older side first
+    expect(pairs[0].b.conflictsWith).toContain(original.id);
+
+    // The triage decision: keep the newer one → pair dissolves.
+    state.markClaimWrong(original.id);
+    state = useAccounts.getState();
+    expect(conflictPairs(state, company.id)).toHaveLength(0);
+  });
+
+  it("applyExtractedOps leaves a transient recentIngest marker for the touched claims", () => {
+    const s = useAccounts.getState();
+    const company = s.addCompany({ name: "AI3" });
+    expect(useAccounts.getState().recentIngest).toBeNull();
+    s.applyExtractedOps({
+      companyId: company.id,
+      ops: {
+        newPersons: [],
+        newClaims: [
+          { category: "goal", text: "Q3 要上白標", subjects: [], side: "theirs", layer: "surface", quote: "" },
+        ],
+        claimUpdates: [],
+      },
+      provenance: { kind: "import", attachmentId: "a1" },
+    });
+    const state = useAccounts.getState();
+    const marker = state.recentIngest;
+    expect(marker?.companyId).toBe(company.id);
+    expect(marker?.claimIds).toEqual([state.claims[0].id]);
+
+    state.clearRecentIngest();
+    expect(useAccounts.getState().recentIngest).toBeNull();
   });
 });

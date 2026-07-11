@@ -1,6 +1,22 @@
 import { useEffect, useState } from "react";
-import { FileAudio, FileText, Plus, ScrollText, Sparkles, Upload, X } from "lucide-react";
-import { useAccounts, threadsOf, activeClaims, triageClaims } from "../../lib/accounts/store";
+import {
+  Archive,
+  ArchiveRestore,
+  FileAudio,
+  FileText,
+  Plus,
+  ScrollText,
+  Sparkles,
+  Upload,
+  X,
+} from "lucide-react";
+import {
+  useAccounts,
+  threadsOf,
+  activeClaims,
+  triageClaims,
+  conflictPairs,
+} from "../../lib/accounts/store";
 import type { Company, CompanyAttachment, ThreadKind } from "../../lib/accounts/types";
 import { THREAD_KINDS } from "../../lib/accounts/types";
 import { listHistory, loadHistoryEntry } from "../../lib/history/history";
@@ -11,9 +27,16 @@ import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import { ClaimCard, ClaimList } from "./ClaimCard";
+import { ConflictPairCard } from "./ConflictPairCard";
 import { FeedDataDialog } from "./FeedDataDialog";
 import { BriefingDialog } from "./BriefingDialog";
-import { AliasesEdit, ArchiveButton, InlineEdit, MiniStages } from "./bits";
+import {
+  AliasesEdit,
+  ArchiveButton,
+  InlineEdit,
+  MiniStages,
+  useRecentIngestHighlight,
+} from "./bits";
 
 /**
  * The company war room (design §4.2): triage first (conflicts + open
@@ -29,12 +52,17 @@ export function CompanyPage({
   const { t } = useI18n();
   const acc = useAccounts();
   const threads = threadsOf(acc, company.id);
-  const triage = triageClaims(acc, company.id);
+  // Conflicts render as side-by-side pairs (B-3); whatever can't pair (open
+  // questions, orphaned conflicts) stays a plain triage card.
+  const pairs = conflictPairs(acc, company.id);
+  const paired = new Set(pairs.flatMap((p) => [p.a.id, p.b.id]));
+  const triage = triageClaims(acc, company.id).filter((c) => !paired.has(c.id));
   const companyClaims = activeClaims(acc, company.id).filter(
     (c) => !c.threadId && c.confidence !== "conflicted" && c.category !== "openq"
   );
   const claimCount = activeClaims(acc, company.id).length;
   const attachments = acc.attachments.filter((a) => a.companyId === company.id);
+  const highlightIds = useRecentIngestHighlight(company.id);
 
   const [feedOpen, setFeedOpen] = useState(false);
   const [briefingOpen, setBriefingOpen] = useState(false);
@@ -100,7 +128,9 @@ export function CompanyPage({
             </div>
           </div>
           <div className="flex shrink-0 gap-2">
-            <ArchiveButton onArchive={() => acc.archiveCompany(company.id)} />
+            {!company.archived && (
+              <ArchiveButton onArchive={() => acc.archiveCompany(company.id)} />
+            )}
             <Button
               size="sm"
               variant="outline"
@@ -127,11 +157,33 @@ export function CompanyPage({
           </div>
         </div>
 
+        {/* Archived: everything stays viewable; one click brings it back. */}
+        {company.archived && (
+          <div className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2">
+            <Archive className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span className="min-w-0 flex-1 text-sm text-amber-700 dark:text-amber-300">
+              {t("accounts.archivedCompanyBanner")}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 shrink-0"
+              onClick={() => acc.unarchiveCompany(company.id)}
+            >
+              <ArchiveRestore className="size-3.5" />
+              {t("accounts.restore")}
+            </Button>
+          </div>
+        )}
+
         {/* Triage: conflicting info + open questions, always on top. */}
-        {triage.length > 0 && (
+        {(pairs.length > 0 || triage.length > 0) && (
           <Section title={`⚠ ${t("accounts.triage")}`}>
+            {pairs.map((p) => (
+              <ConflictPairCard key={`${p.a.id}|${p.b.id}`} a={p.a} b={p.b} />
+            ))}
             {triage.map((c) => (
-              <ClaimCard key={c.id} claim={c} />
+              <ClaimCard key={c.id} claim={c} highlight={highlightIds.has(c.id)} />
             ))}
           </Section>
         )}
@@ -205,6 +257,7 @@ export function CompanyPage({
         <Section title={t("accounts.companyClaims")}>
           <ClaimList
             claims={companyClaims}
+            highlightIds={highlightIds}
             onAdd={(category, text) =>
               acc.addClaim({
                 companyId: company.id,

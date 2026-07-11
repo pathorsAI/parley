@@ -29,15 +29,16 @@ export function AccountsScreen() {
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [center, setCenter] = useState<CenterView>({ kind: "overview" });
 
-  // Land on the first company once data is there (and recover from archive).
+  // Land on the first company once data is there. Archived companies stay
+  // selectable (viewed with a restore banner); only a vanished id recovers.
   useEffect(() => {
-    if (!companyId || !active.some((c) => c.id === companyId)) {
+    if (!companyId || !companies.some((c) => c.id === companyId)) {
       setCompanyId(active[0]?.id ?? null);
       setCenter({ kind: "overview" });
     }
-  }, [active, companyId]);
+  }, [companies, active, companyId]);
 
-  const company = active.find((c) => c.id === companyId) ?? null;
+  const company = companies.find((c) => c.id === companyId) ?? null;
   const thread =
     center.kind === "thread" ? threads.find((x) => x.id === center.id) : undefined;
 

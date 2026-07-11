@@ -1,9 +1,46 @@
 import { Fragment, useEffect, useState } from "react";
 import { Archive } from "lucide-react";
 import { useI18n } from "../../i18n";
+import { useAccounts } from "../../lib/accounts/store";
 import { SALES_STAGES, type SalesStage } from "../../lib/accounts/types";
 
 /** Tiny shared account-area primitives. */
+
+const EMPTY_ID_SET: ReadonlySet<string> = new Set();
+/** Ignore an ingest marker the user only comes back to much later. */
+const INGEST_MARKER_TTL_MS = 15 * 60_000;
+/** How long freshly landed cards stay highlighted once on screen. */
+const INGEST_HIGHLIGHT_MS = 6_000;
+
+/**
+ * Claim ids to highlight because they just landed via the review flow (B-9).
+ * The first mounted view that sees the marker owns the countdown: highlight
+ * for a few seconds, then clear the store marker so it never replays.
+ */
+export function useRecentIngestHighlight(companyId: string): ReadonlySet<string> {
+  const recent = useAccounts((s) => s.recentIngest);
+  const [ids, setIds] = useState<ReadonlySet<string>>(EMPTY_ID_SET);
+
+  useEffect(() => {
+    if (!recent || recent.companyId !== companyId) {
+      setIds(EMPTY_ID_SET);
+      return;
+    }
+    const { clearRecentIngest } = useAccounts.getState();
+    if (Date.now() - recent.at > INGEST_MARKER_TTL_MS) {
+      clearRecentIngest();
+      return;
+    }
+    setIds(new Set(recent.claimIds));
+    const timer = setTimeout(() => {
+      setIds(EMPTY_ID_SET);
+      clearRecentIngest();
+    }, INGEST_HIGHLIGHT_MS);
+    return () => clearTimeout(timer);
+  }, [recent, companyId]);
+
+  return ids;
+}
 
 /** Stance as a colored dot: green support, gray neutral/unknown, red oppose. */
 export function StanceDot({
