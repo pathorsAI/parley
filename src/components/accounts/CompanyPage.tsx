@@ -43,6 +43,7 @@ export function CompanyPage({
   const companyClaims = activeClaims(acc, company.id).filter(
     (c) => !c.threadId && c.confidence !== "conflicted" && c.category !== "openq"
   );
+  const claimCount = activeClaims(acc, company.id).length;
   const attachments = acc.attachments.filter((a) => a.companyId === company.id);
 
   const [feedOpen, setFeedOpen] = useState(false);
@@ -76,7 +77,13 @@ export function CompanyPage({
               <Upload className="size-3.5" />
               {t("accounts.feed")}
             </Button>
-            <Button size="sm" className="h-8" onClick={() => setBriefingOpen(true)}>
+            <Button
+              size="sm"
+              className="h-8"
+              disabled={claimCount === 0}
+              title={claimCount === 0 ? t("accounts.noClaims") : undefined}
+              onClick={() => setBriefingOpen(true)}
+            >
               <Sparkles className="size-3.5" />
               {t("accounts.briefing.generate")}
             </Button>
