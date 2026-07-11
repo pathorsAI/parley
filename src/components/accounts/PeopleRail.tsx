@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { ArrowLeft, Plus, X } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  ArrowLeft,
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  X,
+} from "lucide-react";
 import { useAccounts, claimsAbout, personsOf } from "../../lib/accounts/store";
 import type { Person } from "../../lib/accounts/types";
 import { COMMITTEE_ROLES } from "../../lib/accounts/types";
@@ -18,11 +26,16 @@ export function PeopleRail({ companyId }: Readonly<{ companyId: string }>) {
   const { t } = useI18n();
   const acc = useAccounts();
   const persons = personsOf(acc, companyId);
+  const archived = acc.persons.filter((p) => p.companyId === companyId && p.archived);
   const [personId, setPersonId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
 
-  const person = personId ? persons.find((p) => p.id === personId) : null;
+  // Archived people stay viewable — look the id up across the whole roster.
+  const person = personId
+    ? acc.persons.find((p) => p.id === personId && p.companyId === companyId)
+    : null;
   if (person) {
     return (
       <PersonDetail person={person} onBack={() => setPersonId(null)} />
@@ -61,6 +74,53 @@ export function PeopleRail({ companyId }: Readonly<{ companyId: string }>) {
             </button>
           ))}
         </div>
+
+        {/* Archived people: view on click, restore in one. */}
+        {archived.length > 0 && (
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => setShowArchived((v) => !v)}
+              className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left hover:bg-muted/40"
+            >
+              {showArchived ? (
+                <ChevronDown className="size-3 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="size-3 text-muted-foreground" />
+              )}
+              <span className="text-xs text-muted-foreground">{t("accounts.archived")}</span>
+              <span className="text-[10px] tabular-nums text-muted-foreground">
+                {archived.length}
+              </span>
+            </button>
+            {showArchived && (
+              <div className="flex flex-col gap-0.5">
+                {archived.map((p) => (
+                  <div
+                    key={p.id}
+                    className="group flex items-center gap-1 rounded-md px-2 py-1.5 hover:bg-muted/50"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setPersonId(p.id)}
+                      className="min-w-0 flex-1 truncate text-left text-sm text-muted-foreground"
+                    >
+                      {p.name}
+                    </button>
+                    <button
+                      type="button"
+                      title={t("accounts.restore")}
+                      onClick={() => acc.unarchivePerson(p.id)}
+                      className="shrink-0 rounded p-0.5 text-muted-foreground/0 hover:!text-foreground group-hover:text-muted-foreground"
+                    >
+                      <ArchiveRestore className="size-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <form
@@ -131,6 +191,22 @@ function PersonDetail({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         <div className="flex flex-col gap-1.5 pt-1.5">
+          {person.archived && (
+            <div className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-2 py-1.5">
+              <Archive className="size-3 shrink-0 text-amber-600 dark:text-amber-400" />
+              <span className="min-w-0 flex-1 text-xs text-amber-700 dark:text-amber-300">
+                {t("accounts.archivedPersonBanner")}
+              </span>
+              <button
+                type="button"
+                onClick={() => acc.unarchivePerson(person.id)}
+                className="flex h-6 shrink-0 items-center gap-1 rounded-md border px-1.5 text-[10px] text-muted-foreground hover:text-foreground"
+              >
+                <ArchiveRestore className="size-3" />
+                {t("accounts.restore")}
+              </button>
+            </div>
+          )}
           <div className="flex items-center gap-1.5">
             <InlineEdit
               value={person.title}
@@ -228,14 +304,16 @@ function PersonDetail({
             />
           </div>
 
-          <div className="flex justify-end pt-2">
-            <ArchiveButton
-              onArchive={() => {
-                acc.archivePerson(person.id);
-                onBack();
-              }}
-            />
-          </div>
+          {!person.archived && (
+            <div className="flex justify-end pt-2">
+              <ArchiveButton
+                onArchive={() => {
+                  acc.archivePerson(person.id);
+                  onBack();
+                }}
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>

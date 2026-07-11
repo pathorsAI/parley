@@ -59,24 +59,48 @@ function freshness(ms: number): string {
 export function ClaimCard({
   claim,
   row = false,
+  highlight = false,
 }: Readonly<{
   claim: Claim;
   /** Row mode: rendered inside a category group — no own border, no chip. */
   row?: boolean;
+  /** Freshly landed via the review flow — tinted for a few seconds (B-9). */
+  highlight?: boolean;
 }>) {
   const { t } = useI18n();
   const confirmClaim = useAccounts((s) => s.confirmClaim);
   const markClaimWrong = useAccounts((s) => s.markClaimWrong);
   const updateClaim = useAccounts((s) => s.updateClaim);
+  const threads = useAccounts((s) => s.threads);
+  const persons = useAccounts((s) => s.persons);
+  const companies = useAccounts((s) => s.companies);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState("");
   const [draftCat, setDraftCat] = useState<ClaimCategory>(claim.category);
+  const [draftThread, setDraftThread] = useState("");
+  const [draftSubjects, setDraftSubjects] = useState<string[]>([]);
 
   const quotes = claim.provenance.filter(
     (p): p is Extract<typeof p, { kind: "meeting" } | { kind: "import" }> =>
       p.kind !== "user" && !!(p.quote ?? "").trim()
   );
+
+  // Where this card hangs (B-1): thread + subjects, names resolved even when
+  // the person/company has since been archived.
+  const nameOf = (id: string): string | null =>
+    persons.find((p) => p.id === id)?.name ??
+    companies.find((c) => c.id === id)?.name ??
+    null;
+  const thread = claim.threadId ? threads.find((th) => th.id === claim.threadId) : undefined;
+  const subjectNames = claim.subjects
+    .map(nameOf)
+    .filter((n): n is string => !!n);
+  const companyThreads = threads.filter((th) => th.companyId === claim.companyId);
+  const subjectOptions = [
+    ...companies.filter((c) => c.id === claim.companyId),
+    ...persons.filter((p) => p.companyId === claim.companyId && !p.archived),
+  ].filter((o) => !draftSubjects.includes(o.id));
 
   const confidenceLabel =
     claim.confidence === "confirmed"
@@ -102,13 +126,20 @@ export function ClaimCard({
   function startEdit() {
     setDraftText(claim.text);
     setDraftCat(claim.category);
+    setDraftThread(claim.threadId ?? "");
+    setDraftSubjects(claim.subjects);
     setEditing(true);
   }
 
   function saveEdit() {
     const text = draftText.trim();
     if (!text) return;
-    updateClaim(claim.id, { text, category: draftCat });
+    updateClaim(claim.id, {
+      text,
+      category: draftCat,
+      threadId: draftThread || undefined,
+      subjects: draftSubjects,
+    });
     // An edit is the user vouching for the corrected content.
     confirmClaim(claim.id);
     setEditing(false);
@@ -146,6 +177,60 @@ export function ClaimCard({
             className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus:ring-1 focus:ring-ring"
           />
         </div>
+        {/* Re-hang the card (B-1): move between company level and a thread,
+            add/remove the persons/companies it is about. */}
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <span className="shrink-0 text-[10px] text-muted-foreground">
+            {t("accounts.claim.threadLabel")}
+          </span>
+          <select
+            value={draftThread}
+            onChange={(e) => setDraftThread(e.target.value)}
+            className="h-6 max-w-40 shrink-0 rounded border bg-background px-1 text-[10px]"
+          >
+            <option value="">{t("accounts.claim.threadNone")}</option>
+            {companyThreads.map((th) => (
+              <option key={th.id} value={th.id}>
+                {th.name}
+              </option>
+            ))}
+          </select>
+          <span className="shrink-0 pl-1 text-[10px] text-muted-foreground">
+            {t("accounts.claim.subjects")}
+          </span>
+          {draftSubjects.map((id) => (
+            <span
+              key={id}
+              className="flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[10px]"
+            >
+              {nameOf(id) ?? "?"}
+              <button
+                type="button"
+                onClick={() => setDraftSubjects((xs) => xs.filter((x) => x !== id))}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-2.5" />
+              </button>
+            </span>
+          ))}
+          {subjectOptions.length > 0 && (
+            <select
+              value=""
+              onChange={(e) => {
+                const id = e.target.value;
+                if (id) setDraftSubjects((xs) => [...xs, id]);
+              }}
+              className="h-6 max-w-32 rounded border bg-background px-1 text-[10px] text-muted-foreground"
+            >
+              <option value="">{t("accounts.claim.addSubject")}</option>
+              {subjectOptions.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
         <div className="mt-1.5 flex justify-end gap-1.5">
           <button
             type="button"
@@ -169,11 +254,11 @@ export function ClaimCard({
 
   return (
     <div
-      className={
+      className={`${
         row
-          ? "group px-2.5 py-2 transition-colors hover:bg-muted/40"
-          : "group rounded-md border bg-background/60 px-2.5 py-1.5"
-      }
+          ? "group px-2.5 py-2 transition-colors duration-700 hover:bg-muted/40"
+          : "group rounded-md border bg-background/60 px-2.5 py-1.5 transition-colors duration-700"
+      }${highlight ? " border-sky-400/50 bg-sky-500/10" : ""}`}
     >
       <div className="flex items-start gap-2">
         {!row && (
@@ -213,9 +298,22 @@ export function ClaimCard({
           </button>
         </div>
       </div>
-      <div className="mt-1 flex items-center gap-2 pl-0.5 text-[10px] text-muted-foreground">
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-0.5 text-[10px] text-muted-foreground">
         <span className={confidenceClass}>{confidenceLabel}</span>
         <span>{freshness(claim.lastSupportedAt)}</span>
+        {thread && (
+          <span
+            className="max-w-40 truncate rounded bg-sky-500/10 px-1 text-sky-700 dark:text-sky-300"
+            title={t("accounts.claim.threadLabel")}
+          >
+            #{thread.name}
+          </span>
+        )}
+        {subjectNames.map((n) => (
+          <span key={n} className="max-w-32 truncate rounded bg-muted px-1">
+            @{n}
+          </span>
+        ))}
         {quotes.length > 0 && (
           <button
             type="button"
@@ -260,10 +358,13 @@ export function ClaimCard({
 export function ClaimList({
   claims,
   onAdd,
+  highlightIds,
 }: Readonly<{
   claims: Claim[];
   /** When present, renders the add row; the caller binds subjects/thread. */
   onAdd?: (category: ClaimCategory, text: string) => void;
+  /** Claims to tint briefly because they just landed (B-9). */
+  highlightIds?: ReadonlySet<string>;
 }>) {
   const { t } = useI18n();
   const [category, setCategory] = useState<ClaimCategory>("stance");
@@ -303,7 +404,7 @@ export function ClaimList({
             {!isCollapsed && (
               <div className="mt-1 divide-y divide-border/60 rounded-md border bg-background/60">
                 {g.items.map((c) => (
-                  <ClaimCard key={c.id} claim={c} row />
+                  <ClaimCard key={c.id} claim={c} row highlight={highlightIds?.has(c.id)} />
                 ))}
               </div>
             )}

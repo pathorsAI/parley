@@ -62,10 +62,16 @@ interface AccountsState extends AccountsData {
   /** True once the initial read finished (persist writes are gated on it). */
   loaded: boolean;
 
+  /** Claims touched by the last applyExtractedOps — transient (never persisted);
+   *  the war room highlights them briefly so "what just landed" is visible. */
+  recentIngest: { companyId: string; claimIds: string[]; at: number } | null;
+  clearRecentIngest: () => void;
+
   // companies
   addCompany: (fields: { name: string; note?: string; aliases?: string[] }) => Company;
   updateCompany: (id: string, patch: Partial<Omit<Company, "id">>) => void;
   archiveCompany: (id: string) => void;
+  unarchiveCompany: (id: string) => void;
 
   // persons
   addPerson: (fields: {
@@ -76,6 +82,7 @@ interface AccountsState extends AccountsData {
   }) => Person;
   updatePerson: (id: string, patch: Partial<Omit<Person, "id" | "companyId">>) => void;
   archivePerson: (id: string) => void;
+  unarchivePerson: (id: string) => void;
 
   // threads
   addThread: (fields: {
@@ -125,6 +132,8 @@ function now(): number {
 export const useAccounts = create<AccountsState>()((set, get) => ({
   ...EMPTY_ACCOUNTS,
   loaded: false,
+  recentIngest: null,
+  clearRecentIngest: () => set({ recentIngest: null }),
 
   addCompany: (fields) => {
     const company: Company = {
@@ -147,6 +156,11 @@ export const useAccounts = create<AccountsState>()((set, get) => ({
   archiveCompany: (id) =>
     set((s) => ({
       companies: s.companies.map((c) => (c.id === id ? { ...c, archived: true } : c)),
+    })),
+
+  unarchiveCompany: (id) =>
+    set((s) => ({
+      companies: s.companies.map((c) => (c.id === id ? { ...c, archived: false } : c)),
     })),
 
   addPerson: (fields) => {
@@ -173,6 +187,11 @@ export const useAccounts = create<AccountsState>()((set, get) => ({
   archivePerson: (id) =>
     set((s) => ({
       persons: s.persons.map((p) => (p.id === id ? { ...p, archived: true } : p)),
+    })),
+
+  unarchivePerson: (id) =>
+    set((s) => ({
+      persons: s.persons.map((p) => (p.id === id ? { ...p, archived: false } : p)),
     })),
 
   addThread: (fields) => {
@@ -310,10 +329,12 @@ export const useAccounts = create<AccountsState>()((set, get) => ({
     }));
 
     // 3. Updates to existing claims.
+    const touched: string[] = createdClaims.map((c) => c.id);
     let claims = [...state.claims, ...createdClaims];
     for (const up of ops.claimUpdates) {
       const target = claims.find((c) => c.id === up.claimId);
       if (!target) continue;
+      touched.push(target.id);
       if (up.action === "support") {
         claims = claims.map((c) =>
           c.id === target.id
@@ -336,6 +357,7 @@ export const useAccounts = create<AccountsState>()((set, get) => ({
           createdAt: now(),
           lastSupportedAt: now(),
         };
+        touched.push(replacement.id);
         claims = claims
           .map((c) =>
             c.id === target.id
@@ -356,6 +378,7 @@ export const useAccounts = create<AccountsState>()((set, get) => ({
           createdAt: now(),
           lastSupportedAt: now(),
         };
+        touched.push(rival.id);
         claims = claims
           .map((c) =>
             c.id === target.id
@@ -370,7 +393,13 @@ export const useAccounts = create<AccountsState>()((set, get) => ({
       }
     }
 
-    set({ persons: allPersons, claims });
+    set({
+      persons: allPersons,
+      claims,
+      ...(touched.length
+        ? { recentIngest: { companyId, claimIds: touched, at: now() } }
+        : {}),
+    });
     for (const c of createdClaims) syncStanceCache(c, set, get);
   },
 
@@ -561,4 +590,34 @@ export function triageClaims(s: AccountsState, companyId: string): Claim[] {
   return activeClaims(s, companyId).filter(
     (c) => c.confidence === "conflicted" || c.category === "openq"
   );
+}
+
+/**
+ * Active conflicts resolved into distinct pairs (older claim first), so triage
+ * can lay the two contradicting versions side by side. A conflicted claim
+ * whose rivals are all gone (inactive/missing) won't pair — it stays a plain
+ * triage card.
+ */
+export function conflictPairs(
+  s: AccountsState,
+  companyId: string
+): { a: Claim; b: Claim }[] {
+  const conflicted = activeClaims(s, companyId).filter(
+    (c) => c.confidence === "conflicted"
+  );
+  const byId = new Map(conflicted.map((c) => [c.id, c]));
+  const seen = new Set<string>();
+  const pairs: { a: Claim; b: Claim }[] = [];
+  for (const c of conflicted) {
+    for (const rid of c.conflictsWith ?? []) {
+      const rival = byId.get(rid);
+      if (!rival) continue;
+      const key = [c.id, rid].sort().join("|");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const [a, b] = c.createdAt <= rival.createdAt ? [c, rival] : [rival, c];
+      pairs.push({ a, b });
+    }
+  }
+  return pairs;
 }

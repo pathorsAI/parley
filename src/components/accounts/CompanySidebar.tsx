@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { Building2, Plus } from "lucide-react";
+import {
+  ArchiveRestore,
+  Building2,
+  ChevronDown,
+  ChevronRight,
+  Plus,
+} from "lucide-react";
 import { useAccounts, threadsOf, triageClaims } from "../../lib/accounts/store";
 import { ensureCompanyFolder } from "../../lib/accounts/folders";
 import { useI18n } from "../../i18n";
@@ -16,7 +22,9 @@ export function CompanySidebar({
   const { t } = useI18n();
   const acc = useAccounts();
   const companies = acc.companies.filter((c) => !c.archived);
+  const archived = acc.companies.filter((c) => c.archived);
   const [name, setName] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -62,6 +70,58 @@ export function CompanySidebar({
             );
           })}
         </div>
+
+        {/* Archived companies stay reachable: view on click, restore in one. */}
+        {archived.length > 0 && (
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => setShowArchived((v) => !v)}
+              className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left hover:bg-muted/40"
+            >
+              {showArchived ? (
+                <ChevronDown className="size-3 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="size-3 text-muted-foreground" />
+              )}
+              <span className="text-xs text-muted-foreground">{t("accounts.archived")}</span>
+              <span className="text-[10px] tabular-nums text-muted-foreground">
+                {archived.length}
+              </span>
+            </button>
+            {showArchived && (
+              <div className="flex flex-col gap-0.5">
+                {archived.map((c) => (
+                  <div
+                    key={c.id}
+                    className={`group flex items-center gap-1 rounded-md px-2 py-1.5 transition-colors ${
+                      c.id === selectedId ? "bg-muted" : "hover:bg-muted/50"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onSelect(c.id)}
+                      className="min-w-0 flex-1 truncate text-left text-sm text-muted-foreground"
+                    >
+                      {c.name}
+                    </button>
+                    <button
+                      type="button"
+                      title={t("accounts.restore")}
+                      onClick={() => {
+                        acc.unarchiveCompany(c.id);
+                        onSelect(c.id);
+                      }}
+                      className="shrink-0 rounded p-0.5 text-muted-foreground/0 hover:!text-foreground group-hover:text-muted-foreground"
+                    >
+                      <ArchiveRestore className="size-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <form
