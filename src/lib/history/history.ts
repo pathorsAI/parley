@@ -12,6 +12,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { toast } from "sonner";
 import { useStore, speakerKey } from "../store";
+import { companyFolderId } from "../accounts/folders";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
 import { CLOUD_ENABLED } from "../flags";
@@ -60,6 +61,7 @@ export function buildSummary(entry: HistoryEntry): HistoryEntrySummary {
     hasAudio: entry.audio != null,
     snippet: snippetOf(entry),
     folderId: entry.folderId ?? null,
+    companyId: entry.companyId ?? null,
   };
 }
 
@@ -72,6 +74,9 @@ function snapshotAnalysis() {
     findings: s.findings,
     actionItems: s.actionItems,
     meetingContext: s.meetingContext,
+    companyId: s.meetingCompanyId,
+    threadId: s.meetingThreadId,
+    attendeePersonIds: s.meetingAttendeeIds,
     meetingBatna: s.meetingBatna,
     meetingTarget: s.meetingTarget,
     meetingFloor: s.meetingFloor,
@@ -238,7 +243,9 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
     createdAt,
     durationMs,
     audio: "audio.ogg",
-    folderId: save.folderId,
+    // A company-linked meeting files itself under the company's folder
+    // (issue #132); otherwise the configured default location applies.
+    folderId: companyFolderId(useStore.getState().meetingCompanyId) ?? save.folderId,
     ...snapshotAnalysis(),
     speechRateHz,
   };
@@ -326,7 +333,9 @@ export async function saveUploadToHistory(session: ReplaySession): Promise<strin
     createdAt: session.createdAt,
     durationMs: session.durationMs,
     audio: "audio.ogg",
-    folderId: save.folderId,
+    // A company-linked meeting files itself under the company's folder
+    // (issue #132); otherwise the configured default location applies.
+    folderId: companyFolderId(useStore.getState().meetingCompanyId) ?? save.folderId,
     ...snapshotAnalysis(),
   };
   // Mark this as the loaded entry BEFORE the (multi-second Opus) compress runs, so

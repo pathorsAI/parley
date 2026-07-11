@@ -55,6 +55,19 @@ pub fn write_templates(app: AppHandle, json: String) -> Result<(), String> {
     write_config_file(&app, "templates.json", &json)
 }
 
+/// Read the accounts (mini-CRM: companies/persons/threads/claims) JSON
+/// (empty string if the file doesn't exist yet).
+#[tauri::command]
+pub fn read_accounts(app: AppHandle) -> Result<String, String> {
+    read_config_file(&app, "accounts.json")
+}
+
+/// Write the accounts JSON, creating the config dir if needed.
+#[tauri::command]
+pub fn write_accounts(app: AppHandle, json: String) -> Result<(), String> {
+    write_config_file(&app, "accounts.json", &json)
+}
+
 /// Meeting-specific state held in Tauri's managed state. Who owns the mic (and
 /// the capture threads/gate of the live session) lives in [`MicCoordinator`];
 /// only what a meeting needs beyond its capture stays here.

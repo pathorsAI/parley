@@ -139,7 +139,7 @@ function IntelPage() {
 
   return (
     <ScrollArea className="min-h-0 flex-1">
-      <div className="mx-auto max-w-2xl px-6 py-5">
+      <div className="mx-auto max-w-4xl px-6 py-5">
         <div className="mb-3 flex items-center gap-2">
           <Select
             value={meetingType}
@@ -172,14 +172,21 @@ function IntelPage() {
         {meetingType === "general" ? (
           <p className="text-sm text-muted-foreground">{t("board.empty")}</p>
         ) : (
-          <div className="flex flex-col gap-4">
+          <>
             {!intel && (
               <p className="text-sm text-muted-foreground">
                 {running ? t("board.extracting") : t("board.empty")}
               </p>
             )}
-            {intel?.meetingType === meetingType && <IntelSections />}
-          </div>
+            {intel?.meetingType === meetingType && (
+              /* Bento: each section becomes a card, flowing into two masonry
+                 columns on wide screens — the narrow-rail components read
+                 terribly stretched across a full-width single column. */
+              <div className="columns-1 gap-4 lg:columns-2 [&>div]:mb-4 [&>div]:break-inside-avoid [&>div]:rounded-xl [&>div]:border [&>div]:bg-background/60 [&>div]:p-3.5">
+                <IntelSections />
+              </div>
+            )}
+          </>
         )}
       </div>
     </ScrollArea>

@@ -30,6 +30,8 @@ import { buildPresetTodoTemplates } from "./todoTemplates";
 import { translate, type TranslationKey } from "../i18n/messages";
 import { DEFAULT_MODELS } from "./ai/providers";
 import { countFillerSounds } from "./analysis/fillerWords";
+import { useAccounts } from "./accounts/store";
+import { buildRedlineEvals, isRedlineEvalId } from "./accounts/redline";
 import { log } from "./log";
 
 /** A translate function bound to a language, for resolving built-in templates. */
@@ -109,8 +111,9 @@ const DEFAULT_SETTINGS: Settings = {
   defaultSaveLocation: { scope: "personal", folderId: null },
 };
 
-/** Whether the app is capturing a live meeting or analyzing an uploaded one. */
-export type AppMode = "live" | "replay";
+/** Which top-level screen is active: capturing live, analyzing an uploaded
+ *  recording, or the accounts (客戶) workspace. */
+export type AppMode = "live" | "replay" | "accounts";
 
 /** Lifecycle status of an async pass (analysis, delivery assessment, action items). */
 export type AsyncTaskStatus = "idle" | "running" | "done" | "error";
@@ -316,6 +319,23 @@ interface ParleyState {
   meetingFloor: string;
   setNegotiationField: (field: "meetingBatna" | "meetingTarget" | "meetingFloor", value: string) => void;
 
+  // ── Accounts (mini-CRM) link for the current/upcoming meeting ───────────────
+  /** Company this meeting is with (null = unlinked). Feeds the auto-composed
+   *  brief, red-line guardrails, and the post-meeting review (design §5). */
+  meetingCompanyId: string | null;
+  meetingThreadId: string | null;
+  meetingAttendeeIds: string[];
+  setMeetingLink: (link: {
+    companyId: string | null;
+    threadId: string | null;
+    attendeeIds: string[];
+  }) => void;
+  /** Enter the accounts screen (blocked while recording — the live screen owns
+   *  an active call). */
+  enterAccounts: () => void;
+  /** Leave the accounts screen, back to replay if a recording is loaded. */
+  exitAccounts: () => void;
+
   /**
    * A transcript time (ms) the UI should jump to and briefly highlight — set by
    * clicking a timestamp in the debrief. Generic on purpose: a future recording
@@ -399,6 +419,9 @@ export const useStore = create<ParleyState>()(
       speakerNames: {},
       todos: [],
       meetingContext: "",
+      meetingCompanyId: null,
+      meetingThreadId: null,
+      meetingAttendeeIds: [],
       meetingBatna: "",
       meetingTarget: "",
       meetingFloor: "",
@@ -406,6 +429,15 @@ export const useStore = create<ParleyState>()(
       cloudAuth: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
+  setMeetingLink: ({ companyId, threadId, attendeeIds }) =>
+    set({
+      meetingCompanyId: companyId,
+      meetingThreadId: threadId,
+      meetingAttendeeIds: attendeeIds,
+    }),
+  enterAccounts: () =>
+    set((s) => (s.meetingStatus === "recording" ? {} : { appMode: "accounts" })),
+  exitAccounts: () => set((s) => ({ appMode: s.replay ? "replay" : "live" })),
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
   setCloudAuth: (cloudAuth) =>
@@ -493,6 +525,9 @@ export const useStore = create<ParleyState>()(
       actionItemsError: null,
       // Restore the per-meeting context + negotiation setup.
       meetingContext: entry.meetingContext,
+      meetingCompanyId: entry.companyId ?? null,
+      meetingThreadId: entry.threadId ?? null,
+      meetingAttendeeIds: entry.attendeePersonIds ?? [],
       meetingBatna: entry.meetingBatna,
       meetingTarget: entry.meetingTarget,
       meetingFloor: entry.meetingFloor,
@@ -699,7 +734,28 @@ export const useStore = create<ParleyState>()(
 
   startMeeting: () => {
     log.info("store: meeting started");
-    set({
+    set((state) => {
+      // Red-line guardrails (design §7.3): a linked meeting turns the company's
+      // active red-line claims into per-meeting critical evals. Company-level
+      // claims always apply; thread-scoped ones only for the linked thread —
+      // except with NO thread linked, where every red line applies (safer to
+      // over-guard than to leak). Stripped again on stop.
+      let evaluations = state.evaluations.filter((e) => !isRedlineEvalId(e.id));
+      if (state.meetingCompanyId) {
+        const acc = useAccounts.getState();
+        const claims = acc.claims.filter(
+          (c) =>
+            c.companyId === state.meetingCompanyId &&
+            (!state.meetingThreadId || !c.threadId || c.threadId === state.meetingThreadId)
+        );
+        const defs = buildRedlineEvals(claims, state.settings.language);
+        if (defs.length) {
+          log.info("store: red-line guardrails armed", { count: defs.length });
+          evaluations = [...evaluations, ...evalsFromDefs(defs)];
+        }
+      }
+      return {
+      evaluations,
       meetingStatus: "recording",
       meetingStartedAt: Date.now(),
       loadedHistoryId: null,
@@ -721,6 +777,7 @@ export const useStore = create<ParleyState>()(
       deliveryStatus: "idle",
       intel: null,
       intelStatus: "idle",
+      };
     });
   },
 
@@ -741,7 +798,14 @@ export const useStore = create<ParleyState>()(
 
   stopMeeting: () => {
     log.info("store: meeting stopped");
-    set({ meetingStatus: "stopped", prosody: null, deliveryNudge: null });
+    set((s) => ({
+      meetingStatus: "stopped",
+      prosody: null,
+      deliveryNudge: null,
+      // Red-line guardrails are a live concern; drop them so post-meeting
+      // passes (report, replay re-analysis) don't re-run them as evals.
+      evaluations: s.evaluations.filter((e) => !isRedlineEvalId(e.id)),
+    }));
   },
 
   upsertSegment: (segment) =>

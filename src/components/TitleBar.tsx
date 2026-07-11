@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Circle, FileAudio, History, Languages, LogOut, Mic, Minus, Settings, Square, X } from "lucide-react";
+import { Building2, Circle, FileAudio, History, Languages, LogOut, Mic, Minus, Settings, Square, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { log } from "../lib/log";
 import { STT_BY_ID, sttApiKey, sttRelayUrl } from "../lib/transcription/providers";
@@ -15,6 +15,7 @@ import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
 import { SaveDestinationPicker } from "./SaveDestinationPicker";
+import { PostMeetingReviewButton } from "./accounts/PostMeetingReviewButton";
 
 type TFn = ReturnType<typeof useI18n>["t"];
 type WindowAction = "close" | "minimize" | "fullscreen";
@@ -143,6 +144,11 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const appMode = useStore((s) => s.appMode);
   const replayName = useStore((s) => s.replay?.name ?? "");
   const exitReplay = useStore((s) => s.exitReplay);
+  const enterAccounts = useStore((s) => s.enterAccounts);
+  const exitAccounts = useStore((s) => s.exitAccounts);
+  // The accounts area only exists for business meeting types (design D12).
+  const meetingType = useStore((s) => s.settings.meetingType);
+  const businessType = meetingType === "sales" || meetingType === "negotiation" || meetingType === "partnership";
   // Guard the start/stop toggle so a rapid double-click can't fire two overlapping
   // start/stop invokes (which is what could race two transcription sessions open,
   // or interleave a stop with a start). The ref blocks re-entry synchronously
@@ -152,6 +158,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
 
   const recording = status === "recording";
   const replayMode = appMode === "replay";
+  const accountsMode = appMode === "accounts";
 
   // Vitals timer (top-left): elapsed since the meeting started, ticking 1 Hz.
   useEffect(() => {
@@ -311,7 +318,11 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           posture switch (coach/transcript); a loaded recording swaps in the
           study tabs (brief/intel/transcript/delivery, purple accent). */}
       <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-0.5 rounded-lg bg-muted p-0.5">
-        {replayMode
+        {accountsMode ? (
+          <span className="px-3 py-1 text-xs font-medium text-muted-foreground">
+            {t("accounts.title")}
+          </span>
+        ) : replayMode
           ? (["brief", "intel", "transcript", "delivery"] as const).map((tab) => (
               <button
                 key={tab}
@@ -343,6 +354,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
       </div>
 
       <div className="flex items-center gap-2">
+        {replayMode && <PostMeetingReviewButton />}
         {replayMode ? (
           <Button
             size="sm"
@@ -355,6 +367,11 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           >
             <LogOut className="size-3.5" />
             {t("replay.exit")}
+          </Button>
+        ) : accountsMode ? (
+          <Button size="sm" variant="outline" onClick={exitAccounts} className="h-8">
+            <LogOut className="size-3.5" />
+            {t("accounts.exit")}
           </Button>
         ) : (
           <Button
@@ -369,6 +386,18 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           </Button>
         )}
 
+        {businessType && !accountsMode && !recording && (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8"
+            aria-label={t("accounts.title")}
+            title={t("accounts.title")}
+            onClick={enterAccounts}
+          >
+            <Building2 className="size-4" />
+          </Button>
+        )}
         <Button
           size="icon"
           variant="ghost"

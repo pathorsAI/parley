@@ -282,9 +282,9 @@ function List({
 
 function KV({ k, v }: Readonly<{ k: string; v: string }>) {
   return (
-    <div className="flex items-baseline justify-between gap-2 text-xs">
-      <span className="shrink-0 text-muted-foreground">{k}</span>
-      <b className="truncate">{v}</b>
+    <div className="flex items-baseline gap-2 text-xs">
+      <span className="w-10 shrink-0 text-muted-foreground">{k}</span>
+      <b className="min-w-0 flex-1 leading-snug">{v}</b>
     </div>
   );
 }
