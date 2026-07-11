@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
 
 use crate::audio::microphone::Microphone;
-use crate::capture::{run_metered_session, spawn_capture, Begin, MicCoordinator, MicUser};
+use crate::capture::{run_metered_session, spawn_capture, Begin, MicCoordinator, MicTap, MicUser};
 use crate::commands::{read_config_file, write_config_file};
 use crate::transcription::{SttProvider, TranscribeConfig};
 
@@ -58,9 +58,11 @@ struct VtInner {
     cutoff: Option<Arc<AtomicBool>>,
 }
 
-/// Start a mic-only streaming transcription. Idempotent while already running;
-/// refused while a meeting owns the mic (a second input stream could kill the
-/// meeting's capture — see [`MicCoordinator`]).
+/// Start a mic-only streaming transcription. Idempotent while already running.
+/// While a MEETING owns the mic, the session taps the meeting's raw mic stream
+/// instead of opening its own capture (a second input stream could kill the
+/// meeting's capture — see [`MicCoordinator`] / [`MicTap`]), so dictation works
+/// mid-meeting; only the standalone translate pipeline still refuses.
 ///
 /// Streams mic -> provider, emitting `transcript://segment` + `audio://level`
 /// with source "voice-typing"; the overlay window listens for both. The shared
@@ -73,6 +75,7 @@ struct VtInner {
 pub fn start_voice_typing(
     app: AppHandle,
     coord: State<MicCoordinator>,
+    tap: State<MicTap>,
     state: State<VoiceTypingState>,
     provider: String,
     api_key: String,
@@ -117,13 +120,36 @@ pub fn start_voice_typing(
         }
         vt.seq
     };
-    let gate = match coord.begin(MicUser::VoiceTyping) {
-        Begin::Started(gate) => gate,
+    let rx = match coord.begin(MicUser::VoiceTyping) {
+        Begin::Started(gate) => {
+            let mic = Microphone {
+                device_name: input_device,
+            };
+            match spawn_capture(&coord, MicUser::VoiceTyping, mic, gate, "voice-typing") {
+                Ok(rx) => rx,
+                Err(e) => {
+                    coord.stop(MicUser::VoiceTyping);
+                    return Err(format!("microphone failed to start: {e}"));
+                }
+            }
+        }
         // Unreachable in practice: the host serializes press/release, so no
         // second voice-typing start can land between the stop above and this
         // begin. Kept for safety.
         Begin::AlreadyActive => return Ok(()),
-        Begin::Busy(_) => return Err("microphone is in use by the meeting".into()),
+        // Dictating DURING a meeting: the meeting owns the one input stream,
+        // so read a tee of its raw mic instead of opening a second capture.
+        // Everything downstream (session, overlay, cutoff, paste) is
+        // identical; teardown is self-cleaning — when this session's receiver
+        // drops (release cutoff, abort, or new start), the tap unregisters on
+        // its next failed send. The dictated speech naturally also lands in
+        // the meeting transcript, like anything else said aloud.
+        Begin::Busy(MicUser::Meeting) => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+            tap.subscribe(tx)?;
+            rx
+        }
+        Begin::Busy(owner) => return Err(format!("microphone is in use by {owner:?}")),
     };
     let model = model
         .filter(|m| !m.trim().is_empty())
@@ -134,17 +160,6 @@ pub fn start_voice_typing(
         language_hints: language_hints.unwrap_or_default(),
         diarization: false,
         relay_endpoint,
-    };
-
-    let mic = Microphone {
-        device_name: input_device,
-    };
-    let rx = match spawn_capture(&coord, MicUser::VoiceTyping, mic, gate, "voice-typing") {
-        Ok(rx) => rx,
-        Err(e) => {
-            coord.stop(MicUser::VoiceTyping);
-            return Err(format!("microphone failed to start: {e}"));
-        }
     };
     // Per-session cutoff: `stop_voice_typing` flips it to end the stream the
     // moment the key is released, before the mic thread even notices the gate.

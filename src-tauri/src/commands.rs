@@ -6,7 +6,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::audio::microphone::Microphone;
 use crate::capture::{
-    run_metered_session, spawn_capture, Begin, MicCoordinator, MicUser, RecorderBuf,
+    run_metered_session, spawn_capture, Begin, MicCoordinator, MicTap, MicUser, RecorderBuf,
 };
 use crate::transcription::common::{LevelMeter, LEVEL_EVENT};
 use crate::transcription::{SttProvider, TranscribeConfig};
@@ -719,14 +719,20 @@ fn spawn_mic_prosody_tap(
 ) -> UnboundedReceiver<Vec<i16>> {
     let (tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
     let app = app.clone();
+    // Also the feed point for the voice-typing mic tee (see MicTap): while a
+    // dictation session is subscribed, every raw-mic chunk is cloned to it.
+    let tap = app.state::<MicTap>().inner().clone();
+    tap.source_started();
     tauri::async_runtime::spawn(async move {
         let mut analyzer = crate::audio::prosody::ProsodyAnalyzer::new(app, "me", far);
         while let Some(chunk) = rx.recv().await {
             analyzer.push(&chunk);
+            tap.forward(&chunk);
             if tx.send(chunk).is_err() {
                 break;
             }
         }
+        tap.source_ended();
     });
     out_rx
 }
