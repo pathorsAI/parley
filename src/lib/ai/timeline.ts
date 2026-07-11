@@ -237,8 +237,10 @@ export async function analyzeTimeline(opts: {
     (mode === "live" ? LIVE_MODE_INSTRUCTIONS : REPLAY_MODE_INSTRUCTIONS);
   const transcriptLabel = mode === "live" ? "Transcript so far" : "Full transcript";
 
-  const provider = settings.provider;
-  const model = settings.models[settings.provider].eval;
+  // Live analysis is latency-sensitive; a replay pass buys quality instead.
+  const workload = mode === "live" ? ("realtime" as const) : ("deep" as const);
+  const provider = settings.llmProviders[workload];
+  const model = settings.models[provider][workload];
   log.info("ai.timeline: start", { provider, model, segments: segments.length, evals: evals.length });
 
   // Only treat evalId as valid if it actually matches a configured evaluation.
@@ -265,7 +267,7 @@ export async function analyzeTimeline(opts: {
   let emittedCount = -1;
   const { object, usage } = await streamObjectResilient({
     settings,
-    kind: "eval",
+    workload,
     schema,
     system: system + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: `${ctx}Active evaluations:\n${list}\n\n${transcriptLabel}:\n${transcript || "(no speech was captured)"}`,
@@ -280,7 +282,7 @@ export async function analyzeTimeline(opts: {
     log.error("ai.timeline: failed", { provider, model, error: String(e) });
     throw e;
   });
-  void recordLlmUsage(settings, "eval", "eval", usage);
+  void recordLlmUsage(settings, workload, "eval", usage);
 
   const events = placeEvents(object.moments);
   log.info("ai.timeline: ok", { raw: object.moments.length, placed: events.length });

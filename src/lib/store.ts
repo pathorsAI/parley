@@ -8,9 +8,12 @@ import type {
   Evaluation,
   FindingSolutionEntry,
   IntelState,
+  LlmProvider,
   MeetingStatus,
   MeetingType,
   ProsodyMetrics,
+  ProviderModels,
+  ReasoningEffort,
   Settings,
   TimelineEvent,
   TodoItem,
@@ -64,6 +67,51 @@ function relocalizeBuiltins(settings: Settings): Settings {
 // the active language afterward.
 const tDefault = tFor("zh-TW");
 
+/**
+ * #131: map legacy single-provider settings (provider + {ask,eval} model roles)
+ * onto the per-workload lanes. Realtime inherits the old ask model (the faster
+ * of the two), deep inherits eval — live gets faster and reports get stronger
+ * without user action. Already-migrated shapes pass through untouched.
+ * Exported for tests.
+ */
+export function migrateLlmSettings(
+  p: Partial<Settings>
+): Pick<Settings, "llmProviders" | "models" | "reasoningEffort"> {
+  const legacy = p as Omit<Partial<Settings>, "models" | "reasoningEffort"> & {
+    provider?: LlmProvider;
+    reasoningEffort?: unknown;
+    models?: Record<string, { ask?: string; eval?: string; realtime?: string; deep?: string }>;
+  };
+  const llmProviders: Settings["llmProviders"] =
+    p.llmProviders ??
+    (legacy.provider
+      ? { realtime: legacy.provider, deep: legacy.provider }
+      : DEFAULT_SETTINGS.llmProviders);
+  const models: Record<LlmProvider, ProviderModels> = { ...DEFAULT_SETTINGS.models };
+  for (const [prov, m] of Object.entries(legacy.models ?? {})) {
+    if (!m || !(prov in models)) continue;
+    const key = prov as LlmProvider;
+    if (typeof m.realtime === "string" && typeof m.deep === "string") {
+      models[key] = { realtime: m.realtime, deep: m.deep };
+    } else if (typeof m.ask === "string" && typeof m.eval === "string") {
+      models[key] = { realtime: m.ask, deep: m.eval };
+    }
+  }
+  const persistedReasoning = legacy.reasoningEffort as
+    | string
+    | { ask?: ReasoningEffort; eval?: ReasoningEffort; realtime?: ReasoningEffort; deep?: ReasoningEffort }
+    | undefined;
+  const reasoningEffort: Settings["reasoningEffort"] =
+    typeof persistedReasoning === "string"
+      ? { realtime: persistedReasoning as ReasoningEffort, deep: persistedReasoning as ReasoningEffort }
+      : {
+          realtime:
+            persistedReasoning?.realtime ?? persistedReasoning?.ask ?? DEFAULT_SETTINGS.reasoningEffort.realtime,
+          deep: persistedReasoning?.deep ?? persistedReasoning?.eval ?? DEFAULT_SETTINGS.reasoningEffort.deep,
+        };
+  return { llmProviders, models, reasoningEffort };
+}
+
 const DEFAULT_SETTINGS: Settings = {
   language: "zh-TW",
   theme: "system",
@@ -74,8 +122,8 @@ const DEFAULT_SETTINGS: Settings = {
   userRole: "",
   userCompany: "",
   userBackground: "",
-  // Default to Groq's gpt-oss (fast + cheap); users can switch in Settings.
-  provider: "groq",
+  // Default both lanes to Groq's gpt-oss (fast + cheap); switch in Settings.
+  llmProviders: { realtime: "groq", deep: "groq" },
   anthropicApiKey: "",
   openaiApiKey: "",
   geminiApiKey: "",
@@ -85,7 +133,7 @@ const DEFAULT_SETTINGS: Settings = {
   kimiApiKey: "",
   ollamaApiKey: "",
   parleyApiKey: "",
-  reasoningEffort: { ask: "low", eval: "medium" },
+  reasoningEffort: { realtime: "low", deep: "medium" },
   models: DEFAULT_MODELS,
   transcriptionProvider: "soniox",
   sonioxApiKey: "",
@@ -929,11 +977,7 @@ export const useStore = create<ParleyState>()(
         const validEvalTpls =
           Array.isArray(p.evalTemplates) &&
           p.evalTemplates.every((t) => t && typeof t === "object" && Array.isArray((t as { evals?: unknown }).evals));
-        const persistedReasoning = p.reasoningEffort;
-        const reasoningEffort =
-          typeof persistedReasoning === "string"
-            ? { ask: persistedReasoning, eval: persistedReasoning }
-            : { ...DEFAULT_SETTINGS.reasoningEffort, ...persistedReasoning };
+        const { llmProviders, models, reasoningEffort } = migrateLlmSettings(p);
 
         // Resolve built-in templates into the persisted language so they match
         // the UI on rehydrate.
@@ -962,9 +1006,10 @@ export const useStore = create<ParleyState>()(
             ...DEFAULT_SETTINGS,
             ...p,
             layout,
-            // Deep-merge models so a new provider (e.g. groq) isn't dropped by
-            // older persisted state that only had anthropic/openrouter.
-            models: { ...DEFAULT_SETTINGS.models, ...p.models },
+            llmProviders,
+            // Per-provider models, legacy {ask,eval} roles already remapped;
+            // providers missing from persisted state keep their defaults.
+            models,
             // Backfill delivery-coaching toggles for states saved before they existed.
             delivery: { ...DEFAULT_SETTINGS.delivery, ...p.delivery },
             reasoningEffort,

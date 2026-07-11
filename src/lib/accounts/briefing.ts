@@ -76,8 +76,8 @@ export async function generateBattleBriefing(opts: {
   log.info("accounts: briefing start", { company: company.name, claims: claims.length });
   let full = "";
   const result = streamText({
-    model: getModel(settings, "ask"),
-    providerOptions: getProviderOptions(settings, "ask"),
+    model: getModel(settings, "deep"),
+    providerOptions: getProviderOptions(settings, "deep"),
     system: SYSTEM + outputLanguageInstruction(settings),
     abortSignal: signal,
     prompt,
@@ -88,7 +88,7 @@ export async function generateBattleBriefing(opts: {
   }
   void (async () => {
     try {
-      await recordLlmUsage(settings, "ask", "accounts-briefing", await result.usage);
+      await recordLlmUsage(settings, "deep", "accounts-briefing", await result.usage);
     } catch {
       /* best-effort usage logging */
     }

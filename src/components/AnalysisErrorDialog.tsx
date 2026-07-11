@@ -65,9 +65,19 @@ export function AnalysisErrorDialog() {
 
   const analysisError = useStore((s) => s.analysisError);
   const analysisStatus = useStore((s) => s.analysisStatus);
-  const provider = useStore((s) => s.settings.provider);
-  const evalModel = useStore((s) => s.settings.models[s.settings.provider].eval);
-  const keyConfigured = useStore((s) => hasProviderKey(s.settings));
+  // Analysis rides realtime live and deep in replay — show both when they differ.
+  const providers = useStore((s) => s.settings.llmProviders);
+  const models = useStore((s) => s.settings.models);
+  const keyConfigured = useStore(
+    (s) => hasProviderKey(s.settings, "realtime") && hasProviderKey(s.settings, "deep")
+  );
+  const providerLabelText =
+    providers.realtime === providers.deep
+      ? (PROVIDER_BY_ID[providers.realtime]?.label ?? providers.realtime)
+      : `${PROVIDER_BY_ID[providers.realtime]?.label ?? providers.realtime} / ${PROVIDER_BY_ID[providers.deep]?.label ?? providers.deep}`;
+  const rtModel = models[providers.realtime].realtime;
+  const deepModel = models[providers.deep].deep;
+  const modelText = rtModel === deepModel ? rtModel : `${rtModel} / ${deepModel}`;
   const setAnalysisError = useStore((s) => s.setAnalysisError);
 
   const message = analysisStatus === "error" ? analysisError : null;
@@ -108,9 +118,9 @@ export function AnalysisErrorDialog() {
           <p className="text-[13px] leading-relaxed text-foreground/90">{hint}</p>
 
           <div className="rounded-md bg-muted/50 px-2.5 py-1.5 text-[11px] text-muted-foreground">
-            <span className="font-medium">{L.provider}:</span> {PROVIDER_BY_ID[provider]?.label ?? provider}
+            <span className="font-medium">{L.provider}:</span> {providerLabelText}
             <span className="mx-1.5 opacity-40">·</span>
-            <span className="font-medium">{L.model}:</span> <span className="font-mono">{evalModel}</span>
+            <span className="font-medium">{L.model}:</span> <span className="font-mono">{modelText}</span>
           </div>
 
           <details className="text-[11px] text-muted-foreground">

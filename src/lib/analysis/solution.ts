@@ -18,7 +18,7 @@ export async function runFindingSolution(findingId: string): Promise<void> {
   if (entry && (entry.status === "running" || entry.status === "done")) return;
   const finding = findings.find((f) => f.id === findingId);
   if (!finding) return;
-  if (!hasProviderKey(settings)) return;
+  if (!hasProviderKey(settings, "realtime")) return;
 
   setFindingSolution(findingId, { status: "running", error: null });
   try {

@@ -57,7 +57,8 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
   value: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
   default: "bg-muted text-muted-foreground",
 };
-import type { AppLanguage, AppTheme, EvalDef, LlmProvider, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
+import type { AppLanguage, AppTheme, EvalDef, LlmProvider,
+  LlmWorkload, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 import { VoiceTypingSettings } from "./VoiceTypingSettings";
 import { TranslateSettings } from "./TranslateSettings";
 import { SaveDestinationPicker } from "../components/SaveDestinationPicker";
@@ -145,8 +146,6 @@ export function SettingsApp() {
       setSigningIn(false);
     }
   }
-  const info = PROVIDER_BY_ID[settings.provider];
-  const providerLabel = info.label;
   const sttInfo = STT_BY_ID[settings.transcriptionProvider];
 
   function patch(p: Partial<Settings>) {
@@ -480,97 +479,98 @@ export function SettingsApp() {
 
         {cat === "provider" && (
           <Section title={t("settings.provider.title")}>
-            <Field label={t("settings.provider.provider")}>
-              <Select value={settings.provider} onValueChange={(v) => patch({ provider: v as LlmProvider })}>
-                <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {PROVIDERS.filter(
-                    // The hosted "parley" provider only exists in the cloud build
-                    // and only when signed in (auth IS the gate) — hide it in the
-                    // OSS edition and when signed out.
-                    (p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth),
-                  ).map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      <span className="flex items-center gap-2">
-                        <img src={p.icon} alt="" className="size-4 rounded-sm" />
-                        {p.label}
-                        {p.tag && (
-                          <span
-                            className={`rounded px-1.5 py-px text-[10px] font-medium ${PROVIDER_TAG_TONES[p.tag.tone]}`}
-                          >
-                            {t(p.tag.label)}
-                          </span>
+            <p className="-mt-1 max-w-md text-[11px] text-muted-foreground">
+              {t("settings.provider.workloadsIntro")}
+            </p>
+            {WORKLOADS.map((wl) => {
+              const prov = settings.llmProviders[wl];
+              const winfo = PROVIDER_BY_ID[prov];
+              return (
+                <div key={wl} className="flex flex-col gap-3 rounded-lg border p-3">
+                  <div>
+                    <p className="text-xs font-semibold">{t(`settings.provider.workload.${wl}`)}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {t(`settings.provider.workload.${wl}.hint`)}
+                    </p>
+                  </div>
+                  <Field label={t("settings.provider.provider")}>
+                    <Select
+                      value={prov}
+                      onValueChange={(v) =>
+                        patch({ llmProviders: { ...settings.llmProviders, [wl]: v as LlmProvider } })
+                      }
+                    >
+                      <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {PROVIDERS.filter(
+                          // The hosted "parley" provider only exists in the cloud build
+                          // and only when signed in (auth IS the gate) — hide it in the
+                          // OSS edition and when signed out.
+                          (p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth),
+                        ).map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            <span className="flex items-center gap-2">
+                              <img src={p.icon} alt="" className="size-4 rounded-sm" />
+                              {p.label}
+                              {p.tag && (
+                                <span
+                                  className={`rounded px-1.5 py-px text-[10px] font-medium ${PROVIDER_TAG_TONES[p.tag.tone]}`}
+                                >
+                                  {t(p.tag.label)}
+                                </span>
+                              )}
+                              {p.note && <span className="text-[10px] text-muted-foreground">{t(p.note)}</span>}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  {prov === "parley" ? (
+                    // Hosted provider: no key, no model picker — the server forces
+                    // the real model. Just confirm who the usage bills to.
+                    <p className="text-[11px] text-muted-foreground">
+                      {t("settings.account.useParley.note", { email: cloudAuth?.user.email ?? "" })}
+                    </p>
+                  ) : (
+                    <>
+                      <Field label={t("settings.provider.apiKey", { provider: winfo.label })}>
+                        <PasswordInput
+                          autoComplete="off"
+                          placeholder={winfo.requiresKey === false ? t("settings.provider.noKeyNeeded") : winfo.keyPlaceholder}
+                          className="max-w-sm"
+                          disabled={winfo.requiresKey === false}
+                          value={settings[winfo.apiKeyField]}
+                          onChange={(e) => patch({ [winfo.apiKeyField]: e.target.value } as Partial<Settings>)}
+                        />
+                      </Field>
+                      <Field label={t("settings.provider.model")}>
+                        <ModelSelect
+                          provider={prov}
+                          value={settings.models[prov][wl]}
+                          onChange={(v) => patchModel(patch, settings, prov, wl, v)}
+                        />
+                        {winfo.kind === "openai-compatible" && isReasoningModel(settings.models[prov][wl]) && (
+                          <ReasoningEffortSelect
+                            label={t("settings.provider.reasoning")}
+                            value={settings.reasoningEffort[wl]}
+                            onChange={(v) =>
+                              patch({ reasoningEffort: { ...settings.reasoningEffort, [wl]: v } })
+                            }
+                          />
                         )}
-                        {p.note && <span className="text-[10px] text-muted-foreground">{t(p.note)}</span>}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label={t("settings.provider.apiKey", { provider: providerLabel })}>
-              <PasswordInput
-                autoComplete="off"
-                placeholder={info.requiresKey === false ? t("settings.provider.noKeyNeeded") : info.keyPlaceholder}
-                className="max-w-sm"
-                disabled={info.requiresKey === false}
-                value={settings[info.apiKeyField]}
-                onChange={(e) => patch({ [info.apiKeyField]: e.target.value } as Partial<Settings>)}
-              />
-            </Field>
-            {settings.provider === "parley" ? (
-              // Hosted provider: no key, no model picker — the server forces the
-              // real model behind "parley-fast"/"parley-smart". Just confirm who
-              // the usage bills to.
-              <div className="flex flex-col gap-2 border-t pt-4">
-                <p className="text-[11px] text-muted-foreground">
-                  {t("settings.account.useParley.note", {
-                    email: cloudAuth?.user.email ?? "",
-                  })}
-                </p>
-              </div>
-            ) : (
-            <div className="flex flex-col gap-3 border-t pt-4">
-              <p className="text-[11px] text-muted-foreground">
-                {t("settings.provider.models", {
-                  provider: providerLabel,
-                  suffix: info.kind === "anthropic" ? "" : t("settings.provider.slugSuffix"),
-                })}
-              </p>
-              <Field label={t("settings.provider.askModel")}>
-                <ModelSelect
-                  provider={settings.provider}
-                  value={settings.models[settings.provider].ask}
-                  onChange={(v) => patchModel(patch, settings, settings.provider, "ask", v)}
-                />
-                {info.kind === "openai-compatible" && isReasoningModel(settings.models[settings.provider].ask) && (
-                  <ReasoningEffortSelect
-                    label={t("settings.provider.askReasoning")}
-                    value={settings.reasoningEffort.ask}
-                    onChange={(v) =>
-                      patch({ reasoningEffort: { ...settings.reasoningEffort, ask: v } })
-                    }
-                  />
-                )}
-              </Field>
-              <Field label={t("settings.provider.evalModel")}>
-                <ModelSelect
-                  provider={settings.provider}
-                  value={settings.models[settings.provider].eval}
-                  onChange={(v) => patchModel(patch, settings, settings.provider, "eval", v)}
-                />
-                {info.kind === "openai-compatible" && isReasoningModel(settings.models[settings.provider].eval) && (
-                  <ReasoningEffortSelect
-                    label={t("settings.provider.evalReasoning")}
-                    value={settings.reasoningEffort.eval}
-                    onChange={(v) =>
-                      patch({ reasoningEffort: { ...settings.reasoningEffort, eval: v } })
-                    }
-                  />
-                )}
-              </Field>
-            </div>
-            )}
+                        <p className="text-[11px] text-muted-foreground">
+                          {t("settings.provider.models", {
+                            provider: winfo.label,
+                            suffix: winfo.kind === "anthropic" ? "" : t("settings.provider.slugSuffix"),
+                          })}
+                        </p>
+                      </Field>
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </Section>
         )}
 
@@ -1140,11 +1140,14 @@ function patchModel(
   patch: (p: Partial<Settings>) => void,
   settings: Settings,
   provider: LlmProvider,
-  kind: "ask" | "eval",
+  workload: LlmWorkload,
   value: string
 ) {
-  patch({ models: { ...settings.models, [provider]: { ...settings.models[provider], [kind]: value } } });
+  patch({ models: { ...settings.models, [provider]: { ...settings.models[provider], [workload]: value } } });
 }
+
+/** The two LLM lanes, in display order (#131). */
+const WORKLOADS = ["realtime", "deep"] as const;
 
 /** Sentinel option that switches the picker into free-text "custom model" mode. */
 const CUSTOM_MODEL = "__custom__";

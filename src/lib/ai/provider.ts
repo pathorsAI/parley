@@ -1,7 +1,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
-import type { Settings } from "../types";
+import type { LlmWorkload, Settings } from "../types";
 import { PROVIDER_BY_ID, isReasoningModel } from "./providers";
 import { cloudToken, CLOUD_URL } from "../cloud/client";
 import { CLOUD_ENABLED } from "../flags";
@@ -21,9 +21,9 @@ export const JSON_MODE_INSTRUCTION =
   "Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.";
 
 /**
- * Resolve a Vercel AI SDK model for the active provider, driven by the provider
- * registry. `kind` selects the fast Q&A model ("ask") or the stronger
- * evaluation model ("eval").
+ * Resolve a Vercel AI SDK model for one workload lane (#131): "realtime"
+ * (latency-sensitive live coaching) or "deep" (quality-sensitive pre/post
+ * analysis). Each lane carries its own provider + model in Settings.
  *
  * Anthropic is called directly from the webview, so it needs the
  * `anthropic-dangerous-direct-browser-access` header to satisfy CORS — fine for
@@ -31,7 +31,7 @@ export const JSON_MODE_INSTRUCTION =
  */
 export function getModel(
   settings: Settings,
-  kind: "ask" | "eval",
+  workload: LlmWorkload,
   opts?: {
     /**
      * Force `json_object` mode even for providers that advertise json_schema.
@@ -43,8 +43,9 @@ export function getModel(
     forceJsonObject?: boolean;
   }
 ): LanguageModel {
-  const info = PROVIDER_BY_ID[settings.provider];
-  const modelId = settings.models[settings.provider][kind];
+  const provider = settings.llmProviders[workload];
+  const info = PROVIDER_BY_ID[provider];
+  const modelId = settings.models[provider][workload];
   const apiKey = settings[info.apiKeyField];
 
   if (info.kind === "anthropic") {
@@ -97,13 +98,14 @@ export function getModel(
  * OpenRouter gpt-oss, o-series, etc.) pass the selected `reasoning_effort`.
  * Keyed by the active provider name; empty for non-reasoning models or Anthropic.
  */
-export function getProviderOptions(settings: Settings, kind: "ask" | "eval") {
-  const info = PROVIDER_BY_ID[settings.provider];
+export function getProviderOptions(settings: Settings, workload: LlmWorkload) {
+  const provider = settings.llmProviders[workload];
+  const info = PROVIDER_BY_ID[provider];
   if (info.kind !== "openai-compatible") return {};
 
   const opts: Record<string, string | { require_parameters: boolean }> = {};
-  if (isReasoningModel(settings.models[settings.provider][kind])) {
-    opts.reasoningEffort = settings.reasoningEffort[kind];
+  if (isReasoningModel(settings.models[provider][workload])) {
+    opts.reasoningEffort = settings.reasoningEffort[workload];
   }
   // OpenRouter fans one model id out to many upstreams; some ignore
   // response_format, which silently dropped our enforced schema (→ "did not

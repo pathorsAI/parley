@@ -32,7 +32,7 @@ export function PostMeetingReviewButton() {
 
   async function run() {
     const state = useStore.getState();
-    if (!hasProviderKey(state.settings) || !company) return;
+    if (!hasProviderKey(state.settings, "deep") || !company) return;
     setBusy(true);
     setOpen(true);
     try {

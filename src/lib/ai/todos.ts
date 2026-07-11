@@ -35,7 +35,7 @@ export async function checkTodos(opts: {
 
   const { object, usage } = await generateObjectResilient({
     settings,
-    kind: "ask",
+    workload: "realtime",
     schema,
     system:
       "You track a meeting checklist. Given the checklist items and the live transcript, " +
@@ -44,7 +44,7 @@ export async function checkTodos(opts: {
       JSON_MODE_INSTRUCTION,
     prompt: `${ctx}Checklist (id and text):\n${list}\n\nTranscript so far:\n${transcript}`,
   });
-  void recordLlmUsage(settings, "ask", "todo", usage);
+  void recordLlmUsage(settings, "realtime", "todo", usage);
 
   const validIds = new Set(open.map((t) => t.id));
   return object.done_ids.filter((id) => validIds.has(id));

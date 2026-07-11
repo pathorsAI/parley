@@ -14,7 +14,7 @@ export async function runBriefGeneration(opts?: { force?: boolean }): Promise<vo
   const state = useStore.getState();
   if (state.briefStatus === "running") return;
   if (!opts?.force && state.briefStatus !== "idle") return;
-  if (!hasProviderKey(state.settings)) return;
+  if (!hasProviderKey(state.settings, "deep")) return;
   // Honor the trim keep-window, same as the analysis + action-items passes.
   const segments = state.segments.filter((s) => !isTrimmed(s, state.replayTrim));
   if (!segments.some((s) => s.isFinal && s.text.trim())) return;

@@ -220,7 +220,7 @@ export function IngestWizard() {
   function confirmAnalyze() {
     // No LLM key → can't analyze; keep the transcript-only recording and land on
     // the (diarized) results page.
-    if (!hasProviderKey(useStore.getState().settings)) {
+    if (!hasProviderKey(useStore.getState().settings, "deep")) {
       finishTranscriptOnly();
       return;
     }

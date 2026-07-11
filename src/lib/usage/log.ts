@@ -3,7 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { LanguageModelUsage } from "ai";
 import { isTauri } from "../tauriEvents";
 import { llmCostUsd, sttCostUsd } from "./pricing";
-import type { Settings } from "../types";
+import type { LlmWorkload, Settings } from "../types";
 
 /**
  * One usage record. Written as a single JSON line to `usage.jsonl` by the Rust
@@ -47,19 +47,19 @@ export async function recordUsage(event: Omit<UsageEvent, "ts">): Promise<void> 
 }
 
 /**
- * Record one LLM call: resolves the active provider/model, computes cost, and
- * appends the event. `kind` is the model slot used for the call ("eval" or
- * "ask"); `category` is what the call was for ("eval" | "todo" | "ask").
+ * Record one LLM call: resolves the workload's provider/model, computes cost,
+ * and appends the event. `workload` is the lane the call rode ("realtime" or
+ * "deep"); `category` is what the call was for ("eval" | "todo" | "ask" | …).
  */
 export async function recordLlmUsage(
   settings: Settings,
-  kind: "ask" | "eval",
+  workload: LlmWorkload,
   category: string,
   usage: LanguageModelUsage | undefined
 ): Promise<void> {
   if (!usage) return;
-  const provider = settings.provider;
-  const model = settings.models[provider][kind];
+  const provider = settings.llmProviders[workload];
+  const model = settings.models[provider][workload];
 
   // Split input into non-cached / cache-read / cache-write, preferring the
   // SDK's normalized detail fields. The arithmetic fallback assumes the SDK's

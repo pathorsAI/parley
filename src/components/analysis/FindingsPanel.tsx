@@ -41,8 +41,8 @@ export function FindingsPanel({
   const analysisStatus = useStore((s) => s.analysisStatus);
   const templates = useStore((s) => s.settings.evalTemplates);
   const evaluations = useStore((s) => s.settings.evaluations);
-  const provider = useStore((s) => s.settings.provider);
-  const keyMissing = useStore((s) => !hasProviderKey(s.settings));
+  const provider = useStore((s) => s.settings.llmProviders.realtime);
+  const keyMissing = useStore((s) => !hasProviderKey(s.settings, "realtime"));
   const updateSettings = useStore((s) => s.updateSettings);
   const autoAnalyze = useStore((s) => s.autoAnalyze);
   const autoAnalyzeSec = useStore((s) => s.autoAnalyzeSec);

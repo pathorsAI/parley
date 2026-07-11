@@ -65,7 +65,7 @@ export const PROVIDERS: ProviderInfo[] = [
     apiKeyField: "anthropicApiKey",
     keyPlaceholder: "sk-ant-…",
     models: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
-    defaults: { ask: "claude-sonnet-4-6", eval: "claude-opus-4-8" },
+    defaults: { realtime: "claude-haiku-4-5", deep: "claude-opus-4-8" },
   },
   {
     id: "openai",
@@ -77,8 +77,8 @@ export const PROVIDERS: ProviderInfo[] = [
     apiKeyField: "openaiApiKey",
     keyPlaceholder: "sk-…",
     supportsStructuredOutputs: true,
-    models: ["gpt-5.5", "gpt-4.1", "o4-mini"],
-    defaults: { ask: "gpt-4.1", eval: "gpt-5.5" },
+    models: ["gpt-5.5", "gpt-4.1", "gpt-4.1-mini", "o4-mini"],
+    defaults: { realtime: "gpt-4.1-mini", deep: "gpt-5.5" },
   },
   {
     id: "gemini",
@@ -92,7 +92,7 @@ export const PROVIDERS: ProviderInfo[] = [
     keyPlaceholder: "AIza…",
     supportsStructuredOutputs: true,
     models: ["gemini-2.5-pro", "gemini-2.5-flash"],
-    defaults: { ask: "gemini-2.5-flash", eval: "gemini-2.5-pro" },
+    defaults: { realtime: "gemini-2.5-flash", deep: "gemini-2.5-pro" },
   },
   {
     id: "groq",
@@ -106,7 +106,7 @@ export const PROVIDERS: ProviderInfo[] = [
     keyPlaceholder: "gsk_…",
     supportsStructuredOutputs: true,
     models: ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "meta-llama/llama-4-maverick-17b-128e-instruct"],
-    defaults: { ask: "openai/gpt-oss-20b", eval: "openai/gpt-oss-120b" },
+    defaults: { realtime: "openai/gpt-oss-20b", deep: "openai/gpt-oss-120b" },
   },
   {
     id: "qwen",
@@ -118,7 +118,7 @@ export const PROVIDERS: ProviderInfo[] = [
     apiKeyField: "qwenApiKey",
     keyPlaceholder: "sk-…",
     models: ["qwen-max", "qwen-plus", "qwen3-235b-a22b"],
-    defaults: { ask: "qwen-plus", eval: "qwen-max" },
+    defaults: { realtime: "qwen-plus", deep: "qwen-max" },
   },
   {
     id: "kimi",
@@ -133,7 +133,7 @@ export const PROVIDERS: ProviderInfo[] = [
     // Moonshot ships new K2 point-releases often; pick the exact current id with
     // the "Custom model" field in Settings if a newer one isn't listed here.
     models: ["kimi-k2-thinking", "kimi-k2-turbo-preview", "kimi-k2-0905-preview"],
-    defaults: { ask: "kimi-k2-turbo-preview", eval: "kimi-k2-thinking" },
+    defaults: { realtime: "kimi-k2-turbo-preview", deep: "kimi-k2-thinking" },
   },
   {
     id: "ollama",
@@ -147,7 +147,7 @@ export const PROVIDERS: ProviderInfo[] = [
     keyPlaceholder: "",
     requiresKey: false,
     models: ["qwen3", "llama3.2", "gpt-oss:20b"],
-    defaults: { ask: "llama3.2", eval: "qwen3" },
+    defaults: { realtime: "llama3.2", deep: "qwen3" },
   },
   {
     id: "openrouter",
@@ -164,11 +164,12 @@ export const PROVIDERS: ProviderInfo[] = [
       "openai/gpt-5.5",
       "anthropic/claude-opus-4.8",
       "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-haiku-4.5",
       "z-ai/glm-5.2",
       "moonshotai/kimi-k2-thinking",
       "openai/gpt-oss-120b",
     ],
-    defaults: { ask: "anthropic/claude-sonnet-4.6", eval: "openai/gpt-5.5" },
+    defaults: { realtime: "anthropic/claude-haiku-4.5", deep: "openai/gpt-5.5" },
   },
   {
     id: "parley",
@@ -188,7 +189,7 @@ export const PROVIDERS: ProviderInfo[] = [
     // Mirror Groq (the hosted backend) — it accepts the OpenAI json_schema shape.
     supportsStructuredOutputs: true,
     models: ["parley-fast", "parley-smart"],
-    defaults: { ask: "parley-smart", eval: "parley-fast" },
+    defaults: { realtime: "parley-fast", deep: "parley-smart" },
   },
 ];
 

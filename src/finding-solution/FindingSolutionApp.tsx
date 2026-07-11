@@ -55,7 +55,7 @@ async function dismiss() {
 export function FindingSolutionApp() {
   useThemePreference();
   const { t } = useI18n();
-  const keyMissing = useStore((s) => !hasProviderKey(s.settings));
+  const keyMissing = useStore((s) => !hasProviderKey(s.settings, "realtime"));
   const [state, setState] = useState<FindingSolutionState>({ finding: null, entry: null });
   const { finding, entry } = state;
 

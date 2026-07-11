@@ -115,7 +115,7 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
     const id = crypto.randomUUID();
     setAskCards((c) => [...c, { id, question: q, answer: "", busy: true }]);
     const state = useStore.getState();
-    if (!hasProviderKey(state.settings)) {
+    if (!hasProviderKey(state.settings, "realtime")) {
       setAskCards((c) =>
         c.map((x) => (x.id === id ? { ...x, answer: t("ask.missingKey"), busy: false } : x))
       );

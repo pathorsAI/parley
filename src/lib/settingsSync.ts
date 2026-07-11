@@ -85,7 +85,7 @@ export async function listenForSettings(): Promise<UnlistenFn> {
     const settings = settingsFromPersist(e.newValue);
     if (settings) {
       log.info("settings: applied (storage event)", {
-        provider: settings.provider,
+        llm: settings.llmProviders,
         language: settings.language,
         transcriptionProvider: settings.transcriptionProvider,
       });
@@ -101,7 +101,7 @@ export async function listenForSettings(): Promise<UnlistenFn> {
   // Channel 1: the Tauri broadcast (fast path).
   const unlisten = await listen<Settings>(SETTINGS_EVENT, (e) => {
     log.info("settings: applied (tauri event)", {
-      provider: e.payload.provider,
+      llm: e.payload.llmProviders,
       language: e.payload.language,
     });
     useStore.getState().applySettings(e.payload);

@@ -59,7 +59,7 @@ export function AskPanel() {
     const state = useStore.getState();
     const { settings, speakerNames, segments } = state;
     const meetingContext = meetingBriefText(state);
-    if (!hasProviderKey(settings)) {
+    if (!hasProviderKey(settings, "realtime")) {
       setMessages((m) => [
         ...m,
         { id: crypto.randomUUID(), role: "assistant", content: t("ask.missingKey") },
@@ -99,7 +99,7 @@ export function AskPanel() {
       });
     } catch (err) {
       const { hostedLlmErrorCode } = await import("../../lib/ai/errors");
-      const code = hostedLlmErrorCode(err, settings.provider);
+      const code = hostedLlmErrorCode(err, settings.llmProviders.realtime);
       let content = t("ask.failed", { error: err instanceof Error ? err.message : String(err) });
       if (code === "credits") {
         content = t("ask.error.credits");

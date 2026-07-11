@@ -3,7 +3,7 @@ import { useStore } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { generateObjectResilient } from "../ai/generate";
 import { log } from "../log";
-import type { IntelState, MeetingType, TranscriptSegment } from "../types";
+import type { IntelState, LlmWorkload, MeetingType, TranscriptSegment } from "../types";
 
 /**
  * Intelligence-board extraction: one LLM pass over the live transcript that
@@ -53,14 +53,18 @@ const partnershipSchema = z.object({
   get: z.array(z.string()).describe("what their side offered"),
 });
 
-function transcriptText(segments: TranscriptSegment[]): string {
+function transcriptText(segments: TranscriptSegment[], capChars: number): string {
   const lines = segments
     .filter((s) => s.isFinal && s.text.trim())
     .map((s) => `${s.source === "me" ? "我" : "對方"}: ${s.text}`);
   // Cap the prompt; the tail of the meeting matters most for current state.
   const joined = lines.join("\n");
-  return joined.length > 24_000 ? joined.slice(-24_000) : joined;
+  return joined.length > capChars ? joined.slice(-capChars) : joined;
 }
+
+/** Live refreshes read a short tail (fast, cheap, current); replay/study passes
+ *  read the long window for accuracy. */
+const CAP_CHARS: Record<LlmWorkload, number> = { realtime: 8_000, deep: 24_000 };
 
 const SYSTEM =
   "You are a realtime meeting-intelligence extractor for the user (speaker 我). " +
@@ -70,13 +74,17 @@ const SYSTEM =
 /**
  * Run one extraction for `type` and publish the result into the store. No-op
  * for "general" (the board shows goals only), when a run is in flight, or when
- * there's nothing to read yet.
+ * there's nothing to read yet. `workload` picks the lane: "realtime" for the
+ * live board's periodic refresh, "deep" for replay/study passes (#131).
  */
-export async function runIntelExtraction(type: MeetingType): Promise<void> {
+export async function runIntelExtraction(
+  type: MeetingType,
+  workload: LlmWorkload = "realtime"
+): Promise<void> {
   const state = useStore.getState();
   if (type === "general" || state.intelStatus === "running") return;
-  if (!hasProviderKey(state.settings)) return;
-  const transcript = transcriptText(state.segments);
+  if (!hasProviderKey(state.settings, workload)) return;
+  const transcript = transcriptText(state.segments, CAP_CHARS[workload]);
   if (transcript.length < 40) return;
 
   state.setIntelStatus("running");
@@ -85,7 +93,7 @@ export async function runIntelExtraction(type: MeetingType): Promise<void> {
     if (type === "negotiation") {
       const { object } = await generateObjectResilient({
         settings: state.settings,
-        kind: "eval",
+        workload,
         schema: negotiationSchema,
         system: SYSTEM,
         prompt: `Extract the CURRENT negotiation state from this meeting transcript:\n\n${transcript}`,
@@ -94,7 +102,7 @@ export async function runIntelExtraction(type: MeetingType): Promise<void> {
     } else if (type === "sales") {
       const { object } = await generateObjectResilient({
         settings: state.settings,
-        kind: "eval",
+        workload,
         schema: salesSchema,
         system: SYSTEM,
         prompt: `Extract the CURRENT sales-call state (BANT signals, objections, commitments) from this transcript:\n\n${transcript}`,
@@ -103,7 +111,7 @@ export async function runIntelExtraction(type: MeetingType): Promise<void> {
     } else {
       const { object } = await generateObjectResilient({
         settings: state.settings,
-        kind: "eval",
+        workload,
         schema: partnershipSchema,
         system: SYSTEM,
         prompt:

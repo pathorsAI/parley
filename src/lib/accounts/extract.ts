@@ -128,12 +128,12 @@ export async function extractClaimOps(opts: {
 
   const { object, usage } = await generateObjectResilient({
     settings,
-    kind: "eval",
+    workload: "deep",
     schema: opsSchema,
     system: SYSTEM,
     prompt,
   });
-  void recordLlmUsage(settings, "eval", "accounts-extract", usage);
+  void recordLlmUsage(settings, "deep", "accounts-extract", usage);
 
   // Normalize: drop updates that point at unknown claims, clamp enums.
   const known = new Set(existingClaims.map((c) => c.id));

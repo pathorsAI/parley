@@ -33,6 +33,7 @@ const LLM_PRICING: Record<string, LlmRate> = {
   // OpenAI
   "gpt-5.5": { input: 5, output: 30, cacheRead: 0.5 },
   "gpt-4.1": { input: 2, output: 8, cacheRead: 0.5 },
+  "gpt-4.1-mini": { input: 0.4, output: 1.6, cacheRead: 0.1 },
   "o4-mini": { input: 1.1, output: 4.4, cacheRead: 0.275 },
   // Google Gemini (2.5-pro ≤200k tier; >200k handled in llmCostUsd)
   "gemini-2.5-pro": { input: 1.25, output: 10, cacheRead: 0.125 },
@@ -56,6 +57,7 @@ const LLM_PRICING: Record<string, LlmRate> = {
   "anthropic/claude-opus-4.8": { input: 5, output: 25, cacheRead: 0.5 },
   "anthropic/claude-sonnet-4.6": { input: 3, output: 15, cacheRead: 0.3 },
   "anthropic/claude-sonnet-4.5": { input: 3, output: 15, cacheRead: 0.3 },
+  "anthropic/claude-haiku-4.5": { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
   "moonshotai/kimi-k2-thinking": { input: 0.6, output: 2.5, cacheRead: 0.15 },
   // GLM-5.2 (Z.ai published rate, 2026-06).
   "z-ai/glm-5.2": { input: 1.4, output: 4.4, cacheRead: 0.26 },
