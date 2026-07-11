@@ -24,7 +24,8 @@ Note-takers tell you what happened in a call after it's over — when it's too l
 
 - 🎙️ **Coached, live** — a real-time feed of alerts and suggested replies, plus an intelligence board that extracts the state of the deal as you talk.
 - 🌐 **In any language** — speak your language; the meeting hears the other one, through Parley's own virtual microphone.
-- 📼 **Debriefed, after** — commitments, missed moments, opponent war-gaming, and a delivery scorecard for the next round.
+- 📼 **Debriefed, after** — commitments, missed moments, and a delivery scorecard for the next round.
+- 🗂️ **Remembered, between** — an account workspace that turns every call into durable intelligence: people, deal threads, and what you've learned about each side.
 
 **Local-first, bring your own keys.** Audio and transcripts go directly to the STT and LLM providers *you* configure (Claude, OpenAI, Gemini, Soniox, Deepgram, …). No Pathors proxy, no telemetry, everything stored on your machine.
 
@@ -80,15 +81,30 @@ A slim **interpreter strip** shows the live original → translation line, a run
 ## 📼 After the call
 
 <p align="center">
-  <img src="website/assets/showcase-qa.png" alt="Grounded Q&A over the meeting" width="820" />
+  <img src="website/assets/showcase-study.png" alt="The report: debrief, commitments, action items, and intel on one scroll" width="820" />
 </p>
 
-Stopping a meeting lands on its debrief. Any recording — just finished, from history, or dragged in as an audio file — opens through four tabs:
+Stopping a meeting lands on its debrief. Any recording — just finished, from history, or dragged in as an audio file — opens in two views:
 
-- **Brief** — summary, both sides' commitments, open items, next steps.
-- **Intel** — the intelligence board's final state over the full recording.
-- **Transcript** — scrub to any moment and re-run the analysis *as of that point*, review the other side's moves and your missed moments, and war-game the opponent: their key arguments, the premise you shouldn't concede, response angles with predicted reactions.
-- **Delivery** — your speaking scorecard: pace, monotone stretches, pauses, filler words.
+- **Report** — one scroll: the debrief with clickable timestamps, both sides' commitments, action items, the intelligence board's final state, and your delivery scorecard (measured pace, talk share, filler sounds).
+- **Replay** — the full player: scrub to any moment and re-run the analysis *as of that point*, review the other side's moves and your missed moments side-by-side with the transcript, and ask anything about the call from a drawer that follows you across tabs.
+
+Everything generates once and saves with the recording — reopen it a month later and the whole report loads instantly, no extra LLM calls. Plus **LLM speaker re-attribution** fixes diarization drift by conversational context.
+
+---
+
+## 🗂️ Between calls
+
+<p align="center">
+  <img src="website/assets/showcase-accounts.png" alt="The account workspace: company switcher, deal threads and intel cards, stakeholder rail" width="820" />
+</p>
+
+Deals span many calls; Parley remembers what each one taught you. The **account workspace** keeps a living dossier per company:
+
+- **Intel cards** — atomic facts across nine categories (stances, leverage, goals, risks, red lines, competitors, next moves, open questions, relationships), each with its source quote, confidence level, and freshness. Conflicting intel surfaces in a triage queue instead of silently overwriting.
+- **Deal threads** — each negotiation or opportunity tracked on a pipeline (discovery → demo → proposal → negotiation → closing) with stage guides for what to collect next.
+- **Stakeholder map** — who's the economic buyer, who's your champion, who blocks, and who influences whom.
+- **The loop closes both ways** — after a call, one review pass files what the meeting revealed into the dossier; before the next one, a single click assembles a briefing and loads the stage's open questions into your agenda. Red-line cards automatically arm as live alerts when a meeting with that company starts.
 
 ---
 
