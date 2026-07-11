@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Building2, Plus } from "lucide-react";
 import { useAccounts, threadsOf, triageClaims } from "../../lib/accounts/store";
+import { ensureCompanyFolder } from "../../lib/accounts/folders";
 import { useI18n } from "../../i18n";
 
 /**
@@ -69,6 +70,7 @@ export function CompanySidebar({
           e.preventDefault();
           if (!name.trim()) return;
           const company = useAccounts.getState().addCompany({ name });
+          ensureCompanyFolder(company);
           setName("");
           onSelect(company.id);
         }}

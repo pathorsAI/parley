@@ -13,6 +13,9 @@ export interface Company {
   note: string;
   /** Reserved for a future one-way push to an external CRM (design D1). */
   externalCrmId?: string;
+  /** The company's paired history folder (issue #132) — created with the
+   *  company, follows renames, survives archive. */
+  folderId?: string;
   createdAt: number;
   archived: boolean;
 }

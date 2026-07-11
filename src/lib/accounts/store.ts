@@ -479,6 +479,15 @@ export function initAccounts(): void {
         companies: data.companies?.length ?? 0,
         claims: data.claims?.length ?? 0,
       });
+      // Pair every company with its history folder (companies created before
+      // the pairing existed get theirs here). Dynamic import: folders.ts
+      // imports this store, so a static edge would be a cycle.
+      try {
+        const { migrateCompanyFolders } = await import("./folders");
+        migrateCompanyFolders();
+      } catch (e) {
+        log.warn("accounts: folder migration failed", { error: String(e) });
+      }
     } catch (e) {
       log.error("accounts: load failed — starting empty, writes disabled", {
         error: String(e),

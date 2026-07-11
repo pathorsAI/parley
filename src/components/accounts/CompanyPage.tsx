@@ -4,6 +4,7 @@ import { useAccounts, threadsOf, activeClaims, triageClaims } from "../../lib/ac
 import type { Company, CompanyAttachment, ThreadKind } from "../../lib/accounts/types";
 import { THREAD_KINDS } from "../../lib/accounts/types";
 import { listHistory, loadHistoryEntry } from "../../lib/history/history";
+import { renameCompanyFolder } from "../../lib/accounts/folders";
 import type { HistoryEntrySummary } from "../../lib/history/types";
 import { formatClock, useStore } from "../../lib/store";
 import { useI18n } from "../../i18n";
@@ -76,7 +77,10 @@ export function CompanyPage({
             <InlineEdit
               value={company.name}
               required
-              onCommit={(name) => acc.updateCompany(company.id, { name })}
+              onCommit={(name) => {
+                renameCompanyFolder(company, name);
+                acc.updateCompany(company.id, { name });
+              }}
               className="h-8 text-lg font-semibold leading-tight"
             />
             <InlineEdit
