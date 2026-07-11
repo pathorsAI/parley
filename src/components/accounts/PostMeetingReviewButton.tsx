@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { ClipboardCheck, Loader2 } from "lucide-react";
 import { useStore, transcriptAsText } from "../../lib/store";
 import { useAccounts, personsOf, threadsOf, activeClaims } from "../../lib/accounts/store";
@@ -71,7 +72,8 @@ export function PostMeetingReviewButton() {
         {busy ? <Loader2 className="size-3.5 animate-spin" /> : <ClipboardCheck className="size-3.5" />}
         {t("accounts.postmeeting.run")}
       </Button>
-      {open && (
+      {open &&
+        createPortal(
         <div className="fixed inset-0 z-[90] flex items-center justify-center p-6">
           <button
             type="button"
@@ -96,7 +98,8 @@ export function PostMeetingReviewButton() {
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
