@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useStore, isTrimmed, meetingBriefText, type AppMode } from "../store";
+import { useStore, isTrimmed, meetingBriefText } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { analyzeTimeline } from "../ai/timeline";
 import { evalSignature } from "../evaluations/presets";
@@ -104,13 +104,16 @@ export async function listenForCacheClear(): Promise<() => void> {
  * run is in flight. Each run REPLACES the findings list — `setFindings` clears
  * the selection and any cached solutions (the model mints fresh ids per pass).
  */
-export async function runAnalysis(opts?: { mode?: AppMode; force?: boolean }): Promise<void> {
+export async function runAnalysis(opts?: {
+  mode?: "live" | "replay";
+  force?: boolean;
+}): Promise<void> {
   const state = useStore.getState();
   const { settings, speakerNames } = state;
   // The brief folds the per-deal BATNA / target / bottom line into the context, so
   // it both feeds the prompt AND keys the cache (editing setup → re-analysis).
   const meetingContext = meetingBriefText(state);
-  const mode = opts?.mode ?? state.appMode;
+  const mode = opts?.mode ?? (state.appMode === "replay" ? "replay" : "live");
   // REPLAY: honor the trim keep-window — trimmed segments are excluded from analysis.
   const segments =
     mode === "replay" ? state.segments.filter((s) => !isTrimmed(s, state.replayTrim)) : state.segments;
