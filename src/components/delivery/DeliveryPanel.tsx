@@ -1,11 +1,12 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { useProsody } from "../../lib/analysis/useDelivery";
-import { syllablesPerMin } from "../../lib/analysis/delivery";
+import { syllablesPerMin, talkTimeRatio } from "../../lib/analysis/delivery";
+import { countFillerSounds } from "../../lib/analysis/fillerWords";
 import { useI18n } from "../../i18n";
 import type { TranslationKey } from "../../i18n";
-import type { DeliveryAssessment, ToneVerdict } from "../../lib/types";
+import type { DeliveryAssessment, ToneVerdict, TranscriptSegment } from "../../lib/types";
 
 type TFn = ReturnType<typeof useI18n>["t"];
 type DeliveryStatus = ReturnType<typeof useStore.getState>["deliveryStatus"];
@@ -195,6 +196,76 @@ function DeliveryReadout({
   return null;
 }
 
+/** One stat tile of the full-variant replay scorecard. */
+function StatTile({
+  label,
+  value,
+  sub,
+  watch,
+}: Readonly<{ label: string; value: string; sub?: string; watch?: boolean }>) {
+  return (
+    <div className="rounded-lg border bg-muted/20 px-3 py-2">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-0.5 truncate text-base font-semibold tabular-nums ${watch ? "text-amber-400" : ""}`}>
+        {value}
+      </div>
+      {sub && (
+        <div className={`truncate text-[10px] ${watch ? "text-amber-400" : "text-muted-foreground"}`}>
+          {sub}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Per-bucket voiced ms of the user's own speech across the recording — a cheap,
+ *  fully local "where was I talking (a lot)" strip. Empty for short recordings
+ *  (< 3 min) and when the session has no source-split "me" segments. */
+function talkVolumeBuckets(segments: TranscriptSegment[]): number[] {
+  const spoken = segments.filter((s) => s.isFinal && s.source === "me" && s.text.trim());
+  if (spoken.length === 0) return [];
+  let endMs = 0;
+  for (const s of segments) if (s.isFinal && s.endMs > endMs) endMs = s.endMs;
+  if (endMs < 3 * 60_000) return [];
+  const count = Math.min(60, Math.ceil(endMs / 60_000));
+  const bucketMs = endMs / count;
+  const buckets = new Array<number>(count).fill(0);
+  for (const s of spoken) {
+    const i = Math.min(count - 1, Math.floor(s.startMs / bucketMs));
+    buckets[i] += Math.max(0, s.endMs - s.startMs);
+  }
+  return buckets;
+}
+
+function TalkVolumeStrip({ buckets, title }: Readonly<{ buckets: number[]; title: string }>) {
+  const max = Math.max(...buckets, 1);
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3">
+      <div className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        {title}
+      </div>
+      <div className="flex h-10 items-end gap-px">
+        {buckets.map((v, i) => (
+          <span
+            key={i}
+            className={`min-w-0 flex-1 rounded-t-sm ${v === max ? "bg-primary" : "bg-primary/50"}`}
+            style={{ height: `${Math.max(4, Math.round((v / max) * 100))}%` }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Talk-share band: ≥65% of the talking reads as steamrolling, ≤35% as quiet. */
+function talkBand(me: number): { key: TranslationKey; watch: boolean } {
+  if (me >= 0.65) return { key: "delivery.talk.high", watch: true };
+  if (me <= 0.35) return { key: "delivery.talk.low", watch: false };
+  return { key: "delivery.talk.balanced", watch: false };
+}
+
 /**
  * Persistent "Delivery" card — the always-visible counterpart to the transient
  * nudges, rendered at the top of the findings column in BOTH live and replay.
@@ -212,8 +283,16 @@ function DeliveryReadout({
  * (issue #22: never the counterpart); for uploads it's measured over the file.
  *
  * Gated so it stays out of the way when delivery coaching isn't in play.
+ *
+ * `variant="full"` (the study tense's 評分 page) adds a locally-computed
+ * scorecard on top: stat tiles (measured pace, talk share, filler sounds, tone)
+ * and a per-minute talk-volume strip — all derived from the saved segments at
+ * zero LLM cost, so the page always has content.
  */
-export function DeliveryPanel({ mode }: Readonly<{ mode: "live" | "replay" }>) {
+export function DeliveryPanel({
+  mode,
+  variant = "compact",
+}: Readonly<{ mode: "live" | "replay"; variant?: "compact" | "full" }>) {
   const { t } = useI18n();
   const toneOn = useStore((s) => s.settings.delivery.tone);
   const paceOn = useStore((s) => s.settings.delivery.pace);
@@ -224,13 +303,86 @@ export function DeliveryPanel({ mode }: Readonly<{ mode: "live" | "replay" }>) {
   const status = useStore((s) => s.deliveryStatus);
   const prosody = useProsody();
   const measuredRate = useStore((s) => s.replay?.speechRateHz ?? null);
+  const segments = useStore((s) => s.segments);
+
+  const full = variant === "full" && mode === "replay";
+  // Local replay stats (full variant only) — computed straight from the saved
+  // transcript, no model call. Ratio is null for diarized "mix" sessions.
+  const localStats = useMemo(() => {
+    if (!full) return null;
+    const ratio = talkTimeRatio(segments);
+    let fillers = 0;
+    for (const s of segments) {
+      if (s.isFinal && s.source === "me") fillers += countFillerSounds(s.text);
+    }
+    return { ratio, fillers, buckets: talkVolumeBuckets(segments) };
+  }, [full, segments]);
 
   const hasMeasured = mode === "replay" && !!measuredRate;
   const showLive = toneOn || paceOn || pitchOn || pausesOn;
-  const show = mode === "replay" ? status !== "idle" || !!assessment || hasMeasured : showLive;
+  const show = full || (mode === "replay" ? status !== "idle" || !!assessment || hasMeasured : showLive);
   if (!show) return null;
 
   const running = status === "running" && !assessment;
+
+  if (full && localStats) {
+    const mBandFull = measuredRate ? paceBand(measuredRate) : null;
+    const ratioBand = localStats.ratio ? talkBand(localStats.ratio.me) : null;
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <StatTile
+            label={t("delivery.card.pace")}
+            value={measuredRate ? `${syllablesPerMin(measuredRate)}` : "—"}
+            sub={
+              measuredRate && mBandFull
+                ? `${t("delivery.unit.sylPerMin")} · ${t(mBandFull.key)}`
+                : assessment
+                  ? t(`delivery.pace.${assessment.pace}` as TranslationKey)
+                  : undefined
+            }
+            watch={!!mBandFull?.watch}
+          />
+          {localStats.ratio && ratioBand && (
+            <StatTile
+              label={t("delivery.card.talkRatio")}
+              value={`${Math.round(localStats.ratio.me * 100)}%`}
+              sub={t(ratioBand.key)}
+              watch={ratioBand.watch}
+            />
+          )}
+          <StatTile
+            label={t("delivery.tile.fillers")}
+            value={`${localStats.fillers}`}
+            sub={t("delivery.unit.times")}
+            watch={localStats.fillers >= 10}
+          />
+          <StatTile
+            label={t("delivery.card.tone")}
+            value={assessment ? t(TONE_KEY[assessment.tone]) : running ? "…" : "—"}
+            sub={assessment?.toneEvidence ? `“${assessment.toneEvidence}”` : undefined}
+            watch={!!assessment && (assessment.tone === "sharp" || assessment.tone === "aggressive" || assessment.tone === "rude")}
+          />
+        </div>
+
+        {localStats.buckets.length > 0 && (
+          <TalkVolumeStrip buckets={localStats.buckets} title={t("delivery.card.paceTimeline")} />
+        )}
+
+        <div className="rounded-lg border bg-muted/20 p-3">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-xs font-semibold tracking-tight">{t("delivery.card.llmRead")}</span>
+            {status === "running" && assessment && (
+              <Loader2 className="size-3 animate-spin text-muted-foreground" />
+            )}
+          </div>
+          <div className="flex flex-col gap-1.5 text-[11px]">
+            <DeliveryReadout mode={mode} status={status} running={running} assessment={assessment} t={t} />
+          </div>
+        </div>
+      </div>
+    );
+  }
   // Live meter inputs (null prosody → muted "—" until the first sample).
   const paceHz = prosody?.speechRateHz ?? 0;
   const liveBand = paceBand(paceHz);

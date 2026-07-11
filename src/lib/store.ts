@@ -9,6 +9,7 @@ import type {
   FindingSolutionEntry,
   IntelState,
   MeetingStatus,
+  MeetingType,
   ProsodyMetrics,
   Settings,
   TimelineEvent,
@@ -221,9 +222,26 @@ interface ParleyState {
   intelStatus: AsyncTaskStatus;
   setIntel: (intel: IntelState | null) => void;
   setIntelStatus: (status: AsyncTaskStatus) => void;
-  /** Which study-tense page is open while a recording is loaded. */
-  studyTab: "brief" | "intel" | "transcript" | "delivery";
+  /** Which study-tense page is open while a recording is loaded: the merged
+   *  meeting report (read the outcome) or the replay workbench (check the
+   *  evidence). */
+  studyTab: "report" | "replay";
   setStudyTab: (tab: ParleyState["studyTab"]) => void;
+  /** The study brief (重點 debrief markdown) for the loaded recording. Lives in
+   *  the store (not component state) so tab switches don't lose it, and is
+   *  persisted onto the loaded entry so reopening never regenerates it. */
+  brief: string | null;
+  briefStatus: AsyncTaskStatus;
+  setBrief: (brief: string | null) => void;
+  /** Append a streamed chunk to the brief (streaming render). */
+  appendBrief: (chunk: string) => void;
+  setBriefStatus: (status: AsyncTaskStatus) => void;
+  /** The CURRENT SESSION's meeting type (which intel template applies). Seeded
+   *  from settings.meetingType (the live default) on enter, restored from the
+   *  entry on load — switching it while studying one recording never leaks into
+   *  the global setting or other recordings. */
+  studyMeetingType: MeetingType;
+  setStudyMeetingType: (type: MeetingType) => void;
   /** Insert one finding (MCP/external add) without replacing the list, keeping it
    *  ordered by atMs. A colliding id is reassigned so existing findings are safe. */
   addFinding: (event: TimelineEvent) => void;
@@ -459,7 +477,7 @@ export const useStore = create<ParleyState>()(
       segments: session.segments.length,
       durationMs: session.durationMs,
     });
-    set({
+    set((state) => ({
       appMode: "replay",
       replay: session,
       // A fresh upload isn't a saved entry yet — cleared until its auto-save.
@@ -484,7 +502,14 @@ export const useStore = create<ParleyState>()(
       actionItemsError: null,
       deliveryAssessment: null,
       deliveryStatus: "idle",
-    });
+      // A fresh session gets fresh study outputs — a previous recording's brief
+      // or intel must never render over this one.
+      brief: null,
+      briefStatus: "idle",
+      intel: null,
+      intelStatus: "idle",
+      studyMeetingType: state.settings.meetingType,
+    }));
   },
 
   loadHistory: (entry, session, opts) => {
@@ -515,13 +540,16 @@ export const useStore = create<ParleyState>()(
       speakerNames: entry.speakerNames,
       meetingStatus: "stopped",
       highlightMs: null,
-      // Restore the saved analysis verbatim.
+      // Restore the saved analysis verbatim — but an entry saved WITHOUT one
+      // (transcript-only: the ingest wizard's skip/cancel path, or a pre-key
+      // save) loads as "idle" so the study pipeline runs it once on open and
+      // initHistoryPersistSync writes it back.
       findings: entry.findings,
-      analysisStatus: "done",
+      analysisStatus: entry.findings.length > 0 || entry.actionItems.length > 0 ? "done" : "idle",
       analysisError: null,
       analyzedEvalSig: evalSignature(state.evaluations),
       actionItems: entry.actionItems,
-      actionItemsStatus: "done",
+      actionItemsStatus: entry.findings.length > 0 || entry.actionItems.length > 0 ? "done" : "idle",
       actionItemsError: null,
       // Restore the per-meeting context + negotiation setup.
       meetingContext: entry.meetingContext,
@@ -540,6 +568,14 @@ export const useStore = create<ParleyState>()(
       // status is "idle"). The measured pace rides on `session.speechRateHz`.
       deliveryAssessment: entry.deliveryAssessment ?? null,
       deliveryStatus: entry.deliveryAssessment ? "done" : "idle",
+      // Restore the saved study outputs the same way: present → "done" (never
+      // regenerated), absent (older entries) → "idle" so they generate once on
+      // open and are saved back.
+      brief: entry.brief ?? null,
+      briefStatus: entry.brief ? "done" : "idle",
+      intel: entry.intel ?? null,
+      intelStatus: entry.intel ? "done" : "idle",
+      studyMeetingType: entry.meetingType ?? entry.intel?.meetingType ?? state.settings.meetingType,
     }));
   },
 
@@ -570,6 +606,10 @@ export const useStore = create<ParleyState>()(
       actionItemsError: null,
       deliveryAssessment: null,
       deliveryStatus: "idle",
+      brief: null,
+      briefStatus: "idle",
+      intel: null,
+      intelStatus: "idle",
     });
   },
 
@@ -602,8 +642,15 @@ export const useStore = create<ParleyState>()(
   intelStatus: "idle",
   setIntel: (intel) => set({ intel }),
   setIntelStatus: (status) => set({ intelStatus: status }),
-  studyTab: "brief",
+  studyTab: "report",
   setStudyTab: (tab) => set({ studyTab: tab }),
+  brief: null,
+  briefStatus: "idle",
+  setBrief: (brief) => set({ brief }),
+  appendBrief: (chunk) => set((s) => ({ brief: (s.brief ?? "") + chunk })),
+  setBriefStatus: (status) => set({ briefStatus: status }),
+  studyMeetingType: "general",
+  setStudyMeetingType: (type) => set({ studyMeetingType: type }),
 
   setFindings: (events) =>
     set((s) => {
@@ -777,6 +824,8 @@ export const useStore = create<ParleyState>()(
       deliveryStatus: "idle",
       intel: null,
       intelStatus: "idle",
+      brief: null,
+      briefStatus: "idle",
       };
     });
   },

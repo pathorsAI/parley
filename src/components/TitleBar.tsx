@@ -316,14 +316,14 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
 
       {/* Titlebar-center switcher — two tenses, one slot: live shows the
           posture switch (coach/transcript); a loaded recording swaps in the
-          study tabs (brief/intel/transcript/delivery, purple accent). */}
+          study tabs (report/replay, purple accent). */}
       <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-0.5 rounded-lg bg-muted p-0.5">
         {accountsMode ? (
           <span className="px-3 py-1 text-xs font-medium text-muted-foreground">
             {t("accounts.title")}
           </span>
         ) : replayMode
-          ? (["brief", "intel", "transcript", "delivery"] as const).map((tab) => (
+          ? (["report", "replay"] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -361,7 +361,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             variant="outline"
             onClick={() => {
               exitReplay();
-              setStudyTab("brief");
+              setStudyTab("report");
             }}
             className="h-8"
           >

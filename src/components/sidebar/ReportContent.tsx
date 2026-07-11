@@ -14,9 +14,11 @@ function linkifyTimestamps(md: string): string {
 
 /**
  * Renders the debrief markdown. `[m:ss]` timestamps become buttons that jump
- * the transcript to that moment (via the store's highlightMs signal).
+ * the transcript to that moment — via `onTimestamp` when given (the study
+ * report uses it to switch to the replay tab and seek), else via the store's
+ * highlightMs signal (the live transcript scroll).
  */
-function makeMarkdownComponents(setHighlightMs: (ms: number) => void, onJump?: () => void): Components {
+function makeMarkdownComponents(jump: (ms: number) => void, onJump?: () => void): Components {
   return {
     a: ({ href, children }) => {
       if (href?.startsWith("#t=")) {
@@ -26,7 +28,7 @@ function makeMarkdownComponents(setHighlightMs: (ms: number) => void, onJump?: (
             type="button"
             className="rounded bg-sky-500/15 px-1 font-mono text-[0.85em] text-sky-300 no-underline hover:bg-sky-500/25"
             onClick={() => {
-              setHighlightMs(seconds * 1000);
+              jump(seconds * 1000);
               onJump?.();
             }}
           >
@@ -43,9 +45,13 @@ function makeMarkdownComponents(setHighlightMs: (ms: number) => void, onJump?: (
   };
 }
 
-export function ReportContent({ markdown, onJump }: Readonly<{ markdown: string; onJump?: () => void }>) {
+export function ReportContent({
+  markdown,
+  onJump,
+  onTimestamp,
+}: Readonly<{ markdown: string; onJump?: () => void; onTimestamp?: (ms: number) => void }>) {
   const setHighlightMs = useStore((s) => s.setHighlightMs);
-  const components = makeMarkdownComponents(setHighlightMs, onJump);
+  const components = makeMarkdownComponents(onTimestamp ?? setHighlightMs, onJump);
 
   return (
     <div className="prose prose-invert prose-sm max-w-none select-text text-foreground prose-p:my-1.5 prose-headings:mb-1 prose-headings:mt-3 prose-ul:my-1.5 prose-li:my-0.5">

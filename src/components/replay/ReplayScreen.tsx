@@ -4,7 +4,6 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { useI18n } from "../../i18n";
 import { useStore } from "../../lib/store";
@@ -15,22 +14,19 @@ import { AnalysisTimeline } from "../analysis/AnalysisTimeline";
 import { AnalyzeMenu } from "../analysis/AnalyzeMenu";
 import { FindingsPanel } from "../analysis/FindingsPanel";
 import { selectAndSeek } from "../analysis/useAnalysis";
-import { AskPanel } from "../sidebar/AskPanel";
 import { ReplayPlayerBar } from "./ReplayPlayerBar";
 import { ReplayTranscript } from "./ReplayTranscript";
 import { ReplaySpeakerTags } from "./ReplaySpeakerTags";
-import { ActionItemsPanel } from "./ActionItemsPanel";
 import { useReplayPlayer } from "./useReplayPlayer";
-import { useReplayAnalysis } from "./useReplayAnalysis";
 import { useReplayPlayheadMs, useReplaySession, useReplayTrim } from "./spine";
 
 /**
- * The REPLAY screen: play an uploaded recording and review the whole-recording
- * analysis. The analysis runs ONCE on load (see useReplayAnalysis); dragging the
- * playhead is navigation/viewing only — it never re-runs anything. The timeline
- * and findings list are the shared analysis subsystem (identical to LIVE);
- * clicking a finding seeks the audio and opens its "how it should have been
- * done" drilldown. The center pane is Ask + post-meeting Action items.
+ * The REPLAY workbench: play a recording and check the evidence — transcript on
+ * the left, findings on the right, timeline on top. The analysis runs ONCE on
+ * load (see useReplayAnalysis); dragging the playhead is navigation/viewing only
+ * — it never re-runs anything. Clicking a finding seeks the audio and opens its
+ * "how it should have been done" drilldown. The RESULTS (brief, action items,
+ * intel, delivery) live on the study report page; Ask is the study-wide drawer.
  */
 export function ReplayScreen() {
   const { t } = useI18n();
@@ -38,9 +34,8 @@ export function ReplayScreen() {
   const session = useReplaySession();
   const playheadMs = useReplayPlayheadMs();
   const player = useReplayPlayer(session?.durationMs ?? 0, session?.audioOffsetMs ?? 0);
-
-  // Run the whole-recording analysis once, then chain action items.
-  useReplayAnalysis();
+  // (The analysis pipeline runs from StudyScreen — landing on the report page
+  // starts it too, not just this workbench.)
 
   // Read the working transcript + speakerNames from the STORE (seeded on
   // enterReplay, then rewritten by voice diarization / edits) — not the static
@@ -57,9 +52,10 @@ export function ReplayScreen() {
   const evaluations = useStore((s) => s.settings.evaluations);
   const analyzedEvalSig = useStore((s) => s.analyzedEvalSig);
 
-  // Persist the dragged column proportions (transcript / center / findings) to
-  // localStorage so they survive reloads.
-  const saved = useDefaultLayout({ id: "parley:replay", storage: window.localStorage });
+  // Persist the dragged column proportions (transcript / findings) to
+  // localStorage so they survive reloads. v2 id: the old key stored a 3-column
+  // layout that no longer matches this 2-panel group.
+  const saved = useDefaultLayout({ id: "parley:replay-v2", storage: window.localStorage });
 
   if (!session) {
     return (
@@ -158,7 +154,7 @@ export function ReplayScreen() {
         defaultLayout={saved.defaultLayout}
         onLayoutChanged={saved.onLayoutChanged}
       >
-        <ResizablePanel id="transcript" defaultSize={42} minSize={24}>
+        <ResizablePanel id="transcript" defaultSize={62} minSize={32}>
           <div className="flex h-full min-h-0 flex-col">
             <div className="flex h-9 shrink-0 items-center justify-between border-b px-4">
               <span className="text-xs font-medium text-foreground">{t("replay.transcript")}</span>
@@ -185,26 +181,7 @@ export function ReplayScreen() {
 
         <ResizableHandle withHandle />
 
-        <ResizablePanel id="center" defaultSize={34} minSize={22}>
-          <Tabs defaultValue="actions" className="flex h-full min-h-0 flex-col gap-0">
-            <div className="px-3 pt-2.5">
-              <TabsList className="w-full">
-                <TabsTrigger value="ask">{t("work.ask")}</TabsTrigger>
-                <TabsTrigger value="actions">{t("actionItems.title")}</TabsTrigger>
-              </TabsList>
-            </div>
-            <TabsContent value="ask" className="min-h-0 flex-1 outline-none">
-              <AskPanel />
-            </TabsContent>
-            <TabsContent value="actions" className="min-h-0 flex-1 outline-none">
-              <ActionItemsPanel onSeek={player.seek} />
-            </TabsContent>
-          </Tabs>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        <ResizablePanel id="findings" defaultSize={24} minSize={18}>
+        <ResizablePanel id="findings" defaultSize={38} minSize={22}>
           <FindingsPanel mode="replay" onSeek={player.seek} />
         </ResizablePanel>
       </ResizablePanelGroup>
