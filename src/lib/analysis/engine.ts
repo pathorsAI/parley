@@ -199,6 +199,11 @@ export async function reanalyzeAll(): Promise<void> {
   if (useStore.getState().loadedHistoryId !== startedFor) return;
   const { regenerateActionItems } = await import("./actionItems");
   regenerateActionItems();
+  // The brief summarizes the findings + action items — invalidate it so the
+  // study pipeline (useReplayAnalysis stage 2c) regenerates it once the fresh
+  // action items settle, and re-persists it onto the entry.
+  useStore.getState().setBrief(null);
+  useStore.getState().setBriefStatus("idle");
   // Refresh the delivery verdict against the re-analyzed transcript too, so it
   // doesn't desync from findings/action items. The runner manages its own
   // running/done status, so the one-shot replay stage-2b effect stays inert.

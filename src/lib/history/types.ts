@@ -5,7 +5,14 @@
 // unchanged. `HistoryEntrySummary` is the lightweight card the history grid
 // lists (written to `summary.json` so listing never parses the full entries).
 
-import type { ActionItem, DeliveryAssessment, TimelineEvent, TranscriptSegment } from "../types";
+import type {
+  ActionItem,
+  DeliveryAssessment,
+  IntelState,
+  MeetingType,
+  TimelineEvent,
+  TranscriptSegment,
+} from "../types";
 
 /** Where a saved session came from: a captured live meeting or an upload. */
 export type HistorySource = "live" | "upload";
@@ -45,6 +52,17 @@ export interface HistoryEntry {
    *  pace read. Optional for back-compat; absent/0 → the panel falls back to the
    *  LLM's coarse pace label. */
   speechRateHz?: number | null;
+  /** Saved study brief (the 重點 debrief markdown). Optional: entries saved before
+   *  this field existed omit it → the brief page generates once on open and saves
+   *  the result back, so a given recording only ever pays for it once. */
+  brief?: string | null;
+  /** THIS recording's meeting type (which intel template applies). Per-entry on
+   *  purpose — the global settings.meetingType is only the live-meeting default,
+   *  and switching it while reviewing one recording must not leak into others. */
+  meetingType?: MeetingType;
+  /** Last intel extraction over this recording (its meetingType tells which
+   *  template produced it). Saved so reopening doesn't re-spend the eval model. */
+  intel?: IntelState | null;
   /** Which personal folder this entry lives in; null/absent = the personal root
    *  (個人). A folderId not in the live personal folder list renders at the root. */
   folderId?: string | null;

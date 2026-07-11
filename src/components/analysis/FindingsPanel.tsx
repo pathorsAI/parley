@@ -1,16 +1,13 @@
-import { useState } from "react";
-import { Check, Copy, FileText, Loader2, Maximize2, Sparkles, X } from "lucide-react";
-import { isTrimmed, meetingBriefText, useStore } from "../../lib/store";
+import { Loader2, Sparkles } from "lucide-react";
+import { useStore } from "../../lib/store";
 import { findActiveTemplate } from "../../lib/evaluations/presets";
 import { runAnalysis } from "../../lib/analysis/engine";
-import { generatePostMeetingReport } from "../../lib/ai/report";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { PROVIDER_BY_ID } from "../../lib/ai/providers";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { FindingRow } from "./FindingRow";
 import { openSolution, selectAndSeek } from "./useAnalysis";
-import { ReportContent } from "../sidebar/ReportContent";
 import { DeliveryPanel } from "../delivery/DeliveryPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,10 +22,11 @@ import {
 
 /**
  * The right-hand analysis pane, shared by both modes. Renders the findings list
- * (each row drills into "how it should have been done"), the post-meeting
- * debrief, and the eval-template selector. In LIVE it also surfaces the primary
- * "Analyze" action (+ an optional auto-interval); in REPLAY the analysis runs
- * once on load, so it just shows status.
+ * (each row drills into "how it should have been done") and the eval-template
+ * selector. In LIVE it also surfaces the primary "Analyze" action (+ an optional
+ * auto-interval) and the ambient delivery card; in REPLAY the analysis runs once
+ * on load, so it just shows status — the debrief and delivery live on the study
+ * report page now, not here.
  */
 export function FindingsPanel({
   mode,
@@ -52,51 +50,12 @@ export function FindingsPanel({
   const setAutoAnalyzeSec = useStore((s) => s.setAutoAnalyzeSec);
   const running = analysisStatus === "running";
 
-  const [report, setReport] = useState("");
-  const [reportStatus, setReportStatus] = useState<"idle" | "generating" | "done">("idle");
-  const [expanded, setExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  async function copyReport() {
-    try {
-      await navigator.clipboard.writeText(report);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (e) {
-      console.error("[report] copy failed", e);
-    }
-  }
-
   function applyTemplate(id: string) {
     const tpl = templates.find((x) => x.id === id);
     if (!tpl) return;
     // Apply the set; the picker's value re-derives from it. Findings don't re-run
     // here — the user re-analyzes from the player's Analyze menu (stale banner).
     updateSettings({ evaluations: tpl.evals.map((e) => ({ ...e })) });
-  }
-
-  async function generateReport() {
-    const s = useStore.getState();
-    setReport("");
-    setReportStatus("generating");
-    try {
-      await generatePostMeetingReport({
-        settings: s.settings,
-        // Exclude trimmed (intro/post-meeting) lines from the debrief too.
-        segments: s.segments.filter((seg) => !isTrimmed(seg, s.replayTrim)),
-        evaluations: s.evaluations,
-        // The debrief is replay-only, and replay has its own action-items
-        // surface — so it never folds the (stale) live todos in.
-        todos: [],
-        names: s.speakerNames,
-        meetingContext: meetingBriefText(s),
-        onDelta: (chunk) => setReport((prev) => prev + chunk),
-      });
-    } catch (e) {
-      console.error("[report] failed", e);
-    } finally {
-      setReportStatus("done");
-    }
   }
 
   return (
@@ -134,21 +93,6 @@ export function FindingsPanel({
             {running ? t("analysis.analyzing") : t("analysis.run")}
           </Button>
         )}
-        {/* Debrief is a post-meeting artifact — surfacing it mid-meeting is
-            premature, so it only exists in REPLAY. */}
-        {mode === "replay" && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 px-2.5 text-[11px]"
-            disabled={reportStatus === "generating" || keyMissing}
-            onClick={() => generateReport().catch((error) => log.error("report: generate failed", { error: String(error) }))}
-            title={t("evaluations.reportHint")}
-          >
-            <FileText className={`size-3 ${reportStatus === "generating" ? "animate-pulse" : ""}`} />
-            {t("evaluations.report")}
-          </Button>
-        )}
         {mode === "live" && (
           <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
             <input
@@ -178,53 +122,9 @@ export function FindingsPanel({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-2 px-3 pb-3">
-          {/* Persistent delivery assessment (tone + fillers), above the findings. */}
-          <DeliveryPanel mode={mode} />
-          {reportStatus !== "idle" && (
-            <div className="rounded-lg border bg-muted/20 p-3">
-              <div className="mb-1.5 flex items-center justify-between">
-                <span className="text-xs font-semibold tracking-tight">
-                  {t("evaluations.report")}
-                  {reportStatus === "generating" && (
-                    <span className="ml-2 font-normal text-muted-foreground">
-                      {t("evaluations.reportGenerating")}
-                    </span>
-                  )}
-                </span>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    className="text-muted-foreground hover:text-foreground"
-                    title={t("evaluations.reportExpand")}
-                    onClick={() => setExpanded(true)}
-                  >
-                    <Maximize2 className="size-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    className="text-muted-foreground hover:text-foreground"
-                    onClick={() => {
-                      setReportStatus("idle");
-                      setReport("");
-                    }}
-                  >
-                    <X className="size-3.5" />
-                  </button>
-                </div>
-              </div>
-              <div className="relative max-h-36 overflow-hidden">
-                <ReportContent markdown={report} />
-                <button
-                  type="button"
-                  onClick={() => setExpanded(true)}
-                  className="absolute inset-x-0 bottom-0 flex items-end justify-center gap-1 bg-gradient-to-t from-background via-background/90 to-transparent pb-1 pt-10 text-[11px] font-medium text-sky-300 hover:text-sky-200"
-                >
-                  <Maximize2 className="size-3" />
-                  {t("evaluations.expandFull")}
-                </button>
-              </div>
-            </div>
-          )}
+          {/* Ambient delivery meters, above the findings — LIVE only (the study
+              report page owns the post-call delivery scorecard). */}
+          {mode === "live" && <DeliveryPanel mode="live" />}
 
           {findings.length === 0 && analysisStatus !== "running" ? (
             <p className="px-1 pt-6 text-center text-xs text-muted-foreground">
@@ -245,49 +145,6 @@ export function FindingsPanel({
           )}
         </div>
       </ScrollArea>
-
-      {expanded && reportStatus !== "idle" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-          <button
-            type="button"
-            aria-label={t("common.cancel")}
-            className="absolute inset-0 bg-black/60"
-            onClick={() => setExpanded(false)}
-          />
-          <div className="relative flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl border bg-background shadow-xl">
-            <div className="flex items-center justify-between border-b px-4 py-2.5">
-              <span className="text-sm font-semibold">
-                {t("evaluations.report")}
-                {reportStatus === "generating" && (
-                  <span className="ml-2 text-xs font-normal text-muted-foreground">
-                    {t("evaluations.reportGenerating")}
-                  </span>
-                )}
-              </span>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-                  onClick={() => copyReport().catch((error) => log.error("report: copy failed", { error: String(error) }))}
-                >
-                  {copied ? <Check className="size-3.5 text-emerald-400" /> : <Copy className="size-3.5" />}
-                  {copied ? t("meeting.copied") : t("meeting.copy")}
-                </button>
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-foreground"
-                  onClick={() => setExpanded(false)}
-                >
-                  <X className="size-4" />
-                </button>
-              </div>
-            </div>
-            <div className="overflow-y-auto px-5 py-4">
-              <ReportContent markdown={report} onJump={() => setExpanded(false)} />
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

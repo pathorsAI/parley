@@ -19,7 +19,15 @@ const SEVERITY_DOT: Record<Severity, string> = {
  * the player's Analyze menu, not a per-panel button. `onSeek` jumps the audio to
  * a linked moment.
  */
-export function ActionItemsPanel({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
+export function ActionItemsPanel({
+  onSeek,
+  embedded = false,
+}: Readonly<{
+  onSeek: (ms: number) => void;
+  /** Render as a plain column (no own scroller) inside an already-scrolling
+   *  page, e.g. the study report. */
+  embedded?: boolean;
+}>) {
   const { t } = useI18n();
   const items = useStore((s) => s.actionItems);
   const status = useStore((s) => s.actionItemsStatus);
@@ -28,10 +36,8 @@ export function ActionItemsPanel({ onSeek }: Readonly<{ onSeek: (ms: number) => 
   const keyMissing = useStore((s) => !hasProviderKey(s.settings));
   const running = status === "running";
 
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-2 px-3 py-3">
+  const body = (
+    <div className={`flex flex-col gap-2 ${embedded ? "" : "px-3 py-3"}`}>
           {keyMissing && (
             <p className="px-1 pt-4 text-center text-xs text-muted-foreground">{t("actionItems.noKey")}</p>
           )}
@@ -82,15 +88,20 @@ export function ActionItemsPanel({ onSeek }: Readonly<{ onSeek: (ms: number) => 
             </div>
           ))}
 
-          {/* Still streaming, but rows are already showing. */}
-          {!keyMissing && running && items.length > 0 && (
-            <p className="flex items-center gap-1.5 px-1 pt-1 text-[11px] text-muted-foreground">
-              <Loader2 className="size-3 animate-spin" />
-              {t("actionItems.generating")}
-            </p>
-          )}
-        </div>
-      </ScrollArea>
+      {/* Still streaming, but rows are already showing. */}
+      {!keyMissing && running && items.length > 0 && (
+        <p className="flex items-center gap-1.5 px-1 pt-1 text-[11px] text-muted-foreground">
+          <Loader2 className="size-3 animate-spin" />
+          {t("actionItems.generating")}
+        </p>
+      )}
+    </div>
+  );
+
+  if (embedded) return body;
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <ScrollArea className="min-h-0 flex-1">{body}</ScrollArea>
     </div>
   );
 }

@@ -84,6 +84,11 @@ function snapshotAnalysis() {
     // Upload/loaded entries carry the measured pace on the replay session; a live
     // meeting has none here — saveLiveToHistory measures the recording + sets it.
     speechRateHz: s.replay?.speechRateHz ?? null,
+    // Study outputs ride along so a plain save/overwrite never drops them. A live
+    // save records the type the live board ran with; replay uses the per-entry one.
+    brief: s.brief,
+    intel: s.intel,
+    meetingType: s.appMode === "replay" ? s.studyMeetingType : s.settings.meetingType,
   };
 }
 
@@ -258,11 +263,11 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
   );
   await applyDefaultOrgShare(entry.id, save);
   // 會後 60 秒: a meeting's natural ending is its debrief — slide straight into
-  // the study tense (landing on 重點), unless the user already started another
-  // meeting or opened a different recording in the meantime.
+  // the study tense (landing on the report), unless the user already started
+  // another meeting or opened a different recording in the meantime.
   const now = useStore.getState();
   if (now.meetingStatus !== "recording" && now.appMode === "live") {
-    now.setStudyTab("brief");
+    now.setStudyTab("report");
     await loadHistoryEntry(entry.id).catch((e) =>
       log.warn("history: auto-open after stop failed", { id: entry.id, error: String(e) }),
     );
@@ -379,6 +384,45 @@ export async function updateHistoryEntry(id: string, snapshot?: AnalysisSnapshot
   await emitHistoryUpdated(id);
   pushToCloud(id); // re-analysis → refresh the cloud copy too (best-effort)
   log.info("history: entry analysis overwritten", { id, findings: updated.findings.length });
+}
+
+/**
+ * Persist the loaded entry's STUDY OUTPUTS (brief, intel, meeting type, and a
+ * legacy entry's recomputed delivery assessment) without touching the rest of
+ * its analysis. Called right after each output finishes generating, so a
+ * recording pays for each generation exactly once. Store-null outputs keep the
+ * on-disk value (a brief finishing must not clobber a saved intel, and vice
+ * versa). No-op when nothing is loaded (live meeting / fresh upload — their
+ * save paths snapshot these fields anyway) or for read-only org recordings.
+ */
+export async function persistStudyOutputs(): Promise<void> {
+  const s = useStore.getState();
+  const id = s.loadedHistoryId;
+  if (!isTauri() || !id) return;
+  // An upload's initial save may still be compressing — wait so the entry exists.
+  await Promise.resolve(uploadSaveInFlight).catch(() => {});
+  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+  const updated: HistoryEntry = {
+    ...meta,
+    brief: s.brief ?? meta.brief ?? null,
+    intel: s.intel ?? meta.intel ?? null,
+    meetingType: s.studyMeetingType,
+    deliveryAssessment: s.deliveryAssessment ?? meta.deliveryAssessment ?? null,
+  };
+  await invoke("save_history_entry", {
+    id,
+    summaryJson: JSON.stringify(buildSummary(updated)),
+    metaJson: JSON.stringify(updated),
+    audioSourcePath: null, // leave the recording untouched
+    compress: false,
+  });
+  pushToCloud(id);
+  log.info("history: study outputs saved", {
+    id,
+    brief: !!updated.brief,
+    intel: !!updated.intel,
+    meetingType: updated.meetingType,
+  });
 }
 
 // ── List / read / delete ─────────────────────────────────────────────────────

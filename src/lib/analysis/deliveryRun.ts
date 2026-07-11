@@ -35,6 +35,11 @@ export async function runDeliveryAnalysis(): Promise<void> {
     });
     useStore.getState().setDeliveryAssessment(res);
     useStore.getState().setDeliveryStatus("done");
+    // A legacy entry (saved before deliveryAssessment existed) recomputes this on
+    // open — save it back so it only ever recomputes once. No-op when unsaved.
+    void import("../history/history").then((m) =>
+      m.persistStudyOutputs().catch((e) => console.error("[delivery] persist failed", e))
+    );
   } catch (e) {
     console.error("[delivery]", e);
     useStore.getState().setDeliveryStatus("error");
