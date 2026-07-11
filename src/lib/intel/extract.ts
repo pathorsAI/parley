@@ -116,6 +116,13 @@ export async function runIntelExtraction(type: MeetingType): Promise<void> {
     }
     useStore.getState().setIntel(intel);
     useStore.getState().setIntelStatus("done");
+    // Save the result onto the loaded entry (no-op live / unsaved) so reopening
+    // the recording never re-spends this extraction.
+    void import("../history/history").then((m) =>
+      m.persistStudyOutputs().catch((e) =>
+        log.warn("intel: persist failed", { error: String(e) })
+      )
+    );
   } catch (e) {
     log.warn("intel: extraction failed", { type, error: String(e) });
     useStore.getState().setIntelStatus("error");
