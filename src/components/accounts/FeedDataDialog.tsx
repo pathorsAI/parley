@@ -7,6 +7,7 @@ import { extractClaimOps } from "../../lib/accounts/extract";
 import { hasProviderKey } from "../../lib/ai/settings";
 import type { Company } from "../../lib/accounts/types";
 import { useI18n } from "../../i18n";
+import { toast } from "sonner";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +24,8 @@ export function FeedDataDialog({
   onClose,
 }: Readonly<{ company: Company; onClose: () => void }>) {
   const { t } = useI18n();
-  const [kind, setKind] = useState<"transcript" | "note" | "chatlog">("note");
+  // Default to transcript — the most common thing pasted in (design D11).
+  const [kind, setKind] = useState<"transcript" | "note" | "chatlog">("transcript");
   const [name, setName] = useState("");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -72,6 +74,9 @@ export function FeedDataDialog({
       ops: approved,
       provenance: { kind: "import", attachmentId: attachment.id },
     });
+    const n =
+      approved.newPersons.length + approved.newClaims.length + approved.claimUpdates.length;
+    toast.success(t("accounts.review.applied", { n }));
     onClose();
   }
 

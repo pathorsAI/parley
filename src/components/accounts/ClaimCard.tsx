@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, ChevronDown, ChevronRight, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Pencil, X } from "lucide-react";
 import { useAccounts } from "../../lib/accounts/store";
 import type { Claim, ClaimCategory } from "../../lib/accounts/types";
 import { useI18n } from "../../i18n";
@@ -19,6 +19,19 @@ const CAT_CLASS: Record<ClaimCategory, string> = {
   openq: "bg-orange-500/15 text-orange-700 dark:text-orange-300",
 };
 
+/** Display/edit order for the category pickers. */
+export const CATEGORY_ORDER: ClaimCategory[] = [
+  "redline",
+  "openq",
+  "stance",
+  "relation",
+  "leverage",
+  "goal",
+  "risk",
+  "competitor",
+  "nextmove",
+];
+
 function freshness(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
@@ -26,13 +39,18 @@ function freshness(ms: number): string {
 /**
  * One intel claim: category chip, the assertion, confidence + freshness, and
  * the universal affordances — expand evidence (jump back to the meeting),
- * confirm, mark wrong (design §4.3).
+ * EDIT (text + category; an edit is a user assertion), confirm, mark wrong
+ * (design §4.3).
  */
 export function ClaimCard({ claim }: Readonly<{ claim: Claim }>) {
   const { t } = useI18n();
   const confirmClaim = useAccounts((s) => s.confirmClaim);
   const markClaimWrong = useAccounts((s) => s.markClaimWrong);
+  const updateClaim = useAccounts((s) => s.updateClaim);
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draftText, setDraftText] = useState("");
+  const [draftCat, setDraftCat] = useState<ClaimCategory>(claim.category);
 
   const quotes = claim.provenance.filter(
     (p): p is Extract<typeof p, { kind: "meeting" } | { kind: "import" }> =>
@@ -60,6 +78,68 @@ export function ClaimCard({ claim }: Readonly<{ claim: Claim }>) {
     }
   }
 
+  function startEdit() {
+    setDraftText(claim.text);
+    setDraftCat(claim.category);
+    setEditing(true);
+  }
+
+  function saveEdit() {
+    const text = draftText.trim();
+    if (!text) return;
+    updateClaim(claim.id, { text, category: draftCat });
+    // An edit is the user vouching for the corrected content.
+    confirmClaim(claim.id);
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <div className="rounded-md border border-ring/50 bg-background/60 px-2.5 py-2">
+        <div className="flex items-center gap-1.5">
+          <select
+            value={draftCat}
+            onChange={(e) => setDraftCat(e.target.value as ClaimCategory)}
+            className="h-7 shrink-0 rounded-md border bg-background px-1.5 text-xs"
+          >
+            {CATEGORY_ORDER.map((c) => (
+              <option key={c} value={c}>
+                {t(`accounts.cat.${c}`)}
+              </option>
+            ))}
+          </select>
+          <input
+            value={draftText}
+            onChange={(e) => setDraftText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveEdit();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            autoFocus
+            className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+          />
+        </div>
+        <div className="mt-1.5 flex justify-end gap-1.5">
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            className="h-6 rounded-md border px-2 text-xs text-muted-foreground hover:text-foreground"
+          >
+            {t("accounts.cancel")}
+          </button>
+          <button
+            type="button"
+            onClick={saveEdit}
+            disabled={!draftText.trim()}
+            className="h-6 rounded-md border px-2 text-xs font-medium hover:bg-muted disabled:opacity-40"
+          >
+            {t("accounts.save")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="group rounded-md border bg-background/60 px-2.5 py-1.5">
       <div className="flex items-start gap-2">
@@ -70,6 +150,14 @@ export function ClaimCard({ claim }: Readonly<{ claim: Claim }>) {
         </span>
         <p className="min-w-0 flex-1 text-sm leading-snug">{claim.text}</p>
         <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            type="button"
+            title={t("accounts.edit")}
+            onClick={startEdit}
+            className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+          >
+            <Pencil className="size-3.5" />
+          </button>
           {claim.confidence !== "confirmed" && (
             <button
               type="button"
@@ -141,20 +229,9 @@ export function ClaimList({
   const [category, setCategory] = useState<ClaimCategory>("stance");
   const [text, setText] = useState("");
 
-  const order: ClaimCategory[] = [
-    "redline",
-    "openq",
-    "stance",
-    "relation",
-    "leverage",
-    "goal",
-    "risk",
-    "competitor",
-    "nextmove",
-  ];
   const sorted = [...claims].sort(
     (a, b) =>
-      order.indexOf(a.category) - order.indexOf(b.category) ||
+      CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category) ||
       b.lastSupportedAt - a.lastSupportedAt
   );
 
@@ -181,7 +258,7 @@ export function ClaimList({
             onChange={(e) => setCategory(e.target.value as ClaimCategory)}
             className="h-7 shrink-0 rounded-md border bg-background px-1.5 text-xs"
           >
-            {order.map((c) => (
+            {CATEGORY_ORDER.map((c) => (
               <option key={c} value={c}>
                 {t(`accounts.cat.${c}`)}
               </option>

@@ -5,6 +5,7 @@ import { COMMITTEE_ROLES, SALES_STAGES } from "../../lib/accounts/types";
 import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
 import { ClaimList } from "./ClaimCard";
+import { InlineEdit } from "./bits";
 
 const STATUSES: Thread["status"][] = ["active", "won", "lost", "parked"];
 
@@ -30,7 +31,12 @@ export function ThreadPage({
             <ArrowLeft className="size-4" />
           </Button>
           <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-semibold leading-tight">{thread.name}</h2>
+            <InlineEdit
+              value={thread.name}
+              required
+              onCommit={(name) => acc.updateThread(thread.id, { name })}
+              className="h-8 text-lg font-semibold leading-tight"
+            />
             <div className="flex flex-wrap items-center gap-2 pt-1.5 text-xs">
               <span className="rounded bg-muted px-1.5 py-0.5">{t(`accounts.kind.${thread.kind}`)}</span>
               {thread.kind === "sales" ? (

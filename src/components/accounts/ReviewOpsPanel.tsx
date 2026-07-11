@@ -6,7 +6,9 @@ import type {
   ExtractedNewPerson,
   ExtractedOps,
 } from "../../lib/accounts/store";
-import type { Claim } from "../../lib/accounts/types";
+import type { Claim, ClaimCategory } from "../../lib/accounts/types";
+import { COMMITTEE_ROLES } from "../../lib/accounts/types";
+import { CATEGORY_ORDER } from "./ClaimCard";
 import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
 
@@ -93,13 +95,53 @@ export function ReviewOpsPanel({
                       setPersons((xs) => xs.map((x, j) => (j === i ? { ...x, on: !x.on } : x)))
                     }
                   />
-                  <div className={row.on ? "" : "opacity-40"}>
-                    <b>{row.item.name}</b>
-                    {row.item.title && <span className="text-muted-foreground">（{row.item.title}）</span>}
-                    {row.item.committeeRole && (
-                      <span className="ml-1 rounded bg-muted px-1 text-[10px]">{row.item.committeeRole}</span>
-                    )}
-                    <p className="text-xs text-muted-foreground">{row.item.reason}</p>
+                  <div className={`min-w-0 flex-1 ${row.on ? "" : "opacity-40"}`}>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        value={row.item.name}
+                        onChange={(e) =>
+                          setPersons((xs) =>
+                            xs.map((x, j) =>
+                              j === i ? { ...x, item: { ...x.item, name: e.target.value } } : x
+                            )
+                          )
+                        }
+                        className="h-6 w-32 rounded border bg-background px-1.5 text-sm font-semibold outline-none focus:ring-1 focus:ring-ring"
+                      />
+                      <input
+                        value={row.item.title}
+                        onChange={(e) =>
+                          setPersons((xs) =>
+                            xs.map((x, j) =>
+                              j === i ? { ...x, item: { ...x.item, title: e.target.value } } : x
+                            )
+                          )
+                        }
+                        placeholder={t("accounts.personTitle")}
+                        className="h-6 min-w-0 flex-1 rounded border bg-background px-1.5 text-xs outline-none focus:ring-1 focus:ring-ring"
+                      />
+                      <select
+                        value={row.item.committeeRole}
+                        onChange={(e) =>
+                          setPersons((xs) =>
+                            xs.map((x, j) =>
+                              j === i
+                                ? { ...x, item: { ...x.item, committeeRole: e.target.value } }
+                                : x
+                            )
+                          )
+                        }
+                        className="h-6 shrink-0 rounded border bg-background px-1 text-[10px]"
+                      >
+                        <option value="">—</option>
+                        {COMMITTEE_ROLES.map((r) => (
+                          <option key={r} value={r}>
+                            {t(`accounts.role.${r}`)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <p className="pt-0.5 text-xs text-muted-foreground">{row.item.reason}</p>
                   </div>
                 </div>
               ))}
@@ -121,9 +163,28 @@ export function ReviewOpsPanel({
                   />
                   <div className={`min-w-0 flex-1 ${row.on ? "" : "opacity-40"}`}>
                     <div className="flex items-center gap-1.5">
-                      <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold">
-                        {t(`accounts.cat.${row.item.category}`)}
-                      </span>
+                      <select
+                        value={row.item.category}
+                        onChange={(e) =>
+                          setClaims((xs) =>
+                            xs.map((x, j) =>
+                              j === i
+                                ? {
+                                    ...x,
+                                    item: { ...x.item, category: e.target.value as ClaimCategory },
+                                  }
+                                : x
+                            )
+                          )
+                        }
+                        className="h-6 shrink-0 rounded border bg-background px-1 text-[10px] font-semibold"
+                      >
+                        {CATEGORY_ORDER.map((c) => (
+                          <option key={c} value={c}>
+                            {t(`accounts.cat.${c}`)}
+                          </option>
+                        ))}
+                      </select>
                       {row.item.subjects.length > 0 && (
                         <span className="truncate text-[10px] text-muted-foreground">
                           @{row.item.subjects.join(", ")}

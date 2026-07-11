@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { toast } from "sonner";
 import { useStore } from "../../lib/store";
 import { useAccounts, personsOf, threadsOf, activeClaims } from "../../lib/accounts/store";
@@ -19,6 +20,7 @@ export function MeetingLinkSection() {
   const attendeeIds = useStore((s) => s.meetingAttendeeIds);
   const setMeetingLink = useStore((s) => s.setMeetingLink);
 
+  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
   const companies = acc.companies.filter((c) => !c.archived);
   const company = companies.find((c) => c.id === companyId) ?? null;
   const persons = company ? personsOf(acc, company.id) : [];
@@ -27,6 +29,13 @@ export function MeetingLinkSection() {
 
   function compose() {
     if (!company) return;
+    // Hand-written context is user work — never silently overwrite it.
+    if (useStore.getState().meetingContext.trim() && !confirmOverwrite) {
+      setConfirmOverwrite(true);
+      setTimeout(() => setConfirmOverwrite(false), 4000);
+      return;
+    }
+    setConfirmOverwrite(false);
     const claims = activeClaims(acc, company.id).filter(
       (c) => !threadId || !c.threadId || c.threadId === threadId
     );
@@ -142,8 +151,13 @@ export function MeetingLinkSection() {
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={seedTodos}>
             {t("accounts.link.seedTodos")}
           </Button>
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={compose}>
-            {t("accounts.link.compose")}
+          <Button
+            size="sm"
+            variant="outline"
+            className={`h-7 text-xs ${confirmOverwrite ? "border-amber-500/60 text-amber-600 dark:text-amber-400" : ""}`}
+            onClick={compose}
+          >
+            {confirmOverwrite ? t("accounts.link.overwrite") : t("accounts.link.compose")}
           </Button>
         </div>
       )}

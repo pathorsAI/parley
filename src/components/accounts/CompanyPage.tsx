@@ -7,7 +7,7 @@ import {
   activeClaims,
   triageClaims,
 } from "../../lib/accounts/store";
-import type { Company, ThreadKind } from "../../lib/accounts/types";
+import type { Company, CompanyAttachment, ThreadKind } from "../../lib/accounts/types";
 import { THREAD_KINDS } from "../../lib/accounts/types";
 import { listHistory, loadHistoryEntry } from "../../lib/history/history";
 import type { HistoryEntrySummary } from "../../lib/history/types";
@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { ClaimCard, ClaimList } from "./ClaimCard";
 import { FeedDataDialog } from "./FeedDataDialog";
 import { BriefingDialog } from "./BriefingDialog";
-import { StanceDot } from "./bits";
+import { AliasesEdit, ArchiveButton, InlineEdit, StanceDot } from "./bits";
 
 /**
  * The company war room (design §4.2): triage first (conflicts + open
@@ -53,6 +53,7 @@ export function CompanyPage({
   const [threadName, setThreadName] = useState("");
   const [threadKind, setThreadKind] = useState<ThreadKind>("sales");
   const [meetings, setMeetings] = useState<HistoryEntrySummary[]>([]);
+  const [viewingAttachment, setViewingAttachment] = useState<CompanyAttachment | null>(null);
 
   useEffect(() => {
     listHistory()
@@ -69,10 +70,35 @@ export function CompanyPage({
             <ArrowLeft className="size-4" />
           </Button>
           <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-semibold leading-tight">{company.name}</h2>
-            {company.note && <p className="text-sm text-muted-foreground">{company.note}</p>}
+            <InlineEdit
+              value={company.name}
+              required
+              onCommit={(name) => acc.updateCompany(company.id, { name })}
+              className="h-8 text-lg font-semibold leading-tight"
+            />
+            <InlineEdit
+              value={company.note}
+              onCommit={(note) => acc.updateCompany(company.id, { note })}
+              placeholder={t("accounts.companyNote")}
+              className="h-6 text-sm text-muted-foreground"
+            />
+            <div className="flex items-center gap-1.5 pt-0.5">
+              <span className="shrink-0 text-[10px] text-muted-foreground">
+                {t("accounts.aliases")}
+              </span>
+              <AliasesEdit
+                aliases={company.aliases}
+                onCommit={(aliases) => acc.updateCompany(company.id, { aliases })}
+              />
+            </div>
           </div>
           <div className="flex shrink-0 gap-2">
+            <ArchiveButton
+              onArchive={() => {
+                acc.archiveCompany(company.id);
+                onBack();
+              }}
+            />
             <Button size="sm" variant="outline" className="h-8" onClick={() => setFeedOpen(true)}>
               <Upload className="size-3.5" />
               {t("accounts.feed")}
@@ -266,7 +292,13 @@ export function CompanyPage({
                 className="group flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm"
               >
                 <ScrollText className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate">{a.name}</span>
+                <button
+                  type="button"
+                  onClick={() => setViewingAttachment(a)}
+                  className="min-w-0 flex-1 truncate text-left hover:underline"
+                >
+                  {a.name}
+                </button>
                 <span className="shrink-0 text-[10px] text-muted-foreground">
                   {new Date(a.createdAt).toLocaleDateString()}
                 </span>
@@ -285,6 +317,29 @@ export function CompanyPage({
 
       {feedOpen && <FeedDataDialog company={company} onClose={() => setFeedOpen(false)} />}
       {briefingOpen && <BriefingDialog company={company} onClose={() => setBriefingOpen(false)} />}
+      {viewingAttachment && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-6">
+          <button
+            type="button"
+            aria-label="close"
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setViewingAttachment(null)}
+          />
+          <div className="relative flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border bg-background p-4 shadow-xl">
+            <h3 className="pb-3 text-sm font-semibold">{viewingAttachment.name}</h3>
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-md border p-3">
+              <p className="whitespace-pre-wrap text-sm text-muted-foreground">
+                {viewingAttachment.text || t("accounts.attachment.empty")}
+              </p>
+            </div>
+            <div className="flex shrink-0 justify-end pt-3">
+              <Button size="sm" className="h-8" onClick={() => setViewingAttachment(null)}>
+                {t("common.done")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
