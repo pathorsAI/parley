@@ -22,7 +22,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::audio::AudioSource;
 use crate::transcription::{self, SttProvider, TranscribeConfig};
@@ -149,6 +149,68 @@ impl MicCoordinator {
     /// Who currently owns the mic (`None` when idle).
     pub fn owner(&self) -> Option<MicUser> {
         self.0.lock().unwrap().as_ref().map(|a| a.user)
+    }
+}
+
+/// Live tee of the meeting's raw microphone PCM, so voice typing can dictate
+/// DURING a meeting. The meeting owns the one CoreAudio input stream (see
+/// [`MicCoordinator`] — a second concurrent stream could kill its capture), so
+/// dictation can't open its own; instead the meeting's mic pipeline
+/// (`spawn_mic_prosody_tap`) forwards a clone of every chunk to the subscriber
+/// registered here, and the dictation session reads that.
+#[derive(Clone, Default)]
+pub struct MicTap(Arc<Mutex<MicTapInner>>);
+
+#[derive(Default)]
+struct MicTapInner {
+    /// The live dictation session's input. Dropped when a send fails (the
+    /// session ended) or the last source ends, which closes the session's
+    /// channel — the graceful STT-flush path.
+    subscriber: Option<UnboundedSender<Vec<i16>>>,
+    /// Live meeting mic pipelines currently forwarding (0 or 1 in practice).
+    sources: u32,
+}
+
+impl MicTap {
+    /// A meeting mic pipeline came up and will forward chunks.
+    pub fn source_started(&self) {
+        self.0.lock().unwrap().sources += 1;
+    }
+
+    /// A meeting mic pipeline ended. When it was the last one, drop the
+    /// subscriber so a tapped dictation's input closes now (flushing its final
+    /// tokens) instead of parking silently on a channel nobody feeds.
+    pub fn source_ended(&self) {
+        let mut inner = self.0.lock().unwrap();
+        inner.sources = inner.sources.saturating_sub(1);
+        if inner.sources == 0 {
+            inner.subscriber = None;
+        }
+    }
+
+    /// Register the dictation session's sender: a clone of every meeting mic
+    /// chunk goes to it from now on. Replaces any previous subscriber (whose
+    /// channel thereby closes — a superseded session must stop receiving).
+    /// Errors when no meeting mic pipeline is live to feed it (the meeting
+    /// claimed the mic but its capture failed to start).
+    pub fn subscribe(&self, tx: UnboundedSender<Vec<i16>>) -> Result<(), String> {
+        let mut inner = self.0.lock().unwrap();
+        if inner.sources == 0 {
+            return Err("the meeting's microphone is not capturing".into());
+        }
+        inner.subscriber = Some(tx);
+        Ok(())
+    }
+
+    /// Forward one meeting mic chunk to the subscriber, if any. A failed send
+    /// means the dictation session is gone — unregister it.
+    pub fn forward(&self, chunk: &[i16]) {
+        let mut inner = self.0.lock().unwrap();
+        if let Some(sub) = inner.subscriber.as_ref() {
+            if sub.send(chunk.to_vec()).is_err() {
+                inner.subscriber = None;
+            }
+        }
     }
 }
 
@@ -312,4 +374,67 @@ pub fn run_metered_session(
         // finalize its successor's overlay).
         let _ = app.emit("stt://closed", serde_json::json!({ "source": label }));
     })
+}
+
+#[cfg(test)]
+mod mic_tap_tests {
+    use super::MicTap;
+
+    #[test]
+    fn subscribe_requires_a_live_source() {
+        let tap = MicTap::default();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        assert!(tap.subscribe(tx).is_err());
+    }
+
+    #[test]
+    fn forwards_chunks_to_the_subscriber() {
+        let tap = MicTap::default();
+        tap.source_started();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        tap.subscribe(tx).unwrap();
+        tap.forward(&[1, 2, 3]);
+        assert_eq!(rx.try_recv().unwrap(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn dropped_receiver_unregisters_on_next_forward() {
+        let tap = MicTap::default();
+        tap.source_started();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        tap.subscribe(tx).unwrap();
+        drop(rx);
+        tap.forward(&[1]); // failed send clears the slot
+        assert!(tap.0.lock().unwrap().subscriber.is_none());
+    }
+
+    #[test]
+    fn last_source_ending_closes_the_subscriber() {
+        let tap = MicTap::default();
+        tap.source_started();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        tap.subscribe(tx).unwrap();
+        tap.source_ended();
+        // The sender was dropped, so the dictation session's input is closed.
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn resubscribing_closes_the_previous_subscriber() {
+        let tap = MicTap::default();
+        tap.source_started();
+        let (tx1, mut rx1) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        tap.subscribe(tx1).unwrap();
+        tap.subscribe(tx2).unwrap();
+        tap.forward(&[7]);
+        assert!(matches!(
+            rx1.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+        ));
+        assert_eq!(rx2.try_recv().unwrap(), vec![7]);
+    }
 }

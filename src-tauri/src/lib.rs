@@ -19,7 +19,7 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
-use capture::MicCoordinator;
+use capture::{MicCoordinator, MicTap};
 use commands::MeetingState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -73,6 +73,9 @@ pub fn run() {
         // Single source of truth for "who owns the mic" (meeting / mic test /
         // voice typing) — guarantees at most one live capture session.
         .manage(MicCoordinator::default())
+        // Tee of the live meeting's raw mic PCM so voice typing can dictate
+        // during a meeting without opening a second input stream (see MicTap).
+        .manage(MicTap::default())
         .manage(MeetingState::default())
         // Singleton guard for the voice-typing session task (abort-on-restart
         // + bounded post-release flush) — see voice_typing::VoiceTypingState.
