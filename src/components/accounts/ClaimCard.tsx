@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Check, ChevronDown, ChevronRight, Pencil, X } from "lucide-react";
+// (icons shared by the grouped list below)
 import { useAccounts } from "../../lib/accounts/store";
 import type { Claim, ClaimCategory } from "../../lib/accounts/types";
 import { useI18n } from "../../i18n";
@@ -17,6 +18,19 @@ const CAT_CLASS: Record<ClaimCategory, string> = {
   competitor: "bg-rose-500/15 text-rose-700 dark:text-rose-300",
   nextmove: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
   openq: "bg-orange-500/15 text-orange-700 dark:text-orange-300",
+};
+
+/** Category → group-header dot color. */
+const CAT_DOT: Record<ClaimCategory, string> = {
+  stance: "bg-sky-500",
+  relation: "bg-violet-500",
+  leverage: "bg-emerald-500",
+  goal: "bg-teal-500",
+  risk: "bg-amber-500",
+  redline: "bg-red-500",
+  competitor: "bg-rose-500",
+  nextmove: "bg-indigo-500",
+  openq: "bg-orange-500",
 };
 
 /** Display/edit order for the category pickers. */
@@ -42,7 +56,14 @@ function freshness(ms: number): string {
  * EDIT (text + category; an edit is a user assertion), confirm, mark wrong
  * (design §4.3).
  */
-export function ClaimCard({ claim }: Readonly<{ claim: Claim }>) {
+export function ClaimCard({
+  claim,
+  row = false,
+}: Readonly<{
+  claim: Claim;
+  /** Row mode: rendered inside a category group — no own border, no chip. */
+  row?: boolean;
+}>) {
   const { t } = useI18n();
   const confirmClaim = useAccounts((s) => s.confirmClaim);
   const markClaimWrong = useAccounts((s) => s.markClaimWrong);
@@ -95,7 +116,13 @@ export function ClaimCard({ claim }: Readonly<{ claim: Claim }>) {
 
   if (editing) {
     return (
-      <div className="rounded-md border border-ring/50 bg-background/60 px-2.5 py-2">
+      <div
+        className={
+          row
+            ? "border-l-2 border-ring/60 bg-muted/30 px-2.5 py-2"
+            : "rounded-md border border-ring/50 bg-background/60 px-2.5 py-2"
+        }
+      >
         <div className="flex items-center gap-1.5">
           <select
             value={draftCat}
@@ -141,13 +168,21 @@ export function ClaimCard({ claim }: Readonly<{ claim: Claim }>) {
   }
 
   return (
-    <div className="group rounded-md border bg-background/60 px-2.5 py-1.5">
+    <div
+      className={
+        row
+          ? "group px-2.5 py-2 transition-colors hover:bg-muted/40"
+          : "group rounded-md border bg-background/60 px-2.5 py-1.5"
+      }
+    >
       <div className="flex items-start gap-2">
-        <span
-          className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${CAT_CLASS[claim.category]}`}
-        >
-          {t(`accounts.cat.${claim.category}`)}
-        </span>
+        {!row && (
+          <span
+            className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${CAT_CLASS[claim.category]}`}
+          >
+            {t(`accounts.cat.${claim.category}`)}
+          </span>
+        )}
         <p className="min-w-0 flex-1 text-sm leading-snug">{claim.text}</p>
         <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
           <button
@@ -216,7 +251,12 @@ export function ClaimCard({ claim }: Readonly<{ claim: Claim }>) {
   );
 }
 
-/** Grouped claim list (category order) + the manual add row. */
+/**
+ * Claims grouped the way knowledge tools present dense info (Notion/Linear
+ * grouped lists): one collapsible section per category — colored dot, label,
+ * count — with light divided rows inside, instead of a flat wall of uniform
+ * cards. The category chip lives on the group header, not on every row.
+ */
 export function ClaimList({
   claims,
   onAdd,
@@ -228,21 +268,48 @@ export function ClaimList({
   const { t } = useI18n();
   const [category, setCategory] = useState<ClaimCategory>("stance");
   const [text, setText] = useState("");
+  const [collapsed, setCollapsed] = useState<Partial<Record<ClaimCategory, boolean>>>({});
 
-  const sorted = [...claims].sort(
-    (a, b) =>
-      CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category) ||
-      b.lastSupportedAt - a.lastSupportedAt
-  );
+  const groups = CATEGORY_ORDER.map((cat) => ({
+    cat,
+    items: claims
+      .filter((c) => c.category === cat)
+      .sort((a, b) => b.lastSupportedAt - a.lastSupportedAt),
+  })).filter((g) => g.items.length > 0);
 
   return (
-    <div className="flex flex-col gap-1.5">
-      {sorted.length === 0 && (
+    <div className="flex flex-col gap-2.5">
+      {groups.length === 0 && (
         <p className="py-2 text-center text-xs text-muted-foreground">{t("accounts.noClaims")}</p>
       )}
-      {sorted.map((c) => (
-        <ClaimCard key={c.id} claim={c} />
-      ))}
+      {groups.map((g) => {
+        const isCollapsed = !!collapsed[g.cat];
+        return (
+          <section key={g.cat}>
+            <button
+              type="button"
+              onClick={() => setCollapsed((c) => ({ ...c, [g.cat]: !c[g.cat] }))}
+              className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left hover:bg-muted/40"
+            >
+              {isCollapsed ? (
+                <ChevronRight className="size-3 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="size-3 text-muted-foreground" />
+              )}
+              <span className={`size-2 rounded-full ${CAT_DOT[g.cat]}`} />
+              <span className="text-xs font-semibold">{t(`accounts.cat.${g.cat}`)}</span>
+              <span className="text-[10px] tabular-nums text-muted-foreground">{g.items.length}</span>
+            </button>
+            {!isCollapsed && (
+              <div className="mt-1 divide-y divide-border/60 rounded-md border bg-background/60">
+                {g.items.map((c) => (
+                  <ClaimCard key={c.id} claim={c} row />
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })}
       {onAdd && (
         <form
           className="mt-1 flex items-center gap-1.5"

@@ -13,6 +13,30 @@ export const zhTW = {
   // ── Accounts (mini-CRM) ──
   "accounts.title": "客戶",
   "accounts.save": "儲存",
+  "accounts.stageGuide.title": "階段指南",
+  "accounts.stageGuide.goal": "目標",
+  "accounts.stageGuide.collect": "這階段要收集",
+  "accounts.stageGuide.exit": "退場條件",
+  "accounts.stageGuide.discovery.goal": "用 SPIN 把痛挖深、挖到可量化，確認值得往下走",
+  "accounts.stageGuide.discovery.collect":
+    "S 現況：規模、現行做法與工具\nP 痛點：卡在哪、誰最痛\nI 影響：把痛量化成錢／時間／風險\nN 價值：讓對方自己說出理想結果\n預算訊號與資金來源\n決策鏈：誰拍板、誰把關\n時程與急迫性（compelling event）\n現有方案與競品",
+  "accounts.stageGuide.discovery.exit": "拿到具體、有日期的下一步承諾（demo／引薦拍板者）",
+  "accounts.stageGuide.demo.goal": "把每個功能綁回已確認的痛點，讓對方看見自己的場景",
+  "accounts.stageGuide.demo.collect":
+    "各痛點對應解法的反應\n新冒出的異議與技術疑慮\n整合／資安／部署需求\n在場每個角色的態度變化",
+  "accounts.stageGuide.demo.exit": "取得 POC／試用承諾，或進入報價的明確邀請",
+  "accounts.stageGuide.proposal.goal": "在價值框架下報價，避免掉進純比價",
+  "accounts.stageGuide.proposal.collect":
+    "預算範圍與資金來源確認\n採購流程、補助與簽核鏈\n競品報價結構與比較基準\n驗收與付款條件的期待",
+  "accounts.stageGuide.proposal.exit": "報價送出後，約定明確的回覆時點與窗口",
+  "accounts.stageGuide.negotiation.goal": "每個讓步都換回對等條件，守住底線",
+  "accounts.stageGuide.negotiation.collect":
+    "對方真正的卡點與優先順序\n可交換的變數（價格以外的條款）\n對方的時間壓力與替代方案\n底線與紅線訊號",
+  "accounts.stageGuide.negotiation.exit": "主要條款達成共識，約定簽約時程",
+  "accounts.stageGuide.closing.goal": "移除簽約前最後障礙，確保啟動順利",
+  "accounts.stageGuide.closing.collect":
+    "合約、法務與資安審查需求\n導入時程與雙方分工\n驗收標準與付款節點\n啟動後的成功指標",
+  "accounts.stageGuide.closing.exit": "確定簽約日／啟動日與雙方負責人",
   "accounts.cancel": "取消",
   "accounts.edit": "編輯",
   "accounts.archive": "封存",
@@ -116,7 +140,7 @@ export const zhTW = {
   "accounts.link.none": "不連結",
   "accounts.link.compose": "組出會前 brief",
   "accounts.link.composed": "已寫入會前 context",
-  "accounts.link.seedTodos": "帶入開放問題",
+  "accounts.link.seedTodos": "帶入階段清單＋開放問題",
   "accounts.link.seeded": "已加入 {n} 項待辦",
   "accounts.postmeeting.run": "會後整理",
   "accounts.brief.company": "公司",
@@ -978,6 +1002,30 @@ export const en = {
   // ── Accounts (mini-CRM) ──
   "accounts.title": "Accounts",
   "accounts.save": "Save",
+  "accounts.stageGuide.title": "Stage guide",
+  "accounts.stageGuide.goal": "Goal",
+  "accounts.stageGuide.collect": "To collect this stage",
+  "accounts.stageGuide.exit": "Exit criteria",
+  "accounts.stageGuide.discovery.goal": "Use SPIN to dig the pain deep and quantifiable — confirm it's worth pursuing",
+  "accounts.stageGuide.discovery.collect":
+    "S — Situation: scale, current process and tools\nP — Problem: where it hurts, who hurts most\nI — Implication: quantify the pain in money/time/risk\nN — Need-payoff: let THEM articulate the ideal outcome\nBudget signals and funding source\nDecision chain: who signs, who gates\nTimeline and urgency (compelling event)\nIncumbent solutions and competitors",
+  "accounts.stageGuide.discovery.exit": "A concrete, dated next step (demo / intro to the economic buyer)",
+  "accounts.stageGuide.demo.goal": "Tie every feature back to a confirmed pain — let them see their own scenario",
+  "accounts.stageGuide.demo.collect":
+    "Reaction to each pain→solution mapping\nNew objections and technical doubts\nIntegration / security / deployment needs\nEach attendee's attitude shift",
+  "accounts.stageGuide.demo.exit": "A POC/trial commitment, or an explicit invitation to quote",
+  "accounts.stageGuide.proposal.goal": "Price inside a value frame — avoid a pure price war",
+  "accounts.stageGuide.proposal.collect":
+    "Budget range and funding confirmation\nProcurement process, subsidies, approval chain\nCompetitor pricing structure and comparison basis\nAcceptance and payment-term expectations",
+  "accounts.stageGuide.proposal.exit": "A committed review date and owner after the quote lands",
+  "accounts.stageGuide.negotiation.goal": "Trade every concession for something equal — hold the floor",
+  "accounts.stageGuide.negotiation.collect":
+    "Their real sticking points and priorities\nTradable variables beyond price\nTheir time pressure and alternatives\nFloor and red-line signals",
+  "accounts.stageGuide.negotiation.exit": "Consensus on key terms and a signing timeline",
+  "accounts.stageGuide.closing.goal": "Clear the last pre-signature obstacles, secure the launch",
+  "accounts.stageGuide.closing.collect":
+    "Contract, legal and security review needs\nOnboarding timeline and ownership split\nAcceptance criteria and payment milestones\nPost-launch success metrics",
+  "accounts.stageGuide.closing.exit": "A signing/kickoff date with owners on both sides",
   "accounts.cancel": "Cancel",
   "accounts.edit": "Edit",
   "accounts.archive": "Archive",
@@ -1081,7 +1129,7 @@ export const en = {
   "accounts.link.none": "None",
   "accounts.link.compose": "Compose brief",
   "accounts.link.composed": "Brief written to meeting context",
-  "accounts.link.seedTodos": "Seed open questions",
+  "accounts.link.seedTodos": "Seed stage checklist & open questions",
   "accounts.link.seeded": "Added {n} todos",
   "accounts.postmeeting.run": "Post-meeting review",
   "accounts.brief.company": "Company",

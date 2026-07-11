@@ -54,13 +54,24 @@ export function MeetingLinkSection() {
     if (!company) return;
     const state = useStore.getState();
     const existing = new Set(state.todos.map((x) => x.text));
-    const openqs = activeClaims(acc, company.id).filter(
-      (c) => c.category === "openq" && (!threadId || !c.threadId || c.threadId === threadId)
+    // Stage checklist first (the meeting's frame), then this deal's open
+    // questions — both deduped against what's already on the list.
+    const items: string[] = [];
+    if (thread?.kind === "sales" && thread.stage) {
+      items.push(...t(`accounts.stageGuide.${thread.stage}.collect`).split("\n"));
+    }
+    items.push(
+      ...activeClaims(acc, company.id)
+        .filter(
+          (c) => c.category === "openq" && (!threadId || !c.threadId || c.threadId === threadId)
+        )
+        .map((c) => c.text)
     );
     let n = 0;
-    for (const q of openqs) {
-      if (existing.has(q.text)) continue;
-      state.addTodo(q.text);
+    for (const text of items) {
+      if (!text.trim() || existing.has(text)) continue;
+      existing.add(text);
+      state.addTodo(text);
       n++;
     }
     toast.success(t("accounts.link.seeded", { n }));
