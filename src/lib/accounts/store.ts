@@ -499,11 +499,28 @@ export function initAccounts(): void {
       if (unchanged) return;
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => {
+        saveTimer = null;
         const json = JSON.stringify(dataOf(useAccounts.getState()));
         writeFile(json).catch((e) =>
           log.error("accounts: save failed", { error: String(e) })
         );
       }, SAVE_DEBOUNCE_MS);
+    });
+
+    // A pending debounce must not die with the window/webview — flush it when
+    // the page unloads or is hidden (reload in dev, app quit in Tauri).
+    const flush = () => {
+      if (!saveTimer) return;
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      const json = JSON.stringify(dataOf(useAccounts.getState()));
+      void writeFile(json).catch((e) =>
+        log.error("accounts: flush save failed", { error: String(e) })
+      );
+    };
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flush();
     });
   })();
 }
