@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { FileText, Plus, ScrollText, Sparkles, Upload, X } from "lucide-react";
+import { FileAudio, FileText, Plus, ScrollText, Sparkles, Upload, X } from "lucide-react";
 import { useAccounts, threadsOf, activeClaims, triageClaims } from "../../lib/accounts/store";
 import type { Company, CompanyAttachment, ThreadKind } from "../../lib/accounts/types";
 import { THREAD_KINDS } from "../../lib/accounts/types";
 import { listHistory, loadHistoryEntry } from "../../lib/history/history";
 import type { HistoryEntrySummary } from "../../lib/history/types";
-import { formatClock } from "../../lib/store";
+import { formatClock, useStore } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,25 @@ export function CompanyPage({
       .catch((e) => log.warn("accounts: list meetings failed", { error: String(e) }));
   }, [company.id]);
 
+  // Import a recording AS this company's meeting: pre-link the meeting, then
+  // hand off to the regular ingest wizard (which lives at the app root). The
+  // saved entry carries companyId, so it lands in this company's meeting list
+  // and the post-meeting review can file its intel here.
+  async function importRecording() {
+    const { settings, setMeetingLink, exitAccounts, openIngestWizard } = useStore.getState();
+    setMeetingLink({ companyId: company.id, threadId: null, attendeeIds: [] });
+    try {
+      const { pickRecordingFile } = await import("../../lib/replay/ingest");
+      const audioPath = await pickRecordingFile(settings);
+      if (audioPath) {
+        exitAccounts();
+        openIngestWizard(audioPath);
+      }
+    } catch (e) {
+      log.error("accounts: import recording failed", { error: String(e) });
+    }
+  }
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex max-w-3xl flex-col gap-5 px-6 py-4">
@@ -78,6 +97,15 @@ export function CompanyPage({
           </div>
           <div className="flex shrink-0 gap-2">
             <ArchiveButton onArchive={() => acc.archiveCompany(company.id)} />
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8"
+              onClick={() => void importRecording()}
+            >
+              <FileAudio className="size-3.5" />
+              {t("accounts.importRecording")}
+            </Button>
             <Button size="sm" variant="outline" className="h-8" onClick={() => setFeedOpen(true)}>
               <Upload className="size-3.5" />
               {t("accounts.feed")}
