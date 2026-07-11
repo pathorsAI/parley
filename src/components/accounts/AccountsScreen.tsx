@@ -4,7 +4,6 @@ import { useAccounts, personsOf, threadsOf, triageClaims } from "../../lib/accou
 import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { CompanyPage } from "./CompanyPage";
 import { PersonPage } from "./PersonPage";
 import { ThreadPage } from "./ThreadPage";
@@ -57,7 +56,7 @@ export function AccountsScreen() {
   }
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
+    <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-5">
         <h2 className="flex items-center gap-2 text-lg font-semibold">
           <Building2 className="size-5 text-muted-foreground" />
@@ -126,6 +125,6 @@ export function AccountsScreen() {
           </Button>
         </form>
       </div>
-    </ScrollArea>
+    </div>
   );
 }

@@ -10,7 +10,6 @@ import type { Company } from "../../lib/accounts/types";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 
 /**
  * The generated battle briefing (design §4.2): prose is an OUTPUT of the claim
@@ -68,12 +67,12 @@ export function BriefingDialog({
             {t("accounts.briefing.copy")}
           </Button>
         </div>
-        <ScrollArea className="min-h-0 flex-1 rounded-md border">
+        <div className="min-h-0 flex-1 overflow-y-auto rounded-md border">
           <div className="prose prose-sm dark:prose-invert max-w-none p-3">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
           </div>
-        </ScrollArea>
-        <div className="flex justify-end pt-3">
+        </div>
+        <div className="flex shrink-0 justify-end pt-3">
           <Button size="sm" className="h-8" onClick={onClose}>
             {t("common.done")}
           </Button>

@@ -9,7 +9,6 @@ import type {
 import type { Claim } from "../../lib/accounts/types";
 import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 
 /**
  * The diff-review surface (design §5.4): every proposed op rendered as a row
@@ -71,7 +70,9 @@ export function ReviewOpsPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <p className="pb-2 text-xs text-muted-foreground">{t("accounts.review.hint")}</p>
-      <ScrollArea className="min-h-0 flex-1 rounded-md border">
+      {/* Plain overflow scroller: Radix ScrollArea doesn't reliably shrink in a
+          max-height dialog, letting a long ops list push the action row away. */}
+      <div className="min-h-0 flex-1 overflow-y-auto rounded-md border">
         <div className="flex flex-col gap-3 p-2.5">
           {empty && (
             <p className="py-6 text-center text-sm text-muted-foreground">
@@ -194,8 +195,8 @@ export function ReviewOpsPanel({
             </section>
           )}
         </div>
-      </ScrollArea>
-      <div className="flex justify-end gap-2 pt-3">
+      </div>
+      <div className="flex shrink-0 justify-end gap-2 pt-3">
         <Button size="sm" variant="outline" className="h-8" onClick={onCancel}>
           {t("accounts.back")}
         </Button>

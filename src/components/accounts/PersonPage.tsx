@@ -4,7 +4,6 @@ import type { Person } from "../../lib/accounts/types";
 import { COMMITTEE_ROLES } from "../../lib/accounts/types";
 import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { ClaimList } from "./ClaimCard";
 import { StanceDot } from "./bits";
 
@@ -21,7 +20,7 @@ export function PersonPage({
     .filter(Boolean);
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
+    <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex max-w-3xl flex-col gap-5 px-6 py-4">
         <div className="flex items-start gap-3">
           <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={onBack}>
@@ -84,6 +83,6 @@ export function PersonPage({
           }
         />
       </div>
-    </ScrollArea>
+    </div>
   );
 }

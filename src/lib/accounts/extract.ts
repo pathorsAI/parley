@@ -30,7 +30,7 @@ const CATEGORY_ENUM = z.enum([
 const opsSchema = z.object({
   newPersons: z.array(
     z.object({
-      name: z.string().describe("the person's name as mentioned"),
+      name: z.string().describe("the person's name or clear alias as mentioned"),
       title: z.string().describe("title/department if known, else empty string"),
       committeeRole: z
         .string()
@@ -67,6 +67,9 @@ const SYSTEM =
   "Read the source material and propose operations: NEW claims for genuinely new intel, " +
   "SUPPORT when the source re-confirms an existing claim, SUPERSEDE when it corrects one, " +
   "CONFLICT when it contradicts one and both versions are plausible. " +
+  "newPersons: enumerate EVERY distinct person who speaks in or is mentioned by the source and is " +
+  "NOT already in the known-people list — colleagues, bosses, decision makers, third parties. Do not " +
+  "stop at the most prominent one; a transcript naming four new people yields four entries. " +
   "Rules: one claim = one assertion; ground every claim in the source (no speculation); " +
   "professional judgments only — NEVER extract sensitive personal data (health, politics, " +
   "private life); prefer fewer, sharper claims over exhaustive noise; claims are written in " +

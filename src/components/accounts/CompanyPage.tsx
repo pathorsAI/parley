@@ -15,7 +15,6 @@ import { formatClock } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { ClaimCard, ClaimList } from "./ClaimCard";
 import { FeedDataDialog } from "./FeedDataDialog";
 import { BriefingDialog } from "./BriefingDialog";
@@ -61,7 +60,7 @@ export function CompanyPage({
   }, [company.id]);
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
+    <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex max-w-3xl flex-col gap-5 px-6 py-4">
         {/* Header */}
         <div className="flex items-start gap-3">
@@ -279,7 +278,7 @@ export function CompanyPage({
 
       {feedOpen && <FeedDataDialog company={company} onClose={() => setFeedOpen(false)} />}
       {briefingOpen && <BriefingDialog company={company} onClose={() => setBriefingOpen(false)} />}
-    </ScrollArea>
+    </div>
   );
 }
 

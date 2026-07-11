@@ -114,7 +114,9 @@ export function FeedDataDialog({
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder={t("accounts.feed.paste")}
-              className="min-h-56 flex-1 text-sm"
+              // Fixed-size + internal scroll: the primitive's field-sizing-content
+              // would grow with a pasted hour-long transcript and burst the dialog.
+              className="h-64 min-h-0 flex-1 resize-none overflow-y-auto text-sm [field-sizing:fixed]"
             />
             {error && (
               <p className="pt-2 text-xs text-red-600">{t("accounts.feed.error", { error })}</p>
