@@ -100,7 +100,7 @@ export async function generateActionItems(opts: {
   let emittedCount = -1;
   const { object, usage } = await streamObjectResilient({
     settings,
-    kind: "eval",
+    workload: "deep",
     schema,
     system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: `${ctx}Findings:\n${findingsList}\n\nFull transcript:\n${transcript}`,
@@ -112,7 +112,7 @@ export async function generateActionItems(opts: {
       onPartial(placed);
     },
   });
-  void recordLlmUsage(settings, "eval", "eval", usage);
+  void recordLlmUsage(settings, "deep", "action-items", usage);
 
   return placeItems(object.actions);
 }

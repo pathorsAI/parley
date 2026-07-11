@@ -145,7 +145,7 @@ function BriefSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
   const brief = useStore((s) => s.brief);
   const status = useStore((s) => s.briefStatus);
   const saved = useStore((s) => !!s.loadedHistoryId);
-  const keyMissing = useStore((s) => !hasProviderKey(s.settings));
+  const keyMissing = useStore((s) => !hasProviderKey(s.settings, "deep"));
 
   return (
     <div>
@@ -257,7 +257,7 @@ function IntelSection() {
             className="h-7 w-7"
             disabled={running}
             title={t("board.refresh")}
-            onClick={() => void runIntelExtraction(meetingType)}
+            onClick={() => void runIntelExtraction(meetingType, "deep")}
           >
             {running ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
           </Button>

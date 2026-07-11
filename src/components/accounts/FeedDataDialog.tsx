@@ -34,7 +34,7 @@ export function FeedDataDialog({
 
   async function run() {
     const state = useStore.getState();
-    if (!hasProviderKey(state.settings) || !text.trim()) return;
+    if (!hasProviderKey(state.settings, "deep") || !text.trim()) return;
     setBusy(true);
     setError(null);
     try {

@@ -33,8 +33,8 @@ export async function askAboutMeeting(opts: {
     profileContext(settings) +
     (meetingContext?.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "");
 
-  const provider = settings.provider;
-  const model = settings.models[settings.provider].ask;
+  const provider = settings.llmProviders.realtime;
+  const model = settings.models[provider].realtime;
   log.info("ai.ask: start", {
     provider,
     model,
@@ -45,8 +45,8 @@ export async function askAboutMeeting(opts: {
   let full = "";
   try {
     const result = streamText({
-      model: getModel(settings, "ask"),
-      providerOptions: getProviderOptions(settings, "ask"),
+      model: getModel(settings, "realtime"),
+      providerOptions: getProviderOptions(settings, "realtime"),
       system: SYSTEM,
       abortSignal: signal,
       prompt: `${contextLine}Transcript so far:\n${transcript}\n\nQuestion: ${question}`,
@@ -67,7 +67,7 @@ export async function askAboutMeeting(opts: {
     // Usage resolves once the stream finishes; log it without blocking the return.
     void (async () => {
       try {
-        await recordLlmUsage(settings, "ask", "ask", await result.usage);
+        await recordLlmUsage(settings, "realtime", "ask", await result.usage);
       } catch {
         /* best-effort logging */
       }

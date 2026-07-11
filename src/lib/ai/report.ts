@@ -48,15 +48,15 @@ export async function generatePostMeetingReport(opts: {
     (checklist ? `Agenda / checklist:\n${checklist}\n\n` : "") +
     `Full transcript:\n${transcript || "(no speech was captured)"}`;
 
-  const provider = settings.provider;
-  const model = settings.models[settings.provider].ask;
+  const provider = settings.llmProviders.deep;
+  const model = settings.models[provider].deep;
   log.info("ai.report: start", { provider, model, segments: segments.length });
 
   let full = "";
   try {
     const result = streamText({
-      model: getModel(settings, "ask"),
-      providerOptions: getProviderOptions(settings, "ask"),
+      model: getModel(settings, "deep"),
+      providerOptions: getProviderOptions(settings, "deep"),
       system: SYSTEM + outputLanguageInstruction(settings),
       abortSignal: signal,
       prompt,
@@ -68,7 +68,7 @@ export async function generatePostMeetingReport(opts: {
     }
     void (async () => {
       try {
-        await recordLlmUsage(settings, "ask", "report", await result.usage);
+        await recordLlmUsage(settings, "deep", "report", await result.usage);
       } catch {
         /* best-effort usage logging */
       }

@@ -62,7 +62,7 @@ export function useReplayAnalysis(): void {
     if (analysisStartedFor.current === replayId) return;
 
     const { settings, segments } = useStore.getState();
-    if (!hasProviderKey(settings)) return;
+    if (!hasProviderKey(settings, "deep")) return;
     if (!segments.some((s) => s.isFinal && s.text.trim())) return;
 
     analysisStartedFor.current = replayId;
@@ -98,7 +98,7 @@ export function useReplayAnalysis(): void {
     if (deliveryStartedFor.current === replayId) return;
 
     const { settings, segments } = useStore.getState();
-    if (!hasProviderKey(settings)) return;
+    if (!hasProviderKey(settings, "deep")) return;
     if (!segments.some((s) => s.isFinal && s.text.trim())) return;
 
     deliveryStartedFor.current = replayId;
@@ -135,7 +135,7 @@ export function useReplayAnalysis(): void {
     const key = `${replayId}:${studyMeetingType}`;
     if (intelStartedFor.current === key) return;
     intelStartedFor.current = key;
-    runIntelExtraction(studyMeetingType).catch((e) =>
+    runIntelExtraction(studyMeetingType, "deep").catch((e) =>
       log.warn("study: intel run failed", { error: String(e) })
     );
   }, [replayId, studyMeetingType, intelType, intelStatus]);

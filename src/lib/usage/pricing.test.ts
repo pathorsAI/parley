@@ -130,7 +130,7 @@ describe("hasLlmPrice", () => {
     const { PROVIDERS } = await import("../ai/providers");
     for (const p of PROVIDERS) {
       if (p.requiresKey === false) continue; // local Ollama is intentionally free
-      for (const id of [p.defaults.ask, p.defaults.eval]) {
+      for (const id of [p.defaults.realtime, p.defaults.deep]) {
         expect(hasLlmPrice(p.id, id), `${p.id} default "${id}" must be priced`).toBe(true);
       }
     }

@@ -35,7 +35,7 @@ export function TodosPanel() {
   async function aiUpdate() {
     const state = useStore.getState();
     const { settings, todos: cur, speakerNames, markTodosDone } = state;
-    if (!hasProviderKey(settings) || cur.length === 0) return;
+    if (!hasProviderKey(settings, "realtime") || cur.length === 0) return;
     // TODO agenda auto-check is LIVE-only — use the full live transcript.
     const { segments } = state;
     setChecking(true);

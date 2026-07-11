@@ -14,7 +14,7 @@ import type { TimelineEvent } from "../../lib/types";
  */
 export function FindingSolutionCard({ finding }: Readonly<{ finding: TimelineEvent }>) {
   const entry = useStore((s) => s.findingSolutions[finding.id]);
-  const keyMissing = useStore((s) => !hasProviderKey(s.settings));
+  const keyMissing = useStore((s) => !hasProviderKey(s.settings, "realtime"));
   const status = entry?.status ?? "idle";
 
   // Generate on first open and whenever the open finding changes.

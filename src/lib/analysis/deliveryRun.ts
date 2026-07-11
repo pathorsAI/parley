@@ -20,7 +20,7 @@ export async function runDeliveryAnalysis(): Promise<void> {
     state.appMode === "replay"
       ? state.segments.filter((s) => !isTrimmed(s, state.replayTrim))
       : state.segments;
-  if (!hasProviderKey(settings)) return;
+  if (!hasProviderKey(settings, "deep")) return;
   if (!segments.some((s) => s.isFinal && s.text.trim())) return;
   if (state.deliveryStatus === "running") return;
 

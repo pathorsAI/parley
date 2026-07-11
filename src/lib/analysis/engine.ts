@@ -35,7 +35,9 @@ function analysisCacheKey(
   meetingContext: string,
   names: Record<string, string>
 ): string {
-  const model = `${settings.provider}:${settings.models[settings.provider]?.eval ?? ""}:${settings.reasoningEffort?.eval ?? ""}`;
+  // Replay analyses ride the deep lane (see runAnalysis) — key the cache on it.
+  const deepProvider = settings.llmProviders.deep;
+  const model = `${deepProvider}:${settings.models[deepProvider]?.deep ?? ""}:${settings.reasoningEffort?.deep ?? ""}`;
   const segSig = segments
     .filter((s) => s.isFinal && s.text.trim())
     .map((s) => `${s.id}|${s.speaker}|${s.startMs}|${s.endMs}|${s.text}`)
@@ -118,8 +120,10 @@ export async function runAnalysis(opts?: {
   const segments =
     mode === "replay" ? state.segments.filter((s) => !isTrimmed(s, state.replayTrim)) : state.segments;
 
+  const workload = mode === "replay" ? ("deep" as const) : ("realtime" as const);
+
   if (analysisBusy) return;
-  if (!hasProviderKey(settings)) return;
+  if (!hasProviderKey(settings, workload)) return;
   if (!segments.some((s) => s.isFinal && s.text.trim())) return;
 
   // REPLAY: reuse a cached analysis for the exact same recording + template +
@@ -167,7 +171,7 @@ export async function runAnalysis(opts?: {
     console.error("[analysis]", err);
     const { describeAiError, hostedLlmErrorCode } = await import("../ai/errors");
     const { translate } = await import("../../i18n/messages");
-    const code = hostedLlmErrorCode(err, settings.provider);
+    const code = hostedLlmErrorCode(err, settings.llmProviders[workload]);
     const lang = useStore.getState().settings.language;
     const message =
       code === "credits"
@@ -256,7 +260,7 @@ export function useAnalysisEngine() {
       if (
         now >= lastRun.current.todos + 45_000 &&
         !todoBusy.current &&
-        hasProviderKey(settings) &&
+        hasProviderKey(settings, "realtime") &&
         todos.some((t) => !t.done)
       ) {
         lastRun.current.todos = now;
@@ -278,7 +282,7 @@ export function useAnalysisEngine() {
       if (
         settings.delivery.tone &&
         !toneBusy.current &&
-        hasProviderKey(settings) &&
+        hasProviderKey(settings, "realtime") &&
         now >= lastRun.current.tone + TONE_COOLDOWN_MS &&
         maxEndMs > lastToneEndMs.current + TONE_MIN_NEW_SPEECH_MS
       ) {

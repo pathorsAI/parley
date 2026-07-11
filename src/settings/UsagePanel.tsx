@@ -189,12 +189,14 @@ function QuotaBar({
 function HostedQuotaMeter() {
   const { t } = useI18n();
   const cloudAuth = useStore((s) => s.cloudAuth);
-  const llmProvider = useStore((s) => s.settings.provider);
+  const llmProviders = useStore((s) => s.settings.llmProviders);
   const sttProvider = useStore((s) => s.settings.transcriptionProvider);
   const [quota, setQuota] = useState<HostedQuota | null>(null);
 
   // The hosted allowance is spent whenever EITHER provider is "parley".
-  const show = !!cloudAuth && (llmProvider === "parley" || sttProvider === "parley");
+  const show =
+    !!cloudAuth &&
+    (llmProviders.realtime === "parley" || llmProviders.deep === "parley" || sttProvider === "parley");
 
   useEffect(() => {
     if (!show) return;

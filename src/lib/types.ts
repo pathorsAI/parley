@@ -202,10 +202,18 @@ export type LlmProvider =
 /** Reasoning depth for reasoning-capable models (e.g. Groq gpt-oss). */
 export type ReasoningEffort = "low" | "medium" | "high";
 
-/** Separate reasoning depths for the fast Q&A model and deeper eval model. */
+/**
+ * LLM workload lanes (#131). Realtime = everything a human is waiting on
+ * mid-meeting (live evals, intel board, coach feed, ask bar, reply
+ * suggestions) — latency first. Deep = pre/post-meeting analysis (report,
+ * briefing, extraction, replay passes) — quality first.
+ */
+export type LlmWorkload = "realtime" | "deep";
+
+/** Separate reasoning depths per workload lane. */
 export interface ModelReasoningEfforts {
-  ask: ReasoningEffort;
-  eval: ReasoningEffort;
+  realtime: ReasoningEffort;
+  deep: ReasoningEffort;
 }
 
 /** UI language. */
@@ -289,10 +297,10 @@ export type VoiceTypingShortcut =
  *  - `toggle`: tap once to start, tap again to finish + paste (release ignored). */
 export type VoiceTypingMode = "hold" | "toggle";
 
-/** Model ids for one provider: a fast model for Q&A, a stronger one for evals. */
+/** Model ids for one provider: a low-latency realtime model, a stronger deep one. */
 export interface ProviderModels {
-  ask: string;
-  eval: string;
+  realtime: string;
+  deep: string;
 }
 
 export interface Settings {
@@ -313,7 +321,9 @@ export interface Settings {
   /** Free-text background on you / your side — product, goals, the deal, etc.
    *  Injected into every analysis prompt so the model knows which side is "us". */
   userBackground: string;
-  provider: LlmProvider;
+  /** Which provider serves each workload lane (#131) — realtime and deep can
+   *  point at different vendors (e.g. Groq live, Anthropic for reports). */
+  llmProviders: Record<LlmWorkload, LlmProvider>;
   anthropicApiKey: string;
   openaiApiKey: string;
   geminiApiKey: string;

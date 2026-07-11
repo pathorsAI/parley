@@ -21,7 +21,8 @@ const TodosPanel = lazy(() =>
 
 const TYPES: MeetingType[] = ["general", "negotiation", "sales", "partnership"];
 /** Re-extract cadence while recording (each run reads the full transcript). */
-const AUTO_EXTRACT_MS = 90_000;
+// Realtime lane is cheap and fast — refresh the board every 30s (was 90s).
+const AUTO_EXTRACT_MS = 30_000;
 
 /**
  * The LIVE right rail: accumulated STATE of the conversation. The meeting-type
@@ -45,7 +46,7 @@ export function IntelligenceBoard() {
   useEffect(() => {
     if (!recording || meetingType === "general") return;
     const run = () =>
-      runIntelExtraction(meetingType).catch((e) =>
+      runIntelExtraction(meetingType, "realtime").catch((e) =>
         log.warn("intel: run failed", { error: String(e) })
       );
     run();
@@ -66,7 +67,7 @@ export function IntelligenceBoard() {
             className="h-6 w-6"
             disabled={running}
             title={t("board.refresh")}
-            onClick={() => void runIntelExtraction(meetingType)}
+            onClick={() => void runIntelExtraction(meetingType, "realtime")}
           >
             {running ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
           </Button>

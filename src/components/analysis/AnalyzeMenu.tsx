@@ -23,7 +23,7 @@ export function AnalyzeMenu() {
   const { t } = useI18n();
   const analysisStatus = useStore((s) => s.analysisStatus);
   const actionItemsStatus = useStore((s) => s.actionItemsStatus);
-  const keyMissing = useStore((s) => !hasProviderKey(s.settings));
+  const keyMissing = useStore((s) => !hasProviderKey(s.settings, "realtime"));
   const busy = analysisStatus === "running" || actionItemsStatus === "running";
   // Which re-analysis to run once the user confirms context. null = dialog closed.
   const [pending, setPending] = useState<null | "all" | "timeline">(null);

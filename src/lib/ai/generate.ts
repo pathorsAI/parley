@@ -4,7 +4,7 @@ import { getModel, getProviderOptions } from "./provider";
 import { isReasoningModel, PROVIDER_BY_ID } from "./providers";
 import { logAiError } from "./errors";
 import { log } from "../log";
-import type { Settings } from "../types";
+import type { LlmWorkload, Settings } from "../types";
 
 /**
  * Output-token cap. Reasoning models (Groq gpt-oss, o-series, …) spend output
@@ -13,8 +13,9 @@ import type { Settings } from "../types";
  * and an empty `failed_generation`. Give them a generous cap so the JSON still
  * fits after reasoning; non-reasoning models keep the provider default (undefined).
  */
-function maxOutputTokensFor(settings: Settings, kind: "ask" | "eval"): number | undefined {
-  return isReasoningModel(settings.models[settings.provider][kind]) ? 32_000 : undefined;
+function maxOutputTokensFor(settings: Settings, workload: LlmWorkload): number | undefined {
+  const provider = settings.llmProviders[workload];
+  return isReasoningModel(settings.models[provider][workload]) ? 32_000 : undefined;
 }
 
 /** Parse model text into JSON, tolerating ```json fences and leading prose. */
@@ -91,20 +92,21 @@ function salvageObject<OBJECT>(
  */
 export async function generateObjectResilient<OBJECT>(opts: {
   settings: Settings;
-  kind: "ask" | "eval";
+  workload: LlmWorkload;
   schema: z.ZodType<OBJECT>;
   system: string;
   prompt: string;
 }) {
-  const { settings, kind, schema, system, prompt } = opts;
-  const providerOptions = getProviderOptions(settings, kind);
-  const maxOutputTokens = maxOutputTokensFor(settings, kind);
-  const tag = { provider: settings.provider, kind, model: settings.models[settings.provider][kind] };
+  const { settings, workload, schema, system, prompt } = opts;
+  const provider = settings.llmProviders[workload];
+  const providerOptions = getProviderOptions(settings, workload);
+  const maxOutputTokens = maxOutputTokensFor(settings, workload);
+  const tag = { provider, workload, model: settings.models[provider][workload] };
 
   try {
-    return await generateObject({ model: getModel(settings, kind), providerOptions, schema, system, prompt, maxOutputTokens });
+    return await generateObject({ model: getModel(settings, workload), providerOptions, schema, system, prompt, maxOutputTokens });
   } catch (err) {
-    const info = PROVIDER_BY_ID[settings.provider];
+    const info = PROVIDER_BY_ID[provider];
     const canFallback = info.kind === "openai-compatible" && (info.supportsStructuredOutputs ?? false);
     logAiError(canFallback ? "ai.generateObject json_schema (retrying json_object)" : "ai.generateObject", tag, err);
     const salvaged = salvageObject(err, schema);
@@ -115,7 +117,7 @@ export async function generateObjectResilient<OBJECT>(opts: {
     if (!canFallback) throw err;
     try {
       return await generateObject({
-        model: getModel(settings, kind, { forceJsonObject: true }),
+        model: getModel(settings, workload, { forceJsonObject: true }),
         providerOptions,
         schema,
         system,
@@ -150,21 +152,22 @@ export async function generateObjectResilient<OBJECT>(opts: {
  */
 export async function streamObjectResilient<OBJECT>(opts: {
   settings: Settings;
-  kind: "ask" | "eval";
+  workload: LlmWorkload;
   schema: z.ZodType<OBJECT>;
   system: string;
   prompt: string;
   onPartial: (partial: unknown) => void;
 }) {
-  const { settings, kind, schema, system, prompt, onPartial } = opts;
-  const providerOptions = getProviderOptions(settings, kind);
-  const forceJsonObject = PROVIDER_BY_ID[settings.provider].kind === "openai-compatible";
-  const maxOutputTokens = maxOutputTokensFor(settings, kind);
-  const tag = { provider: settings.provider, kind, model: settings.models[settings.provider][kind] };
+  const { settings, workload, schema, system, prompt, onPartial } = opts;
+  const provider = settings.llmProviders[workload];
+  const providerOptions = getProviderOptions(settings, workload);
+  const forceJsonObject = PROVIDER_BY_ID[provider].kind === "openai-compatible";
+  const maxOutputTokens = maxOutputTokensFor(settings, workload);
+  const tag = { provider, workload, model: settings.models[provider][workload] };
 
   try {
     const result = streamObject({
-      model: getModel(settings, kind, { forceJsonObject }),
+      model: getModel(settings, workload, { forceJsonObject }),
       providerOptions,
       schema,
       system,
@@ -175,7 +178,7 @@ export async function streamObjectResilient<OBJECT>(opts: {
     return { object: await result.object, usage: await result.usage };
   } catch (err) {
     logAiError("ai.streamObject (falling back to non-streamed)", tag, err);
-    const res = await generateObjectResilient({ settings, kind, schema, system, prompt });
+    const res = await generateObjectResilient({ settings, workload, schema, system, prompt });
     onPartial(res.object);
     return { object: res.object, usage: res.usage };
   }

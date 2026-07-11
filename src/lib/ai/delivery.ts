@@ -119,12 +119,12 @@ export async function analyzeDelivery(opts: {
 
   const { object, usage } = await generateObjectResilient({
     settings,
-    kind: "ask",
+    workload: "realtime",
     schema,
     system: SYSTEM(mode === "live") + outputLanguageInstruction(settings),
     prompt: `${ctx}${label}:\n${transcript}`,
   });
-  void recordLlmUsage(settings, "ask", "delivery", usage);
+  void recordLlmUsage(settings, "realtime", "delivery", usage);
 
   return {
     tone: object.tone,

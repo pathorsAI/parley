@@ -16,7 +16,7 @@ export async function runActionItems(): Promise<void> {
   // Honor the trim keep-window (replay-only feature) — same as the analysis pass.
   const segments = state.segments.filter((s) => !isTrimmed(s, state.replayTrim));
   if (actionItemsBusy) return;
-  if (!hasProviderKey(settings)) return;
+  if (!hasProviderKey(settings, "deep")) return;
   if (!segments.some((s) => s.isFinal && s.text.trim())) return;
 
   actionItemsBusy = true;

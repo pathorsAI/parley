@@ -133,12 +133,12 @@ export async function generateFindingSolution(opts: {
 
   const { object, usage } = await generateObjectResilient({
     settings,
-    kind: "eval",
+    workload: "realtime",
     schema,
     system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: buildFindingSolutionPrompt({ context: ctx, finding, segments, names, mode }),
   });
-  void recordLlmUsage(settings, "eval", "eval", usage);
+  void recordLlmUsage(settings, "realtime", "finding-solution", usage);
 
   return {
     findingId: finding.id,

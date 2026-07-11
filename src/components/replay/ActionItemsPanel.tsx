@@ -33,7 +33,7 @@ export function ActionItemsPanel({
   const status = useStore((s) => s.actionItemsStatus);
   const error = useStore((s) => s.actionItemsError);
   const toggle = useStore((s) => s.toggleActionItem);
-  const keyMissing = useStore((s) => !hasProviderKey(s.settings));
+  const keyMissing = useStore((s) => !hasProviderKey(s.settings, "deep"));
   const running = status === "running";
 
   const body = (

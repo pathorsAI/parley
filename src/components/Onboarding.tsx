@@ -73,7 +73,7 @@ export function Onboarding() {
     patch({ onboardingStep: step });
   }, [step, patch]);
 
-  const llm = PROVIDER_BY_ID[settings.provider];
+  const llm = PROVIDER_BY_ID[settings.llmProviders.deep];
   const stt = STT_BY_ID[settings.transcriptionProvider];
 
   async function recheck() {
@@ -183,7 +183,14 @@ export function Onboarding() {
               body={t("onboarding.llm.body")}
               label={t("onboarding.llm.provider")}
             >
-              <Select value={settings.provider} onValueChange={(v) => patch({ provider: v as LlmProvider })}>
+              <Select
+                value={settings.llmProviders.deep}
+                onValueChange={(v) =>
+                  // Onboarding keeps it simple: one pick drives both lanes; the
+                  // per-workload split lives in Settings.
+                  patch({ llmProviders: { realtime: v as LlmProvider, deep: v as LlmProvider } })
+                }
+              >
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
@@ -450,7 +457,7 @@ function LoginStep() {
       await signInWithGoogle();
       // Signed in → default to Parley's free hosted STT + LLM so onboarding is
       // done in one tap; the LLM/STT pickers now surface "parley" too.
-      patch({ provider: "parley", transcriptionProvider: "parley" });
+      patch({ llmProviders: { realtime: "parley", deep: "parley" }, transcriptionProvider: "parley" });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
