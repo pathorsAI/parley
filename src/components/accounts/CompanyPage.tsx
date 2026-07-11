@@ -1,12 +1,6 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, FileText, Plus, ScrollText, Sparkles, Upload, X } from "lucide-react";
-import {
-  useAccounts,
-  personsOf,
-  threadsOf,
-  activeClaims,
-  triageClaims,
-} from "../../lib/accounts/store";
+import { FileText, Plus, ScrollText, Sparkles, Upload, X } from "lucide-react";
+import { useAccounts, threadsOf, activeClaims, triageClaims } from "../../lib/accounts/store";
 import type { Company, CompanyAttachment, ThreadKind } from "../../lib/accounts/types";
 import { THREAD_KINDS } from "../../lib/accounts/types";
 import { listHistory, loadHistoryEntry } from "../../lib/history/history";
@@ -18,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { ClaimCard, ClaimList } from "./ClaimCard";
 import { FeedDataDialog } from "./FeedDataDialog";
 import { BriefingDialog } from "./BriefingDialog";
-import { AliasesEdit, ArchiveButton, InlineEdit, MiniStages, StanceDot } from "./bits";
+import { AliasesEdit, ArchiveButton, InlineEdit, MiniStages } from "./bits";
 
 /**
  * The company war room (design §4.2): triage first (conflicts + open
@@ -26,18 +20,13 @@ import { AliasesEdit, ArchiveButton, InlineEdit, MiniStages, StanceDot } from ".
  */
 export function CompanyPage({
   company,
-  onBack,
-  onOpenPerson,
   onOpenThread,
 }: Readonly<{
   company: Company;
-  onBack: () => void;
-  onOpenPerson: (id: string) => void;
   onOpenThread: (id: string) => void;
 }>) {
   const { t } = useI18n();
   const acc = useAccounts();
-  const persons = personsOf(acc, company.id);
   const threads = threadsOf(acc, company.id);
   const triage = triageClaims(acc, company.id);
   const companyClaims = activeClaims(acc, company.id).filter(
@@ -48,8 +37,6 @@ export function CompanyPage({
 
   const [feedOpen, setFeedOpen] = useState(false);
   const [briefingOpen, setBriefingOpen] = useState(false);
-  const [personName, setPersonName] = useState("");
-  const [personTitle, setPersonTitle] = useState("");
   const [threadName, setThreadName] = useState("");
   const [threadKind, setThreadKind] = useState<ThreadKind>("sales");
   const [meetings, setMeetings] = useState<HistoryEntrySummary[]>([]);
@@ -66,9 +53,6 @@ export function CompanyPage({
       <div className="mx-auto flex max-w-3xl flex-col gap-5 px-6 py-4">
         {/* Header */}
         <div className="flex items-start gap-3">
-          <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={onBack}>
-            <ArrowLeft className="size-4" />
-          </Button>
           <div className="min-w-0 flex-1">
             <InlineEdit
               value={company.name}
@@ -93,12 +77,7 @@ export function CompanyPage({
             </div>
           </div>
           <div className="flex shrink-0 gap-2">
-            <ArchiveButton
-              onArchive={() => {
-                acc.archiveCompany(company.id);
-                onBack();
-              }}
-            />
+            <ArchiveButton onArchive={() => acc.archiveCompany(company.id)} />
             <Button size="sm" variant="outline" className="h-8" onClick={() => setFeedOpen(true)}>
               <Upload className="size-3.5" />
               {t("accounts.feed")}
@@ -189,59 +168,6 @@ export function CompanyPage({
           </form>
         </Section>
 
-        {/* People */}
-        <Section title={t("accounts.people")}>
-          <div className="flex flex-wrap gap-2">
-            {persons.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => onOpenPerson(p.id)}
-                className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left hover:bg-muted/50"
-              >
-                <StanceDot stance={p.stance?.value} />
-                <span className="text-sm font-medium">{p.name}</span>
-                {p.title && <span className="text-xs text-muted-foreground">{p.title}</span>}
-                {p.committeeRole && (
-                  <span className="rounded bg-muted px-1 py-0.5 text-[10px]">
-                    {t(`accounts.role.${p.committeeRole}`)}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-          <form
-            className="flex items-center gap-1.5"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!personName.trim()) return;
-              acc.addPerson({ companyId: company.id, name: personName, title: personTitle });
-              setPersonName("");
-              setPersonTitle("");
-            }}
-          >
-            <input
-              value={personName}
-              onChange={(e) => setPersonName(e.target.value)}
-              placeholder={t("accounts.personName")}
-              className="h-7 w-32 rounded-md border bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
-            />
-            <input
-              value={personTitle}
-              onChange={(e) => setPersonTitle(e.target.value)}
-              placeholder={t("accounts.personTitle")}
-              className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
-            />
-            <button
-              type="submit"
-              disabled={!personName.trim()}
-              className="flex h-7 items-center gap-1 rounded-md border px-2 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
-            >
-              <Plus className="size-3" />
-              {t("accounts.newPerson")}
-            </button>
-          </form>
-        </Section>
 
         {/* Company-level claims */}
         <Section title={t("accounts.companyClaims")}>

@@ -12,6 +12,7 @@ export const zhTW = {
 
   // ── Accounts (mini-CRM) ──
   "accounts.title": "客戶",
+  "accounts.selectCompany": "從左欄選擇或建立一家公司，開始累積戰情。",
   "accounts.save": "儲存",
   "accounts.stageGuide.title": "階段指南",
   "accounts.stageGuide.goal": "目標",
@@ -1002,6 +1003,7 @@ export const en = {
 
   // ── Accounts (mini-CRM) ──
   "accounts.title": "Accounts",
+  "accounts.selectCompany": "Select or create a company on the left to start building intel.",
   "accounts.save": "Save",
   "accounts.stageGuide.title": "Stage guide",
   "accounts.stageGuide.goal": "Goal",
