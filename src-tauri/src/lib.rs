@@ -157,7 +157,8 @@ pub fn run() {
             history::delete_history_entry,
             diarize::download_diarize_model,
             diarize::diarize_model_status,
-            mcp::get_mcp_server_info
+            mcp::get_mcp_server_info,
+            mcp::get_mcp_activity
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

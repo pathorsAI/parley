@@ -36,9 +36,31 @@ pub struct McpServerInfo {
     pub templates_path: String,
 }
 
+/// Rolling record of MCP client traffic, so the app UI can show whether a
+/// client is connected and what it has been reading/writing. HTTP MCP has no
+/// persistent connection, so "connected" is derived from `last_request_at`.
+#[derive(Default)]
+struct ActivityState {
+    /// `clientInfo` from the most recent `initialize` ({ name, version }).
+    client: Option<Value>,
+    /// Epoch ms of the last JSON-RPC request of any kind.
+    last_request_at: Option<u64>,
+    /// Most-recent-first tool calls: { at, tool, kind: read|write, ok, error? }.
+    recent: std::collections::VecDeque<Value>,
+}
+
+/// How many tool calls the activity feed keeps.
+const ACTIVITY_CAP: usize = 50;
+
+#[derive(Clone, Default)]
+pub struct McpActivity {
+    inner: Arc<RwLock<ActivityState>>,
+}
+
 #[derive(Clone)]
 pub struct McpState {
     info: Arc<RwLock<McpServerInfo>>,
+    activity: McpActivity,
 }
 
 #[derive(Clone)]
@@ -51,6 +73,8 @@ struct HttpState {
     /// Local recording store (`<app_data_dir>/history`) for the read-only
     /// recording tools — same layout history.rs documents.
     history_dir: PathBuf,
+    /// Client-traffic record surfaced to the app UI (`get_mcp_activity`).
+    activity: McpActivity,
 }
 
 #[derive(Deserialize)]
@@ -137,9 +161,15 @@ pub fn start(app: AppHandle) -> McpState {
             .join("history")
     });
 
-    let state = McpState { info: info.clone() };
+    let activity = McpActivity::default();
+    let state = McpState {
+        info: info.clone(),
+        activity: activity.clone(),
+    };
     tauri::async_runtime::spawn(async move {
-        if let Err(err) = run_http_server(templates, session, commands, results, history, info).await {
+        if let Err(err) =
+            run_http_server(templates, session, commands, results, history, activity, info).await
+        {
             eprintln!("[parley-mcp] failed to start: {err}");
         }
     });
@@ -154,12 +184,26 @@ pub async fn get_mcp_server_info(
     Ok(state.info.read().await.clone())
 }
 
+/// Client-traffic snapshot for the app UI: who initialized (name/version), when
+/// the last request arrived, and the recent tool calls (newest first). The UI
+/// derives "connected" from `lastRequestAt` recency — HTTP MCP has no session.
+#[tauri::command]
+pub async fn get_mcp_activity(state: tauri::State<'_, McpState>) -> Result<Value, String> {
+    let a = state.activity.inner.read().await;
+    Ok(json!({
+        "client": a.client,
+        "lastRequestAt": a.last_request_at,
+        "recent": a.recent.iter().cloned().collect::<Vec<Value>>(),
+    }))
+}
+
 async fn run_http_server(
     templates_path: PathBuf,
     session_path: PathBuf,
     commands_path: PathBuf,
     results_path: PathBuf,
     history_dir: PathBuf,
+    activity: McpActivity,
     info: Arc<RwLock<McpServerInfo>>,
 ) -> anyhow::Result<()> {
     let (listener, addr) = bind_listener().await?;
@@ -183,6 +227,7 @@ async fn run_http_server(
             commands_path,
             results_path,
             history_dir,
+            activity,
         });
 
     eprintln!("[parley-mcp] ready at {endpoint}");
@@ -231,6 +276,16 @@ async fn handle_rpc(
 }
 
 async fn handle_method(state: &HttpState, method: &str, params: Value) -> anyhow::Result<Value> {
+    // Every request marks the client as alive; initialize also records who it is.
+    {
+        let mut a = state.activity.inner.write().await;
+        a.last_request_at = Some(now_ms());
+        if method == "initialize" {
+            if let Some(client) = params.get("clientInfo") {
+                a.client = Some(client.clone());
+            }
+        }
+    }
     match method {
         "initialize" => Ok(json!({
             "protocolVersion": PROTOCOL_VERSION,
@@ -239,9 +294,49 @@ async fn handle_method(state: &HttpState, method: &str, params: Value) -> anyhow
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tools() })),
-        "tools/call" => call_tool(state, params).await,
+        "tools/call" => {
+            let tool = params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+                .to_string();
+            let result = call_tool(state, params).await;
+            let mut entry = json!({
+                "at": now_ms(),
+                "tool": tool,
+                "kind": tool_kind(&tool),
+                "ok": result.is_ok(),
+            });
+            if let Err(err) = &result {
+                entry["error"] = json!(err.to_string());
+            }
+            let mut a = state.activity.inner.write().await;
+            a.recent.push_front(entry);
+            a.recent.truncate(ACTIVITY_CAP);
+            result
+        }
         _ if method.starts_with("notifications/") => Ok(Value::Null),
         _ => anyhow::bail!("unsupported MCP method: {method}"),
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Coarse read/write classification for the activity feed, by tool-name verb.
+fn tool_kind(name: &str) -> &'static str {
+    const WRITE_VERBS: [&str; 11] = [
+        "upsert_", "delete_", "add_", "remove_", "check_", "set_", "update_", "rename_",
+        "move_", "share_", "copy_",
+    ];
+    if WRITE_VERBS.iter().any(|v| name.starts_with(v)) {
+        "write"
+    } else {
+        "read"
     }
 }
 
