@@ -46,6 +46,7 @@ describe("accounts store", () => {
             side: "",
             layer: "",
             quote: "你 email 我我馬上回",
+            slotIds: [],
           },
         ],
         claimUpdates: [],
@@ -193,6 +194,55 @@ describe("accounts store", () => {
     expect(conflictPairs(state, company.id)).toHaveLength(0);
   });
 
+  it("applyExtractedOps stores slotIds; empty stays undefined (still backfill-eligible)", () => {
+    const s = useAccounts.getState();
+    const company = s.addCompany({ name: "AI3" });
+    s.applyExtractedOps({
+      companyId: company.id,
+      ops: {
+        newPersons: [],
+        newClaims: [
+          { category: "risk", text: "尖峰漏接", subjects: [], side: "theirs", layer: "", quote: "", slotIds: ["discovery.problem"] },
+          { category: "goal", text: "想上白標", subjects: [], side: "theirs", layer: "", quote: "", slotIds: [] },
+        ],
+        claimUpdates: [],
+      },
+      provenance: { kind: "import", attachmentId: "a1" },
+    });
+    const claims = useAccounts.getState().claims;
+    expect(claims.find((c) => c.text === "尖峰漏接")?.slotIds).toEqual(["discovery.problem"]);
+    expect(claims.find((c) => c.text === "想上白標")?.slotIds).toBeUndefined();
+  });
+
+  it("supersede carries the old claim's slotIds onto the replacement", () => {
+    const s = useAccounts.getState();
+    const company = s.addCompany({ name: "AI3" });
+    const original = s.addClaim({
+      companyId: company.id,
+      subjects: [],
+      category: "risk",
+      slotIds: ["discovery.problem"],
+      text: "每月漏接 100 通",
+      provenance: [{ kind: "user" }],
+      confidence: "confirmed",
+    });
+    s.applyExtractedOps({
+      companyId: company.id,
+      ops: {
+        newPersons: [],
+        newClaims: [],
+        claimUpdates: [
+          { claimId: original.id, action: "supersede", newText: "每月漏接 300 通", quote: "" },
+        ],
+      },
+      provenance: { kind: "import", attachmentId: "a1" },
+    });
+    const state = useAccounts.getState();
+    const replacement = state.claims.find((c) => c.status === "active" && c.text === "每月漏接 300 通");
+    expect(replacement?.slotIds).toEqual(["discovery.problem"]);
+    expect(state.claims.find((c) => c.id === original.id)?.status).toBe("superseded");
+  });
+
   it("applyExtractedOps leaves a transient recentIngest marker for the touched claims", () => {
     const s = useAccounts.getState();
     const company = s.addCompany({ name: "AI3" });
@@ -202,7 +252,7 @@ describe("accounts store", () => {
       ops: {
         newPersons: [],
         newClaims: [
-          { category: "goal", text: "Q3 要上白標", subjects: [], side: "theirs", layer: "surface", quote: "" },
+          { category: "goal", text: "Q3 要上白標", subjects: [], side: "theirs", layer: "surface", quote: "", slotIds: [] },
         ],
         claimUpdates: [],
       },
