@@ -1,13 +1,14 @@
 import { useEffect, useRef } from "react";
-import { useStore, isTrimmed, meetingBriefText } from "../store";
+import { useStore, isTrimmed, hasSpokenSegment, meetingBriefText } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { analyzeTimeline } from "../ai/timeline";
 import { evalSignature } from "../evaluations/presets";
+import { readJsonCache, writeJsonCache, clearCacheByPrefix } from "../cache";
+import { clearStudyCache } from "../history/studyCache";
+import { makeRunGuard } from "./runGuard";
 import { translate } from "../../i18n";
 import { isTauri } from "../tauriEvents";
 import type { EvalDef, Settings, TimelineEvent, TranscriptSegment } from "../types";
-
-let analysisBusy = false;
 
 /** Bump when the analysis prompt/output shape changes, to invalidate caches. */
 const ANALYSIS_CACHE_VERSION = "7";
@@ -50,50 +51,22 @@ function analysisCacheKey(
   return `parley:analysis:${fnv1a(raw)}`;
 }
 
-function readAnalysisCache(key: string): TimelineEvent[] | null {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as TimelineEvent[]) : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeAnalysisCache(key: string, events: TimelineEvent[]): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(events));
-  } catch {
-    /* quota/serialization — caching is best-effort */
-  }
-}
-
 /** Drop every cached analysis (all `parley:analysis:*` localStorage entries). */
 export function clearAnalysisCache(): number {
-  let removed = 0;
-  try {
-    for (let i = localStorage.length - 1; i >= 0; i--) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith("parley:analysis:")) {
-        localStorage.removeItem(k);
-        removed++;
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return removed;
+  return clearCacheByPrefix("parley:analysis:");
 }
 
 /**
  * Listen for the native "Clear Cache → Analysis" menu action (Rust emits
- * `cache://clear-analysis`) and clear the localStorage analysis cache. No-op
- * outside Tauri. Returns an unlisten function.
+ * `cache://clear-analysis`) and clear every derived-output cache: the raw
+ * analysis cache here plus the read-only study-output cache. No-op outside
+ * Tauri. Returns an unlisten function.
  */
 export async function listenForCacheClear(): Promise<() => void> {
   if (!isTauri()) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
   return listen("cache://clear-analysis", () => {
-    const n = clearAnalysisCache();
+    const n = clearAnalysisCache() + clearStudyCache();
     console.info(`[cache] cleared ${n} cached analyses`);
   });
 }
@@ -105,7 +78,10 @@ export async function listenForCacheClear(): Promise<() => void> {
  * whole recording). Skips silently if there's no LLM key, no transcript, or a
  * run is in flight. Each run REPLACES the findings list — `setFindings` clears
  * the selection and any cached solutions (the model mints fresh ids per pass).
+ * A run that outlives its session or is superseded by a newer pass stops
+ * writing (see runGuard) — its results are discarded, never misfiled.
  */
+const analysisGuard = makeRunGuard();
 export async function runAnalysis(opts?: {
   mode?: "live" | "replay";
   force?: boolean;
@@ -122,9 +98,11 @@ export async function runAnalysis(opts?: {
 
   const workload = mode === "replay" ? ("deep" as const) : ("realtime" as const);
 
-  if (analysisBusy) return;
+  // Reentrancy guard: the status IS the lock (set synchronously below, so two
+  // back-to-back calls can't interleave — JS is single-threaded between awaits).
+  if (state.analysisStatus === "running") return;
   if (!hasProviderKey(settings, workload)) return;
-  if (!segments.some((s) => s.isFinal && s.text.trim())) return;
+  if (!hasSpokenSegment(segments)) return;
 
   // REPLAY: reuse a cached analysis for the exact same recording + template +
   // speaker names + model — re-analyzing the same upload is then instant + free.
@@ -139,7 +117,7 @@ export async function runAnalysis(opts?: {
   // stale when the template / evals change before the next re-analysis.
   const evalSig = evalSignature(settings.evaluations);
   if (cacheKey && !opts?.force) {
-    const cached = readAnalysisCache(cacheKey);
+    const cached = readJsonCache<TimelineEvent[]>(cacheKey);
     if (cached) {
       state.setFindings(cached);
       state.setAnalysisStatus("done");
@@ -148,7 +126,7 @@ export async function runAnalysis(opts?: {
     }
   }
 
-  analysisBusy = true;
+  const alive = analysisGuard.begin();
   state.setAnalysisError(null);
   state.setAnalysisStatus("running");
   try {
@@ -161,14 +139,19 @@ export async function runAnalysis(opts?: {
       mode,
       // Stream findings into the store as they're generated so dots + rows appear
       // progressively instead of all at once when the whole pass finishes.
-      onPartial: (partial) => useStore.getState().setFindings(partial),
+      onPartial: (partial) => {
+        if (alive()) useStore.getState().setFindings(partial);
+      },
     });
-    if (cacheKey) writeAnalysisCache(cacheKey, events);
+    // The content-keyed cache write is session-independent — always keep it.
+    if (cacheKey) writeJsonCache(cacheKey, events);
+    if (!alive()) return;
     useStore.getState().setFindings(events);
     useStore.getState().setAnalysisStatus("done");
     useStore.setState({ analyzedEvalSig: evalSig });
   } catch (err) {
     console.error("[analysis]", err);
+    if (!alive()) return;
     const { describeAiError, hostedLlmErrorCode } = await import("../ai/errors");
     const { translate } = await import("../../i18n/messages");
     const code = hostedLlmErrorCode(err, settings.llmProviders[workload]);
@@ -181,38 +164,7 @@ export async function runAnalysis(opts?: {
           : describeAiError(err);
     useStore.getState().setAnalysisError(message);
     useStore.getState().setAnalysisStatus("error");
-  } finally {
-    analysisBusy = false;
   }
-}
-
-/**
- * REPLAY "re-analyze all": run a fresh whole-recording analysis, then regenerate
- * the post-meeting action items off it. Driven by the player's Analyze menu.
- * Forces a fresh analysis (bypasses the cache); action items only regenerate if
- * the analysis actually succeeded (so a failed pass doesn't wipe good items).
- */
-export async function reanalyzeAll(): Promise<void> {
-  // Pin the entry we started on; if the user loads a DIFFERENT record mid-run
-  // (e.g. from the History window, which isn't gated by the busy menu), don't
-  // chain action items — that would re-arm the persist for the new entry and
-  // write THIS run's analysis onto it.
-  const startedFor = useStore.getState().loadedHistoryId;
-  await runAnalysis({ mode: "replay", force: true });
-  if (useStore.getState().analysisStatus !== "done") return;
-  if (useStore.getState().loadedHistoryId !== startedFor) return;
-  const { regenerateActionItems } = await import("./actionItems");
-  regenerateActionItems();
-  // The brief summarizes the findings + action items — invalidate it so the
-  // study pipeline (useReplayAnalysis stage 2c) regenerates it once the fresh
-  // action items settle, and re-persists it onto the entry.
-  useStore.getState().setBrief(null);
-  useStore.getState().setBriefStatus("idle");
-  // Refresh the delivery verdict against the re-analyzed transcript too, so it
-  // doesn't desync from findings/action items. The runner manages its own
-  // running/done status, so the one-shot replay stage-2b effect stays inert.
-  const { runDeliveryAnalysis } = await import("./deliveryRun");
-  void runDeliveryAnalysis();
 }
 
 /**

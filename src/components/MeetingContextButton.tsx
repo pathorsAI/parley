@@ -3,7 +3,7 @@ import { FileText } from "lucide-react";
 import { useStore } from "../lib/store";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
-import { MeetingContextField } from "./MeetingContextField";
+import { MeetingContextDialog } from "./MeetingContextDialog";
 import { MeetingLinkSection } from "./accounts/MeetingLinkSection";
 
 /**
@@ -31,23 +31,17 @@ export function MeetingContextButton({ className }: Readonly<{ className?: strin
         {hasContext && <span className="size-1.5 rounded-full bg-emerald-400" />}
       </button>
       {open && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center p-6">
-          <button
-            type="button"
-            aria-label={t("common.done")}
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setOpen(false)}
-          />
-          <div className="relative w-full max-w-md rounded-xl border bg-background p-4 shadow-xl">
-            {businessType && <MeetingLinkSection />}
-            <MeetingContextField rows={4} autoFocus />
-            <div className="mt-4 flex justify-end">
-              <Button size="sm" className="h-8" onClick={() => setOpen(false)}>
-                {t("common.done")}
-              </Button>
-            </div>
-          </div>
-        </div>
+        <MeetingContextDialog
+          onClose={() => setOpen(false)}
+          closeLabel={t("common.done")}
+          footer={
+            <Button size="sm" className="h-8" onClick={() => setOpen(false)}>
+              {t("common.done")}
+            </Button>
+          }
+        >
+          {businessType && <MeetingLinkSection />}
+        </MeetingContextDialog>
       )}
     </>
   );

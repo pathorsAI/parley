@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Loader2, MessageCircleQuestion, RefreshCw, Sparkles, X } from "lucide-react";
+import { Clock, Loader2, MessageCircleQuestion, X } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
-import { runBriefGeneration } from "../../lib/analysis/briefRun";
-import { runIntelExtraction } from "../../lib/intel/extract";
+import { useBriefQueued } from "../../lib/analysis/studyPipeline";
 import { persistStudyOutputs } from "../../lib/history/history";
 import { useI18n, type TranslationKey } from "../../i18n";
 import { log } from "../../lib/log";
 import type { IntelState, MeetingType } from "../../lib/types";
 import { ReplayScreen } from "../replay/ReplayScreen";
-import { useReplayAnalysis } from "../replay/useReplayAnalysis";
 import { ReportContent } from "../sidebar/ReportContent";
 import { DeliveryPanel } from "../delivery/DeliveryPanel";
 import { IntelSections } from "../live/IntelligenceBoard";
@@ -45,9 +43,9 @@ const SECTIONS = [
  */
 export function StudyScreen() {
   const tab = useStore((s) => s.studyTab);
-  // The whole LLM pipeline (analysis → action items ∥ delivery → brief, plus
-  // intel) runs from HERE, not inside a page — landing on either tab starts it.
-  useReplayAnalysis();
+  // The LLM pipeline (analysis → action items ∥ delivery → brief, plus intel)
+  // is NOT mounted here — it's a store subscription (initStudyPipeline, see
+  // lib/analysis/studyPipeline.ts) that runs no matter which screen is up.
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       {tab === "replay" ? <ReplayScreen /> : <ReportPage />}
@@ -201,44 +199,35 @@ function ReportSection({
 
 /** The auto-generated debrief. Store-backed + persisted onto the entry, so it
  *  generates ONCE per recording — scrolling away and reopening render the saved
- *  text. Generation itself is owned by the study pipeline (useReplayAnalysis),
- *  which runs it after the action items settle; this section just renders the
- *  result and offers a manual Regenerate. Timestamp clicks jump to replay. */
+ *  text. Generation AND regeneration are owned by the study pipeline + the
+ *  titlebar's analysis chip; this section only renders the pipeline's state —
+ *  including "queued" while the upstream analysis / action items still run, so
+ *  the wait is never a silent blank. Timestamp clicks jump to replay. */
 function BriefSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
   const { t } = useI18n();
   const brief = useStore((s) => s.brief);
   const status = useStore((s) => s.briefStatus);
   const saved = useStore((s) => !!s.loadedHistoryId);
   const keyMissing = useStore((s) => !hasProviderKey(s.settings, "deep"));
+  const queued = useBriefQueued();
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-[11px] text-muted-foreground/70">
-          {status === "done" && saved && !!brief ? t("study.brief.saved") : ""}
-        </span>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7"
-          disabled={status === "running" || keyMissing}
-          onClick={() =>
-            void runBriefGeneration({ force: true }).catch((e) =>
-              log.error("study: brief regenerate failed", { error: String(e) })
-            )
-          }
-        >
-          {status === "running" ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <Sparkles className="size-3.5" />
-          )}
-          {brief ? t("study.brief.regenerate") : t("study.brief.generate")}
-        </Button>
-      </div>
+      {status === "done" && saved && !!brief && (
+        <p className="mb-2 text-[11px] text-muted-foreground/70">{t("study.brief.saved")}</p>
+      )}
       {keyMissing && <p className="text-sm text-muted-foreground">{t("study.brief.missingKey")}</p>}
+      {queued && !brief && (
+        <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+          <Clock className="size-3.5" />
+          {t("study.brief.queued")}
+        </p>
+      )}
       {status === "running" && !brief && (
-        <p className="text-sm text-muted-foreground">{t("study.brief.generating")}</p>
+        <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" />
+          {t("study.brief.generating")}
+        </p>
       )}
       {status === "error" && (
         <p className="text-sm text-muted-foreground">{t("study.brief.error")}</p>
@@ -285,9 +274,10 @@ function IntelSection() {
   const intelStatus = useStore((s) => s.intelStatus);
   const running = intelStatus === "running";
 
-  // Extraction is owned by the study pipeline (useReplayAnalysis), which runs
-  // whenever the type is set and the intel doesn't match — this section only
-  // picks the type and offers the manual refresh.
+  // Extraction is owned by the study pipeline (studyPipeline.ts), which runs
+  // whenever the picked type has no matching board — this section only picks
+  // the type (switching it re-extracts automatically); the manual re-run lives
+  // in the titlebar's analysis chip.
   const pickType = (v: MeetingType) => {
     setStudyMeetingType(v);
     // Remember the choice on the entry right away (extraction saves again later).
@@ -315,16 +305,7 @@ function IntelSection() {
               ))}
             </SelectContent>
           </Select>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7"
-            disabled={running}
-            title={t("board.refresh")}
-            onClick={() => void runIntelExtraction(meetingType, "deep")}
-          >
-            {running ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
-          </Button>
+          {running && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
         </div>
       )}
       {meetingType === "general" ? (

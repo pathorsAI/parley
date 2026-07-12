@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AudioLines, Check, Loader2, Mic, Pause, Play, Scissors } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import { useStore, speakerKey, defaultSpeakerLabel, formatClock, type ReplayTrim } from "../lib/store";
+import { useStore, speakerKey, defaultSpeakerLabel, formatClock, hasSpokenSegment, type ReplayTrim } from "../lib/store";
 import { speakerDotClass } from "../lib/speakerColors";
 import { hasProviderKey } from "../lib/ai/settings";
 import { runAnalysis } from "../lib/analysis/engine";
@@ -43,9 +43,11 @@ function errMsg(e: unknown): string {
  * voice → review & name the speakers (with a transcript preview) → on Confirm,
  * run the whole-recording analysis → close into the results page.
  *
- * The whole-recording analysis is gated (store `analysisGate: "deferred"`, armed
- * by openIngestWizard) so it can't auto-run when the session loads behind the
- * dialog; this wizard runs it explicitly at Confirm.
+ * While the wizard is OPEN the study pipeline defers auto-analysis (it reads
+ * `ingestWizardOpen` — see lib/analysis/studyPipeline.ts), so loading the
+ * session behind the dialog can't trigger a pass; this wizard runs the first
+ * analysis explicitly at Confirm. Closing on any path un-defers, and the
+ * pipeline picks up whatever is still missing.
  */
 export function IngestWizard() {
   const { t } = useI18n();
@@ -200,13 +202,13 @@ export function IngestWizard() {
    * recording as a transcript-only history entry so the upload is never lost.
    * Used by "analyze later", the no-LLM-key path, and Cancel once a transcript
    * exists. Skips the save when the analysis pipeline is already running/done (it
-   * auto-saves WITH findings via useReplayAnalysis) or when the session was
+   * auto-saves WITH findings via the study pipeline) or when the session was
    * already persisted.
    */
   function finishTranscriptOnly() {
     const st = useStore.getState();
     const { replay, loadedHistoryId, analysisStatus } = st;
-    const hasSpoken = st.segments.some((s) => s.isFinal && s.text.trim());
+    const hasSpoken = hasSpokenSegment(st.segments);
     if (replay && hasSpoken && !loadedHistoryId && analysisStatus !== "running" && analysisStatus !== "done") {
       // Fire-and-forget: saveUploadToHistory marks the entry loaded before its slow
       // Opus compress, so a later manual re-analysis overwrites it in place.
@@ -252,11 +254,10 @@ export function IngestWizard() {
     // discard it — persist it transcript-only and land on the results page so the
     // upload isn't lost. Before that (count/transcribing, app still LIVE) there's
     // nothing to save; exitReplay would wipe a stopped live meeting's transcript,
-    // so just disarm the deferred gate and close.
+    // so just close.
     if (useStore.getState().appMode === "replay") {
       finishTranscriptOnly();
     } else {
-      useStore.setState({ analysisGate: "open" });
       close();
     }
   }

@@ -169,6 +169,50 @@ export type AppMode = "live" | "replay" | "accounts";
 export type AsyncTaskStatus = "idle" | "running" | "done" | "error";
 
 /**
+ * Every analysis/study output slice, cleared as ONE unit. enterReplay,
+ * loadHistory (as the base under its restores), exitReplay and startMeeting all
+ * reset the same fields — defining the list once means a new output field can
+ * never be forgotten on one of the four paths (parallel hand-maintained reset
+ * lists are exactly how the old analysis-gate leak happened).
+ */
+const CLEARED_STUDY_SLICE: Pick<
+  ParleyState,
+  | "findings"
+  | "analysisStatus"
+  | "analysisError"
+  | "analyzedEvalSig"
+  | "selectedFindingId"
+  | "solutionFindingId"
+  | "findingSolutions"
+  | "actionItems"
+  | "actionItemsStatus"
+  | "actionItemsError"
+  | "deliveryAssessment"
+  | "deliveryStatus"
+  | "brief"
+  | "briefStatus"
+  | "intel"
+  | "intelStatus"
+> = {
+  findings: [],
+  analysisStatus: "idle",
+  analysisError: null,
+  analyzedEvalSig: "",
+  selectedFindingId: null,
+  solutionFindingId: null,
+  findingSolutions: {},
+  actionItems: [],
+  actionItemsStatus: "idle",
+  actionItemsError: null,
+  deliveryAssessment: null,
+  deliveryStatus: "idle",
+  brief: null,
+  briefStatus: "idle",
+  intel: null,
+  intelStatus: "idle",
+};
+
+/**
  * Replay keep-window. Segments that fall entirely OUTSIDE [startMs, endMs] are
  * trimmed: greyed in the transcript and excluded from every analysis (evals,
  * Ask, timeline, war-gaming, voice diarization). `null` = keep the whole thing.
@@ -195,6 +239,11 @@ interface ParleyState {
    *  null for a not-yet-saved upload or in live mode. */
   loadedHistoryId: string | null;
   setLoadedHistoryId: (id: string | null) => void;
+  /** True while a READ-ONLY (org-shared) recording is loaded. Its generated study
+   *  outputs can't be written back to the shared entry, so they persist into the
+   *  local {@link import("./history/studyCache").writeStudyCache} instead —
+   *  anything that ran is stored, and reopening never re-spends it. */
+  replayReadOnly: boolean;
   /** Scrub position (ms) in replay mode — drives audio + transcript highlight. */
   replayPlayheadMs: number;
   /** Load an uploaded recording and switch into replay mode. */
@@ -245,13 +294,6 @@ interface ParleyState {
   openIngestWizard: (audioPath: string) => void;
   setIngestWizardStep: (step: ParleyState["ingestWizardStep"], error?: string | null) => void;
   closeIngestWizard: () => void;
-  /**
-   * Analysis runs only after the wizard's review-confirm releases this gate.
-   * Default "open" so LIVE and any direct re-analysis are never gated; the wizard
-   * arms it to "deferred" on open and releases it at Confirm.
-   */
-  analysisGate: "deferred" | "open";
-  releaseAnalysisGate: () => void;
 
   // ── Unified analysis (shared by LIVE + REPLAY) ──────────────────────────────
   /**
@@ -455,6 +497,7 @@ export const useStore = create<ParleyState>()(
       appMode: "live",
       replay: null,
       loadedHistoryId: null,
+      replayReadOnly: false,
       replayPlayheadMs: 0,
       replaySeekNonce: 0,
       replayTrim: null,
@@ -462,7 +505,6 @@ export const useStore = create<ParleyState>()(
       ingestWizardStep: "count",
       ingestWizardError: null,
       ingestAudioPath: null,
-      analysisGate: "open",
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
@@ -539,6 +581,7 @@ export const useStore = create<ParleyState>()(
       replay: session,
       // A fresh upload isn't a saved entry yet — cleared until its auto-save.
       loadedHistoryId: null,
+      replayReadOnly: false,
       // Start at the beginning of the recording (the full transcript always
       // shows now — no masking); the playhead is just for playback/navigation.
       replayPlayheadMs: 0,
@@ -547,24 +590,9 @@ export const useStore = create<ParleyState>()(
       speakerNames: session.speakerNames,
       meetingStatus: "stopped",
       highlightMs: null,
-      findings: [],
-      analysisStatus: "idle",
-      analysisError: null,
-      analyzedEvalSig: "",
-      selectedFindingId: null,
-      solutionFindingId: null,
-      findingSolutions: {},
-      actionItems: [],
-      actionItemsStatus: "idle",
-      actionItemsError: null,
-      deliveryAssessment: null,
-      deliveryStatus: "idle",
       // A fresh session gets fresh study outputs — a previous recording's brief
       // or intel must never render over this one.
-      brief: null,
-      briefStatus: "idle",
-      intel: null,
-      intelStatus: "idle",
+      ...CLEARED_STUDY_SLICE,
       studyMeetingType: state.settings.meetingType,
     }));
   },
@@ -584,30 +612,34 @@ export const useStore = create<ParleyState>()(
       // an own/local entry. A read-only org recording leaves this null so the
       // re-analysis-persist subscription doesn't try to write it to the local dir.
       loadedHistoryId: opts?.readOnly ? null : entry.id,
+      replayReadOnly: !!opts?.readOnly,
       replayPlayheadMs: 0,
       replaySeekNonce: state.replaySeekNonce + 1,
       replayTrim: null,
       ingestWizardOpen: false,
       ingestAudioPath: null,
-      // Open so playback/seeking works, but the analysis below is already "done"
-      // (see useReplayAnalysis: it only runs when status is "idle"), so loading a
-      // saved entry never re-spends a generation.
-      analysisGate: "open",
       segments: entry.segments,
       speakerNames: entry.speakerNames,
       meetingStatus: "stopped",
       highlightMs: null,
-      // Restore the saved analysis verbatim — but an entry saved WITHOUT one
-      // (transcript-only: the ingest wizard's skip/cancel path, or a pre-key
-      // save) loads as "idle" so the study pipeline runs it once on open and
-      // initHistoryPersistSync writes it back.
+      // Base-clear every study slice, then restore what the entry has. Present
+      // → "done" (the pipeline only starts "idle" stages, so loading a saved
+      // entry never re-spends a generation); absent (transcript-only save, or
+      // an entry predating the field) → stays "idle" and generates once on
+      // open, written back by initHistoryPersistSync / persistStudyOutputs.
+      ...CLEARED_STUDY_SLICE,
       findings: entry.findings,
       analysisStatus: entry.findings.length > 0 || entry.actionItems.length > 0 ? "done" : "idle",
-      analysisError: null,
       analyzedEvalSig: evalSignature(state.evaluations),
       actionItems: entry.actionItems,
       actionItemsStatus: entry.findings.length > 0 || entry.actionItems.length > 0 ? "done" : "idle",
-      actionItemsError: null,
+      deliveryAssessment: entry.deliveryAssessment ?? null,
+      deliveryStatus: entry.deliveryAssessment ? "done" : "idle",
+      brief: entry.brief ?? null,
+      briefStatus: entry.brief ? "done" : "idle",
+      intel: entry.intel ?? null,
+      intelStatus: entry.intel ? "done" : "idle",
+      studyMeetingType: entry.meetingType ?? entry.intel?.meetingType ?? state.settings.meetingType,
       // Restore the per-meeting context + negotiation setup.
       meetingContext: entry.meetingContext,
       meetingCompanyId: entry.companyId ?? null,
@@ -617,23 +649,6 @@ export const useStore = create<ParleyState>()(
       meetingBatna: entry.meetingBatna,
       meetingTarget: entry.meetingTarget,
       meetingFloor: entry.meetingFloor,
-      // Nothing selected / open yet.
-      selectedFindingId: null,
-      solutionFindingId: null,
-      findingSolutions: {},
-      // Restore the saved delivery assessment when present (older entries predate
-      // it → recompute once on open via useReplayAnalysis, which only runs when
-      // status is "idle"). The measured pace rides on `session.speechRateHz`.
-      deliveryAssessment: entry.deliveryAssessment ?? null,
-      deliveryStatus: entry.deliveryAssessment ? "done" : "idle",
-      // Restore the saved study outputs the same way: present → "done" (never
-      // regenerated), absent (older entries) → "idle" so they generate once on
-      // open and are saved back.
-      brief: entry.brief ?? null,
-      briefStatus: entry.brief ? "done" : "idle",
-      intel: entry.intel ?? null,
-      intelStatus: entry.intel ? "done" : "idle",
-      studyMeetingType: entry.meetingType ?? entry.intel?.meetingType ?? state.settings.meetingType,
     }));
   },
 
@@ -643,31 +658,16 @@ export const useStore = create<ParleyState>()(
       appMode: "live",
       replay: null,
       loadedHistoryId: null,
+      replayReadOnly: false,
       replayPlayheadMs: 0,
       replayTrim: null,
       ingestWizardOpen: false,
       ingestAudioPath: null,
-      analysisGate: "open",
       segments: [],
       speakerNames: {},
       meetingStatus: "idle",
       highlightMs: null,
-      findings: [],
-      analysisStatus: "idle",
-      analysisError: null,
-      analyzedEvalSig: "",
-      selectedFindingId: null,
-      solutionFindingId: null,
-      findingSolutions: {},
-      actionItems: [],
-      actionItemsStatus: "idle",
-      actionItemsError: null,
-      deliveryAssessment: null,
-      deliveryStatus: "idle",
-      brief: null,
-      briefStatus: "idle",
-      intel: null,
-      intelStatus: "idle",
+      ...CLEARED_STUDY_SLICE,
     });
   },
 
@@ -676,20 +676,19 @@ export const useStore = create<ParleyState>()(
 
   setReplayTrim: (trim) => set({ replayTrim: trim }),
 
-  // Ingest wizard. Opening ARMS the analysis gate ("deferred") so loading the
-  // session behind the dialog doesn't auto-analyze; the review-confirm releases it.
+  // Ingest wizard. While it is OPEN the study pipeline defers auto-analysis
+  // (the wizard runs the first pass itself at Confirm) — the pipeline reads
+  // `ingestWizardOpen` directly, so there is no separate gate to leak.
   openIngestWizard: (audioPath) =>
     set({
       ingestWizardOpen: true,
       ingestWizardStep: "count",
       ingestWizardError: null,
       ingestAudioPath: audioPath,
-      analysisGate: "deferred",
     }),
   setIngestWizardStep: (step, error = null) =>
     set({ ingestWizardStep: step, ingestWizardError: error }),
   closeIngestWizard: () => set({ ingestWizardOpen: false, ingestAudioPath: null }),
-  releaseAnalysisGate: () => set({ analysisGate: "open" }),
 
   // Replace the findings list, keeping the selection + cached solutions of any
   // finding that STILL EXISTS in the new list. During streaming, partials commit
@@ -708,7 +707,21 @@ export const useStore = create<ParleyState>()(
   appendBrief: (chunk) => set((s) => ({ brief: (s.brief ?? "") + chunk })),
   setBriefStatus: (status) => set({ briefStatus: status }),
   studyMeetingType: "general",
-  setStudyMeetingType: (type) => set({ studyMeetingType: type }),
+  // Switching the template re-aims the intel STATUS at the new type: a board
+  // that already matches it is simply "done" again (switching away and back is
+  // free), anything else resets to "idle" so the pipeline extracts — including
+  // after a failed run, where "error" would otherwise block the new type
+  // forever. An in-flight run keeps "running"; the runner discards a stale
+  // result itself (see runIntelExtraction's alive/type checks).
+  setStudyMeetingType: (type) =>
+    set((s) => {
+      if (type === s.studyMeetingType) return {};
+      if (s.intelStatus === "running") return { studyMeetingType: type };
+      return {
+        studyMeetingType: type,
+        intelStatus: s.intel?.meetingType === type ? ("done" as const) : ("idle" as const),
+      };
+    }),
 
   setFindings: (events) =>
     set((s) => {
@@ -866,24 +879,12 @@ export const useStore = create<ParleyState>()(
       loadedHistoryId: null,
       segments: [],
       speakerNames: {},
-      findings: [],
-      analysisStatus: "idle",
-      analysisError: null,
-      analyzedEvalSig: "",
-      selectedFindingId: null,
-      solutionFindingId: null,
-      findingSolutions: {},
+      ...CLEARED_STUDY_SLICE,
       prosody: null,
       micSessionRateHz: null,
       filledPauseCount: 0,
       filledPauseCounted: {},
       deliveryNudge: null,
-      deliveryAssessment: null,
-      deliveryStatus: "idle",
-      intel: null,
-      intelStatus: "idle",
-      brief: null,
-      briefStatus: "idle",
       };
     });
   },
@@ -1054,6 +1055,19 @@ export function isTrimmed(
 ): boolean {
   if (!trim) return false;
   return s.endMs < trim.startMs || s.startMs > trim.endMs;
+}
+
+/**
+ * Is there any spoken (final, non-empty) content inside the keep-window? THE
+ * shared "can an analysis pass run" predicate — the study pipeline's scheduler
+ * and every runner's own guard must agree on it, or a stage gets offered
+ * forever while its runner silently declines.
+ */
+export function hasSpokenSegment(
+  segments: TranscriptSegment[],
+  trim: ReplayTrim | null = null
+): boolean {
+  return segments.some((s) => !isTrimmed(s, trim) && s.isFinal && s.text.trim());
 }
 
 /**
