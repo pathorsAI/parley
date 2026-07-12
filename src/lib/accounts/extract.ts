@@ -4,9 +4,11 @@ import { JSON_MODE_INSTRUCTION } from "../ai/provider";
 import { profileContext } from "../ai/profile";
 import { log } from "../log";
 import { recordLlmUsage } from "../usage/log";
+import { translate, type TranslationKey } from "../../i18n/messages";
 import type { Settings } from "../types";
 import type { Claim, Company, Person, Thread } from "./types";
 import type { ExtractedOps } from "./store";
+import { readStageBundleOverrides, stageBundles, type SlotDef } from "./bundles";
 
 /**
  * Claim extraction: one LLM pass over source material (a meeting transcript, a
@@ -50,6 +52,11 @@ const opsSchema = z.object({
       side: z.string().describe('"ours" or "theirs" for leverage/goal claims, else empty'),
       layer: z.string().describe('"surface" or "deep" for goal claims, else empty'),
       quote: z.string().describe("short verbatim quote from the source backing it, else empty"),
+      slotIds: z
+        .array(z.string())
+        .describe(
+          "ids of gap-board slots this claim fills, ONLY from the provided slot list; empty if none or no list given"
+        ),
     })
   ),
   claimUpdates: z.array(
@@ -103,6 +110,38 @@ function rosterDigest(persons: Person[], threads: Thread[]): string {
   );
 }
 
+/**
+ * Gap-board slots to offer the model (#146): the linked thread's current
+ * stage, or — for company-level feeds with no thread — every active sales
+ * thread's stage, deduped (slot ids are stage-namespaced, so no collisions).
+ */
+async function slotsForExtraction(
+  settings: Settings,
+  threads: Thread[],
+  threadId?: string
+): Promise<SlotDef[]> {
+  const relevant = (threadId ? threads.filter((t) => t.id === threadId) : threads).filter(
+    (t) => t.kind === "sales" && t.stage && t.status === "active"
+  );
+  if (!relevant.length) return [];
+  const t = (key: string) => translate(settings.language, key as TranslationKey);
+  const bundles = stageBundles(t, await readStageBundleOverrides());
+  const out = new Map<string, SlotDef>();
+  for (const th of relevant) {
+    for (const slot of bundles[th.stage!].slots) out.set(slot.id, slot);
+  }
+  return [...out.values()];
+}
+
+function slotDigest(slots: SlotDef[]): string {
+  if (!slots.length) return "";
+  const lines = slots.map((s) => `- ${s.id}: ${s.label} — ${s.hint}`);
+  return (
+    `Gap-board slots (tag each NEW claim with the slot ids it fills via slotIds; ` +
+    `a claim may fill several, most fill one, leave empty when none apply):\n${lines.join("\n")}\n\n`
+  );
+}
+
 export async function extractClaimOps(opts: {
   settings: Settings;
   company: Company;
@@ -113,14 +152,19 @@ export async function extractClaimOps(opts: {
   sourceText: string;
   /** One line describing the source for the prompt (e.g. "meeting transcript"). */
   sourceLabel: string;
+  /** Linked thread (post-meeting path) — scopes slot tagging to its stage. */
+  threadId?: string;
 }): Promise<ExtractedOps> {
-  const { settings, company, persons, threads, existingClaims, sourceText, sourceLabel } = opts;
+  const { settings, company, persons, threads, existingClaims, sourceText, sourceLabel, threadId } =
+    opts;
 
+  const slots = await slotsForExtraction(settings, threads, threadId);
   const digest = claimDigest(existingClaims);
   const prompt =
     profileContext(settings) +
     `Company under analysis: ${company.name}${company.note ? ` — ${company.note}` : ""}\n\n` +
     rosterDigest(persons, threads) +
+    slotDigest(slots) +
     (digest
       ? `EXISTING claims (reference these ids in claimUpdates; do NOT re-add them as new):\n${digest}\n\n`
       : "") +
@@ -135,8 +179,10 @@ export async function extractClaimOps(opts: {
   });
   void recordLlmUsage(settings, "deep", "accounts-extract", usage);
 
-  // Normalize: drop updates that point at unknown claims, clamp enums.
+  // Normalize: drop updates that point at unknown claims, clamp enums,
+  // and keep only slot ids we actually offered (the model must not invent).
   const known = new Set(existingClaims.map((c) => c.id));
+  const knownSlots = new Set(slots.map((s) => s.id));
   const ops: ExtractedOps = {
     newPersons: object.newPersons.filter((p) => p.name.trim()),
     newClaims: object.newClaims
@@ -148,6 +194,7 @@ export async function extractClaimOps(opts: {
         side: c.side === "ours" || c.side === "theirs" ? c.side : "",
         layer: c.layer === "surface" || c.layer === "deep" ? c.layer : "",
         quote: c.quote,
+        slotIds: c.slotIds.filter((id) => knownSlots.has(id)),
       })),
     claimUpdates: object.claimUpdates.filter((u) => known.has(u.claimId)),
   };

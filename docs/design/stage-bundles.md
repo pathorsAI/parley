@@ -114,7 +114,10 @@ type StageBundleFile = { version: 1; overrides: Partial<Record<SalesStage, Stage
 ```ts
 interface Claim {
   // …既有欄位…
-  /** 缺口板 slot 標籤（S3）。萃取時標；補分類/手動掛也寫這裡。 */
+  /** 缺口板 slot 標籤（S3）。萃取時標；補分類/手動掛也寫這裡。
+   *  缺席＝從未分類（板用粗查詢兜底）；補分類的負向結果寫階段限定
+   *  sentinel（如 `discovery.none`）——該階段不重送、換階段仍可再分類，
+   *  「無新卡不重跑」由資料本身保證，不需獨立快取（#146 實作定案）。 */
   slotIds?: string[];
 }
 ```

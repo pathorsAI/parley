@@ -124,6 +124,13 @@ export interface Claim {
   layer?: "surface" | "deep";
   /** The claim itself — one sentence, one assertion. */
   text: string;
+  /** Gap-board slots this claim fills (bundle-namespaced ids, e.g.
+   *  `discovery.problem`). Absent = never classified (board falls back to the
+   *  slot's coarse query, S3); present = authoritative. May carry a
+   *  `<stage>.none` sentinel — "classified for that stage, fills nothing" —
+   *  so backfill never re-sends the card for THAT stage but a later stage can
+   *  still classify it (#146). Optional and additive — no migration. */
+  slotIds?: string[];
   provenance: ClaimProvenance[];
   confidence: ClaimConfidence;
   /** Wrong/superseded claims are KEPT (so "why did we believe this" survives). */
