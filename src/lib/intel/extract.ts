@@ -70,6 +70,27 @@ export function normalizeSlotFills(
   return (fills ?? []).filter((f) => f.text.trim() && knownSlotIds.has(f.slotId));
 }
 
+/** Auto-focus (S22): ONE slot to chase next — the board highlights only this. */
+const focusSchema = z.object({
+  slotId: z.string().describe("id of the ONE slot to pursue next, from the provided list"),
+  question: z
+    .string()
+    .describe(
+      "ONE speakable question chasing that slot — ride the counterpart's actual words, " +
+        "open-ended, one ask, never survey-like; transcript language"
+    ),
+  reason: z.string().describe("why this slot now, under 8 words, transcript language"),
+});
+
+/** Drop a focus that points nowhere or says nothing. Exported for tests. */
+export function normalizeFocus(
+  focus: { slotId: string; question: string; reason: string } | undefined,
+  knownSlotIds: Set<string>
+): IntelState["focusSlot"] {
+  if (!focus || !focus.question.trim() || !knownSlotIds.has(focus.slotId)) return undefined;
+  return focus;
+}
+
 const partnershipSchema = z.object({
   theyHave: z.array(z.string()).describe("assets/strengths the counterpart has (channels, users, tech, team)"),
   theyNeed: z.array(z.string()).describe("things the counterpart needs or lacks"),
@@ -133,17 +154,24 @@ export async function runIntelExtraction(
       const { object } = await generateObjectResilient({
         settings: state.settings,
         workload,
-        schema: salesSchema.extend({ slotFills: slotFillsSchema }),
+        schema: salesSchema.extend({ slotFills: slotFillsSchema, focus: focusSchema }),
         system: SYSTEM,
         prompt:
           `Extract the CURRENT sales-call state (BANT signals, objections, commitments) from this transcript.\n\n` +
           `Additionally fill slotFills: map intel that was actually said onto these gap-board slots ` +
-          `(ONLY these ids; a slot can receive several items):\n${slotLines}\n\n${transcript}`,
+          `(ONLY these ids; a slot can receive several items). The slots are listed in the stage's ` +
+          `intended question ORDER:\n${slotLines}\n\n` +
+          `Then set focus — the ONE slot the salesperson should chase next: the earliest slot in ` +
+          `order that is still unfilled or thin, UNLESS the conversation is actively on a later ` +
+          `slot's ground (then take it); if the topic drifted away from an unfinished earlier slot, ` +
+          `steer back to it. Craft the question so it rides what the counterpart just said.\n\n${transcript}`,
       });
+      const known = new Set(bundle.slots.map((s) => s.id));
       intel = {
         meetingType: type,
         ...object,
-        slotFills: normalizeSlotFills(object.slotFills, new Set(bundle.slots.map((s) => s.id))),
+        slotFills: normalizeSlotFills(object.slotFills, known),
+        focusSlot: normalizeFocus(object.focus, known),
       };
     } else {
       const { object } = await generateObjectResilient({

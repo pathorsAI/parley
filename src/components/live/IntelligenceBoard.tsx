@@ -117,7 +117,11 @@ export function IntelligenceBoard() {
                   {running ? t("board.extracting") : t("board.empty")}
                 </p>
               )}
-              {intel?.meetingType === meetingType && <IntelSections />}
+              {intel?.meetingType === meetingType && (
+                // Sales: BANT lives in the stage board's slots now — showing it
+                // twice is exactly the clutter the second-attention rule bans.
+                <IntelSections hideBant={meetingType === "sales"} />
+              )}
             </div>
           </ScrollArea>
           {/* Goals keep a slim home under the intel sections. */}
@@ -134,7 +138,7 @@ export function IntelligenceBoard() {
 
 /** Render the populated sections of the current intel state. Exported for the
  *  study tense's 情報 page, which shows the same board over a loaded recording. */
-export function IntelSections() {
+export function IntelSections({ hideBant = false }: Readonly<{ hideBant?: boolean }> = {}) {
   const { t } = useI18n();
   const intel = useStore((s) => s.intel);
   if (!intel) return null;
@@ -186,7 +190,7 @@ export function IntelSections() {
       )}
 
       {/* ── sales ───────────────────────────────────── */}
-      {(intel.budget || intel.timeline || intel.decisionMaker) && (
+      {!hideBant && (intel.budget || intel.timeline || intel.decisionMaker) && (
         <Section title={t("board.sec.bant")}>
           {intel.budget && <KV k={t("board.sec.budget")} v={intel.budget} />}
           {intel.timeline && <KV k={t("board.sec.timeline")} v={intel.timeline} />}

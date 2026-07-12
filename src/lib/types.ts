@@ -276,6 +276,9 @@ export interface IntelState {
   competitors?: string[];
   /** Live gap-board fills for THIS call's stage (§4.3, UI transient). */
   slotFills?: IntelSlotFill[];
+  /** Auto-focus (S22): the ONE slot to pursue next, judged each refresh —
+   *  stage order first, unfilled first, but riding the current topic. */
+  focusSlot?: { slotId: string; question: string; reason: string };
   /* partnership */
   theyHave?: string[];
   theyNeed?: string[];

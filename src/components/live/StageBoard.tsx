@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, MessageCircleQuestion } from "lucide-react";
-import { transcriptAsText, useStore } from "../../lib/store";
+import { useStore } from "../../lib/store";
 import { activeClaims, useAccounts } from "../../lib/accounts/store";
-import { suggestSlotQuestions, type SlotQuestion } from "../../lib/accounts/suggest";
 import {
   buildBuiltinBundles,
   mergeBundles,
@@ -17,12 +15,12 @@ import { useI18n, type TranslationKey } from "../../i18n";
 import { log } from "../../lib/log";
 
 /**
- * The live gap board's "readable" form (S21, #147 P1-3): shown at the top of
- * the sales intel rail. Header = THIS call's stage (S19 — defaults to the
- * linked thread's stage, changeable per call, never writes back); body = the
- * stage bundle's slots with 空/薄/實 dots, attached cards, and ghost hints.
- * Live slotFills (in-call updates) arrive in P2 — this form reads the claim
- * base as it stands.
+ * The live gap board (S21/S22, #147): a SECOND-attention surface — one line
+ * per slot, glanceable in 1–2 seconds of peripheral vision. The realtime
+ * extraction auto-focuses the ONE slot to chase next (stage order first,
+ * riding the current topic) and the board highlights only that cell with one
+ * speakable question. No per-cell actions: the user picks TIMING (refresh /
+ * the 30s cadence), never direction. Header = THIS call's stage (S19).
  */
 
 /** Builtins in the current language, with user overrides once they load. */
@@ -48,57 +46,13 @@ export function StageBoard() {
   const threadId = useStore((s) => s.meetingThreadId);
   const meetingStage = useStore((s) => s.meetingStage);
   const setMeetingStage = useStore((s) => s.setMeetingStage);
+  const intel = useStore((s) => s.intel);
   const bundles = useStageBundles();
 
   const thread = acc.threads.find((x) => x.id === threadId) ?? null;
   const threadStage = thread?.kind === "sales" ? thread.stage : undefined;
   const stage: SalesStage = meetingStage ?? threadStage ?? SALES_STAGES[0];
   const bundle = bundles[stage];
-
-  // Live fills for THIS call (§4.3): transient proposals from the realtime
-  // extraction — they land in cells with a "pending" look, never the claim base.
-  const intel = useStore((s) => s.intel);
-  const fillsBySlot = useMemo(() => {
-    const out = new Map<string, { text: string; speaker: "me" | "them" }[]>();
-    if (intel?.meetingType !== "sales") return out;
-    for (const f of intel.slotFills ?? []) {
-      const list = out.get(f.slotId) ?? [];
-      list.push({ text: f.text, speaker: f.speaker });
-      out.set(f.slotId, list);
-    }
-    return out;
-  }, [intel]);
-
-  // 建議問法 (#148): per-slot, on demand, cleared when the stage flips.
-  const [asks, setAsks] = useState<
-    Record<string, { status: "running" | "done" | "error"; questions: SlotQuestion[] }>
-  >({});
-  useEffect(() => setAsks({}), [stage]);
-  const canAsk = hasProviderKey(settings, "realtime");
-
-  function ask(slotId: string) {
-    const slot = bundle.slots.find((s) => s.id === slotId);
-    if (!slot || asks[slotId]?.status === "running") return;
-    setAsks((m) => ({ ...m, [slotId]: { status: "running", questions: [] } }));
-    const state = useStore.getState();
-    const attached = board.find((b) => b.slot.id === slotId)?.claims ?? [];
-    const known = [
-      ...attached.map((c) => c.text),
-      ...(fillsBySlot.get(slotId)?.map((f) => f.text) ?? []),
-    ];
-    suggestSlotQuestions({
-      settings: state.settings,
-      stage,
-      slot,
-      knownTexts: known,
-      transcriptTail: transcriptAsText(state.segments, state.speakerNames).slice(-2_000),
-    })
-      .then((questions) => setAsks((m) => ({ ...m, [slotId]: { status: "done", questions } })))
-      .catch((e) => {
-        log.warn("stage-board: suggest failed", { error: String(e) });
-        setAsks((m) => ({ ...m, [slotId]: { status: "error", questions: [] } }));
-      });
-  }
 
   // This meeting's view of the claim base: thread-scoped + company-level cards.
   const claims = useMemo(
@@ -111,6 +65,16 @@ export function StageBoard() {
     [acc, companyId, threadId]
   );
   const board = useMemo(() => boardStates(claims, bundle, Date.now()), [claims, bundle]);
+
+  // Live fills + auto-focus for THIS call (§4.3/S22): UI transient, from the
+  // 30s realtime pass — the claim base is written at post-meeting review (D8).
+  const live = intel?.meetingType === "sales" ? intel : null;
+  const fillsBySlot = useMemo(() => {
+    const out = new Map<string, string[]>();
+    for (const f of live?.slotFills ?? []) out.set(f.slotId, [...(out.get(f.slotId) ?? []), f.text]);
+    return out;
+  }, [live]);
+  const focus = live?.focusSlot;
 
   // Board-open backfill (#146): classify query-hit-but-untagged cards once per
   // stage, write results back into the claim base. Deliberately keyed on the
@@ -141,8 +105,8 @@ export function StageBoard() {
             onClick={() => setMeetingStage(s)}
             className={`rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
               s === stage
-                ? "border-primary bg-primary/10 font-semibold text-primary"
-                : "text-muted-foreground hover:text-foreground"
+                ? "border-primary/60 bg-primary/10 font-semibold text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
             {t(`accounts.stage.${s}` as TranslationKey)}
@@ -150,25 +114,22 @@ export function StageBoard() {
         ))}
       </div>
 
-      <p className="text-[11px] leading-snug">
-        <span className="text-muted-foreground">{t("accounts.stageGuide.goal")}：</span>
-        {t(`accounts.stageGuide.${stage}.goal` as TranslationKey)}
-      </p>
-
-      <div className="flex flex-col gap-1.5">
+      {/* One line per slot; ONLY the focused cell expands (S22). */}
+      <div className="flex flex-col">
         {board.map(({ slot, claims: cards, state }) => {
           const fills = fillsBySlot.get(slot.id) ?? [];
-          const askState = asks[slot.id];
+          const focused = focus?.slotId === slot.id;
+          const newestCard = [...cards].sort((a, b) => b.lastSupportedAt - a.lastSupportedAt)[0];
+          const content = fills[fills.length - 1] ?? newestCard?.text ?? slot.hint;
+          const n = cards.length + fills.length;
           return (
             <div
               key={slot.id}
-              className={`rounded-md border px-2 py-1.5 ${
-                state === "empty" && fills.length === 0 ? "border-dashed" : ""
-              }`}
+              className={`rounded-md px-1.5 py-1 ${focused ? "bg-secondary" : ""}`}
             >
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-baseline gap-1.5">
                 <span
-                  className={`size-1.5 shrink-0 rounded-full ${
+                  className={`size-1.5 shrink-0 self-center rounded-full ${
                     state === "solid"
                       ? "bg-emerald-500"
                       : state === "thin" || fills.length > 0
@@ -176,74 +137,25 @@ export function StageBoard() {
                         : "border border-muted-foreground/50"
                   }`}
                 />
-                <span className="min-w-0 flex-1 truncate text-xs font-medium">{slot.label}</span>
-                {cards.length > 0 && (
-                  <span className="text-[10px] text-muted-foreground">{cards.length}</span>
-                )}
-                {canAsk && (
-                  <button
-                    type="button"
-                    title={t("board.stage.ask")}
-                    className="text-muted-foreground/60 transition-colors hover:text-foreground"
-                    onClick={() => ask(slot.id)}
-                  >
-                    {askState?.status === "running" ? (
-                      <Loader2 className="size-3 animate-spin" />
-                    ) : (
-                      <MessageCircleQuestion className="size-3" />
-                    )}
-                  </button>
-                )}
-              </div>
-
-              {cards.slice(0, 3).map((c) => (
-                <p
-                  key={c.id}
-                  className="truncate pl-3 text-[11px] text-muted-foreground"
-                  title={c.text}
+                <span className="shrink-0 text-xs font-medium">{slot.label}</span>
+                <span
+                  className={`min-w-0 flex-1 truncate text-[11px] ${
+                    n > 0 ? "text-muted-foreground" : "text-muted-foreground/60"
+                  }`}
                 >
-                  {c.text}
-                </p>
-              ))}
-              {/* Live fills: pending-review look — captured this call, not yet in the base. */}
-              {fills.map((f) => (
-                <p key={f.text} className="pl-3 text-[11px] italic leading-snug text-sky-600 dark:text-sky-400">
-                  ✎ {f.text}
-                  <span className="ml-1 not-italic text-[9px] text-muted-foreground">
-                    {t("board.stage.pending")}
-                  </span>
-                </p>
-              ))}
-              {cards.length === 0 && fills.length === 0 && (
-                // Ghost hint: what belongs here — doubles as "how to ask" (§5 seeds).
-                <p className="pl-3 text-[11px] leading-snug text-muted-foreground/70">{slot.hint}</p>
+                  {content}
+                </span>
+                {n > 0 && <span className="shrink-0 text-[10px] text-muted-foreground">{n}</span>}
+              </div>
+              {focused && (
+                <div className="pb-0.5 pl-3 pt-1">
+                  <p className="text-xs leading-snug">{focus.question}</p>
+                  <p className="text-[10px] leading-snug text-muted-foreground">{focus.reason}</p>
+                </div>
               )}
-
-              {/* 建議問法 (#148): speakable lines, ride the conversation. */}
-              {askState?.status === "error" && (
-                <p className="pl-3 text-[10px] text-destructive">{t("board.stage.askFail")}</p>
-              )}
-              {askState?.status === "done" &&
-                askState.questions.map((q) => (
-                  <div key={q.reply} className="mt-1 rounded border-l-2 border-primary/50 bg-muted/40 py-0.5 pl-2 pr-1">
-                    <p className="text-[11px] leading-snug">{q.reply}</p>
-                    <p className="text-[10px] leading-snug text-muted-foreground">{q.consideration}</p>
-                  </div>
-                ))}
             </div>
           );
         })}
-      </div>
-
-      <div>
-        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-          {t("accounts.stageGuide.exit")}
-        </span>
-        {bundle.exitCriteria.map((x) => (
-          <p key={x} className="text-[11px] leading-snug text-muted-foreground">
-            ○ {x}
-          </p>
-        ))}
       </div>
 
       {!companyId && (
