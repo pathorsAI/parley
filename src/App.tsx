@@ -36,6 +36,7 @@ import { initSessionSync } from "./lib/sessionSync";
 import { initSessionCommands } from "./lib/sessionCommands";
 import { useThemePreference } from "./lib/theme";
 import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
+import { initStudyPipeline } from "./lib/analysis/studyPipeline";
 import { initAccounts } from "./lib/accounts/store";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import {
@@ -148,6 +149,7 @@ const App = () => {
     const unSession = initSessionSync();
     const unSessionCmds = initSessionCommands();
     const unHistoryPersist = initHistoryPersistSync();
+    const unStudyPipeline = initStudyPipeline();
     const unVoiceTyping = initVoiceTyping();
     return () => {
       active = false;
@@ -157,6 +159,7 @@ const App = () => {
       unSession();
       unSessionCmds();
       unHistoryPersist();
+      unStudyPipeline();
       unVoiceTyping();
     };
   }, []);

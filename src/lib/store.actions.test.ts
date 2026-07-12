@@ -70,9 +70,8 @@ describe("enterReplay / exitReplay", () => {
   it("exitReplay returns to a clean live/idle state", () => {
     const session = replaySession([seg({ id: "s1" })]);
     useStore.getState().enterReplay(session);
-    // Simulate having opened the wizard + run analysis + a post-call delivery pass.
+    // Simulate having run analysis + a post-call delivery pass.
     useStore.setState({
-      analysisGate: "deferred",
       findings: [makeFinding("f1")],
       deliveryAssessment: {
         tone: "firm",
@@ -92,7 +91,6 @@ describe("enterReplay / exitReplay", () => {
     expect(s.segments).toEqual([]);
     expect(s.speakerNames).toEqual({});
     expect(s.meetingStatus).toBe("idle");
-    expect(s.analysisGate).toBe("open");
     expect(s.findings).toEqual([]);
     expect(s.replayTrim).toBeNull();
     // Delivery slice must not leak into the next LIVE session.
@@ -135,7 +133,7 @@ describe("loadHistory", () => {
     expect(s.segments).toEqual(session.segments);
     expect(s.speakerNames).toEqual({ "them-1": "Bob" });
     expect(s.meetingStatus).toBe("stopped");
-    // Analysis restored verbatim and marked done so useReplayAnalysis won't re-run.
+    // Analysis restored verbatim and marked done so the study pipeline won't re-run.
     expect(s.findings).toHaveLength(2);
     expect(s.analysisStatus).toBe("done");
     expect(s.actionItems).toHaveLength(1);
@@ -145,16 +143,13 @@ describe("loadHistory", () => {
     expect(s.meetingBatna).toBe("batna");
     expect(s.meetingTarget).toBe("target");
     expect(s.meetingFloor).toBe("floor");
-    // analysisGate open + a non-stale eval signature so findings aren't flagged stale.
-    expect(s.analysisGate).toBe("open");
+    // A non-stale eval signature so findings aren't flagged stale.
     expect(s.analyzedEvalSig).not.toBe("");
   });
 });
 
-describe("ingest wizard + analysis gate", () => {
-  it("openIngestWizard arms the deferred gate and sets step/path", () => {
-    expect(useStore.getState().analysisGate).toBe("open");
-
+describe("ingest wizard", () => {
+  it("openIngestWizard sets step/path (the OPEN dialog itself defers auto-analysis)", () => {
     useStore.getState().openIngestWizard("/tmp/rec.wav");
 
     const s = useStore.getState();
@@ -162,14 +157,6 @@ describe("ingest wizard + analysis gate", () => {
     expect(s.ingestWizardStep).toBe("count");
     expect(s.ingestWizardError).toBeNull();
     expect(s.ingestAudioPath).toBe("/tmp/rec.wav");
-    // Loading the session behind the dialog must NOT auto-analyze.
-    expect(s.analysisGate).toBe("deferred");
-  });
-
-  it("releaseAnalysisGate opens the gate (the review-confirm path)", () => {
-    useStore.getState().openIngestWizard("/tmp/rec.wav");
-    useStore.getState().releaseAnalysisGate();
-    expect(useStore.getState().analysisGate).toBe("open");
   });
 
   it("setIngestWizardStep records the step and optional error", () => {
@@ -191,6 +178,37 @@ describe("ingest wizard + analysis gate", () => {
     const s = useStore.getState();
     expect(s.ingestWizardOpen).toBe(false);
     expect(s.ingestAudioPath).toBeNull();
+  });
+});
+
+describe("setStudyMeetingType re-aims the intel status", () => {
+  it("switching to a type whose board exists restores 'done'; otherwise invalidates to 'idle'", () => {
+    useStore.setState({
+      studyMeetingType: "sales",
+      intelStatus: "done",
+      intel: { meetingType: "sales", budget: "", timeline: "", decisionMaker: "", objections: [], commitments: [], competitors: [] },
+    });
+
+    // Away from the board's type → idle, so the pipeline extracts the new type.
+    useStore.getState().setStudyMeetingType("negotiation");
+    expect(useStore.getState().intelStatus).toBe("idle");
+
+    // Back to the type the existing board matches → done again, no re-spend.
+    useStore.getState().setStudyMeetingType("sales");
+    expect(useStore.getState().intelStatus).toBe("done");
+  });
+
+  it("a failed extraction unblocks when the user switches type", () => {
+    useStore.setState({ studyMeetingType: "sales", intelStatus: "error", intel: null });
+    useStore.getState().setStudyMeetingType("negotiation");
+    expect(useStore.getState().intelStatus).toBe("idle");
+  });
+
+  it("an in-flight run keeps 'running' — the runner itself discards a stale-type result", () => {
+    useStore.setState({ studyMeetingType: "sales", intelStatus: "running", intel: null });
+    useStore.getState().setStudyMeetingType("negotiation");
+    expect(useStore.getState().intelStatus).toBe("running");
+    expect(useStore.getState().studyMeetingType).toBe("negotiation");
   });
 });
 

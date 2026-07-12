@@ -11,7 +11,8 @@ import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { toast } from "sonner";
-import { useStore, speakerKey } from "../store";
+import { useStore, speakerKey, hasSpokenSegment } from "../store";
+import { readStudyCache, writeStudyCache } from "./studyCache";
 import { companyFolderId } from "../accounts/folders";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
@@ -112,7 +113,7 @@ export type AnalysisSnapshot = ReturnType<typeof snapshotAnalysis>;
 
 /** Whether the current transcript has any spoken content worth saving. */
 function hasSpokenTranscript(): boolean {
-  return useStore.getState().segments.some((s) => s.isFinal && s.text.trim());
+  return hasSpokenSegment(useStore.getState().segments);
 }
 
 /** Persist an entry: write meta + summary and place the audio. */
@@ -392,12 +393,26 @@ export async function updateHistoryEntry(id: string, snapshot?: AnalysisSnapshot
  * its analysis. Called right after each output finishes generating, so a
  * recording pays for each generation exactly once. Store-null outputs keep the
  * on-disk value (a brief finishing must not clobber a saved intel, and vice
- * versa). No-op when nothing is loaded (live meeting / fresh upload — their
- * save paths snapshot these fields anyway) or for read-only org recordings.
+ * versa). A READ-ONLY org recording can't be written back — its outputs go into
+ * the local study cache instead, so anything that ran is still stored and
+ * reopening never re-spends it. No-op when nothing is loaded (live meeting /
+ * fresh upload — their save paths snapshot these fields anyway).
  */
 export async function persistStudyOutputs(): Promise<void> {
   const s = useStore.getState();
   const id = s.loadedHistoryId;
+  if (s.replayReadOnly && s.replay?.id) {
+    writeStudyCache(s.replay.id, {
+      findings: s.findings,
+      actionItems: s.actionItems,
+      brief: s.brief,
+      intel: s.intel,
+      deliveryAssessment: s.deliveryAssessment,
+      meetingType: s.studyMeetingType,
+    });
+    log.info("history: study outputs cached (read-only entry)", { id: s.replay.id });
+    return;
+  }
   if (!isTauri() || !id) return;
   // An upload's initial save may still be compressing — wait so the entry exists.
   await Promise.resolve(uploadSaveInFlight).catch(() => {});
@@ -527,6 +542,24 @@ export async function loadHistoryEntry(id: string): Promise<void> {
 export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
   const base = `/orgs/${encodeURIComponent(orgId)}/recordings/${encodeURIComponent(id)}`;
   const meta = (await (await cloudFetch(`${base}/meta`)).json()) as HistoryEntry;
+  // Server meta shapes vary across versions — never trust the arrays to exist.
+  meta.findings ??= [];
+  meta.actionItems ??= [];
+  // Fold locally-cached study outputs over the fetched meta (read-only entries
+  // persist there instead of back to the org) so restored outputs load as
+  // "done" and the pipeline doesn't re-spend a generation. The shared entry's
+  // own saved GENERATED outputs win — the cache only fills what the org copy
+  // lacks. The meeting TYPE is the opposite: it's the viewer's own study
+  // choice, so their cached pick beats the owner's.
+  const cached = readStudyCache(id);
+  if (cached) {
+    if (!meta.findings.length && cached.findings?.length) meta.findings = cached.findings;
+    if (!meta.actionItems.length && cached.actionItems?.length) meta.actionItems = cached.actionItems;
+    meta.brief = meta.brief ?? cached.brief ?? null;
+    meta.intel = meta.intel ?? cached.intel ?? null;
+    meta.deliveryAssessment = meta.deliveryAssessment ?? cached.deliveryAssessment ?? null;
+    meta.meetingType = cached.meetingType ?? meta.meetingType;
+  }
   let audioPath = "";
   const t = cloudToken();
   if (meta.audio && t) {

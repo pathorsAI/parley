@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
 import { SaveDestinationPicker } from "./SaveDestinationPicker";
 import { PostMeetingReviewButton } from "./accounts/PostMeetingReviewButton";
+import { StudyGenerationChip } from "./study/StudyGenerationChip";
 
 type TFn = ReturnType<typeof useI18n>["t"];
 type WindowAction = "close" | "minimize" | "fullscreen";
@@ -316,8 +317,10 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
 
       {/* Titlebar-center switcher — two tenses, one slot: live shows the
           posture switch (coach/transcript); a loaded recording swaps in the
-          study tabs (report/replay, purple accent). */}
-      <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-0.5 rounded-lg bg-muted p-0.5">
+          study tabs (report/replay, purple accent) plus the analysis-status
+          chip (the ONE generation surface for the whole study tense). */}
+      <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2">
+        <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
         {accountsMode ? (
           <span className="px-3 py-1 text-xs font-medium text-muted-foreground">
             {t("accounts.title")}
@@ -351,6 +354,8 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
                 {t(`layout.${mode}`)}
               </button>
             ))}
+        </div>
+        {replayMode && <StudyGenerationChip />}
       </div>
 
       <div className="flex items-center gap-2">

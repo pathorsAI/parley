@@ -35,7 +35,7 @@ You are given the FINDINGS from the retro analysis (notable moments, each with a
 - linkedEventId: the finding id it derives from when it maps to one, else null.
 - time: the [m:ss] it relates to (copy a real transcript timestamp), else null.
 
-Be selective — surface the actions that genuinely matter (typically 3-7), not busywork. Ground everything in what was actually said. Respond ENTIRELY in the language of the transcript.`;
+Be selective — surface the actions that genuinely matter (typically 3-7), not busywork. Ground everything in what was actually said.`;
 
 /** A (possibly half-streamed) raw action item — every field may be absent. */
 type RawItem = { text?: string | null; rationale?: string | null; linkedEventId?: string | null; time?: string | null };

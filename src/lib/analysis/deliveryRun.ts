@@ -1,6 +1,7 @@
-import { useStore, isTrimmed } from "../store";
+import { useStore, isTrimmed, hasSpokenSegment } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { analyzeDelivery } from "../ai/delivery";
+import { makeRunGuard } from "./runGuard";
 
 /**
  * Run the whole-recording delivery assessment (tone + over-frequent fillers + an
@@ -9,8 +10,10 @@ import { analyzeDelivery } from "../ai/delivery";
  * Unlike the LIVE coach (gated behind the opt-in `delivery.tone` toggle, which
  * governs the extra *live* nudges), the post-call pass runs as part of the retro
  * whenever there's a provider key + transcript — same as the timeline analysis
- * and action items. Fires once per replay load (the caller guards re-entry).
+ * and action items. Dispatched by the study pipeline; a run that outlives its
+ * session or is superseded stops writing (see runGuard).
  */
+const guard = makeRunGuard();
 export async function runDeliveryAnalysis(): Promise<void> {
   const state = useStore.getState();
   const { settings, speakerNames } = state;
@@ -21,9 +24,10 @@ export async function runDeliveryAnalysis(): Promise<void> {
       ? state.segments.filter((s) => !isTrimmed(s, state.replayTrim))
       : state.segments;
   if (!hasProviderKey(settings, "deep")) return;
-  if (!segments.some((s) => s.isFinal && s.text.trim())) return;
+  if (!hasSpokenSegment(segments)) return;
   if (state.deliveryStatus === "running") return;
 
+  const alive = guard.begin();
   state.setDeliveryStatus("running");
   try {
     const res = await analyzeDelivery({
@@ -33,6 +37,7 @@ export async function runDeliveryAnalysis(): Promise<void> {
       measuredRateHz: state.replay?.speechRateHz ?? null,
       mode: "post",
     });
+    if (!alive()) return;
     useStore.getState().setDeliveryAssessment(res);
     useStore.getState().setDeliveryStatus("done");
     // A legacy entry (saved before deliveryAssessment existed) recomputes this on
@@ -42,6 +47,6 @@ export async function runDeliveryAnalysis(): Promise<void> {
     );
   } catch (e) {
     console.error("[delivery]", e);
-    useStore.getState().setDeliveryStatus("error");
+    if (alive()) useStore.getState().setDeliveryStatus("error");
   }
 }
