@@ -148,6 +148,9 @@ export function AnalysisTimeline({
           onSelect={onSelect}
           extraLabel={t("timeline.extra")}
           tooltipTime={t("timeline.atMoment")}
+          // Top lane: open the tooltip DOWNWARD so it stays inside the panel
+          // instead of escaping over whatever sits above the timeline.
+          tooltipBelow
         />
         <Lane
           label={t("timeline.laneMe")}
@@ -204,6 +207,9 @@ interface LaneProps {
   onSelect: (event: TimelineEvent) => void;
   extraLabel: string;
   tooltipTime: string;
+  /** Open tooltips below the dots (for the top lane, so they never escape
+   *  upward over neighbouring panels / the window edge). */
+  tooltipBelow?: boolean;
 }
 
 function Lane({
@@ -217,6 +223,7 @@ function Lane({
   onSelect,
   extraLabel,
   tooltipTime,
+  tooltipBelow = false,
 }: Readonly<LaneProps>) {
   const { t } = useI18n();
   const evalNames = useEvalNames();
@@ -257,7 +264,17 @@ function Lane({
               aria-label={`${formatClock(e.atMs)} ${e.title}`}
             >
               {isHovered && (
-                <span className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1.5 w-56 -translate-x-1/2 rounded-md border bg-popover px-2 py-1.5 text-left text-[11px] leading-snug text-popover-foreground shadow-md">
+                <span
+                  className={cn(
+                    "pointer-events-none absolute z-30 w-56 rounded-md border bg-popover px-2 py-1.5 text-left text-[11px] leading-snug text-popover-foreground shadow-md",
+                    // Vertical: top lane opens downward so the tooltip never
+                    // escapes the panel; bottom lane keeps opening upward.
+                    tooltipBelow ? "top-full mt-1.5" : "bottom-full mb-1.5",
+                    // Horizontal: dots near either end pin the tooltip to that
+                    // edge instead of centering it off the window.
+                    pct < 0.2 ? "left-0" : pct > 0.8 ? "right-0" : "left-1/2 -translate-x-1/2"
+                  )}
+                >
                   <span className="flex items-center gap-1.5">
                     <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
                       {tooltipTime} {formatClock(e.atMs)}
