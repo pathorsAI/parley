@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { useStore } from "../../lib/store";
+import { Loader2, MessageCircleQuestion } from "lucide-react";
+import { transcriptAsText, useStore } from "../../lib/store";
 import { activeClaims, useAccounts } from "../../lib/accounts/store";
+import { suggestSlotQuestions, type SlotQuestion } from "../../lib/accounts/suggest";
 import {
   buildBuiltinBundles,
   mergeBundles,
@@ -52,6 +54,51 @@ export function StageBoard() {
   const threadStage = thread?.kind === "sales" ? thread.stage : undefined;
   const stage: SalesStage = meetingStage ?? threadStage ?? SALES_STAGES[0];
   const bundle = bundles[stage];
+
+  // Live fills for THIS call (§4.3): transient proposals from the realtime
+  // extraction — they land in cells with a "pending" look, never the claim base.
+  const intel = useStore((s) => s.intel);
+  const fillsBySlot = useMemo(() => {
+    const out = new Map<string, { text: string; speaker: "me" | "them" }[]>();
+    if (intel?.meetingType !== "sales") return out;
+    for (const f of intel.slotFills ?? []) {
+      const list = out.get(f.slotId) ?? [];
+      list.push({ text: f.text, speaker: f.speaker });
+      out.set(f.slotId, list);
+    }
+    return out;
+  }, [intel]);
+
+  // 建議問法 (#148): per-slot, on demand, cleared when the stage flips.
+  const [asks, setAsks] = useState<
+    Record<string, { status: "running" | "done" | "error"; questions: SlotQuestion[] }>
+  >({});
+  useEffect(() => setAsks({}), [stage]);
+  const canAsk = hasProviderKey(settings, "realtime");
+
+  function ask(slotId: string) {
+    const slot = bundle.slots.find((s) => s.id === slotId);
+    if (!slot || asks[slotId]?.status === "running") return;
+    setAsks((m) => ({ ...m, [slotId]: { status: "running", questions: [] } }));
+    const state = useStore.getState();
+    const attached = board.find((b) => b.slot.id === slotId)?.claims ?? [];
+    const known = [
+      ...attached.map((c) => c.text),
+      ...(fillsBySlot.get(slotId)?.map((f) => f.text) ?? []),
+    ];
+    suggestSlotQuestions({
+      settings: state.settings,
+      stage,
+      slot,
+      knownTexts: known,
+      transcriptTail: transcriptAsText(state.segments, state.speakerNames).slice(-2_000),
+    })
+      .then((questions) => setAsks((m) => ({ ...m, [slotId]: { status: "done", questions } })))
+      .catch((e) => {
+        log.warn("stage-board: suggest failed", { error: String(e) });
+        setAsks((m) => ({ ...m, [slotId]: { status: "error", questions: [] } }));
+      });
+  }
 
   // This meeting's view of the claim base: thread-scoped + company-level cards.
   const claims = useMemo(
@@ -109,31 +156,47 @@ export function StageBoard() {
       </p>
 
       <div className="flex flex-col gap-1.5">
-        {board.map(({ slot, claims: cards, state }) => (
-          <div
-            key={slot.id}
-            className={`rounded-md border px-2 py-1.5 ${state === "empty" ? "border-dashed" : ""}`}
-          >
-            <div className="flex items-center gap-1.5">
-              <span
-                className={`size-1.5 shrink-0 rounded-full ${
-                  state === "solid"
-                    ? "bg-emerald-500"
-                    : state === "thin"
-                      ? "bg-amber-500"
-                      : "border border-muted-foreground/50"
-                }`}
-              />
-              <span className="min-w-0 flex-1 truncate text-xs font-medium">{slot.label}</span>
-              {cards.length > 0 && (
-                <span className="text-[10px] text-muted-foreground">{cards.length}</span>
-              )}
-            </div>
-            {cards.length === 0 ? (
-              // Ghost hint: what belongs here — doubles as "how to ask" (§5 seeds).
-              <p className="pl-3 text-[11px] leading-snug text-muted-foreground/70">{slot.hint}</p>
-            ) : (
-              cards.slice(0, 3).map((c) => (
+        {board.map(({ slot, claims: cards, state }) => {
+          const fills = fillsBySlot.get(slot.id) ?? [];
+          const askState = asks[slot.id];
+          return (
+            <div
+              key={slot.id}
+              className={`rounded-md border px-2 py-1.5 ${
+                state === "empty" && fills.length === 0 ? "border-dashed" : ""
+              }`}
+            >
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`size-1.5 shrink-0 rounded-full ${
+                    state === "solid"
+                      ? "bg-emerald-500"
+                      : state === "thin" || fills.length > 0
+                        ? "bg-amber-500"
+                        : "border border-muted-foreground/50"
+                  }`}
+                />
+                <span className="min-w-0 flex-1 truncate text-xs font-medium">{slot.label}</span>
+                {cards.length > 0 && (
+                  <span className="text-[10px] text-muted-foreground">{cards.length}</span>
+                )}
+                {canAsk && (
+                  <button
+                    type="button"
+                    title={t("board.stage.ask")}
+                    className="text-muted-foreground/60 transition-colors hover:text-foreground"
+                    onClick={() => ask(slot.id)}
+                  >
+                    {askState?.status === "running" ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : (
+                      <MessageCircleQuestion className="size-3" />
+                    )}
+                  </button>
+                )}
+              </div>
+
+              {cards.slice(0, 3).map((c) => (
                 <p
                   key={c.id}
                   className="truncate pl-3 text-[11px] text-muted-foreground"
@@ -141,10 +204,35 @@ export function StageBoard() {
                 >
                   {c.text}
                 </p>
-              ))
-            )}
-          </div>
-        ))}
+              ))}
+              {/* Live fills: pending-review look — captured this call, not yet in the base. */}
+              {fills.map((f) => (
+                <p key={f.text} className="pl-3 text-[11px] italic leading-snug text-sky-600 dark:text-sky-400">
+                  ✎ {f.text}
+                  <span className="ml-1 not-italic text-[9px] text-muted-foreground">
+                    {t("board.stage.pending")}
+                  </span>
+                </p>
+              ))}
+              {cards.length === 0 && fills.length === 0 && (
+                // Ghost hint: what belongs here — doubles as "how to ask" (§5 seeds).
+                <p className="pl-3 text-[11px] leading-snug text-muted-foreground/70">{slot.hint}</p>
+              )}
+
+              {/* 建議問法 (#148): speakable lines, ride the conversation. */}
+              {askState?.status === "error" && (
+                <p className="pl-3 text-[10px] text-destructive">{t("board.stage.askFail")}</p>
+              )}
+              {askState?.status === "done" &&
+                askState.questions.map((q) => (
+                  <div key={q.reply} className="mt-1 rounded border-l-2 border-primary/50 bg-muted/40 py-0.5 pl-2 pr-1">
+                    <p className="text-[11px] leading-snug">{q.reply}</p>
+                    <p className="text-[10px] leading-snug text-muted-foreground">{q.consideration}</p>
+                  </div>
+                ))}
+            </div>
+          );
+        })}
       </div>
 
       <div>

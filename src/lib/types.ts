@@ -248,6 +248,17 @@ export interface IntelCommitment {
 /** Accumulated structured intelligence for the current meeting — the board's
  *  STATE (vs. the coach feed's events). Extracted by LLM passes over the live
  *  transcript; sections are populated per meeting type. */
+/** One live-captured intel item proposed for a gap-board slot (§4.3): UI
+ *  transient only — the claim base is written at post-meeting review (D8). */
+export interface IntelSlotFill {
+  slotId: string;
+  /** The captured intel, one sentence, in the transcript's language. */
+  text: string;
+  /** Short verbatim quote backing it. */
+  quote: string;
+  speaker: "me" | "them";
+}
+
 export interface IntelState {
   meetingType: MeetingType;
   /* negotiation */
@@ -263,6 +274,8 @@ export interface IntelState {
   objections?: IntelObjection[];
   commitments?: IntelCommitment[];
   competitors?: string[];
+  /** Live gap-board fills for THIS call's stage (§4.3, UI transient). */
+  slotFills?: IntelSlotFill[];
   /* partnership */
   theyHave?: string[];
   theyNeed?: string[];

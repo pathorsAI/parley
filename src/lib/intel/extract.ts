@@ -2,8 +2,15 @@ import { z } from "zod";
 import { useStore } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { generateObjectResilient } from "../ai/generate";
+import { resolveMeetingBundle } from "../accounts/currentStage";
 import { log } from "../log";
-import type { IntelState, LlmWorkload, MeetingType, TranscriptSegment } from "../types";
+import type {
+  IntelSlotFill,
+  IntelState,
+  LlmWorkload,
+  MeetingType,
+  TranscriptSegment,
+} from "../types";
 
 /**
  * Intelligence-board extraction: one LLM pass over the live transcript that
@@ -42,6 +49,26 @@ const salesSchema = z.object({
   ),
   competitors: z.array(z.string()).describe("competitor names mentioned"),
 });
+
+/** Live gap-board fills (§4.3): UI transient — never written to the claim base. */
+const slotFillsSchema = z
+  .array(
+    z.object({
+      slotId: z.string().describe("id from the provided slot list"),
+      text: z.string().describe("the captured intel, ONE sentence, transcript language"),
+      quote: z.string().describe("short verbatim quote backing it, else empty"),
+      speaker: z.enum(["me", "them"]).describe("who said it"),
+    })
+  )
+  .describe("intel said SO FAR that fills the gap-board slots; empty when nothing qualifies");
+
+/** Keep only fills pointing at slots we actually offered. Exported for tests. */
+export function normalizeSlotFills(
+  fills: IntelSlotFill[] | undefined,
+  knownSlotIds: Set<string>
+): IntelSlotFill[] {
+  return (fills ?? []).filter((f) => f.text.trim() && knownSlotIds.has(f.slotId));
+}
 
 const partnershipSchema = z.object({
   theyHave: z.array(z.string()).describe("assets/strengths the counterpart has (channels, users, tech, team)"),
@@ -100,14 +127,24 @@ export async function runIntelExtraction(
       });
       intel = { meetingType: type, ...object };
     } else if (type === "sales") {
+      // THIS call's stage bundle drives the gap-board fills (S19/§4.3).
+      const bundle = await resolveMeetingBundle(state.settings);
+      const slotLines = bundle.slots.map((s) => `- ${s.id}: ${s.label} — ${s.hint}`).join("\n");
       const { object } = await generateObjectResilient({
         settings: state.settings,
         workload,
-        schema: salesSchema,
+        schema: salesSchema.extend({ slotFills: slotFillsSchema }),
         system: SYSTEM,
-        prompt: `Extract the CURRENT sales-call state (BANT signals, objections, commitments) from this transcript:\n\n${transcript}`,
+        prompt:
+          `Extract the CURRENT sales-call state (BANT signals, objections, commitments) from this transcript.\n\n` +
+          `Additionally fill slotFills: map intel that was actually said onto these gap-board slots ` +
+          `(ONLY these ids; a slot can receive several items):\n${slotLines}\n\n${transcript}`,
       });
-      intel = { meetingType: type, ...object };
+      intel = {
+        meetingType: type,
+        ...object,
+        slotFills: normalizeSlotFills(object.slotFills, new Set(bundle.slots.map((s) => s.id))),
+      };
     } else {
       const { object } = await generateObjectResilient({
         settings: state.settings,
