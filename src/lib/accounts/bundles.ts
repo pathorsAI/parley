@@ -5,6 +5,7 @@ import {
   buildBuiltinBundles,
   EMPTY_BUNDLE_FILE,
   parseBundleFile,
+  serializeBundleFile,
   stageOrder,
   type ParsedBundleFile,
   type StageBundle,
@@ -65,6 +66,15 @@ export async function readStageBundleOverrides(): Promise<
   Partial<Record<SalesStage, StageBundle>>
 > {
   return (await readStageBundleFile()).overrides;
+}
+
+/** Persist the file (Settings stage editor) and drop the read cache so the
+ *  UI sees the change immediately. */
+export async function writeStageBundleFile(parsed: ParsedBundleFile): Promise<void> {
+  const body = serializeBundleFile(parsed);
+  if (isTauri()) await invoke("write_stage_bundles", { json: body });
+  else localStorage.setItem(LS_KEY, body);
+  cache = { at: Date.now(), value: parsed };
 }
 
 /** Merged view: an override replaces its stage whole (S9). */

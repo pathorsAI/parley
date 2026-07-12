@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isValidCustomStageId,
   parseBundleFile,
+  serializeBundleFile,
   stageOrder,
   type CustomStageDef,
   type StageBundle,
@@ -109,6 +110,20 @@ describe("stageOrder", () => {
       custom("warmup", { insertAfter: "coldcall" }),
     ]);
     expect(order.indexOf("warmup")).toBe(order.indexOf("coldcall") + 1);
+  });
+});
+
+describe("serializeBundleFile", () => {
+  it("round-trips with parseBundleFile", () => {
+    const parsed = parseBundleFile(
+      JSON.stringify({
+        version: 2,
+        stages: [custom("coldcall", { insertAfter: "prospecting" })],
+        overrides: { discovery: bundle("discovery", { boardTitle: "改" }) },
+      })
+    );
+    const again = parseBundleFile(serializeBundleFile(parsed));
+    expect(again).toEqual(parsed);
   });
 });
 

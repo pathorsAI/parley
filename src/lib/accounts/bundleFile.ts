@@ -167,6 +167,16 @@ export function parseBundleFile(raw: string, warn: Warn = () => {}): ParsedBundl
   return { customStages, overrides };
 }
 
+/** Serialize back to the v2 file format — the single writer shape for the
+ *  Settings editor, the MCP server, and tests (round-trips with parse). */
+export function serializeBundleFile(parsed: ParsedBundleFile): string {
+  return JSON.stringify(
+    { version: 2, stages: parsed.customStages, overrides: parsed.overrides },
+    null,
+    2
+  );
+}
+
 /** Full pipeline order: builtins with customs spliced in after their anchor
  *  (file order among siblings); unknown/absent anchors append at the end. */
 export function stageOrder(customStages: CustomStageDef[]): SalesStage[] {
