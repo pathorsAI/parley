@@ -70,25 +70,36 @@ export function normalizeSlotFills(
   return (fills ?? []).filter((f) => f.text.trim() && knownSlotIds.has(f.slotId));
 }
 
-/** Auto-focus (S22): ONE slot to chase next — the board highlights only this. */
+/** Auto-focus (S22): the ONE thing to say next — counter a live challenge, or
+ *  chase the next board slot. The board surfaces only this. */
 const focusSchema = z.object({
-  slotId: z.string().describe("id of the ONE slot to pursue next, from the provided list"),
+  kind: z
+    .enum(["gap", "objection"])
+    .describe(
+      '"objection" when the counterpart has a fresh UNADDRESSED challenge/doubt on the table ' +
+        '(countering it beats gap-chasing); otherwise "gap"'
+    ),
+  slotId: z
+    .string()
+    .describe('for "gap": id of the ONE slot to pursue, from the provided list; empty for "objection"'),
   question: z
     .string()
     .describe(
-      "ONE speakable question chasing that slot — ride the counterpart's actual words, " +
-        "open-ended, one ask, never survey-like; transcript language"
+      "ONE speakable line — for gap: a question chasing that slot; for objection: how to answer " +
+        "the challenge (may pair evidence with a question back). Ride the counterpart's actual " +
+        "words, one ask, never survey-like; transcript language"
     ),
-  reason: z.string().describe("why this slot now, under 8 words, transcript language"),
+  reason: z.string().describe("why this now, under 8 words, transcript language"),
 });
 
 /** Drop a focus that points nowhere or says nothing. Exported for tests. */
 export function normalizeFocus(
-  focus: { slotId: string; question: string; reason: string } | undefined,
+  focus: { kind: "gap" | "objection"; slotId: string; question: string; reason: string } | undefined,
   knownSlotIds: Set<string>
 ): IntelState["focusSlot"] {
-  if (!focus || !focus.question.trim() || !knownSlotIds.has(focus.slotId)) return undefined;
-  return focus;
+  if (!focus?.question.trim()) return undefined;
+  if (focus.kind === "objection") return { ...focus, slotId: "" };
+  return knownSlotIds.has(focus.slotId) ? focus : undefined;
 }
 
 const partnershipSchema = z.object({
@@ -161,10 +172,12 @@ export async function runIntelExtraction(
           `Additionally fill slotFills: map intel that was actually said onto these gap-board slots ` +
           `(ONLY these ids; a slot can receive several items). The slots are listed in the stage's ` +
           `intended question ORDER:\n${slotLines}\n\n` +
-          `Then set focus — the ONE slot the salesperson should chase next: the earliest slot in ` +
-          `order that is still unfilled or thin, UNLESS the conversation is actively on a later ` +
-          `slot's ground (then take it); if the topic drifted away from an unfinished earlier slot, ` +
-          `steer back to it. Craft the question so it rides what the counterpart just said.\n\n${transcript}`,
+          `Then set focus — the ONE thing the salesperson should say next. Conversations aren't ` +
+          `linear: if the counterpart has a fresh challenge/doubt still unaddressed, focus on ` +
+          `COUNTERING it (kind "objection"). Otherwise chase a gap (kind "gap"): the earliest slot ` +
+          `in order still unfilled or thin, UNLESS the conversation is actively on a later slot's ` +
+          `ground (then take it); if the topic drifted away from an unfinished earlier slot, steer ` +
+          `back. Either way the line must ride what the counterpart just said.\n\n${transcript}`,
       });
       const known = new Set(bundle.slots.map((s) => s.id));
       intel = {
