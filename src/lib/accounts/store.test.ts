@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { conflictPairs, useAccounts } from "./store";
-import { EMPTY_ACCOUNTS } from "./types";
+import { EMPTY_ACCOUNTS, SALES_STAGES } from "./types";
 
 /** Reset the accounts store between tests (bypasses persistence entirely). */
 function reset() {
@@ -130,6 +130,15 @@ describe("accounts store", () => {
     const survivor = state.claims.find((c) => c.id === b.id)!;
     expect(survivor.conflictsWith).toEqual([]);
     expect(survivor.confidence).toBe("inferred");
+  });
+
+  it("new sales threads start at the pipeline's first stage; non-sales carry none", () => {
+    const s = useAccounts.getState();
+    const company = s.addCompany({ name: "AI3" });
+    const sales = s.addThread({ companyId: company.id, kind: "sales", name: "報價案" });
+    expect(sales.stage).toBe(SALES_STAGES[0]); // prospecting — not skipped
+    const channel = s.addThread({ companyId: company.id, kind: "channel", name: "通路" });
+    expect(channel.stage).toBeUndefined();
   });
 
   it("archive → unarchive round-trips for companies and persons", () => {

@@ -4,6 +4,7 @@ import { log } from "../log";
 import {
   EMPTY_ACCOUNTS,
   personMatches,
+  SALES_STAGES,
   type AccountsData,
   type Claim,
   type ClaimProvenance,
@@ -202,7 +203,8 @@ export const useAccounts = create<AccountsState>()((set, get) => ({
       kind: fields.kind,
       name: fields.name.trim(),
       status: "active",
-      stage: fields.kind === "sales" ? (fields.stage ?? "discovery") : undefined,
+      // New sales threads start at the pipeline's first stage (prospecting).
+      stage: fields.kind === "sales" ? (fields.stage ?? SALES_STAGES[0]) : undefined,
       committee: [],
       createdAt: now(),
     };
