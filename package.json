@@ -42,6 +42,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@tailwindcss/vite": "^4.0.0",
     "@tauri-apps/cli": "^2",
     "@types/node": "^25.9.3",

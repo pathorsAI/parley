@@ -54,14 +54,19 @@ export interface Person {
 /** What kind of battle a thread is (design D3). Only "sales" carries a pipeline stage. */
 export type ThreadKind = "sales" | "channel" | "investment" | "other";
 
-/** Sales-pipeline stage for sales-kind threads (six stages, S18). */
-export type SalesStage =
+/** The six builtin pipeline stages (S18). */
+export type BuiltinSalesStage =
   | "prospecting"
   | "discovery"
   | "demo"
   | "proposal"
   | "negotiation"
   | "closing";
+
+/** A stage id: one of the builtin six, or a user-defined custom stage from
+ *  stage-bundles.json v2 (#155) — e.g. a dedicated cold-call stage. Custom ids
+ *  are slugs (no dots); display names live in the bundle file, not i18n. */
+export type SalesStage = string;
 
 /** A thread (戰線): one of possibly several parallel battles under a company. */
 export interface Thread {
@@ -190,7 +195,8 @@ export const COMMITTEE_ROLES: CommitteeRole[] = [
   "blocker",
 ];
 
-export const SALES_STAGES: SalesStage[] = [
+/** Builtin pipeline order — custom stages splice in via `stageOrder` (#155). */
+export const SALES_STAGES: BuiltinSalesStage[] = [
   "prospecting",
   "discovery",
   "demo",

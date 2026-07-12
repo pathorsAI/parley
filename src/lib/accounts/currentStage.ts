@@ -1,12 +1,7 @@
 import { useStore } from "../store";
 import { useAccounts } from "./store";
 import { translate, type TranslationKey } from "../../i18n/messages";
-import {
-  buildBuiltinBundles,
-  mergeBundles,
-  readStageBundleOverrides,
-  type StageBundle,
-} from "./bundles";
+import { buildStageSet, readStageBundleFile, type StageBundle } from "./bundles";
 import { SALES_STAGES, type SalesStage } from "./types";
 import type { Settings } from "../types";
 
@@ -23,9 +18,11 @@ export function resolveMeetingStage(): SalesStage {
   return (thread?.kind === "sales" ? thread.stage : undefined) ?? SALES_STAGES[0];
 }
 
-/** The current call's stage bundle (builtins + user overrides, i18n'd). */
+/** The current call's stage bundle — always fresh (the 30s live loop is how
+ *  MCP edits reach a running meeting, #155). Stale custom stages fall back to
+ *  the pipeline start. */
 export async function resolveMeetingBundle(settings: Settings): Promise<StageBundle> {
   const t = (key: string) => translate(settings.language, key as TranslationKey);
-  const bundles = mergeBundles(buildBuiltinBundles(t), await readStageBundleOverrides());
-  return bundles[resolveMeetingStage()];
+  const set = buildStageSet(t, await readStageBundleFile({ fresh: true }));
+  return set.bundles[resolveMeetingStage()] ?? set.bundles[SALES_STAGES[0]];
 }

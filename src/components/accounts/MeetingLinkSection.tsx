@@ -3,7 +3,9 @@ import { toast } from "sonner";
 import { useStore } from "../../lib/store";
 import { useAccounts, personsOf, threadsOf, activeClaims } from "../../lib/accounts/store";
 import { composeBrief } from "../../lib/accounts/brief";
-import { useI18n } from "../../i18n";
+import { stageGuideView } from "../../lib/accounts/bundles";
+import { useStageSet } from "../../lib/accounts/useStageSet";
+import { useI18n, type TranslationKey } from "../../i18n";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -15,6 +17,7 @@ import { Button } from "@/components/ui/button";
 export function MeetingLinkSection() {
   const { t, language } = useI18n();
   const acc = useAccounts();
+  const stageSet = useStageSet();
   const companyId = useStore((s) => s.meetingCompanyId);
   const threadId = useStore((s) => s.meetingThreadId);
   const attendeeIds = useStore((s) => s.meetingAttendeeIds);
@@ -58,7 +61,7 @@ export function MeetingLinkSection() {
     // questions — both deduped against what's already on the list.
     const items: string[] = [];
     if (thread?.kind === "sales" && thread.stage) {
-      items.push(...t(`accounts.stageGuide.${thread.stage}.collect`).split("\n"));
+      items.push(...stageGuideView((k) => t(k as TranslationKey), stageSet, thread.stage).collect);
     }
     items.push(
       ...activeClaims(acc, company.id)
@@ -115,7 +118,7 @@ export function MeetingLinkSection() {
             {threads.map((x) => (
               <option key={x.id} value={x.id}>
                 {x.name}
-                {x.stage ? `（${t(`accounts.stage.${x.stage}`)}）` : ""}
+                {x.stage ? `（${stageSet.names[x.stage] ?? x.stage}）` : ""}
               </option>
             ))}
           </select>

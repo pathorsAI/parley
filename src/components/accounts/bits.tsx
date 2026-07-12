@@ -2,7 +2,8 @@ import { Fragment, useEffect, useState } from "react";
 import { Archive } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { useAccounts } from "../../lib/accounts/store";
-import { SALES_STAGES, type SalesStage } from "../../lib/accounts/types";
+import { useStageSet } from "../../lib/accounts/useStageSet";
+import type { SalesStage } from "../../lib/accounts/types";
 
 /** Tiny shared account-area primitives. */
 
@@ -134,11 +135,11 @@ export function StageStepper({
   stage,
   onChange,
 }: Readonly<{ stage: SalesStage; onChange: (s: SalesStage) => void }>) {
-  const { t } = useI18n();
-  const idx = SALES_STAGES.indexOf(stage);
+  const set = useStageSet();
+  const idx = set.order.indexOf(stage);
   return (
     <div className="flex flex-wrap items-center gap-y-1">
-      {SALES_STAGES.map((s, i) => (
+      {set.order.map((s, i) => (
         <Fragment key={s}>
           {i > 0 && <div className={`h-px w-3 ${i <= idx ? "bg-sky-500" : "bg-border"}`} />}
           <button
@@ -152,7 +153,7 @@ export function StageStepper({
                   : "border-border text-muted-foreground hover:bg-muted/60"
             }`}
           >
-            {t(`accounts.stage.${s}`)}
+            {set.names[s] ?? s}
           </button>
         </Fragment>
       ))}
@@ -160,20 +161,20 @@ export function StageStepper({
   );
 }
 
-/** Compact read-only pipeline position: five dots + the current stage label. */
+/** Compact read-only pipeline position: one dot per stage + the current label. */
 export function MiniStages({ stage }: Readonly<{ stage: SalesStage }>) {
-  const { t } = useI18n();
-  const idx = SALES_STAGES.indexOf(stage);
+  const set = useStageSet();
+  const idx = set.order.indexOf(stage);
   return (
     <span className="flex shrink-0 items-center gap-1">
-      {SALES_STAGES.map((s, i) => (
+      {set.order.map((s, i) => (
         <span
           key={s}
           className={`size-1.5 rounded-full ${i <= idx ? "bg-sky-500" : "bg-border"}`}
         />
       ))}
       <span className="pl-1 text-[10px] font-semibold text-sky-700 dark:text-sky-300">
-        {t(`accounts.stage.${stage}`)}
+        {set.names[stage] ?? stage}
       </span>
     </span>
   );
