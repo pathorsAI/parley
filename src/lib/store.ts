@@ -195,6 +195,9 @@ interface ParleyState {
    *  null for a not-yet-saved upload or in live mode. */
   loadedHistoryId: string | null;
   setLoadedHistoryId: (id: string | null) => void;
+  /** Update the loaded recording's display name (after a rename persisted via
+   *  renameHistoryEntry) so the replay header reflects it immediately. */
+  renameReplay: (title: string) => void;
   /** Scrub position (ms) in replay mode — drives audio + transcript highlight. */
   replayPlayheadMs: number;
   /** Load an uploaded recording and switch into replay mode. */
@@ -527,6 +530,8 @@ export const useStore = create<ParleyState>()(
       return { cloudAuth };
     }),
   setLoadedHistoryId: (loadedHistoryId) => set({ loadedHistoryId }),
+  renameReplay: (title) =>
+    set((s) => (s.replay ? { replay: { ...s.replay, name: title } } : {})),
 
   enterReplay: (session) => {
     log.info("store: enter replay", {

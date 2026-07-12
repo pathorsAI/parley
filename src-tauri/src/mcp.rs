@@ -12,11 +12,22 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 use tokio::{net::TcpListener, sync::RwLock};
 
-use crate::commands::{session_commands_path, session_path, templates_path};
+use crate::commands::{
+    session_command_results_path, session_commands_path, session_path, templates_path,
+};
 
 const DEFAULT_PORT: u16 = 3011;
 const MAX_PORT: u16 = 3020;
 const PROTOCOL_VERSION: &str = "2025-06-18";
+
+/// Attached to every response that carries Parley's own analysis output
+/// (findings, brief, intel, action items, delivery assessment), so an MCP
+/// client treats those as context to reason over — not as authority.
+const ANALYSIS_NOTE: &str =
+    "The findings, evaluations, brief, intel, action items, and delivery assessment in this \
+     response are Parley's OWN prior analysis, included as CONTEXT — not ground truth. When \
+     analyzing or advising, reason from the transcript first; you are free and encouraged to \
+     think critically, disagree with these results, or surface angles they missed.";
 
 #[derive(Clone, Serialize)]
 pub struct McpServerInfo {
@@ -35,6 +46,11 @@ struct HttpState {
     templates_path: PathBuf,
     session_path: PathBuf,
     commands_path: PathBuf,
+    /// RPC results appended by the frontend (see `call_frontend`).
+    results_path: PathBuf,
+    /// Local recording store (`<app_data_dir>/history`) for the read-only
+    /// recording tools — same layout history.rs documents.
+    history_dir: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -108,10 +124,22 @@ pub fn start(app: AppHandle) -> McpState {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join("session_commands.jsonl")
     });
+    let results = session_command_results_path(&app).unwrap_or_else(|_| {
+        app.path()
+            .app_config_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("session_command_results.jsonl")
+    });
+    let history = crate::history::history_dir(&app).unwrap_or_else(|_| {
+        app.path()
+            .app_data_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("history")
+    });
 
     let state = McpState { info: info.clone() };
     tauri::async_runtime::spawn(async move {
-        if let Err(err) = run_http_server(templates, session, commands, info).await {
+        if let Err(err) = run_http_server(templates, session, commands, results, history, info).await {
             eprintln!("[parley-mcp] failed to start: {err}");
         }
     });
@@ -130,6 +158,8 @@ async fn run_http_server(
     templates_path: PathBuf,
     session_path: PathBuf,
     commands_path: PathBuf,
+    results_path: PathBuf,
+    history_dir: PathBuf,
     info: Arc<RwLock<McpServerInfo>>,
 ) -> anyhow::Result<()> {
     let (listener, addr) = bind_listener().await?;
@@ -140,6 +170,10 @@ async fn run_http_server(
         info.endpoint = endpoint.clone();
     }
 
+    // RPC ids are minted per run; drop any results left over from a previous
+    // launch so the scan stays small and stale lines can never match.
+    let _ = std::fs::write(&results_path, "");
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/mcp", post(handle_rpc))
@@ -147,6 +181,8 @@ async fn run_http_server(
             templates_path,
             session_path,
             commands_path,
+            results_path,
+            history_dir,
         });
 
     eprintln!("[parley-mcp] ready at {endpoint}");
@@ -198,7 +234,7 @@ async fn handle_method(state: &HttpState, method: &str, params: Value) -> anyhow
     match method {
         "initialize" => Ok(json!({
             "protocolVersion": PROTOCOL_VERSION,
-            "serverInfo": { "name": "parley-templates", "version": env!("CARGO_PKG_VERSION") },
+            "serverInfo": { "name": "parley", "version": env!("CARGO_PKG_VERSION") },
             "capabilities": { "tools": { "listChanged": false } }
         })),
         "ping" => Ok(json!({})),
@@ -288,17 +324,44 @@ fn tools() -> Vec<Value> {
             json!({ "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }),
         ),
         tool(
+            "get_app_context",
+            "Get what the user is looking at",
+            "ALWAYS CALL THIS FIRST to know what the user is focused on. Returns focus \
+             (live / replay / accounts), meetingStatus, and — when the user is reviewing a \
+             recording — which one. IMPORTANT: meetingStatus 'stopped' means the last live \
+             meeting ENDED; if focus is 'replay' the user is reviewing a SAVED recording, \
+             not sitting in a meeting. Never assume a meeting is happening unless \
+             meetingStatus is 'recording'.",
+            json!({ "type": "object", "properties": {} }),
+        ),
+        tool(
+            "get_focused_content",
+            "Get the content the user is viewing",
+            "Get the data behind whatever screen the user is on right now, plus the focus \
+             context: the transcript and EVERYTHING Parley's own analysis produced for it \
+             (findings, study brief, intel board, action items, delivery assessment; live \
+             mode adds todos and evaluations). Those analysis artifacts are CONTEXT from \
+             Parley's earlier passes, not ground truth — when giving advice, reason from \
+             the transcript yourself and feel free to challenge or go beyond them. Use \
+             this to give advice about what the user is currently seeing.",
+            json!({ "type": "object", "properties": {} }),
+        ),
+        tool(
             "get_session_status",
             "Get live session status",
             "Get the current Parley meeting state: meetingStatus (idle/recording/stopped), \
-             when it was last updated, and counts of transcript segments, todos, evaluations, \
-             and timeline-analysis findings.",
+             when it was last updated, counts of transcript segments, todos, evaluations, \
+             and timeline-analysis findings — plus the focus context (live vs replay). \
+             'stopped' = the last meeting has ENDED, not an active meeting.",
             json!({ "type": "object", "properties": {} }),
         ),
         tool(
             "get_transcript",
-            "Get live transcript",
-            "Get the full transcript of the current meeting so far, labelled by speaker.",
+            "Get the loaded transcript",
+            "Get the transcript currently loaded in the app, labelled by speaker. During a \
+             live meeting this is the live transcript so far; in replay it is the transcript \
+             of the recording being reviewed; after a meeting ends it is the finished \
+             meeting's transcript. Check the returned context to know which one you got.",
             json!({ "type": "object", "properties": {} }),
         ),
         tool(
@@ -311,7 +374,9 @@ fn tools() -> Vec<Value> {
             "list_evaluations",
             "List live evaluations",
             "List the current meeting's evaluations with their latest results: \
-             { id, name, description, status, lastRunAt, result }.",
+             { id, name, description, status, lastRunAt, result }. Results are Parley's \
+             own automated reads of the transcript — context you may second-guess, not \
+             verdicts.",
             json!({ "type": "object", "properties": {} }),
         ),
         tool(
@@ -363,9 +428,11 @@ fn tools() -> Vec<Value> {
         tool(
             "list_findings",
             "List timeline-analysis findings",
-            "List the current meeting's timeline-analysis findings (the markers on the \
+            "List the loaded session's timeline-analysis findings (the markers on the \
              replay timeline) as TimelineEvent objects: \
-             { id, atMs, side, severity, source, title, detail, quotes?, evalIds?, resolved?, resolution? }.",
+             { id, atMs, side, severity, source, title, detail, quotes?, evalIds?, resolved?, resolution? }. \
+             These come from Parley's own analysis pass — treat them as context to build \
+             on or challenge, not as settled conclusions.",
             json!({ "type": "object", "properties": {} }),
         ),
         tool(
@@ -422,6 +489,138 @@ fn tools() -> Vec<Value> {
             "Remove one timeline-analysis finding",
             "Delete a single timeline-analysis finding by id. Get ids from list_findings.",
             json!({ "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }),
+        ),
+        tool(
+            "list_recordings",
+            "List saved recordings (history)",
+            "List the user's locally saved recordings (the personal history library), \
+             newest first, as summary cards: { id, title, source, createdAt, durationMs, \
+             speakerCount, findingsCount, actionItemsCount, hasAudio, snippet, folderId }. \
+             Optional text query filters by title + transcript snippet. Org-shared \
+             recordings live in the cloud — list those with list_org_recordings.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Case-insensitive text filter over title + snippet." },
+                    "folderId": { "type": "string", "description": "Only recordings in this personal folder (get ids from list_folders)." },
+                    "limit": { "type": "number", "description": "Max results (default 50)." }
+                }
+            }),
+        ),
+        tool(
+            "get_recording",
+            "Read one saved recording",
+            "Read a locally saved recording in full: title, dates, speaker names, the \
+             complete timestamped transcript, plus everything Parley's analysis saved with \
+             it (findings, action items, study brief, intel board, delivery assessment). \
+             The saved analysis is CONTEXT — you're encouraged to form your own view from \
+             the transcript and disagree where warranted. Use this (over several ids) as \
+             the basis for cross-meeting advice or comparisons. Get ids from \
+             list_recordings.",
+            json!({ "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }),
+        ),
+        tool(
+            "rename_recording",
+            "Rename a saved recording",
+            "Rename a locally saved recording. Applied by the app (which also syncs the \
+             new title to the cloud); waits for the app to confirm.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "title": { "type": "string" }
+                },
+                "required": ["id", "title"]
+            }),
+        ),
+        tool(
+            "list_folders",
+            "List personal folders",
+            "List the personal history folders as { id, name }. Recordings whose folderId \
+             is null (or unknown) live at the personal root.",
+            json!({ "type": "object", "properties": {} }),
+        ),
+        tool(
+            "move_recording_to_folder",
+            "Move a recording between personal folders",
+            "Move a locally saved recording into a personal folder (or to the personal \
+             root by omitting folderId). Get folder ids from list_folders.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "folderId": { "type": "string", "description": "Target folder id; omit for the personal root." }
+                },
+                "required": ["id"]
+            }),
+        ),
+        tool(
+            "list_orgs",
+            "List organizations",
+            "List the organizations the signed-in user belongs to, as { id, name, role }. \
+             Requires the user to be signed in to Parley cloud.",
+            json!({ "type": "object", "properties": {} }),
+        ),
+        tool(
+            "list_org_recordings",
+            "List an org's shared recordings",
+            "List the recordings shared into an organization (cloud-hosted). Get org ids \
+             from list_orgs.",
+            json!({ "type": "object", "properties": { "orgId": { "type": "string" } }, "required": ["orgId"] }),
+        ),
+        tool(
+            "list_org_folders",
+            "List an org's folders",
+            "List an organization's folders as { id, name }. Get org ids from list_orgs.",
+            json!({ "type": "object", "properties": { "orgId": { "type": "string" } }, "required": ["orgId"] }),
+        ),
+        tool(
+            "share_recording_to_org",
+            "Copy a recording into an org",
+            "Share (COPY) a personal recording into an organization, optionally into a \
+             specific org folder. The personal original stays put. Returns the new \
+             org-side summary (note: the org copy gets a NEW id).",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Personal recording id (from list_recordings)." },
+                    "orgId": { "type": "string" },
+                    "folderId": { "type": "string", "description": "Org folder id; omit for the org root." }
+                },
+                "required": ["id", "orgId"]
+            }),
+        ),
+        tool(
+            "move_recording_to_org",
+            "Move a recording into an org",
+            "MOVE a personal recording into an organization: copy it in, then delete the \
+             personal original (local + personal cloud). Destructive for the personal \
+             copy — prefer share_recording_to_org to keep it. Returns the new org-side \
+             summary.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Personal recording id (from list_recordings)." },
+                    "orgId": { "type": "string" },
+                    "folderId": { "type": "string", "description": "Org folder id; omit for the org root." }
+                },
+                "required": ["id", "orgId"]
+            }),
+        ),
+        tool(
+            "copy_org_recording_to_personal",
+            "Copy an org recording to personal",
+            "Save a copy of an org-shared recording into the personal library (local \
+             disk), so it appears in list_recordings and can be opened in replay. The \
+             org copy stays put (removing it needs uploader/admin rights in the app).",
+            json!({
+                "type": "object",
+                "properties": {
+                    "orgId": { "type": "string" },
+                    "id": { "type": "string", "description": "Org recording id (from list_org_recordings)." }
+                },
+                "required": ["orgId", "id"]
+            }),
         ),
     ]
 }
@@ -487,11 +686,20 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             &state.templates_path,
             required_str(&args, "id")?
         )?),
+        "get_app_context" => {
+            let s = read_session(&state.session_path);
+            focus_context(&s)
+        }
+        "get_focused_content" => focused_content(state),
         "get_session_status" => session_status(&state.session_path),
-        "get_transcript" => read_session(&state.session_path)
-            .get("transcript")
-            .cloned()
-            .unwrap_or_else(|| json!({ "text": "", "segmentCount": 0 })),
+        "get_transcript" => {
+            let s = read_session(&state.session_path);
+            let transcript = s
+                .get("transcript")
+                .cloned()
+                .unwrap_or_else(|| json!({ "text": "", "segmentCount": 0 }));
+            json!({ "context": focus_context(&s), "transcript": transcript })
+        }
         "list_todos" => read_session(&state.session_path)
             .get("todos")
             .cloned()
@@ -551,6 +759,71 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             "remove_finding",
             json!({ "id": required_str(&args, "id")? }),
         )?,
+        "list_recordings" => list_recordings(&state.history_dir, &args)?,
+        "get_recording" => get_recording(&state.history_dir, required_str(&args, "id")?)?,
+        "rename_recording" => {
+            call_frontend(
+                state,
+                "rename_recording",
+                json!({
+                    "id": required_str(&args, "id")?,
+                    "title": required_str(&args, "title")?
+                }),
+            )
+            .await?
+        }
+        "list_folders" => call_frontend(state, "list_folders", json!({})).await?,
+        "move_recording_to_folder" => {
+            call_frontend(
+                state,
+                "move_recording_to_folder",
+                json!({
+                    "id": required_str(&args, "id")?,
+                    "folderId": args.get("folderId").cloned().unwrap_or(Value::Null)
+                }),
+            )
+            .await?
+        }
+        "list_orgs" => call_frontend(state, "list_orgs", json!({})).await?,
+        "list_org_recordings" => {
+            call_frontend(
+                state,
+                "list_org_recordings",
+                json!({ "orgId": required_str(&args, "orgId")? }),
+            )
+            .await?
+        }
+        "list_org_folders" => {
+            call_frontend(
+                state,
+                "list_org_folders",
+                json!({ "orgId": required_str(&args, "orgId")? }),
+            )
+            .await?
+        }
+        "share_recording_to_org" | "move_recording_to_org" => {
+            call_frontend(
+                state,
+                name,
+                json!({
+                    "id": required_str(&args, "id")?,
+                    "orgId": required_str(&args, "orgId")?,
+                    "folderId": args.get("folderId").cloned().unwrap_or(Value::Null)
+                }),
+            )
+            .await?
+        }
+        "copy_org_recording_to_personal" => {
+            call_frontend(
+                state,
+                "copy_org_recording_to_personal",
+                json!({
+                    "orgId": required_str(&args, "orgId")?,
+                    "id": required_str(&args, "id")?
+                }),
+            )
+            .await?
+        }
         _ => anyhow::bail!("unknown tool: {name}"),
     };
     Ok(json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&value)? }] }))
@@ -595,6 +868,7 @@ fn session_status(path: &PathBuf) -> Value {
     let s = read_session(path);
     let count = |key: &str| s.get(key).and_then(Value::as_array).map_or(0, |a| a.len());
     json!({
+        "context": focus_context(&s),
         "meetingStatus": s.get("meetingStatus").cloned().unwrap_or_else(|| json!("idle")),
         "updatedAt": s.get("updatedAt").cloned().unwrap_or(Value::Null),
         "segmentCount": s.pointer("/transcript/segmentCount").cloned().unwrap_or_else(|| json!(0)),
@@ -602,6 +876,346 @@ fn session_status(path: &PathBuf) -> Value {
         "evalCount": count("evaluations"),
         "findingCount": count("findings"),
     })
+}
+
+/// The focus context derived from the snapshot's `context` block (written by the
+/// frontend): which screen the user is on, whether a meeting is truly active, and
+/// which recording is loaded in replay. `focusSummary` spells out the situation in
+/// prose so an MCP client can't misread "stopped + transcript" as a live meeting.
+fn focus_context(s: &Value) -> Value {
+    let app_mode = s
+        .pointer("/context/appMode")
+        .and_then(Value::as_str)
+        .unwrap_or("live");
+    let meeting_status = s
+        .get("meetingStatus")
+        .and_then(Value::as_str)
+        .unwrap_or("idle");
+    let replay = s.pointer("/context/replay").cloned().unwrap_or(Value::Null);
+    let study_tab = s.pointer("/context/studyTab").cloned().unwrap_or(Value::Null);
+
+    let focus = match app_mode {
+        "replay" => "replay",
+        "accounts" => "accounts",
+        _ => match meeting_status {
+            "recording" => "live-meeting",
+            "stopped" => "live-post-meeting",
+            _ => "idle",
+        },
+    };
+    let summary = match focus {
+        "replay" => {
+            let name = replay
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("(unnamed)");
+            let saved = replay.get("savedHistoryId").and_then(Value::as_str);
+            format!(
+                "The user is REVIEWING a saved recording ('{name}'{}) in the replay/study \
+                 screen — they are NOT in a live meeting (the last meeting, if any, already \
+                 ended). The transcript and findings in this session snapshot belong to that \
+                 recording.",
+                match saved {
+                    Some(id) => format!(", history id {id}"),
+                    None => ", not saved to the local library".to_string(),
+                }
+            )
+        }
+        "accounts" => "The user is on the accounts (mini-CRM) screen — no meeting is active \
+                       and no recording is loaded."
+            .to_string(),
+        "live-meeting" => "A live meeting is being recorded RIGHT NOW; the transcript below \
+                           is growing in real time."
+            .to_string(),
+        "live-post-meeting" => "No meeting is active: the last live meeting has ENDED and \
+                                the user is looking at its post-meeting state. The transcript \
+                                and findings below are from that finished meeting — do not \
+                                treat it as ongoing."
+            .to_string(),
+        _ => "Nothing is happening: no meeting is active and no recording is loaded.".to_string(),
+    };
+    json!({
+        "focus": focus,
+        "appMode": app_mode,
+        "meetingStatus": meeting_status,
+        "studyTab": study_tab,
+        "replay": replay,
+        "updatedAt": s.get("updatedAt").cloned().unwrap_or(Value::Null),
+        "focusSummary": summary,
+    })
+}
+
+/// What the user is looking at, with its content AND everything Parley's own
+/// analysis has produced for it. The snapshot fields already track the loaded
+/// content (in replay mode the store — and therefore the snapshot — holds the
+/// replayed recording's transcript, findings, brief, intel, action items, and
+/// delivery assessment), so one read covers live, post-meeting, and replay. For
+/// a saved replay, `meta.json` backfills anything the snapshot doesn't carry.
+fn focused_content(state: &HttpState) -> Value {
+    let s = read_session(&state.session_path);
+    let ctx = focus_context(&s);
+    let focus = ctx.get("focus").and_then(Value::as_str).unwrap_or("idle");
+    let mut out = serde_json::Map::new();
+    out.insert("context".into(), ctx.clone());
+    out.insert("analysisNote".into(), json!(ANALYSIS_NOTE));
+    out.insert(
+        "transcript".into(),
+        s.get("transcript")
+            .cloned()
+            .unwrap_or_else(|| json!({ "text": "", "segmentCount": 0 })),
+    );
+    out.insert(
+        "findings".into(),
+        s.get("findings").cloned().unwrap_or_else(|| json!([])),
+    );
+    // Every analysis artifact the app has for the loaded content.
+    for key in ["brief", "intel", "actionItems", "deliveryAssessment", "meetingType"] {
+        if let Some(v) = s.get(key) {
+            if !v.is_null() {
+                out.insert(key.into(), v.clone());
+            }
+        }
+    }
+    if focus == "live-meeting" || focus == "live-post-meeting" {
+        out.insert("todos".into(), s.get("todos").cloned().unwrap_or_else(|| json!([])));
+        out.insert(
+            "evaluations".into(),
+            s.get("evaluations").cloned().unwrap_or_else(|| json!([])),
+        );
+    }
+    if focus == "replay" {
+        if let Some(id) = ctx.pointer("/replay/savedHistoryId").and_then(Value::as_str) {
+            // Backfill from disk anything the snapshot didn't carry (e.g. a
+            // snapshot written by an older app version).
+            if let Ok(meta) = read_meta(&state.history_dir, id) {
+                for key in [
+                    "title",
+                    "brief",
+                    "intel",
+                    "actionItems",
+                    "deliveryAssessment",
+                    "meetingType",
+                ] {
+                    if out.contains_key(key) {
+                        continue;
+                    }
+                    if let Some(v) = meta.get(key) {
+                        if !v.is_null() {
+                            out.insert(key.into(), v.clone());
+                        }
+                    }
+                }
+            }
+        } else {
+            out.insert(
+                "note".into(),
+                json!("This recording is not in the local library (an unsaved upload or an \
+                       org recording viewed read-only), so saved extras like action items \
+                       are unavailable here."),
+            );
+        }
+    }
+    Value::Object(out)
+}
+
+// ── Local recording store (read-only; mirrors the history.rs layout) ─────────
+
+/// Read one entry's `meta.json`.
+fn read_meta(history_dir: &std::path::Path, id: &str) -> anyhow::Result<Value> {
+    let path = history_dir.join(crate::history::safe_id(id)).join("meta.json");
+    let raw = std::fs::read_to_string(&path).map_err(|_| {
+        anyhow::anyhow!(
+            "recording not found: {id} (only locally saved personal recordings are \
+             readable here — use list_recordings for valid ids)"
+        )
+    })?;
+    Ok(serde_json::from_str(&raw)?)
+}
+
+/// List local recording summaries, newest first, with an optional text filter.
+fn list_recordings(history_dir: &std::path::Path, args: &Value) -> anyhow::Result<Value> {
+    let query = args
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    let folder = args.get("folderId").and_then(Value::as_str);
+    let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(50) as usize;
+
+    let mut items: Vec<Value> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(history_dir) {
+        for entry in entries.flatten() {
+            let Ok(raw) = std::fs::read_to_string(entry.path().join("summary.json")) else {
+                continue;
+            };
+            let Ok(v) = serde_json::from_str::<Value>(&raw) else {
+                continue;
+            };
+            if let Some(folder) = folder {
+                if v.get("folderId").and_then(Value::as_str) != Some(folder) {
+                    continue;
+                }
+            }
+            if !query.is_empty() {
+                let title = v.get("title").and_then(Value::as_str).unwrap_or("");
+                let snippet = v.get("snippet").and_then(Value::as_str).unwrap_or("");
+                if !title.to_lowercase().contains(&query)
+                    && !snippet.to_lowercase().contains(&query)
+                {
+                    continue;
+                }
+            }
+            items.push(v);
+        }
+    }
+    items.sort_by_key(|v| std::cmp::Reverse(v.get("createdAt").and_then(Value::as_i64).unwrap_or(0)));
+    let total = items.len();
+    items.truncate(limit);
+    Ok(json!({ "recordings": items, "total": total, "returned": items.len() }))
+}
+
+/// Read one recording in full: curated meta fields + the transcript rebuilt as
+/// timestamped, speaker-labelled text (the segments themselves stay on disk).
+/// Includes every analysis artifact saved with the entry, labelled as context
+/// via `analysisNote`.
+fn get_recording(history_dir: &std::path::Path, id: &str) -> anyhow::Result<Value> {
+    let meta = read_meta(history_dir, id)?;
+    let names = meta.get("speakerNames").cloned().unwrap_or_else(|| json!({}));
+    let transcript = transcript_text(&meta, &names);
+    let mut out = serde_json::Map::new();
+    out.insert("analysisNote".into(), json!(ANALYSIS_NOTE));
+    for key in [
+        "id",
+        "title",
+        "source",
+        "createdAt",
+        "durationMs",
+        "speakerNames",
+        "findings",
+        "actionItems",
+        "brief",
+        "intel",
+        "deliveryAssessment",
+        "meetingType",
+        "meetingContext",
+        "folderId",
+    ] {
+        if let Some(v) = meta.get(key) {
+            if !v.is_null() {
+                out.insert(key.into(), v.clone());
+            }
+        }
+    }
+    out.insert("transcript".into(), json!(transcript));
+    Ok(Value::Object(out))
+}
+
+/// Rebuild the saved transcript as "[m:ss] [Speaker] text" lines — the same
+/// labelling the frontend's transcriptAsText/speakerLabel produce (store.ts).
+fn transcript_text(meta: &Value, names: &Value) -> String {
+    let Some(segments) = meta.get("segments").and_then(Value::as_array) else {
+        return String::new();
+    };
+    let mut finals: Vec<&Value> = segments
+        .iter()
+        .filter(|s| {
+            s.get("isFinal").and_then(Value::as_bool).unwrap_or(false)
+                && !s
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .is_empty()
+        })
+        .collect();
+    finals.sort_by_key(|s| s.get("startMs").and_then(Value::as_i64).unwrap_or(0));
+    finals
+        .iter()
+        .map(|s| {
+            let start = s.get("startMs").and_then(Value::as_i64).unwrap_or(0).max(0);
+            let total = start / 1000;
+            let source = s.get("source").and_then(Value::as_str).unwrap_or("me");
+            let speaker = s.get("speaker").and_then(Value::as_i64).unwrap_or(0);
+            let key = format!("{source}-{speaker}");
+            let label = match names.get(&key).and_then(Value::as_str) {
+                Some(custom) => custom.to_string(),
+                None => {
+                    let display = if speaker == 0 { 1 } else { speaker };
+                    match source {
+                        "mix" => format!("Speaker {display}"),
+                        "me" => {
+                            if display <= 1 {
+                                "You".to_string()
+                            } else {
+                                format!("Speaker {display}")
+                            }
+                        }
+                        _ => {
+                            if speaker > 0 {
+                                format!("Remote {speaker}")
+                            } else {
+                                "Them".to_string()
+                            }
+                        }
+                    }
+                }
+            };
+            let text = s.get("text").and_then(Value::as_str).unwrap_or("").trim();
+            format!("[{}:{:02}] [{label}] {text}", total / 60, total % 60)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// ── RPC bridge: enqueue a command, wait for the frontend's result ─────────────
+
+/// Enqueue a command carrying an id and wait for the frontend to execute it and
+/// append `{ id, ok, data|error }` to the results file. The frontend polls the
+/// queue every ~1.5s, so a round trip is typically 2–3s; cloud operations (org
+/// listing/moves) add their own network time. Times out after 20s.
+async fn call_frontend(state: &HttpState, action: &str, args: Value) -> anyhow::Result<Value> {
+    use std::io::Write;
+    let id = new_id();
+    if let Some(parent) = state.commands_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let line = json!({ "id": id, "action": action, "args": args }).to_string();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&state.commands_path)?;
+    writeln!(file, "{line}")?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        if let Some(result) = find_result(&state.results_path, &id) {
+            if result.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+                return Ok(result.get("data").cloned().unwrap_or(Value::Null));
+            }
+            let err = result
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown error");
+            anyhow::bail!("the Parley app could not apply '{action}': {err}");
+        }
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!(
+                "timed out waiting for the Parley app to apply '{action}' — make sure the \
+                 app is running (and signed in, for cloud/org operations)"
+            );
+        }
+    }
+}
+
+/// Scan the results file for the line matching `id` (the file is truncated on
+/// every server start, so it stays small).
+fn find_result(path: &PathBuf, id: &str) -> Option<Value> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    raw.lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|v| v.get("id").and_then(Value::as_str) == Some(id))
 }
 
 fn read_templates(path: &PathBuf) -> anyhow::Result<TemplatesFile> {

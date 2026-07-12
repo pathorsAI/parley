@@ -23,6 +23,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   Share2,
   Sparkles,
   Trash2,
@@ -226,6 +227,10 @@ export function HistoryApp() {
   const [view, setView] = useState<"library" | "voice">("library");
   const [selection, setSelection] = useState<Selection>({ kind: "personal", folderId: null });
   const [entries, setEntries] = useState<HistoryCardItem[] | null>(null);
+  // Text search over the current scope (title + snippet). While active it looks
+  // across ALL folders of the scope, so a match never hides behind folder
+  // navigation; clearing it restores the folder view.
+  const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [sharingId, setSharingId] = useState<string | null>(null);
@@ -383,6 +388,7 @@ export function HistoryApp() {
   const scopeKey = selection.kind === "org" ? `org:${selection.id}` : "personal";
   useEffect(() => {
     refresh();
+    setQuery(""); // a search is scoped; don't carry it into another scope
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey]);
 
@@ -436,7 +442,15 @@ export function HistoryApp() {
   // ── Folder visibility (the orphan→root rule) ────────────────────────────────────
   const scopeFolders = selection.kind === "org" ? orgFolders[selection.id] ?? [] : personalFolders;
   const liveFolderIds = new Set(scopeFolders.map((f) => f.id));
+  const searchQuery = query.trim().toLowerCase();
   const visible = (entries ?? []).filter((e) => {
+    // A search spans the whole scope regardless of the selected folder.
+    if (searchQuery) {
+      return (
+        e.title.toLowerCase().includes(searchQuery) ||
+        (e.snippet ?? "").toLowerCase().includes(searchQuery)
+      );
+    }
     const fid = e.folderId ?? null;
     if (selection.folderId === null) {
       // Root: entries with no folder OR whose folder isn't a live folder of this
@@ -871,6 +885,8 @@ export function HistoryApp() {
             selectedFolderName={selectedFolderName}
             entries={entries}
             visible={visible}
+            query={query}
+            onQueryChange={setQuery}
             syncing={syncing}
             locale={locale}
             signedIn={signedIn}
@@ -924,6 +940,8 @@ function LibraryContent({
   selectedFolderName,
   entries,
   visible,
+  query,
+  onQueryChange,
   syncing,
   locale,
   signedIn,
@@ -944,6 +962,8 @@ function LibraryContent({
   selectedFolderName: string | null;
   entries: HistoryCardItem[] | null;
   visible: HistoryCardItem[];
+  query: string;
+  onQueryChange: (query: string) => void;
   syncing: boolean;
   locale: string;
   signedIn: boolean;
@@ -961,14 +981,17 @@ function LibraryContent({
 }>) {
   const { t } = useI18n();
   const isOrg = selection.kind === "org";
+  const searching = query.trim().length > 0;
 
   let emptyTitle: string;
-  if (selection.folderId) emptyTitle = t("history.folder.empty");
+  if (searching) emptyTitle = t("history.searchEmpty");
+  else if (selection.folderId) emptyTitle = t("history.folder.empty");
   else if (isOrg) emptyTitle = t("history.org.empty");
   else emptyTitle = t("history.empty");
 
   let emptyHint: string;
-  if (selection.folderId) emptyHint = t("history.folder.emptyHint");
+  if (searching) emptyHint = t("history.searchEmptyHint");
+  else if (selection.folderId) emptyHint = t("history.folder.emptyHint");
   else if (isOrg) emptyHint = t("history.org.emptyHint");
   else emptyHint = t("history.emptyHint");
 
@@ -1057,10 +1080,32 @@ function LibraryContent({
         )}
         <span className="text-xs text-muted-foreground">{t("history.count", { count: visible.length })}</span>
         {!isOrg && syncing && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+        <div className="relative ml-auto w-48 min-w-0 shrink">
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/70" />
+          <input
+            value={query}
+            onChange={(ev) => onQueryChange(ev.target.value)}
+            onKeyDown={(ev) => {
+              if (ev.key === "Escape") onQueryChange("");
+            }}
+            placeholder={t("history.searchPlaceholder")}
+            className="h-7 w-full rounded-md border bg-background pl-7 pr-6 text-xs outline-none placeholder:text-muted-foreground/60 focus:border-primary"
+          />
+          {searching && (
+            <button
+              type="button"
+              aria-label={t("history.searchClear")}
+              onClick={() => onQueryChange("")}
+              className="absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-3" />
+            </button>
+          )}
+        </div>
         <button
           type="button"
           onClick={() => void importRecording()}
-          className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <Plus className="size-3.5" />
           {t("history.import")}
