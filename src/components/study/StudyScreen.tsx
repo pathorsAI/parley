@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Loader2, MessageCircleQuestion, RefreshCw, Sparkles, X } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
@@ -29,7 +29,7 @@ const TYPES: MeetingType[] = ["general", "negotiation", "sales", "partnership"];
 /** The typed templates offered by the intel section's picker cards. */
 const TYPED: Exclude<MeetingType, "general">[] = ["negotiation", "sales", "partnership"];
 
-/** The report's section anchors (order = page order = nav-pill order). */
+/** The report's section anchors (order = page order = TOC-rail order). */
 const SECTIONS = [
   { id: "study-brief", key: "study.brief" },
   { id: "study-actions", key: "actionItems.title" },
@@ -74,6 +74,29 @@ function ReportPage() {
   const { t } = useI18n();
   const seek = useSeekToReplay();
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [activeId, setActiveId] = useState<string>(SECTIONS[0].id);
+
+  // The section that owns the viewport: the last heading that has crossed the
+  // top edge. Scrolled-to-bottom pins the last section, which may be too short
+  // to ever reach the top on its own.
+  useEffect(() => {
+    const viewport = scrollRef.current?.closest("[data-slot='scroll-area-viewport']");
+    if (!viewport) return;
+    const onScroll = () => {
+      const viewportTop = viewport.getBoundingClientRect().top;
+      let current: string = SECTIONS[0].id;
+      for (const s of SECTIONS) {
+        const el = viewport.querySelector(`#${s.id}`);
+        if (el && el.getBoundingClientRect().top - viewportTop <= 96) current = s.id;
+      }
+      if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 4)
+        current = SECTIONS[SECTIONS.length - 1].id;
+      setActiveId(current);
+    };
+    onScroll();
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", onScroll);
+  }, []);
 
   const jumpTo = (id: string) => {
     scrollRef.current
@@ -82,41 +105,82 @@ function ReportPage() {
   };
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
-      <div ref={scrollRef} className="mx-auto max-w-2xl px-6 py-5">
-        {/* Anchor pills — the report is one scroll; these are shortcuts, not tabs. */}
-        <div className="sticky top-0 z-10 -mx-2 mb-4 flex gap-1.5 bg-background/95 px-2 py-2 backdrop-blur">
-          {SECTIONS.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => jumpTo(s.id)}
-              className="rounded-full border px-2.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-            >
-              {t(s.key)}
-            </button>
-          ))}
+    <div className="relative min-h-0 flex-1">
+      <ScrollArea className="h-full">
+        <div ref={scrollRef} className="mx-auto max-w-2xl px-6 py-5">
+          <div className="flex flex-col gap-8 pb-10">
+            <ReportSection id="study-brief" title={t("study.brief")}>
+              <BriefSection onSeek={seek} />
+            </ReportSection>
+
+            <ReportSection id="study-actions" title={t("actionItems.title")}>
+              <ActionItemsPanel onSeek={seek} embedded />
+            </ReportSection>
+
+            <ReportSection id="study-intel" title={t("study.intel")}>
+              <IntelSection />
+            </ReportSection>
+
+            <ReportSection id="study-delivery" title={t("study.delivery")}>
+              <DeliveryPanel mode="replay" variant="full" />
+            </ReportSection>
+          </div>
         </div>
+      </ScrollArea>
+      <ReportToc activeId={activeId} onJump={jumpTo} />
+    </div>
+  );
+}
 
-        <div className="flex flex-col gap-8 pb-10">
-          <ReportSection id="study-brief" title={t("study.brief")}>
-            <BriefSection onSeek={seek} />
-          </ReportSection>
-
-          <ReportSection id="study-actions" title={t("actionItems.title")}>
-            <ActionItemsPanel onSeek={seek} embedded />
-          </ReportSection>
-
-          <ReportSection id="study-intel" title={t("study.intel")}>
-            <IntelSection />
-          </ReportSection>
-
-          <ReportSection id="study-delivery" title={t("study.delivery")}>
-            <DeliveryPanel mode="replay" variant="full" />
-          </ReportSection>
-        </div>
+/** Notion-style TOC rail: tick marks hugging the right edge — one per section,
+ *  the active one emphasized — that expand into a jump list on hover (or on
+ *  keyboard focus). An overlay, so the centered report column never reflows and
+ *  narrow windows keep it. */
+function ReportToc({
+  activeId,
+  onJump,
+}: Readonly<{ activeId: string; onJump: (id: string) => void }>) {
+  const { t } = useI18n();
+  return (
+    <nav
+      aria-label={t("study.toc")}
+      className="group absolute right-1.5 top-1/2 z-20 -translate-y-1/2"
+    >
+      {/* Collapsed: the where-am-I glance. */}
+      <div className="flex flex-col items-end gap-2 px-2 py-3 transition-opacity duration-150 group-focus-within:opacity-0 group-hover:opacity-0">
+        {SECTIONS.map((s) => (
+          <span
+            key={s.id}
+            className={`h-0.5 rounded-full transition-all duration-200 ${
+              s.id === activeId ? "w-5 bg-foreground/80" : "w-3 bg-muted-foreground/35"
+            }`}
+          />
+        ))}
       </div>
-    </ScrollArea>
+      {/* Expanded: the jump list. Invisible buttons stay tabbable, so keyboard
+          focus reveals the card via group-focus-within. */}
+      <div className="pointer-events-none absolute right-0 top-1/2 min-w-36 -translate-y-1/2 rounded-lg border bg-popover/95 p-1 opacity-0 shadow-lg backdrop-blur transition-opacity duration-150 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+        {SECTIONS.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => onJump(s.id)}
+            className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors ${
+              s.id === activeId
+                ? "bg-muted/60 font-medium text-foreground"
+                : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+            }`}
+          >
+            <span
+              className={`h-3 w-0.5 shrink-0 rounded-full ${
+                s.id === activeId ? "bg-primary" : "bg-transparent"
+              }`}
+            />
+            {t(s.key)}
+          </button>
+        ))}
+      </div>
+    </nav>
   );
 }
 
@@ -126,7 +190,7 @@ function ReportSection({
   children,
 }: Readonly<{ id: string; title: string; children: ReactNode }>) {
   return (
-    <section id={id} className="scroll-mt-12">
+    <section id={id} className="scroll-mt-4">
       <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         {title}
       </h2>
