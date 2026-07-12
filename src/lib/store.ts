@@ -36,6 +36,7 @@ import { DEFAULT_MODELS } from "./ai/providers";
 import { countFillerSounds } from "./analysis/fillerWords";
 import { useAccounts } from "./accounts/store";
 import { buildRedlineEvals, isRedlineEvalId } from "./accounts/redline";
+import type { SalesStage } from "./accounts/types";
 import { log } from "./log";
 
 /** A translate function bound to a language, for resolving built-in templates. */
@@ -391,6 +392,10 @@ interface ParleyState {
   meetingCompanyId: string | null;
   meetingThreadId: string | null;
   meetingAttendeeIds: string[];
+  /** THIS call's pipeline stage (S19): defaults to the linked thread's stage,
+   *  user-changeable per call, never writes back to the thread. */
+  meetingStage: SalesStage | null;
+  setMeetingStage: (stage: SalesStage | null) => void;
   setMeetingLink: (link: {
     companyId: string | null;
     threadId: string | null;
@@ -488,6 +493,7 @@ export const useStore = create<ParleyState>()(
       meetingCompanyId: null,
       meetingThreadId: null,
       meetingAttendeeIds: [],
+      meetingStage: null,
       meetingBatna: "",
       meetingTarget: "",
       meetingFloor: "",
@@ -495,11 +501,14 @@ export const useStore = create<ParleyState>()(
       cloudAuth: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
+  setMeetingStage: (stage) => set({ meetingStage: stage }),
   setMeetingLink: ({ companyId, threadId, attendeeIds }) =>
     set({
       meetingCompanyId: companyId,
       meetingThreadId: threadId,
       meetingAttendeeIds: attendeeIds,
+      // Re-linking re-derives this call's stage from the (new) thread (S19).
+      meetingStage: null,
     }),
   enterAccounts: () =>
     set((s) => (s.meetingStatus === "recording" ? {} : { appMode: "accounts" })),
@@ -604,6 +613,7 @@ export const useStore = create<ParleyState>()(
       meetingCompanyId: entry.companyId ?? null,
       meetingThreadId: entry.threadId ?? null,
       meetingAttendeeIds: entry.attendeePersonIds ?? [],
+      meetingStage: null,
       meetingBatna: entry.meetingBatna,
       meetingTarget: entry.meetingTarget,
       meetingFloor: entry.meetingFloor,

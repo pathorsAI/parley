@@ -18,6 +18,9 @@ import {
 const TodosPanel = lazy(() =>
   import("../sidebar/TodosPanel").then((m) => ({ default: m.TodosPanel }))
 );
+const StageBoard = lazy(() =>
+  import("./StageBoard").then((m) => ({ default: m.StageBoard }))
+);
 
 const TYPES: MeetingType[] = ["general", "negotiation", "sales", "partnership"];
 /** Re-extract cadence while recording (each run reads the full transcript). */
@@ -103,6 +106,12 @@ export function IntelligenceBoard() {
         <>
           <ScrollArea className="min-h-0 flex-1 border-t">
             <div className="flex flex-col gap-3 px-3 py-2.5">
+              {/* Sales: the stage gap board is the rail's primary block (S21). */}
+              {meetingType === "sales" && (
+                <Suspense fallback={null}>
+                  <StageBoard />
+                </Suspense>
+              )}
               {!intel && (
                 <p className="py-4 text-center text-xs text-muted-foreground">
                   {running ? t("board.extracting") : t("board.empty")}
