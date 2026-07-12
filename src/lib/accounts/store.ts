@@ -4,6 +4,7 @@ import { log } from "../log";
 import {
   EMPTY_ACCOUNTS,
   personMatches,
+  SALES_STAGES,
   type AccountsData,
   type Claim,
   type ClaimProvenance,
@@ -41,6 +42,8 @@ export interface ExtractedNewClaim {
   side: "ours" | "theirs" | "";
   layer: "surface" | "deep" | "";
   quote: string;
+  /** Gap-board slots this claim fills (#146) — already validated by extract. */
+  slotIds: string[];
 }
 
 export interface ExtractedClaimUpdate {
@@ -202,7 +205,8 @@ export const useAccounts = create<AccountsState>()((set, get) => ({
       kind: fields.kind,
       name: fields.name.trim(),
       status: "active",
-      stage: fields.kind === "sales" ? (fields.stage ?? "discovery") : undefined,
+      // New sales threads start at the pipeline's first stage (prospecting).
+      stage: fields.kind === "sales" ? (fields.stage ?? SALES_STAGES[0]) : undefined,
       committee: [],
       createdAt: now(),
     };
@@ -321,6 +325,9 @@ export const useAccounts = create<AccountsState>()((set, get) => ({
       side: nc.side || undefined,
       layer: nc.layer || undefined,
       text: nc.text.trim(),
+      // Empty stays undefined: the card remains eligible for coarse-query
+      // attach and later backfill classification (#146) under ANY stage.
+      slotIds: nc.slotIds.length ? nc.slotIds : undefined,
       provenance: [withQuote(provenance, nc.quote)],
       confidence: "inferred",
       status: "active",

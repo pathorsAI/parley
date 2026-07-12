@@ -45,6 +45,8 @@ export function PostMeetingReviewButton() {
         existingClaims: activeClaims(acc, company.id),
         sourceText: transcriptAsText(state.segments, state.speakerNames),
         sourceLabel: "meeting transcript",
+        // Scope slot tagging to the linked thread's current stage (#146).
+        threadId: threadId ?? undefined,
       });
       setOps(proposed);
     } catch (e) {
