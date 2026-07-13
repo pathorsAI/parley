@@ -18,15 +18,16 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
-/// Base directory for all history entries (`<app_data_dir>/history`).
-fn history_dir(app: &AppHandle) -> Result<PathBuf, String> {
+/// Base directory for all history entries (`<app_data_dir>/history`). Also used
+/// by the MCP server (mcp.rs) for its read-only recording tools.
+pub(crate) fn history_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(dir.join("history"))
 }
 
 /// Reduce an id to a single safe path component (it's a minted UUID, but guard
 /// against separators/traversal regardless).
-fn safe_id(id: &str) -> String {
+pub(crate) fn safe_id(id: &str) -> String {
     id.replace(['/', '\\', '.'], "-")
 }
 

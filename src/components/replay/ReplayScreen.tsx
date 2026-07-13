@@ -50,6 +50,10 @@ export function ReplayScreen() {
   const evalTemplates = useStore((s) => s.settings.evalTemplates);
   const evaluations = useStore((s) => s.settings.evaluations);
   const analyzedEvalSig = useStore((s) => s.analyzedEvalSig);
+  // Rename is only offered for recordings saved in the local library (null for
+  // an unsaved upload or an org recording viewed read-only).
+  const loadedHistoryId = useStore((s) => s.loadedHistoryId);
+  const renameReplay = useStore((s) => s.renameReplay);
 
   // Persist the dragged column proportions (transcript / findings) to
   // localStorage so they survive reloads. v2 id: the old key stored a 3-column
@@ -68,6 +72,21 @@ export function ReplayScreen() {
   const activeTemplate = findActiveTemplate(evalTemplates, evaluations);
   const templateStale =
     findings.length > 0 && analysisStatus === "done" && evalSignature(evaluations) !== analyzedEvalSig;
+
+  // Rename the recording in place: persist to disk (+ cloud push + History
+  // window refresh via renameHistoryEntry), then update the header immediately.
+  async function renameRecording(title: string) {
+    if (!loadedHistoryId) return;
+    try {
+      const { renameHistoryEntry } = await import("../../lib/history/history");
+      await renameHistoryEntry(loadedHistoryId, title);
+      renameReplay(title);
+    } catch (e) {
+      console.error("[rename]", e);
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error(t("replay.renameFailed", { error: message }));
+    }
+  }
 
   // Save the recording's audio out to a folder the user picks, then reveal it.
   async function exportRecording() {
@@ -117,12 +136,15 @@ export function ReplayScreen() {
         durationMs={session.durationMs}
         player={player}
         onExport={isTauri() ? exportRecording : undefined}
+        onRename={loadedHistoryId ? (title) => void renameRecording(title) : undefined}
         labels={{
           title: t("replay.title"),
           play: t("replay.play"),
           pause: t("replay.pause"),
           playhead: t("replay.playhead"),
           exportAudio: t("replay.export"),
+          rename: t("replay.rename"),
+          renameSave: t("history.renameSave"),
           trim: t("replay.trim"),
           trimApply: t("replay.trimApply"),
           trimming: t("replay.trimming"),

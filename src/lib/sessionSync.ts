@@ -7,12 +7,33 @@ import { isTauri } from "./tauriEvents";
  * built-in MCP server reads so clients (Claude, etc.) can see the current
  * transcript, todos, and evaluation results in real time. One-way for now:
  * the app writes, MCP reads.
+ *
+ * `context` tells MCP clients WHAT the user is focused on — a live meeting, the
+ * post-meeting report, or a replay of a saved recording. Without it, a client
+ * seeing meetingStatus "stopped" plus a lingering transcript can't tell "meeting
+ * just ended" from "reviewing an old recording" (mcp.rs turns these fields into
+ * the focusSummary the tools return).
  */
 function snapshot() {
   const s = useStore.getState();
   return {
     meetingStatus: s.meetingStatus,
     updatedAt: Date.now(),
+    context: {
+      appMode: s.appMode,
+      studyTab: s.appMode === "replay" ? s.studyTab : null,
+      replay: s.replay
+        ? {
+            id: s.replay.id,
+            name: s.replay.name,
+            /** Id in the local history library; null = unsaved upload or an org
+             *  recording viewed read-only. */
+            savedHistoryId: s.loadedHistoryId,
+            durationMs: s.replay.durationMs,
+            createdAt: s.replay.createdAt,
+          }
+        : null,
+    },
     transcript: {
       text: transcriptAsText(s.segments, s.speakerNames),
       segmentCount: s.segments.filter((seg) => seg.isFinal && seg.text.trim()).length,
@@ -29,6 +50,16 @@ function snapshot() {
     // Timeline-analysis findings, exposed verbatim so an MCP client can read,
     // overwrite, or edit them (see the *_finding tools / sessionCommands).
     findings: s.findings,
+    // Everything else Parley's own analysis has produced for the LOADED content
+    // (the live meeting, or the recording under replay — the store holds
+    // whichever is on screen). Mirrored so MCP clients always get the full
+    // analyzed picture alongside the raw transcript, clearly labelled as
+    // Parley's prior analysis (context, not ground truth) on the MCP side.
+    meetingType: s.studyMeetingType,
+    brief: s.brief,
+    intel: s.intel,
+    actionItems: s.actionItems,
+    deliveryAssessment: s.deliveryAssessment,
   };
 }
 

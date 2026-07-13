@@ -239,6 +239,9 @@ interface ParleyState {
    *  null for a not-yet-saved upload or in live mode. */
   loadedHistoryId: string | null;
   setLoadedHistoryId: (id: string | null) => void;
+  /** Update the loaded recording's display name (after a rename persisted via
+   *  renameHistoryEntry) so the replay header reflects it immediately. */
+  renameReplay: (title: string) => void;
   /** True while a READ-ONLY (org-shared) recording is loaded. Its generated study
    *  outputs can't be written back to the shared entry, so they persist into the
    *  local {@link import("./history/studyCache").writeStudyCache} instead —
@@ -569,6 +572,8 @@ export const useStore = create<ParleyState>()(
       return { cloudAuth };
     }),
   setLoadedHistoryId: (loadedHistoryId) => set({ loadedHistoryId }),
+  renameReplay: (title) =>
+    set((s) => (s.replay ? { replay: { ...s.replay, name: title } } : {})),
 
   enterReplay: (session) => {
     log.info("store: enter replay", {

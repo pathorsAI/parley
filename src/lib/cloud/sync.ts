@@ -309,3 +309,26 @@ export async function deleteOrgRecording(orgId: string, id: string): Promise<voi
     { method: "DELETE" },
   );
 }
+
+/**
+ * Save a COPY of an org-shared recording into the personal library: fetch the
+ * full entry over HTTP and write it to local disk as an ordinary history entry
+ * (audio streamed down by Rust, same as downloadCloudEntry). The org copy stays
+ * put — the reverse of shareRecordingToOrg, and like it, an explicit copy rather
+ * than a shared reference. The saved entry lands at the personal root (its org
+ * folderId means nothing in the personal scope).
+ */
+export async function saveOrgRecordingToPersonal(orgId: string, id: string): Promise<void> {
+  const base = `/orgs/${encodeURIComponent(orgId)}/recordings/${encodeURIComponent(id)}`;
+  const meta = (await (await cloudFetch(`${base}/meta`)).json()) as HistoryEntry;
+  const entry: HistoryEntry = { ...meta, folderId: null };
+  const t = cloudToken();
+  await invoke("save_remote_history_entry", {
+    id: entry.id,
+    summaryJson: JSON.stringify(buildSummary(entry)),
+    metaJson: JSON.stringify(entry),
+    audioUrl: meta.audio && t ? `${CLOUD_URL}${base}/audio` : null,
+    token: t,
+  });
+  log.info("cloud: org recording saved to personal", { orgId, id });
+}

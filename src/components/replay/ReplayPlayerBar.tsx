@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from "react";
-import { Check, Download, Loader2, Pause, Play, Scissors } from "lucide-react";
+import { useRef, useState, type ReactNode } from "react";
+import { Check, Download, Loader2, Pause, Pencil, Play, Scissors } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatClock, type ReplayTrim } from "../../lib/store";
@@ -15,6 +15,9 @@ interface ReplayPlayerBarProps {
   rightSlot?: ReactNode;
   /** Save the recording's audio to a user-chosen folder (Tauri only; omit to hide). */
   onExport?: () => void;
+  /** Rename the recording in place (omit to render the name read-only — e.g. an
+   *  unsaved upload or an org recording viewed read-only). */
+  onRename?: (title: string) => void;
   /** Localized strings (resolved by the parent via the replay i18n shim). */
   labels: {
     title: string;
@@ -22,6 +25,8 @@ interface ReplayPlayerBarProps {
     pause: string;
     playhead: string;
     exportAudio: string;
+    rename: string;
+    renameSave: string;
     trim: string;
     trimApply: string;
     trimming: string;
@@ -50,11 +55,29 @@ export function ReplayPlayerBar({
   player,
   rightSlot,
   onExport,
+  onRename,
   labels,
 }: Readonly<ReplayPlayerBarProps>) {
   const [trimOpen, setTrimOpen] = useState(false);
   const [draft, setDraft] = useState<ReplayTrim | null>(null);
   const [trimming, setTrimming] = useState(false);
+
+  // Inline rename of the recording name (same interaction as the History card:
+  // pencil → input, Enter/blur commits, Escape cancels).
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(name);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  function startNameEdit() {
+    setNameDraft(name);
+    setEditingName(true);
+    requestAnimationFrame(() => nameInputRef.current?.select());
+  }
+  function commitName() {
+    setEditingName(false);
+    const clean = nameDraft.trim();
+    if (clean && clean !== name) onRename?.(clean);
+  }
 
   const keptText =
     draft && labels.trimKept
@@ -82,9 +105,54 @@ export function ReplayPlayerBar({
 
   return (
     <div className="shrink-0 border-b">
-      <div className="flex h-10 items-center gap-2 px-4">
-        <span className="truncate text-xs font-medium text-foreground">{labels.title}</span>
-        <span className="truncate text-[11px] text-muted-foreground">· {name}</span>
+      <div className="group/name flex h-10 items-center gap-2 px-4">
+        <span className="shrink-0 truncate text-xs font-medium text-foreground">{labels.title}</span>
+        {editingName ? (
+          <span className="flex min-w-0 flex-1 items-center gap-1">
+            <input
+              ref={nameInputRef}
+              value={nameDraft}
+              onChange={(ev) => setNameDraft(ev.target.value)}
+              onKeyDown={(ev) => {
+                ev.stopPropagation();
+                if (ev.key === "Enter") {
+                  ev.preventDefault();
+                  commitName();
+                } else if (ev.key === "Escape") {
+                  ev.preventDefault();
+                  setNameDraft(name);
+                  setEditingName(false);
+                }
+              }}
+              onBlur={commitName}
+              className="h-6 min-w-0 max-w-72 flex-1 rounded border bg-background px-1.5 text-[11px] outline-none focus:border-primary"
+            />
+            <button
+              type="button"
+              aria-label={labels.renameSave}
+              onMouseDown={(ev) => ev.preventDefault()}
+              onClick={commitName}
+              className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:text-foreground"
+            >
+              <Check className="size-3" />
+            </button>
+          </span>
+        ) : (
+          <span className="flex min-w-0 items-center gap-1">
+            <span className="truncate text-[11px] text-muted-foreground">· {name}</span>
+            {onRename && (
+              <button
+                type="button"
+                aria-label={labels.rename}
+                title={labels.rename}
+                onClick={startNameEdit}
+                className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/name:opacity-100"
+              >
+                <Pencil className="size-3" />
+              </button>
+            )}
+          </span>
+        )}
         {trimming && (
           <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
             <Loader2 className="size-3 animate-spin" />

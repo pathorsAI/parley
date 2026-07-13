@@ -14,6 +14,7 @@ import { openLiveTranslateWindow } from "../lib/liveTranslate";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
+import { McpStatusChip } from "./McpStatusChip";
 import { SaveDestinationPicker } from "./SaveDestinationPicker";
 import { PostMeetingReviewButton } from "./accounts/PostMeetingReviewButton";
 import { StudyGenerationChip } from "./study/StudyGenerationChip";
@@ -403,6 +404,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             <Building2 className="size-4" />
           </Button>
         )}
+        <McpStatusChip />
         <Button
           size="icon"
           variant="ghost"

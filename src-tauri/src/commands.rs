@@ -862,3 +862,27 @@ pub(crate) fn session_commands_path(app: &AppHandle) -> Result<std::path::PathBu
 pub fn read_session_commands(app: AppHandle) -> Result<String, String> {
     read_config_file(&app, "session_commands.jsonl")
 }
+
+/// Append-only results file for RPC-style session commands: the MCP server
+/// enqueues a command carrying an `id`, the frontend executes it and appends
+/// `{ id, ok, data|error }` here, and the MCP handler polls for its id.
+pub(crate) fn session_command_results_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app_config_file(app, "session_command_results.jsonl")
+}
+
+/// Append one RPC command result (a JSON object line) for the MCP server to
+/// pick up. Called by the frontend after executing a command that carried an id.
+#[tauri::command]
+pub fn append_session_command_result(app: AppHandle, json: String) -> Result<(), String> {
+    use std::io::Write;
+    let path = session_command_results_path(&app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    writeln!(file, "{}", json.trim()).map_err(|e| e.to_string())
+}

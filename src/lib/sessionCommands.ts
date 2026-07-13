@@ -7,8 +7,16 @@ import type { EvalDef, TimelineEvent } from "./types";
  * Apply mutation commands the MCP server enqueues (add/check/remove todo,
  * add/remove evaluation) so an MCP client can change the live meeting in real
  * time. The queue file is append-only; we track a cursor of applied lines.
+ *
+ * Commands carrying an `id` are RPC-style: the MCP server is blocked waiting for
+ * a result, so we execute them and append `{ id, ok, data|error }` to the results
+ * file (`append_session_command_result`). This is how MCP tools reach things only
+ * the frontend can do — cloud/org calls (auth lives here) and localStorage
+ * (folders).
  */
 interface SessionCommand {
+  /** Present on RPC commands — the MCP server polls the results file for it. */
+  id?: string;
   action: string;
   args: Record<string, unknown>;
 }
@@ -137,6 +145,89 @@ function applyCommand(cmd: SessionCommand): void {
   }
 }
 
+/**
+ * Execute an RPC command (one that carries an id) and return its result data.
+ * These reach the pieces the Rust MCP server can't touch directly: cloud/org
+ * HTTP calls (the bearer token lives in this process) and the localStorage
+ * folder registry. Throwing here surfaces as the MCP tool's error message.
+ */
+async function applyRpcCommand(action: string, a: Record<string, unknown>): Promise<unknown> {
+  switch (action) {
+    case "rename_recording": {
+      const id = argStr(a.id);
+      const title = argStr(a.title).trim();
+      if (!id || !title) throw new Error("id and title are required");
+      const { renameHistoryEntry } = await import("./history/history");
+      await renameHistoryEntry(id, title);
+      // If that recording is open in replay, reflect the new name immediately.
+      const s = useStore.getState();
+      if (s.loadedHistoryId === id) s.renameReplay(title);
+      return { id, title };
+    }
+    case "move_recording_to_folder": {
+      const id = argStr(a.id);
+      if (!id) throw new Error("id is required");
+      const folderId = a.folderId ? argStr(a.folderId) : null;
+      const { setEntryFolder, emitHistoryUpdated } = await import("./history/history");
+      await setEntryFolder(id, folderId);
+      await emitHistoryUpdated(id);
+      return { id, folderId };
+    }
+    case "list_folders": {
+      const { listLocalFolders } = await import("./history/folders");
+      return listLocalFolders().map((f) => ({ id: f.id, name: f.name }));
+    }
+    case "list_orgs": {
+      const { listMyOrgs } = await import("./cloud/orgs");
+      return await listMyOrgs();
+    }
+    case "list_org_recordings": {
+      const { listOrgRecordings } = await import("./cloud/sync");
+      return await listOrgRecordings(argStr(a.orgId));
+    }
+    case "list_org_folders": {
+      const { listOrgFolders } = await import("./cloud/folders");
+      const folders = await listOrgFolders(argStr(a.orgId));
+      return folders.map((f) => ({ id: f.id, name: f.name }));
+    }
+    case "share_recording_to_org": {
+      const { shareRecordingToOrg } = await import("./cloud/sync");
+      return await shareRecordingToOrg(
+        argStr(a.id),
+        argStr(a.orgId),
+        a.folderId ? argStr(a.folderId) : null,
+      );
+    }
+    case "move_recording_to_org": {
+      const id = argStr(a.id);
+      const { moveRecordingToOrg } = await import("./cloud/sync");
+      const shared = await moveRecordingToOrg(id, argStr(a.orgId), a.folderId ? argStr(a.folderId) : null);
+      const { emitHistoryUpdated } = await import("./history/history");
+      await emitHistoryUpdated(id);
+      return shared;
+    }
+    case "copy_org_recording_to_personal": {
+      const id = argStr(a.id);
+      const { saveOrgRecordingToPersonal } = await import("./cloud/sync");
+      await saveOrgRecordingToPersonal(argStr(a.orgId), id);
+      const { emitHistoryUpdated } = await import("./history/history");
+      await emitHistoryUpdated(id);
+      return { id };
+    }
+    default:
+      throw new Error(`unknown command: ${action}`);
+  }
+}
+
+/** Report an RPC command's outcome for the MCP server to pick up. */
+async function writeResult(id: string, result: { ok: boolean; data?: unknown; error?: string }): Promise<void> {
+  try {
+    await invoke("append_session_command_result", { json: JSON.stringify({ id, ...result }) });
+  } catch (e) {
+    console.warn("[session] result write failed", e);
+  }
+}
+
 async function poll(): Promise<void> {
   try {
     const all = lines(await invoke<string>("read_session_commands"));
@@ -144,10 +235,26 @@ async function poll(): Promise<void> {
     const fresh = all.slice(cursor);
     cursor = all.length;
     for (const line of fresh) {
+      let cmd: SessionCommand;
       try {
-        applyCommand(JSON.parse(line) as SessionCommand);
+        cmd = JSON.parse(line) as SessionCommand;
       } catch {
-        /* skip a malformed line */
+        continue; // skip a malformed line
+      }
+      if (cmd.id) {
+        try {
+          const data = await applyRpcCommand(cmd.action, cmd.args ?? {});
+          await writeResult(cmd.id, { ok: true, data });
+        } catch (e) {
+          const error = e instanceof Error ? e.message : String(e);
+          await writeResult(cmd.id, { ok: false, error });
+        }
+      } else {
+        try {
+          applyCommand(cmd);
+        } catch {
+          /* skip a failing command */
+        }
       }
     }
   } catch {

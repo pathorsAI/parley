@@ -26,6 +26,7 @@ import { isTauri } from "../lib/tauriEvents";
 import { fetchLatestReleaseNotes, markReleaseNotesSeen, type ReleaseNotes } from "../lib/releaseNotes";
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
+import { connState, relativeTime, type McpActivityInfo } from "../components/McpStatusChip";
 import { ReleaseNotesDialog } from "../components/ReleaseNotesDialog";
 import { UsagePanel } from "./UsagePanel";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
@@ -117,6 +118,7 @@ export function SettingsApp() {
   const [newTplName, setNewTplName] = useState("");
   const [templatesPath, setTemplatesPath] = useState("");
   const [mcpInfo, setMcpInfo] = useState<McpServerInfo | null>(null);
+  const [mcpActivity, setMcpActivity] = useState<McpActivityInfo | null>(null);
   const [logPath, setLogPath] = useState("");
   const [updateChecking, setUpdateChecking] = useState(false);
   const [releaseNotesLoading, setReleaseNotesLoading] = useState(false);
@@ -199,6 +201,26 @@ export function SettingsApp() {
       invoke("stop_mic_test").catch((error) => log.warn("settings: stop mic test on cleanup failed", { error: String(error) }));
     };
   }, [mcpInfo?.running]);
+
+  // MCP client traffic (who's connected, recent reads/writes) — polled only
+  // while the MCP tab is open.
+  useEffect(() => {
+    if (!isTauri() || cat !== "mcp") return;
+    let alive = true;
+    const refresh = () => {
+      invoke<McpActivityInfo>("get_mcp_activity")
+        .then((a) => {
+          if (alive) setMcpActivity(a);
+        })
+        .catch(() => {});
+    };
+    refresh();
+    const id = window.setInterval(refresh, 3000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [cat]);
 
   // Reflect the live meeting's recording state (query once, then follow the
   // broadcast `meeting://status`) so the mic controls lock while recording.
@@ -903,6 +925,63 @@ export function SettingsApp() {
               </div>
             </div>
 
+            {/* Client connection + recent read/write activity (same data as the
+                titlebar chip, so MCP data access is auditable from here too). */}
+            <div className="max-w-xl rounded-lg border bg-muted/20 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <span>{t("mcp.panel.client")}</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                    ["active", "connected"].includes(connState(mcpActivity, Date.now()))
+                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                      : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {t(`mcp.state.${connState(mcpActivity, Date.now())}`)}
+                </span>
+                <span className="ml-auto truncate text-xs text-muted-foreground">
+                  {mcpActivity?.client
+                    ? `${mcpActivity.client.name ?? "?"}${mcpActivity.client.version ? ` v${mcpActivity.client.version}` : ""}`
+                    : t("mcp.panel.noClient")}
+                </span>
+              </div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                {t("mcp.panel.lastRequest")}：
+                {mcpActivity?.lastRequestAt
+                  ? relativeTime(t, mcpActivity.lastRequestAt, Date.now())
+                  : "—"}
+              </div>
+              <div className="mt-2 border-t pt-2">
+                <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                  {t("mcp.panel.activity")}
+                </div>
+                {mcpActivity?.recent?.length ? (
+                  <ul className="max-h-48 space-y-0.5 overflow-y-auto">
+                    {mcpActivity.recent.map((e) => (
+                      <li key={`${e.at}-${e.tool}`} className="flex items-center gap-2 text-[11px]">
+                        <span
+                          className={`w-6 shrink-0 rounded px-1 text-center text-[9.5px] font-semibold ${
+                            e.kind === "write"
+                              ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                              : "bg-sky-500/15 text-sky-600 dark:text-sky-400"
+                          }`}
+                        >
+                          {t(`mcp.kind.${e.kind}`)}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate font-mono">{e.tool}</span>
+                        {!e.ok && <span className="shrink-0 text-destructive">{t("mcp.panel.failed")}</span>}
+                        <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground">
+                          {relativeTime(t, e.at, Date.now())}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">{t("mcp.panel.emptyActivity")}</p>
+                )}
+              </div>
+            </div>
+
             <Field label={t("settings.mcp.sharedFile")}>
               <div className="flex max-w-xl items-center gap-2">
                 <Input
@@ -925,14 +1004,14 @@ export function SettingsApp() {
                 <CopyButton
                   className="h-8 gap-1"
                   value={() =>
-                    `claude mcp add --transport http parley-templates ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`
+                    `claude mcp add --transport http parley ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`
                   }
                   label={t("settings.mcp.copyCommand")}
                 />
               </div>
               <p className="text-[11px] text-muted-foreground">{t("settings.mcp.claudeCodeHelp")}</p>
               <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
-                {`claude mcp add --transport http parley-templates ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`}
+                {`claude mcp add --transport http parley ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`}
               </pre>
             </div>
 
@@ -945,7 +1024,7 @@ export function SettingsApp() {
                     JSON.stringify(
                       {
                         mcpServers: {
-                          "parley-templates": {
+                          "parley": {
                             type: "http",
                             url: mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp",
                           },
@@ -962,7 +1041,7 @@ export function SettingsApp() {
               <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
                 {`{
   "mcpServers": {
-    "parley-templates": {
+    "parley": {
       "type": "http",
       "url": "${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}"
     }

@@ -465,6 +465,11 @@ export async function renameHistoryEntry(id: string, title: string): Promise<voi
   // A rename is a content change → go through the same dirty→push→clear lifecycle
   // as save/re-analysis, so a failed cloud push is retried by the background sweep.
   pushToCloud(id);
+  // Renames can now start outside the History grid (replay header, MCP), so tell
+  // any open History window to re-list.
+  emitHistoryUpdated(id).catch((e) =>
+    log.warn("history: rename update event failed", { id, error: String(e) }),
+  );
 }
 
 /**
@@ -690,7 +695,7 @@ export async function listenForRecordingSaved(): Promise<UnlistenFn> {
 }
 
 /** Tell other windows (the History grid) that an entry's saved analysis changed. */
-async function emitHistoryUpdated(id: string): Promise<void> {
+export async function emitHistoryUpdated(id: string): Promise<void> {
   if (!isTauri()) return;
   await emit(HISTORY_UPDATED_EVENT, { id });
 }

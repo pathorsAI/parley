@@ -116,6 +116,7 @@ pub fn run() {
             commands::read_log_tail,
             commands::write_session,
             commands::read_session_commands,
+            commands::append_session_command_result,
             usage::append_usage_event,
             usage::read_usage_events,
             permissions::check_permissions,
@@ -157,7 +158,8 @@ pub fn run() {
             history::delete_history_entry,
             diarize::download_diarize_model,
             diarize::diarize_model_status,
-            mcp::get_mcp_server_info
+            mcp::get_mcp_server_info,
+            mcp::get_mcp_activity
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
