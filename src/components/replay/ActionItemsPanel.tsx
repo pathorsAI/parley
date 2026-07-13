@@ -15,9 +15,9 @@ const SEVERITY_DOT: Record<Severity, string> = {
 /**
  * REPLAY post-meeting action items: AI-generated follow-ups, each linked back to
  * the moment that motivated it. Auto-generated once analysis finishes (see
- * useReplayAnalysis); read-only with a done-toggle. Regenerating is driven from
- * the player's Analyze menu, not a per-panel button. `onSeek` jumps the audio to
- * a linked moment.
+ * lib/analysis/studyPipeline.ts); read-only with a done-toggle. Regenerating is driven from
+ * the titlebar's analysis chip, not a per-panel button. `onSeek` jumps the audio
+ * to a linked moment.
  */
 export function ActionItemsPanel({
   onSeek,

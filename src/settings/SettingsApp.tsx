@@ -995,14 +995,14 @@ export function SettingsApp() {
                 <CopyButton
                   className="h-8 gap-1"
                   value={() =>
-                    `claude mcp add --transport http parley-templates ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`
+                    `claude mcp add --transport http parley ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`
                   }
                   label={t("settings.mcp.copyCommand")}
                 />
               </div>
               <p className="text-[11px] text-muted-foreground">{t("settings.mcp.claudeCodeHelp")}</p>
               <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
-                {`claude mcp add --transport http parley-templates ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`}
+                {`claude mcp add --transport http parley ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`}
               </pre>
             </div>
 
@@ -1015,7 +1015,7 @@ export function SettingsApp() {
                     JSON.stringify(
                       {
                         mcpServers: {
-                          "parley-templates": {
+                          "parley": {
                             type: "http",
                             url: mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp",
                           },
@@ -1032,7 +1032,7 @@ export function SettingsApp() {
               <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
                 {`{
   "mcpServers": {
-    "parley-templates": {
+    "parley": {
       "type": "http",
       "url": "${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}"
     }

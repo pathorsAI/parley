@@ -1,8 +1,10 @@
 import { z } from "zod";
-import { useStore } from "../store";
+import { useStore, isTrimmed, type ReplayTrim } from "../store";
 import { hasProviderKey } from "../ai/settings";
+import { outputLanguageInstruction } from "../ai/profile";
 import { generateObjectResilient } from "../ai/generate";
 import { resolveMeetingBundle } from "../accounts/currentStage";
+import { makeRunGuard } from "../analysis/runGuard";
 import { log } from "../log";
 import type {
   IntelSlotFill,
@@ -125,17 +127,48 @@ function transcriptText(segments: TranscriptSegment[], capChars: number): string
  *  read the long window for accuracy. */
 const CAP_CHARS: Record<LlmWorkload, number> = { realtime: 8_000, deep: 24_000 };
 
+/** Below this much spoken text an extraction has nothing to work with. */
+const MIN_TRANSCRIPT_CHARS = 40;
+
+/**
+ * Enough final (untrimmed) speech for an extraction? THE shared predicate
+ * between this runner and the study pipeline's scheduler — if they disagreed,
+ * the pipeline would keep offering an extraction the runner silently declines
+ * and the chip would show "queued" forever. Cheap early-exit sum.
+ */
+export function intelTranscriptReady(
+  segments: TranscriptSegment[],
+  trim: ReplayTrim | null = null
+): boolean {
+  let total = 0;
+  for (const s of segments) {
+    if (!s.isFinal || isTrimmed(s, trim)) continue;
+    total += s.text.trim().length;
+    if (total >= MIN_TRANSCRIPT_CHARS) return true;
+  }
+  return false;
+}
+
+// Output rides the app's configured language (outputLanguageInstruction, appended
+// per run below) so the intel board matches the brief/action items on the report
+// page. The SPEAKABLE fields (slotFills.text, focus.question/reason) opt back
+// into the transcript's language via their own descriptions — a line the user
+// will say out loud must be in the meeting's language.
 const SYSTEM =
   "You are a realtime meeting-intelligence extractor for the user (speaker 我). " +
   "Read the transcript and return ONLY facts grounded in what was actually said — no speculation. " +
-  "Empty arrays/strings are correct when nothing qualifies. Answer values in the transcript's language.";
+  "Empty arrays/strings are correct when nothing qualifies.";
 
 /**
  * Run one extraction for `type` and publish the result into the store. No-op
  * for "general" (the board shows goals only), when a run is in flight, or when
  * there's nothing to read yet. `workload` picks the lane: "realtime" for the
- * live board's periodic refresh, "deep" for replay/study passes (#131).
+ * live board's periodic refresh, "deep" for replay/study passes (#131). A run
+ * that outlives its session or is superseded stops writing (see runGuard); a
+ * REPLAY run landing after the user switched to a different template discards
+ * its result and resets to "idle" so the pipeline extracts the new type.
  */
+const guard = makeRunGuard();
 export async function runIntelExtraction(
   type: MeetingType,
   workload: LlmWorkload = "realtime"
@@ -143,8 +176,18 @@ export async function runIntelExtraction(
   const state = useStore.getState();
   if (type === "general" || state.intelStatus === "running") return;
   if (!hasProviderKey(state.settings, workload)) return;
-  const transcript = transcriptText(state.segments, CAP_CHARS[workload]);
-  if (transcript.length < 40) return;
+  // REPLAY honors the trim keep-window, same as every other study pass.
+  const trim = state.appMode === "replay" ? state.replayTrim : null;
+  const segments = trim ? state.segments.filter((s) => !isTrimmed(s, trim)) : state.segments;
+  if (!intelTranscriptReady(segments)) return;
+  const transcript = transcriptText(segments, CAP_CHARS[workload]);
+
+  const alive = guard.begin();
+  // Did the user switch templates while this run was in flight? Its result
+  // belongs to the OLD type: discard it and hand the status back to "idle" so
+  // the pipeline dispatches the currently-picked type.
+  const staleType = () =>
+    useStore.getState().appMode === "replay" && useStore.getState().studyMeetingType !== type;
 
   state.setIntelStatus("running");
   try {
@@ -154,7 +197,7 @@ export async function runIntelExtraction(
         settings: state.settings,
         workload,
         schema: negotiationSchema,
-        system: SYSTEM,
+        system: SYSTEM + outputLanguageInstruction(state.settings),
         prompt: `Extract the CURRENT negotiation state from this meeting transcript:\n\n${transcript}`,
       });
       intel = { meetingType: type, ...object };
@@ -166,7 +209,7 @@ export async function runIntelExtraction(
         settings: state.settings,
         workload,
         schema: salesSchema.extend({ slotFills: slotFillsSchema, focus: focusSchema }),
-        system: SYSTEM,
+        system: SYSTEM + outputLanguageInstruction(state.settings),
         prompt:
           `Extract the CURRENT sales-call state (BANT signals, objections, commitments) from this transcript.\n\n` +
           `Additionally fill slotFills: map intel that was actually said onto these gap-board slots ` +
@@ -191,7 +234,7 @@ export async function runIntelExtraction(
         settings: state.settings,
         workload,
         schema: partnershipSchema,
-        system: SYSTEM,
+        system: SYSTEM + outputLanguageInstruction(state.settings),
         prompt:
           "Extract the CURRENT partnership-talk state from this transcript. " +
           "For `leverage`, propose concrete ways the two sides can leverage each other " +
@@ -199,6 +242,11 @@ export async function runIntelExtraction(
           `including proactive ways WE can help THEM first:\n\n${transcript}`,
       });
       intel = { meetingType: type, ...object };
+    }
+    if (!alive()) return;
+    if (staleType()) {
+      useStore.getState().setIntelStatus("idle");
+      return;
     }
     useStore.getState().setIntel(intel);
     useStore.getState().setIntelStatus("done");
@@ -211,6 +259,8 @@ export async function runIntelExtraction(
     );
   } catch (e) {
     log.warn("intel: extraction failed", { type, error: String(e) });
-    useStore.getState().setIntelStatus("error");
+    if (!alive()) return;
+    // A stale-type failure must not block the newly picked type behind "error".
+    useStore.getState().setIntelStatus(staleType() ? "idle" : "error");
   }
 }

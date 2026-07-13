@@ -6,12 +6,11 @@ import {
 } from "@/components/ui/resizable";
 import { toast } from "sonner";
 import { useI18n } from "../../i18n";
-import { useStore } from "../../lib/store";
+import { useStore, hasSpokenSegment } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
 import { evalSignature, findActiveTemplate } from "../../lib/evaluations/presets";
 import { TranscriptCopyMenu } from "../TranscriptCopyMenu";
 import { AnalysisTimeline } from "../analysis/AnalysisTimeline";
-import { AnalyzeMenu } from "../analysis/AnalyzeMenu";
 import { FindingsPanel } from "../analysis/FindingsPanel";
 import { selectAndSeek } from "../analysis/useAnalysis";
 import { ReplayPlayerBar } from "./ReplayPlayerBar";
@@ -23,7 +22,7 @@ import { useReplayPlayheadMs, useReplaySession, useReplayTrim } from "./spine";
 /**
  * The REPLAY workbench: play a recording and check the evidence — transcript on
  * the left, findings on the right, timeline on top. The analysis runs ONCE on
- * load (see useReplayAnalysis); dragging the playhead is navigation/viewing only
+ * load (see lib/analysis/studyPipeline.ts); dragging the playhead is navigation/viewing only
  * — it never re-runs anything. Clicking a finding seeks the audio and opens its
  * "how it should have been done" drilldown. The RESULTS (brief, action items,
  * intel, delivery) live on the study report page; Ask is the study-wide drawer.
@@ -136,7 +135,6 @@ export function ReplayScreen() {
         name={session.name}
         durationMs={session.durationMs}
         player={player}
-        rightSlot={<AnalyzeMenu />}
         onExport={isTauri() ? exportRecording : undefined}
         onRename={loadedHistoryId ? (title) => void renameRecording(title) : undefined}
         labels={{
@@ -183,7 +181,7 @@ export function ReplayScreen() {
               <TranscriptCopyMenu
                 segments={segments}
                 speakerNames={speakerNames}
-                disabled={!segments.some((s) => s.isFinal && s.text.trim())}
+                disabled={!hasSpokenSegment(segments)}
               />
             </div>
             <ReplaySpeakerTags segments={segments} names={speakerNames} label={t("meeting.speakers")} />
