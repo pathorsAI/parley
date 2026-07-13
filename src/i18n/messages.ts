@@ -2,9 +2,9 @@ import type { AppLanguage } from "../lib/types";
 
 export type Dict = Record<string, string>;
 
-export const LANGUAGE_OPTIONS: { value: AppLanguage; label: string; nativeLabel: string }[] = [
-  { value: "zh-TW", label: "Traditional Chinese", nativeLabel: "繁體中文" },
-  { value: "en", label: "English", nativeLabel: "English" },
+export const LANGUAGE_OPTIONS: { value: AppLanguage; label: string; nativeLabel: string; flag: string }[] = [
+  { value: "zh-TW", label: "Traditional Chinese", nativeLabel: "繁體中文", flag: "tw" },
+  { value: "en", label: "English", nativeLabel: "English", flag: "us" },
 ];
 
 export const zhTW = {

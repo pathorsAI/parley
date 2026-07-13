@@ -7,6 +7,7 @@ import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
 import { log } from "../lib/log";
 import { TRANSLATE_LANGUAGES, TRANSLATE_USD_PER_MINUTE } from "../lib/translateLanguages";
+import { Flag } from "../components/ui/flag";
 import type { Settings } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -141,6 +142,7 @@ export function TranslateSettings() {
           <SelectContent>
             {TRANSLATE_LANGUAGES.map((l) => (
               <SelectItem key={l.code} value={l.code}>
+                <Flag code={l.flag} />
                 {l.nativeLabel}
                 <span className="ml-2 text-muted-foreground">{l.label}</span>
               </SelectItem>

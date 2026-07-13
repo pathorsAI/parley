@@ -22,6 +22,7 @@ import { useI18n, type TranslationKey } from "../../i18n";
 import { LANGUAGE_OPTIONS } from "../../i18n/messages";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
+import { Flag } from "@/components/ui/flag";
 import { MeetingContextDialog } from "../MeetingContextDialog";
 import { cn } from "@/lib/utils";
 
@@ -76,8 +77,8 @@ export function StudyGenerationChip() {
     );
   }
 
-  const outputLanguage =
-    LANGUAGE_OPTIONS.find((o) => o.value === language)?.nativeLabel ?? language;
+  const outputOption = LANGUAGE_OPTIONS.find((o) => o.value === language);
+  const outputLanguage = outputOption?.nativeLabel ?? language;
 
   return (
     <>
@@ -97,8 +98,10 @@ export function StudyGenerationChip() {
               <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 {t("studyGen.panel.title")}
               </span>
-              <span className="text-[10px] text-muted-foreground">
-                {t("studyGen.language")}：{outputLanguage}
+              <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                {t("studyGen.language")}：
+                <Flag code={outputOption?.flag} className="size-3" />
+                {outputLanguage}
               </span>
             </div>
 
