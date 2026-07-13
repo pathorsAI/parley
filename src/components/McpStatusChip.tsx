@@ -5,6 +5,7 @@ import { AlertCircle, Plug } from "lucide-react";
 import { isTauri } from "../lib/tauriEvents";
 import { useI18n } from "../i18n";
 import { cn } from "@/lib/utils";
+import { CopyButton } from "@/components/CopyButton";
 
 /** One tool call recorded by the MCP server (newest first in `recent`). */
 export interface McpActivityEntry {
@@ -142,9 +143,17 @@ export function McpStatusChip() {
               </span>
             </div>
             {endpoint && (
-              <div className="flex items-baseline justify-between gap-2">
+              <div className="flex items-center justify-between gap-2">
                 <span className="shrink-0 text-muted-foreground">Endpoint</span>
-                <span className="truncate font-mono text-[10px] text-muted-foreground">{endpoint}</span>
+                <span className="flex min-w-0 items-center gap-1">
+                  <span className="truncate font-mono text-[10px] text-muted-foreground">{endpoint}</span>
+                  <CopyButton
+                    value={endpoint}
+                    iconOnly
+                    title={t("settings.mcp.copyUrl")}
+                    className="size-5 shrink-0 text-muted-foreground"
+                  />
+                </span>
               </div>
             )}
           </div>
