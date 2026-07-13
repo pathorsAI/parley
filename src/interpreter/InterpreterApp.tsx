@@ -5,8 +5,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Languages, Pause, Play, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isTauri } from "../lib/tauriEvents";
-import { TRANSLATE_USD_PER_MINUTE } from "../lib/translateLanguages";
+import { TRANSLATE_LANGUAGES, TRANSLATE_USD_PER_MINUTE } from "../lib/translateLanguages";
 import { useI18n } from "../i18n";
+import { Flag } from "../components/ui/flag";
 import { LevelMeter } from "../components/LevelMeter";
 
 /**
@@ -22,6 +23,7 @@ export function InterpreterApp() {
   const { t } = useI18n();
   // Settings sync via the persisted store is enough for the language label.
   const language = useStore((s) => s.settings.translateTargetLanguage);
+  const languageFlag = TRANSLATE_LANGUAGES.find((l) => l.code === language)?.flag;
 
   const [live, setLive] = useState<{ input: string; output: string }>({ input: "", output: "" });
   const [paused, setPaused] = useState(false);
@@ -82,7 +84,12 @@ export function InterpreterApp() {
             paused ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"
           }`}
         >
-          <Languages className="size-3.5" /> {language.toUpperCase()}
+          {languageFlag ? (
+            <Flag code={languageFlag} className="size-3.5" />
+          ) : (
+            <Languages className="size-3.5" />
+          )}{" "}
+          {language.toUpperCase()}
         </span>
         <LevelMeter source="translate-out" className="h-1.5 w-10" />
         <span className="flex-1" data-tauri-drag-region />

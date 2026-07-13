@@ -13,29 +13,31 @@ export interface TranslateLanguage {
   label: string;
   /** Endonym shown in the picker. */
   nativeLabel: string;
+  /** ISO 3166-1 alpha-2 country code for the circle flag in `/public/flags`. */
+  flag: string;
 }
 
 export const TRANSLATE_LANGUAGES: readonly TranslateLanguage[] = [
-  { code: "en", label: "English", nativeLabel: "English" },
-  { code: "zh-Hant", label: "Chinese (Traditional)", nativeLabel: "繁體中文" },
-  { code: "zh-Hans", label: "Chinese (Simplified)", nativeLabel: "简体中文" },
-  { code: "ja", label: "Japanese", nativeLabel: "日本語" },
-  { code: "ko", label: "Korean", nativeLabel: "한국어" },
-  { code: "es", label: "Spanish", nativeLabel: "Español" },
-  { code: "fr", label: "French", nativeLabel: "Français" },
-  { code: "de", label: "German", nativeLabel: "Deutsch" },
-  { code: "pt", label: "Portuguese", nativeLabel: "Português" },
-  { code: "it", label: "Italian", nativeLabel: "Italiano" },
-  { code: "ru", label: "Russian", nativeLabel: "Русский" },
-  { code: "ar", label: "Arabic", nativeLabel: "العربية" },
-  { code: "hi", label: "Hindi", nativeLabel: "हिन्दी" },
-  { code: "id", label: "Indonesian", nativeLabel: "Bahasa Indonesia" },
-  { code: "th", label: "Thai", nativeLabel: "ไทย" },
-  { code: "vi", label: "Vietnamese", nativeLabel: "Tiếng Việt" },
-  { code: "nl", label: "Dutch", nativeLabel: "Nederlands" },
-  { code: "pl", label: "Polish", nativeLabel: "Polski" },
-  { code: "tr", label: "Turkish", nativeLabel: "Türkçe" },
-  { code: "uk", label: "Ukrainian", nativeLabel: "Українська" },
+  { code: "en", label: "English", nativeLabel: "English", flag: "us" },
+  { code: "zh-Hant", label: "Chinese (Traditional)", nativeLabel: "繁體中文", flag: "tw" },
+  { code: "zh-Hans", label: "Chinese (Simplified)", nativeLabel: "简体中文", flag: "cn" },
+  { code: "ja", label: "Japanese", nativeLabel: "日本語", flag: "jp" },
+  { code: "ko", label: "Korean", nativeLabel: "한국어", flag: "kr" },
+  { code: "es", label: "Spanish", nativeLabel: "Español", flag: "es" },
+  { code: "fr", label: "French", nativeLabel: "Français", flag: "fr" },
+  { code: "de", label: "German", nativeLabel: "Deutsch", flag: "de" },
+  { code: "pt", label: "Portuguese", nativeLabel: "Português", flag: "pt" },
+  { code: "it", label: "Italian", nativeLabel: "Italiano", flag: "it" },
+  { code: "ru", label: "Russian", nativeLabel: "Русский", flag: "ru" },
+  { code: "ar", label: "Arabic", nativeLabel: "العربية", flag: "sa" },
+  { code: "hi", label: "Hindi", nativeLabel: "हिन्दी", flag: "in" },
+  { code: "id", label: "Indonesian", nativeLabel: "Bahasa Indonesia", flag: "id" },
+  { code: "th", label: "Thai", nativeLabel: "ไทย", flag: "th" },
+  { code: "vi", label: "Vietnamese", nativeLabel: "Tiếng Việt", flag: "vn" },
+  { code: "nl", label: "Dutch", nativeLabel: "Nederlands", flag: "nl" },
+  { code: "pl", label: "Polish", nativeLabel: "Polski", flag: "pl" },
+  { code: "tr", label: "Turkish", nativeLabel: "Türkçe", flag: "tr" },
+  { code: "uk", label: "Ukrainian", nativeLabel: "Українська", flag: "ua" },
 ] as const;
 
 /** Human label for a stored code (falls back to the raw code). */

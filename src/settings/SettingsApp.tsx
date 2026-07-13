@@ -12,6 +12,7 @@ import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings } from "../lib/settingsSync";
 import { signInWithGoogle, signOut, CloudError } from "../lib/cloud/client";
 import { CLOUD_ENABLED } from "../lib/flags";
+import { Flag } from "../components/ui/flag";
 import {
   createOrg,
   listMyOrgs,
@@ -393,6 +394,7 @@ export function SettingsApp() {
                 <SelectContent>
                   {LANGUAGE_OPTIONS.map((language) => (
                     <SelectItem key={language.value} value={language.value}>
+                      <Flag code={language.flag} />
                       {language.nativeLabel}
                     </SelectItem>
                   ))}

@@ -11,6 +11,7 @@ import { shortcutCaps } from "../settings/VoiceTypingSettings";
 import { PROVIDERS, PROVIDER_BY_ID } from "../lib/ai/providers";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
 import { useI18n, LANGUAGE_OPTIONS } from "../i18n";
+import { Flag } from "./ui/flag";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -155,7 +156,10 @@ export function Onboarding() {
                         : "hover:bg-muted/50"
                     }`}
                   >
-                    <span>{lang.nativeLabel}</span>
+                    <span className="flex items-center gap-2">
+                      <Flag code={lang.flag} className="size-5" />
+                      {lang.nativeLabel}
+                    </span>
                     {settings.language === lang.value && <Check className="size-4 text-primary" />}
                   </button>
                 ))}

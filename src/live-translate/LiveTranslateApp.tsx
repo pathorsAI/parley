@@ -6,6 +6,7 @@ import { useStore } from "../lib/store";
 import { isTauri } from "../lib/tauriEvents";
 import { log } from "../lib/log";
 import { TRANSLATE_LANGUAGES } from "../lib/translateLanguages";
+import { Flag } from "../components/ui/flag";
 import { LevelMeter } from "../components/LevelMeter";
 import { Button } from "@/components/ui/button";
 import {
@@ -341,6 +342,7 @@ export function LiveTranslateApp() {
             <SelectContent>
               {TRANSLATE_LANGUAGES.map((l) => (
                 <SelectItem key={l.code} value={l.code}>
+                  <Flag code={l.flag} />
                   {l.nativeLabel}
                   <span className="ml-2 text-muted-foreground">{l.label}</span>
                 </SelectItem>
