@@ -8,7 +8,7 @@ import { translate, type TranslationKey } from "../../i18n/messages";
 import type { Settings } from "../types";
 import type { Claim, Company, Person, Thread } from "./types";
 import type { ExtractedOps } from "./store";
-import { readStageBundleOverrides, stageBundles, type SlotDef } from "./bundles";
+import { buildStageSet, readStageBundleFile, type SlotDef } from "./bundles";
 
 /**
  * Claim extraction: one LLM pass over source material (a meeting transcript, a
@@ -125,10 +125,11 @@ async function slotsForExtraction(
   );
   if (!relevant.length) return [];
   const t = (key: string) => translate(settings.language, key as TranslationKey);
-  const bundles = stageBundles(t, await readStageBundleOverrides());
+  const set = buildStageSet(t, await readStageBundleFile({ fresh: true }));
   const out = new Map<string, SlotDef>();
   for (const th of relevant) {
-    for (const slot of bundles[th.stage!].slots) out.set(slot.id, slot);
+    // Stale custom stage (definition removed) → no slots for that thread.
+    for (const slot of set.bundles[th.stage!]?.slots ?? []) out.set(slot.id, slot);
   }
   return [...out.values()];
 }

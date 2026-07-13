@@ -61,6 +61,7 @@ import type { AppLanguage, AppTheme, EvalDef, LlmProvider,
   LlmWorkload, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 import { VoiceTypingSettings } from "./VoiceTypingSettings";
 import { TranslateSettings } from "./TranslateSettings";
+import { StageBundleSettings } from "./StageBundleSettings";
 import { SaveDestinationPicker } from "../components/SaveDestinationPicker";
 import { PermissionsPanel } from "./PermissionsPanel";
 
@@ -74,6 +75,7 @@ type Category =
   | "permissions"
   | "evaluations"
   | "todos"
+  | "stages"
   | "mcp"
   | "usage";
 
@@ -95,6 +97,7 @@ const NAV: { id: Category; labelKey: TranslationKey; cloudOnly?: boolean }[] = [
   { id: "permissions", labelKey: "settings.nav.permissions" },
   { id: "evaluations", labelKey: "settings.nav.evaluations" },
   { id: "todos", labelKey: "settings.nav.todos" },
+  { id: "stages", labelKey: "settings.nav.stages" },
   { id: "mcp", labelKey: "settings.nav.mcp" },
   { id: "usage", labelKey: "settings.nav.usage" },
 ];
@@ -852,6 +855,12 @@ export function SettingsApp() {
             >
               <Plus className="size-3.5" /> {t("settings.todos.addTemplate")}
             </Button>
+          </Section>
+        )}
+
+        {cat === "stages" && (
+          <Section title={t("settings.stages.title")}>
+            <StageBundleSettings />
           </Section>
         )}
 

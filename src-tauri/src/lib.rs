@@ -112,6 +112,7 @@ pub fn run() {
             commands::read_accounts,
             commands::write_accounts,
             commands::read_stage_bundles,
+            commands::write_stage_bundles,
             commands::read_log_tail,
             commands::write_session,
             commands::read_session_commands,

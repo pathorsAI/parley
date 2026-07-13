@@ -2,7 +2,9 @@ import { ArrowLeft } from "lucide-react";
 import { useAccounts, claimsOfThread, personsOf } from "../../lib/accounts/store";
 import type { Thread } from "../../lib/accounts/types";
 import { COMMITTEE_ROLES } from "../../lib/accounts/types";
-import { useI18n } from "../../i18n";
+import { stageGuideView } from "../../lib/accounts/bundles";
+import { useStageSet } from "../../lib/accounts/useStageSet";
+import { useI18n, type TranslationKey } from "../../i18n";
 import { Button } from "@/components/ui/button";
 import { ClaimList } from "./ClaimCard";
 import { InlineEdit, StageStepper, useRecentIngestHighlight } from "./bits";
@@ -16,9 +18,13 @@ export function ThreadPage({
 }: Readonly<{ thread: Thread; onBack: () => void }>) {
   const { t } = useI18n();
   const acc = useAccounts();
+  const stageSet = useStageSet();
   const claims = claimsOfThread(acc, thread.id);
   const persons = personsOf(acc, thread.companyId);
   const highlightIds = useRecentIngestHighlight(thread.companyId);
+  const guide = thread.stage
+    ? stageGuideView((k) => t(k as TranslationKey), stageSet, thread.stage)
+    : null;
 
   const expected = thread.expectedCloseAt
     ? new Date(thread.expectedCloseAt).toISOString().slice(0, 10)
@@ -88,37 +94,39 @@ export function ThreadPage({
         {/* Stage guide (pipeline lite): what this stage is for, what to
             collect (SPIN for discovery), and its exit criteria. The full
             SPIN gap board is the stage-bundle workstream (design §8). */}
-        {thread.kind === "sales" && thread.stage && (
+        {thread.kind === "sales" && thread.stage && guide && (
           <section className="rounded-lg border bg-muted/20 p-3">
             <div className="flex items-baseline gap-2">
               <h3 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                 {t("accounts.stageGuide.title")}
               </h3>
               <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:text-sky-300">
-                {t(`accounts.stage.${thread.stage}`)}
+                {stageSet.names[thread.stage] ?? thread.stage}
               </span>
             </div>
-            <p className="pt-1.5 text-sm">
-              <span className="text-muted-foreground">{t("accounts.stageGuide.goal")}：</span>
-              {t(`accounts.stageGuide.${thread.stage}.goal`)}
-            </p>
+            {guide.goal && (
+              <p className="pt-1.5 text-sm">
+                <span className="text-muted-foreground">{t("accounts.stageGuide.goal")}：</span>
+                {guide.goal}
+              </p>
+            )}
             <p className="pt-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
               {t("accounts.stageGuide.collect")}
             </p>
             <ul className="pt-0.5">
-              {t(`accounts.stageGuide.${thread.stage}.collect`)
-                .split("\n")
-                .map((item) => (
-                  <li key={item} className="flex gap-1.5 text-sm text-muted-foreground">
-                    <span className="text-sky-500">○</span>
-                    {item}
-                  </li>
-                ))}
+              {guide.collect.map((item) => (
+                <li key={item} className="flex gap-1.5 text-sm text-muted-foreground">
+                  <span className="text-sky-500">○</span>
+                  {item}
+                </li>
+              ))}
             </ul>
-            <p className="pt-2 text-sm">
-              <span className="text-muted-foreground">{t("accounts.stageGuide.exit")}：</span>
-              {t(`accounts.stageGuide.${thread.stage}.exit`)}
-            </p>
+            {guide.exit.length > 0 && (
+              <p className="pt-2 text-sm">
+                <span className="text-muted-foreground">{t("accounts.stageGuide.exit")}：</span>
+                {guide.exit.join("；")}
+              </p>
+            )}
           </section>
         )}
 

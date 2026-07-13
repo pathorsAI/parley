@@ -3,17 +3,12 @@ import { Loader2 } from "lucide-react";
 import { transcriptAsText, useStore } from "../../lib/store";
 import { activeClaims, useAccounts } from "../../lib/accounts/store";
 import { suggestSlotQuestions, type SlotQuestion } from "../../lib/accounts/suggest";
-import {
-  buildBuiltinBundles,
-  mergeBundles,
-  readStageBundleOverrides,
-  type StageBundle,
-} from "../../lib/accounts/bundles";
+import { useStageSet } from "../../lib/accounts/useStageSet";
 import { boardStates } from "../../lib/accounts/slotState";
 import { backfillSlotIds } from "../../lib/accounts/backfill";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { SALES_STAGES, type SalesStage } from "../../lib/accounts/types";
-import { useI18n, type TranslationKey } from "../../i18n";
+import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 
 /**
@@ -25,21 +20,6 @@ import { log } from "../../lib/log";
  * the 30s cadence), never direction. Header = THIS call's stage (S19).
  */
 
-/** Builtins in the current language, with user overrides once they load. */
-function useStageBundles(): Record<SalesStage, StageBundle> {
-  const { t } = useI18n();
-  const [overrides, setOverrides] = useState<Partial<Record<SalesStage, StageBundle>>>({});
-  useEffect(() => {
-    readStageBundleOverrides()
-      .then(setOverrides)
-      .catch(() => {});
-  }, []);
-  return useMemo(
-    () => mergeBundles(buildBuiltinBundles((k) => t(k as TranslationKey)), overrides),
-    [t, overrides]
-  );
-}
-
 export function StageBoard() {
   const { t } = useI18n();
   const acc = useAccounts();
@@ -49,12 +29,14 @@ export function StageBoard() {
   const meetingStage = useStore((s) => s.meetingStage);
   const setMeetingStage = useStore((s) => s.setMeetingStage);
   const intel = useStore((s) => s.intel);
-  const bundles = useStageBundles();
+  const stageSet = useStageSet();
 
   const thread = acc.threads.find((x) => x.id === threadId) ?? null;
   const threadStage = thread?.kind === "sales" ? thread.stage : undefined;
-  const stage: SalesStage = meetingStage ?? threadStage ?? SALES_STAGES[0];
-  const bundle = bundles[stage];
+  const wanted: SalesStage = meetingStage ?? threadStage ?? SALES_STAGES[0];
+  // A stale custom stage (definition removed) falls back to the pipeline start.
+  const stage: SalesStage = stageSet.bundles[wanted] ? wanted : SALES_STAGES[0];
+  const bundle = stageSet.bundles[stage];
 
   // This meeting's view of the claim base: thread-scoped + company-level cards.
   const claims = useMemo(
@@ -137,7 +119,7 @@ export function StageBoard() {
     <div className="flex flex-col gap-2 border-b pb-2.5">
       {/* S19: this call's stage. */}
       <div className="flex flex-wrap gap-1">
-        {SALES_STAGES.map((s) => (
+        {stageSet.order.map((s) => (
           <button
             key={s}
             type="button"
@@ -148,7 +130,7 @@ export function StageBoard() {
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            {t(`accounts.stage.${s}` as TranslationKey)}
+            {stageSet.names[s] ?? s}
           </button>
         ))}
       </div>
