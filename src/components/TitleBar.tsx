@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Building2, Circle, FileAudio, History, Languages, LogOut, Mic, Minus, Settings, Square, X } from "lucide-react";
+import { Building2, Check, Circle, FileAudio, History, Languages, LogOut, Mic, Minus, Pencil, Settings, Square, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { log } from "../lib/log";
 import { STT_BY_ID, sttApiKey, sttRelayUrl } from "../lib/transcription/providers";
@@ -115,6 +115,97 @@ function TrafficLights({
 }
 
 /**
+ * The loaded recording's name at the leading edge of the titlebar, doubling as
+ * an inline rename affordance (hover → pencil → input; Enter/blur commits,
+ * Escape cancels — the same interaction as the History card). Rename persists to
+ * disk + cloud + the History window via renameHistoryEntry, then updates the
+ * header immediately via renameReplay. Only offered for recordings saved in the
+ * local library; an unsaved upload or a read-only org recording (loadedHistoryId
+ * null) renders the name read-only.
+ */
+function ReplayTitle({ t }: Readonly<{ t: TFn }>) {
+  const replayName = useStore((s) => s.replay?.name ?? "");
+  const loadedHistoryId = useStore((s) => s.loadedHistoryId);
+  const renameReplay = useStore((s) => s.renameReplay);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(replayName);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function startEdit() {
+    setDraft(replayName);
+    setEditing(true);
+    requestAnimationFrame(() => inputRef.current?.select());
+  }
+  async function commit() {
+    setEditing(false);
+    const clean = draft.trim();
+    if (!clean || clean === replayName || !loadedHistoryId) return;
+    try {
+      const { renameHistoryEntry } = await import("../lib/history/history");
+      await renameHistoryEntry(loadedHistoryId, clean);
+      renameReplay(clean);
+    } catch (e) {
+      log.error("replay: rename failed", { error: String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error(t("replay.renameFailed", { error: message }));
+    }
+  }
+
+  if (editing) {
+    return (
+      <span className="flex min-w-0 items-center gap-1.5 text-xs text-violet-600 dark:text-violet-400">
+        <FileAudio className="size-3.5 shrink-0" />
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(ev) => setDraft(ev.target.value)}
+          onKeyDown={(ev) => {
+            ev.stopPropagation();
+            if (ev.key === "Enter") {
+              ev.preventDefault();
+              void commit();
+            } else if (ev.key === "Escape") {
+              ev.preventDefault();
+              setDraft(replayName);
+              setEditing(false);
+            }
+          }}
+          onBlur={() => void commit()}
+          className="h-6 w-44 min-w-0 rounded border bg-background px-1.5 text-xs text-foreground outline-none focus:border-primary"
+        />
+        <button
+          type="button"
+          aria-label={t("history.renameSave")}
+          onMouseDown={(ev) => ev.preventDefault()}
+          onClick={() => void commit()}
+          className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:text-foreground"
+        >
+          <Check className="size-3" />
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <span className="group/rename flex min-w-0 items-center gap-1.5 text-xs text-violet-600 dark:text-violet-400">
+      <FileAudio className="size-3.5 shrink-0" />
+      <span className="max-w-44 truncate">{replayName}</span>
+      {loadedHistoryId && (
+        <button
+          type="button"
+          aria-label={t("replay.rename")}
+          title={t("replay.rename")}
+          onClick={startEdit}
+          className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/rename:opacity-100"
+        >
+          <Pencil className="size-3" />
+        </button>
+      )}
+    </span>
+  );
+}
+
+/**
  * Custom window titlebar. The main Tauri window is undecorated, so this header
  * owns both the draggable region and the window controls.
  *
@@ -144,7 +235,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const setStudyTab = useStore((s) => s.setStudyTab);
   const [elapsed, setElapsed] = useState("00:00");
   const appMode = useStore((s) => s.appMode);
-  const replayName = useStore((s) => s.replay?.name ?? "");
   const exitReplay = useStore((s) => s.exitReplay);
   const enterAccounts = useStore((s) => s.enterAccounts);
   const exitAccounts = useStore((s) => s.exitAccounts);
@@ -285,12 +375,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           Settings trip); recording → the session vitals (rec + elapsed + mic
           level + translation). */}
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
-        {replayMode && (
-          <span className="flex min-w-0 items-center gap-1.5 text-xs text-violet-600 dark:text-violet-400">
-            <FileAudio className="size-3.5 shrink-0" />
-            <span className="max-w-44 truncate">{replayName}</span>
-          </span>
-        )}
+        {replayMode && <ReplayTitle t={t} />}
         {!replayMode && !recording && (
           <SaveDestinationPicker
             compact
