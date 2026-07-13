@@ -917,6 +917,11 @@ export const zhTW = {
   "replay.trimNote": "立即套用：範圍外的逐字稿與分析會移除，播放也只會播保留範圍（不會重新分析；重新上傳即可還原）。",
   "replay.trimStart": "修剪起點",
   "replay.trimEnd": "修剪終點",
+  "replay.searchOpen": "搜尋逐字稿（⌘F）",
+  "replay.searchPlaceholder": "搜尋逐字稿",
+  "replay.searchPrev": "上一個結果",
+  "replay.searchNext": "下一個結果",
+  "replay.searchClose": "關閉搜尋",
   // Time-anchored retro timeline (whole-recording analysis → markers).
   "timeline.title": "時間軸分析",
   "timeline.analyze": "分析",
@@ -2024,6 +2029,11 @@ export const en = {
   "replay.trimNote": "Applies instantly: transcript & findings outside the range are removed and playback is limited to it (no re-analysis; re-upload to restore).",
   "replay.trimStart": "Trim start",
   "replay.trimEnd": "Trim end",
+  "replay.searchOpen": "Search transcript (⌘F)",
+  "replay.searchPlaceholder": "Search transcript",
+  "replay.searchPrev": "Previous match",
+  "replay.searchNext": "Next match",
+  "replay.searchClose": "Close search",
   // Time-anchored retro timeline (whole-recording analysis → markers).
   "timeline.title": "Timeline analysis",
   "timeline.analyze": "Analyze",
