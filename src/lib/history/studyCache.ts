@@ -21,6 +21,10 @@ const key = (entryId: string) => `${PREFIX}${entryId}`;
 export interface StudyCacheEntry {
   findings?: TimelineEvent[];
   actionItems?: ActionItem[];
+  /** True once the findings + action-items pipeline completed — marks even an
+   *  EMPTY result as done so reopening doesn't re-run it (the read-only twin of
+   *  HistoryEntry.analyzed). Accretive: once true it never un-sets. */
+  analyzed?: boolean;
   brief?: string | null;
   intel?: IntelState | null;
   deliveryAssessment?: DeliveryAssessment | null;
@@ -48,6 +52,9 @@ export function writeStudyCache(entryId: string, patch: StudyCacheEntry): void {
     ...prev,
     findings: patch.findings?.length ? patch.findings : prev.findings,
     actionItems: patch.actionItems?.length ? patch.actionItems : prev.actionItems,
+    // `|| undefined` so a mid-pipeline persist (actions still running → false)
+    // keeps an earlier true and a plain false is dropped from the JSON.
+    analyzed: patch.analyzed || prev.analyzed || undefined,
     brief: patch.brief ?? prev.brief ?? null,
     intel: patch.intel ?? prev.intel ?? null,
     deliveryAssessment: patch.deliveryAssessment ?? prev.deliveryAssessment ?? null,

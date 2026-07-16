@@ -74,6 +74,13 @@ function snapshotAnalysis() {
     speakerNames: s.speakerNames,
     findings: s.findings,
     actionItems: s.actionItems,
+    // "Pipeline completed" marker — lets loadHistory restore even an EMPTY result
+    // as done instead of re-running it. False when a pass hasn't run or failed
+    // (a live save before the post-meeting pass; an errored action-items pass):
+    // loading then falls back to the content heuristic, and the flag turns true
+    // once a completed re-run persists (initHistoryPersistSync snapshots only
+    // after both statuses settle "done").
+    analyzed: s.analysisStatus === "done" && s.actionItemsStatus === "done",
     meetingContext: s.meetingContext,
     companyId: s.meetingCompanyId,
     threadId: s.meetingThreadId,
@@ -405,6 +412,7 @@ export async function persistStudyOutputs(): Promise<void> {
     writeStudyCache(s.replay.id, {
       findings: s.findings,
       actionItems: s.actionItems,
+      analyzed: s.analysisStatus === "done" && s.actionItemsStatus === "done",
       brief: s.brief,
       intel: s.intel,
       deliveryAssessment: s.deliveryAssessment,
@@ -560,6 +568,9 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
   if (cached) {
     if (!meta.findings.length && cached.findings?.length) meta.findings = cached.findings;
     if (!meta.actionItems.length && cached.actionItems?.length) meta.actionItems = cached.actionItems;
+    // The VIEWER's own completed pass also counts as analyzed — a clean-empty
+    // result must restore as done here too, or every open re-spends it.
+    if (cached.analyzed) meta.analyzed = true;
     meta.brief = meta.brief ?? cached.brief ?? null;
     meta.intel = meta.intel ?? cached.intel ?? null;
     meta.deliveryAssessment = meta.deliveryAssessment ?? cached.deliveryAssessment ?? null;
