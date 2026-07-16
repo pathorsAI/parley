@@ -6,17 +6,12 @@ import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 /**
- * Meeting checklist. Apply a template (from Settings) to load items, add/check/
- * remove ad-hoc, and let the AI auto-check items that have been covered.
+ * Meeting checklist: add/check/remove ad-hoc items, and let the AI auto-check
+ * items that have been covered. (The template picker that used to sit here was
+ * removed — per-stage collect cells on the stage board cover the "what to ask
+ * this meeting" job, and the two surfaces just duplicated each other.)
  */
 export function TodosPanel() {
   const { t } = useI18n();
@@ -24,11 +19,8 @@ export function TodosPanel() {
   const addTodo = useStore((s) => s.addTodo);
   const toggleTodo = useStore((s) => s.toggleTodo);
   const removeTodo = useStore((s) => s.removeTodo);
-  const templates = useStore((s) => s.settings.todoTemplates);
-  const applyTodoTemplate = useStore((s) => s.applyTodoTemplate);
   const [input, setInput] = useState("");
   const [checking, setChecking] = useState(false);
-  const [selectedTemplateId, setSelectedTemplateId] = useState("");
 
   const done = todos.filter((t) => t.done).length;
 
@@ -62,28 +54,10 @@ export function TodosPanel() {
         <span className="shrink-0">
           {todos.length > 0 ? t("todos.doneCount", { done, total: todos.length }) : t("todos.noItems")}
         </span>
-        <Select
-          value={templates.some((tpl) => tpl.id === selectedTemplateId) ? selectedTemplateId : ""}
-          onValueChange={(id) => {
-            const template = templates.find((x) => x.id === id);
-            if (!template) return;
-            applyTodoTemplate(template.items);
-            setSelectedTemplateId(id);
-          }}
-        >
-          <SelectTrigger size="sm" className="ml-auto h-6 w-[140px] text-[11px]">
-            <SelectValue placeholder={t("todos.applyTemplate")} />
-          </SelectTrigger>
-          <SelectContent>
-            {templates.map((t) => (
-              <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
         <Button
           variant="outline"
           size="sm"
-          className="h-6 shrink-0 px-2 text-[11px]"
+          className="ml-auto h-6 shrink-0 px-2 text-[11px]"
           disabled={checking || todos.length === 0}
           onClick={aiUpdate}
           title={t("todos.aiTitle")}

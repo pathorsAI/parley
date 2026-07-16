@@ -93,7 +93,7 @@ describe("stage bundles — builtins", () => {
   });
 
   it("coarse-converts the remaining stages: one slot per collect line, label = hint = line", () => {
-    for (const stage of ["demo", "proposal", "negotiation", "closing"] as const) {
+    for (const stage of ["demo", "negotiation", "closing"] as const) {
       const lines = t(`accounts.stageGuide.${stage}.collect`)
         .split("\n")
         .map((l) => l.trim())

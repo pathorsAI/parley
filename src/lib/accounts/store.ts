@@ -499,6 +499,54 @@ let initStarted = false;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
+ * S24 one-shot migration: the builtin "proposal" stage merged INTO
+ * "negotiation" (the merged bundle's collect cells are proposal's four lines
+ * as c0..c3 followed by negotiation's four as c4..c7). Runs only when the
+ * data still references the removed stage — a proposal thread stage or a
+ * proposal-prefixed slot id — so already-migrated (or never-tagged) data is
+ * never touched twice. In one pass per slot id:
+ *   proposal.none → negotiation.none, proposal.cN → negotiation.cN (same cell
+ *   content, new prefix); legacy coarse negotiation.c0–3 → negotiation.c4–7
+ *   (their lines shifted down). Non-coarse ids (a negotiation override's
+ *   custom slots) keep their ids — the override still defines those cells.
+ * Exported for tests.
+ */
+export function migrateProposalMerge(data: AccountsData): {
+  data: AccountsData;
+  migrated: boolean;
+} {
+  const threads = data.threads ?? [];
+  const claims = data.claims ?? [];
+  const preMerge =
+    threads.some((t) => (t.stage as string) === "proposal") ||
+    claims.some((c) => (c.slotIds ?? []).some((s) => s.startsWith("proposal.")));
+  if (!preMerge) return { data, migrated: false };
+
+  const mapSlot = (s: string): string => {
+    if (s === "proposal.none") return "negotiation.none";
+    const prop = /^proposal\.(.+)$/.exec(s);
+    if (prop) return `negotiation.${prop[1]}`;
+    const coarse = /^negotiation\.c([0-3])$/.exec(s);
+    if (coarse) return `negotiation.c${Number(coarse[1]) + 4}`;
+    return s;
+  };
+  const migratedData: AccountsData = {
+    ...data,
+    threads: threads.map((t) =>
+      (t.stage as string) === "proposal" ? { ...t, stage: "negotiation" } : t
+    ),
+    claims: claims.map((c) =>
+      c.slotIds?.length ? { ...c, slotIds: [...new Set(c.slotIds.map(mapSlot))] } : c
+    ),
+  };
+  log.info("accounts: proposal→negotiation stage migration applied", {
+    threads: threads.filter((t) => (t.stage as string) === "proposal").length,
+    claims: claims.filter((c) => (c.slotIds ?? []).some((s) => s.startsWith("proposal."))).length,
+  });
+  return { data: migratedData, migrated: true };
+}
+
+/**
  * Hydrate the store from disk once, then persist every change (debounced).
  * Mounted from the app root; safe to call more than once.
  */
@@ -509,12 +557,20 @@ export function initAccounts(): void {
   (async () => {
     try {
       const raw = await readFile();
-      const data = raw.trim() ? (JSON.parse(raw) as AccountsData) : EMPTY_ACCOUNTS;
+      const parsed = raw.trim() ? (JSON.parse(raw) as AccountsData) : EMPTY_ACCOUNTS;
+      const { data, migrated } = migrateProposalMerge(parsed);
       useAccounts.getState().hydrate(data);
       log.info("accounts: loaded", {
         companies: data.companies?.length ?? 0,
         claims: data.claims?.length ?? 0,
       });
+      // One-shot persist of a stage migration, so the file stops carrying the
+      // legacy ids even if this session never touches accounts again.
+      if (migrated) {
+        writeFile(JSON.stringify(data)).catch((e) =>
+          log.warn("accounts: stage migration save failed", { error: String(e) })
+        );
+      }
       // Pair every company with its history folder (companies created before
       // the pairing existed get theirs here). Dynamic import: folders.ts
       // imports this store, so a static edge would be a cycle.

@@ -12,8 +12,7 @@ import type { Claim, Company, Person, Thread } from "./types";
 const STAGE_LABEL: Record<string, string> = {
   discovery: "Discovery",
   demo: "Demo",
-  proposal: "Proposal",
-  negotiation: "Negotiation",
+  negotiation: "Proposal & negotiation",
   closing: "Closing",
 };
 

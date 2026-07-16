@@ -144,7 +144,15 @@ export function parseBundleFile(raw: string, warn: Warn = () => {}): ParsedBundl
   for (const entry of Array.isArray(file.stages) ? file.stages : []) {
     if (isCustomStageLike(entry) && !seen.has(entry.id)) {
       seen.add(entry.id);
-      customStages.push({ ...entry, bundle: { ...entry.bundle, stage: entry.id, name: entry.name } });
+      // S24 merged the builtin "proposal" stage into "negotiation" — an anchor
+      // pointing at the removed stage keeps its pipeline position via the
+      // survivor instead of falling to the end.
+      const insertAfter = entry.insertAfter === "proposal" ? "negotiation" : entry.insertAfter;
+      customStages.push({
+        ...entry,
+        insertAfter,
+        bundle: { ...entry.bundle, stage: entry.id, name: entry.name },
+      });
     } else {
       warn("stage-bundles: dropped malformed custom stage", {
         id: (entry as CustomStageDef | null)?.id,
@@ -283,7 +291,9 @@ export function buildBuiltinBundles(t: Tr): Record<SalesStage, StageBundle> {
     prospecting,
     discovery,
     demo,
-    proposal: coarseBundle("proposal", t, 30),
+    // S24: the old separate "proposal" stage merged in — its collect lines are
+    // this bundle's c0..c3 and the original negotiation lines shifted to
+    // c4..c7 (the accounts-load migration remaps legacy slot ids to match).
     negotiation: coarseBundle("negotiation", t, 45),
     closing: coarseBundle("closing", t, 30),
   };
