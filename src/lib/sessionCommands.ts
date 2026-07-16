@@ -174,8 +174,11 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
       return { id, folderId };
     }
     case "list_folders": {
-      const { listLocalFolders } = await import("./history/folders");
-      return listLocalFolders().map((f) => ({ id: f.id, name: f.name }));
+      // Fresh read: another INSTANCE (packaged vs dev) may have changed the
+      // shared registry — MCP answers must reflect the file, not this
+      // window's cache.
+      const { listFoldersFresh } = await import("./history/folders");
+      return (await listFoldersFresh()).map((f) => ({ id: f.id, name: f.name }));
     }
     case "list_orgs": {
       const { listMyOrgs } = await import("./cloud/orgs");

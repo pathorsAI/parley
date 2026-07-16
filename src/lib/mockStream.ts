@@ -27,7 +27,14 @@ export function startMockStream() {
   let line = 0;
 
   function emitLine() {
-    if (useStore.getState().meetingStatus !== "recording") return;
+    const status = useStore.getState().meetingStatus;
+    // Paused → hold this position and poll for resume (the dev stand-in for the
+    // backend's dropped-audio pause); anything else ends the stream.
+    if (status === "paused") {
+      timer = setTimeout(emitLine, 300);
+      return;
+    }
+    if (status !== "recording") return;
     if (line >= SCRIPT.length) return;
 
     const { source, speaker, text } = SCRIPT[line];
@@ -37,7 +44,12 @@ export function startMockStream() {
     let wordIdx = 0;
 
     function emitWord() {
-      if (useStore.getState().meetingStatus !== "recording") return;
+      const status = useStore.getState().meetingStatus;
+      if (status === "paused") {
+        timer = setTimeout(emitWord, 300);
+        return;
+      }
+      if (status !== "recording") return;
       wordIdx++;
       const partial = words.slice(0, wordIdx).join(" ");
       const isFinal = wordIdx >= words.length;

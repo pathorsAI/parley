@@ -184,8 +184,10 @@ export interface TodoTemplate {
   items: string[];
 }
 
-/** High-level meeting lifecycle state. */
-export type MeetingStatus = "idle" | "recording" | "stopped";
+/** High-level meeting lifecycle state. "paused" keeps the capture + STT
+ *  sockets open but drops every chunk (nothing transcribed/recorded/billed)
+ *  until resume — see the backend's `set_meeting_paused`. */
+export type MeetingStatus = "idle" | "recording" | "paused" | "stopped";
 
 /** Which LLM provider to route inference through. */
 export type LlmProvider =

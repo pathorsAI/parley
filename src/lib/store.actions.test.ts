@@ -7,7 +7,7 @@ vi.mock("./log", () => ({
   attachConsoleOnce: vi.fn(),
 }));
 
-import { useStore } from "./store";
+import { useStore, meetingElapsedMs } from "./store";
 import { seg, replaySession } from "./test/fixtures";
 import type { TimelineEvent } from "./types";
 import type { HistoryEntry } from "./history/types";
@@ -469,6 +469,85 @@ describe("meeting lifecycle", () => {
     useStore.getState().startMeeting();
     useStore.getState().stopMeeting();
     expect(useStore.getState().meetingStatus).toBe("stopped");
+  });
+
+  it("pause/resume freeze elapsed time and accumulate the paused span", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      useStore.getState().startMeeting();
+
+      vi.setSystemTime(1_060_000); // 60s in
+      useStore.getState().pauseMeeting();
+      let s = useStore.getState();
+      expect(s.meetingStatus).toBe("paused");
+      expect(meetingElapsedMs(s, Date.now())).toBe(60_000);
+
+      vi.setSystemTime(1_360_000); // paused 5 min — elapsed must not move
+      expect(meetingElapsedMs(useStore.getState(), Date.now())).toBe(60_000);
+
+      useStore.getState().resumeMeeting();
+      s = useStore.getState();
+      expect(s.meetingStatus).toBe("recording");
+      expect(s.meetingPausedAt).toBeNull();
+      expect(s.meetingPausedTotalMs).toBe(300_000);
+
+      vi.setSystemTime(1_370_000); // +10s recording after resume
+      expect(meetingElapsedMs(useStore.getState(), Date.now())).toBe(70_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pauseMeeting is a no-op unless recording; resumeMeeting unless paused", () => {
+    useStore.getState().pauseMeeting();
+    expect(useStore.getState().meetingStatus).toBe("idle");
+    useStore.getState().startMeeting();
+    useStore.getState().resumeMeeting();
+    expect(useStore.getState().meetingStatus).toBe("recording");
+  });
+
+  it("startMeeting resets pause bookkeeping from a previous meeting", () => {
+    useStore.setState({ meetingPausedAt: 123, meetingPausedTotalMs: 456 });
+    useStore.getState().startMeeting();
+    const s = useStore.getState();
+    expect(s.meetingPausedAt).toBeNull();
+    expect(s.meetingPausedTotalMs).toBe(0);
+  });
+
+  it("cancelMeeting discards the session back to idle", () => {
+    useStore.getState().startMeeting();
+    useStore.setState({
+      segments: [seg({ id: "s1", text: "hello" })],
+      findings: [makeFinding("f")],
+      speakerNames: { "them-1": "Alice" },
+      brief: "brief md",
+      briefStatus: "done",
+    });
+    useStore.getState().pauseMeeting();
+
+    useStore.getState().cancelMeeting();
+
+    const s = useStore.getState();
+    expect(s.meetingStatus).toBe("idle");
+    expect(s.meetingStartedAt).toBeNull();
+    expect(s.meetingPausedAt).toBeNull();
+    expect(s.meetingPausedTotalMs).toBe(0);
+    expect(s.segments).toEqual([]);
+    expect(s.findings).toEqual([]);
+    expect(s.speakerNames).toEqual({});
+    expect(s.brief).toBeNull();
+    expect(s.briefStatus).toBe("idle");
+  });
+
+  it("cancelMeeting keeps the pre-meeting setup (todos + context)", () => {
+    useStore.getState().addTodo("agenda item");
+    useStore.getState().setMeetingContext("with ACME");
+    useStore.getState().startMeeting();
+    useStore.getState().cancelMeeting();
+    const s = useStore.getState();
+    expect(s.todos).toHaveLength(1);
+    expect(s.meetingContext).toBe("with ACME");
   });
 });
 

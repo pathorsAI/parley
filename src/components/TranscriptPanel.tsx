@@ -57,7 +57,7 @@ export function TranscriptPanel() {
   if (runs.length === 0) {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
-        {status === "recording"
+        {status === "recording" || status === "paused"
           ? t("meeting.listening")
           : t("meeting.startPrompt")}
       </div>

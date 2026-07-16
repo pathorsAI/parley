@@ -27,11 +27,13 @@ export function TranslateStrip() {
   const [elapsedSec, setElapsedSec] = useState(0);
   const startedAt = useRef<number | null>(null);
 
-  const recording = status === "recording";
-  const active = recording && enabled && isTauri();
+  // Meeting-paused counts as active: the strip must survive a titlebar ⏸
+  // (unmounting would reset the cost ticker), it just freezes while paused.
+  const active = (status === "recording" || status === "paused") && enabled && isTauri();
 
   // Elapsed/cost ticker + per-meeting reset (pause state included: the backend
-  // re-arms unpaused on every start).
+  // re-arms unpaused on every start). While the MEETING is paused no audio is
+  // uploaded (nothing billed), so the ticker holds instead of counting.
   useEffect(() => {
     if (!active) {
       startedAt.current = null;
@@ -40,9 +42,15 @@ export function TranslateStrip() {
       setLive({ input: "", output: "" });
       return;
     }
-    startedAt.current = Date.now();
+    startedAt.current ??= Date.now();
     const id = setInterval(() => {
-      if (startedAt.current) setElapsedSec(Math.floor((Date.now() - startedAt.current) / 1000));
+      if (!startedAt.current) return;
+      if (useStore.getState().meetingStatus === "paused") {
+        // Freeze: shift the baseline forward so paused time never bills.
+        startedAt.current += 1000;
+        return;
+      }
+      setElapsedSec(Math.floor((Date.now() - startedAt.current) / 1000));
     }, 1000);
     return () => clearInterval(id);
   }, [active]);

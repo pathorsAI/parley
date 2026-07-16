@@ -6,7 +6,7 @@ import { AnalysisTimeline } from "./analysis/AnalysisTimeline";
 import { selectAndSeek } from "./analysis/useAnalysis";
 import { runAnalysis } from "../lib/analysis/engine";
 import { findActiveTemplate } from "../lib/evaluations/presets";
-import { useStore, transcriptAsText, formatClock } from "../lib/store";
+import { useStore, transcriptAsText, formatClock, meetingElapsedMs } from "../lib/store";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 
@@ -42,13 +42,17 @@ export function MeetingView() {
   const highlightMs = useStore((s) => s.highlightMs);
   const setHighlightMs = useStore((s) => s.setHighlightMs);
   const meetingStartedAt = useStore((s) => s.meetingStartedAt);
+  const meetingPausedAt = useStore((s) => s.meetingPausedAt);
+  const meetingPausedTotalMs = useStore((s) => s.meetingPausedTotalMs);
   const recording = useStore((s) => s.meetingStatus === "recording");
+  const meetingActive = useStore((s) => s.meetingStatus === "recording" || s.meetingStatus === "paused");
   const maxEndMs = useStore((s) => s.segments.reduce((m, x) => Math.max(m, x.endMs), 0));
   const evalTemplates = useStore((s) => s.settings.evalTemplates);
   const evaluations = useStore((s) => s.settings.evaluations);
   const activeTemplate = findActiveTemplate(evalTemplates, evaluations);
 
-  // Tick once a second so the axis right-edge advances while recording.
+  // Tick once a second so the axis right-edge advances while recording (a
+  // pause freezes the elapsed value, so ticking through it is a no-op).
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (!recording) return;
@@ -56,7 +60,12 @@ export function MeetingView() {
     return () => clearInterval(id);
   }, [recording]);
 
-  const elapsedMs = recording && meetingStartedAt ? nowMs - meetingStartedAt : maxEndMs;
+  // Recorded-time elapsed (wall minus pauses) so the axis matches segment
+  // timestamps — which the STT clock also compacts over pauses.
+  const elapsedMs =
+    meetingActive && meetingStartedAt
+      ? meetingElapsedMs({ meetingStartedAt, meetingPausedAt, meetingPausedTotalMs }, nowMs)
+      : maxEndMs;
   const axisMaxMs = Math.max(elapsedMs, maxEndMs, 1);
   const showTimeline = findings.length > 0 || analysisStatus === "running" || analysisStatus === "error";
 

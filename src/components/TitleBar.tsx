@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Building2, Check, Circle, FileAudio, History, Languages, LogOut, Mic, Minus, Pencil, Settings, Square, X } from "lucide-react";
-import { useStore } from "../lib/store";
+import { Building2, Check, Circle, FileAudio, History, Languages, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
+import { useStore, meetingElapsedMs } from "../lib/store";
 import { log } from "../lib/log";
 import { STT_BY_ID, sttApiKey, sttRelayUrl } from "../lib/transcription/providers";
 import { toast } from "sonner";
@@ -15,6 +16,7 @@ import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
 import { McpStatusChip } from "./McpStatusChip";
+import { ReplayFolderChip } from "./ReplayFolderChip";
 import { SaveDestinationPicker } from "./SaveDestinationPicker";
 import { PostMeetingReviewButton } from "./accounts/PostMeetingReviewButton";
 import { StudyGenerationChip } from "./study/StudyGenerationChip";
@@ -206,6 +208,45 @@ function ReplayTitle({ t }: Readonly<{ t: TFn }>) {
 }
 
 /**
+ * Confirm dialog for CANCELLING a live meeting — the one destructive control
+ * in the recorder cluster (transcript + recording are discarded, nothing is
+ * saved or analyzed), so it never fires on a single click. Portal'd for the
+ * same reason as MeetingContextDialog: the titlebar's backdrop-blur makes it
+ * the containing block for fixed-position descendants.
+ */
+function CancelMeetingDialog({
+  onConfirm,
+  onKeep,
+  t,
+}: Readonly<{ onConfirm: () => void; onKeep: () => void; t: TFn }>) {
+  return createPortal(
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-6">
+      <button
+        type="button"
+        aria-label={t("meeting.cancel.keep")}
+        className="absolute inset-0 bg-black/50"
+        onClick={onKeep}
+      />
+      <div className="relative w-full max-w-sm rounded-xl border bg-background p-4 shadow-xl">
+        <h2 className="text-sm font-semibold text-foreground">{t("meeting.cancel.title")}</h2>
+        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+          {t("meeting.cancel.body")}
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button size="sm" variant="outline" className="h-8" onClick={onKeep}>
+            {t("meeting.cancel.keep")}
+          </Button>
+          <Button size="sm" variant="destructive" className="h-8" onClick={onConfirm}>
+            {t("meeting.cancel.confirm")}
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/**
  * Custom window titlebar. The main Tauri window is undecorated, so this header
  * owns both the draggable region and the window controls.
  *
@@ -222,6 +263,9 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const inputDevice = useStore((s) => s.settings.inputDevice);
   const startMeeting = useStore((s) => s.startMeeting);
   const stopMeeting = useStore((s) => s.stopMeeting);
+  const pauseMeeting = useStore((s) => s.pauseMeeting);
+  const resumeMeeting = useStore((s) => s.resumeMeeting);
+  const cancelMeeting = useStore((s) => s.cancelMeeting);
   const translateEnabled = useStore((s) => s.settings.meetingTranslateEnabled);
   const translateLanguage = useStore((s) => s.settings.translateTargetLanguage);
   const translateOutputDevice = useStore((s) => s.settings.translateOutputDevice);
@@ -247,46 +291,49 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   // (before any re-render); `toggleBusy` just disables the button visually.
   const toggleBusyRef = useRef(false);
   const [toggleBusy, setToggleBusy] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
 
   const recording = status === "recording";
+  const paused = status === "paused";
+  // Recording OR paused: the meeting owns the session (recorder controls show).
+  const meetingActive = recording || paused;
   const replayMode = appMode === "replay";
   const accountsMode = appMode === "accounts";
 
-  // Vitals timer (top-left): elapsed since the meeting started, ticking 1 Hz.
+  // Vitals timer (top-left): elapsed RECORDED time (wall time minus pauses —
+  // matching the pause-compacted recording), ticking 1 Hz. While paused the
+  // value is frozen, so ticking is pointless; the transition re-renders it once.
   useEffect(() => {
-    if (!recording) return;
+    if (!meetingActive) return;
     const tick = () => {
-      const sec = Math.max(0, Math.floor((Date.now() - (meetingStartedAt ?? Date.now())) / 1000));
+      const sec = Math.floor(meetingElapsedMs(useStore.getState()) / 1000);
       setElapsed(
         `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`
       );
     };
     tick();
+    if (paused) return;
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [recording, meetingStartedAt]);
+  }, [meetingActive, paused, meetingStartedAt]);
   const useRealPipeline = isTauri() && !!sttKey.trim();
 
-  async function toggle() {
-    // Re-entrancy guard: ignore clicks while a start/stop is already in flight.
+  /** Run `fn` under the shared re-entrancy guard: rapid clicks across the
+   *  recorder controls (start/end/cancel) can't overlap two mutating invokes. */
+  async function guarded(fn: () => Promise<void>) {
     if (toggleBusyRef.current) return;
     toggleBusyRef.current = true;
     setToggleBusy(true);
     try {
-      if (recording) {
-        log.info("meeting: stop requested");
-        stopMeeting();
-        if (useRealPipeline) {
-          try {
-            await invoke("stop_meeting");
-          } catch (e) {
-            log.error("meeting: stop failed", { error: String(e) });
-          }
-        } else {
-          stopMockStream();
-        }
-        return;
-      }
+      await fn();
+    } finally {
+      toggleBusyRef.current = false;
+      setToggleBusy(false);
+    }
+  }
+
+  async function start() {
+    await guarded(async () => {
       // Meeting translation needs its own (Gemini) key on top of the STT key;
       // refuse loudly rather than silently starting an untranslated meeting.
       if (useRealPipeline && translateEnabled && !geminiApiKey.trim()) {
@@ -338,10 +385,60 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
         log.info("meeting: start (mock stream)");
         startMockStream();
       }
-    } finally {
-      toggleBusyRef.current = false;
-      setToggleBusy(false);
+    });
+  }
+
+  /** End = the meeting's natural finish: save the recording, then the study
+   *  pipeline runs the debrief. (The old single stop button, renamed.) */
+  async function end() {
+    await guarded(async () => {
+      log.info("meeting: stop requested");
+      stopMeeting();
+      if (useRealPipeline) {
+        try {
+          await invoke("stop_meeting");
+        } catch (e) {
+          log.error("meeting: stop failed", { error: String(e) });
+        }
+      } else {
+        stopMockStream();
+      }
+    });
+  }
+
+  /** Pause/resume flips the store first (instant UI) then tells the backend to
+   *  drop/readmit audio. The backend flag is idempotent, so no busy guard. */
+  function togglePause() {
+    if (paused) {
+      log.info("meeting: resume requested");
+      resumeMeeting();
+    } else {
+      log.info("meeting: pause requested");
+      pauseMeeting();
     }
+    if (useRealPipeline) {
+      invoke("set_meeting_paused", { paused: !paused }).catch((e) =>
+        log.error("meeting: pause toggle failed", { error: String(e) })
+      );
+    }
+  }
+
+  /** Cancel (from the confirm dialog): discard everything, back to idle. */
+  async function cancel() {
+    setConfirmCancel(false);
+    await guarded(async () => {
+      log.info("meeting: cancel requested");
+      cancelMeeting();
+      if (useRealPipeline) {
+        try {
+          await invoke("cancel_meeting");
+        } catch (e) {
+          log.error("meeting: cancel failed", { error: String(e) });
+        }
+      } else {
+        stopMockStream();
+      }
+    });
   }
 
   async function controlWindow(action: WindowAction) {
@@ -376,7 +473,8 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           level + translation). */}
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
         {replayMode && <ReplayTitle t={t} />}
-        {!replayMode && !recording && (
+        {replayMode && <ReplayFolderChip />}
+        {!replayMode && !meetingActive && (
           <SaveDestinationPicker
             compact
             value={saveLocation}
@@ -384,13 +482,23 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             onChange={(loc) => updateSettings({ defaultSaveLocation: loc })}
           />
         )}
-        {recording && (
+        {meetingActive && (
           <>
             <span className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
-              <Circle className="h-2 w-2 animate-pulse fill-red-500 text-red-500" />
+              {paused ? (
+                <Circle className="h-2 w-2 fill-amber-500 text-amber-500" />
+              ) : (
+                <Circle className="h-2 w-2 animate-pulse fill-red-500 text-red-500" />
+              )}
               {elapsed}
             </span>
-            <LevelMeter source="me" className="h-1.5 w-14" />
+            {paused ? (
+              <span className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                {t("titlebar.paused")}
+              </span>
+            ) : (
+              <LevelMeter source="me" className="h-1.5 w-14" />
+            )}
             {translateEnabled && (
               <span className="flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
                 <Languages className="size-3.5" />
@@ -464,20 +572,61 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             <LogOut className="size-3.5" />
             {t("accounts.exit")}
           </Button>
+        ) : meetingActive ? (
+          // Recorder cluster: pause/resume ⇄, end (save → debrief), cancel
+          // (discard, confirm-gated). All three live in both states, so the
+          // user always has 繼續/結束/取消 at hand — the ask in issue terms.
+          <>
+            <Button
+              size="sm"
+              variant={paused ? "default" : "outline"}
+              onClick={togglePause}
+              // Held while a start/end/cancel invoke is in flight: pausing
+              // mid-start could land set_meeting_paused BEFORE start_meeting
+              // resets the flag, splitting UI and backend pause state.
+              disabled={toggleBusy}
+              className="h-8"
+            >
+              {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+              {paused ? t("titlebar.resume") : t("titlebar.pause")}
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={end}
+              disabled={toggleBusy}
+              className="h-8"
+            >
+              <Square className="size-3.5" />
+              {t("titlebar.end")}
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+              aria-label={t("titlebar.cancelMeeting")}
+              title={t("titlebar.cancelMeeting")}
+              disabled={toggleBusy}
+              onClick={() => setConfirmCancel(true)}
+            >
+              <X className="size-4" />
+            </Button>
+          </>
         ) : (
-          <Button
-            size="sm"
-            variant={recording ? "destructive" : "default"}
-            onClick={toggle}
-            disabled={toggleBusy}
-            className="h-8"
-          >
-            {recording ? <Square className="size-3.5" /> : <Mic className="size-3.5" />}
-            {recording ? t("titlebar.stop") : t("titlebar.startMeeting")}
+          <Button size="sm" variant="default" onClick={start} disabled={toggleBusy} className="h-8">
+            <Mic className="size-3.5" />
+            {t("titlebar.startMeeting")}
           </Button>
         )}
+        {confirmCancel && (
+          <CancelMeetingDialog
+            t={t}
+            onKeep={() => setConfirmCancel(false)}
+            onConfirm={() => void cancel()}
+          />
+        )}
 
-        {businessType && !accountsMode && !recording && (
+        {businessType && !accountsMode && !meetingActive && (
           <Button
             size="icon"
             variant="ghost"

@@ -186,6 +186,7 @@ pub fn start_translate(
         meeting_source: None,
         error_event: ERROR_EVENT,
         paused: None,
+        meeting_paused: None,
     };
 
     let task = tauri::async_runtime::spawn(run_translate_session(
@@ -246,6 +247,10 @@ struct SessionParams {
     /// chunks are dropped instead of uploaded — the counterpart hears silence
     /// and no audio tokens are billed. `None` = not pausable (standalone).
     paused: Option<Arc<AtomicBool>>,
+    /// The MEETING's own pause (the titlebar ⏸, distinct from the strip's).
+    /// Checked alongside `paused` — either one set drops the upload. `None`
+    /// for the standalone interpreter window.
+    meeting_paused: Option<Arc<AtomicBool>>,
 }
 
 /// Wire a meeting's "me" side through Gemini live-translate: opens the output
@@ -255,6 +260,7 @@ struct SessionParams {
 ///
 /// Used by `start_meeting` when the user enables meeting translation; the
 /// standalone window goes through `start_translate` instead.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_meeting_translate(
     app: &AppHandle,
     api_key: String,
@@ -263,6 +269,7 @@ pub fn spawn_meeting_translate(
     pcm_rx: UnboundedReceiver<Vec<i16>>,
     error_mute: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    meeting_paused: Arc<AtomicBool>,
 ) -> Result<(tauri::async_runtime::JoinHandle<()>, PlaybackHandle), String> {
     let (sink, playback) =
         start_playback(output_device).map_err(|e| format!("could not open output device: {e}"))?;
@@ -274,6 +281,7 @@ pub fn spawn_meeting_translate(
         meeting_source: Some("me"),
         error_event: "meeting://error",
         paused: Some(paused),
+        meeting_paused: Some(meeting_paused),
     };
     let task = tauri::async_runtime::spawn(run_translate_session(
         app.clone(),
@@ -395,6 +403,7 @@ async fn session_inner(
     let in_meter_source = params.meeting_source.unwrap_or("translate-in");
     let mut in_meter = LevelMeter::new(app.clone(), in_meter_source, LEVEL_EVENT);
     let paused = params.paused.clone();
+    let meeting_paused = params.meeting_paused.clone();
     // Resolves `true` when the mic drained (normal stop), `false` if a send
     // failed (dead socket) — drive_session reports the latter as a failure.
     let forward = async move {
@@ -404,12 +413,15 @@ async fn session_inner(
                 break true;
             };
             in_meter.push(&chunk);
-            // Paused (interpreter strip ⏸): keep metering so the user sees the
-            // mic is alive, but drop the upload — silence to the counterpart,
-            // zero audio tokens billed.
+            // Paused (interpreter strip ⏸ or the meeting's own ⏸): keep metering
+            // so the user sees the mic is alive, but drop the upload — silence
+            // to the counterpart, zero audio tokens billed.
             if paused
                 .as_ref()
                 .is_some_and(|p| p.load(Ordering::Relaxed))
+                || meeting_paused
+                    .as_ref()
+                    .is_some_and(|p| p.load(Ordering::Relaxed))
             {
                 continue;
             }

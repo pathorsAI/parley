@@ -97,6 +97,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::start_meeting,
             commands::stop_meeting,
+            commands::cancel_meeting,
+            commands::set_meeting_paused,
             commands::discard_recording,
             commands::list_input_devices,
             commands::start_mic_test,
@@ -109,6 +111,8 @@ pub fn run() {
             commands::read_templates,
             commands::write_templates,
             commands::get_templates_path,
+            commands::read_folders,
+            commands::write_folders,
             commands::read_accounts,
             commands::write_accounts,
             commands::read_stage_bundles,

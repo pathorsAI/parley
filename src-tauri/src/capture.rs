@@ -266,6 +266,13 @@ pub type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
 /// (and billing) new chunks and drops its sender, closing the STT input NOW so
 /// only what was said before release is transcribed and flushed. Meetings pass
 /// `None` (they stop by dropping the mic sender via the gate).
+///
+/// `paused`: the meeting's pause switch (see `set_meeting_paused`). While set,
+/// chunks are DROPPED here — not counted (billed), not recorded, not forwarded
+/// to the STT adapter. The socket survives on the adapters' audio-independent
+/// keepalives, and since providers timestamp by received-audio time, the
+/// transcript timeline stays aligned with the pause-compacted recording.
+/// Voice typing passes `None`.
 #[allow(clippy::too_many_arguments)]
 pub fn run_metered_session(
     app: &AppHandle,
@@ -277,6 +284,7 @@ pub fn run_metered_session(
     error_event: &'static str,
     error_mute: Option<Arc<AtomicBool>>,
     cutoff: Option<Arc<AtomicBool>>,
+    paused: Option<Arc<AtomicBool>>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -294,6 +302,9 @@ pub fn run_metered_session(
                 // triggers its final flush of only the pre-release speech.
                 if cutoff.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
                     break;
+                }
+                if paused.as_ref().is_some_and(|p| p.load(Ordering::SeqCst)) {
+                    continue;
                 }
                 samples += chunk.len() as u64;
                 // Tee into the recording buffer (kept while the meeting is armed).
