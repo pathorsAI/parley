@@ -174,6 +174,9 @@ pub fn start_voice_typing(
         "voicetyping://error",
         None,
         Some(cutoff.clone()),
+        // Dictation is not pausable — and must keep working even while a live
+        // meeting (whose mic it taps) is paused.
+        None,
     );
     // Pin the session task so the next start (or stop's backstop) can abort
     // it. If a newer start won the race while we were spawning, ours is the

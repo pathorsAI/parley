@@ -11,7 +11,7 @@ import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { toast } from "sonner";
-import { useStore, speakerKey, hasSpokenSegment } from "../store";
+import { useStore, speakerKey, hasSpokenSegment, isMeetingActive } from "../store";
 import { readStudyCache, writeStudyCache } from "./studyCache";
 import { companyFolderId } from "../accounts/folders";
 import { isTauri } from "../tauriEvents";
@@ -267,7 +267,7 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
   // the study tense (landing on the report), unless the user already started
   // another meeting or opened a different recording in the meantime.
   const now = useStore.getState();
-  if (now.meetingStatus !== "recording" && now.appMode === "live") {
+  if (!isMeetingActive(now.meetingStatus) && now.appMode === "live") {
     now.setStudyTab("report");
     await loadHistoryEntry(entry.id).catch((e) =>
       log.warn("history: auto-open after stop failed", { id: entry.id, error: String(e) }),
@@ -350,6 +350,7 @@ export async function saveUploadToHistory(session: ReplaySession): Promise<strin
   // persist subscription awaits `uploadSaveInFlight` so the overwrite can't run
   // before the file exists.
   useStore.getState().setLoadedHistoryId(id);
+  useStore.getState().setReplayFolderId(entry.folderId ?? null);
   const saving = persist(entry, session.audioPath, /* compress */ true);
   uploadSaveInFlight = saving;
   try {
@@ -659,7 +660,7 @@ export async function emitHistoryImport(path: string): Promise<void> {
 export async function listenForHistoryImport(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   return listen<{ path: string }>(HISTORY_IMPORT_EVENT, (e) => {
-    if (useStore.getState().meetingStatus === "recording") return;
+    if (isMeetingActive(useStore.getState().meetingStatus)) return;
     useStore.getState().openIngestWizard(e.payload.path);
     import("@tauri-apps/api/webviewWindow")
       .then(({ WebviewWindow }) => WebviewWindow.getByLabel("main"))

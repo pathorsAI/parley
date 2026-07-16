@@ -55,6 +55,23 @@ pub fn write_templates(app: AppHandle, json: String) -> Result<(), String> {
     write_config_file(&app, "templates.json", &json)
 }
 
+/// Read the shared personal-folder registry JSON (empty string if the file
+/// doesn't exist yet). The registry lives on DISK — one file for every window
+/// AND every app instance (packaged + `tauri dev` share the config dir) — so
+/// the folder list can never fork per webview origin the way the old
+/// localStorage registry did.
+#[tauri::command]
+pub fn read_folders(app: AppHandle) -> Result<String, String> {
+    read_config_file(&app, "folders.json")
+}
+
+/// Write the shared personal-folder registry JSON, creating the config dir if
+/// needed.
+#[tauri::command]
+pub fn write_folders(app: AppHandle, json: String) -> Result<(), String> {
+    write_config_file(&app, "folders.json", &json)
+}
+
 /// Read the accounts (mini-CRM: companies/persons/threads/claims) JSON
 /// (empty string if the file doesn't exist yet).
 #[tauri::command]
@@ -108,6 +125,11 @@ pub struct MeetingState {
     /// Interpreter-strip pause: while true the translate session drops mic
     /// uploads (silence to the counterpart, no billing). Reset on every start.
     translate_paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Meeting pause (the titlebar ⏸): while true, captured PCM is dropped
+    /// before the STT upload, the recording tee and the usage counter — nothing
+    /// is transcribed, recorded or billed, but the capture + sockets stay open
+    /// so resume is instant. Reset on every start.
+    meeting_paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// List available microphone input device names (for the Settings picker).
@@ -187,6 +209,23 @@ pub fn set_translate_paused(app: AppHandle, state: State<MeetingState>, paused: 
     log::info!("meeting-translate: paused={paused}");
 }
 
+/// Pause / resume the live meeting (the titlebar ⏸/▶). While paused every
+/// captured chunk is dropped before the recorder tee, the STT upload and the
+/// usage counter (see `run_metered_session`), so nothing is transcribed,
+/// recorded or billed — but the mic/system capture and the provider sockets
+/// stay open (the adapters' keepalives carry them), making resume seamless:
+/// same session, same speaker diarization, continuous timeline. Deliberately
+/// does NOT emit `meeting://status` — the capture is still live, so surfaces
+/// keyed on that event (the Settings mic lock) must keep treating the meeting
+/// as active.
+#[tauri::command]
+pub fn set_meeting_paused(state: State<MeetingState>, paused: bool) {
+    state
+        .meeting_paused
+        .store(paused, std::sync::atomic::Ordering::SeqCst);
+    log::info!("meeting: paused={paused}");
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn start_meeting(
@@ -247,6 +286,11 @@ pub fn start_meeting(
     // Arm a fresh recording buffer for this meeting (the designated session below
     // tees its PCM into it; stop_meeting encodes + clears it).
     *state.recorder.lock().unwrap() = Some(Vec::new());
+    // A new meeting always starts unpaused.
+    state
+        .meeting_paused
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let meeting_paused = state.meeting_paused.clone();
     // Drop any (finished) session handles from a prior meeting before this one fills in.
     state.tasks.lock().unwrap().clear();
     // Arm THIS meeting's error mute (unset). The previous meeting's sessions
@@ -292,7 +336,7 @@ pub fn start_meeting(
                 .ok()
                 .map(|rx| {
                     let rx = spawn_mic_prosody_tap(&app, rx, Some(far.clone()));
-                    spawn_recorder_tee(rx, recorder.clone())
+                    spawn_recorder_tee(rx, recorder.clone(), meeting_paused.clone())
                 });
             let Some(rx_me) = rx_me else {
                 // Translation without the mic is meaningless — fail the start
@@ -312,6 +356,7 @@ pub fn start_meeting(
                 rx_me,
                 error_mute.clone(),
                 state.translate_paused.clone(),
+                meeting_paused.clone(),
             ) {
                 Ok((task, playback)) => {
                     state.tasks.lock().unwrap().push(task);
@@ -335,6 +380,7 @@ pub fn start_meeting(
                     Some(error_mute.clone()),
                     // No release cutoff — meetings end via stop, not key-up.
                     None,
+                    Some(meeting_paused.clone()),
                 ));
             }
         } else if diarization {
@@ -372,6 +418,7 @@ pub fn start_meeting(
                         "meeting://error",
                         Some(error_mute.clone()),
                         None,
+                        Some(meeting_paused.clone()),
                     ));
                 }
                 // If one capture failed, transcribe + record whichever started.
@@ -386,6 +433,7 @@ pub fn start_meeting(
                         "meeting://error",
                         Some(error_mute.clone()),
                         None,
+                        Some(meeting_paused.clone()),
                     ));
                 }
                 (None, Some(b)) => {
@@ -399,6 +447,7 @@ pub fn start_meeting(
                         "meeting://error",
                         Some(error_mute.clone()),
                         None,
+                        Some(meeting_paused.clone()),
                     ));
                 }
                 (None, None) => {
@@ -435,6 +484,7 @@ pub fn start_meeting(
                     "meeting://error",
                     Some(error_mute.clone()),
                     None,
+                    Some(meeting_paused.clone()),
                 ));
             }
             if let Ok(rx) = spawn_capture(&coord, MicUser::Meeting, sys, gate.clone(), "them") {
@@ -449,6 +499,7 @@ pub fn start_meeting(
                     "meeting://error",
                     Some(error_mute.clone()),
                     None,
+                    Some(meeting_paused.clone()),
                 ));
             }
         }
@@ -476,6 +527,7 @@ pub fn start_meeting(
                 "meeting://error",
                 Some(error_mute.clone()),
                 None,
+                Some(meeting_paused.clone()),
             );
             state.tasks.lock().unwrap().push(task);
         }
@@ -485,12 +537,15 @@ pub fn start_meeting(
     Ok(())
 }
 
-#[tauri::command]
-pub fn stop_meeting(
-    app: AppHandle,
-    state: State<MeetingState>,
-    coord: State<MicCoordinator>,
-) -> Result<(), String> {
+/// Shared meeting teardown: mute this session's error surface, release the
+/// transcription tasks (with the flush/abort grace), stop the capture and free
+/// the translate output. Returns the recorded PCM buffer for the caller to
+/// either encode (stop) or discard (cancel).
+fn teardown_meeting(
+    app: &AppHandle,
+    state: &State<MeetingState>,
+    coord: &State<MicCoordinator>,
+) -> Option<Vec<i16>> {
     // Direct-cancel safety net for the transcription sessions. Stopping the
     // capture below starts the graceful capture→channel-close cascade, which
     // closes the socket and emits final usage. The abort is ONLY a backstop for a
@@ -518,6 +573,9 @@ pub fn stop_meeting(
         });
     }
 
+    // NOTE: a stop/cancel while paused leaves `meeting_paused` set on purpose —
+    // chunks still draining through the flush grace belong to the paused span
+    // and must stay dropped. The next start re-arms the flag.
     // Clear this session's gate and join its capture threads (bounded grace) so
     // each releases its device — dropping its PCM sender, which ends the STT
     // session via channel close. See MicCoordinator for the gate/detach story.
@@ -527,10 +585,19 @@ pub fn stop_meeting(
     // into a bounded buffer harmlessly until the task ends.
     let _ = state.translate_playback.lock().unwrap().take();
     let _ = app.emit("meeting://status", "stopped");
+    state.recorder.lock().unwrap().take()
+}
+
+#[tauri::command]
+pub fn stop_meeting(
+    app: AppHandle,
+    state: State<MeetingState>,
+    coord: State<MicCoordinator>,
+) -> Result<(), String> {
+    let pcm = teardown_meeting(&app, &state, &coord);
 
     // Encode the captured audio off-thread and tell the frontend where it landed
     // (which then writes the history entry). Skip very short / empty recordings.
-    let pcm = state.recorder.lock().unwrap().take();
     if let Some(pcm) = pcm {
         let app = app.clone();
         std::thread::spawn(move || {
@@ -559,6 +626,25 @@ pub fn stop_meeting(
                 Err(e) => log::error!("recording: encode failed: {e}"),
             }
         });
+    }
+    Ok(())
+}
+
+/// Cancel the live meeting: identical teardown to [`stop_meeting`], but the
+/// captured audio is DISCARDED instead of encoded — no `meeting://recording-saved`
+/// follows, so nothing is saved to history and no analysis runs. The frontend
+/// resets its own transcript/session state alongside this call.
+#[tauri::command]
+pub fn cancel_meeting(
+    app: AppHandle,
+    state: State<MeetingState>,
+    coord: State<MicCoordinator>,
+) -> Result<(), String> {
+    let pcm = teardown_meeting(&app, &state, &coord);
+    if let Some(pcm) = pcm {
+        log::info!("meeting: cancelled, discarding {} samples", pcm.len());
+    } else {
+        log::info!("meeting: cancelled (no recording buffered)");
     }
     Ok(())
 }
@@ -756,17 +842,22 @@ fn spawn_mic_prosody_tap(
 /// Tee PCM into the meeting's recording buffer, forwarding every chunk
 /// untouched downstream. The translate path needs this standalone tee because
 /// its session doesn't go through [`run_metered_session`] (which does the
-/// recorder tee for STT sessions).
+/// recorder tee for STT sessions). While `paused` is set nothing is recorded,
+/// but chunks still flow downstream so the translate session keeps metering
+/// the mic (its own pause checks drop the upload) — mirroring the strip's ⏸.
 #[cfg(target_os = "macos")]
 fn spawn_recorder_tee(
     mut rx: UnboundedReceiver<Vec<i16>>,
     recorder: RecorderBuf,
+    paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> UnboundedReceiver<Vec<i16>> {
     let (tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
     tauri::async_runtime::spawn(async move {
         while let Some(chunk) = rx.recv().await {
-            if let Some(buf) = recorder.lock().unwrap().as_mut() {
-                buf.extend_from_slice(&chunk);
+            if !paused.load(std::sync::atomic::Ordering::SeqCst) {
+                if let Some(buf) = recorder.lock().unwrap().as_mut() {
+                    buf.extend_from_slice(&chunk);
+                }
             }
             if tx.send(chunk).is_err() {
                 break;

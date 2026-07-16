@@ -993,7 +993,9 @@ fn focus_context(s: &Value) -> Value {
         "replay" => "replay",
         "accounts" => "accounts",
         _ => match meeting_status {
-            "recording" => "live-meeting",
+            // A paused meeting is still THE live meeting (capture held, resume
+            // is one click) — same focus, the summary spells out the pause.
+            "recording" | "paused" => "live-meeting",
             "stopped" => "live-post-meeting",
             _ => "idle",
         },
@@ -1019,9 +1021,18 @@ fn focus_context(s: &Value) -> Value {
         "accounts" => "The user is on the accounts (mini-CRM) screen — no meeting is active \
                        and no recording is loaded."
             .to_string(),
-        "live-meeting" => "A live meeting is being recorded RIGHT NOW; the transcript below \
-                           is growing in real time."
-            .to_string(),
+        "live-meeting" => {
+            if meeting_status == "paused" {
+                "A live meeting is in progress but PAUSED — audio is not being \
+                 transcribed or recorded until the user resumes. The transcript \
+                 below covers the meeting so far."
+                    .to_string()
+            } else {
+                "A live meeting is being recorded RIGHT NOW; the transcript below \
+                 is growing in real time."
+                    .to_string()
+            }
+        }
         "live-post-meeting" => "No meeting is active: the last live meeting has ENDED and \
                                 the user is looking at its post-meeting state. The transcript \
                                 and findings below are from that finished meeting — do not \

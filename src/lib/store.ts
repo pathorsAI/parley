@@ -247,6 +247,12 @@ interface ParleyState {
    *  local {@link import("./history/studyCache").writeStudyCache} instead —
    *  anything that ran is stored, and reopening never re-spends it. */
   replayReadOnly: boolean;
+  /** The loaded PERSONAL entry's folder (null = unfiled/root; also null for
+   *  read-only org recordings and not-yet-saved uploads). Mirrors the entry's
+   *  on-disk folderId so the replay titlebar can show + change where this
+   *  recording is filed without a History-window round trip. */
+  replayFolderId: string | null;
+  setReplayFolderId: (id: string | null) => void;
   /** Scrub position (ms) in replay mode — drives audio + transcript highlight. */
   replayPlayheadMs: number;
   /** Load an uploaded recording and switch into replay mode. */
@@ -414,6 +420,13 @@ interface ParleyState {
 
   meetingStatus: MeetingStatus;
   meetingStartedAt: number | null;
+  /** When the CURRENT pause began (epoch ms), null while not paused. */
+  meetingPausedAt: number | null;
+  /** Total paused time (ms) accumulated by PREVIOUS pauses this meeting —
+   *  excludes the ongoing pause. With `meetingPausedAt`, lets the UI show
+   *  recorded-time elapsed (see {@link meetingElapsedMs}) that matches the
+   *  pause-compacted recording + transcript timeline. */
+  meetingPausedTotalMs: number;
   segments: TranscriptSegment[];
   evaluations: Evaluation[];
   settings: Settings;
@@ -476,6 +489,17 @@ interface ParleyState {
   // meeting lifecycle
   startMeeting: () => void;
   stopMeeting: () => void;
+  /** Freeze the live meeting (recording → paused). The backend drops audio
+   *  while paused; segments finalizing from PRE-pause audio still land. */
+  pauseMeeting: () => void;
+  /** Continue a paused meeting (paused → recording), folding the finished
+   *  pause into {@link meetingPausedTotalMs}. */
+  resumeMeeting: () => void;
+  /** Abandon the live meeting entirely: transcript + study outputs are
+   *  discarded and the app returns to idle — nothing is saved or analyzed
+   *  (the caller also invokes the backend `cancel_meeting`, which discards
+   *  the recording instead of encoding it). */
+  cancelMeeting: () => void;
 
   /** Assign/clear a custom name for a speaker key. */
   setSpeakerName: (key: string, name: string) => void;
@@ -501,6 +525,7 @@ export const useStore = create<ParleyState>()(
       replay: null,
       loadedHistoryId: null,
       replayReadOnly: false,
+      replayFolderId: null,
       replayPlayheadMs: 0,
       replaySeekNonce: 0,
       replayTrim: null,
@@ -529,6 +554,8 @@ export const useStore = create<ParleyState>()(
       actionItemsError: null,
       meetingStatus: "idle",
       meetingStartedAt: null,
+      meetingPausedAt: null,
+      meetingPausedTotalMs: 0,
       segments: [],
       evaluations: evalsFromDefs(DEFAULT_SETTINGS.evaluations),
       settings: DEFAULT_SETTINGS,
@@ -556,7 +583,7 @@ export const useStore = create<ParleyState>()(
       meetingStage: null,
     }),
   enterAccounts: () =>
-    set((s) => (s.meetingStatus === "recording" ? {} : { appMode: "accounts" })),
+    set((s) => (isMeetingActive(s.meetingStatus) ? {} : { appMode: "accounts" })),
   exitAccounts: () => set((s) => ({ appMode: s.replay ? "replay" : "live" })),
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
@@ -572,6 +599,7 @@ export const useStore = create<ParleyState>()(
       return { cloudAuth };
     }),
   setLoadedHistoryId: (loadedHistoryId) => set({ loadedHistoryId }),
+  setReplayFolderId: (replayFolderId) => set({ replayFolderId }),
   renameReplay: (title) =>
     set((s) => (s.replay ? { replay: { ...s.replay, name: title } } : {})),
 
@@ -587,6 +615,7 @@ export const useStore = create<ParleyState>()(
       // A fresh upload isn't a saved entry yet — cleared until its auto-save.
       loadedHistoryId: null,
       replayReadOnly: false,
+      replayFolderId: null,
       // Start at the beginning of the recording (the full transcript always
       // shows now — no masking); the playhead is just for playback/navigation.
       replayPlayheadMs: 0,
@@ -618,6 +647,7 @@ export const useStore = create<ParleyState>()(
       // re-analysis-persist subscription doesn't try to write it to the local dir.
       loadedHistoryId: opts?.readOnly ? null : entry.id,
       replayReadOnly: !!opts?.readOnly,
+      replayFolderId: opts?.readOnly ? null : entry.folderId ?? null,
       replayPlayheadMs: 0,
       replaySeekNonce: state.replaySeekNonce + 1,
       replayTrim: null,
@@ -664,6 +694,7 @@ export const useStore = create<ParleyState>()(
       replay: null,
       loadedHistoryId: null,
       replayReadOnly: false,
+      replayFolderId: null,
       replayPlayheadMs: 0,
       replayTrim: null,
       ingestWizardOpen: false,
@@ -881,7 +912,10 @@ export const useStore = create<ParleyState>()(
       evaluations,
       meetingStatus: "recording",
       meetingStartedAt: Date.now(),
+      meetingPausedAt: null,
+      meetingPausedTotalMs: 0,
       loadedHistoryId: null,
+      replayFolderId: null,
       segments: [],
       speakerNames: {},
       ...CLEARED_STUDY_SLICE,
@@ -892,6 +926,47 @@ export const useStore = create<ParleyState>()(
       deliveryNudge: null,
       };
     });
+  },
+
+  pauseMeeting: () => {
+    log.info("store: meeting paused");
+    set((s) => (s.meetingStatus === "recording" ? { meetingStatus: "paused", meetingPausedAt: Date.now() } : {}));
+  },
+
+  resumeMeeting: () => {
+    log.info("store: meeting resumed");
+    set((s) =>
+      s.meetingStatus === "paused"
+        ? {
+            meetingStatus: "recording",
+            meetingPausedAt: null,
+            meetingPausedTotalMs:
+              s.meetingPausedTotalMs + Math.max(0, Date.now() - (s.meetingPausedAt ?? Date.now())),
+          }
+        : {}
+    );
+  },
+
+  cancelMeeting: () => {
+    log.info("store: meeting cancelled");
+    set((s) => ({
+      meetingStatus: "idle",
+      meetingStartedAt: null,
+      meetingPausedAt: null,
+      meetingPausedTotalMs: 0,
+      segments: [],
+      speakerNames: {},
+      ...CLEARED_STUDY_SLICE,
+      prosody: null,
+      micSessionRateHz: null,
+      filledPauseCount: 0,
+      filledPauseCounted: {},
+      deliveryNudge: null,
+      // Red-line guardrails are armed per meeting (startMeeting) — strip them
+      // like stopMeeting does. The meeting context/todos/links stay: the user
+      // may restart the same meeting right away.
+      evaluations: s.evaluations.filter((e) => !isRedlineEvalId(e.id)),
+    }));
   },
 
   setSpeakerName: (key, name) =>
@@ -913,6 +988,7 @@ export const useStore = create<ParleyState>()(
     log.info("store: meeting stopped");
     set((s) => ({
       meetingStatus: "stopped",
+      meetingPausedAt: null,
       prosody: null,
       deliveryNudge: null,
       // Red-line guardrails are a live concern; drop them so post-meeting
@@ -1047,6 +1123,30 @@ export const useStore = create<ParleyState>()(
     }
   )
 );
+
+/**
+ * Is a live meeting in progress (recording or paused)? Paused meetings still
+ * own the mic and the STT sessions, so every "don't do X while recording"
+ * guard (accounts screen, ingest, close-window stop) must treat them as active.
+ */
+export function isMeetingActive(status: MeetingStatus): boolean {
+  return status === "recording" || status === "paused";
+}
+
+/**
+ * Elapsed RECORDED time of the live meeting (ms): wall time since start minus
+ * every paused span (including the ongoing one). Matches the pause-compacted
+ * recording + the STT timeline, so the titlebar clock and the live analysis
+ * axis line up with segment timestamps instead of drifting ahead over pauses.
+ */
+export function meetingElapsedMs(
+  s: Pick<ParleyState, "meetingStartedAt" | "meetingPausedAt" | "meetingPausedTotalMs">,
+  now: number = Date.now()
+): number {
+  if (s.meetingStartedAt == null) return 0;
+  const end = s.meetingPausedAt ?? now;
+  return Math.max(0, end - s.meetingStartedAt - s.meetingPausedTotalMs);
+}
 
 /**
  * Is this segment outside the replay keep-window (i.e. trimmed away)? A segment

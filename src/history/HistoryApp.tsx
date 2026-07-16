@@ -16,6 +16,7 @@ import {
   CloudOff,
   Folder,
   FolderClosed,
+  FolderInput,
   FolderPlus,
   ListChecks,
   Loader2,
@@ -678,6 +679,16 @@ export function HistoryApp() {
     [t],
   );
 
+  // The card menu's scope-aware move (the click alternative to drag-and-drop) —
+  // same handlers the sidebar drop targets use, keyed off the open scope.
+  const moveCard = useCallback(
+    async (item: HistoryCardItem, folderId: string | null) => {
+      if (selection.kind === "org") await moveOrgCard(selection.id, item, folderId);
+      else await movePersonalCard(item, folderId);
+    },
+    [selection, moveOrgCard, movePersonalCard],
+  );
+
   const handleDrop = useCallback(
     async (target: DropTarget) => {
       const item = dragItem;
@@ -899,6 +910,8 @@ export function HistoryApp() {
             remove={remove}
             rename={rename}
             share={share}
+            scopeFolders={scopeFolders}
+            move={moveCard}
             onDragStart={setDragItem}
             onDragEnd={() => {
               setDragItem(null);
@@ -954,6 +967,8 @@ function LibraryContent({
   remove,
   rename,
   share,
+  scopeFolders,
+  move,
   onDragStart,
   onDragEnd,
 }: Readonly<{
@@ -976,6 +991,8 @@ function LibraryContent({
   remove: (item: HistoryCardItem) => Promise<void>;
   rename: (id: string, title: string) => Promise<void>;
   share: (item: HistoryCardItem, org: CloudOrg) => Promise<void>;
+  scopeFolders: LocalFolder[];
+  move: (item: HistoryCardItem, folderId: string | null) => Promise<void>;
   onDragStart: (item: HistoryCardItem) => void;
   onDragEnd: () => void;
 }>) {
@@ -1046,6 +1063,12 @@ function LibraryContent({
                   orgId: org.id,
                   error: String(error),
                 }),
+              );
+            }}
+            folders={scopeFolders}
+            onMove={(folderId) => {
+              move(entry, folderId).catch((error) =>
+                log.error("history: move failed", { id: entry.id, error: String(error) }),
               );
             }}
             onDragStart={() => onDragStart(entry)}
@@ -1339,6 +1362,100 @@ function AddFolderButton({ depth = 0, onClick }: Readonly<{ depth?: number; onCl
 }
 
 /** A small dropdown that copies a personal recording into one of the user's orgs. */
+/**
+ * Per-card "move to folder" menu — the click alternative to dragging a card
+ * onto a sidebar folder (same movePersonalCard/moveOrgCard handlers behind
+ * it). Lists the scope's folders plus a top-level option; the card's current
+ * location is shown checked and inert.
+ */
+function MoveMenu({
+  folders,
+  currentFolderId,
+  onMove,
+}: Readonly<{
+  folders: LocalFolder[];
+  currentFolderId: string | null;
+  onMove: (folderId: string | null) => void;
+}>) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const options: { id: string | null; name: string }[] = [
+    { id: null, name: t("history.move.rootOption") },
+    ...folders.map((f) => ({ id: f.id, name: f.name })),
+  ];
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        aria-label={t("history.move.button")}
+        title={t("history.move.button")}
+        onClick={(ev) => {
+          ev.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="grid size-6 place-items-center rounded-md bg-background/70 text-muted-foreground backdrop-blur transition-colors hover:bg-muted hover:text-foreground"
+      >
+        <FolderInput className="size-3.5" />
+      </button>
+      {open && (
+        <>
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label={t("common.cancel")}
+            className="fixed inset-0 z-30"
+            onClick={(ev) => {
+              ev.stopPropagation();
+              setOpen(false);
+            }}
+            onKeyDown={(ev) => {
+              if (ev.key === "Enter" || ev.key === " " || ev.key === "Escape") {
+                ev.preventDefault();
+                ev.stopPropagation();
+                setOpen(false);
+              }
+            }}
+          />
+          <div
+            role="presentation"
+            className="absolute right-0 top-7 z-40 max-h-64 min-w-40 overflow-y-auto rounded-md border bg-popover p-1 shadow-md"
+            onClick={(ev) => ev.stopPropagation()}
+            onKeyDown={(ev) => ev.stopPropagation()}
+          >
+            <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+              {t("history.move.menuTitle")}
+            </div>
+            {options.map((o) => {
+              const current = (currentFolderId ?? null) === o.id;
+              return (
+                <button
+                  key={o.id ?? "__root"}
+                  type="button"
+                  disabled={current}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    setOpen(false);
+                    onMove(o.id);
+                  }}
+                  className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs hover:bg-muted disabled:opacity-60 disabled:hover:bg-transparent"
+                >
+                  {o.id === null ? (
+                    <FolderClosed className="size-3 shrink-0" />
+                  ) : (
+                    <Folder className="size-3 shrink-0" />
+                  )}
+                  <span className="truncate">{o.name}</span>
+                  {current && <Check className="ml-auto size-3 shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ShareMenu({
   orgs,
   sharing,
@@ -1483,10 +1600,12 @@ function HistoryCard({
   busy,
   downloading,
   sharing,
+  folders,
   onOpen,
   onDelete,
   onRename,
   onShare,
+  onMove,
   onDragStart,
   onDragEnd,
 }: Readonly<{
@@ -1498,10 +1617,13 @@ function HistoryCard({
   busy: boolean;
   downloading: boolean;
   sharing: boolean;
+  /** The current scope's folders (personal or the open org's) for the move menu. */
+  folders: LocalFolder[];
   onOpen: () => void;
   onDelete: () => void;
   onRename: (title: string) => void;
   onShare: (org: CloudOrg) => void;
+  onMove: (folderId: string | null) => void;
   onDragStart: () => void;
   onDragEnd: () => void;
 }>) {
@@ -1617,6 +1739,9 @@ function HistoryCard({
     >
       {!editing && (
         <div className="absolute right-2 top-2 z-10 flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
+          {folders.length > 0 && (
+            <MoveMenu folders={folders} currentFolderId={entry.folderId ?? null} onMove={onMove} />
+          )}
           {canShare && <ShareMenu orgs={orgs} sharing={sharing} onShare={onShare} />}
           {!isCloudOnly && !isOrgContext && (
             <button

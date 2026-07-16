@@ -19,7 +19,7 @@ import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWind
 import { useFindingSolutionHost } from "./components/analysis/useFindingSolutionHost";
 import { DeliveryNudgeHost } from "./components/delivery/DeliveryNudgeHost";
 import { useDeliveryCoach } from "./lib/analysis/useDelivery";
-import { useStore } from "./lib/store";
+import { useStore, isMeetingActive } from "./lib/store";
 import {
   isTauri,
   listenForMeetingError,
@@ -209,7 +209,7 @@ const App = () => {
     let active = true;
     let unlisten: (() => void) | undefined;
     const stopIfRecording = () => {
-      if (useStore.getState().meetingStatus === "recording") {
+      if (isMeetingActive(useStore.getState().meetingStatus)) {
         invoke("stop_meeting").catch((error) => log.warn("meeting: stop on close failed", { error: String(error) }));
       }
     };
@@ -244,7 +244,7 @@ const App = () => {
           const audio = e.payload.paths.find((p) =>
             /\.(mp3|m4a|wav|ogg|oga|flac|aac|mp4|webm|opus)$/i.test(p)
           );
-          if (audio && useStore.getState().meetingStatus !== "recording") {
+          if (audio && !isMeetingActive(useStore.getState().meetingStatus)) {
             log.info("replay: file dropped, opening ingest wizard");
             useStore.getState().openIngestWizard(audio);
           }
