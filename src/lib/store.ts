@@ -610,6 +610,13 @@ export const useStore = create<ParleyState>()(
       findings: entry.findings.length,
       readOnly: !!opts?.readOnly,
     });
+    // Did the findings + action-items pipeline already run for this entry? The
+    // saved `analyzed` flag says so even when the result was genuinely EMPTY (a
+    // clean meeting yields 0 findings and 0 action items) — without it, every
+    // reopen would re-dispatch and re-spend the action-items generation. Entries
+    // predating the flag fall back to inferring completion from content.
+    const analysisDone =
+      entry.analyzed || entry.findings.length > 0 || entry.actionItems.length > 0;
     set((state) => ({
       appMode: "replay",
       replay: session,
@@ -634,10 +641,10 @@ export const useStore = create<ParleyState>()(
       // open, written back by initHistoryPersistSync / persistStudyOutputs.
       ...CLEARED_STUDY_SLICE,
       findings: entry.findings,
-      analysisStatus: entry.findings.length > 0 || entry.actionItems.length > 0 ? "done" : "idle",
+      analysisStatus: analysisDone ? "done" : "idle",
       analyzedEvalSig: evalSignature(state.evaluations),
       actionItems: entry.actionItems,
-      actionItemsStatus: entry.findings.length > 0 || entry.actionItems.length > 0 ? "done" : "idle",
+      actionItemsStatus: analysisDone ? "done" : "idle",
       deliveryAssessment: entry.deliveryAssessment ?? null,
       deliveryStatus: entry.deliveryAssessment ? "done" : "idle",
       brief: entry.brief ?? null,

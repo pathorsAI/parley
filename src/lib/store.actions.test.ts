@@ -10,6 +10,7 @@ vi.mock("./log", () => ({
 import { useStore } from "./store";
 import { seg, replaySession } from "./test/fixtures";
 import type { TimelineEvent } from "./types";
+import type { HistoryEntry } from "./history/types";
 
 // Snapshot the pristine initial state once, then restore before every test so
 // each case drives the store from a known baseline (the store is a singleton).
@@ -145,6 +146,73 @@ describe("loadHistory", () => {
     expect(s.meetingFloor).toBe("floor");
     // A non-stale eval signature so findings aren't flagged stale.
     expect(s.analyzedEvalSig).not.toBe("");
+  });
+
+  // Minimal saved entry for the status-restore cases; override per test.
+  function histEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
+    return {
+      id: "hist-1",
+      title: "entry",
+      source: "live",
+      createdAt: 123,
+      durationMs: 60_000,
+      segments: [seg({ id: "s1", text: "saved line" })],
+      speakerNames: {},
+      findings: [],
+      actionItems: [],
+      meetingContext: "",
+      meetingBatna: "",
+      meetingTarget: "",
+      meetingFloor: "",
+      audio: "audio.ogg",
+      ...overrides,
+    };
+  }
+
+  it("restores an analyzed-but-EMPTY entry as done — a clean meeting must not re-run on reopen", () => {
+    const session = replaySession([seg({ id: "s1", text: "short clean meeting" })], {
+      id: "hist-2",
+    });
+    useStore.getState().loadHistory(histEntry({ id: "hist-2", analyzed: true }), session);
+
+    const s = useStore.getState();
+    expect(s.findings).toEqual([]);
+    expect(s.actionItems).toEqual([]);
+    // Both "done": the study pipeline dispatches nothing, so no model re-spend.
+    expect(s.analysisStatus).toBe("done");
+    expect(s.actionItemsStatus).toBe("done");
+  });
+
+  it("falls back to content inference for entries predating `analyzed`", () => {
+    const session = replaySession([seg({ id: "s1", text: "hi" })], { id: "hist-3" });
+
+    // Legacy empty entry: can't tell "clean" from "never ran" → idle, so the
+    // pipeline generates once on open (and the persist writes the flag).
+    useStore.getState().loadHistory(histEntry({ id: "hist-3" }), session);
+    expect(useStore.getState().analysisStatus).toBe("idle");
+    expect(useStore.getState().actionItemsStatus).toBe("idle");
+
+    // Legacy entry WITH content restores done, exactly as before the flag.
+    useStore
+      .getState()
+      .loadHistory(histEntry({ id: "hist-3", findings: [makeFinding("f1")] }), session);
+    expect(useStore.getState().analysisStatus).toBe("done");
+    expect(useStore.getState().actionItemsStatus).toBe("done");
+  });
+
+  it("analyzed:false defers to content — an errored pass must not force re-runs when findings exist", () => {
+    // Shape saveUploadToHistory writes when action items ERRORED after a good
+    // findings pass: analyzed false, findings present. Reopen keeps them "done"
+    // (retry stays manual, matching pre-flag behavior).
+    const session = replaySession([seg({ id: "s1", text: "hi" })], { id: "hist-4" });
+    useStore
+      .getState()
+      .loadHistory(
+        histEntry({ id: "hist-4", analyzed: false, findings: [makeFinding("f1")] }),
+        session,
+      );
+    expect(useStore.getState().analysisStatus).toBe("done");
+    expect(useStore.getState().actionItemsStatus).toBe("done");
   });
 });
 

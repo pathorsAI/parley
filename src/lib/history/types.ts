@@ -33,6 +33,13 @@ export interface HistoryEntry {
   findings: TimelineEvent[];
   /** Post-meeting follow-ups generated from the analysis. */
   actionItems: ActionItem[];
+  /** True once the findings + action-items pipeline COMPLETED for this recording.
+   *  The arrays alone can't distinguish "analyzed, genuinely empty" from "never
+   *  analyzed" (a clean short meeting legitimately yields 0 of both), and loading
+   *  must not re-spend the model on the former. Optional: entries saved before
+   *  this field existed omit it → loading falls back to inferring completion from
+   *  non-empty findings/actionItems. */
+  analyzed?: boolean;
   /** Per-meeting free-text context + principled-negotiation setup. */
   meetingContext: string;
   /** Accounts link (mini-CRM, design §3.2): which company/thread this meeting
