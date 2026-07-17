@@ -68,7 +68,7 @@ interface Person {
 
 /** 戰線：一家公司下可多條並行（D3）。sales 型接 pipeline 階段與 stage bundle。 */
 type ThreadKind = "sales" | "channel" | "investment" | "other";
-type SalesStage = "discovery" | "demo" | "proposal" | "negotiation" | "closing";
+type SalesStage = "discovery" | "demo" | "negotiation" | "closing"; // S24（stage-bundles）合併 proposal；S18 另加 prospecting
 
 interface Thread {
   id: string;

@@ -26,13 +26,9 @@ export const zhTW = {
   "accounts.stageGuide.demo.collect":
     "各痛點對應解法的反應\n新冒出的異議與技術疑慮\n整合／資安／部署需求\n在場每個角色的態度變化",
   "accounts.stageGuide.demo.exit": "取得 POC／試用承諾，或進入報價的明確邀請",
-  "accounts.stageGuide.proposal.goal": "在價值框架下報價，避免掉進純比價",
-  "accounts.stageGuide.proposal.collect":
-    "預算範圍與資金來源確認\n採購流程、補助與簽核鏈\n競品報價結構與比較基準\n驗收與付款條件的期待",
-  "accounts.stageGuide.proposal.exit": "報價送出後，約定明確的回覆時點與窗口",
-  "accounts.stageGuide.negotiation.goal": "每個讓步都換回對等條件，守住底線",
+  "accounts.stageGuide.negotiation.goal": "在價值框架下報價、避免純比價；每個讓步都換回對等條件，守住底線",
   "accounts.stageGuide.negotiation.collect":
-    "對方真正的卡點與優先順序\n可交換的變數（價格以外的條款）\n對方的時間壓力與替代方案\n底線與紅線訊號",
+    "預算範圍與資金來源確認\n採購流程、補助與簽核鏈\n競品報價結構與比較基準\n驗收與付款條件的期待\n對方真正的卡點與優先順序\n可交換的變數（價格以外的條款）\n對方的時間壓力與替代方案\n底線與紅線訊號",
   "accounts.stageGuide.negotiation.exit": "主要條款達成共識，約定簽約時程",
   "accounts.stageGuide.closing.goal": "移除簽約前最後障礙，確保啟動順利",
   "accounts.stageGuide.closing.collect":
@@ -107,8 +103,7 @@ export const zhTW = {
   "accounts.bundle.discovery.exitOwned": "I 與 N 由客戶親口說出（不是我方替他講）",
   "accounts.stage.discovery": "Discovery",
   "accounts.stage.demo": "Demo",
-  "accounts.stage.proposal": "報價",
-  "accounts.stage.negotiation": "議價",
+  "accounts.stage.negotiation": "報價議價",
   "accounts.stage.closing": "收尾",
   "accounts.status.active": "進行中",
   "accounts.status.won": "已成交",
@@ -822,7 +817,7 @@ export const zhTW = {
   "todos.noItems": "沒有項目",
   "todos.applyTemplate": "套用模板…",
   "todos.aiTitle": "讓 AI 依對話勾選已完成項目",
-  "todos.empty": "加入這場會議要確認的事項（也可在設定建立模板，開始會議時自動帶入）。",
+  "todos.empty": "加入這場會議要確認的事項（連結戰線後可一鍵帶入階段清單）。",
   "todos.addPlaceholder": "新增待辦…",
 
   "evaluations.title": "評估",
@@ -1151,13 +1146,10 @@ export const en = {
   "accounts.stageGuide.demo.collect":
     "Reaction to each pain→solution mapping\nNew objections and technical doubts\nIntegration / security / deployment needs\nEach attendee's attitude shift",
   "accounts.stageGuide.demo.exit": "A POC/trial commitment, or an explicit invitation to quote",
-  "accounts.stageGuide.proposal.goal": "Price inside a value frame — avoid a pure price war",
-  "accounts.stageGuide.proposal.collect":
-    "Budget range and funding confirmation\nProcurement process, subsidies, approval chain\nCompetitor pricing structure and comparison basis\nAcceptance and payment-term expectations",
-  "accounts.stageGuide.proposal.exit": "A committed review date and owner after the quote lands",
-  "accounts.stageGuide.negotiation.goal": "Trade every concession for something equal — hold the floor",
+  "accounts.stageGuide.negotiation.goal":
+    "Price inside a value frame; trade every concession for something equal — hold the floor",
   "accounts.stageGuide.negotiation.collect":
-    "Their real sticking points and priorities\nTradable variables beyond price\nTheir time pressure and alternatives\nFloor and red-line signals",
+    "Budget range and funding confirmation\nProcurement process, subsidies, approval chain\nCompetitor pricing structure and comparison basis\nAcceptance and payment-term expectations\nTheir real sticking points and priorities\nTradable variables beyond price\nTheir time pressure and alternatives\nFloor and red-line signals",
   "accounts.stageGuide.negotiation.exit": "Consensus on key terms and a signing timeline",
   "accounts.stageGuide.closing.goal": "Clear the last pre-signature obstacles, secure the launch",
   "accounts.stageGuide.closing.collect":
@@ -1232,8 +1224,7 @@ export const en = {
   "accounts.bundle.discovery.exitOwned": "I and N spoken by the customer themselves (not by us)",
   "accounts.stage.discovery": "Discovery",
   "accounts.stage.demo": "Demo",
-  "accounts.stage.proposal": "Proposal",
-  "accounts.stage.negotiation": "Negotiation",
+  "accounts.stage.negotiation": "Proposal & negotiation",
   "accounts.stage.closing": "Closing",
   "accounts.status.active": "Active",
   "accounts.status.won": "Won",
@@ -1948,7 +1939,7 @@ export const en = {
   "todos.noItems": "No items",
   "todos.applyTemplate": "Apply template…",
   "todos.aiTitle": "Let AI check completed items from the conversation",
-  "todos.empty": "Add things to confirm in this meeting. You can also create templates in Settings.",
+  "todos.empty": "Add things to confirm in this meeting (link a thread to seed its stage checklist).",
   "todos.addPlaceholder": "Add todo…",
 
   "evaluations.title": "Evaluations",

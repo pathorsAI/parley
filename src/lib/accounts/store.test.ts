@@ -1,6 +1,14 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { conflictPairs, useAccounts } from "./store";
-import { EMPTY_ACCOUNTS, SALES_STAGES } from "./types";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// The migration logs via `log.*`, whose Tauri-less path touches `window` —
+// absent in the node test env. Same stub as store.actions.test.ts.
+vi.mock("../log", () => ({
+  log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  attachConsoleOnce: vi.fn(),
+}));
+
+import { conflictPairs, migrateProposalMerge, useAccounts } from "./store";
+import { EMPTY_ACCOUNTS, SALES_STAGES, type AccountsData } from "./types";
 
 /** Reset the accounts store between tests (bypasses persistence entirely). */
 function reset() {
@@ -265,5 +273,53 @@ describe("accounts store", () => {
 
     state.clearRecentIngest();
     expect(useAccounts.getState().recentIngest).toBeNull();
+  });
+});
+
+describe("migrateProposalMerge (S24: proposal merged into negotiation)", () => {
+  const thread = (stage: string) => ({ id: `t-${stage}`, stage }) as unknown as AccountsData["threads"][number];
+  const claim = (id: string, slotIds: string[]) =>
+    ({ id, slotIds }) as unknown as AccountsData["claims"][number];
+  const dataOf = (threads: unknown[], claims: unknown[]) =>
+    ({ ...EMPTY_ACCOUNTS, threads, claims }) as unknown as AccountsData;
+
+  it("is a no-op (same reference) when nothing references the removed stage", () => {
+    const data = dataOf([thread("discovery")], [claim("c1", ["negotiation.c0"])]);
+    const res = migrateProposalMerge(data);
+    expect(res.migrated).toBe(false);
+    expect(res.data).toBe(data);
+    // Crucially the legacy-coarse shift must NOT run without a proposal marker —
+    // post-merge data already means c0 = the merged bundle's first cell.
+    expect(res.data.claims[0].slotIds).toEqual(["negotiation.c0"]);
+  });
+
+  it("remaps thread stages and slot ids in one pass", () => {
+    const data = dataOf(
+      [thread("proposal"), thread("closing")],
+      [
+        claim("c1", ["proposal.c0", "negotiation.c1", "proposal.none", "discovery.problem"]),
+        claim("c2", ["negotiation.batna"]), // an override's custom slot id — untouched
+      ]
+    );
+    const res = migrateProposalMerge(data);
+    expect(res.migrated).toBe(true);
+    expect(res.data.threads.map((t) => t.stage)).toEqual(["negotiation", "closing"]);
+    // proposal.c0 → same cell new prefix; legacy negotiation.c1 → shifted +4.
+    expect(res.data.claims[0].slotIds).toEqual([
+      "negotiation.c0",
+      "negotiation.c5",
+      "negotiation.none",
+      "discovery.problem",
+    ]);
+    expect(res.data.claims[1].slotIds).toEqual(["negotiation.batna"]);
+  });
+
+  it("dedupes slot ids that collide after the remap", () => {
+    const data = dataOf(
+      [],
+      [claim("c1", ["proposal.none", "negotiation.none"])]
+    );
+    const res = migrateProposalMerge(data);
+    expect(res.data.claims[0].slotIds).toEqual(["negotiation.none"]);
   });
 });

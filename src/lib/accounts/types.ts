@@ -54,12 +54,13 @@ export interface Person {
 /** What kind of battle a thread is (design D3). Only "sales" carries a pipeline stage. */
 export type ThreadKind = "sales" | "channel" | "investment" | "other";
 
-/** The six builtin pipeline stages (S18). */
+/** The five builtin pipeline stages (S18; S24 merged proposal INTO negotiation
+ *  — 報價跟議價實務上不分開，quote-sent is a moment inside the negotiation, not
+ *  a stage boundary. Legacy "proposal" data migrates on accounts load). */
 export type BuiltinSalesStage =
   | "prospecting"
   | "discovery"
   | "demo"
-  | "proposal"
   | "negotiation"
   | "closing";
 
@@ -200,7 +201,6 @@ export const SALES_STAGES: BuiltinSalesStage[] = [
   "prospecting",
   "discovery",
   "demo",
-  "proposal",
   "negotiation",
   "closing",
 ];
