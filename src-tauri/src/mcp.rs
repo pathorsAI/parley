@@ -697,6 +697,29 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
+            "create_company_from_folder",
+            "Sync a history folder into an Accounts company",
+            "Create (or reuse a same-name) company card in the Accounts mini-CRM from a \
+             history folder: links the existing same-name folder, backfills the folder's \
+             recordings onto the company so they show in its meeting timeline, and — when \
+             `profileText` is given — attaches that text as a 'doc' source on the company. \
+             Idempotent: re-running with the same name reuses the company and only fills \
+             what's missing. Get folder ids/names from list_folders. This is the \
+             folder→客戶 sync; run once per customer folder.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Company name (usually the folder name)." },
+                    "folderId": { "type": "string", "description": "The history folder to link + backfill (from list_folders)." },
+                    "aliases": { "type": "array", "items": { "type": "string" }, "description": "Alternate spellings/nicknames for transcript matching." },
+                    "note": { "type": "string", "description": "One-line positioning for the company." },
+                    "profileText": { "type": "string", "description": "Customer-profile text to attach as a doc source (e.g. the _客戶輪廓.md contents)." },
+                    "profileName": { "type": "string", "description": "Attachment display name (default 客戶輪廓)." }
+                },
+                "required": ["name"]
+            }),
+        ),
+        tool(
             "list_orgs",
             "List organizations",
             "List the organizations the signed-in user belongs to, as { id, name, role }. \
@@ -938,6 +961,21 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
                 json!({
                     "id": required_str(&args, "id")?,
                     "folderId": args.get("folderId").cloned().unwrap_or(Value::Null)
+                }),
+            )
+            .await?
+        }
+        "create_company_from_folder" => {
+            call_frontend(
+                state,
+                "create_company_from_folder",
+                json!({
+                    "name": required_str(&args, "name")?,
+                    "folderId": args.get("folderId").cloned().unwrap_or(Value::Null),
+                    "aliases": args.get("aliases").cloned().unwrap_or(Value::Null),
+                    "note": args.get("note").cloned().unwrap_or(Value::Null),
+                    "profileText": args.get("profileText").cloned().unwrap_or(Value::Null),
+                    "profileName": args.get("profileName").cloned().unwrap_or(Value::Null)
                 }),
             )
             .await?

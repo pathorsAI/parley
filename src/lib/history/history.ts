@@ -549,6 +549,27 @@ export async function setEntryFolder(id: string, folderId: string | null): Promi
   pushToCloud(id); // sync the new folderId (best-effort; gated by the sync toggle)
 }
 
+/**
+ * Link an entry to an Accounts company (or clear with null) by patching its
+ * `companyId` in meta + summary. The company page's meeting timeline filters by
+ * `companyId` (not folder), so this is what makes an imported recording show up
+ * under its company — used by the folder→company sync (create_company_from_folder).
+ * Leaves the recording + folder untouched.
+ */
+export async function setEntryCompany(id: string, companyId: string | null): Promise<void> {
+  if (!isTauri()) return;
+  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+  const updated: HistoryEntry = { ...meta, companyId };
+  await invoke("save_history_entry", {
+    id,
+    summaryJson: JSON.stringify(buildSummary(updated)),
+    metaJson: JSON.stringify(updated),
+    audioSourcePath: null, // leave the recording untouched
+    compress: false,
+  });
+  pushToCloud(id); // sync the new companyId (best-effort; gated by the sync toggle)
+}
+
 /** Delete one entry's folder. */
 export async function deleteHistoryEntry(id: string): Promise<void> {
   if (!isTauri()) return;
