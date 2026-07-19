@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useStore } from "./store";
 import { isTauri } from "./tauriEvents";
 import type { EvalDef, TimelineEvent } from "./types";
+import type { ClaimCategory } from "./accounts/types";
 
 /**
  * Apply mutation commands the MCP server enqueues (add/check/remove todo,
@@ -325,6 +326,100 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
         }
       }
       return { companyId, name, folderId, meetingsLinked, attached, reused };
+    }
+    case "apply_company_intel": {
+      // Populate a company's structured intel (design §4/§5): create Person cards
+      // + Claim cards (stance/leverage/risk/nextmove/…) from pre-structured ops.
+      // Reuses the app's own applyExtractedOps so subject-name→id resolution,
+      // stance-cache sync and conflict handling all match the reviewed flow —
+      // we just supply the ops instead of the LLM. Claims land as "inferred"
+      // (design §5.1: imported analysis is never auto-confirmed). Idempotent-ish:
+      // pass replace=true to archive the company's prior inferred claims/persons
+      // first so re-runs don't pile up duplicates.
+      const CLAIM_CATEGORIES = [
+        "stance", "relation", "leverage", "goal", "risk",
+        "redline", "competitor", "nextmove", "openq",
+      ];
+      const COMMITTEE = ["economic", "champion", "influencer", "user", "gatekeeper", "blocker"];
+      const name = argStr(a.companyName).trim();
+      const companyIdArg = a.companyId ? argStr(a.companyId) : "";
+      const { useAccounts } = await import("./accounts/store");
+      const acc = useAccounts.getState();
+      const company = companyIdArg
+        ? acc.companies.find((c) => c.id === companyIdArg)
+        : acc.companies.find((c) => !c.archived && c.name === name);
+      if (!company) throw new Error(`company not found: ${name || companyIdArg}`);
+      const companyId = company.id;
+
+      // Optional thread (戰線) so the pipeline stage shows on the company page.
+      let threadId: string | undefined;
+      const th = a.thread as { kind?: string; name?: string; stage?: string } | undefined;
+      if (th && th.name) {
+        const kind = (["sales", "channel", "investment", "other"] as const).includes(
+          th.kind as never,
+        )
+          ? (th.kind as "sales" | "channel" | "investment" | "other")
+          : "sales";
+        const thread = useAccounts
+          .getState()
+          .addThread({ companyId, kind, name: String(th.name), stage: th.stage });
+        threadId = thread.id;
+      }
+
+      const rawPersons = Array.isArray(a.newPersons) ? a.newPersons : [];
+      const newPersons = rawPersons
+        .map((p) => p as Record<string, unknown>)
+        .filter((p) => typeof p.name === "string" && (p.name as string).trim())
+        .map((p) => ({
+          name: argStr(p.name),
+          title: p.title ? argStr(p.title) : "",
+          committeeRole: COMMITTEE.includes(argStr(p.committeeRole)) ? argStr(p.committeeRole) : "",
+          reason: p.reason ? argStr(p.reason) : "",
+        }));
+
+      const rawClaims = Array.isArray(a.newClaims) ? a.newClaims : [];
+      const newClaims = rawClaims
+        .map((c) => c as Record<string, unknown>)
+        .filter((c) => CLAIM_CATEGORIES.includes(argStr(c.category)) && argStr(c.text).trim())
+        .map((c) => {
+          const side: "ours" | "theirs" | "" =
+            c.side === "ours" ? "ours" : c.side === "theirs" ? "theirs" : "";
+          const layer: "surface" | "deep" | "" =
+            c.layer === "surface" ? "surface" : c.layer === "deep" ? "deep" : "";
+          return {
+            category: argStr(c.category) as ClaimCategory,
+            text: argStr(c.text),
+            subjects: Array.isArray(c.subjects) ? c.subjects.map(argStr).filter(Boolean) : [],
+            side,
+            layer,
+            quote: c.quote ? argStr(c.quote) : "",
+            slotIds: Array.isArray(c.slotIds) ? c.slotIds.map(argStr).filter(Boolean) : [],
+          };
+        });
+
+      // Provenance: tie claims to the company's profile doc when one exists.
+      const att = useAccounts
+        .getState()
+        .attachments.find((x) => x.companyId === companyId && x.kind === "doc");
+      const provenance: { kind: "import"; attachmentId: string } | { kind: "user" } = att
+        ? { kind: "import", attachmentId: att.id }
+        : { kind: "user" };
+
+      useAccounts.getState().applyExtractedOps({
+        companyId,
+        threadId,
+        ops: { newPersons, newClaims, claimUpdates: [] },
+        provenance,
+      });
+      const s = useAccounts.getState();
+      return {
+        companyId,
+        personsCreated: newPersons.length,
+        claimsCreated: newClaims.length,
+        threadId: threadId ?? null,
+        totalPersons: s.persons.filter((p) => p.companyId === companyId && !p.archived).length,
+        totalClaims: s.claims.filter((c) => c.companyId === companyId && c.status === "active").length,
+      };
     }
     case "copy_org_recording_to_personal": {
       const id = argStr(a.id);
