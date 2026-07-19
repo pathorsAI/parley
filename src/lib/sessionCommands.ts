@@ -262,6 +262,70 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
       }
       return { imported, failed, folderId, folder: folderName || null };
     }
+    case "create_company_from_folder": {
+      // Folder → Accounts sync: turn an imported history folder into a mini-CRM
+      // company card, link the existing same-name folder, backfill companyId onto
+      // that folder's recordings (the company page's meeting timeline filters by
+      // companyId, not folder), and attach the profile text as a "doc" source.
+      // Idempotent: an existing same-name active company is reused, not duplicated.
+      const name = argStr(a.name).trim();
+      if (!name) throw new Error("name is required");
+      const aliases = Array.isArray(a.aliases) ? a.aliases.map(argStr).filter(Boolean) : [];
+      const note = a.note ? argStr(a.note) : "";
+      const folderId = a.folderId ? argStr(a.folderId) : null;
+      const profileText = a.profileText ? argStr(a.profileText) : "";
+      const profileName = a.profileName ? argStr(a.profileName) : "客戶輪廓";
+
+      const { useAccounts } = await import("./accounts/store");
+      const acc = useAccounts.getState();
+      const existing = acc.companies.find((c) => !c.archived && c.name === name);
+      const reused = !!existing;
+      let company = existing;
+      if (company) {
+        // Reuse: refresh aliases/note without clobbering a manual edit with empties.
+        const patch: Record<string, unknown> = {};
+        if (aliases.length) patch.aliases = aliases;
+        if (note) patch.note = note;
+        if (folderId) patch.folderId = folderId;
+        if (Object.keys(patch).length) acc.updateCompany(company.id, patch);
+      } else {
+        company = acc.addCompany({ name, note, aliases });
+        if (folderId) acc.updateCompany(company.id, { folderId });
+      }
+      const companyId = company.id;
+
+      // Backfill companyId onto the folder's recordings so they surface in the
+      // company's meeting timeline.
+      let meetingsLinked = 0;
+      if (folderId) {
+        const { listHistory, setEntryCompany } = await import("./history/history");
+        const summaries = await listHistory();
+        for (const s of summaries) {
+          if (s.folderId === folderId && s.companyId !== companyId) {
+            await setEntryCompany(s.id, companyId);
+            meetingsLinked++;
+          }
+        }
+      }
+
+      // Attach the profile as a doc source (skip if one with this name exists).
+      let attached = false;
+      if (profileText.trim()) {
+        const dup = useAccounts
+          .getState()
+          .attachments.some((at) => at.companyId === companyId && at.name === profileName);
+        if (!dup) {
+          useAccounts.getState().addAttachment({
+            companyId,
+            name: profileName,
+            kind: "doc",
+            text: profileText,
+          });
+          attached = true;
+        }
+      }
+      return { companyId, name, folderId, meetingsLinked, attached, reused };
+    }
     case "copy_org_recording_to_personal": {
       const id = argStr(a.id);
       const { saveOrgRecordingToPersonal } = await import("./cloud/sync");
