@@ -304,6 +304,12 @@ interface ParleyState {
   setIngestWizardStep: (step: ParleyState["ingestWizardStep"], error?: string | null) => void;
   closeIngestWizard: () => void;
 
+  // ── Transcript import (issue #130 text-ingest: .txt → history entry) ────────
+  /** Absolute paths queued in the transcript-import dialog; null = closed. */
+  transcriptImportPaths: string[] | null;
+  openTranscriptImport: (paths: string[]) => void;
+  closeTranscriptImport: () => void;
+
   // ── Unified analysis (shared by LIVE + REPLAY) ──────────────────────────────
   /**
    * Time-anchored findings from an analysis pass (eval-matched or AI "extra").
@@ -533,6 +539,7 @@ export const useStore = create<ParleyState>()(
       ingestWizardStep: "count",
       ingestWizardError: null,
       ingestAudioPath: null,
+      transcriptImportPaths: null,
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
@@ -732,6 +739,9 @@ export const useStore = create<ParleyState>()(
   setIngestWizardStep: (step, error = null) =>
     set({ ingestWizardStep: step, ingestWizardError: error }),
   closeIngestWizard: () => set({ ingestWizardOpen: false, ingestAudioPath: null }),
+
+  openTranscriptImport: (paths) => set({ transcriptImportPaths: paths }),
+  closeTranscriptImport: () => set({ transcriptImportPaths: null }),
 
   // Replace the findings list, keeping the selection + cached solutions of any
   // finding that STILL EXISTS in the new list. During streaming, partials commit

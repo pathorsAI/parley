@@ -47,6 +47,7 @@ import {
   renameHistoryEntry,
   setEntryFolder,
   emitHistoryImport,
+  emitHistoryImportTranscript,
 } from "../lib/history/history";
 import {
   createLocalFolder,
@@ -94,14 +95,17 @@ import { Toaster } from "@/components/ui/sonner";
 import type { CloudOrg, CloudRecordingSummary } from "../lib/cloud/types";
 import { VoiceTypingHistory } from "./VoiceTypingHistory";
 
-/** "+ Import" in the header: pick an audio file here, hand it to the main
- *  window's ingest wizard (which owns the transcribe→diarize→analyze flow). */
+/** "+ Import" in the header: pick audio OR .txt transcripts here, hand them to
+ *  the main window — audio goes to the ingest wizard (transcribe→diarize→
+ *  analyze), transcripts to the direct import dialog (issue #130). */
 async function importRecording(): Promise<void> {
   const { settings } = useStore.getState();
   try {
-    const { pickRecordingFile } = await import("../lib/replay/ingest");
-    const path = await pickRecordingFile(settings);
-    if (path) await emitHistoryImport(path);
+    const { pickImportFiles } = await import("../lib/replay/ingest");
+    const pick = await pickImportFiles(settings);
+    if (!pick) return;
+    if (pick.kind === "audio") await emitHistoryImport(pick.path);
+    else await emitHistoryImportTranscript(pick.paths);
   } catch (e) {
     log.error("history: import pick failed", { error: String(e) });
   }

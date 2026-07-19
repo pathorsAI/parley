@@ -9,7 +9,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::{net::TcpListener, sync::RwLock};
 
 use crate::commands::{
@@ -18,6 +18,9 @@ use crate::commands::{
 
 const DEFAULT_PORT: u16 = 3011;
 const MAX_PORT: u16 = 3020;
+/// Emitted after enqueuing a session command so the frontend applies it now
+/// instead of on its next (possibly suspended) poll tick.
+const SESSION_COMMANDS_EVENT: &str = "session://commands";
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// Attached to every response that carries Parley's own analysis output
@@ -75,6 +78,17 @@ struct HttpState {
     history_dir: PathBuf,
     /// Client-traffic record surfaced to the app UI (`get_mcp_activity`).
     activity: McpActivity,
+    /// This server's own endpoint ("http://127.0.0.1:<port>/mcp"). Stamped onto
+    /// RPC commands as `instance` so that when TWO app instances run (packaged +
+    /// dev share the config-dir command queue), only the frontend belonging to
+    /// THIS server executes them — otherwise both would, and a mutating RPC like
+    /// import_transcript would apply twice.
+    endpoint: String,
+    /// Handle for waking the webview when a command is enqueued: macOS suspends
+    /// an occluded window's JS timers, so the frontend's polling loop alone can
+    /// stall until the 20s RPC deadline. An event rides the IPC instead of a
+    /// timer, so delivery doesn't depend on the window being visible.
+    app: AppHandle,
 }
 
 #[derive(Deserialize)]
@@ -167,8 +181,10 @@ pub fn start(app: AppHandle) -> McpState {
         activity: activity.clone(),
     };
     tauri::async_runtime::spawn(async move {
-        if let Err(err) =
-            run_http_server(templates, session, commands, results, history, activity, info).await
+        if let Err(err) = run_http_server(
+            app, templates, session, commands, results, history, activity, info,
+        )
+        .await
         {
             eprintln!("[parley-mcp] failed to start: {err}");
         }
@@ -197,7 +213,9 @@ pub async fn get_mcp_activity(state: tauri::State<'_, McpState>) -> Result<Value
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_http_server(
+    app: AppHandle,
     templates_path: PathBuf,
     session_path: PathBuf,
     commands_path: PathBuf,
@@ -228,6 +246,8 @@ async fn run_http_server(
             results_path,
             history_dir,
             activity,
+            endpoint: endpoint.clone(),
+            app,
         });
 
     eprintln!("[parley-mcp] ready at {endpoint}");
@@ -330,8 +350,8 @@ fn now_ms() -> u64 {
 /// Coarse read/write classification for the activity feed, by tool-name verb.
 fn tool_kind(name: &str) -> &'static str {
     const WRITE_VERBS: [&str; 11] = [
-        "upsert_", "delete_", "add_", "remove_", "check_", "set_", "update_", "rename_",
-        "move_", "share_", "copy_",
+        "upsert_", "delete_", "add_", "remove_", "check_", "set_", "update_", "rename_", "move_",
+        "share_", "copy_",
     ];
     if WRITE_VERBS.iter().any(|v| name.starts_with(v)) {
         "write"
@@ -636,6 +656,33 @@ fn tools() -> Vec<Value> {
             json!({ "type": "object", "properties": {} }),
         ),
         tool(
+            "import_transcript",
+            "Import .txt transcripts as recordings",
+            "Import plain-text transcript files as audio-less personal recordings \
+             (issue #130 text-ingest). Speaker labels ('Speaker 1:' / 'Name: …') and \
+             [HH:MM:SS] timestamps are auto-detected; unstructured text is chunked at \
+             sentence boundaries with a synthesized timeline. Entries save unanalyzed \
+             and run their analysis on first open. `folder` files them into that \
+             personal folder BY NAME (created if missing); omit it for the personal \
+             root. Requires the Parley app to be running. Import in batches (e.g. one \
+             customer folder's files per call) to stay inside the RPC timeout.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "paths": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Absolute paths of .txt transcript files."
+                    },
+                    "folder": {
+                        "type": "string",
+                        "description": "Target personal folder NAME (created if missing); omit for the personal root."
+                    }
+                },
+                "required": ["paths"]
+            }),
+        ),
+        tool(
             "move_recording_to_folder",
             "Move a recording between personal folders",
             "Move a locally saved recording into a personal folder (or to the personal \
@@ -804,12 +851,12 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             .cloned()
             .unwrap_or_else(|| json!([])),
         "add_todo" => append_command(
-            &state.commands_path,
+            state,
             "add_todo",
             json!({ "text": required_str(&args, "text")? }),
         )?,
         "check_todo" => append_command(
-            &state.commands_path,
+            state,
             "check_todo",
             json!({
                 "id": required_str(&args, "id")?,
@@ -817,12 +864,12 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             }),
         )?,
         "remove_todo" => append_command(
-            &state.commands_path,
+            state,
             "remove_todo",
             json!({ "id": required_str(&args, "id")? }),
         )?,
         "add_evaluation" => append_command(
-            &state.commands_path,
+            state,
             "add_evaluation",
             json!({
                 "name": required_str(&args, "name")?,
@@ -831,7 +878,7 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             }),
         )?,
         "remove_evaluation" => append_command(
-            &state.commands_path,
+            state,
             "remove_evaluation",
             json!({ "id": required_str(&args, "id")? }),
         )?,
@@ -839,18 +886,18 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             .get("findings")
             .cloned()
             .unwrap_or_else(|| json!([])),
-        "add_finding" => append_command(&state.commands_path, "add_finding", args)?,
+        "add_finding" => append_command(state, "add_finding", args)?,
         "set_findings" => append_command(
-            &state.commands_path,
+            state,
             "set_findings",
             json!({ "events": args.get("events").cloned().unwrap_or_else(|| json!([])) }),
         )?,
         "update_finding" => {
             required_str(&args, "id")?; // validate before queueing the raw patch
-            append_command(&state.commands_path, "update_finding", args)?
+            append_command(state, "update_finding", args)?
         }
         "remove_finding" => append_command(
-            &state.commands_path,
+            state,
             "remove_finding",
             json!({ "id": required_str(&args, "id")? }),
         )?,
@@ -868,6 +915,22 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             .await?
         }
         "list_folders" => call_frontend(state, "list_folders", json!({})).await?,
+        "import_transcript" => {
+            let paths = args
+                .get("paths")
+                .and_then(Value::as_array)
+                .filter(|a| !a.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("paths (non-empty array) is required"))?;
+            call_frontend(
+                state,
+                "import_transcript",
+                json!({
+                    "paths": paths,
+                    "folder": args.get("folder").cloned().unwrap_or(Value::Null)
+                }),
+            )
+            .await?
+        }
         "move_recording_to_folder" => {
             call_frontend(
                 state,
@@ -932,18 +995,22 @@ fn required_str<'a>(value: &'a Value, key: &str) -> anyhow::Result<&'a str> {
 }
 
 /// Append one mutation command for the frontend to apply. The frontend polls
-/// the file and applies new lines, so we only need to enqueue the intent.
-fn append_command(path: &PathBuf, action: &str, args: Value) -> anyhow::Result<Value> {
+/// the file and applies new lines, so we only need to enqueue the intent —
+/// stamped with this server's `instance` (same scoping rule as call_frontend)
+/// and followed by a wake event so an occluded window applies it promptly.
+fn append_command(state: &HttpState, action: &str, args: Value) -> anyhow::Result<Value> {
     use std::io::Write;
+    let path = &state.commands_path;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let line = json!({ "action": action, "args": args }).to_string();
+    let line = json!({ "instance": state.endpoint, "action": action, "args": args }).to_string();
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)?;
     writeln!(file, "{line}")?;
+    let _ = state.app.emit(SESSION_COMMANDS_EVENT, ());
     Ok(json!({ "ok": true, "queued": action }))
 }
 
@@ -987,7 +1054,10 @@ fn focus_context(s: &Value) -> Value {
         .and_then(Value::as_str)
         .unwrap_or("idle");
     let replay = s.pointer("/context/replay").cloned().unwrap_or(Value::Null);
-    let study_tab = s.pointer("/context/studyTab").cloned().unwrap_or(Value::Null);
+    let study_tab = s
+        .pointer("/context/studyTab")
+        .cloned()
+        .unwrap_or(Value::Null);
 
     let focus = match app_mode {
         "replay" => "replay",
@@ -1075,7 +1145,13 @@ fn focused_content(state: &HttpState) -> Value {
         s.get("findings").cloned().unwrap_or_else(|| json!([])),
     );
     // Every analysis artifact the app has for the loaded content.
-    for key in ["brief", "intel", "actionItems", "deliveryAssessment", "meetingType"] {
+    for key in [
+        "brief",
+        "intel",
+        "actionItems",
+        "deliveryAssessment",
+        "meetingType",
+    ] {
         if let Some(v) = s.get(key) {
             if !v.is_null() {
                 out.insert(key.into(), v.clone());
@@ -1083,14 +1159,20 @@ fn focused_content(state: &HttpState) -> Value {
         }
     }
     if focus == "live-meeting" || focus == "live-post-meeting" {
-        out.insert("todos".into(), s.get("todos").cloned().unwrap_or_else(|| json!([])));
+        out.insert(
+            "todos".into(),
+            s.get("todos").cloned().unwrap_or_else(|| json!([])),
+        );
         out.insert(
             "evaluations".into(),
             s.get("evaluations").cloned().unwrap_or_else(|| json!([])),
         );
     }
     if focus == "replay" {
-        if let Some(id) = ctx.pointer("/replay/savedHistoryId").and_then(Value::as_str) {
+        if let Some(id) = ctx
+            .pointer("/replay/savedHistoryId")
+            .and_then(Value::as_str)
+        {
             // Backfill from disk anything the snapshot didn't carry (e.g. a
             // snapshot written by an older app version).
             if let Ok(meta) = read_meta(&state.history_dir, id) {
@@ -1115,9 +1197,11 @@ fn focused_content(state: &HttpState) -> Value {
         } else {
             out.insert(
                 "note".into(),
-                json!("This recording is not in the local library (an unsaved upload or an \
+                json!(
+                    "This recording is not in the local library (an unsaved upload or an \
                        org recording viewed read-only), so saved extras like action items \
-                       are unavailable here."),
+                       are unavailable here."
+                ),
             );
         }
     }
@@ -1128,7 +1212,9 @@ fn focused_content(state: &HttpState) -> Value {
 
 /// Read one entry's `meta.json`.
 fn read_meta(history_dir: &std::path::Path, id: &str) -> anyhow::Result<Value> {
-    let path = history_dir.join(crate::history::safe_id(id)).join("meta.json");
+    let path = history_dir
+        .join(crate::history::safe_id(id))
+        .join("meta.json");
     let raw = std::fs::read_to_string(&path).map_err(|_| {
         anyhow::anyhow!(
             "recording not found: {id} (only locally saved personal recordings are \
@@ -1175,7 +1261,9 @@ fn list_recordings(history_dir: &std::path::Path, args: &Value) -> anyhow::Resul
             items.push(v);
         }
     }
-    items.sort_by_key(|v| std::cmp::Reverse(v.get("createdAt").and_then(Value::as_i64).unwrap_or(0)));
+    items.sort_by_key(|v| {
+        std::cmp::Reverse(v.get("createdAt").and_then(Value::as_i64).unwrap_or(0))
+    });
     let total = items.len();
     items.truncate(limit);
     Ok(json!({ "recordings": items, "total": total, "returned": items.len() }))
@@ -1187,7 +1275,10 @@ fn list_recordings(history_dir: &std::path::Path, args: &Value) -> anyhow::Resul
 /// via `analysisNote`.
 fn get_recording(history_dir: &std::path::Path, id: &str) -> anyhow::Result<Value> {
     let meta = read_meta(history_dir, id)?;
-    let names = meta.get("speakerNames").cloned().unwrap_or_else(|| json!({}));
+    let names = meta
+        .get("speakerNames")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     let transcript = transcript_text(&meta, &names);
     let mut out = serde_json::Map::new();
     out.insert("analysisNote".into(), json!(ANALYSIS_NOTE));
@@ -1286,12 +1377,17 @@ async fn call_frontend(state: &HttpState, action: &str, args: Value) -> anyhow::
     if let Some(parent) = state.commands_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let line = json!({ "id": id, "action": action, "args": args }).to_string();
+    // `instance` scopes the command to THIS server's own frontend (see HttpState).
+    let line =
+        json!({ "id": id, "instance": state.endpoint, "action": action, "args": args }).to_string();
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&state.commands_path)?;
     writeln!(file, "{line}")?;
+    // Wake the webview AFTER the line is on disk — occluded windows have their
+    // timers suspended, so without this kick the poll loop may never run.
+    let _ = state.app.emit(SESSION_COMMANDS_EVENT, ());
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {

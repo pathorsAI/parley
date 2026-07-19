@@ -234,3 +234,41 @@ pub fn delete_history_entry(app: AppHandle, id: String) -> Result<(), String> {
         Err(e) => Err(e.to_string()),
     }
 }
+
+/// A plain-text transcript read for import (issue #130's text-ingest path).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptFile {
+    pub text: String,
+    /// File mtime as epoch ms — the entry's default `createdAt` when the file
+    /// name carries no date. None when the filesystem can't say.
+    pub modified_ms: Option<f64>,
+}
+
+/// Read a `.txt` transcript for the import dialog. Guarded to the one extension
+/// the picker offers and a generous size cap, since the path arrives from the
+/// webview.
+#[tauri::command]
+pub fn read_transcript_file(path: String) -> Result<TranscriptFile, String> {
+    const MAX_BYTES: u64 = 20 * 1024 * 1024;
+    let p = PathBuf::from(&path);
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if ext != "txt" {
+        return Err("only .txt transcripts can be imported".into());
+    }
+    let meta = std::fs::metadata(&p).map_err(|e| e.to_string())?;
+    if meta.len() > MAX_BYTES {
+        return Err("transcript file is too large (max 20 MB)".into());
+    }
+    let text = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
+    let modified_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as f64);
+    Ok(TranscriptFile { text, modified_ms })
+}

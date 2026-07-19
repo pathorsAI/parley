@@ -44,6 +44,14 @@ const AUDIO_EXTENSIONS = [
   "mp4",
 ];
 
+/** Plain-text transcript extensions (issue #130's text-ingest path). */
+const TRANSCRIPT_EXTENSIONS = ["txt"];
+
+/** Whether a picked/dropped path is a text transcript rather than audio. */
+export function isTranscriptPath(path: string): boolean {
+  return /\.txt$/i.test(path);
+}
+
 /** Shape returned by the Rust `transcribe_file` command (serde camelCase). */
 interface RustSegment {
   id: string;
@@ -75,6 +83,23 @@ interface RustTranscriptionResult {
  * ingest wizard can ask the speaker count BEFORE the (slow) transcription runs.
  */
 export async function pickRecordingFile(settings: Settings): Promise<string | null> {
+  assertUploadTranscribable(settings);
+
+  const selected = await open({
+    multiple: false,
+    directory: false,
+    title: "Choose a recording",
+    filters: [{ name: "Audio", extensions: AUDIO_EXTENSIONS }],
+  });
+  if (selected === null) return null; // user cancelled
+  const audioPath = Array.isArray(selected) ? selected[0] : selected;
+  return audioPath || null;
+}
+
+/** Throw (with the actionable message) unless the configured STT provider can
+ *  batch-transcribe an uploaded file. Only audio needs this — text transcripts
+ *  import without any provider. */
+function assertUploadTranscribable(settings: Settings): void {
   const provider = settings.transcriptionProvider;
   const info = STT_BY_ID[provider];
   if (!info.supportsFileUpload) {
@@ -87,16 +112,41 @@ export async function pickRecordingFile(settings: Settings): Promise<string | nu
     log.warn("ingest: missing stt key", { provider });
     throw new Error(`Add your ${info.label} API key in Settings to transcribe recordings.`);
   }
+}
 
+/** What the combined History "+ Import" picker resolved to: one audio file for
+ *  the transcribe wizard, or text transcript(s) for the direct import dialog. */
+export type ImportPick =
+  | { kind: "audio"; path: string }
+  | { kind: "transcript"; paths: string[] };
+
+/**
+ * One picker for both import flavors — audio recordings AND .txt transcripts
+ * (multi-select; a folder's worth of transcripts imports in one go). Audio wins
+ * when the selection mixes kinds, mirroring the drag-drop rule. The STT gate
+ * runs only when audio was actually chosen, so transcript import works with any
+ * provider and no STT key.
+ */
+export async function pickImportFiles(settings: Settings): Promise<ImportPick | null> {
   const selected = await open({
-    multiple: false,
+    multiple: true,
     directory: false,
-    title: "Choose a recording",
-    filters: [{ name: "Audio", extensions: AUDIO_EXTENSIONS }],
+    title: "Choose recordings or transcripts",
+    filters: [
+      { name: "Recording or transcript", extensions: [...AUDIO_EXTENSIONS, ...TRANSCRIPT_EXTENSIONS] },
+      { name: "Audio", extensions: AUDIO_EXTENSIONS },
+      { name: "Transcript", extensions: TRANSCRIPT_EXTENSIONS },
+    ],
   });
   if (selected === null) return null; // user cancelled
-  const audioPath = Array.isArray(selected) ? selected[0] : selected;
-  return audioPath || null;
+  const paths = (Array.isArray(selected) ? selected : [selected]).filter(Boolean);
+  if (!paths.length) return null;
+  const audio = paths.find((p) => !isTranscriptPath(p));
+  if (audio) {
+    assertUploadTranscribable(settings);
+    return { kind: "audio", path: audio };
+  }
+  return { kind: "transcript", paths: paths.filter(isTranscriptPath) };
 }
 
 /**
