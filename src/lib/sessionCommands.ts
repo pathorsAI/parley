@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useStore } from "./store";
 import { isTauri } from "./tauriEvents";
 import type { EvalDef, TimelineEvent } from "./types";
@@ -17,6 +18,11 @@ import type { EvalDef, TimelineEvent } from "./types";
 interface SessionCommand {
   /** Present on RPC commands — the MCP server polls the results file for it. */
   id?: string;
+  /** Enqueuing MCP server's endpoint. The command queue lives in the config dir,
+   *  which packaged + dev instances SHARE — without this scope a mutating RPC
+   *  (import_transcript!) would be executed by BOTH frontends. Absent on
+   *  commands from older builds → any instance may run them (legacy behavior). */
+  instance?: string;
   action: string;
   args: Record<string, unknown>;
 }
@@ -25,6 +31,9 @@ interface SessionCommand {
 // replaying commands left over from a previous launch).
 let cursor = Number.MAX_SAFE_INTEGER;
 let timer: ReturnType<typeof setInterval> | null = null;
+/** This instance's own MCP endpoint (see SessionCommand.instance); resolved
+ *  before polling starts, null if the embedded server didn't come up. */
+let ownEndpoint: string | null = null;
 
 function lines(raw: string): string[] {
   return raw.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -209,6 +218,50 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
       await emitHistoryUpdated(id);
       return shared;
     }
+    case "import_transcript": {
+      // Text-ingest over MCP (issue #130): parse .txt transcripts and save them
+      // as audio-less history entries — same pipeline as the import dialog.
+      // Never touches the live store, so it's safe during a meeting.
+      const paths = Array.isArray(a.paths) ? a.paths.map(argStr).filter(Boolean) : [];
+      if (!paths.length) throw new Error("paths (array of absolute .txt paths) is required");
+      const folderName = a.folder ? argStr(a.folder).trim() : "";
+      const { listFoldersFresh, createLocalFolder, emitFoldersUpdated } = await import(
+        "./history/folders"
+      );
+      let folderId: string | null = null;
+      if (folderName) {
+        // Fresh read (cross-instance registry), adopt an existing name, else create.
+        const existing = (await listFoldersFresh()).find((f) => f.name === folderName);
+        folderId = existing?.id ?? createLocalFolder(folderName).id;
+        if (!existing) await emitFoldersUpdated().catch(() => {});
+      }
+      const { prepareTranscriptFile } = await import("./replay/importFiles");
+      const { saveTranscriptToHistory } = await import("./history/history");
+      const imported: { id: string; title: string; segments: number; format: string }[] = [];
+      const failed: { path: string; error: string }[] = [];
+      for (const path of paths) {
+        const file = await prepareTranscriptFile(path);
+        if (!file.parsed) {
+          failed.push({ path, error: file.error ?? "unreadable" });
+          continue;
+        }
+        const id = await saveTranscriptToHistory({
+          title: file.title,
+          segments: file.parsed.segments,
+          speakerNames: file.parsed.speakerNames,
+          durationMs: file.parsed.durationMs,
+          createdAt: file.createdAt,
+          folderId,
+        });
+        if (id) imported.push({
+          id,
+          title: file.title,
+          segments: file.parsed.segments.length,
+          format: file.parsed.format,
+        });
+      }
+      return { imported, failed, folderId, folder: folderName || null };
+    }
     case "copy_org_recording_to_personal": {
       const id = argStr(a.id);
       const { saveOrgRecordingToPersonal } = await import("./cloud/sync");
@@ -244,6 +297,9 @@ async function poll(): Promise<void> {
       } catch {
         continue; // skip a malformed line
       }
+      // Another instance's command (shared config-dir queue) — ITS frontend
+      // executes and answers it; running it here too would double-apply.
+      if (cmd.instance && ownEndpoint && cmd.instance !== ownEndpoint) continue;
       if (cmd.id) {
         try {
           const data = await applyRpcCommand(cmd.action, cmd.args ?? {});
@@ -269,20 +325,41 @@ async function poll(): Promise<void> {
 export function initSessionCommands(): () => void {
   if (!isTauri()) return () => {};
   let cancelled = false;
-  // Seed the cursor from the existing backlog, THEN start polling — so commands
-  // appended after this snapshot are applied and the backlog is skipped.
-  invoke<string>("read_session_commands")
+  // Seed the cursor from the existing backlog AND learn this instance's own MCP
+  // endpoint, THEN start polling — so commands appended after this snapshot are
+  // applied, the backlog is skipped, and instance-scoped commands are never
+  // misjudged during a startup race.
+  const seedCursor = invoke<string>("read_session_commands")
     .then((raw) => {
       cursor = lines(raw).length;
     })
     .catch(() => {
       cursor = 0;
-    })
-    .finally(() => {
-      if (!cancelled) timer = setInterval(poll, 1500);
     });
+  const seedEndpoint = invoke<{ endpoint?: string }>("get_mcp_server_info")
+    .then((info) => {
+      ownEndpoint = info.endpoint || null;
+    })
+    .catch(() => {
+      ownEndpoint = null;
+    });
+  // The MCP server emits this right after enqueuing a command. It's the PRIMARY
+  // delivery path: macOS suspends an occluded window's JS timers, so the poll
+  // interval alone can stall past the server's 20s RPC deadline (observed
+  // during the first bulk import). The interval stays as the fallback sweep.
+  let unlistenKick: UnlistenFn | null = null;
+  const seedKick = listen("session://commands", () => {
+    void poll();
+  }).then((u) => {
+    if (cancelled) u();
+    else unlistenKick = u;
+  });
+  Promise.allSettled([seedCursor, seedEndpoint, seedKick]).then(() => {
+    if (!cancelled) timer = setInterval(poll, 1500);
+  });
   return () => {
     cancelled = true;
     if (timer) clearInterval(timer);
+    unlistenKick?.();
   };
 }

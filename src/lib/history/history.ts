@@ -23,6 +23,7 @@ import { listLocalFolders } from "./folders";
 import { rediarizeSegments } from "../speakers/postDiarize";
 import { translate } from "../../i18n/messages";
 import type { ReplaySession } from "../replay/types";
+import type { TranscriptSegment } from "../types";
 import type { HistoryEntry, HistoryEntrySummary } from "./types";
 
 const HISTORY_OPEN_EVENT = "history://open";
@@ -369,6 +370,51 @@ export async function saveUploadToHistory(session: ReplaySession): Promise<strin
   return id;
 }
 
+/** What the transcript-import dialog saves (issue #130's text-ingest path). */
+export interface TranscriptImportSave {
+  title: string;
+  segments: TranscriptSegment[];
+  speakerNames: Record<string, string>;
+  durationMs: number;
+  createdAt: number;
+  folderId: string | null;
+}
+
+/**
+ * Save an imported PLAIN-TEXT transcript as a normal history entry (design doc
+ * D11: source "upload", audio null — replay's audio-less degradation already
+ * handles it). Unlike {@link saveUploadToHistory} this never snapshots the live
+ * store: a bulk import must not inherit whatever meeting context/company the
+ * store happens to hold. Saved with `analyzed: false` and no findings, so the
+ * study pipeline analyzes it on FIRST OPEN — importing a folder's worth of
+ * transcripts spends zero model calls up front. Returns the new entry id.
+ */
+export async function saveTranscriptToHistory(save: TranscriptImportSave): Promise<string | null> {
+  if (!isTauri()) return null;
+  const entry: HistoryEntry = {
+    id: crypto.randomUUID(),
+    title: save.title,
+    source: "upload",
+    createdAt: save.createdAt,
+    durationMs: save.durationMs,
+    segments: save.segments,
+    speakerNames: save.speakerNames,
+    findings: [],
+    actionItems: [],
+    analyzed: false,
+    meetingContext: "",
+    meetingBatna: "",
+    meetingTarget: "",
+    meetingFloor: "",
+    audio: null,
+    folderId: save.folderId,
+  };
+  await persist(entry, null, /* compress */ false);
+  // The import usually starts FROM the History window — tell its grid to re-list.
+  await emitHistoryUpdated(entry.id).catch(() => {});
+  return entry.id;
+}
+
 /**
  * Overwrite an existing entry's ANALYSIS in place — used after the user re-runs
  * the analysis on a loaded record. Reads the saved entry first so its title,
@@ -673,6 +719,28 @@ export async function listenForHistoryImport(): Promise<UnlistenFn> {
   return listen<{ path: string }>(HISTORY_IMPORT_EVENT, (e) => {
     if (isMeetingActive(useStore.getState().meetingStatus)) return;
     useStore.getState().openIngestWizard(e.payload.path);
+    import("@tauri-apps/api/webviewWindow")
+      .then(({ WebviewWindow }) => WebviewWindow.getByLabel("main"))
+      .then((w) => w?.setFocus())
+      .catch(() => {});
+  });
+}
+
+const HISTORY_IMPORT_TRANSCRIPT_EVENT = "history://import-transcript";
+
+/** From the History window: hand picked transcript files to the main window's
+ *  import dialog (the text sibling of {@link emitHistoryImport}). */
+export async function emitHistoryImportTranscript(paths: string[]): Promise<void> {
+  if (!isTauri()) return;
+  await emit(HISTORY_IMPORT_TRANSCRIPT_EVENT, { paths });
+}
+
+/** Main-window listener: open the transcript-import dialog for files picked in History. */
+export async function listenForHistoryImportTranscript(): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<{ paths: string[] }>(HISTORY_IMPORT_TRANSCRIPT_EVENT, (e) => {
+    if (isMeetingActive(useStore.getState().meetingStatus)) return;
+    useStore.getState().openTranscriptImport(e.payload.paths);
     import("@tauri-apps/api/webviewWindow")
       .then(({ WebviewWindow }) => WebviewWindow.getByLabel("main"))
       .then((w) => w?.setFocus())

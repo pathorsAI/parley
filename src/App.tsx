@@ -15,6 +15,7 @@ import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import { ReleaseNotesDialog } from "./components/ReleaseNotesDialog";
 import { Toaster } from "./components/ui/sonner";
 import { IngestWizard } from "./components/IngestWizard";
+import { TranscriptImportDialog } from "./components/TranscriptImportDialog";
 import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWindow";
 import { useFindingSolutionHost } from "./components/analysis/useFindingSolutionHost";
 import { DeliveryNudgeHost } from "./components/delivery/DeliveryNudgeHost";
@@ -42,6 +43,7 @@ import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import {
   initHistoryPersistSync,
   listenForHistoryImport,
+  listenForHistoryImportTranscript,
   listenForHistoryOpen,
   listenForHistoryOpenOrg,
   listenForRecordingSaved,
@@ -143,6 +145,7 @@ const App = () => {
     track(listenForRecordingSaved());
     track(listenForHistoryOpen());
     track(listenForHistoryImport());
+    track(listenForHistoryImportTranscript());
     if (CLOUD_ENABLED) track(listenForHistoryOpenOrg());
     // These return a synchronous UnlistenFn.
     const unTemplates = initTemplatesSync();
@@ -232,7 +235,9 @@ const App = () => {
   }, []);
 
   // Drop an audio file anywhere on the window → straight into the ingest
-  // wizard (the header upload button's replacement).
+  // wizard (the header upload button's replacement). Dropped .txt transcripts
+  // (one or many) go to the transcript-import dialog instead; audio wins when
+  // a drop mixes both kinds.
   useEffect(() => {
     if (!isTauri()) return;
     let active = true;
@@ -241,12 +246,22 @@ const App = () => {
       .then(({ getCurrentWebview }) =>
         getCurrentWebview().onDragDropEvent((e) => {
           if (e.payload.type !== "drop") return;
+          if (isMeetingActive(useStore.getState().meetingStatus)) return;
           const audio = e.payload.paths.find((p) =>
             /\.(mp3|m4a|wav|ogg|oga|flac|aac|mp4|webm|opus)$/i.test(p)
           );
-          if (audio && !isMeetingActive(useStore.getState().meetingStatus)) {
+          if (audio) {
             log.info("replay: file dropped, opening ingest wizard");
             useStore.getState().openIngestWizard(audio);
+            return;
+          }
+          // Keep in sync with isTranscriptPath (lib/replay/ingest.ts) — inlined
+          // here so the drop handler doesn't pull the ingest module (STT
+          // registry + dialog plugin) into the initial bundle.
+          const transcripts = e.payload.paths.filter((p) => /\.txt$/i.test(p));
+          if (transcripts.length) {
+            log.info("import: transcripts dropped", { count: transcripts.length });
+            useStore.getState().openTranscriptImport(transcripts);
           }
         })
       )
@@ -294,6 +309,7 @@ const App = () => {
       )}
       <Toaster />
       <IngestWizard />
+      <TranscriptImportDialog />
       {/* In the Tauri app the drilldown is its own OS window (see
           useFindingSolutionHost); in plain browser dev we fall back to the
           in-app overlay so the feature still works without multi-window. */}
