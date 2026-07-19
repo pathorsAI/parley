@@ -720,6 +720,66 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
+            "apply_company_intel",
+            "Populate a company's people + intel cards",
+            "Write structured intel into an Accounts company's war room: Person cards \
+             and Claim cards (the nine categories: stance / relation / leverage / goal / \
+             risk / redline / competitor / nextmove / openq). Reuses the app's own \
+             apply pipeline — claim `subjects` are person NAMES resolved to ids, a \
+             stance claim auto-updates the person's stance chip, and everything lands \
+             as 'inferred' (imported analysis is never auto-confirmed). Identify the \
+             company by companyName (or companyId). Optionally create a thread (戰線) \
+             so its pipeline stage shows. Feed this the structured cards distilled from \
+             a customer profile so the company page shows the real people roster + \
+             battle intel, not just a doc attachment.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "companyName": { "type": "string", "description": "Company name (as shown in Accounts)." },
+                    "companyId": { "type": "string", "description": "Company id (alternative to companyName)." },
+                    "newPersons": {
+                        "type": "array",
+                        "description": "People at this company.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": { "type": "string" },
+                                "title": { "type": "string", "description": "Title / department." },
+                                "committeeRole": { "type": "string", "enum": ["economic", "champion", "influencer", "user", "gatekeeper", "blocker", ""], "description": "MEDDICC buying-committee role, or empty." },
+                                "reason": { "type": "string", "description": "One line: why this person matters." }
+                            },
+                            "required": ["name"]
+                        }
+                    },
+                    "newClaims": {
+                        "type": "array",
+                        "description": "Intel claims — one assertion each.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "category": { "type": "string", "enum": ["stance", "relation", "leverage", "goal", "risk", "redline", "competitor", "nextmove", "openq"] },
+                                "text": { "type": "string", "description": "One sentence, one assertion (zh-TW)." },
+                                "subjects": { "type": "array", "items": { "type": "string" }, "description": "Person/company NAMES this is about." },
+                                "side": { "type": "string", "enum": ["ours", "theirs", ""], "description": "For leverage/goal." },
+                                "layer": { "type": "string", "enum": ["surface", "deep", ""], "description": "For goal claims." },
+                                "quote": { "type": "string", "description": "Supporting verbatim quote, if any." }
+                            },
+                            "required": ["category", "text"]
+                        }
+                    },
+                    "thread": {
+                        "type": "object",
+                        "description": "Optional 戰線 to create (shows the pipeline stage).",
+                        "properties": {
+                            "kind": { "type": "string", "enum": ["sales", "channel", "investment", "other"] },
+                            "name": { "type": "string" },
+                            "stage": { "type": "string", "description": "For sales: prospecting|discovery|demo|negotiation|closing." }
+                        }
+                    }
+                }
+            }),
+        ),
+        tool(
             "list_orgs",
             "List organizations",
             "List the organizations the signed-in user belongs to, as { id, name, role }. \
@@ -976,6 +1036,20 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
                     "note": args.get("note").cloned().unwrap_or(Value::Null),
                     "profileText": args.get("profileText").cloned().unwrap_or(Value::Null),
                     "profileName": args.get("profileName").cloned().unwrap_or(Value::Null)
+                }),
+            )
+            .await?
+        }
+        "apply_company_intel" => {
+            call_frontend(
+                state,
+                "apply_company_intel",
+                json!({
+                    "companyName": args.get("companyName").cloned().unwrap_or(Value::Null),
+                    "companyId": args.get("companyId").cloned().unwrap_or(Value::Null),
+                    "newPersons": args.get("newPersons").cloned().unwrap_or(Value::Null),
+                    "newClaims": args.get("newClaims").cloned().unwrap_or(Value::Null),
+                    "thread": args.get("thread").cloned().unwrap_or(Value::Null)
                 }),
             )
             .await?
