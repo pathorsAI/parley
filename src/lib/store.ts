@@ -425,6 +425,11 @@ interface ParleyState {
   toggleActionItem: (id: string) => void;
 
   meetingStatus: MeetingStatus;
+  /** True from "End meeting" until the recording is saved and its report loaded
+   *  (or Rust reports it was discarded). Backs the titlebar "saving…" state so
+   *  the multi-second save → re-diarize → share → load window doesn't look hung. */
+  isFinalizingMeeting: boolean;
+  setFinalizingMeeting: (v: boolean) => void;
   meetingStartedAt: number | null;
   /** When the CURRENT pause began (epoch ms), null while not paused. */
   meetingPausedAt: number | null;
@@ -560,6 +565,7 @@ export const useStore = create<ParleyState>()(
       actionItemsStatus: "idle",
       actionItemsError: null,
       meetingStatus: "idle",
+      isFinalizingMeeting: false,
       meetingStartedAt: null,
       meetingPausedAt: null,
       meetingPausedTotalMs: 0,
@@ -1000,6 +1006,8 @@ export const useStore = create<ParleyState>()(
       }
       return { speakerNames: next };
     }),
+
+  setFinalizingMeeting: (v) => set({ isFinalizingMeeting: v }),
 
   stopMeeting: () => {
     log.info("store: meeting stopped");

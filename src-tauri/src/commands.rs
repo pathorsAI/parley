@@ -597,36 +597,48 @@ pub fn stop_meeting(
     let pcm = teardown_meeting(&app, &state, &coord);
 
     // Encode the captured audio off-thread and tell the frontend where it landed
-    // (which then writes the history entry). Skip very short / empty recordings.
-    if let Some(pcm) = pcm {
-        let app = app.clone();
-        std::thread::spawn(move || {
-            let rate = crate::audio::TARGET_SAMPLE_RATE as usize;
-            if pcm.len() < rate * 2 {
-                log::info!("recording: too short to save ({} samples)", pcm.len());
-                return;
+    // (which then writes the history entry). Skip very short / empty recordings —
+    // but ALWAYS emit a terminal signal (saved OR discarded), because the frontend
+    // holds a "finalizing" spinner from the moment End is pressed and only clears
+    // it on one of these events; a silent exit would hang that spinner forever.
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let discarded = || {
+            let _ = app.emit("meeting://recording-discarded", ());
+        };
+        let Some(pcm) = pcm else {
+            discarded();
+            return;
+        };
+        let rate = crate::audio::TARGET_SAMPLE_RATE as usize;
+        if pcm.len() < rate * 2 {
+            log::info!("recording: too short to save ({} samples)", pcm.len());
+            discarded();
+            return;
+        }
+        let duration_ms = (pcm.len() as u64 * 1000) / rate as u64;
+        let out = crate::replay_audio::unique_recording_path();
+        match crate::replay_audio::encode_opus_ogg(&pcm, &out) {
+            Ok(()) => {
+                log::info!(
+                    "recording: saved {} ({} ms)",
+                    out.to_string_lossy(),
+                    duration_ms
+                );
+                let _ = app.emit(
+                    "meeting://recording-saved",
+                    serde_json::json!({
+                        "path": out.to_string_lossy(),
+                        "durationMs": duration_ms,
+                    }),
+                );
             }
-            let duration_ms = (pcm.len() as u64 * 1000) / rate as u64;
-            let out = crate::replay_audio::unique_recording_path();
-            match crate::replay_audio::encode_opus_ogg(&pcm, &out) {
-                Ok(()) => {
-                    log::info!(
-                        "recording: saved {} ({} ms)",
-                        out.to_string_lossy(),
-                        duration_ms
-                    );
-                    let _ = app.emit(
-                        "meeting://recording-saved",
-                        serde_json::json!({
-                            "path": out.to_string_lossy(),
-                            "durationMs": duration_ms,
-                        }),
-                    );
-                }
-                Err(e) => log::error!("recording: encode failed: {e}"),
+            Err(e) => {
+                log::error!("recording: encode failed: {e}");
+                discarded();
             }
-        });
-    }
+        }
+    });
     Ok(())
 }
 

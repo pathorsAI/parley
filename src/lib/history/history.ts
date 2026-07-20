@@ -30,6 +30,10 @@ const HISTORY_OPEN_EVENT = "history://open";
 const HISTORY_OPEN_ORG_EVENT = "history://open-org";
 const HISTORY_UPDATED_EVENT = "history://updated";
 const RECORDING_SAVED_EVENT = "meeting://recording-saved";
+// Rust emits this instead of `recording-saved` when the stopped meeting produced
+// no keepable recording (empty / too short / encode failed). Nothing is saved,
+// so it exists only to release the titlebar's "finalizing" state.
+const RECORDING_DISCARDED_EVENT = "meeting://recording-discarded";
 
 // ── Build helpers ───────────────────────────────────────────────────────────
 
@@ -785,14 +789,22 @@ export async function listenForHistoryOpenOrg(): Promise<UnlistenFn> {
   });
 }
 
-/** Main-window listener: auto-save the meeting once Rust finishes encoding it. */
+/** Main-window listener: auto-save the meeting once Rust finishes encoding it,
+ *  and release the titlebar "finalizing" state when the save settles — or when
+ *  Rust reports the recording was discarded (so the spinner can't hang forever). */
 export async function listenForRecordingSaved(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<{ path: string; durationMs: number }>(RECORDING_SAVED_EVENT, (e) => {
-    saveLiveToHistory(e.payload.path, e.payload.durationMs).catch((err) =>
-      log.error("history: live save failed", { error: String(err) }),
-    );
+  const clearFinalizing = () => useStore.getState().setFinalizingMeeting(false);
+  const unlistenSaved = await listen<{ path: string; durationMs: number }>(RECORDING_SAVED_EVENT, (e) => {
+    saveLiveToHistory(e.payload.path, e.payload.durationMs)
+      .catch((err) => log.error("history: live save failed", { error: String(err) }))
+      .finally(clearFinalizing);
   });
+  const unlistenDiscarded = await listen(RECORDING_DISCARDED_EVENT, clearFinalizing);
+  return () => {
+    unlistenSaved();
+    unlistenDiscarded();
+  };
 }
 
 /** Tell other windows (the History grid) that an entry's saved analysis changed. */
