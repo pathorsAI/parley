@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Building2, Check, Circle, FileAudio, History, Languages, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
+import { Building2, Check, Circle, FileAudio, History, Languages, Loader2, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
 import { useStore, meetingElapsedMs } from "../lib/store";
 import { log } from "../lib/log";
 import { STT_BY_ID, sttApiKey, sttRelayUrl } from "../lib/transcription/providers";
@@ -263,6 +263,8 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const inputDevice = useStore((s) => s.settings.inputDevice);
   const startMeeting = useStore((s) => s.startMeeting);
   const stopMeeting = useStore((s) => s.stopMeeting);
+  const isFinalizingMeeting = useStore((s) => s.isFinalizingMeeting);
+  const setFinalizingMeeting = useStore((s) => s.setFinalizingMeeting);
   const pauseMeeting = useStore((s) => s.pauseMeeting);
   const resumeMeeting = useStore((s) => s.resumeMeeting);
   const cancelMeeting = useStore((s) => s.cancelMeeting);
@@ -395,10 +397,17 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
       log.info("meeting: stop requested");
       stopMeeting();
       if (useRealPipeline) {
+        // The real save runs async off the `recording-saved` event and takes
+        // seconds (encode → persist → re-diarize → org share → load report).
+        // Flag "finalizing" now so the button shows a spinner for that whole
+        // window instead of reading as hung. Cleared when the save finishes or
+        // Rust reports the recording was discarded (see listenForRecordingSaved).
+        setFinalizingMeeting(true);
         try {
           await invoke("stop_meeting");
         } catch (e) {
           log.error("meeting: stop failed", { error: String(e) });
+          setFinalizingMeeting(false);
         }
       } else {
         stopMockStream();
@@ -612,6 +621,14 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
               <X className="size-4" />
             </Button>
           </>
+        ) : isFinalizingMeeting ? (
+          // Post-"End" save window: the recording is encoding + persisting +
+          // re-diarizing off-thread. Hold a disabled spinner here (not the Start
+          // button) so the seconds-long wait doesn't read as a hang or a no-op.
+          <Button size="sm" variant="default" disabled className="h-8">
+            <Loader2 className="size-3.5 animate-spin" />
+            {t("titlebar.finalizing")}
+          </Button>
         ) : (
           <Button size="sm" variant="default" onClick={start} disabled={toggleBusy} className="h-8">
             <Mic className="size-3.5" />
