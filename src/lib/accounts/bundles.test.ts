@@ -76,10 +76,10 @@ describe("stage bundles — builtins", () => {
   it("gives discovery a SPIN board (S13 letters) with s-tax and spin-order rules", () => {
     const d = builtins.discovery;
     expect(d.slots.map((s) => s.label)).toEqual([
-      "S（Situation）",
-      "P（Problem）",
-      "I（Implication）",
-      "N（Need-payoff）",
+      "S（情境）",
+      "P（問題）",
+      "I（影響）",
+      "N（效益）",
       expect.any(String), // committee label resolved from i18n
     ]);
     expect(d.coachRules.some((r) => r.kind === "s-tax")).toBe(true);

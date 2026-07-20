@@ -83,7 +83,7 @@ export function PostMeetingReviewButton() {
         <div className="fixed inset-0 z-[90] flex items-center justify-center p-6">
           <button
             type="button"
-            aria-label="close"
+            aria-label={t("common.close")}
             className="absolute inset-0 bg-black/50"
             onClick={() => setOpen(false)}
           />

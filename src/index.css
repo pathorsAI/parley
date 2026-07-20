@@ -86,6 +86,16 @@ textarea,
   background: #3a3a42;
 }
 
+/* Radix ScrollArea wraps content in a `display: table` div that grows to
+   max-content, so truncate/flex-wrap inside a resizable rail never engage and
+   rows clip past the panel edge. Every ScrollArea here scrolls vertically
+   only — pin the wrapper to the viewport width. */
+[data-slot="scroll-area-viewport"] > div {
+  display: block !important;
+  min-width: 0 !important;
+  width: 100%;
+}
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: 'Geist Variable', sans-serif;
