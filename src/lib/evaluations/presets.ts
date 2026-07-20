@@ -246,14 +246,8 @@ export function buildPresetEvalTemplates(t: T): EvalTemplate[] {
         "Detect objections or concerns the prospect ('them') raises — price, timing, fit, competitor, risk, " +
         "authority. Flag each one, and especially any that I ('me') have NOT yet addressed. Quote the objection.",
     },
-    {
-      id: "sl-nextstep",
-      name: t("tpl.eval.sl-nextstep.name"),
-      description: t("tpl.eval.sl-nextstep.desc"),
-      prompt:
-        "Check whether a concrete, mutually-agreed next step has been established (a scheduled meeting, a trial, " +
-        "an intro to the economic buyer). Flag if the call is heading toward ending without a committed next step.",
-    },
+    // (sl-nextstep retired by the C integration: the board's next-step slot +
+    // deterministic gate own that concern — one home, no LLM pass.)
     claims, // claims to verify
     topicShift, // topic shift / focus dilution
     nextMove(t), // recommend the next move

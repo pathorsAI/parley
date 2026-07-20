@@ -4,9 +4,10 @@ import { useStore } from "../../lib/store";
 import { runIntelExtraction } from "../../lib/intel/extract";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
-import type { MeetingType } from "../../lib/types";
+import type { IntelObjection, MeetingType } from "../../lib/types";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { TypedBoard } from "./TypedBoard";
 import {
   Select,
   SelectContent,
@@ -18,6 +19,9 @@ import {
 const TodosPanel = lazy(() =>
   import("../sidebar/TodosPanel").then((m) => ({ default: m.TodosPanel }))
 );
+const TodosSection = lazy(() =>
+  import("../sidebar/TodosPanel").then((m) => ({ default: m.TodosSection }))
+);
 const StageBoard = lazy(() =>
   import("./StageBoard").then((m) => ({ default: m.StageBoard }))
 );
@@ -28,12 +32,13 @@ const TYPES: MeetingType[] = ["general", "negotiation", "sales", "partnership"];
 const AUTO_EXTRACT_MS = 30_000;
 
 /**
- * The LIVE right rail: accumulated STATE of the conversation. The meeting-type
- * picker selects the intelligence template — negotiation (numbers ledger,
- * concessions, agreed/open), sales (BANT, objections, commitments), partnership
- * (they-have × they-need, leverage proposals, give/get). "General" shows the
- * goals agenda only. Extraction re-runs on a slow cadence while recording, and
- * on demand via the refresh button.
+ * The LIVE right rail — ONE rendering model for every typed meeting (C
+ * integration): the meeting-type picker selects which slot BOARD runs (sales =
+ * this call's stage bundle + shared slots; negotiation/partnership = fixed
+ * builtin boards). Below the board: the sales objection ledger and the todo
+ * section (action items, auto-checked by the same extraction pass). "General"
+ * shows the goals agenda only. Extraction re-runs on a 30s cadence while
+ * recording, and on demand via the refresh button.
  */
 export function IntelligenceBoard() {
   const { t } = useI18n();
@@ -77,7 +82,7 @@ export function IntelligenceBoard() {
         )}
       </div>
 
-      {/* Meeting-type picker: which template this board runs. */}
+      {/* Meeting-type picker: which board this rail runs. */}
       <div className="px-3 pb-2">
         <Select
           value={meetingType}
@@ -103,49 +108,75 @@ export function IntelligenceBoard() {
           </Suspense>
         </div>
       ) : (
-        <>
-          <ScrollArea className="min-h-0 flex-1 border-t">
-            <div className="flex flex-col gap-3 px-3 py-2.5">
-              {/* Sales: the stage gap board is the rail's primary block (S21). */}
-              {meetingType === "sales" && (
-                <Suspense fallback={null}>
-                  <StageBoard />
-                </Suspense>
-              )}
-              {!intel && (
-                <p className="py-4 text-center text-xs text-muted-foreground">
-                  {running ? t("board.extracting") : t("board.empty")}
-                </p>
-              )}
-              {intel?.meetingType === meetingType && (
-                // Sales: BANT lives in the stage board's slots now — showing it
-                // twice is exactly the clutter the second-attention rule bans.
-                <IntelSections hideBant={meetingType === "sales"} />
-              )}
-            </div>
-          </ScrollArea>
-          {/* Goals keep a slim home under the intel sections. */}
-          <div className="h-[30%] min-h-24 shrink-0 border-t">
+        <ScrollArea className="min-h-0 flex-1 border-t">
+          <div className="flex flex-col gap-3 px-3 py-2.5">
+            {meetingType === "sales" ? (
+              <Suspense fallback={null}>
+                <StageBoard />
+              </Suspense>
+            ) : (
+              <TypedBoard type={meetingType} />
+            )}
+            {!intel && (
+              <p className="py-2 text-center text-xs text-muted-foreground">
+                {running ? t("board.extracting") : t("board.empty")}
+              </p>
+            )}
+            {/* The objection ledger is the ONE home of objection facts; the
+                board's counter banner carries only the reply (A3). */}
+            {meetingType === "sales" && intel?.meetingType === "sales" && (
+              <ObjectionsLedger objections={intel.objections} />
+            )}
+            {/* Todos ride the same rail now (C): action items only, checked by
+                the same 30s pass — no separate strip, no separate LLM loop. */}
             <Suspense fallback={null}>
-              <TodosPanel />
+              <TodosSection />
             </Suspense>
           </div>
-        </>
+        </ScrollArea>
       )}
     </div>
   );
 }
 
-/** Render the populated sections of the current intel state. Exported for the
- *  study tense's 情報 page, which shows the same board over a loaded recording. */
-export function IntelSections({ hideBant = false }: Readonly<{ hideBant?: boolean }> = {}) {
+/** The sales objection tracker — addressed state drives ⚠/✓. */
+export function ObjectionsLedger({
+  objections,
+}: Readonly<{ objections?: IntelObjection[] }>) {
+  const { t } = useI18n();
+  if (!objections?.length) return null;
+  return (
+    <Section title={t("board.sec.objections")}>
+      {objections.map((o, i) => (
+        <div key={i} className="flex items-baseline gap-1.5 text-xs">
+          <span
+            className={
+              o.addressed
+                ? "text-emerald-600 dark:text-emerald-400"
+                : "font-bold text-amber-600 dark:text-amber-400"
+            }
+          >
+            {o.addressed ? "✓" : "⚠"}
+          </span>
+          <span className={o.addressed ? "text-muted-foreground" : ""}>{o.text}</span>
+        </div>
+      ))}
+    </Section>
+  );
+}
+
+/** LEGACY sections renderer — pre-C recordings persisted per-type fields
+ *  (numbers ledger, BANT, they-have/they-need…). The study 情報 page still
+ *  renders those entries; new recordings only carry `objections` here (the
+ *  board slots hold everything else). */
+export function IntelSections() {
   const { t } = useI18n();
   const intel = useStore((s) => s.intel);
   if (!intel) return null;
 
   return (
     <>
-      {/* ── negotiation ─────────────────────────────── */}
+      {/* ── negotiation (legacy) ─────────────────────── */}
       {intel.numbers && intel.numbers.length > 0 && (
         <Section title={t("board.sec.numbers")}>
           {intel.numbers.map((n, i) => (
@@ -189,32 +220,15 @@ export function IntelSections({ hideBant = false }: Readonly<{ hideBant?: boolea
         </Section>
       )}
 
-      {/* ── sales ───────────────────────────────────── */}
-      {!hideBant && (intel.budget || intel.timeline || intel.decisionMaker) && (
+      {/* ── sales (legacy BANT + ledgers) ────────────── */}
+      {(intel.budget || intel.timeline || intel.decisionMaker) && (
         <Section title={t("board.sec.bant")}>
           {intel.budget && <KV k={t("board.sec.budget")} v={intel.budget} />}
           {intel.timeline && <KV k={t("board.sec.timeline")} v={intel.timeline} />}
           {intel.decisionMaker && <KV k={t("board.sec.decisionMaker")} v={intel.decisionMaker} />}
         </Section>
       )}
-      {intel.objections && intel.objections.length > 0 && (
-        <Section title={t("board.sec.objections")}>
-          {intel.objections.map((o, i) => (
-            <div key={i} className="flex items-baseline gap-1.5 text-xs">
-              <span
-                className={
-                  o.addressed
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "font-bold text-amber-600 dark:text-amber-400"
-                }
-              >
-                {o.addressed ? "✓" : "⚠"}
-              </span>
-              <span className={o.addressed ? "text-muted-foreground" : ""}>{o.text}</span>
-            </div>
-          ))}
-        </Section>
-      )}
+      <ObjectionsLedger objections={intel.objections} />
       {intel.commitments && intel.commitments.length > 0 && (
         <Section title={t("board.sec.commitments")}>
           {intel.commitments.map((c, i) => (
@@ -239,7 +253,7 @@ export function IntelSections({ hideBant = false }: Readonly<{ hideBant?: boolea
         </Section>
       )}
 
-      {/* ── partnership ─────────────────────────────── */}
+      {/* ── partnership (legacy) ─────────────────────── */}
       {intel.theyHave && intel.theyHave.length > 0 && (
         <Section title={t("board.sec.theyHave")}>
           <List items={intel.theyHave} prefix="◆" className="text-sky-700 dark:text-sky-400" />

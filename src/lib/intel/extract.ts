@@ -3,7 +3,7 @@ import { useStore, isTrimmed, type ReplayTrim } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { outputLanguageInstruction } from "../ai/profile";
 import { generateObjectResilient } from "../ai/generate";
-import { resolveMeetingBundle } from "../accounts/currentStage";
+import { resolveBoard, type MeetingBoard } from "./boards";
 import { makeRunGuard } from "../analysis/runGuard";
 import { log } from "../log";
 import type {
@@ -11,48 +11,21 @@ import type {
   IntelState,
   LlmWorkload,
   MeetingType,
+  TodoItem,
   TranscriptSegment,
 } from "../types";
 
 /**
- * Intelligence-board extraction: one LLM pass over the live transcript that
- * returns the ACCUMULATED state for the selected meeting type (negotiation
- * numbers ledger, sales objection tracker, partnership leverage map). Always
- * recomputed from the full transcript, so it self-corrects as context grows —
- * no incremental-merge bugs.
+ * Intelligence-board extraction — THE one transcript→board LLM pass (C
+ * integration). Every typed meeting resolves to a slot board (boards.ts); one
+ * schema fills its slots, picks the focus, tracks sales objections, and checks
+ * the todo list — replacing the per-type schemas and the separate checkTodos
+ * loop. Always recomputed from the full transcript, so it self-corrects as
+ * context grows — no incremental-merge bugs.
  */
 
-const negotiationSchema = z.object({
-  numbers: z.array(
-    z.object({
-      value: z.string().describe("the number/amount as said, e.g. $120, 500 units, 3 years"),
-      speaker: z.enum(["me", "them"]),
-      context: z.string().describe("what this number was about, under 10 words"),
-    })
-  ),
-  concessionsMe: z.array(z.string()).describe("concessions MY side has made so far"),
-  concessionsThem: z.array(z.string()).describe("concessions THEIR side has made so far"),
-  agreed: z.array(z.string()).describe("terms both sides have agreed on"),
-  open: z.array(z.string()).describe("terms raised but still unresolved"),
-});
-
-const salesSchema = z.object({
-  budget: z.string().describe("budget signal if any was mentioned, else empty string"),
-  timeline: z.string().describe("timeline/deadline signal if any, else empty string"),
-  decisionMaker: z.string().describe("who decides, if it came up, else empty string"),
-  objections: z.array(
-    z.object({
-      text: z.string().describe("the objection, under 15 words"),
-      addressed: z.boolean().describe("was it substantively answered"),
-    })
-  ),
-  commitments: z.array(
-    z.object({ who: z.enum(["me", "them"]), what: z.string().describe("the commitment, under 15 words") })
-  ),
-  competitors: z.array(z.string()).describe("competitor names mentioned"),
-});
-
-/** Live gap-board fills (§4.3): UI transient — never written to the claim base. */
+/** Live gap-board fills (§4.3): UI transient — never written to the claim base
+ *  directly; the post-meeting review turns them into claim candidates (B6). */
 const slotFillsSchema = z
   .array(
     z.object({
@@ -62,7 +35,10 @@ const slotFillsSchema = z
       speaker: z.enum(["me", "them"]).describe("who said it"),
     })
   )
-  .describe("intel said SO FAR that fills the gap-board slots; empty when nothing qualifies");
+  .describe(
+    "intel said SO FAR mapped onto the board slots; one fact per entry, a slot can receive " +
+      "several entries; empty when nothing qualifies"
+  );
 
 /** Keep only fills pointing at slots we actually offered. Exported for tests. */
 export function normalizeSlotFills(
@@ -104,15 +80,26 @@ export function normalizeFocus(
   return knownSlotIds.has(focus.slotId) ? focus : undefined;
 }
 
-const partnershipSchema = z.object({
-  theyHave: z.array(z.string()).describe("assets/strengths the counterpart has (channels, users, tech, team)"),
-  theyNeed: z.array(z.string()).describe("things the counterpart needs or lacks"),
-  leverage: z
-    .array(z.string())
-    .describe("concrete mutual-leverage proposals pairing their assets/needs with ours, actionable, under 20 words each"),
-  give: z.array(z.string()).describe("what our side offered"),
-  get: z.array(z.string()).describe("what their side offered"),
+const objectionsSchema = z.array(
+  z.object({
+    text: z.string().describe("the objection, under 15 words"),
+    addressed: z.boolean().describe("was it substantively answered"),
+  })
+);
+
+const todoChecksSchema = z
+  .array(z.string())
+  .describe(
+    "ids of checklist items that have CLEARLY been addressed/covered in the conversation; " +
+      "be conservative; empty when no checklist was given or nothing qualifies"
+  );
+
+const typedSchema = z.object({
+  slotFills: slotFillsSchema,
+  focus: focusSchema,
+  todoChecks: todoChecksSchema,
 });
+const salesSchemaC = typedSchema.extend({ objections: objectionsSchema });
 
 function transcriptText(segments: TranscriptSegment[], capChars: number): string {
   const lines = segments
@@ -159,6 +146,47 @@ const SYSTEM =
   "Read the transcript and return ONLY facts grounded in what was actually said — no speculation. " +
   "Empty arrays/strings are correct when nothing qualifies.";
 
+/** Per-type framing ahead of the shared slot/focus instructions. */
+const TYPE_GUIDANCE: Record<Exclude<MeetingType, "general">, string> = {
+  sales:
+    "This is a SALES call. Also track objections: every challenge/doubt the counterpart raised " +
+    "and whether it was substantively answered.",
+  negotiation:
+    "This is a NEGOTIATION. Every number said (price, quantity, term) becomes ONE fill of the " +
+    "numbers slot — value plus what it was about; the fill's speaker field carries who said it. " +
+    "Concessions land on the give/get slots by side.",
+  partnership:
+    "This is a PARTNERSHIP talk. For the leverage slot, propose concrete ways the two sides can " +
+    "leverage each other based on the counterpart's stated position (their assets × our needs, " +
+    "and vice versa), including proactive ways WE can help THEM first.",
+};
+
+function buildPrompt(opts: {
+  board: MeetingBoard;
+  transcript: string;
+  openTodos: TodoItem[];
+}): string {
+  const { board, transcript, openTodos } = opts;
+  const slotLines = board.slots.map((s) => `- ${s.id}: ${s.label} — ${s.hint}`).join("\n");
+  const todoLines = openTodos.map((t) => `- [${t.id}] ${t.text}`).join("\n");
+  return (
+    `${TYPE_GUIDANCE[board.type]}\n\n` +
+    `Fill slotFills: map intel that was actually said onto these board slots (ONLY these ids; ` +
+    `a slot can receive several items). The slots are listed in their intended question ORDER:\n` +
+    `${slotLines}\n\n` +
+    `Then set focus — the ONE thing to say next. Conversations aren't linear: if the counterpart ` +
+    `has a fresh challenge/doubt still unaddressed, focus on COUNTERING it (kind "objection"). ` +
+    `Otherwise chase a gap (kind "gap"): the earliest slot in order still unfilled or thin, ` +
+    `UNLESS the conversation is actively on a later slot's ground (then take it); if the topic ` +
+    `drifted away from an unfinished earlier slot, steer back. Either way the line must ride ` +
+    `what the counterpart just said.\n\n` +
+    (todoLines
+      ? `Checklist to auto-check (return covered ids in todoChecks):\n${todoLines}\n\n`
+      : "") +
+    transcript
+  );
+}
+
 /**
  * Run one extraction for `type` and publish the result into the store. No-op
  * for "general" (the board shows goals only), when a run is in flight, or when
@@ -182,6 +210,10 @@ export async function runIntelExtraction(
   if (!intelTranscriptReady(segments)) return;
   const transcript = transcriptText(segments, CAP_CHARS[workload]);
 
+  // The todo auto-check rides this same pass (one LLM loop per typed meeting);
+  // it's a LIVE concern — replay/study extractions never see the checklist.
+  const openTodos = workload === "realtime" ? state.todos.filter((t) => !t.done) : [];
+
   const alive = guard.begin();
   // Did the user switch templates while this run was in flight? Its result
   // belongs to the OLD type: discard it and hand the status back to "idle" so
@@ -191,59 +223,46 @@ export async function runIntelExtraction(
 
   state.setIntelStatus("running");
   try {
-    let intel: IntelState;
-    if (type === "negotiation") {
-      const { object } = await generateObjectResilient({
-        settings: state.settings,
-        workload,
-        schema: negotiationSchema,
-        system: SYSTEM + outputLanguageInstruction(state.settings),
-        prompt: `Extract the CURRENT negotiation state from this meeting transcript:\n\n${transcript}`,
-      });
-      intel = { meetingType: type, ...object };
-    } else if (type === "sales") {
-      // THIS call's stage bundle drives the gap-board fills (S19/§4.3).
-      const bundle = await resolveMeetingBundle(state.settings);
-      const slotLines = bundle.slots.map((s) => `- ${s.id}: ${s.label} — ${s.hint}`).join("\n");
-      const { object } = await generateObjectResilient({
-        settings: state.settings,
-        workload,
-        schema: salesSchema.extend({ slotFills: slotFillsSchema, focus: focusSchema }),
-        system: SYSTEM + outputLanguageInstruction(state.settings),
-        prompt:
-          `Extract the CURRENT sales-call state (BANT signals, objections, commitments) from this transcript.\n\n` +
-          `Additionally fill slotFills: map intel that was actually said onto these gap-board slots ` +
-          `(ONLY these ids; a slot can receive several items). The slots are listed in the stage's ` +
-          `intended question ORDER:\n${slotLines}\n\n` +
-          `Then set focus — the ONE thing the salesperson should say next. Conversations aren't ` +
-          `linear: if the counterpart has a fresh challenge/doubt still unaddressed, focus on ` +
-          `COUNTERING it (kind "objection"). Otherwise chase a gap (kind "gap"): the earliest slot ` +
-          `in order still unfilled or thin, UNLESS the conversation is actively on a later slot's ` +
-          `ground (then take it); if the topic drifted away from an unfinished earlier slot, steer ` +
-          `back. Either way the line must ride what the counterpart just said.\n\n${transcript}`,
-      });
-      const known = new Set(bundle.slots.map((s) => s.id));
-      intel = {
-        meetingType: type,
-        ...object,
-        slotFills: normalizeSlotFills(object.slotFills, known),
-        focusSlot: normalizeFocus(object.focus, known),
-      };
-    } else {
-      const { object } = await generateObjectResilient({
-        settings: state.settings,
-        workload,
-        schema: partnershipSchema,
-        system: SYSTEM + outputLanguageInstruction(state.settings),
-        prompt:
-          "Extract the CURRENT partnership-talk state from this transcript. " +
-          "For `leverage`, propose concrete ways the two sides can leverage each other " +
-          "based on the counterpart's stated position (their assets × our needs, and vice versa), " +
-          `including proactive ways WE can help THEM first:\n\n${transcript}`,
-      });
-      intel = { meetingType: type, ...object };
+    const board = await resolveBoard(type, state.settings);
+    if (!board) {
+      // Unreachable (general returned above) — but never leave "running" stuck.
+      useStore.getState().setIntelStatus("idle");
+      return;
     }
+    const prompt = buildPrompt({ board, transcript, openTodos });
+    const system = SYSTEM + outputLanguageInstruction(state.settings);
+    let object: z.infer<typeof typedSchema> & { objections?: IntelState["objections"] };
+    if (type === "sales") {
+      ({ object } = await generateObjectResilient({
+        settings: state.settings,
+        workload,
+        schema: salesSchemaC,
+        system,
+        prompt,
+      }));
+    } else {
+      ({ object } = await generateObjectResilient({
+        settings: state.settings,
+        workload,
+        schema: typedSchema,
+        system,
+        prompt,
+      }));
+    }
+
+    const known = new Set(board.slots.map((s) => s.id));
+    const intel: IntelState = {
+      meetingType: type,
+      slotFills: normalizeSlotFills(object.slotFills, known),
+      focusSlot: normalizeFocus(object.focus, known),
+    };
+    if (object.objections) intel.objections = object.objections;
     if (!alive()) return;
+    // Todo checks are transcript-grounded — valid even when the intel result
+    // itself is stale-typed; only a dead session discards them.
+    const openIds = new Set(openTodos.map((t) => t.id));
+    const done = object.todoChecks.filter((id) => openIds.has(id));
+    if (done.length) useStore.getState().markTodosDone(done);
     if (staleType()) {
       useStore.getState().setIntelStatus("idle");
       return;

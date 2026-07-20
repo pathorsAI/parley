@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
-import { transcriptAsText, useStore } from "../../lib/store";
+import { transcriptAsText, useStore, meetingElapsedMs } from "../../lib/store";
 import { activeClaims, useAccounts } from "../../lib/accounts/store";
 import { suggestSlotQuestions, type SlotQuestion } from "../../lib/accounts/suggest";
 import { useStageSet } from "../../lib/accounts/useStageSet";
@@ -8,8 +7,10 @@ import { boardStates } from "../../lib/accounts/slotState";
 import { backfillSlotIds } from "../../lib/accounts/backfill";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { SALES_STAGES, type SalesStage } from "../../lib/accounts/types";
+import { salesBoardFromBundle, applyNextStepGate } from "../../lib/intel/boards";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
+import { FocusBanner, SlotRow } from "./SlotBoard";
 
 /**
  * The live gap board (S21/S22, #147): a SECOND-attention surface — one line
@@ -18,10 +19,12 @@ import { log } from "../../lib/log";
  * riding the current topic) and the board highlights only that cell with one
  * speakable question. No per-cell actions: the user picks TIMING (refresh /
  * the 30s cadence), never direction. Header = THIS call's stage (S19).
+ * Cross-stage slots (next step / competitors) and the deterministic next-step
+ * gate come from the unified board model (boards.ts, C integration).
  */
 
 export function StageBoard() {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const acc = useAccounts();
   const settings = useStore((s) => s.settings);
   const companyId = useStore((s) => s.meetingCompanyId);
@@ -29,6 +32,7 @@ export function StageBoard() {
   const meetingStage = useStore((s) => s.meetingStage);
   const setMeetingStage = useStore((s) => s.setMeetingStage);
   const intel = useStore((s) => s.intel);
+  const recording = useStore((s) => s.meetingStatus === "recording");
   const stageSet = useStageSet();
 
   const thread = acc.threads.find((x) => x.id === threadId) ?? null;
@@ -37,6 +41,11 @@ export function StageBoard() {
   // A stale custom stage (definition removed) falls back to the pipeline start.
   const stage: SalesStage = stageSet.bundles[wanted] ? wanted : SALES_STAGES[0];
   const bundle = stageSet.bundles[stage];
+
+  // The unified board: bundle slots + shared next-step/competitor slots, gate
+  // params from the bundle's nextstep-gate rule (boards.ts).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const salesBoard = useMemo(() => salesBoardFromBundle(bundle, t), [bundle, language]);
 
   // This meeting's view of the claim base: thread-scoped + company-level cards.
   const claims = useMemo(
@@ -48,7 +57,10 @@ export function StageBoard() {
         : [],
     [acc, companyId, threadId]
   );
-  const board = useMemo(() => boardStates(claims, bundle, Date.now()), [claims, bundle]);
+  const board = useMemo(
+    () => boardStates(claims, { ...bundle, slots: salesBoard.slots }, Date.now()),
+    [claims, bundle, salesBoard]
+  );
 
   // Live fills + auto-focus for THIS call (§4.3/S22): UI transient, from the
   // 30s realtime pass — the claim base is written at post-meeting review (D8).
@@ -58,7 +70,24 @@ export function StageBoard() {
     for (const f of live?.slotFills ?? []) out.set(f.slotId, [...(out.get(f.slotId) ?? []), f.text]);
     return out;
   }, [live]);
-  const focus = live?.focusSlot;
+
+  // Next-step gate: tick the recorded-time clock while live so the gate can
+  // fire without waiting for the next extraction.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!recording) return;
+    const id = setInterval(() => setNowMs(Date.now()), 15_000);
+    return () => clearInterval(id);
+  }, [recording]);
+  const elapsedMs = meetingElapsedMs(useStore.getState(), nowMs);
+  const focus = applyNextStepGate({
+    focus: live?.focusSlot,
+    fills: live?.slotFills ?? [],
+    board: salesBoard,
+    elapsedMs,
+    question: t("board.gate.question"),
+    reason: t("board.gate.reason"),
+  });
 
   // Manual override (S22 修訂): tap a row → generate for THAT slot in place.
   // One expansion at a time; tapping again collapses. Cleared on stage flip.
@@ -76,7 +105,7 @@ export function StageBoard() {
       setManual(null); // toggle off
       return;
     }
-    const slot = bundle.slots.find((s) => s.id === slotId);
+    const slot = salesBoard.slots.find((s) => s.id === slotId);
     if (!slot) return;
     setManual({ slotId, status: "running", questions: [] });
     const state = useStore.getState();
@@ -100,8 +129,12 @@ export function StageBoard() {
   // Board-open backfill (#146): classify query-hit-but-untagged cards once per
   // stage, write results back into the claim base. Deliberately keyed on the
   // stage/company — not `claims` — so approving cards doesn't re-trigger it.
+  // Since the live pass became the only transcript→slot channel (B6), this is
+  // a FALLBACK for recordings/feeds with no live fills — skip when they exist.
   useEffect(() => {
     if (!companyId || !hasProviderKey(settings, "deep")) return;
+    const cur = useStore.getState().intel;
+    if (cur?.meetingType === "sales" && (cur.slotFills?.length ?? 0) > 0) return;
     const snapshot = useAccounts.getState();
     const all = activeClaims(snapshot, companyId).filter(
       (c) => !threadId || !c.threadId || c.threadId === threadId
@@ -137,13 +170,7 @@ export function StageBoard() {
 
       {/* Counter-the-challenge focus: outranks gap-chasing, one at a time. */}
       {focus?.kind === "objection" && (
-        <div className="rounded-r-md border-l-2 border-primary bg-primary/10 px-2 py-1.5">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">
-            {t("board.stage.counter")}
-          </p>
-          <p className="text-xs leading-snug">{focus.question}</p>
-          <p className="text-[10px] leading-snug text-muted-foreground">{focus.reason}</p>
-        </div>
+        <FocusBanner label={t("board.stage.counter")} question={focus.question} reason={focus.reason} />
       )}
 
       {/* One line per slot; only the focused/tapped cell expands (S22).
@@ -157,48 +184,18 @@ export function StageBoard() {
           const content = fills[fills.length - 1] ?? newestCard?.text ?? slot.hint;
           const n = cards.length + fills.length;
           return (
-            <div
+            <SlotRow
               key={slot.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => askSlot(slot.id)}
-              onKeyDown={(e) => e.key === "Enter" && askSlot(slot.id)}
-              className={`px-1.5 py-1 text-left transition-colors ${
-                focused
-                  ? "rounded-r-md border-l-2 border-primary bg-primary/10"
-                  : tapped
-                    ? "rounded-md bg-muted/60"
-                    : canAsk
-                      ? "cursor-pointer rounded-md hover:bg-muted/40"
-                      : "rounded-md"
-              }`}
+              state={state === "empty" && fills.length > 0 ? "thin" : state}
+              label={slot.label}
+              content={content}
+              count={n}
+              focused={focused}
+              activated={tapped}
+              clickable={canAsk}
+              busy={tapped && manual.status === "running"}
+              onActivate={() => askSlot(slot.id)}
             >
-              <div className="flex items-baseline gap-1.5">
-                <span
-                  className={`size-1.5 shrink-0 self-center rounded-full ${
-                    state === "solid"
-                      ? "bg-emerald-500"
-                      : state === "thin" || fills.length > 0
-                        ? "bg-amber-500"
-                        : "border border-muted-foreground/50"
-                  }`}
-                />
-                <span className={`shrink-0 text-xs font-medium ${focused ? "text-primary" : ""}`}>
-                  {slot.label}
-                </span>
-                <span
-                  className={`min-w-0 flex-1 truncate text-[11px] ${
-                    n > 0 ? "text-muted-foreground" : "text-muted-foreground/60"
-                  }`}
-                >
-                  {content}
-                </span>
-                {tapped && manual.status === "running" ? (
-                  <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />
-                ) : (
-                  n > 0 && <span className="shrink-0 text-[10px] text-muted-foreground">{n}</span>
-                )}
-              </div>
               {/* Manual expansion wins over auto focus on the same row. */}
               {tapped && manual.status === "done" &&
                 manual.questions.slice(0, 2).map((q) => (
@@ -216,7 +213,7 @@ export function StageBoard() {
                   <p className="text-[10px] leading-snug text-muted-foreground">{focus.reason}</p>
                 </div>
               )}
-            </div>
+            </SlotRow>
           );
         })}
       </div>

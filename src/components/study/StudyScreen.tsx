@@ -4,13 +4,15 @@ import { useStore } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { useBriefQueued } from "../../lib/analysis/studyPipeline";
 import { persistStudyOutputs } from "../../lib/history/history";
-import { useI18n, type TranslationKey } from "../../i18n";
+import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import type { IntelState, MeetingType } from "../../lib/types";
 import { ReplayScreen } from "../replay/ReplayScreen";
 import { ReportContent } from "../sidebar/ReportContent";
 import { DeliveryPanel } from "../delivery/DeliveryPanel";
 import { IntelSections } from "../live/IntelligenceBoard";
+import { slotCatalog } from "../../lib/intel/boards";
+import type { SlotDef } from "../../lib/accounts/bundleFile";
 import { ActionItemsPanel } from "../replay/ActionItemsPanel";
 import { AskPanel } from "../sidebar/AskPanel";
 import { Button } from "@/components/ui/button";
@@ -237,30 +239,85 @@ function BriefSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
   );
 }
 
-/** The sections of `intel` that came back with nothing, as their i18n title
- *  keys. Every template has exactly four sections, so `length === 4` means the
- *  whole extraction was empty. */
-function emptySectionKeys(intel: IntelState): TranslationKey[] {
-  const empty: TranslationKey[] = [];
-  const none = (a?: unknown[]) => !a || a.length === 0;
-  if (intel.meetingType === "negotiation") {
-    if (none(intel.numbers)) empty.push("board.sec.numbers");
-    if (none(intel.concessionsMe) && none(intel.concessionsThem))
-      empty.push("board.sec.concessions");
-    if (none(intel.agreed)) empty.push("board.sec.agreed");
-    if (none(intel.open)) empty.push("board.sec.open");
-  } else if (intel.meetingType === "sales") {
-    if (!intel.budget && !intel.timeline && !intel.decisionMaker) empty.push("board.sec.bant");
-    if (none(intel.objections)) empty.push("board.sec.objections");
-    if (none(intel.commitments)) empty.push("board.sec.commitments");
-    if (none(intel.competitors)) empty.push("board.sec.competitors");
-  } else if (intel.meetingType === "partnership") {
-    if (none(intel.theyHave)) empty.push("board.sec.theyHave");
-    if (none(intel.theyNeed)) empty.push("board.sec.theyNeed");
-    if (none(intel.leverage)) empty.push("board.sec.leverage");
-    if (none(intel.give) && none(intel.get)) empty.push("board.sec.giveGet");
-  }
-  return empty;
+/** Anything to show from the pre-C per-type sections (legacy recordings) or
+ *  the ledgers IntelSections still owns (objections)? */
+function legacyHasContent(intel: IntelState): boolean {
+  const some = (a?: unknown[]) => (a?.length ?? 0) > 0;
+  return (
+    some(intel.numbers) ||
+    some(intel.concessionsMe) ||
+    some(intel.concessionsThem) ||
+    some(intel.agreed) ||
+    some(intel.open) ||
+    Boolean(intel.budget || intel.timeline || intel.decisionMaker) ||
+    some(intel.objections) ||
+    some(intel.commitments) ||
+    some(intel.competitors) ||
+    some(intel.theyHave) ||
+    some(intel.theyNeed) ||
+    some(intel.leverage) ||
+    some(intel.give) ||
+    some(intel.get)
+  );
+}
+
+/** id → slot def across everything the type can produce (async: sales reads
+ *  the stage-bundle file). A recording only records which slots it FILLED, not
+ *  which stage was live — labels must resolve across all stages. */
+function useSlotCatalog(type: MeetingType): Map<string, SlotDef> | null {
+  const settings = useStore((s) => s.settings);
+  const [catalog, setCatalog] = useState<Map<string, SlotDef> | null>(null);
+  useEffect(() => {
+    let on = true;
+    void slotCatalog(type, settings).then((c) => {
+      if (on) setCatalog(c);
+    });
+    return () => {
+      on = false;
+    };
+  }, [type, settings]);
+  return catalog;
+}
+
+/** The recording's slot board, read-only: every FILLED slot with its
+ *  accumulated fills — the study face of the live board. */
+function BoardReadout({ intel }: Readonly<{ intel: IntelState }>) {
+  const { t } = useI18n();
+  const catalog = useSlotCatalog(intel.meetingType);
+  if (!catalog) return null;
+  const fills = intel.slotFills ?? [];
+  const bySlot = new Map<string, typeof fills>();
+  for (const f of fills) bySlot.set(f.slotId, [...(bySlot.get(f.slotId) ?? []), f]);
+  // Catalog order first; unknown ids (deleted custom stages) render last, raw.
+  const ordered = [
+    ...[...catalog.keys()].filter((id) => bySlot.has(id)),
+    ...[...bySlot.keys()].filter((id) => !catalog.has(id)),
+  ];
+  return (
+    <div className="flex flex-col gap-2.5">
+      {ordered.map((id) => (
+        <div key={id} className="flex flex-col gap-0.5">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            {catalog.get(id)?.label ?? id}
+          </span>
+          {(bySlot.get(id) ?? []).map((f, i) => (
+            <div key={i} className="flex items-baseline gap-1.5 text-xs">
+              <span
+                className={`shrink-0 text-[10px] ${
+                  f.speaker === "me"
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-sky-600 dark:text-sky-400"
+                }`}
+              >
+                {f.speaker === "me" ? t("speaker.you") : t("speaker.them")}
+              </span>
+              <span className="min-w-0 flex-1 leading-snug">{f.text}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /** 情報: the intelligence board run over the full recording. The meeting type is
@@ -286,8 +343,10 @@ function IntelSection() {
     );
   };
 
-  const emptyKeys = intel && intel.meetingType === meetingType ? emptySectionKeys(intel) : [];
-  const allEmpty = emptyKeys.length === 4;
+  const current = intel && intel.meetingType === meetingType ? intel : null;
+  const hasBoard = (current?.slotFills?.length ?? 0) > 0;
+  const hasLegacy = current ? legacyHasContent(current) : false;
+  const allEmpty = current !== null && !hasBoard && !hasLegacy;
 
   return (
     <div>
@@ -333,24 +392,18 @@ function IntelSection() {
               {running ? t("board.extracting") : t("board.empty")}
             </p>
           )}
-          {intel?.meetingType === meetingType && !allEmpty && (
-            /* Bento (from #133): each section becomes a card, flowing into two
-               masonry columns when the width allows — the narrow-rail
-               components read terribly stretched across one wide column. */
+          {current && !allEmpty && (
+            /* Bento (from #133): each card flows into two masonry columns when
+               width allows. The slot-board readout is the primary card (C);
+               IntelSections renders whatever legacy/ledger entries exist. */
             <div className="columns-1 gap-4 sm:columns-2 [&>div]:mb-4 [&>div]:break-inside-avoid [&>div]:rounded-xl [&>div]:border [&>div]:bg-background/60 [&>div]:p-3.5">
-              <IntelSections />
+              {hasBoard && <BoardReadout intel={current} />}
+              {hasLegacy && <IntelSections />}
             </div>
           )}
-          {/* "Scanned but found nothing" ≠ "didn't run": name the empty sections. */}
-          {intel?.meetingType === meetingType && allEmpty && (
+          {allEmpty && (
             <p className="rounded-lg border border-dashed px-3 py-2.5 text-sm text-muted-foreground">
               {t("study.intel.allEmpty")}
-            </p>
-          )}
-          {intel?.meetingType === meetingType && !allEmpty && emptyKeys.length > 0 && (
-            <p className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
-              {t("study.intel.scannedNone")}
-              {emptyKeys.map((k) => t(k)).join("・")}
             </p>
           )}
         </div>

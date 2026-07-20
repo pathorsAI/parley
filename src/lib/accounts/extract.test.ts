@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// extract.ts pulls in `log` and bundle override reading (both touch window /
-// Tauri IPC in their non-test paths) plus the real LLM call — stub them all;
-// we test the prompt assembly and normalization around the model, not the model.
+// extract.ts pulls in `log` (touches window / Tauri IPC in non-test paths)
+// plus the real LLM call — stub them all; we test the prompt assembly and
+// normalization around the model, not the model.
 vi.mock("../log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -59,10 +59,10 @@ function emptyResult(newClaims: unknown[] = []) {
   };
 }
 
-describe("extractClaimOps slot tagging (#146)", () => {
+describe("extractClaimOps (post-B6: no slot tagging)", () => {
   beforeEach(() => generateMock.mockClear());
 
-  it("injects the linked thread's stage slots and whitelists returned slotIds", async () => {
+  it("tells the model what the live board already captured, and deep-pass claims carry no slotIds", async () => {
     generateMock.mockResolvedValueOnce(
       emptyResult([
         {
@@ -72,7 +72,6 @@ describe("extractClaimOps slot tagging (#146)", () => {
           side: "theirs",
           layer: "",
           quote: "",
-          slotIds: ["discovery.problem", "bogus.slot"],
         },
       ])
     );
@@ -84,62 +83,28 @@ describe("extractClaimOps slot tagging (#146)", () => {
       existingClaims: [],
       sourceText: "逐字稿",
       sourceLabel: "meeting transcript",
-      threadId: "th",
+      capturedTexts: ["旺季每天五六次改單", "決策者是營運副總"],
     });
     const prompt = (generateMock.mock.calls[0][0] as { prompt: string }).prompt;
-    expect(prompt).toContain("Gap-board slots");
-    expect(prompt).toContain("discovery.problem");
-    // The model must not invent ids outside the offered list.
-    expect(ops.newClaims[0].slotIds).toEqual(["discovery.problem"]);
+    expect(prompt).toContain("Already captured on the live board");
+    expect(prompt).toContain("旺季每天五六次改單");
+    // The live pass is the only transcript→slot channel now.
+    expect(prompt).not.toContain("Gap-board slots");
+    expect(ops.newClaims[0].slotIds).toEqual([]);
   });
 
-  it("company-level feed (no threadId) offers the union of active sales threads' stages", async () => {
+  it("no captured texts → no captured digest in the prompt", async () => {
     generateMock.mockResolvedValueOnce(emptyResult());
     await extractClaimOps({
       settings,
       company,
       persons: [],
-      threads: [
-        thread({ id: "t1", stage: "prospecting" }),
-        thread({ id: "t2", stage: "discovery" }),
-        thread({ id: "t3", stage: "demo", status: "lost" }), // inactive → excluded
-        thread({ id: "t4", kind: "channel", stage: undefined }), // non-sales → excluded
-      ],
+      threads: [thread({})],
       existingClaims: [],
       sourceText: "notes",
       sourceLabel: "notes",
     });
     const prompt = (generateMock.mock.calls[0][0] as { prompt: string }).prompt;
-    expect(prompt).toContain("prospecting.identity");
-    expect(prompt).toContain("discovery.problem");
-    expect(prompt).not.toContain("demo.c0");
-  });
-
-  it("no bundled stage in scope → no slot digest, and any returned ids are dropped", async () => {
-    generateMock.mockResolvedValueOnce(
-      emptyResult([
-        {
-          category: "goal",
-          text: "想上白標",
-          subjects: [],
-          side: "theirs",
-          layer: "",
-          quote: "",
-          slotIds: ["discovery.problem"],
-        },
-      ])
-    );
-    const ops = await extractClaimOps({
-      settings,
-      company,
-      persons: [],
-      threads: [thread({ kind: "other", stage: undefined })],
-      existingClaims: [],
-      sourceText: "notes",
-      sourceLabel: "notes",
-    });
-    const prompt = (generateMock.mock.calls[0][0] as { prompt: string }).prompt;
-    expect(prompt).not.toContain("Gap-board slots");
-    expect(ops.newClaims[0].slotIds).toEqual([]);
+    expect(prompt).not.toContain("Already captured");
   });
 });

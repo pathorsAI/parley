@@ -3,9 +3,8 @@ import { toast } from "sonner";
 import { useStore } from "../../lib/store";
 import { useAccounts, personsOf, threadsOf, activeClaims } from "../../lib/accounts/store";
 import { composeBrief } from "../../lib/accounts/brief";
-import { stageGuideView } from "../../lib/accounts/bundles";
 import { useStageSet } from "../../lib/accounts/useStageSet";
-import { useI18n, type TranslationKey } from "../../i18n";
+import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -57,19 +56,14 @@ export function MeetingLinkSection() {
     if (!company) return;
     const state = useStore.getState();
     const existing = new Set(state.todos.map((x) => x.text));
-    // Stage checklist first (the meeting's frame), then this deal's open
-    // questions — both deduped against what's already on the list.
-    const items: string[] = [];
-    if (thread?.kind === "sales" && thread.stage) {
-      items.push(...stageGuideView((k) => t(k as TranslationKey), stageSet, thread.stage).collect);
-    }
-    items.push(
-      ...activeClaims(acc, company.id)
-        .filter(
-          (c) => c.category === "openq" && (!threadId || !c.threadId || c.threadId === threadId)
-        )
-        .map((c) => c.text)
-    );
+    // This deal's open questions only (S17, closed for good by C): the stage's
+    // collect items live on the board slots — todos carry ACTIONS, and copying
+    // collect lines here was the last two-ledgers leak.
+    const items = activeClaims(acc, company.id)
+      .filter(
+        (c) => c.category === "openq" && (!threadId || !c.threadId || c.threadId === threadId)
+      )
+      .map((c) => c.text);
     let n = 0;
     for (const text of items) {
       if (!text.trim() || existing.has(text)) continue;
