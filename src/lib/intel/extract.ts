@@ -19,7 +19,7 @@ import type {
  * Intelligence-board extraction — THE one transcript→board LLM pass (C
  * integration). Every typed meeting resolves to a slot board (boards.ts); one
  * schema fills its slots, picks the focus, tracks sales objections, and checks
- * the todo list — replacing the per-type schemas and the separate checkTodos
+ * the checklist — replacing the per-type schemas and the separate checkTodos
  * loop. Always recomputed from the full transcript, so it self-corrects as
  * context grows — no incremental-merge bugs.
  */
@@ -97,7 +97,7 @@ const todoChecksSchema = z
   );
 
 /** ONE schema for every scenario (scenario system): board fills + focus +
- *  objection ledger + todo checks. */
+ *  objection ledger + checklist checks. */
 const boardSchema = z.object({
   slotFills: slotFillsSchema,
   focus: focusSchema,
@@ -186,6 +186,35 @@ function buildPrompt(opts: {
  * its result and resets to "idle" so the pipeline extracts the new type.
  */
 const guard = makeRunGuard();
+
+/** Untrimmed final transcript for the current mode, or null when there's
+ *  nothing extractable yet. */
+function extractableTranscript(workload: LlmWorkload): string | null {
+  const state = useStore.getState();
+  // REPLAY honors the trim keep-window, same as every other study pass.
+  const trim = state.appMode === "replay" ? state.replayTrim : null;
+  const segments = trim ? state.segments.filter((s) => !isTrimmed(s, trim)) : state.segments;
+  return intelTranscriptReady(segments) ? transcriptText(segments, CAP_CHARS[workload]) : null;
+}
+
+/** The scenario no longer exists (a deleted custom id on an old recording or
+ *  stale settings). Degrade the pick to "general" so the study pipeline stops
+ *  re-dispatching this extraction forever, and never leave "running" stuck. */
+function degradeUnknownScenario(type: MeetingType): void {
+  log.warn("intel: unknown scenario — degrading to general", { type });
+  const s = useStore.getState();
+  if (s.appMode === "replay" && s.studyMeetingType === type) s.setStudyMeetingType("general");
+  s.setIntelStatus("idle");
+}
+
+/** Checklist checks are transcript-grounded — valid even when the intel result
+ *  itself is stale-typed; only a dead session discards them. */
+function markCoveredTodos(openTodos: TodoItem[], checkedIds: string[]): void {
+  const openIds = new Set(openTodos.map((t) => t.id));
+  const done = checkedIds.filter((id) => openIds.has(id));
+  if (done.length) useStore.getState().markTodosDone(done);
+}
+
 export async function runIntelExtraction(
   type: MeetingType,
   workload: LlmWorkload = "realtime"
@@ -193,14 +222,11 @@ export async function runIntelExtraction(
   const state = useStore.getState();
   if (type === "general" || state.intelStatus === "running") return;
   if (!hasProviderKey(state.settings, workload)) return;
-  // REPLAY honors the trim keep-window, same as every other study pass.
-  const trim = state.appMode === "replay" ? state.replayTrim : null;
-  const segments = trim ? state.segments.filter((s) => !isTrimmed(s, trim)) : state.segments;
-  if (!intelTranscriptReady(segments)) return;
-  const transcript = transcriptText(segments, CAP_CHARS[workload]);
+  const transcript = extractableTranscript(workload);
+  if (transcript === null) return;
 
-  // The todo auto-check rides this same pass (one LLM loop per typed meeting);
-  // it's a LIVE concern — replay/study extractions never see the checklist.
+  // The checklist auto-check rides this same pass (one LLM loop per typed
+  // meeting); it's a LIVE concern — replay/study extractions never see it.
   const openTodos = workload === "realtime" ? state.todos.filter((t) => !t.done) : [];
 
   const alive = guard.begin();
@@ -214,24 +240,15 @@ export async function runIntelExtraction(
   try {
     const board = await resolveBoard(type, state.settings);
     if (!board) {
-      // The scenario no longer exists (a deleted custom id on an old recording
-      // or stale settings). Degrade the pick to "general" so the study
-      // pipeline stops re-dispatching this extraction forever, and never
-      // leave "running" stuck.
-      log.warn("intel: unknown scenario — degrading to general", { type });
-      const s = useStore.getState();
-      if (s.appMode === "replay" && s.studyMeetingType === type) s.setStudyMeetingType("general");
-      s.setIntelStatus("idle");
+      degradeUnknownScenario(type);
       return;
     }
-    const prompt = buildPrompt({ board, transcript, openTodos });
-    const system = SYSTEM + outputLanguageInstruction(state.settings);
     const { object } = await generateObjectResilient({
       settings: state.settings,
       workload,
       schema: boardSchema,
-      system,
-      prompt,
+      system: SYSTEM + outputLanguageInstruction(state.settings),
+      prompt: buildPrompt({ board, transcript, openTodos }),
     });
 
     const known = new Set(board.slots.map((s) => s.id));
@@ -242,11 +259,7 @@ export async function runIntelExtraction(
       objections: object.objections,
     };
     if (!alive()) return;
-    // Todo checks are transcript-grounded — valid even when the intel result
-    // itself is stale-typed; only a dead session discards them.
-    const openIds = new Set(openTodos.map((t) => t.id));
-    const done = object.todoChecks.filter((id) => openIds.has(id));
-    if (done.length) useStore.getState().markTodosDone(done);
+    markCoveredTodos(openTodos, object.todoChecks);
     if (staleType()) {
       useStore.getState().setIntelStatus("idle");
       return;

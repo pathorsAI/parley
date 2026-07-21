@@ -32,7 +32,7 @@ const AUTO_EXTRACT_MS = 30_000;
 /**
  * The LIVE right rail (scenario system, 呼吸版): ONE header line — scenario
  * picker · stage chip (multi-stage scenarios only) · refresh — then the
- * scenario's slot board, the objection ledger, and the folded todo section.
+ * scenario's slot board, the objection ledger, and the folded checklist section.
  * "General" shows the goals agenda only. Picking a scenario also applies its
  * bound eval template, so the coach feed switches lenses with the board.
  */
@@ -144,7 +144,7 @@ export function IntelligenceBoard() {
             {intel?.meetingType === scenario.id && (
               <ObjectionsLedger objections={intel.objections} />
             )}
-            {/* Todos ride the same rail (C): action items only, checked by the
+            {/* The checklist rides the same rail (C): action items only, checked by the
                 same 30s pass — folded to one line until opened (呼吸版). */}
             <Suspense fallback={null}>
               <TodosSection />
@@ -184,15 +184,15 @@ export function ObjectionsLedger({
           </button>
         )}
       </div>
-      {open.map((o, i) => (
-        <div key={i} className="flex items-baseline gap-1.5 text-xs">
+      {open.map((o) => (
+        <div key={o.text} className="flex items-baseline gap-1.5 text-xs">
           <span className="font-bold text-amber-600 dark:text-amber-400">⚠</span>
           <span>{o.text}</span>
         </div>
       ))}
       {showAddressed &&
-        addressed.map((o, i) => (
-          <div key={i} className="flex items-baseline gap-1.5 text-xs">
+        addressed.map((o) => (
+          <div key={o.text} className="flex items-baseline gap-1.5 text-xs">
             <span className="text-emerald-600 dark:text-emerald-400">✓</span>
             <span className="text-muted-foreground">{o.text}</span>
           </div>

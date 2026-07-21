@@ -297,8 +297,8 @@ function BoardReadout({ intel }: Readonly<{ intel: IntelState }>) {
           <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
             {catalog.get(id)?.label ?? id}
           </span>
-          {(bySlot.get(id) ?? []).map((f, i) => (
-            <div key={i} className="flex items-baseline gap-1.5 text-xs">
+          {(bySlot.get(id) ?? []).map((f) => (
+            <div key={`${f.speaker}:${f.text}`} className="flex items-baseline gap-1.5 text-xs">
               <span
                 className={`shrink-0 text-[10px] ${
                   f.speaker === "me"

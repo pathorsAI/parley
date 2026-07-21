@@ -404,11 +404,11 @@ export function buildBuiltinBundles(t: Tr): Record<SalesStage, StageBundle> {
  *  negotiation's ledgers and partnership's leverage map, as ordinary bundles —
  *  same override/gate/claims machinery as every sales stage. */
 export function buildTypedBuiltinBundles(t: Tr): { nego: StageBundle; partner: StageBundle } {
-  const s = (id: string, key: string, query: SlotDef["query"] = { categories: [] }): SlotDef => ({
+  const s = (id: string, key: string, query?: SlotDef["query"]): SlotDef => ({
     id,
     label: t(`board.slot.${key}.label`),
     hint: t(`board.slot.${key}.hint`),
-    query,
+    query: query ?? { categories: [] },
   });
   const nego: StageBundle = {
     stage: TYPED_STAGE_IDS.negotiation,

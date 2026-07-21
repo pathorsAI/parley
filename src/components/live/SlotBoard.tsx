@@ -2,9 +2,9 @@ import { Loader2 } from "lucide-react";
 import type { ReactNode } from "react";
 
 /**
- * Shared board primitives (C integration): every typed meeting renders the
- * same one-line-per-slot model — StageBoard (sales, claims-aware) and
- * TypedBoard (negotiation/partnership, fills-only) both compose these.
+ * Shared board primitives (C integration): every scenario renders the same
+ * one-line-per-slot model — ScenarioBoard composes these for builtin and
+ * custom scenarios alike.
  */
 
 /** The counter-the-challenge banner: outranks gap-chasing, one at a time. */
@@ -20,6 +20,19 @@ export function FocusBanner({
       <p className="text-[10px] leading-snug text-muted-foreground">{reason}</p>
     </div>
   );
+}
+
+function rowClass(opts: { focused: boolean; activated: boolean; clickable: boolean }): string {
+  if (opts.focused) return "rounded-r-md border-l-2 border-primary bg-primary/10";
+  if (opts.activated) return "rounded-md bg-muted/60";
+  if (opts.clickable) return "cursor-pointer rounded-md hover:bg-muted/40";
+  return "rounded-md";
+}
+
+function dotClass(state: "empty" | "thin" | "solid"): string {
+  if (state === "solid") return "bg-emerald-500";
+  if (state === "thin") return "bg-amber-500";
+  return "border border-muted-foreground/50";
 }
 
 /** One glanceable slot line; only the focused/activated row expands (S22). */
@@ -47,31 +60,13 @@ export function SlotRow({
   children?: ReactNode;
 }>) {
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <button
+      type="button"
       onClick={onActivate}
-      onKeyDown={(e) => e.key === "Enter" && onActivate?.()}
-      className={`px-1.5 py-1 text-left transition-colors ${
-        focused
-          ? "rounded-r-md border-l-2 border-primary bg-primary/10"
-          : activated
-            ? "rounded-md bg-muted/60"
-            : clickable
-              ? "cursor-pointer rounded-md hover:bg-muted/40"
-              : "rounded-md"
-      }`}
+      className={`w-full px-1.5 py-1 text-left transition-colors ${rowClass({ focused, activated, clickable })}`}
     >
       <div className="flex items-baseline gap-1.5">
-        <span
-          className={`size-1.5 shrink-0 self-center rounded-full ${
-            state === "solid"
-              ? "bg-emerald-500"
-              : state === "thin"
-                ? "bg-amber-500"
-                : "border border-muted-foreground/50"
-          }`}
-        />
+        <span className={`size-1.5 shrink-0 self-center rounded-full ${dotClass(state)}`} />
         <span className={`shrink-0 text-xs font-medium ${focused ? "text-primary" : ""}`}>
           {label}
         </span>
@@ -89,6 +84,6 @@ export function SlotRow({
         )}
       </div>
       {children}
-    </div>
+    </button>
   );
 }

@@ -20,6 +20,18 @@ import { FocusBanner, SlotRow } from "./SlotBoard";
  * "how to ask" lines for THAT slot. The stage picker lives in the rail header
  * (IntelligenceBoard); this board renders the resolved stage.
  */
+function stageFor(
+  scenario: Scenario,
+  meetingStage: string | null | undefined,
+  threadStage: string | undefined
+): string {
+  if (meetingStage && scenario.order.includes(meetingStage)) return meetingStage;
+  if (scenario.id === "sales" && threadStage && scenario.order.includes(threadStage)) {
+    return threadStage;
+  }
+  return scenario.order[0];
+}
+
 export function ScenarioBoard({ scenario }: Readonly<{ scenario: Scenario }>) {
   const { t } = useI18n();
   const acc = useAccounts();
@@ -33,12 +45,7 @@ export function ScenarioBoard({ scenario }: Readonly<{ scenario: Scenario }>) {
   // Reactive mirror of resolveScenarioStageId (keep the two in step).
   const thread = acc.threads.find((x) => x.id === threadId) ?? null;
   const threadStage = thread?.kind === "sales" ? thread.stage : undefined;
-  const stage =
-    meetingStage && scenario.order.includes(meetingStage)
-      ? meetingStage
-      : scenario.id === "sales" && threadStage && scenario.order.includes(threadStage)
-        ? threadStage
-        : scenario.order[0];
+  const stage = stageFor(scenario, meetingStage, threadStage);
   const bundle = scenario.bundles[stage];
 
   const board = useMemo(
@@ -189,8 +196,8 @@ export function ScenarioBoard({ scenario }: Readonly<{ scenario: Scenario }>) {
                   {/* What belongs here (the hint, now on demand)… */}
                   <p className="text-[10px] leading-snug text-muted-foreground/70">{slot.hint}</p>
                   {/* …what we captured… */}
-                  {fills.map((f, i) => (
-                    <div key={i} className="flex items-baseline gap-1.5">
+                  {fills.map((f) => (
+                    <div key={`${f.speaker}:${f.text}`} className="flex items-baseline gap-1.5">
                       <span
                         className={`shrink-0 text-[10px] ${
                           f.speaker === "me"

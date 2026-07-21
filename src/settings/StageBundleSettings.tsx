@@ -67,6 +67,130 @@ function emptyStage(id: string, name: string): CustomStageDef {
   };
 }
 
+function patchSlotRow(d: Draft, i: number, patch: Partial<SlotRow>): Draft {
+  return { ...d, slots: d.slots.map((r, j) => (j === i ? { ...r, ...patch } : r)) };
+}
+
+function dropSlotRow(d: Draft, i: number): Draft {
+  return { ...d, slots: d.slots.filter((_, j) => j !== i) };
+}
+
+/** The per-stage edit form — top-level so the editor's scenario→stage maps
+ *  stay shallow. Simple fields only; queries/coach rules stay MCP/JSON-side. */
+function StageDraftForm({
+  draft,
+  setDraft,
+  nameLocked,
+  canReset,
+  canDelete,
+  confirmingDelete,
+  onSave,
+  onReset,
+  onDelete,
+}: Readonly<{
+  draft: Draft;
+  setDraft: (d: Draft) => void;
+  nameLocked: boolean;
+  canReset: boolean;
+  canDelete: boolean;
+  confirmingDelete: boolean;
+  onSave: () => void;
+  onReset: () => void;
+  onDelete: () => void;
+}>) {
+  const { t } = useI18n();
+  return (
+    <div className="flex flex-col gap-3 border-t px-3 py-3">
+      <label className="flex flex-col gap-1 text-xs">
+        <span className="text-muted-foreground">{t("settings.stages.name")}</span>
+        <Input
+          value={draft.name}
+          disabled={nameLocked}
+          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+          className="h-8"
+        />
+      </label>
+
+      <label className="flex flex-col gap-1 text-xs">
+        <span className="text-muted-foreground">{t("settings.stages.goal")}</span>
+        <Textarea
+          value={draft.goal}
+          rows={2}
+          placeholder={t("settings.stages.goalPh")}
+          onChange={(e) => setDraft({ ...draft, goal: e.target.value })}
+        />
+      </label>
+
+      <div className="flex flex-col gap-1.5 text-xs">
+        <span className="text-muted-foreground">{t("settings.stages.slots")}</span>
+        {draft.slots.map((row, i) => (
+          <div key={row.id ?? `new-${i}`} className="flex items-start gap-1.5">
+            <Input
+              value={row.label}
+              placeholder={t("settings.stages.slotLabel")}
+              onChange={(e) => setDraft(patchSlotRow(draft, i, { label: e.target.value }))}
+              className="h-8 w-36 shrink-0"
+            />
+            <Input
+              value={row.hint}
+              placeholder={t("settings.stages.slotHint")}
+              onChange={(e) => setDraft(patchSlotRow(draft, i, { hint: e.target.value }))}
+              className="h-8 flex-1"
+            />
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 shrink-0"
+              onClick={() => setDraft(dropSlotRow(draft, i))}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </div>
+        ))}
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 w-fit text-xs"
+          onClick={() => setDraft({ ...draft, slots: [...draft.slots, { label: "", hint: "" }] })}
+        >
+          <Plus className="size-3" />
+          {t("settings.stages.addSlot")}
+        </Button>
+      </div>
+
+      <label className="flex flex-col gap-1 text-xs">
+        <span className="text-muted-foreground">{t("settings.stages.exit")}</span>
+        <Textarea
+          value={draft.exitText}
+          rows={3}
+          onChange={(e) => setDraft({ ...draft, exitText: e.target.value })}
+        />
+      </label>
+
+      <div className="flex items-center gap-2">
+        <Button size="sm" className="h-7 text-xs" onClick={onSave}>
+          {t("settings.stages.save")}
+        </Button>
+        {canReset && (
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onReset}>
+            {t("settings.stages.reset")}
+          </Button>
+        )}
+        {canDelete && (
+          <Button
+            size="sm"
+            variant="outline"
+            className={`h-7 text-xs ${confirmingDelete ? "border-destructive text-destructive" : ""}`}
+            onClick={onDelete}
+          >
+            {confirmingDelete ? t("settings.stages.deleteConfirm") : t("settings.stages.delete")}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ScenarioSettings() {
   const { t } = useI18n();
   const tr = (k: string) => t(k as TranslationKey);
@@ -195,7 +319,7 @@ export function ScenarioSettings() {
     setDraft(null);
   }
 
-  async function removeStage(scenario: Scenario) {
+  async function removeStage() {
     if (!openStage) return;
     if (confirmDelete !== openStage) {
       setConfirmDelete(openStage);
@@ -222,7 +346,6 @@ export function ScenarioSettings() {
             customStages: file.customStages.filter((c) => c.id !== openStage),
           }
     );
-    void scenario;
     setOpenStage(null);
     setDraft(null);
   }
@@ -315,6 +438,7 @@ export function ScenarioSettings() {
       <div className="flex flex-col gap-1.5">
         {set.list.map((sc) => {
           const scOpened = openScenario === sc.id;
+          const scDelKey = `sc:${sc.id}`;
           const custom = !sc.builtin;
           const fileDef = file.customScenarios.find((x) => x.id === sc.id);
           return (
@@ -388,10 +512,10 @@ export function ScenarioSettings() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className={`h-8 text-xs ${confirmDelete === `sc:${sc.id}` ? "border-destructive text-destructive" : ""}`}
+                        className={`h-8 text-xs ${confirmDelete === scDelKey ? "border-destructive text-destructive" : ""}`}
                         onClick={() => void removeScenario(sc.id)}
                       >
-                        {confirmDelete === `sc:${sc.id}`
+                        {confirmDelete === scDelKey
                           ? t("settings.stages.deleteConfirm")
                           : t("settings.scenarios.delete")}
                       </Button>
@@ -429,139 +553,21 @@ export function ScenarioSettings() {
                           </button>
 
                           {opened && draft && (
-                            <div className="flex flex-col gap-3 border-t px-3 py-3">
-                              <label className="flex flex-col gap-1 text-xs">
-                                <span className="text-muted-foreground">
-                                  {t("settings.stages.name")}
-                                </span>
-                                <Input
-                                  value={draft.name}
-                                  disabled={sc.builtin && isBuiltinSalesStage(stageId)}
-                                  onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                                  className="h-8"
-                                />
-                              </label>
-
-                              <label className="flex flex-col gap-1 text-xs">
-                                <span className="text-muted-foreground">
-                                  {t("settings.stages.goal")}
-                                </span>
-                                <Textarea
-                                  value={draft.goal}
-                                  rows={2}
-                                  placeholder={t("settings.stages.goalPh")}
-                                  onChange={(e) => setDraft({ ...draft, goal: e.target.value })}
-                                />
-                              </label>
-
-                              <div className="flex flex-col gap-1.5 text-xs">
-                                <span className="text-muted-foreground">
-                                  {t("settings.stages.slots")}
-                                </span>
-                                {draft.slots.map((row, i) => (
-                                  <div key={row.id ?? `new-${i}`} className="flex items-start gap-1.5">
-                                    <Input
-                                      value={row.label}
-                                      placeholder={t("settings.stages.slotLabel")}
-                                      onChange={(e) =>
-                                        setDraft({
-                                          ...draft,
-                                          slots: draft.slots.map((r, j) =>
-                                            j === i ? { ...r, label: e.target.value } : r
-                                          ),
-                                        })
-                                      }
-                                      className="h-8 w-36 shrink-0"
-                                    />
-                                    <Input
-                                      value={row.hint}
-                                      placeholder={t("settings.stages.slotHint")}
-                                      onChange={(e) =>
-                                        setDraft({
-                                          ...draft,
-                                          slots: draft.slots.map((r, j) =>
-                                            j === i ? { ...r, hint: e.target.value } : r
-                                          ),
-                                        })
-                                      }
-                                      className="h-8 flex-1"
-                                    />
-                                    <Button
-                                      size="icon"
-                                      variant="ghost"
-                                      className="h-8 w-8 shrink-0"
-                                      onClick={() =>
-                                        setDraft({
-                                          ...draft,
-                                          slots: draft.slots.filter((_, j) => j !== i),
-                                        })
-                                      }
-                                    >
-                                      <X className="size-3.5" />
-                                    </Button>
-                                  </div>
-                                ))}
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 w-fit text-xs"
-                                  onClick={() =>
-                                    setDraft({
-                                      ...draft,
-                                      slots: [...draft.slots, { label: "", hint: "" }],
-                                    })
-                                  }
-                                >
-                                  <Plus className="size-3" />
-                                  {t("settings.stages.addSlot")}
-                                </Button>
-                              </div>
-
-                              <label className="flex flex-col gap-1 text-xs">
-                                <span className="text-muted-foreground">
-                                  {t("settings.stages.exit")}
-                                </span>
-                                <Textarea
-                                  value={draft.exitText}
-                                  rows={3}
-                                  onChange={(e) => setDraft({ ...draft, exitText: e.target.value })}
-                                />
-                              </label>
-
-                              <div className="flex items-center gap-2">
-                                <Button
-                                  size="sm"
-                                  className="h-7 text-xs"
-                                  onClick={() => void saveStage(sc)}
-                                >
-                                  {t("settings.stages.save")}
-                                </Button>
-                                {sc.builtin &&
-                                  !isCustomSalesStage(stageId) &&
-                                  !!file.overrides[stageId] && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-7 text-xs"
-                                      onClick={() => void resetBuiltinStage()}
-                                    >
-                                      {t("settings.stages.reset")}
-                                    </Button>
-                                  )}
-                                {(isCustomSalesStage(stageId) || !!customScenarioOf(stageId)) && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className={`h-7 text-xs ${confirmDelete === stageId ? "border-destructive text-destructive" : ""}`}
-                                    onClick={() => void removeStage(sc)}
-                                  >
-                                    {confirmDelete === stageId
-                                      ? t("settings.stages.deleteConfirm")
-                                      : t("settings.stages.delete")}
-                                  </Button>
-                                )}
-                              </div>
-                            </div>
+                            <StageDraftForm
+                              draft={draft}
+                              setDraft={setDraft}
+                              nameLocked={sc.builtin && isBuiltinSalesStage(stageId)}
+                              canReset={
+                                sc.builtin &&
+                                !isCustomSalesStage(stageId) &&
+                                !!file.overrides[stageId]
+                              }
+                              canDelete={isCustomSalesStage(stageId) || !!customScenarioOf(stageId)}
+                              confirmingDelete={confirmDelete === stageId}
+                              onSave={() => void saveStage(sc)}
+                              onReset={() => void resetBuiltinStage()}
+                              onDelete={() => void removeStage()}
+                            />
                           )}
                         </div>
                       );

@@ -23,6 +23,7 @@ function TodoRow({ todo }: Readonly<{ todo: TodoItem }>) {
   return (
     <div className="group flex items-start gap-2 rounded-md px-1.5 py-1 hover:bg-muted/50">
       <button
+        type="button"
         onClick={() => toggleTodo(todo.id)}
         className="mt-0.5 shrink-0 text-muted-foreground hover:text-foreground"
       >
@@ -34,6 +35,7 @@ function TodoRow({ todo }: Readonly<{ todo: TodoItem }>) {
         {todo.text}
       </span>
       <button
+        type="button"
         onClick={() => removeTodo(todo.id)}
         className="shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground hover:!text-foreground"
       >
