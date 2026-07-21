@@ -5,6 +5,7 @@ import { useStore, transcriptAsText } from "../../lib/store";
 import { useAccounts, personsOf, threadsOf, activeClaims } from "../../lib/accounts/store";
 import type { ExtractedOps } from "../../lib/accounts/store";
 import { extractClaimOps } from "../../lib/accounts/extract";
+import { fillsToClaimCandidates, resolveBoard } from "../../lib/intel/boards";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { useI18n } from "../../i18n";
 import { toast } from "sonner";
@@ -37,6 +38,14 @@ export function PostMeetingReviewButton() {
     setOpen(true);
     try {
       const acc = useAccounts.getState();
+      // B6: the live board's slot fills ARE the claim candidates — the deep
+      // pass no longer re-tags slots; it hunts people/updates/off-board intel.
+      const intel = state.intel;
+      const board =
+        intel && intel.meetingType !== "general"
+          ? await resolveBoard(intel.meetingType, state.settings)
+          : null;
+      const candidates = board ? fillsToClaimCandidates(intel?.slotFills ?? [], board.slots) : [];
       const proposed = await extractClaimOps({
         settings: state.settings,
         company,
@@ -45,10 +54,17 @@ export function PostMeetingReviewButton() {
         existingClaims: activeClaims(acc, company.id),
         sourceText: transcriptAsText(state.segments, state.speakerNames),
         sourceLabel: "meeting transcript",
-        // Scope slot tagging to the linked thread's current stage (#146).
-        threadId: threadId ?? undefined,
+        capturedTexts: candidates.map((c) => c.text),
       });
-      setOps(proposed);
+      // Board candidates lead the review list; drop any LLM re-proposal of them.
+      const seen = new Set(candidates.map((c) => c.text.trim().toLowerCase()));
+      setOps({
+        ...proposed,
+        newClaims: [
+          ...candidates,
+          ...proposed.newClaims.filter((c) => !seen.has(c.text.trim().toLowerCase())),
+        ],
+      });
     } catch (e) {
       log.error("accounts: post-meeting extraction failed", { error: String(e) });
       setOpen(false);
@@ -83,7 +99,7 @@ export function PostMeetingReviewButton() {
         <div className="fixed inset-0 z-[90] flex items-center justify-center p-6">
           <button
             type="button"
-            aria-label="close"
+            aria-label={t("common.close")}
             className="absolute inset-0 bg-black/50"
             onClick={() => setOpen(false)}
           />

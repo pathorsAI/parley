@@ -17,7 +17,9 @@ export function MeetingContextButton({ className }: Readonly<{ className?: strin
   const { t } = useI18n();
   const hasContext = useStore((s) => !!s.meetingContext.trim());
   const meetingType = useStore((s) => s.settings.meetingType);
-  const businessType = meetingType === "sales" || meetingType === "negotiation" || meetingType === "partnership";
+  // Scenario system: every scenario (builtin or custom) can link the mini-CRM;
+  // only "general" (no board) stays personal.
+  const businessType = meetingType !== "general";
   const [open, setOpen] = useState(false);
   return (
     <>

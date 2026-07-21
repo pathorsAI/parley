@@ -224,9 +224,11 @@ export type AppLanguage = "zh-TW" | "en";
 /** UI color theme preference. */
 export type AppTheme = "light" | "dark" | "system";
 
-/** What kind of meeting this is — drives which intelligence template the
- *  board runs (extraction prompts + sections). Picked on the board itself. */
-export type MeetingType = "general" | "negotiation" | "sales" | "partnership";
+/** Which meeting SCENARIO the board runs — "general" (goals only) or a
+ *  scenario id: builtin ("sales" | "negotiation" | "partnership") or a
+ *  user-defined scenario from stage-bundles.json v3. Open string on purpose
+ *  (like SalesStage): the scenario set is data, not a type. */
+export type MeetingType = string; // NOSONAR — deliberate semantic alias (scenario id), same convention as SalesStage
 
 /** A number someone said, captured with attribution (negotiation ledger). */
 export interface IntelNumber {
@@ -263,32 +265,34 @@ export interface IntelSlotFill {
 
 export interface IntelState {
   meetingType: MeetingType;
-  /* negotiation */
+  /* LEGACY sections (pre-C-integration recordings only — the unified board
+     extraction no longer writes them; the study page still renders them). */
   numbers?: IntelNumber[];
   concessionsMe?: string[];
   concessionsThem?: string[];
   agreed?: string[];
   open?: string[];
-  /* sales */
   budget?: string;
   timeline?: string;
   decisionMaker?: string;
-  objections?: IntelObjection[];
   commitments?: IntelCommitment[];
   competitors?: string[];
-  /** Live gap-board fills for THIS call's stage (§4.3, UI transient). */
+  theyHave?: string[];
+  theyNeed?: string[];
+  leverage?: string[];
+  give?: string[];
+  get?: string[];
+  /* CURRENT model: the slot board + ledgers. */
+  /** Sales objection tracker (addressed state drives ⚠/✓ and the counter focus). */
+  objections?: IntelObjection[];
+  /** Board slot fills for every typed meeting (§4.3, UI transient — the
+   *  post-meeting review turns them into claim candidates). */
   slotFills?: IntelSlotFill[];
   /** Auto-focus (S22): the ONE thing to say next, judged each refresh.
    *  kind "objection" = counter the counterpart's fresh unaddressed challenge
    *  (slotId empty); kind "gap" = chase a board slot (stage order first,
    *  unfilled first, riding the current topic). */
   focusSlot?: { kind: "gap" | "objection"; slotId: string; question: string; reason: string };
-  /* partnership */
-  theyHave?: string[];
-  theyNeed?: string[];
-  leverage?: string[];
-  give?: string[];
-  get?: string[];
 }
 
 /** Live-screen posture, switched from the titlebar-center segmented control:

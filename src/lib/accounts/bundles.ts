@@ -3,10 +3,14 @@ import { log } from "../log";
 import { SALES_STAGES, type SalesStage } from "./types";
 import {
   buildBuiltinBundles,
+  buildTypedBuiltinBundles,
   EMPTY_BUNDLE_FILE,
+  GENERIC_GUIDANCE,
   parseBundleFile,
+  SCENARIO_GUIDANCE,
   serializeBundleFile,
   stageOrder,
+  TYPED_STAGE_IDS,
   type ParsedBundleFile,
   type StageBundle,
   type Tr,
@@ -21,13 +25,21 @@ import {
 
 export type {
   CoachRuleDef,
+  CustomScenarioDef,
   CustomStageDef,
   ParsedBundleFile,
   SlotDef,
   StageBundle,
   StageBundleFile,
 } from "./bundleFile";
-export { buildBuiltinBundles, isBundleLike, parseBundleFile, stageOrder } from "./bundleFile";
+export {
+  BUILTIN_SCENARIO_IDS,
+  buildBuiltinBundles,
+  isBundleLike,
+  parseBundleFile,
+  stageOrder,
+  TYPED_STAGE_IDS,
+} from "./bundleFile";
 
 const LS_KEY = "parley-stage-bundles";
 
@@ -123,6 +135,97 @@ export function buildStageSet(t: Tr, parsed: ParsedBundleFile): StageSet {
     customized.add(stage);
   }
   return { order: stageOrder(parsed.customStages), bundles, names, customized };
+}
+
+// ── Scenarios(v3)────────────────────────────────────────────────────────────
+
+/**
+ * One meeting scenario — the unit the board/extraction/pickers run on. Builtin
+ * or custom, a scenario is exactly: an ordered list of stages, each with a
+ * bundle. Sales has five stages; the other builtins have one; customs choose.
+ */
+export interface Scenario {
+  id: string;
+  name: string;
+  /** Emoji for pickers/chips. */
+  icon: string;
+  builtin: boolean;
+  /** Extraction guidance ahead of the shared prompt (model input, English). */
+  guidance: string;
+  /** Eval template auto-applied when this scenario is picked (if it exists). */
+  evalTemplateId?: string;
+  /** Stage ids in pipeline order (length 1 = no stage row in the UI). */
+  order: string[];
+  names: Record<string, string>;
+  bundles: Record<string, StageBundle>;
+}
+
+export interface ScenarioSet {
+  /** Builtins first (sales, negotiation, partnership), then customs. */
+  list: Scenario[];
+  byId: Record<string, Scenario>;
+}
+
+/** The full scenario universe: builtins from code+i18n (overrides applied),
+ *  customs from the file. THE lookup every scenario-aware surface uses. */
+export function buildScenarioSet(t: Tr, parsed: ParsedBundleFile): ScenarioSet {
+  const stageSet = buildStageSet(t, parsed);
+  const typed = buildTypedBuiltinBundles(t);
+  const negoStage = TYPED_STAGE_IDS.negotiation;
+  const partnerStage = TYPED_STAGE_IDS.partnership;
+  const sales: Scenario = {
+    id: "sales",
+    name: t("scenario.sales.name"),
+    icon: "🤝",
+    builtin: true,
+    guidance: SCENARIO_GUIDANCE.sales,
+    evalTemplateId: "tpl-sales",
+    order: stageSet.order,
+    names: stageSet.names,
+    bundles: stageSet.bundles,
+  };
+  const negotiation: Scenario = {
+    id: "negotiation",
+    name: t("scenario.negotiation.name"),
+    icon: "⚖️",
+    builtin: true,
+    guidance: SCENARIO_GUIDANCE.negotiation,
+    evalTemplateId: "tpl-negotiation",
+    order: [negoStage],
+    names: { [negoStage]: t("scenario.negotiation.name") },
+    bundles: { [negoStage]: parsed.overrides[negoStage] ?? typed.nego },
+  };
+  const partnership: Scenario = {
+    id: "partnership",
+    name: t("scenario.partnership.name"),
+    icon: "🚀",
+    builtin: true,
+    guidance: SCENARIO_GUIDANCE.partnership,
+    order: [partnerStage],
+    names: { [partnerStage]: t("scenario.partnership.name") },
+    bundles: { [partnerStage]: parsed.overrides[partnerStage] ?? typed.partner },
+  };
+  const customs: Scenario[] = parsed.customScenarios.map((sc) => {
+    const names: Record<string, string> = {};
+    const bundles: Record<string, StageBundle> = {};
+    for (const st of sc.stages) {
+      names[st.id] = st.name;
+      bundles[st.id] = parsed.overrides[st.id] ?? st.bundle;
+    }
+    return {
+      id: sc.id,
+      name: sc.name,
+      icon: sc.icon ?? "🎯",
+      builtin: false,
+      guidance: sc.guidance ?? GENERIC_GUIDANCE,
+      ...(sc.evalTemplateId ? { evalTemplateId: sc.evalTemplateId } : {}),
+      order: sc.stages.map((st) => st.id),
+      names,
+      bundles,
+    };
+  });
+  const list = [sales, negotiation, partnership, ...customs].filter((s) => s.order.length > 0);
+  return { list, byId: Object.fromEntries(list.map((s) => [s.id, s])) };
 }
 
 /**

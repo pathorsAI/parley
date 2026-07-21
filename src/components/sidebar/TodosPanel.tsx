@@ -6,23 +6,121 @@ import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { TodoItem } from "../../lib/types";
 
 /**
- * Meeting checklist: add/check/remove ad-hoc items, and let the AI auto-check
- * items that have been covered. (The template picker that used to sit here was
- * removed — per-stage collect cells on the stage board cover the "what to ask
- * this meeting" job, and the two surfaces just duplicated each other.)
+ * Meeting checklist. Two faces of the same list (S17: todos keep only ACTION
+ * items — info-gathering lives on the board slots):
+ * - TodosPanel: the whole intelligence rail for GENERAL meetings, with the
+ *   manual AI check (general has no extraction pass to ride).
+ * - TodosSection: a flat section inside the typed board — auto-checked by the
+ *   unified 30s extraction, so no AI button.
  */
+
+function TodoRow({ todo }: Readonly<{ todo: TodoItem }>) {
+  const toggleTodo = useStore((s) => s.toggleTodo);
+  const removeTodo = useStore((s) => s.removeTodo);
+  return (
+    <div className="group flex items-start gap-2 rounded-md px-1.5 py-1 hover:bg-muted/50">
+      <button
+        type="button"
+        onClick={() => toggleTodo(todo.id)}
+        className="mt-0.5 shrink-0 text-muted-foreground hover:text-foreground"
+      >
+        {todo.done ? <Check className="size-4 text-emerald-500" /> : <Square className="size-4" />}
+      </button>
+      <span
+        className={`flex-1 text-sm leading-snug ${todo.done ? "text-muted-foreground line-through" : ""}`}
+      >
+        {todo.text}
+      </span>
+      <button
+        type="button"
+        onClick={() => removeTodo(todo.id)}
+        className="shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground hover:!text-foreground"
+      >
+        <X className="size-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function AddForm({ compact = false }: Readonly<{ compact?: boolean }>) {
+  const { t } = useI18n();
+  const addTodo = useStore((s) => s.addTodo);
+  const [input, setInput] = useState("");
+  function add(e: React.FormEvent) {
+    e.preventDefault();
+    addTodo(input);
+    setInput("");
+  }
+  return (
+    <form
+      onSubmit={add}
+      className={compact ? "flex items-center gap-2 pt-1" : "flex items-center gap-2 border-t p-2.5"}
+    >
+      <Input
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        placeholder={t("todos.addPlaceholder")}
+        className={compact ? "h-7 text-xs" : "h-8 text-sm"}
+      />
+      <Button
+        type="submit"
+        size="icon"
+        className={compact ? "size-7 shrink-0" : "size-8 shrink-0"}
+        disabled={!input.trim()}
+      >
+        <Plus className="size-4" />
+      </Button>
+    </form>
+  );
+}
+
+/** The board-rail section (scenario meetings, 呼吸版): folded to one line —
+ *  count + chevron — until opened; action items only, auto-checked by the
+ *  unified extraction pass. */
+export function TodosSection() {
+  const { t } = useI18n();
+  const todos = useStore((s) => s.todos);
+  const [open, setOpen] = useState(false);
+  const done = todos.filter((x) => x.done).length;
+  return (
+    <div className="flex flex-col gap-1 border-t pt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((x) => !x)}
+        className="flex items-baseline gap-2 text-left"
+      >
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          {t("board.todos.title")}
+        </span>
+        <span className="text-[10px] text-muted-foreground/70">
+          {todos.length > 0 ? t("todos.doneCount", { done, total: todos.length }) : t("todos.noItems")}
+        </span>
+        <span className="ml-auto text-[10px] text-muted-foreground/70">
+          ＋ {open ? "▴" : "▾"}
+        </span>
+      </button>
+      {open && (
+        <>
+          {todos.map((x) => (
+            <TodoRow key={x.id} todo={x} />
+          ))}
+          <AddForm compact />
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The whole-rail panel (GENERAL meetings). */
 export function TodosPanel() {
   const { t } = useI18n();
   const todos = useStore((s) => s.todos);
-  const addTodo = useStore((s) => s.addTodo);
-  const toggleTodo = useStore((s) => s.toggleTodo);
-  const removeTodo = useStore((s) => s.removeTodo);
-  const [input, setInput] = useState("");
   const [checking, setChecking] = useState(false);
 
-  const done = todos.filter((t) => t.done).length;
+  const done = todos.filter((x) => x.done).length;
 
   async function aiUpdate() {
     const state = useStore.getState();
@@ -40,12 +138,6 @@ export function TodosPanel() {
     } finally {
       setChecking(false);
     }
-  }
-
-  function add(e: React.FormEvent) {
-    e.preventDefault();
-    addTodo(input);
-    setInput("");
   }
 
   return (
@@ -74,37 +166,12 @@ export function TodosPanel() {
               {t("todos.empty")}
             </p>
           ) : (
-            todos.map((t) => (
-              <div key={t.id} className="group flex items-start gap-2 rounded-md px-1.5 py-1 hover:bg-muted/50">
-                <button onClick={() => toggleTodo(t.id)} className="mt-0.5 shrink-0 text-muted-foreground hover:text-foreground">
-                  {t.done ? <Check className="size-4 text-emerald-500" /> : <Square className="size-4" />}
-                </button>
-                <span className={`flex-1 text-sm leading-snug ${t.done ? "text-muted-foreground line-through" : ""}`}>
-                  {t.text}
-                </span>
-                <button
-                  onClick={() => removeTodo(t.id)}
-                  className="shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground hover:!text-foreground"
-                >
-                  <X className="size-3.5" />
-                </button>
-              </div>
-            ))
+            todos.map((x) => <TodoRow key={x.id} todo={x} />)
           )}
         </div>
       </ScrollArea>
 
-      <form onSubmit={add} className="flex items-center gap-2 border-t p-2.5">
-        <Input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={t("todos.addPlaceholder")}
-          className="h-8 text-sm"
-        />
-        <Button type="submit" size="icon" className="size-8 shrink-0" disabled={!input.trim()}>
-          <Plus className="size-4" />
-        </Button>
-      </form>
+      <AddForm />
     </div>
   );
 }

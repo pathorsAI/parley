@@ -208,8 +208,11 @@ export function useAnalysisEngine() {
         void runAnalysis({ mode: "live" });
       }
 
-      // Auto-check the TODO checklist every ~45s while recording.
+      // Auto-check the TODO checklist every ~45s while recording — GENERAL
+      // meetings only: typed meetings ride the intel board's 30s pass, which
+      // returns todoChecks in the same call (one LLM loop per meeting).
       if (
+        settings.meetingType === "general" &&
         now >= lastRun.current.todos + 45_000 &&
         !todoBusy.current &&
         hasProviderKey(settings, "realtime") &&

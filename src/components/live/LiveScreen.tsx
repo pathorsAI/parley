@@ -40,25 +40,27 @@ export function LiveScreen() {
     >
       {layout === "coach" ? (
         <>
-          <ResizablePanel id="transcript" defaultSize={26} minSize={15}>
+          {/* Pixel minimums (window minWidth is 900): below these the rails'
+              one-line rows degrade into clipped fragments. */}
+          <ResizablePanel id="transcript" defaultSize={26} minSize="220px">
             <MeetingView />
           </ResizablePanel>
           <ResizableHandle withHandle />
-          <ResizablePanel id="feed" defaultSize={48} minSize={30}>
+          <ResizablePanel id="feed" defaultSize={48} minSize="320px">
             <CoachFeed onSeek={setHighlightMs} />
           </ResizablePanel>
           <ResizableHandle withHandle />
-          <ResizablePanel id="board" defaultSize={26} minSize={16}>
+          <ResizablePanel id="board" defaultSize={26} minSize="260px">
             <IntelligenceBoard />
           </ResizablePanel>
         </>
       ) : (
         <>
-          <ResizablePanel id="transcript" defaultSize={70} minSize={40}>
+          <ResizablePanel id="transcript" defaultSize={70} minSize="420px">
             <MeetingView />
           </ResizablePanel>
           <ResizableHandle withHandle />
-          <ResizablePanel id="findings" defaultSize={30} minSize={18}>
+          <ResizablePanel id="findings" defaultSize={30} minSize="260px">
             <FindingsPanel mode="live" onSeek={setHighlightMs} />
           </ResizablePanel>
         </>

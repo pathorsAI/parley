@@ -7,11 +7,16 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import {
   buildBuiltinBundles,
+  buildTypedBuiltinBundles,
   isBundleLike,
   isValidCustomStageId,
+  isValidScenarioId,
   parseBundleFile,
+  serializeBundleFile,
   slotsMatchStage,
   stageOrder,
+  TYPED_STAGE_IDS,
+  type CustomScenarioDef,
   type CustomStageDef,
   type ParsedBundleFile,
   type StageBundle,
@@ -21,11 +26,12 @@ import { translate, type TranslationKey } from "../src/i18n/messages";
 import type { AppLanguage } from "../src/lib/types";
 
 /**
- * Stage-bundles MCP server (#155): lets an external Claude edit Parley's sales
- * domain know-how — stage bundles (slots/hints/exit criteria) and CUSTOM
- * pipeline stages — by editing the same config-dir `stage-bundles.json` the
- * app reads. The app doesn't need to be running; a live meeting picks changes
- * up within one 30s extraction cycle.
+ * Stage-bundles MCP server (#155, scenario system): lets an external Claude
+ * edit Parley's meeting know-how — stage bundles (slots/hints/exit criteria),
+ * CUSTOM sales stages, and whole CUSTOM SCENARIOS (v3: e.g. an interview or
+ * fundraise-pitch board) — by editing the same config-dir `stage-bundles.json`
+ * the app reads. The app doesn't need to be running; a live meeting picks
+ * changes up within one 30s extraction cycle.
  *
  * Register (Claude Code):
  *   claude mcp add parley-bundles -- bun run /path/to/parley/mcp/stage-bundles-server.ts
@@ -52,13 +58,8 @@ function readFile(): { parsed: ParsedBundleFile; warnings: string[] } {
 /** Atomic write: the app may read the file at any moment (30s live loop). */
 function writeFile(parsed: ParsedBundleFile): void {
   mkdirSync(dirname(FILE), { recursive: true });
-  const body = JSON.stringify(
-    { version: 2, stages: parsed.customStages, overrides: parsed.overrides },
-    null,
-    2
-  );
   const tmp = `${FILE}.tmp`;
-  writeFileSync(tmp, body, "utf8");
+  writeFileSync(tmp, serializeBundleFile(parsed), "utf8");
   renameSync(tmp, FILE);
 }
 
@@ -77,13 +78,31 @@ function fail(message: string) {
   return { content: [{ type: "text" as const, text: `ERROR: ${message}` }], isError: true };
 }
 
-/** Effective bundle for a stage id (builtin + override, or custom). */
+/** Effective bundle for a stage id (builtin + override, custom sales stage,
+ *  typed builtin, or a custom scenario's stage). */
 function effectiveBundle(parsed: ParsedBundleFile, stage: string): StageBundle | null {
   const override = parsed.overrides[stage];
   if (override) return override;
   const custom = parsed.customStages.find((c) => c.id === stage);
   if (custom) return custom.bundle;
+  for (const sc of parsed.customScenarios) {
+    const st = sc.stages.find((x) => x.id === stage);
+    if (st) return st.bundle;
+  }
+  if (stage === TYPED_STAGE_IDS.negotiation) return buildTypedBuiltinBundles(t).nego;
+  if (stage === TYPED_STAGE_IDS.partnership) return buildTypedBuiltinBundles(t).partner;
   return (SALES_STAGES as string[]).includes(stage) ? buildBuiltinBundles(t)[stage] : null;
+}
+
+/** Every stage id the file currently knows (override targets). */
+function knownStageIds(parsed: ParsedBundleFile): Set<string> {
+  return new Set([
+    ...SALES_STAGES,
+    TYPED_STAGE_IDS.negotiation,
+    TYPED_STAGE_IDS.partnership,
+    ...parsed.customStages.map((c) => c.id),
+    ...parsed.customScenarios.flatMap((sc) => sc.stages.map((x) => x.id)),
+  ]);
 }
 
 /** Validate a caller-supplied bundle for a stage; returns an error string or null. */
@@ -140,8 +159,7 @@ server.tool(
   },
   async ({ stage, bundle }) => {
     const { parsed } = readFile();
-    const known = new Set([...SALES_STAGES, ...parsed.customStages.map((c) => c.id)]);
-    if (!known.has(stage)) return fail(`unknown stage "${stage}"`);
+    if (!knownStageIds(parsed).has(stage)) return fail(`unknown stage "${stage}"`);
     const err = bundleError(stage, bundle);
     if (err) return fail(err);
     parsed.overrides[stage] = { ...(bundle as unknown as StageBundle), stage };
@@ -231,6 +249,103 @@ server.tool(
     if (!parsed.customStages.some((c) => c.id === id)) return fail(`no custom stage "${id}"`);
     parsed.customStages = parsed.customStages.filter((c) => c.id !== id);
     delete parsed.overrides[id];
+    writeFile(parsed);
+    return ok({ written: FILE, id });
+  }
+);
+
+// ── Scenarios (v3) ───────────────────────────────────────────────────────────
+
+server.tool(
+  "list_scenarios",
+  "List all meeting scenarios: builtin (sales / negotiation / partnership) + custom, with their stage ids in order.",
+  {},
+  async () => {
+    const { parsed, warnings } = readFile();
+    const builtins = [
+      { id: "sales", source: "builtin", stages: stageOrder(parsed.customStages) },
+      { id: "negotiation", source: "builtin", stages: [TYPED_STAGE_IDS.negotiation] },
+      { id: "partnership", source: "builtin", stages: [TYPED_STAGE_IDS.partnership] },
+    ];
+    const customs = parsed.customScenarios.map((sc) => ({
+      id: sc.id,
+      name: sc.name,
+      icon: sc.icon,
+      source: "custom",
+      stages: sc.stages.map((x) => x.id),
+      evalTemplateId: sc.evalTemplateId,
+    }));
+    return ok([...builtins, ...customs], warnings);
+  }
+);
+
+server.tool(
+  "upsert_scenario",
+  "Create or replace a CUSTOM meeting scenario (e.g. interview, fundraise pitch). id: lowercase slug, no dots, not a builtin. Each stage's slot ids must be `<stageId>.<slot>` and stage ids must be globally unique slugs. guidance: English extraction framing for the model. evalTemplateId: optional coach template auto-applied when picked.",
+  {
+    id: z.string().describe("slug id, e.g. interview"),
+    name: z.string().describe("display name, e.g. 面試"),
+    icon: z.string().optional().describe("emoji, default 🎯"),
+    guidance: z.string().optional().describe("English extraction guidance line"),
+    evalTemplateId: z.string().optional(),
+    stages: z
+      .array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          bundle: z.record(z.string(), z.unknown()),
+        })
+      )
+      .min(1)
+      .describe("stages in pipeline order (one stage = no stage row in the UI)"),
+  },
+  async ({ id, name, icon, guidance, evalTemplateId, stages }) => {
+    const { parsed } = readFile();
+    if (!isValidScenarioId(id))
+      return fail(`invalid scenario id "${id}": lowercase slug, not a builtin, not "general"`);
+    if (!name.trim()) return fail("name must be non-empty");
+    const otherStageIds = new Set(
+      [...knownStageIds(parsed)].filter(
+        (sid) =>
+          !parsed.customScenarios.find((sc) => sc.id === id)?.stages.some((x) => x.id === sid)
+      )
+    );
+    const defs: CustomStageDef[] = [];
+    for (const st of stages) {
+      if (!isValidCustomStageId(st.id)) return fail(`invalid stage id "${st.id}"`);
+      if (otherStageIds.has(st.id)) return fail(`stage id "${st.id}" already exists elsewhere`);
+      const err = bundleError(st.id, st.bundle);
+      if (err) return fail(`stage "${st.id}": ${err}`);
+      defs.push({
+        id: st.id,
+        name: st.name,
+        bundle: { ...(st.bundle as unknown as StageBundle), stage: st.id, name: st.name },
+      });
+    }
+    const def: CustomScenarioDef = {
+      id,
+      name,
+      ...(icon ? { icon } : {}),
+      ...(guidance ? { guidance } : {}),
+      ...(evalTemplateId ? { evalTemplateId } : {}),
+      stages: defs,
+    };
+    parsed.customScenarios = [...parsed.customScenarios.filter((sc) => sc.id !== id), def];
+    writeFile(parsed);
+    return ok({ written: FILE, id, stages: defs.map((x) => x.id) });
+  }
+);
+
+server.tool(
+  "remove_scenario",
+  "Remove a custom scenario (its stages' overrides go too). Recordings that used it fall back to 'general' in the live picker.",
+  { id: z.string() },
+  async ({ id }) => {
+    const { parsed } = readFile();
+    const sc = parsed.customScenarios.find((x) => x.id === id);
+    if (!sc) return fail(`no custom scenario "${id}"`);
+    for (const st of sc.stages) delete parsed.overrides[st.id];
+    parsed.customScenarios = parsed.customScenarios.filter((x) => x.id !== id);
     writeFile(parsed);
     return ok({ written: FILE, id });
   }
