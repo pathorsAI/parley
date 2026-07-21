@@ -228,7 +228,7 @@ export type AppTheme = "light" | "dark" | "system";
  *  scenario id: builtin ("sales" | "negotiation" | "partnership") or a
  *  user-defined scenario from stage-bundles.json v3. Open string on purpose
  *  (like SalesStage): the scenario set is data, not a type. */
-export type MeetingType = string & {};
+export type MeetingType = string; // NOSONAR — deliberate semantic alias (scenario id), same convention as SalesStage
 
 /** A number someone said, captured with attribution (negotiation ledger). */
 export interface IntelNumber {
