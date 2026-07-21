@@ -6,11 +6,14 @@ import { SALES_STAGES, type ClaimCategory, type SalesStage } from "./types";
  * config-dir IO) and by the MCP editing server (mcp/stage-bundles-server.ts),
  * so both sides validate with exactly the same rules (#155).
  *
- * File format v2 (config-dir `stage-bundles.json`):
- *   { version: 2,
- *     stages:   [{ id, name, insertAfter?, bundle }],   // user-defined stages
- *     overrides: { [stageId]: StageBundle } }           // whole-stage replace (S9)
- * v1 files ({ version: 1, overrides }) keep parsing unchanged.
+ * File format v3 (config-dir `stage-bundles.json`):
+ *   { version: 3,
+ *     stages:    [{ id, name, insertAfter?, bundle }],  // custom SALES stages
+ *     overrides: { [stageId]: StageBundle },            // whole-stage replace (S9)
+ *     scenarios: [{ id, name, icon?, guidance?, evalTemplateId?, stages }] }
+ * v1 ({ version: 1, overrides }) and v2 (no scenarios) keep parsing unchanged.
+ * Builtin scenarios (sales / negotiation / partnership) live in code+i18n;
+ * their stages accept overrides like any other stage.
  */
 
 /** One board cell. Ids are stage-namespaced: `discovery.problem`. */
@@ -68,19 +71,53 @@ export interface CustomStageDef {
   bundle: StageBundle;
 }
 
-/** The persisted file. v1 = overrides only; v2 adds custom stages. */
+/**
+ * A user-defined meeting SCENARIO (v3) — the same kind of thing as the builtin
+ * 銷售/談判/合作: an ordered list of stages, each carrying a board bundle.
+ * Single-stage scenarios (the common case) render without a stage row.
+ */
+export interface CustomScenarioDef {
+  /** Slug id; becomes the meeting-type value. Must not shadow a builtin. */
+  id: string;
+  name: string;
+  /** Emoji shown on the scenario picker (default 🎯). */
+  icon?: string;
+  /** Extraction guidance ahead of the shared prompt — model input, English. */
+  guidance?: string;
+  /** Eval template to auto-apply when this scenario is picked. */
+  evalTemplateId?: string;
+  /** Pipeline order = array order (insertAfter is ignored here). */
+  stages: CustomStageDef[];
+}
+
+/** Builtin scenario ids — these come from code+i18n, never from the file. */
+export const BUILTIN_SCENARIO_IDS = ["sales", "negotiation", "partnership"] as const;
+
+/** Stage ids of the builtin single-stage scenarios (they double as the slot-id
+ *  prefix, which is why they differ from the scenario ids — `negotiation` is
+ *  already taken by the sales pipeline's 報價議價 stage). */
+export const TYPED_STAGE_IDS = { negotiation: "nego", partnership: "partner" } as const;
+
+/** The persisted file. v1 = overrides only; v2 adds custom stages; v3 adds
+ *  custom scenarios. */
 export interface StageBundleFile {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   stages?: CustomStageDef[];
   overrides?: Partial<Record<SalesStage, StageBundle>>;
+  scenarios?: CustomScenarioDef[];
 }
 
 export interface ParsedBundleFile {
   customStages: CustomStageDef[];
   overrides: Partial<Record<SalesStage, StageBundle>>;
+  customScenarios: CustomScenarioDef[];
 }
 
-export const EMPTY_BUNDLE_FILE: ParsedBundleFile = { customStages: [], overrides: {} };
+export const EMPTY_BUNDLE_FILE: ParsedBundleFile = {
+  customStages: [],
+  overrides: {},
+  customScenarios: [],
+};
 
 type Warn = (message: string, context?: Record<string, unknown>) => void;
 
@@ -103,12 +140,26 @@ export function slotsMatchStage(bundle: StageBundle, stage: string): boolean {
   return bundle.slots.every((s) => s.id.startsWith(`${stage}.`));
 }
 
+/** Every stage id the builtins claim (sales pipeline + typed scenarios). */
+const RESERVED_STAGE_IDS = new Set<string>([
+  ...SALES_STAGES,
+  TYPED_STAGE_IDS.negotiation,
+  TYPED_STAGE_IDS.partnership,
+]);
+
 /** Custom stage ids are dot-free slugs and must not shadow a builtin. */
 export function isValidCustomStageId(id: unknown): id is string {
+  return typeof id === "string" && /^[a-z][a-z0-9-]*$/.test(id) && !RESERVED_STAGE_IDS.has(id);
+}
+
+/** Scenario ids are dot-free slugs and must not shadow a builtin scenario or
+ *  the "general" (no-board) meeting type. */
+export function isValidScenarioId(id: unknown): id is string {
   return (
     typeof id === "string" &&
     /^[a-z][a-z0-9-]*$/.test(id) &&
-    !(SALES_STAGES as string[]).includes(id)
+    !(BUILTIN_SCENARIO_IDS as readonly string[]).includes(id) &&
+    id !== "general"
   );
 }
 
@@ -160,8 +211,53 @@ export function parseBundleFile(raw: string, warn: Warn = () => {}): ParsedBundl
     }
   }
 
-  // 2. Overrides — keyed to a builtin or a (just-parsed) custom stage.
-  const knownIds = new Set<string>([...SALES_STAGES, ...seen]);
+  // 2. Custom scenarios (v3). First definition of an id wins; stage ids must
+  //    be globally unique (claims carry `<stage>.<slot>` ids, so a collision
+  //    would cross-wire two scenarios' boards).
+  const customScenarios: CustomScenarioDef[] = [];
+  const seenScenarios = new Set<string>();
+  const seenStagesGlobal = new Set<string>(seen);
+  for (const entry of Array.isArray(file.scenarios) ? file.scenarios : []) {
+    const sc = entry as CustomScenarioDef | null;
+    if (
+      !sc ||
+      !isValidScenarioId(sc.id) ||
+      seenScenarios.has(sc.id) ||
+      typeof sc.name !== "string" ||
+      !sc.name.trim() ||
+      !Array.isArray(sc.stages)
+    ) {
+      warn("stage-bundles: dropped malformed custom scenario", { id: sc?.id });
+      continue;
+    }
+    const stages: CustomStageDef[] = [];
+    for (const st of sc.stages) {
+      if (isCustomStageLike(st) && !seenStagesGlobal.has(st.id)) {
+        seenStagesGlobal.add(st.id);
+        stages.push({ id: st.id, name: st.name, bundle: { ...st.bundle, stage: st.id, name: st.name } });
+      } else {
+        warn("stage-bundles: dropped malformed scenario stage", {
+          scenario: sc.id,
+          id: (st as CustomStageDef | null)?.id,
+        });
+      }
+    }
+    seenScenarios.add(sc.id);
+    customScenarios.push({
+      id: sc.id,
+      name: sc.name,
+      ...(typeof sc.icon === "string" && sc.icon.trim() ? { icon: sc.icon } : {}),
+      ...(typeof sc.guidance === "string" && sc.guidance.trim() ? { guidance: sc.guidance } : {}),
+      ...(typeof sc.evalTemplateId === "string" && sc.evalTemplateId.trim()
+        ? { evalTemplateId: sc.evalTemplateId }
+        : {}),
+      stages,
+    });
+  }
+
+  // 3. Overrides — keyed to any builtin stage (sales pipeline + typed
+  //    scenarios' single stages) or a just-parsed custom stage.
+  const knownIds = new Set<string>([...RESERVED_STAGE_IDS, ...seenStagesGlobal]);
   const overrides: Partial<Record<SalesStage, StageBundle>> = {};
   for (const [stage, o] of Object.entries(file.overrides ?? {})) {
     if (!knownIds.has(stage)) {
@@ -172,14 +268,19 @@ export function parseBundleFile(raw: string, warn: Warn = () => {}): ParsedBundl
       warn("stage-bundles: dropped malformed override", { stage });
     }
   }
-  return { customStages, overrides };
+  return { customStages, overrides, customScenarios };
 }
 
-/** Serialize back to the v2 file format — the single writer shape for the
+/** Serialize back to the v3 file format — the single writer shape for the
  *  Settings editor, the MCP server, and tests (round-trips with parse). */
 export function serializeBundleFile(parsed: ParsedBundleFile): string {
   return JSON.stringify(
-    { version: 2, stages: parsed.customStages, overrides: parsed.overrides },
+    {
+      version: 3,
+      stages: parsed.customStages,
+      overrides: parsed.overrides,
+      scenarios: parsed.customScenarios,
+    },
     null,
     2
   );
@@ -298,3 +399,68 @@ export function buildBuiltinBundles(t: Tr): Record<SalesStage, StageBundle> {
     closing: coarseBundle("closing", t, 30),
   };
 }
+
+/** The builtin single-stage boards of the typed scenarios (scenario system):
+ *  negotiation's ledgers and partnership's leverage map, as ordinary bundles —
+ *  same override/gate/claims machinery as every sales stage. */
+export function buildTypedBuiltinBundles(t: Tr): { nego: StageBundle; partner: StageBundle } {
+  const s = (id: string, key: string, query: SlotDef["query"] = { categories: [] }): SlotDef => ({
+    id,
+    label: t(`board.slot.${key}.label`),
+    hint: t(`board.slot.${key}.hint`),
+    query,
+  });
+  const nego: StageBundle = {
+    stage: TYPED_STAGE_IDS.negotiation,
+    boardTitle: t("scenario.negotiation.name"),
+    slots: [
+      s("nego.numbers", "nego.numbers"),
+      s("nego.give", "nego.give"),
+      s("nego.get", "nego.get"),
+      s("nego.agreed", "nego.agreed"),
+      s("nego.open", "nego.open"),
+      s("nego.next", "nego.next", { categories: ["nextmove"] }),
+    ],
+    exitCriteria: [],
+    coachRules: [{ kind: "nextstep-gate", triggerAtRemainingPct: 20, cooldownSec: 300 }],
+    defaultDurationMin: 60,
+  };
+  const partner: StageBundle = {
+    stage: TYPED_STAGE_IDS.partnership,
+    boardTitle: t("scenario.partnership.name"),
+    slots: [
+      s("partner.have", "partner.have"),
+      s("partner.need", "partner.need"),
+      s("partner.leverage", "partner.leverage", { categories: ["leverage"] }),
+      s("partner.give", "partner.give"),
+      s("partner.get", "partner.get"),
+      s("partner.next", "partner.next", { categories: ["nextmove"] }),
+    ],
+    exitCriteria: [],
+    coachRules: [{ kind: "nextstep-gate", triggerAtRemainingPct: 20, cooldownSec: 300 }],
+    defaultDurationMin: 60,
+  };
+  return { nego, partner };
+}
+
+// ── Scenario guidance(model input,English)─────────────────────────────────
+// Per-scenario framing ahead of the shared slot/focus extraction instructions.
+
+export const SCENARIO_GUIDANCE: Record<string, string> = {
+  sales:
+    "This is a SALES call. Also track objections: every challenge/doubt the counterpart raised " +
+    "and whether it was substantively answered.",
+  negotiation:
+    "This is a NEGOTIATION. Every number said (price, quantity, term) becomes ONE fill of the " +
+    "numbers slot — value plus what it was about; the fill's speaker field carries who said it. " +
+    "Concessions land on the give/get slots by side.",
+  partnership:
+    "This is a PARTNERSHIP talk. For the leverage slot, propose concrete ways the two sides can " +
+    "leverage each other based on the counterpart's stated position (their assets × our needs, " +
+    "and vice versa), including proactive ways WE can help THEM first.",
+};
+
+/** Fallback guidance for custom scenarios that don't carry their own. */
+export const GENERIC_GUIDANCE =
+  "Map what was said onto the provided board slots for this meeting scenario. " +
+  "Also track objections: challenges/doubts the counterpart raised and whether they were answered.";

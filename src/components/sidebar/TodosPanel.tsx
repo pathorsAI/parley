@@ -75,28 +75,39 @@ function AddForm({ compact = false }: Readonly<{ compact?: boolean }>) {
   );
 }
 
-/** The board-rail section (typed meetings): action items only, auto-checked
- *  by the unified extraction pass — glanceable, no chrome. */
+/** The board-rail section (scenario meetings, 呼吸版): folded to one line —
+ *  count + chevron — until opened; action items only, auto-checked by the
+ *  unified extraction pass. */
 export function TodosSection() {
   const { t } = useI18n();
   const todos = useStore((s) => s.todos);
+  const [open, setOpen] = useState(false);
   const done = todos.filter((x) => x.done).length;
   return (
     <div className="flex flex-col gap-1 border-t pt-2">
-      <div className="flex items-baseline gap-2">
+      <button
+        type="button"
+        onClick={() => setOpen((x) => !x)}
+        className="flex items-baseline gap-2 text-left"
+      >
         <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
           {t("board.todos.title")}
         </span>
-        {todos.length > 0 && (
-          <span className="text-[10px] text-muted-foreground/70">
-            {t("todos.doneCount", { done, total: todos.length })}
-          </span>
-        )}
-      </div>
-      {todos.map((x) => (
-        <TodoRow key={x.id} todo={x} />
-      ))}
-      <AddForm compact />
+        <span className="text-[10px] text-muted-foreground/70">
+          {todos.length > 0 ? t("todos.doneCount", { done, total: todos.length }) : t("todos.noItems")}
+        </span>
+        <span className="ml-auto text-[10px] text-muted-foreground/70">
+          ＋ {open ? "▴" : "▾"}
+        </span>
+      </button>
+      {open && (
+        <>
+          {todos.map((x) => (
+            <TodoRow key={x.id} todo={x} />
+          ))}
+          <AddForm compact />
+        </>
+      )}
     </div>
   );
 }

@@ -86,7 +86,7 @@ describe("parseBundleFile — v2", () => {
   });
 
   it("empty / broken json → empty file", () => {
-    expect(parseBundleFile("")).toEqual({ customStages: [], overrides: {} });
+    expect(parseBundleFile("")).toEqual({ customStages: [], overrides: {}, customScenarios: [] });
     expect(parseBundleFile("{ not json").customStages).toEqual([]);
   });
 });
@@ -133,5 +133,73 @@ describe("isValidCustomStageId", () => {
     expect(isValidCustomStageId("2cold")).toBe(false);
     expect(isValidCustomStageId("cold.call")).toBe(false);
     expect(isValidCustomStageId("closing")).toBe(false);
+  });
+});
+
+describe("parseBundleFile — v3 scenarios", () => {
+  function scenario(id: string, over: Record<string, unknown> = {}) {
+    return {
+      id,
+      name: `${id} 情境`,
+      stages: [{ id: `${id}-main`, name: "主板", bundle: bundle(`${id}-main`) }],
+      ...over,
+    };
+  }
+
+  it("parses a custom scenario and round-trips through serialize (v3)", () => {
+    const raw = JSON.stringify({ version: 3, scenarios: [scenario("interview", { icon: "🎯", guidance: "g", evalTemplateId: "tpl-interview" })] });
+    const out = parseBundleFile(raw);
+    expect(out.customScenarios).toHaveLength(1);
+    expect(out.customScenarios[0]).toMatchObject({
+      id: "interview",
+      icon: "🎯",
+      guidance: "g",
+      evalTemplateId: "tpl-interview",
+    });
+    expect(out.customScenarios[0].stages[0].bundle.stage).toBe("interview-main");
+    const again = parseBundleFile(serializeBundleFile(out));
+    expect(again).toEqual(out);
+  });
+
+  it("drops scenarios with invalid/builtin ids and stages that collide globally", () => {
+    const raw = JSON.stringify({
+      version: 3,
+      stages: [custom("coldcall")],
+      scenarios: [
+        scenario("sales"), // shadows a builtin scenario
+        scenario("Bad Id"),
+        scenario("ok", {
+          stages: [
+            { id: "coldcall", name: "撞名", bundle: bundle("coldcall") }, // collides with custom sales stage
+            { id: "nego", name: "撞內建", bundle: bundle("nego") }, // reserved typed stage
+            { id: "ok-main", name: "主板", bundle: bundle("ok-main") },
+          ],
+        }),
+      ],
+    });
+    const out = parseBundleFile(raw);
+    expect(out.customScenarios.map((s) => s.id)).toEqual(["ok"]);
+    expect(out.customScenarios[0].stages.map((s) => s.id)).toEqual(["ok-main"]);
+  });
+
+  it("accepts overrides keyed to typed builtin stages and scenario stages", () => {
+    const raw = JSON.stringify({
+      version: 3,
+      scenarios: [scenario("iv")],
+      overrides: {
+        nego: bundle("nego"),
+        "iv-main": bundle("iv-main"),
+        ghost: bundle("ghost"),
+      },
+    });
+    const out = parseBundleFile(raw);
+    expect(out.overrides.nego).toBeDefined();
+    expect(out.overrides["iv-main"]).toBeDefined();
+    expect(out.overrides.ghost).toBeUndefined();
+  });
+
+  it("v2 files parse with empty customScenarios", () => {
+    const raw = JSON.stringify({ version: 2, stages: [custom("coldcall")] });
+    expect(parseBundleFile(raw).customScenarios).toEqual([]);
   });
 });

@@ -1,22 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
 
-// resolveBoard's sales branch reads the live store/stage file — not under test
-// here (the pure helpers are); stub the chain so importing boards.ts is clean.
-vi.mock("../accounts/currentStage", () => ({ resolveMeetingBundle: vi.fn() }));
+// resolveBoard reads the live store/stage file — not under test here (the pure
+// helpers are); stub the chain so importing boards.ts is clean.
+vi.mock("../accounts/currentStage", () => ({ resolveScenarioStageId: vi.fn() }));
 
 import { translate, type TranslationKey } from "../../i18n/messages";
 import {
   applyNextStepGate,
+  boardFromBundle,
   fillsToClaimCandidates,
   nextSlotIdOf,
-  typedBoard,
-  withSharedSalesSlots,
+  withSharedSlots,
   type MeetingBoard,
 } from "./boards";
-import type { SlotDef } from "../accounts/bundleFile";
+import { buildScenarioSet } from "../accounts/bundles";
+import { EMPTY_BUNDLE_FILE, type SlotDef } from "../accounts/bundleFile";
 import type { IntelSlotFill } from "../types";
 
 const t = (key: TranslationKey) => translate("zh-TW", key);
+const tr = (k: string) => t(k as TranslationKey);
 
 function slot(id: string, query: SlotDef["query"] = { categories: [] }): SlotDef {
   return { id, label: id, hint: "h", query };
@@ -26,15 +28,20 @@ function fill(slotId: string, text: string, speaker: "me" | "them" = "them"): In
   return { slotId, text, quote: "", speaker };
 }
 
-describe("withSharedSalesSlots", () => {
-  it("appends next-step and competitor slots when the bundle lacks them", () => {
-    const out = withSharedSalesSlots([slot("discovery.problem")], t);
+describe("withSharedSlots", () => {
+  it("appends next-step (always) and competitors (sales) when the bundle lacks them", () => {
+    const out = withSharedSlots([slot("discovery.problem")], t, { competitors: true });
     expect(out.map((s) => s.id)).toEqual([
       "discovery.problem",
       "sales.next",
       "sales.competitors",
     ]);
     expect(out[1].query.categories).toEqual(["nextmove"]);
+    // Non-sales boards get the next slot only.
+    expect(withSharedSlots([slot("iv.depth")], t).map((s) => s.id)).toEqual([
+      "iv.depth",
+      "sales.next",
+    ]);
   });
 
   it("keeps the bundle's own .next slot (prospecting) and competitor query", () => {
@@ -42,16 +49,26 @@ describe("withSharedSalesSlots", () => {
       slot("prospecting.next", { categories: ["nextmove"] }),
       slot("prospecting.rivals", { categories: ["competitor"] }),
     ];
-    const out = withSharedSalesSlots(own, t);
+    const out = withSharedSlots(own, t, { competitors: true });
     expect(out).toHaveLength(2);
     expect(nextSlotIdOf(out)).toBe("prospecting.next");
   });
 });
 
-describe("typedBoard", () => {
-  it("negotiation and partnership carry fixed boards with a next-step slot", () => {
-    const nego = typedBoard("negotiation", t);
-    expect(nego.slots.map((s) => s.id)).toEqual([
+describe("buildScenarioSet (builtins)", () => {
+  const set = buildScenarioSet(tr, EMPTY_BUNDLE_FILE);
+
+  it("ships sales (multi-stage) + negotiation/partnership (single-stage)", () => {
+    expect(set.list.map((s) => s.id)).toEqual(["sales", "negotiation", "partnership"]);
+    expect(set.byId.sales.order.length).toBeGreaterThan(1);
+    expect(set.byId.negotiation.order).toEqual(["nego"]);
+    expect(set.byId.partnership.order).toEqual(["partner"]);
+  });
+
+  it("typed boards carry i18n labels and a next-step slot; boardFromBundle gates them", () => {
+    const nego = set.byId.negotiation;
+    const bundle = nego.bundles.nego;
+    expect(bundle.slots.map((s) => s.id)).toEqual([
       "nego.numbers",
       "nego.give",
       "nego.get",
@@ -59,18 +76,29 @@ describe("typedBoard", () => {
       "nego.open",
       "nego.next",
     ]);
-    expect(nego.nextSlotId).toBe("nego.next");
-    const partner = typedBoard("partnership", t);
-    expect(partner.slots.some((s) => s.id === "partner.leverage")).toBe(true);
-    expect(partner.nextSlotId).toBe("partner.next");
-    // Labels resolve through i18n, not raw keys.
-    expect(nego.slots[0].label).toBe("數字帳本");
+    expect(bundle.slots[0].label).toBe("數字帳本");
+    const board = boardFromBundle(nego, bundle, t);
+    expect(board.nextSlotId).toBe("nego.next");
+    expect(board.durationMin).toBe(60);
+    expect(board.gateAtRemainingPct).toBe(20);
+    // No competitor slot outside sales.
+    expect(board.slots.some((s) => s.id === "sales.competitors")).toBe(false);
+  });
+
+  it("every sales stage board ends with a next-step slot (own or shared)", () => {
+    const sales = set.byId.sales;
+    for (const stage of sales.order) {
+      const board = boardFromBundle(sales, sales.bundles[stage], t);
+      expect(board.nextSlotId, stage).not.toBeNull();
+    }
   });
 });
 
 describe("applyNextStepGate", () => {
   const board: MeetingBoard = {
-    type: "negotiation",
+    scenarioId: "negotiation",
+    stageId: "nego",
+    guidance: "",
     slots: [slot("nego.numbers"), slot("nego.next")],
     durationMin: 60,
     gateAtRemainingPct: 20,

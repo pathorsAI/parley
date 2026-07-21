@@ -4,7 +4,7 @@ import { useStore } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { useBriefQueued } from "../../lib/analysis/studyPipeline";
 import { persistStudyOutputs } from "../../lib/history/history";
-import { useI18n } from "../../i18n";
+import { useI18n, type TranslationKey } from "../../i18n";
 import { log } from "../../lib/log";
 import type { IntelState, MeetingType } from "../../lib/types";
 import { ReplayScreen } from "../replay/ReplayScreen";
@@ -12,7 +12,8 @@ import { ReportContent } from "../sidebar/ReportContent";
 import { DeliveryPanel } from "../delivery/DeliveryPanel";
 import { IntelSections } from "../live/IntelligenceBoard";
 import { slotCatalog } from "../../lib/intel/boards";
-import type { SlotDef } from "../../lib/accounts/bundleFile";
+import { useScenarioSet } from "../../lib/accounts/useStageSet";
+import { BUILTIN_SCENARIO_IDS, type SlotDef } from "../../lib/accounts/bundleFile";
 import { ActionItemsPanel } from "../replay/ActionItemsPanel";
 import { AskPanel } from "../sidebar/AskPanel";
 import { Button } from "@/components/ui/button";
@@ -24,10 +25,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
-const TYPES: MeetingType[] = ["general", "negotiation", "sales", "partnership"];
-/** The typed templates offered by the intel section's picker cards. */
-const TYPED: Exclude<MeetingType, "general">[] = ["negotiation", "sales", "partnership"];
 
 /** The report's section anchors (order = page order = TOC-rail order). */
 const SECTIONS = [
@@ -343,23 +340,30 @@ function IntelSection() {
     );
   };
 
+  const scenarios = useScenarioSet();
   const current = intel && intel.meetingType === meetingType ? intel : null;
   const hasBoard = (current?.slotFills?.length ?? 0) > 0;
   const hasLegacy = current ? legacyHasContent(current) : false;
   const allEmpty = current !== null && !hasBoard && !hasLegacy;
+  /** Builtin scenarios ship a one-line description; customs describe themselves. */
+  const descOf = (id: string) =>
+    (BUILTIN_SCENARIO_IDS as readonly string[]).includes(id)
+      ? t(`study.intel.type.${id}.desc` as TranslationKey)
+      : "";
 
   return (
     <div>
       {meetingType !== "general" && (
         <div className="mb-3 flex items-center gap-2">
-          <Select value={meetingType} onValueChange={(v) => pickType(v as MeetingType)}>
+          <Select value={meetingType} onValueChange={(v) => pickType(v)}>
             <SelectTrigger className="h-7 w-52 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {TYPES.map((v) => (
-                <SelectItem key={v} value={v}>
-                  {t(`board.type.${v}`)}
+              <SelectItem value="general">{t("board.type.general")}</SelectItem>
+              {scenarios.list.map((s) => (
+                <SelectItem key={s.id} value={s.id}>
+                  {s.icon} {s.name}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -368,20 +372,22 @@ function IntelSection() {
         </div>
       )}
       {meetingType === "general" ? (
-        // No template picked yet: the empty state is the type picker, not a dead end.
+        // No scenario picked yet: the empty state is the picker, not a dead end.
         <div className="flex flex-col gap-2">
           <p className="mb-1 text-sm text-muted-foreground">{t("study.intel.pick")}</p>
-          {TYPED.map((v) => (
+          {scenarios.list.map((s) => (
             <button
-              key={v}
+              key={s.id}
               type="button"
-              onClick={() => pickType(v)}
+              onClick={() => pickType(s.id)}
               className="rounded-lg border bg-muted/20 px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-muted/40"
             >
-              <div className="text-sm font-medium">{t(`board.type.${v}`)}</div>
-              <div className="mt-0.5 text-xs text-muted-foreground">
-                {t(`study.intel.type.${v}.desc`)}
+              <div className="text-sm font-medium">
+                {s.icon} {s.name}
               </div>
+              {descOf(s.id) && (
+                <div className="mt-0.5 text-xs text-muted-foreground">{descOf(s.id)}</div>
+              )}
             </button>
           ))}
         </div>

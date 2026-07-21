@@ -55,3 +55,17 @@ add_custom_stage {
   }
 }
 ```
+
+## 情境(Scenarios,v3)
+
+情境系統之後,`stage-bundles.json` 升到 **v3**:銷售只是內建情境之一(五階段),談判/合作是單階段內建情境(stage id `nego`/`partner`,可用 `upsert_stage_override` 覆寫),而你可以**新增整個自訂情境**(例:面試、募資簡報)。v1/v2 檔案照常解析。
+
+新工具:
+
+| 工具 | 用途 |
+|---|---|
+| `list_scenarios` | 列出內建+自訂情境與各自的階段 |
+| `upsert_scenario` | 建立/整包替換一個自訂情境:`{id, name, icon?, guidance?, evalTemplateId?, stages:[{id,name,bundle}]}`。單階段情境在 UI 不顯示階段列;`guidance` 是餵給抽取模型的英文開場;`evalTemplateId` 讓選情境時自動套教練模板 |
+| `remove_scenario` | 刪除自訂情境(連同其階段的 overrides) |
+
+規則:情境 id 與階段 id 都是小寫 slug、不可撞內建;slot id 必須以 `<stageId>.` 開頭;階段 id 全域唯一(claims 以 slot id 掛卡)。

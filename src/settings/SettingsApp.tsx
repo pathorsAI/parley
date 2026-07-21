@@ -64,7 +64,7 @@ import type { AppLanguage, AppTheme, EvalDef, LlmProvider,
   LlmWorkload, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 import { VoiceTypingSettings } from "./VoiceTypingSettings";
 import { TranslateSettings } from "./TranslateSettings";
-import { StageBundleSettings } from "./StageBundleSettings";
+import { ScenarioSettings } from "./StageBundleSettings";
 import { SaveDestinationPicker } from "../components/SaveDestinationPicker";
 import { PermissionsPanel } from "./PermissionsPanel";
 
@@ -884,8 +884,8 @@ export function SettingsApp() {
         )}
 
         {cat === "stages" && (
-          <Section title={t("settings.stages.title")}>
-            <StageBundleSettings />
+          <Section title={t("settings.scenarios.title")}>
+            <ScenarioSettings />
           </Section>
         )}
 

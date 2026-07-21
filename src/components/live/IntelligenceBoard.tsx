@@ -1,13 +1,15 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { runIntelExtraction } from "../../lib/intel/extract";
+import { useScenarioSet } from "../../lib/accounts/useStageSet";
+import type { Scenario } from "../../lib/accounts/bundles";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import type { IntelObjection, MeetingType } from "../../lib/types";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { TypedBoard } from "./TypedBoard";
+import { ScenarioBoard } from "./ScenarioBoard";
 import {
   Select,
   SelectContent,
@@ -22,87 +24,113 @@ const TodosPanel = lazy(() =>
 const TodosSection = lazy(() =>
   import("../sidebar/TodosPanel").then((m) => ({ default: m.TodosSection }))
 );
-const StageBoard = lazy(() =>
-  import("./StageBoard").then((m) => ({ default: m.StageBoard }))
-);
 
-const TYPES: MeetingType[] = ["general", "negotiation", "sales", "partnership"];
 /** Re-extract cadence while recording (each run reads the full transcript). */
 // Realtime lane is cheap and fast — refresh the board every 30s (was 90s).
 const AUTO_EXTRACT_MS = 30_000;
 
 /**
- * The LIVE right rail — ONE rendering model for every typed meeting (C
- * integration): the meeting-type picker selects which slot BOARD runs (sales =
- * this call's stage bundle + shared slots; negotiation/partnership = fixed
- * builtin boards). Below the board: the sales objection ledger and the todo
- * section (action items, auto-checked by the same extraction pass). "General"
- * shows the goals agenda only. Extraction re-runs on a 30s cadence while
- * recording, and on demand via the refresh button.
+ * The LIVE right rail (scenario system, 呼吸版): ONE header line — scenario
+ * picker · stage chip (multi-stage scenarios only) · refresh — then the
+ * scenario's slot board, the objection ledger, and the folded todo section.
+ * "General" shows the goals agenda only. Picking a scenario also applies its
+ * bound eval template, so the coach feed switches lenses with the board.
  */
 export function IntelligenceBoard() {
   const { t } = useI18n();
   const meetingType = useStore((s) => s.settings.meetingType);
+  const evalTemplates = useStore((s) => s.settings.evalTemplates);
   const updateSettings = useStore((s) => s.updateSettings);
+  const meetingStage = useStore((s) => s.meetingStage);
+  const setMeetingStage = useStore((s) => s.setMeetingStage);
   const intel = useStore((s) => s.intel);
   const intelStatus = useStore((s) => s.intelStatus);
   const recording = useStore((s) => s.meetingStatus === "recording");
   const running = intelStatus === "running";
 
+  const scenarios = useScenarioSet();
+  // A deleted custom scenario in settings degrades to "general", never crashes.
+  const scenario: Scenario | null = scenarios.byId[meetingType] ?? null;
+
   // Slow auto-extraction while a typed meeting is recording; immediate first
-  // run on type switch so the board isn't empty for 90s.
+  // run on scenario switch so the board isn't empty for 30s.
   useEffect(() => {
-    if (!recording || meetingType === "general") return;
+    if (!recording || !scenario) return;
     const run = () =>
-      runIntelExtraction(meetingType, "realtime").catch((e) =>
+      runIntelExtraction(scenario.id, "realtime").catch((e) =>
         log.warn("intel: run failed", { error: String(e) })
       );
     run();
     const id = setInterval(run, AUTO_EXTRACT_MS);
     return () => clearInterval(id);
-  }, [recording, meetingType]);
+  }, [recording, scenario]);
+
+  function pickScenario(v: MeetingType) {
+    const next = scenarios.byId[v];
+    // Scenario-bound eval template rides along (when it exists) — the coach
+    // feed's lens follows the board.
+    const tpl = next?.evalTemplateId
+      ? evalTemplates.find((x) => x.id === next.evalTemplateId)
+      : undefined;
+    updateSettings({
+      meetingType: v,
+      ...(tpl ? { evaluations: tpl.evals.map((e) => ({ ...e })) } : {}),
+    });
+  }
+
+  const stage =
+    scenario && meetingStage && scenario.order.includes(meetingStage)
+      ? meetingStage
+      : scenario?.order[0];
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-1.5 px-3 pt-2.5 pb-1.5">
-        <span className="flex-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {t("board.title")}
-        </span>
-        {meetingType !== "general" && (
+      {/* ONE header line: scenario · stage · refresh (呼吸版). */}
+      <div className="flex items-center gap-1.5 px-3 pt-2 pb-2">
+        <Select value={scenario ? meetingType : "general"} onValueChange={pickScenario}>
+          <SelectTrigger size="sm" className="h-7 w-auto min-w-0 gap-1 border-none bg-transparent px-1.5 text-xs font-medium shadow-none">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="general">{t("board.type.general")}</SelectItem>
+            {scenarios.list.map((s) => (
+              <SelectItem key={s.id} value={s.id}>
+                {s.icon} {s.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {scenario && scenario.order.length > 1 && stage && (
+          <Select value={stage} onValueChange={(v) => setMeetingStage(v)}>
+            <SelectTrigger size="sm" className="h-6 w-auto min-w-0 gap-1 rounded-full border px-2.5 text-[11px] text-muted-foreground shadow-none">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {scenario.order.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {scenario.names[s] ?? s}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <span className="flex-1" />
+        {scenario && (
           <Button
             size="icon"
             variant="ghost"
             className="h-6 w-6"
             disabled={running}
             title={t("board.refresh")}
-            onClick={() => void runIntelExtraction(meetingType, "realtime")}
+            onClick={() => void runIntelExtraction(scenario.id, "realtime")}
           >
             {running ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
           </Button>
         )}
       </div>
 
-      {/* Meeting-type picker: which board this rail runs. */}
-      <div className="px-3 pb-2">
-        <Select
-          value={meetingType}
-          onValueChange={(v) => updateSettings({ meetingType: v as MeetingType })}
-        >
-          <SelectTrigger className="h-7 w-full text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {TYPES.map((v) => (
-              <SelectItem key={v} value={v}>
-                {t(`board.type.${v}`)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      {meetingType === "general" ? (
-        <div className="min-h-0 flex-1">
+      {!scenario ? (
+        <div className="min-h-0 flex-1 border-t">
           <Suspense fallback={null}>
             <TodosPanel />
           </Suspense>
@@ -110,25 +138,14 @@ export function IntelligenceBoard() {
       ) : (
         <ScrollArea className="min-h-0 flex-1 border-t">
           <div className="flex flex-col gap-3 px-3 py-2.5">
-            {meetingType === "sales" ? (
-              <Suspense fallback={null}>
-                <StageBoard />
-              </Suspense>
-            ) : (
-              <TypedBoard type={meetingType} />
-            )}
-            {!intel && (
-              <p className="py-2 text-center text-xs text-muted-foreground">
-                {running ? t("board.extracting") : t("board.empty")}
-              </p>
-            )}
+            <ScenarioBoard scenario={scenario} />
             {/* The objection ledger is the ONE home of objection facts; the
                 board's counter banner carries only the reply (A3). */}
-            {meetingType === "sales" && intel?.meetingType === "sales" && (
+            {intel?.meetingType === scenario.id && (
               <ObjectionsLedger objections={intel.objections} />
             )}
-            {/* Todos ride the same rail now (C): action items only, checked by
-                the same 30s pass — no separate strip, no separate LLM loop. */}
+            {/* Todos ride the same rail (C): action items only, checked by the
+                same 30s pass — folded to one line until opened (呼吸版). */}
             <Suspense fallback={null}>
               <TodosSection />
             </Suspense>
@@ -139,29 +156,48 @@ export function IntelligenceBoard() {
   );
 }
 
-/** The sales objection tracker — addressed state drives ⚠/✓. */
+/** The objection tracker (呼吸版): open items in front, answered ones folded
+ *  behind a count — addressed state drives ⚠/✓. */
 export function ObjectionsLedger({
   objections,
 }: Readonly<{ objections?: IntelObjection[] }>) {
   const { t } = useI18n();
+  const [showAddressed, setShowAddressed] = useState(false);
   if (!objections?.length) return null;
+  const open = objections.filter((o) => !o.addressed);
+  const addressed = objections.filter((o) => o.addressed);
   return (
-    <Section title={t("board.sec.objections")}>
-      {objections.map((o, i) => (
-        <div key={i} className="flex items-baseline gap-1.5 text-xs">
-          <span
-            className={
-              o.addressed
-                ? "text-emerald-600 dark:text-emerald-400"
-                : "font-bold text-amber-600 dark:text-amber-400"
-            }
+    <div className="flex flex-col gap-1">
+      <div className="flex items-baseline gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          {open.length > 0
+            ? t("board.objections.open", { n: open.length })
+            : t("board.objections.none")}
+        </span>
+        {addressed.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowAddressed((x) => !x)}
+            className="text-[10px] text-muted-foreground/70 hover:text-foreground"
           >
-            {o.addressed ? "✓" : "⚠"}
-          </span>
-          <span className={o.addressed ? "text-muted-foreground" : ""}>{o.text}</span>
+            {t("board.objections.addressed", { n: addressed.length })} {showAddressed ? "▴" : "▾"}
+          </button>
+        )}
+      </div>
+      {open.map((o, i) => (
+        <div key={i} className="flex items-baseline gap-1.5 text-xs">
+          <span className="font-bold text-amber-600 dark:text-amber-400">⚠</span>
+          <span>{o.text}</span>
         </div>
       ))}
-    </Section>
+      {showAddressed &&
+        addressed.map((o, i) => (
+          <div key={i} className="flex items-baseline gap-1.5 text-xs">
+            <span className="text-emerald-600 dark:text-emerald-400">✓</span>
+            <span className="text-muted-foreground">{o.text}</span>
+          </div>
+        ))}
+    </div>
   );
 }
 

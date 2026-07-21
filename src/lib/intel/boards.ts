@@ -1,20 +1,28 @@
 import { translate, type TranslationKey } from "../../i18n/messages";
-import { resolveMeetingBundle } from "../accounts/currentStage";
-import { buildStageSet, readStageBundleFile } from "../accounts/bundles";
+import { resolveScenarioStageId } from "../accounts/currentStage";
+import {
+  buildScenarioSet,
+  readStageBundleFile,
+  type Scenario,
+  type ScenarioSet,
+} from "../accounts/bundles";
 import type { SlotDef, StageBundle } from "../accounts/bundleFile";
 import type { ExtractedNewClaim } from "../accounts/store";
 import type { IntelSlotFill, IntelState, MeetingType, Settings } from "../types";
 
 /**
- * ONE board model for every typed meeting (C-integration): the intelligence
- * board is a slot board regardless of meeting type. Sales resolves THIS call's
- * stage bundle (plus shared cross-stage slots); negotiation and partnership
- * carry fixed builtin boards. The unified extraction fills slots, the board
- * renders them, and the next-step gate reads board state deterministically.
+ * ONE board model for every meeting scenario (scenario system): a scenario is
+ * an ordered list of stages, each stage a slot board. The unified extraction
+ * fills slots, the board renders them, and the next-step gate reads board
+ * state deterministically. Sales is not special here — it's just the builtin
+ * scenario that happens to have five stages.
  */
 export interface MeetingBoard {
-  type: Exclude<MeetingType, "general">;
+  scenarioId: string;
+  stageId: string;
   slots: SlotDef[];
+  /** Extraction guidance (from the scenario; model input). */
+  guidance: string;
   /** Expected meeting length (minutes) — drives the next-step gate. */
   durationMin: number;
   /** Gate fires when remaining time falls below this percentage. */
@@ -23,11 +31,11 @@ export interface MeetingBoard {
   nextSlotId: string | null;
 }
 
-function slot(
+function sharedSlot(
   t: (k: TranslationKey) => string,
   id: string,
   key: string,
-  query: SlotDef["query"] = { categories: [] }
+  query: SlotDef["query"]
 ): SlotDef {
   return {
     id,
@@ -37,46 +45,24 @@ function slot(
   };
 }
 
-/** Negotiation board: the ledgers the old IntelSections held, as slots. */
-function negotiationSlots(t: (k: TranslationKey) => string): SlotDef[] {
-  return [
-    slot(t, "nego.numbers", "nego.numbers"),
-    slot(t, "nego.give", "nego.give"),
-    slot(t, "nego.get", "nego.get"),
-    slot(t, "nego.agreed", "nego.agreed"),
-    slot(t, "nego.open", "nego.open"),
-    slot(t, "nego.next", "nego.next", { categories: ["nextmove"] }),
-  ];
-}
-
-/** Partnership board: they-have × they-need, leverage, give/get. */
-function partnershipSlots(t: (k: TranslationKey) => string): SlotDef[] {
-  return [
-    slot(t, "partner.have", "partner.have"),
-    slot(t, "partner.need", "partner.need"),
-    slot(t, "partner.leverage", "partner.leverage", { categories: ["leverage"] }),
-    slot(t, "partner.give", "partner.give"),
-    slot(t, "partner.get", "partner.get"),
-    slot(t, "partner.next", "partner.next", { categories: ["nextmove"] }),
-  ];
-}
-
 /**
- * Cross-stage sales slots appended to every stage bundle: the next-step
- * commitment and competitor mentions — the two ledgers every sales call keeps
- * regardless of stage. A bundle that already owns a `.next` slot (prospecting)
- * keeps its own. Exported for tests.
+ * Cross-stage shared slots: every board keeps a next-step slot (the gate's
+ * target); sales boards also track competitor mentions. A bundle that already
+ * owns a `.next` slot keeps its own. Exported for tests.
  */
-export function withSharedSalesSlots(
+export function withSharedSlots(
   slots: SlotDef[],
-  t: (k: TranslationKey) => string
+  t: (k: TranslationKey) => string,
+  opts: { competitors?: boolean } = {}
 ): SlotDef[] {
   const out = [...slots];
   if (!slots.some((s) => s.id.endsWith(".next"))) {
-    out.push(slot(t, "sales.next", "sales.next", { categories: ["nextmove"] }));
+    out.push(sharedSlot(t, "sales.next", "sales.next", { categories: ["nextmove"] }));
   }
-  if (!slots.some((s) => s.query.categories.includes("competitor"))) {
-    out.push(slot(t, "sales.competitors", "sales.competitors", { categories: ["competitor"] }));
+  if (opts.competitors && !slots.some((s) => s.query.categories.includes("competitor"))) {
+    out.push(
+      sharedSlot(t, "sales.competitors", "sales.competitors", { categories: ["competitor"] })
+    );
   }
   return out;
 }
@@ -89,55 +75,53 @@ export function nextSlotIdOf(slots: SlotDef[]): string | null {
 const GATE_DEFAULT_PCT = 20;
 const DURATION_DEFAULT_MIN = 60;
 
-/** The sales board for one stage bundle — shared slots appended, gate params
- *  read from the bundle's (previously dormant) nextstep-gate coach rule. Sync,
- *  so StageBoard can derive it from its already-loaded stage set. */
-export function salesBoardFromBundle(
+/** The board for one scenario stage — shared slots appended, gate params read
+ *  from the bundle's nextstep-gate coach rule. Pure/sync; exported for the
+ *  ScenarioBoard, which already holds the scenario. */
+export function boardFromBundle(
+  scenario: Pick<Scenario, "id" | "guidance">,
   bundle: StageBundle,
   t: (k: TranslationKey) => string
 ): MeetingBoard {
-  const slots = withSharedSalesSlots(bundle.slots, t);
+  const slots = withSharedSlots(bundle.slots, t, { competitors: scenario.id === "sales" });
   const gate = bundle.coachRules.find((r) => r.kind === "nextstep-gate");
   return {
-    type: "sales",
+    scenarioId: scenario.id,
+    stageId: bundle.stage,
     slots,
+    guidance: scenario.guidance,
     durationMin: bundle.defaultDurationMin ?? DURATION_DEFAULT_MIN,
     gateAtRemainingPct: gate?.triggerAtRemainingPct ?? GATE_DEFAULT_PCT,
     nextSlotId: nextSlotIdOf(slots),
   };
 }
 
-/** The fixed board for a non-sales typed meeting. Sync. */
-export function typedBoard(
-  type: "negotiation" | "partnership",
-  t: (k: TranslationKey) => string
-): MeetingBoard {
-  const slots = type === "negotiation" ? negotiationSlots(t) : partnershipSlots(t);
-  return {
-    type,
-    slots,
-    durationMin: DURATION_DEFAULT_MIN,
-    gateAtRemainingPct: GATE_DEFAULT_PCT,
-    nextSlotId: nextSlotIdOf(slots),
-  };
+/** Fresh scenario set for imperative callers (extraction, review, catalog). */
+export async function resolveScenarioSet(settings: Settings): Promise<ScenarioSet> {
+  const t = (key: string) => translate(settings.language, key as TranslationKey);
+  return buildScenarioSet(t, await readStageBundleFile({ fresh: true }));
 }
 
-/** Resolve the board for a meeting type; null for "general" (todos only). */
+/** Resolve the live board for a meeting type; null for "general" (todos only)
+ *  and for scenario ids that no longer exist (deleted customs). */
 export async function resolveBoard(
   type: MeetingType,
   settings: Settings
 ): Promise<MeetingBoard | null> {
   if (type === "general") return null;
   const t = (key: TranslationKey) => translate(settings.language, key);
-  if (type === "sales") return salesBoardFromBundle(await resolveMeetingBundle(settings), t);
-  return typedBoard(type, t);
+  const scenario = (await resolveScenarioSet(settings)).byId[type];
+  if (!scenario) return null;
+  const stageId = resolveScenarioStageId(scenario);
+  const bundle = scenario.bundles[stageId];
+  return bundle ? boardFromBundle(scenario, bundle, t) : null;
 }
 
 /**
- * Every slot the type can ever produce, id → def. The study readout resolves
- * labels through this instead of one resolved stage board — a recording only
- * says which slots it FILLED, not which stage was live, and sales slot ids are
- * stage-namespaced so the union is collision-free.
+ * Every slot the scenario can ever produce, id → def. The study readout
+ * resolves labels through this instead of one resolved stage board — a
+ * recording only says which slots it FILLED, not which stage was live, and
+ * slot ids are stage-namespaced so the union is collision-free.
  */
 export async function slotCatalog(
   type: MeetingType,
@@ -145,16 +129,15 @@ export async function slotCatalog(
 ): Promise<Map<string, SlotDef>> {
   if (type === "general") return new Map();
   const t = (key: TranslationKey) => translate(settings.language, key);
-  if (type !== "sales") return new Map(typedBoard(type, t).slots.map((s) => [s.id, s]));
-  const set = buildStageSet(
-    (key: string) => t(key as TranslationKey),
-    await readStageBundleFile({ fresh: true })
-  );
+  const scenario = (await resolveScenarioSet(settings)).byId[type];
+  if (!scenario) return new Map();
   const map = new Map<string, SlotDef>();
-  for (const stage of set.order) {
-    for (const s of set.bundles[stage]?.slots ?? []) map.set(s.id, s);
+  for (const stage of scenario.order) {
+    for (const s of scenario.bundles[stage]?.slots ?? []) map.set(s.id, s);
   }
-  for (const s of withSharedSalesSlots([], t)) map.set(s.id, s);
+  for (const s of withSharedSlots([], t, { competitors: scenario.id === "sales" })) {
+    map.set(s.id, s);
+  }
   return map;
 }
 

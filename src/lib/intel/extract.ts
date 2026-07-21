@@ -80,12 +80,14 @@ export function normalizeFocus(
   return knownSlotIds.has(focus.slotId) ? focus : undefined;
 }
 
-const objectionsSchema = z.array(
-  z.object({
-    text: z.string().describe("the objection, under 15 words"),
-    addressed: z.boolean().describe("was it substantively answered"),
-  })
-);
+const objectionsSchema = z
+  .array(
+    z.object({
+      text: z.string().describe("the objection, under 15 words"),
+      addressed: z.boolean().describe("was it substantively answered"),
+    })
+  )
+  .describe("challenges/doubts the counterpart raised; empty when none");
 
 const todoChecksSchema = z
   .array(z.string())
@@ -94,12 +96,14 @@ const todoChecksSchema = z
       "be conservative; empty when no checklist was given or nothing qualifies"
   );
 
-const typedSchema = z.object({
+/** ONE schema for every scenario (scenario system): board fills + focus +
+ *  objection ledger + todo checks. */
+const boardSchema = z.object({
   slotFills: slotFillsSchema,
   focus: focusSchema,
+  objections: objectionsSchema,
   todoChecks: todoChecksSchema,
 });
-const salesSchemaC = typedSchema.extend({ objections: objectionsSchema });
 
 function transcriptText(segments: TranscriptSegment[], capChars: number): string {
   const lines = segments
@@ -146,21 +150,6 @@ const SYSTEM =
   "Read the transcript and return ONLY facts grounded in what was actually said — no speculation. " +
   "Empty arrays/strings are correct when nothing qualifies.";
 
-/** Per-type framing ahead of the shared slot/focus instructions. */
-const TYPE_GUIDANCE: Record<Exclude<MeetingType, "general">, string> = {
-  sales:
-    "This is a SALES call. Also track objections: every challenge/doubt the counterpart raised " +
-    "and whether it was substantively answered.",
-  negotiation:
-    "This is a NEGOTIATION. Every number said (price, quantity, term) becomes ONE fill of the " +
-    "numbers slot — value plus what it was about; the fill's speaker field carries who said it. " +
-    "Concessions land on the give/get slots by side.",
-  partnership:
-    "This is a PARTNERSHIP talk. For the leverage slot, propose concrete ways the two sides can " +
-    "leverage each other based on the counterpart's stated position (their assets × our needs, " +
-    "and vice versa), including proactive ways WE can help THEM first.",
-};
-
 function buildPrompt(opts: {
   board: MeetingBoard;
   transcript: string;
@@ -170,7 +159,7 @@ function buildPrompt(opts: {
   const slotLines = board.slots.map((s) => `- ${s.id}: ${s.label} — ${s.hint}`).join("\n");
   const todoLines = openTodos.map((t) => `- [${t.id}] ${t.text}`).join("\n");
   return (
-    `${TYPE_GUIDANCE[board.type]}\n\n` +
+    `${board.guidance}\n\n` +
     `Fill slotFills: map intel that was actually said onto these board slots (ONLY these ids; ` +
     `a slot can receive several items). The slots are listed in their intended question ORDER:\n` +
     `${slotLines}\n\n` +
@@ -231,32 +220,21 @@ export async function runIntelExtraction(
     }
     const prompt = buildPrompt({ board, transcript, openTodos });
     const system = SYSTEM + outputLanguageInstruction(state.settings);
-    let object: z.infer<typeof typedSchema> & { objections?: IntelState["objections"] };
-    if (type === "sales") {
-      ({ object } = await generateObjectResilient({
-        settings: state.settings,
-        workload,
-        schema: salesSchemaC,
-        system,
-        prompt,
-      }));
-    } else {
-      ({ object } = await generateObjectResilient({
-        settings: state.settings,
-        workload,
-        schema: typedSchema,
-        system,
-        prompt,
-      }));
-    }
+    const { object } = await generateObjectResilient({
+      settings: state.settings,
+      workload,
+      schema: boardSchema,
+      system,
+      prompt,
+    });
 
     const known = new Set(board.slots.map((s) => s.id));
     const intel: IntelState = {
       meetingType: type,
       slotFills: normalizeSlotFills(object.slotFills, known),
       focusSlot: normalizeFocus(object.focus, known),
+      objections: object.objections,
     };
-    if (object.objections) intel.objections = object.objections;
     if (!alive()) return;
     // Todo checks are transcript-grounded — valid even when the intel result
     // itself is stale-typed; only a dead session discards them.

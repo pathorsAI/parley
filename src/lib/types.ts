@@ -224,9 +224,11 @@ export type AppLanguage = "zh-TW" | "en";
 /** UI color theme preference. */
 export type AppTheme = "light" | "dark" | "system";
 
-/** What kind of meeting this is — drives which intelligence template the
- *  board runs (extraction prompts + sections). Picked on the board itself. */
-export type MeetingType = "general" | "negotiation" | "sales" | "partnership";
+/** Which meeting SCENARIO the board runs — "general" (goals only) or a
+ *  scenario id: builtin ("sales" | "negotiation" | "partnership") or a
+ *  user-defined scenario from stage-bundles.json v3. Open string on purpose
+ *  (like SalesStage): the scenario set is data, not a type. */
+export type MeetingType = string;
 
 /** A number someone said, captured with attribution (negotiation ledger). */
 export interface IntelNumber {
