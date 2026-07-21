@@ -286,7 +286,9 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const exitAccounts = useStore((s) => s.exitAccounts);
   // The accounts area only exists for business meeting types (design D12).
   const meetingType = useStore((s) => s.settings.meetingType);
-  const businessType = meetingType === "sales" || meetingType === "negotiation" || meetingType === "partnership";
+  // Scenario system: every scenario (builtin or custom) can link the mini-CRM;
+  // only "general" (no board) stays personal.
+  const businessType = meetingType !== "general";
   // Guard the start/stop toggle so a rapid double-click can't fire two overlapping
   // start/stop invokes (which is what could race two transcription sessions open,
   // or interleave a stop with a start). The ref blocks re-entry synchronously

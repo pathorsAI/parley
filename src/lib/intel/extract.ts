@@ -214,8 +214,14 @@ export async function runIntelExtraction(
   try {
     const board = await resolveBoard(type, state.settings);
     if (!board) {
-      // Unreachable (general returned above) — but never leave "running" stuck.
-      useStore.getState().setIntelStatus("idle");
+      // The scenario no longer exists (a deleted custom id on an old recording
+      // or stale settings). Degrade the pick to "general" so the study
+      // pipeline stops re-dispatching this extraction forever, and never
+      // leave "running" stuck.
+      log.warn("intel: unknown scenario — degrading to general", { type });
+      const s = useStore.getState();
+      if (s.appMode === "replay" && s.studyMeetingType === type) s.setStudyMeetingType("general");
+      s.setIntelStatus("idle");
       return;
     }
     const prompt = buildPrompt({ board, transcript, openTodos });
