@@ -355,7 +355,6 @@ mod imp {
     use objc::runtime::{Class, Object};
     use objc::{class, msg_send, sel, sel_impl};
     use std::ffi::c_void;
-    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[link(name = "AppKit", kind = "framework")]
     extern "C" {}
@@ -449,16 +448,17 @@ mod imp {
     /// Parley or stealing focus.
     const NONACTIVATING_PANEL: usize = 1 << 7;
 
-    /// One-shot: has the overlay window been turned into an NSPanel yet?
-    static OVERLAY_IS_PANEL: AtomicBool = AtomicBool::new(false);
-
     pub fn present_overlay(ns_window: *mut std::ffi::c_void) {
         unsafe {
             let w = ns_window as *mut Object;
             // A plain NSWindow gets isolated to its own Space and can't float over
             // another app's full-screen Space. Turning it into a non-activating
             // NSPanel (+ fullScreenAuxiliary) is the native pattern for overlays.
-            if !OVERLAY_IS_PANEL.swap(true, Ordering::SeqCst) {
+            // Keyed off the window's own class — a process-wide one-shot flag
+            // would skip the conversion forever if the overlay window is ever
+            // destroyed and recreated.
+            let is_panel: bool = msg_send![w, isKindOfClass: class!(NSPanel)];
+            if !is_panel {
                 object_setClass(w, class!(NSPanel) as *const Class);
                 let style: usize = msg_send![w, styleMask];
                 let _: () = msg_send![w, setStyleMask: style | NONACTIVATING_PANEL];

@@ -91,6 +91,10 @@ pub fn run() {
             // Start the global fn-key push-to-talk listener (no-op until the
             // user grants Input Monitoring).
             hotkey::init(app.handle().clone());
+            // Re-assert the push-to-talk trigger after sleep/wake and session
+            // unlock — Carbon hotkey registrations and CGEventTaps can come
+            // back dead from a sleep cycle.
+            hotkey::install_wake_observer(app.handle().clone());
             log::info!("app: starting up (parley {})", env!("CARGO_PKG_VERSION"));
             Ok(())
         })
@@ -166,6 +170,49 @@ pub fn run() {
             mcp::get_mcp_server_info,
             mcp::get_mcp_activity
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(
+            #[allow(unused_variables)]
+            |app, event| {
+                // macOS: a Dock-icon click (or launching the app again while
+                // it's already running) arrives as `Reopen`. tao's app delegate
+                // suppresses AppKit's default un-minimize response, so without
+                // this handler the click does nothing once the main window is
+                // hidden or minimized — the "app sits in the Dock but won't
+                // open" bug.
+                #[cfg(target_os = "macos")]
+                if let tauri::RunEvent::Reopen { .. } = event {
+                    show_main_window(app);
+                }
+            },
+        );
+}
+
+/// Bring the main window back for a Dock-icon click: un-minimize + show +
+/// focus. Recreated from the window config if it was destroyed — possible via
+/// paths that bypass the frontend's hide-on-close (e.g. a crashed webview).
+#[cfg(target_os = "macos")]
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
+        return;
+    }
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == "main")
+        .cloned()
+    else {
+        log::error!("window: no main window config to recreate from");
+        return;
+    };
+    match tauri::WebviewWindowBuilder::from_config(app, &config).and_then(|b| b.build()) {
+        Ok(_) => log::info!("window: recreated main window on reopen"),
+        Err(e) => log::error!("window: failed to recreate main window: {e}"),
+    }
 }

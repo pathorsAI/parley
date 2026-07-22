@@ -186,6 +186,46 @@ pub fn init(app: AppHandle) {
     imp::ensure_started(app, false);
 }
 
+/// Watch for sleep/wake and session re-activation (NSWorkspace notifications)
+/// and re-assert the push-to-talk trigger each time. Both delivery paths can
+/// silently die across a sleep cycle: a Carbon hotkey registration can come
+/// back inert, and a CGEventTap can be left disabled without ever receiving
+/// the "disabled by timeout" callback its self-heal relies on (that callback
+/// only fires when an event actually reaches the dead tap). Re-registering is
+/// cheap and idempotent, so we just redo it on every wake.
+pub fn install_wake_observer(app: AppHandle) {
+    imp::install_wake_observer(app);
+}
+
+/// Re-apply the currently selected trigger (see [`install_wake_observer`]).
+fn reassert(app: &AppHandle) {
+    let id = CURRENT
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(|| "alt-space".to_string());
+    log::info!("voice-typing: re-asserting trigger {id:?} after wake");
+    // Always revive the tap: in combo mode it's parked (matches nothing) but
+    // must stay alive for the next switch back to a modifier key.
+    imp::reenable_tap();
+    if MODIFIER_IDS.contains(&id.as_str()) {
+        // No-op when the tap thread is alive; recreates it if boot skipped it
+        // (permission granted after launch).
+        imp::ensure_started(app.clone(), false);
+    } else {
+        let gs = app.global_shortcut();
+        let _ = gs.unregister_all();
+        let ok = match parse_combo(&id) {
+            Some(sc) => gs
+                .register(sc)
+                .map_err(|e| log::warn!("voice-typing: wake re-register {id:?} failed: {e}"))
+                .is_ok(),
+            None => false,
+        };
+        COMBO_OK.store(ok, Ordering::SeqCst);
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod imp {
     use std::ffi::c_void;
@@ -397,6 +437,53 @@ mod imp {
         event
     }
 
+    /// Re-enable the live tap if macOS disabled it (sleep/wake can leave a tap
+    /// off without the "disabled" callback ever firing). No-op without a tap.
+    pub fn reenable_tap() {
+        let port = TAP_PORT.load(Ordering::SeqCst);
+        if !port.is_null() {
+            unsafe { CGEventTapEnable(port as CFMachPortRef, true) };
+        }
+    }
+
+    /// Register NSWorkspace wake/session-activation observers that re-assert
+    /// the push-to-talk trigger. Installed once at setup, lives for the app's
+    /// lifetime (the notification center holds the block-based observers).
+    pub fn install_wake_observer(app: AppHandle) {
+        use block2::RcBlock;
+        use core_foundation::base::TCFType;
+        use core_foundation::string::CFString;
+        use objc::runtime::Object;
+        use objc::{class, msg_send, sel, sel_impl};
+
+        // Lid-open wake, and console session re-activation (fast user
+        // switching / some lock-screen returns) — either can strand the
+        // trigger. NSNotificationName is an NSString, so a matching CFString
+        // (toll-free bridged) subscribes to the same notification.
+        const NAMES: [&str; 2] = [
+            "NSWorkspaceDidWakeNotification",
+            "NSWorkspaceSessionDidBecomeActiveNotification",
+        ];
+        unsafe {
+            let ws: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let nc: *mut Object = msg_send![ws, notificationCenter];
+            let queue: *mut Object = msg_send![class!(NSOperationQueue), mainQueue];
+            for name in NAMES {
+                let app = app.clone();
+                let block = RcBlock::<dyn Fn(*mut std::ffi::c_void)>::new(move |_note| {
+                    super::reassert(&app);
+                });
+                let cf = CFString::new(name);
+                let name_obj = cf.as_concrete_TypeRef() as *const Object;
+                let nil: *mut Object = std::ptr::null_mut();
+                let _observer: *mut Object = msg_send![nc, addObserverForName: name_obj object: nil queue: queue usingBlock: &*block];
+                // Never removed — the center keeps the observer + block alive;
+                // forget our handle so the block isn't dropped underneath it.
+                std::mem::forget(block);
+            }
+        }
+    }
+
     /// Start the tap thread if it isn't running; returns whether a live tap
     /// exists. `force` skips the permission pre-gate (explicit user action).
     pub fn ensure_started(app: AppHandle, force: bool) -> bool {
@@ -506,4 +593,6 @@ mod imp {
     pub fn ensure_started(_app: AppHandle, _force: bool) -> bool {
         false
     }
+    pub fn reenable_tap() {}
+    pub fn install_wake_observer(_app: AppHandle) {}
 }

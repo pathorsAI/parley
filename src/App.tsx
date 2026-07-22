@@ -207,6 +207,13 @@ const App = () => {
   // other stop_meeting caller is the toolbar toggle, so without this a reload/close
   // leaves the backend recording. Best-effort: the IPC is dispatched even as the
   // webview tears down; stop_meeting is idempotent.
+  //
+  // On macOS the close button HIDES the window instead of destroying it (the
+  // platform convention — the app stays in the Dock and a Dock-icon click
+  // brings the window back via Rust's RunEvent::Reopen handler). Destroying it
+  // would also kill the voice-typing host that lives in this window, leaving
+  // the global push-to-talk key dead until the app is relaunched. An active
+  // meeting is still stopped first: a hidden window must never keep recording.
   useEffect(() => {
     if (!isTauri()) return;
     let active = true;
@@ -218,7 +225,15 @@ const App = () => {
     };
     window.addEventListener("beforeunload", stopIfRecording);
     getCurrentWindow()
-      .onCloseRequested(stopIfRecording)
+      .onCloseRequested((event) => {
+        stopIfRecording();
+        if (navigator.userAgent.includes("Mac")) {
+          event.preventDefault();
+          getCurrentWindow()
+            .hide()
+            .catch((error) => log.warn("window: hide on close failed", { error: String(error) }));
+        }
+      })
       .then((fn) => {
         if (active) {
           unlisten = fn;
