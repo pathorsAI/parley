@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { useStore, isTrimmed, type ReplayTrim } from "../store";
+import { useStore, isTrimmed, transcriptAsText, type ReplayTrim } from "../store";
 import { hasProviderKey } from "../ai/settings";
-import { outputLanguageInstruction } from "../ai/profile";
+import { outputLanguageInstruction, profileContext } from "../ai/profile";
 import { generateObjectResilient } from "../ai/generate";
 import { resolveBoard, type MeetingBoard } from "./boards";
 import { makeRunGuard } from "../analysis/runGuard";
@@ -32,7 +32,9 @@ const slotFillsSchema = z
       slotId: z.string().describe("id from the provided slot list"),
       text: z.string().describe("the captured intel, ONE sentence, transcript language"),
       quote: z.string().describe("short verbatim quote backing it, else empty"),
-      speaker: z.enum(["me", "them"]).describe("who said it"),
+      speaker: z
+        .enum(["me", "them"])
+        .describe('which side said it: "me" (ME/US) or "them" (the other party)'),
     })
   )
   .describe(
@@ -105,12 +107,22 @@ const boardSchema = z.object({
   todoChecks: todoChecksSchema,
 });
 
-function transcriptText(segments: TranscriptSegment[], capChars: number): string {
-  const lines = segments
-    .filter((s) => s.isFinal && s.text.trim())
-    .map((s) => `${s.source === "me" ? "我" : "對方"}: ${s.text}`);
+/**
+ * Prompt transcript, labelled by REAL speaker (custom names when set) — the same
+ * helper every other prompt builder uses. A binary me/them collapse would LIE on
+ * "mix" segments: a single diarizing STT session carries mic + system audio in
+ * one stream (commands.rs `start_meeting`), so the user's own lines arrive as
+ * source "mix" too and would all be attributed to the counterpart. Which
+ * labelled speaker is ME is pinned down by profileContext in the prompt.
+ * Exported for tests.
+ */
+export function transcriptText(
+  segments: TranscriptSegment[],
+  names: Record<string, string> | undefined,
+  capChars: number
+): string {
+  const joined = transcriptAsText(segments, names);
   // Cap the prompt; the tail of the meeting matters most for current state.
-  const joined = lines.join("\n");
   return joined.length > capChars ? joined.slice(-capChars) : joined;
 }
 
@@ -146,19 +158,22 @@ export function intelTranscriptReady(
 // into the transcript's language via their own descriptions — a line the user
 // will say out loud must be in the meeting's language.
 const SYSTEM =
-  "You are a realtime meeting-intelligence extractor for the user (speaker 我). " +
+  "You are a realtime meeting-intelligence extractor for ME — one of the speakers in the transcript. " +
   "Read the transcript and return ONLY facts grounded in what was actually said — no speculation. " +
   "Empty arrays/strings are correct when nothing qualifies.";
 
 function buildPrompt(opts: {
   board: MeetingBoard;
+  /** profileContext preamble — which labelled speaker is ME (see ai/profile). */
+  profile: string;
   transcript: string;
   openTodos: TodoItem[];
 }): string {
-  const { board, transcript, openTodos } = opts;
+  const { board, profile, transcript, openTodos } = opts;
   const slotLines = board.slots.map((s) => `- ${s.id}: ${s.label} — ${s.hint}`).join("\n");
   const todoLines = openTodos.map((t) => `- [${t.id}] ${t.text}`).join("\n");
   return (
+    profile +
     `${board.guidance}\n\n` +
     `Fill slotFills: map intel that was actually said onto these board slots (ONLY these ids; ` +
     `a slot can receive several items). The slots are listed in their intended question ORDER:\n` +
@@ -172,7 +187,7 @@ function buildPrompt(opts: {
     (todoLines
       ? `Checklist to auto-check (return covered ids in todoChecks):\n${todoLines}\n\n`
       : "") +
-    transcript
+    `Transcript so far (each line is "[speaker] what they said"):\n${transcript}`
   );
 }
 
@@ -194,7 +209,9 @@ function extractableTranscript(workload: LlmWorkload): string | null {
   // REPLAY honors the trim keep-window, same as every other study pass.
   const trim = state.appMode === "replay" ? state.replayTrim : null;
   const segments = trim ? state.segments.filter((s) => !isTrimmed(s, trim)) : state.segments;
-  return intelTranscriptReady(segments) ? transcriptText(segments, CAP_CHARS[workload]) : null;
+  return intelTranscriptReady(segments)
+    ? transcriptText(segments, state.speakerNames, CAP_CHARS[workload])
+    : null;
 }
 
 /** The scenario no longer exists (a deleted custom id on an old recording or
@@ -248,7 +265,12 @@ export async function runIntelExtraction(
       workload,
       schema: boardSchema,
       system: SYSTEM + outputLanguageInstruction(state.settings),
-      prompt: buildPrompt({ board, transcript, openTodos }),
+      prompt: buildPrompt({
+        board,
+        profile: profileContext(state.settings),
+        transcript,
+        openTodos,
+      }),
     });
 
     const known = new Set(board.slots.map((s) => s.id));
