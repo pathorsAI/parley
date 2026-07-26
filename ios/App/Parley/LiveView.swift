@@ -9,6 +9,7 @@ struct LiveView: View {
     @StateObject private var store = TranscriptStore()
     @State private var capture: AudioCapture?
     @State private var relay: SttRelayClient?
+    @State private var uploader: MeetingUploader?
 
     var body: some View {
         NavigationStack {
@@ -22,14 +23,9 @@ struct LiveView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(store.isRecording ? Theme.recording : Theme.mutedForeground.opacity(0.4))
-                            .frame(width: 9, height: 9)
-                        Text(store.status)
-                            .font(.caption)
-                            .foregroundStyle(Theme.mutedForeground)
-                    }
+                    Circle()
+                        .fill(store.isRecording ? Theme.recording : Theme.mutedForeground.opacity(0.4))
+                        .frame(width: 9, height: 9)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     LevelMeter(level: store.micLevel)
@@ -74,17 +70,27 @@ struct LiveView: View {
     }
 
     private var controls: some View {
-        Button(action: toggle) {
-            Label(
-                store.isRecording ? "結束會議" : "開始錄音",
-                systemImage: store.isRecording ? "stop.circle.fill" : "record.circle"
-            )
-            .font(.body.weight(.medium))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
+        VStack(spacing: 8) {
+            if store.status != "idle" {
+                Text(store.status)
+                    .font(.caption)
+                    .foregroundStyle(Theme.mutedForeground)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+            }
+            Button(action: toggle) {
+                Label(
+                    store.isRecording ? "結束會議" : "開始錄音",
+                    systemImage: store.isRecording ? "stop.circle.fill" : "record.circle"
+                )
+                .font(.body.weight(.medium))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .foregroundStyle(store.isRecording ? Color.white : Theme.primaryForeground)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(store.isRecording ? Theme.recording : Theme.primary)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(store.isRecording ? Theme.recording : Color(uiColor: .label))
         .padding(16)
     }
 
@@ -119,8 +125,12 @@ struct LiveView: View {
         }
         self.relay = relayClient
 
+        let rec = try? MeetingUploader()
+        self.uploader = rec
+
         let cap = AudioCapture { samples, level in
             Task { @MainActor in store.micLevel = level }
+            rec?.append(samples)
             if let relayClient {
                 Task { try? await relayClient.send(pcm: samples) }
             }
@@ -143,8 +153,37 @@ struct LiveView: View {
         if let relay {
             store.status = "收尾中…"
             await relay.finish()  // drain: the relay flushes the last utterance
-        } else {
+        }
+        await upload()
+    }
+
+    private func upload() async {
+        guard let uploader else {
             store.status = "idle"
+            return
+        }
+        self.uploader = nil
+        guard app.signedIn else {
+            store.status = "未登入——錄音未上傳"
+            return
+        }
+        store.status = "上傳中…"
+        do {
+            let outcome = try await uploader.finishAndUpload(
+                segments: store.segments,
+                cloud: app.cloud,
+                defaultSave: app.defaultSave,
+                orgs: app.orgs)
+            if let outcome {
+                store.status =
+                    outcome.sharedToOrgName.map { "已同步，並分享到「\($0)」" } ?? "已同步到雲端"
+            } else {
+                store.status = "錄音太短，已捨棄"
+            }
+        } catch let e as CloudError where e.status == 402 {
+            store.status = "額度已用完，錄音未上傳"
+        } catch {
+            store.status = "上傳失敗：\(error.localizedDescription)"
         }
     }
 

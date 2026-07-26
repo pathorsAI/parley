@@ -24,6 +24,25 @@ public struct CloudRecordingSummary: Codable, Equatable, Identifiable, Sendable 
     public var folderId: String?
     /// Server push time (epoch ms) — last-writer-wins ordering across devices.
     public let updatedAt: Double?
+
+    public init(
+        id: String, title: String, source: String, createdAt: Double, durationMs: Double,
+        speakerCount: Int?, findingsCount: Int?, actionItemsCount: Int?, hasAudio: Bool,
+        snippet: String?, folderId: String?, updatedAt: Double?
+    ) {
+        self.id = id
+        self.title = title
+        self.source = source
+        self.createdAt = createdAt
+        self.durationMs = durationMs
+        self.speakerCount = speakerCount
+        self.findingsCount = findingsCount
+        self.actionItemsCount = actionItemsCount
+        self.hasAudio = hasAudio
+        self.snippet = snippet
+        self.folderId = folderId
+        self.updatedAt = updatedAt
+    }
 }
 
 public struct CloudFolder: Codable, Equatable, Identifiable, Sendable {
