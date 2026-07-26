@@ -29,7 +29,7 @@ iOS 版不是「把桌機塞進手機」。它是補上另一半的會議形態�
 | D2 | 分析分工 | ✅拍板 **手機偏向會議轉錄，複雜分析在桌機跑**。手機只跑「一個 live 迴圈」；report / action items / brief / delivery / 情報板抽取五個 DAG 節點（[`studyPipeline.ts`](../../src/lib/analysis/studyPipeline.ts)）完全不移植，由桌機開啟該場會議時自動跑完回寫雲端 |
 | D3 | v1 範圍 | ✅拍板 含 **live coach feed**，但限縮為「findings 那一層」：45s 一次的 live 提醒（複用 [`ai/timeline.ts`](../../src/lib/ai/timeline.ts) 的 `SYSTEM_INTRO_LIVE` + `eventSchema` + eval templates）。**不含**情報板 slot 抽取、不含事後五節點 |
 | D4 | 手機 UI 形態 | 提案 直接落實 stage-bundles S22「呼吸版 / second-attention」：一行狀態 + 一個 intervention + 可下拉的逐字稿。手機本來只能瞄一眼，這反而是設計上最誠實的螢幕 |
-| D5 | 開源與 repo | ✅拍板 iOS app **開源**。提案放**獨立 public repo `parley-ios`**（Xcode 專案 + 送審節奏塞進 Tauri repo 會弄髒現有 release workflow）；sync 合約以本 repo `src/lib/cloud/*` 為事實規格，另立 §5.0 合約文件 |
+| D5 | 開源與 repo | ✅拍板 iOS app **開源**，放**本 repo `ios/`（monorepo）**。本 repo 早已是多產物形態（`website/`、`virtual-mic/`、`mcp/` 與桌機同居），iOS 延續慣例；sync 合約文件與兩個實作者同 repo、issue 一處追蹤。邊界不變：**cloud 仍留在 parley-internal**。iOS release 用獨立 tag namespace（`ios-v*`）與獨立 workflow，不碰現有 `release.yml` |
 | D6 | 憑證與設定同步 | 提案 **API key 不上雲**（安全理由見 §9.1）。手機預設用 hosted provider（登入即可用，本來就不需要 key）；BYOK 在手機自行輸入存 **Keychain**。上雲的只有非機密設定：model 選擇、語言、eval templates、scenario bundles |
 | D7 | me/them 判定 | 提案 iOS 全程走 `"mix"` 單一 STT session（Soniox diarization 已預設開啟）。「誰是我」用**錄前 3 秒 enrollment 或錄後在逐字稿上點一下指定**，同場自動套用。不在 v1 做聲紋跨場身分 |
 | D8 | 音檔格式 | 提案 維持 **Ogg/Opus 16k mono**，與桌機 [`replay_audio.rs`](../../src-tauri/src/replay_audio.rs) 及 `PUT /recordings/:id/audio` 的 `audio/ogg` 契約一致，避免雲端多一條轉檔路徑 |

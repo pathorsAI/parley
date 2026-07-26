@@ -36,3 +36,8 @@ src-tauri/onnxruntime/*.dylib
 src-tauri/virtualmic/
 src-tauri/tauri.dev.conf.json
 .gstack/
+
+# iOS (ios/)
+ios/App/Parley.xcodeproj
+ios/App/build/
+ios/ParleyKit/.build/
