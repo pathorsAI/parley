@@ -1,54 +1,52 @@
 import ParleyKit
 import SwiftUI
 
-/// The live screen, walking-skeleton edition: mic level proves the
-/// AVAudioEngine → 16 kHz mono pipeline; the demo feed proves the Soniox
-/// parser + segment upsert + UI. The relay hookup lands once cloud auth
-/// (Phase 0) exists.
+/// The live screen: record an in-person meeting, watch the diarized
+/// transcript grow. Signed-in users stream through the hosted STT relay with
+/// their session token — no API keys on the phone.
 struct LiveView: View {
+    @EnvironmentObject private var app: AppState
     @StateObject private var store = TranscriptStore()
     @State private var capture: AudioCapture?
-    @State private var demoTask: Task<Void, Never>?
+    @State private var relay: SttRelayClient?
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            transcript
-            Divider()
-            controls
+        NavigationStack {
+            VStack(spacing: 0) {
+                transcript
+                Divider()
+                controls
+            }
+            .background(Theme.background)
+            .navigationTitle("Parley")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(store.isRecording ? Theme.recording : Theme.mutedForeground.opacity(0.4))
+                            .frame(width: 9, height: 9)
+                        Text(store.status)
+                            .font(.caption)
+                            .foregroundStyle(Theme.mutedForeground)
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    LevelMeter(level: store.micLevel)
+                }
+            }
         }
-        .background(Color(.systemBackground))
-    }
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(store.isRecording ? Color.red : Color.secondary.opacity(0.4))
-                .frame(width: 10, height: 10)
-            Text("Parley").font(.headline)
-            Text(store.status).font(.caption).foregroundStyle(.secondary)
-            Spacer()
-            LevelMeter(level: store.micLevel)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
     }
 
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
+                LazyVStack(alignment: .leading, spacing: 12) {
                     if store.segments.isEmpty {
-                        Text("按 Demo 重播一段談判逐字稿，或按錄音測試收音。")
-                            .foregroundStyle(.secondary)
-                            .font(.subheadline)
-                            .padding(.top, 40)
-                            .frame(maxWidth: .infinity)
+                        emptyState
                     }
                     ForEach(store.segments, id: \.id) { seg in
-                        SegmentRow(segment: seg)
-                            .id(seg.id)
+                        SegmentRow(segment: seg).id(seg.id)
                     }
                 }
                 .padding(16)
@@ -61,102 +59,144 @@ struct LiveView: View {
         }
     }
 
-    private var controls: some View {
-        HStack(spacing: 12) {
-            Button(action: toggleRecord) {
-                Label(
-                    store.isRecording ? "停止" : "錄音測試",
-                    systemImage: store.isRecording ? "stop.circle.fill" : "mic.circle.fill"
-                )
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(store.isRecording ? .red : .accentColor)
-
-            Button(action: runDemo) {
-                Label("Demo", systemImage: "play.circle")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "waveform")
+                .font(.title2)
+                .foregroundStyle(Theme.mutedForeground)
+            Text(app.signedIn ? "按下錄音，把手機放在桌上收整個房間。" : "登入後即可即時轉錄——設定 → 帳號。")
+                .font(.subheadline)
+                .foregroundStyle(Theme.mutedForeground)
+                .multilineTextAlignment(.center)
         }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 60)
+    }
+
+    private var controls: some View {
+        Button(action: toggle) {
+            Label(
+                store.isRecording ? "結束會議" : "開始錄音",
+                systemImage: store.isRecording ? "stop.circle.fill" : "record.circle"
+            )
+            .font(.body.weight(.medium))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(store.isRecording ? Theme.recording : Color(uiColor: .label))
         .padding(16)
     }
 
-    private func toggleRecord() {
-        if store.isRecording {
-            capture?.stop()
-            capture = nil
-            store.isRecording = false
-            store.status = "idle"
-            store.micLevel = 0
+    private func toggle() {
+        if store.isRecording { Task { await stop() } } else { Task { await start() } }
+    }
+
+    private func start() async {
+        guard await AudioCapture.requestPermission() else {
+            store.status = "需要麥克風權限"
             return
         }
-        Task {
-            guard await AudioCapture.requestPermission() else {
-                store.status = "mic permission denied"
-                return
-            }
-            let cap = AudioCapture { _, level in
-                Task { @MainActor in store.micLevel = level }
+        store.clear()
+
+        // Signed in → stream through the hosted relay; otherwise level-only.
+        var relayClient: SttRelayClient?
+        if let token = KeychainStore.get(AppState.tokenKey) {
+            let client = SttRelayClient(
+                options: .init(bearerToken: token, feature: "meeting")
+            ) { event in
+                Task { @MainActor in handle(event) }
             }
             do {
-                try cap.start()
-                capture = cap
-                store.isRecording = true
-                store.status = "capturing 16k mono"
+                try await client.start()
+                relayClient = client
+                store.status = "即時轉錄中"
             } catch {
-                store.status = "audio error: \(error.localizedDescription)"
+                store.status = "relay 連線失敗，僅錄音"
             }
+        } else {
+            store.status = "未登入——僅收音測試"
+        }
+        self.relay = relayClient
+
+        let cap = AudioCapture { samples, level in
+            Task { @MainActor in store.micLevel = level }
+            if let relayClient {
+                Task { try? await relayClient.send(pcm: samples) }
+            }
+        }
+        do {
+            try cap.start()
+            capture = cap
+            store.isRecording = true
+        } catch {
+            store.status = "audio error: \(error.localizedDescription)"
+            await relayClient?.finish()
         }
     }
 
-    private func runDemo() {
-        demoTask?.cancel()
-        store.clear()
-        store.status = "demo replay"
-        demoTask = DemoFeed.run { seg in
+    private func stop() async {
+        capture?.stop()
+        capture = nil
+        store.isRecording = false
+        store.micLevel = 0
+        if let relay {
+            store.status = "收尾中…"
+            await relay.finish()  // drain: the relay flushes the last utterance
+        } else {
+            store.status = "idle"
+        }
+    }
+
+    private func handle(_ event: SttRelayEvent) {
+        switch event {
+        case .segment(let seg):
             store.upsert(seg)
-            if seg.id.hasSuffix("-tail") == false && seg.text.contains("核心模組") {
-                store.status = "demo done"
-            }
+        case .closed(let reason):
+            store.status = store.isRecording ? "relay 已關閉（\(reason)）" : "idle"
+            relay = nil
+        case .error(let message):
+            store.status = message
+            relay = nil
         }
     }
 }
 
-private struct SegmentRow: View {
+struct SegmentRow: View {
     let segment: TranscriptSegment
 
-    private var label: String {
-        segment.speaker == 0 ? "…" : "Speaker \(segment.speaker)"
-    }
+    private static let palette: [Color] = [.blue, .orange, .purple, .teal, .pink, .indigo]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label)
+            Text(segment.speaker == 0 ? "…" : "Speaker \(segment.speaker)")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(segment.speaker == 1 ? Color.blue : Color.orange)
+                .foregroundStyle(
+                    segment.speaker == 0
+                        ? Theme.mutedForeground
+                        : Self.palette[(segment.speaker - 1) % Self.palette.count])
             Text(segment.text)
                 .font(.body)
-                .foregroundStyle(segment.isFinal ? .primary : .secondary)
+                .foregroundStyle(segment.isFinal ? Theme.foreground : Theme.mutedForeground)
                 .italic(!segment.isFinal)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-private struct LevelMeter: View {
+struct LevelMeter: View {
     let level: Float
 
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.secondary.opacity(0.15))
+                Capsule().fill(Theme.muted)
                 Capsule()
                     .fill(Color.green)
                     .frame(width: geo.size.width * CGFloat(min(1, level * 6)))
                     .animation(.linear(duration: 0.08), value: level)
             }
         }
-        .frame(width: 90, height: 6)
+        .frame(width: 70, height: 5)
     }
 }

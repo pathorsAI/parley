@@ -22,6 +22,9 @@ targets:
         NSMicrophoneUsageDescription: Parley listens to the meeting to transcribe and coach it live. Audio goes only to the transcription provider tied to your account.
         UIBackgroundModes: [audio]
         ITSAppUsesNonExemptEncryption: false
+        CFBundleURLTypes:
+          - CFBundleURLName: com.pathors.parley.ios.auth
+            CFBundleURLSchemes: [parley]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pathors.parley.ios
