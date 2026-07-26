@@ -101,6 +101,40 @@ final class AppState: NSObject, ObservableObject {
         session.start()
     }
 
+    /// First-party account: Better Auth email+password via the bearer plugin.
+    func signIn(email: String, password: String) async {
+        await adoptAuthResult { try await self.cloud.signIn(email: email, password: password) }
+    }
+
+    func signUp(name: String, email: String, password: String) async {
+        await adoptAuthResult {
+            try await self.cloud.signUp(name: name, email: email, password: password)
+        }
+    }
+
+    private func adoptAuthResult(_ op: () async throws -> String) async {
+        authError = nil
+        signingIn = true
+        defer { signingIn = false }
+        do {
+            let token = try await op()
+            KeychainStore.set(token, for: Self.tokenKey)
+            user = try await cloud.me()
+            await loadAccountExtras()
+        } catch let err as CloudError {
+            authError = Self.authMessage(err)
+        } catch {
+            authError = "連線失敗，請再試一次"
+        }
+    }
+
+    private static func authMessage(_ err: CloudError) -> String {
+        if err.message.contains("USER_ALREADY_EXISTS") { return "這個信箱已經註冊過了" }
+        if err.message.contains("INVALID_EMAIL_OR_PASSWORD") { return "信箱或密碼不正確" }
+        if err.message.contains("PASSWORD_TOO_SHORT") { return "密碼至少 8 個字元" }
+        return "登入失敗（\(err.status)）"
+    }
+
     func signOut() async {
         try? await cloud.signOut()
         KeychainStore.delete(Self.tokenKey)

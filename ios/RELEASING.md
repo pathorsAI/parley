@@ -6,8 +6,8 @@
 
 | 項目 | 說明 |
 |---|---|
-| Apple Developer Program | 公司帳號（Pathors 法人，需 D-U-N-S）或個人帳號皆可，US$99/年。公司帳號上架名稱顯示「Pathors」而非個人名 |
-| App ID | `com.pathors.parley.ios`（已是 project.yml 的 bundle id）。在 developer.apple.com 註冊，capabilities 勾 **Sign in with Apple**（見 §3） |
+| Apple Developer Program | ✅ 已有（科技派斯，Team ID `SXHVCQXJHZ`） |
+| App ID | ✅ 已註冊：`com.pathors.parley.ios`（explicit）+ **Sign in with Apple** capability（2026-07-27）。SIWA 的 Services ID 與 .p8 key（web flow / 後端驗證用）要用時再建 |
 | App Store Connect | 建 app record：名稱「Parley」、主要語言 zh-Hant、SKU 任意 |
 | 簽章 | Xcode → Settings → Accounts 登入開發者帳號後，`CODE_SIGN_STYLE: Automatic`（已設定）+ 選 Team 即可；CI 要用 fastlane match 或 App Store Connect API key 再說 |
 

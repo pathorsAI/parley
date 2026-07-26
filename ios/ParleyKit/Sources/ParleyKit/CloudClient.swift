@@ -50,6 +50,32 @@ public actor CloudClient {
         return token
     }
 
+    // MARK: first-party auth (Better Auth emailAndPassword + bearer plugin)
+
+    /// `POST /auth/sign-in/email`. The bearer plugin returns the session token
+    /// in the `set-auth-token` response header — that's the credential every
+    /// later call sends as `Authorization: Bearer`.
+    public func signIn(email: String, password: String) async throws -> String {
+        try await authToken(
+            path: "auth/sign-in/email", payload: ["email": email, "password": password])
+    }
+
+    /// `POST /auth/sign-up/email` — creates the account and signs in.
+    public func signUp(name: String, email: String, password: String) async throws -> String {
+        try await authToken(
+            path: "auth/sign-up/email",
+            payload: ["name": name, "email": email, "password": password])
+    }
+
+    private func authToken(path: String, payload: [String: String]) async throws -> String {
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        let (_, response) = try await requestWithResponse(
+            path, method: "POST", body: body, contentType: "application/json")
+        guard let token = response.value(forHTTPHeaderField: "set-auth-token"), !token.isEmpty
+        else { throw CloudError(status: response.statusCode, message: "no_session_token") }
+        return token
+    }
+
     // MARK: identity / usage
 
     public func me() async throws -> CloudUser? {
@@ -163,6 +189,12 @@ public actor CloudClient {
     private func request(
         _ path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil
     ) async throws -> Data {
+        try await requestWithResponse(path, method: method, body: body, contentType: contentType).0
+    }
+
+    private func requestWithResponse(
+        _ path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil
+    ) async throws -> (Data, HTTPURLResponse) {
         var req = URLRequest(url: baseURL.appendingPathComponent(path))
         req.httpMethod = method
         req.httpBody = body
@@ -171,11 +203,11 @@ public actor CloudClient {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         let (data, resp) = try await session.data(for: req)
-        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status) else {
+        let http = (resp as? HTTPURLResponse) ?? HTTPURLResponse()
+        guard (200..<300).contains(http.statusCode) else {
             let message = String(data: data, encoding: .utf8) ?? ""
-            throw CloudError(status: status, message: message)
+            throw CloudError(status: http.statusCode, message: message)
         }
-        return data
+        return (data, http)
     }
 }

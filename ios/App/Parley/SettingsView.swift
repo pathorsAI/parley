@@ -9,6 +9,11 @@ struct SettingsView: View {
     @EnvironmentObject private var app: AppState
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
+    private enum AuthMode { case signIn, signUp }
+    @State private var authMode: AuthMode = .signIn
+    @State private var name = ""
+    @State private var email = ""
+    @State private var password = ""
     #if DEBUG
         @State private var devToken = ""
     #endif
@@ -60,23 +65,54 @@ struct SettingsView: View {
                     Task { await app.signOut() }
                 }
             } else {
-                Button {
-                    app.signIn()
-                } label: {
-                    HStack {
-                        if app.signingIn { ProgressView().padding(.trailing, 6) }
-                        Text("使用 Google 登入")
-                    }
-                }
-                .disabled(app.signingIn)
-                if let err = app.authError {
-                    Text(err).font(.caption).foregroundStyle(Theme.destructive)
-                }
-                Text("登入後即可即時轉錄（免帶 API key）、同步錄音與逐字稿。")
-                    .font(.caption)
-                    .foregroundStyle(Theme.mutedForeground)
+                signInForm
             }
         }
+    }
+
+    /// First-party email+password first; Google (and later Apple) beneath.
+    @ViewBuilder
+    private var signInForm: some View {
+        Picker("", selection: $authMode) {
+            Text("登入").tag(AuthMode.signIn)
+            Text("註冊").tag(AuthMode.signUp)
+        }
+        .pickerStyle(.segmented)
+        if authMode == .signUp {
+            TextField("名稱", text: $name)
+                .textContentType(.name)
+        }
+        TextField("信箱", text: $email)
+            .textContentType(.emailAddress)
+            .keyboardType(.emailAddress)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+        SecureField(authMode == .signUp ? "密碼（至少 8 字元）" : "密碼", text: $password)
+            .textContentType(authMode == .signUp ? .newPassword : .password)
+        Button {
+            Task {
+                if authMode == .signUp {
+                    await app.signUp(name: name, email: email, password: password)
+                } else {
+                    await app.signIn(email: email, password: password)
+                }
+                if app.signedIn { password = "" }
+            }
+        } label: {
+            HStack {
+                if app.signingIn { ProgressView().padding(.trailing, 6) }
+                Text(authMode == .signUp ? "建立帳號" : "登入")
+            }
+        }
+        .disabled(app.signingIn || email.isEmpty || password.isEmpty)
+        Button("使用 Google 登入") { app.signIn() }
+            .disabled(app.signingIn)
+        if let err = app.authError {
+            Text(err).font(.caption).foregroundStyle(Theme.destructive)
+        }
+        Text("登入後即可即時轉錄（免帶 API key）、同步錄音與逐字稿。")
+            .font(.caption)
+            .foregroundStyle(Theme.mutedForeground)
     }
 
     private func avatar(_ user: CloudUser) -> some View {
