@@ -107,7 +107,7 @@ struct SettingsView: View {
         .disabled(app.signingIn || email.isEmpty || password.isEmpty)
         Button("使用 Google 登入") { app.signIn() }
             .disabled(app.signingIn)
-        if let err = app.authError {
+        if let err = app.signInError {
             Text(err).font(.caption).foregroundStyle(Theme.destructive)
         }
         Text("登入後即可即時轉錄（免帶 API key）、同步錄音與逐字稿。")

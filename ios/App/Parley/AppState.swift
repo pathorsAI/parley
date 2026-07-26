@@ -14,7 +14,7 @@ final class AppState: NSObject, ObservableObject {
     @Published var quota: HostedQuota?
     @Published var orgs: [CloudOrg] = []
     @Published var signingIn = false
-    @Published var authError: String?
+    @Published var signInError: String?
 
     @AppStorage("theme") var themeRaw: String = AppTheme.system.rawValue
     /// JSON-encoded `SaveDestination` (mirror of desktop `defaultSaveLocation`).
@@ -70,7 +70,7 @@ final class AppState: NSObject, ObservableObject {
     /// OAuth flow (incl. the state cookie) runs in the auth browser session,
     /// and its redirect allowlist admits `parley://` callbacks.
     func signIn() {
-        authError = nil
+        signInError = nil
         signingIn = true
         let url = cloud.signInURL(callback: "parley://auth/cb")
         let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "parley") {
@@ -80,7 +80,7 @@ final class AppState: NSObject, ObservableObject {
                 self.signingIn = false
                 if let error {
                     if (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin {
-                        self.authError = error.localizedDescription
+                        self.signInError = error.localizedDescription
                     }
                     return
                 }
@@ -91,7 +91,7 @@ final class AppState: NSObject, ObservableObject {
                     self.user = try await self.cloud.me()
                     await self.loadAccountExtras()
                 } catch {
-                    self.authError = "登入失敗：\(error.localizedDescription)"
+                    self.signInError = "登入失敗：\(error.localizedDescription)"
                 }
             }
         }
@@ -113,7 +113,7 @@ final class AppState: NSObject, ObservableObject {
     }
 
     private func adoptAuthResult(_ op: () async throws -> String) async {
-        authError = nil
+        signInError = nil
         signingIn = true
         defer { signingIn = false }
         do {
@@ -122,13 +122,13 @@ final class AppState: NSObject, ObservableObject {
             user = try await cloud.me()
             await loadAccountExtras()
         } catch let err as CloudError {
-            authError = Self.authMessage(err)
+            signInError = Self.errorMessage(err)
         } catch {
-            authError = "連線失敗，請再試一次"
+            signInError = "連線失敗，請再試一次"
         }
     }
 
-    private static func authMessage(_ err: CloudError) -> String {
+    private static func errorMessage(_ err: CloudError) -> String {
         if err.message.contains("USER_ALREADY_EXISTS") { return "這個信箱已經註冊過了" }
         if err.message.contains("INVALID_EMAIL_OR_PASSWORD") { return "信箱或密碼不正確" }
         if err.message.contains("PASSWORD_TOO_SHORT") { return "密碼至少 8 個字元" }
