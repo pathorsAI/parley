@@ -12,14 +12,21 @@ level are native 1206×2622; [`6.9-inch/`](6.9-inch) holds the same frames scale
 to the 6.9-inch slot's **1320×2868** (0.06% aspect delta, not visible). Upload
 the `6.9-inch/` set.
 
-Still to capture for the full story: a live in-progress recording frame and the
-save-destination picker. Both need a live relay session, so shoot them during
-the next device test pass.
+Four frames satisfy submission (App Store Connect requires at least one). Two
+more would complete the story and are worth grabbing on the next pass:
 
-> Driving the simulator: `xcrun simctl io <device> screenshot <path>` works on
-> any booted device. The iOS Simulator MCP tool binds its input channel to the
-> first device it connects to, so keep exactly one simulator booted or taps land
-> on the wrong one.
+- **consent + live recording** — tap Start Recording to show the consent sheet,
+  confirm, then capture the red recording state with the level meter.
+- **save destination** — Settings → Default save location with the picker open.
+
+> Driving the simulator: `xcrun simctl io <device> screenshot <path>` captures
+> reliably on any booted device. Input is the fragile part — the iOS Simulator
+> MCP tool binds its input channel to the first device it connects to and does
+> not recover after the Simulator app is restarted (`machPortNotConnected`);
+> AppleScript `click at` lands on the menu bar, and posting `CGEvent`s from a
+> shell needs Accessibility permission the sandbox does not have. Fastest path:
+> keep exactly one simulator booted, do not restart the Simulator app mid-session,
+> and if input dies, tap by hand and capture with `simctl`.
 
 Export 5 PNG/JPEG images without alpha at one accepted iPhone size (for
 example, the current 6.9-inch or 6.5-inch App Store slot shown in Connect).
