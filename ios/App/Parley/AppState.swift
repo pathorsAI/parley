@@ -66,9 +66,10 @@ final class AppState: NSObject, ObservableObject {
         orgs = (try? await cloud.myOrgs()) ?? []
     }
 
-    /// Google sign-in through the cloud's `/desktop/sign-in` route — the whole
-    /// OAuth flow (incl. the state cookie) runs in the auth browser session,
-    /// and its redirect allowlist admits `parley://` callbacks.
+    /// Sign in via the hosted `/sign-in` page in an auth browser session —
+    /// email+password, Google, and Apple all live there; the page redirects
+    /// back to `parley://` with the session token. Credentials never pass
+    /// through the app.
     func signIn() {
         signInError = nil
         signingIn = true
@@ -99,64 +100,6 @@ final class AppState: NSObject, ObservableObject {
         session.prefersEphemeralWebBrowserSession = false
         webAuth = session
         session.start()
-    }
-
-    /// Native Sign in with Apple: the ASAuthorization identity token goes to
-    /// Better Auth's social sign-in, which verifies it against Apple's public
-    /// keys (audience = our bundle id via APPLE_APP_BUNDLE_ID).
-    func signInApple(result: Result<ASAuthorization, Error>) {
-        switch result {
-        case .failure(let err):
-            if (err as? ASAuthorizationError)?.code != .canceled {
-                signInError = err.localizedDescription
-            }
-        case .success(let auth):
-            guard
-                let cred = auth.credential as? ASAuthorizationAppleIDCredential,
-                let data = cred.identityToken,
-                let idToken = String(data: data, encoding: .utf8)
-            else {
-                signInError = "Apple 沒有回傳身分憑證"
-                return
-            }
-            Task {
-                await adoptAuthResult { try await self.cloud.signInApple(idToken: idToken) }
-            }
-        }
-    }
-
-    /// First-party account: Better Auth email+password via the bearer plugin.
-    func signIn(email: String, password: String) async {
-        await adoptAuthResult { try await self.cloud.signIn(email: email, password: password) }
-    }
-
-    func signUp(name: String, email: String, password: String) async {
-        await adoptAuthResult {
-            try await self.cloud.signUp(name: name, email: email, password: password)
-        }
-    }
-
-    private func adoptAuthResult(_ op: () async throws -> String) async {
-        signInError = nil
-        signingIn = true
-        defer { signingIn = false }
-        do {
-            let token = try await op()
-            KeychainStore.set(token, for: Self.tokenKey)
-            user = try await cloud.me()
-            await loadAccountExtras()
-        } catch let err as CloudError {
-            signInError = Self.errorMessage(err)
-        } catch {
-            signInError = "連線失敗，請再試一次"
-        }
-    }
-
-    private static func errorMessage(_ err: CloudError) -> String {
-        if err.message.contains("USER_ALREADY_EXISTS") { return "這個信箱已經註冊過了" }
-        if err.message.contains("INVALID_EMAIL_OR_PASSWORD") { return "信箱或密碼不正確" }
-        if err.message.contains("PASSWORD_TOO_SHORT") { return "密碼至少 8 個字元" }
-        return "登入失敗（\(err.status)）"
     }
 
     func signOut() async {

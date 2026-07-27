@@ -1,4 +1,3 @@
-import AuthenticationServices
 import ParleyKit
 import SwiftUI
 
@@ -8,14 +7,8 @@ import SwiftUI
 /// rides the hosted providers with the account token (design doc D6).
 struct SettingsView: View {
     @EnvironmentObject private var app: AppState
-    @Environment(\.colorScheme) private var colorScheme
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
-    private enum AuthMode { case signIn, signUp }
-    @State private var authMode: AuthMode = .signIn
-    @State private var name = ""
-    @State private var email = ""
-    @State private var password = ""
     #if DEBUG
         @State private var devToken = ""
     #endif
@@ -72,55 +65,25 @@ struct SettingsView: View {
         }
     }
 
-    /// First-party email+password first; Google (and later Apple) beneath.
+    /// One button → the hosted `/sign-in` page (email+password / Google /
+    /// Apple, all on our origin). The app never renders credential fields.
     @ViewBuilder
     private var signInForm: some View {
-        Picker("", selection: $authMode) {
-            Text("登入").tag(AuthMode.signIn)
-            Text("註冊").tag(AuthMode.signUp)
-        }
-        .pickerStyle(.segmented)
-        if authMode == .signUp {
-            TextField("名稱", text: $name)
-                .textContentType(.name)
-        }
-        TextField("信箱", text: $email)
-            .textContentType(.emailAddress)
-            .keyboardType(.emailAddress)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-        SecureField(authMode == .signUp ? "密碼（至少 8 字元）" : "密碼", text: $password)
-            .textContentType(authMode == .signUp ? .newPassword : .password)
         Button {
-            Task {
-                if authMode == .signUp {
-                    await app.signUp(name: name, email: email, password: password)
-                } else {
-                    await app.signIn(email: email, password: password)
-                }
-                if app.signedIn { password = "" }
-            }
+            app.signIn()
         } label: {
             HStack {
                 if app.signingIn { ProgressView().padding(.trailing, 6) }
-                Text(authMode == .signUp ? "建立帳號" : "登入")
+                Text("登入或註冊")
+                    .font(.body.weight(.medium))
+                    .frame(maxWidth: .infinity)
             }
         }
-        .disabled(app.signingIn || email.isEmpty || password.isEmpty)
-        SignInWithAppleButton(.signIn) { request in
-            request.requestedScopes = [.email, .fullName]
-        } onCompletion: { result in
-            app.signInApple(result: result)
-        }
-        .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-        .frame(height: 40)
-        .listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 20))
-        Button("使用 Google 登入") { app.signIn() }
-            .disabled(app.signingIn)
+        .disabled(app.signingIn)
         if let err = app.signInError {
             Text(err).font(.caption).foregroundStyle(Theme.destructive)
         }
-        Text("登入後即可即時轉錄（免帶 API key）、同步錄音與逐字稿。")
+        Text("會開啟 Parley 的登入頁——支援信箱密碼、Google 與 Apple。登入後即可即時轉錄（免帶 API key）、同步錄音與逐字稿。")
             .font(.caption)
             .foregroundStyle(Theme.mutedForeground)
     }

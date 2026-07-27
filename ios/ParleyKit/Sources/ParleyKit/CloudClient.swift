@@ -27,12 +27,12 @@ public actor CloudClient {
         self.tokenProvider = tokenProvider
     }
 
-    /// Browser URL that runs the whole OAuth flow server-side and hands the
-    /// session token back to `parley://…` — the same `/desktop/sign-in` route
-    /// the desktop uses; its allowlist admits `parley://` schemes.
+    /// The hosted sign-in page (`/sign-in`): email+password, Google, and Apple
+    /// all live on our origin; on success the browser redirects to `callback`
+    /// (`parley://…`) with `?token=`. The app never touches credentials.
     public nonisolated func signInURL(callback: String) -> URL {
         var comps = URLComponents(
-            url: baseURL.appendingPathComponent("desktop/sign-in"),
+            url: baseURL.appendingPathComponent("sign-in"),
             resolvingAgainstBaseURL: false)!
         comps.queryItems = [URLQueryItem(name: "to", value: callback)]
         return comps.url!
