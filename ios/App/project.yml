@@ -34,4 +34,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.pathors.parley.ios
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
+        # 科技派斯 (Pathors). Xcode manages the certificate and profile; CI can
+        # pass an App Store Connect API key with -allowProvisioningUpdates.
+        DEVELOPMENT_TEAM: SXHVCQXJHZ
