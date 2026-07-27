@@ -1,0 +1,37 @@
+name: Parley
+options:
+  bundleIdPrefix: com.pathors
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "26.0"
+packages:
+  ParleyKit:
+    path: ../ParleyKit
+targets:
+  Parley:
+    type: application
+    platform: iOS
+    sources: [Parley]
+    dependencies:
+      - package: ParleyKit
+    entitlements:
+      path: Parley/Parley.entitlements
+      properties:
+        com.apple.developer.applesignin: [Default]
+    info:
+      path: Parley/Info.plist
+      properties:
+        CFBundleDisplayName: Parley
+        UILaunchScreen: {}
+        NSMicrophoneUsageDescription: Parley listens to the meeting to transcribe and coach it live. Audio goes only to the transcription provider tied to your account.
+        UIBackgroundModes: [audio]
+        ITSAppUsesNonExemptEncryption: false
+        CFBundleURLTypes:
+          - CFBundleURLName: com.pathors.parley.ios.auth
+            CFBundleURLSchemes: [parley]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pathors.parley.ios
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
