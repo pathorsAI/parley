@@ -1,0 +1,97 @@
+:root {
+  --ink: #0c111b;
+  --paper: #f6f8fb;
+  --panel: #ffffff;
+  --line: #dce3eb;
+  --muted: #5d6b7d;
+  --signal: #147f8d;
+  --signal-soft: #dff5f4;
+  --link: #195bcc;
+  --focus: #e85b6a;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #edf3fa;
+    --paper: #0c111b;
+    --panel: #131c29;
+    --line: #273548;
+    --muted: #a8b6c8;
+    --signal: #46d4d1;
+    --signal-soft: #11333b;
+    --link: #76a8ff;
+    --focus: #ff8b98;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="light"] {
+  --ink: #0c111b;
+  --paper: #f6f8fb;
+  --panel: #ffffff;
+  --line: #dce3eb;
+  --muted: #5d6b7d;
+  --signal: #147f8d;
+  --signal-soft: #dff5f4;
+  --link: #195bcc;
+  --focus: #e85b6a;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --ink: #edf3fa;
+  --paper: #0c111b;
+  --panel: #131c29;
+  --line: #273548;
+  --muted: #a8b6c8;
+  --signal: #46d4d1;
+  --signal-soft: #11333b;
+  --link: #76a8ff;
+  --focus: #ff8b98;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--paper); }
+body {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2rem clamp(1.25rem, 5vw, 4rem) 4rem;
+  background:
+    linear-gradient(90deg, transparent 0, transparent calc(100% - 1px), var(--line) calc(100% - 1px)) 0 0 / 12rem 100%,
+    var(--paper);
+  color: var(--ink);
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.7;
+}
+a { color: var(--link); text-underline-offset: 0.16em; }
+a:focus-visible, button:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+.topline { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: clamp(4rem, 12vw, 8rem); }
+.brand { display: inline-flex; align-items: center; gap: 0.65rem; color: var(--ink); font-weight: 700; text-decoration: none; }
+.brand img { width: 30px; height: 30px; }
+.back { color: var(--muted); font-size: 0.9rem; }
+main { max-width: 48rem; }
+.eyebrow { margin: 0 0 0.9rem; color: var(--signal); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+h1, h2 { line-height: 1.15; letter-spacing: -0.035em; text-wrap: balance; }
+h1 { max-width: 15ch; margin: 0; font-size: clamp(2.4rem, 8vw, 4.8rem); }
+h2 { margin: 3.6rem 0 0.7rem; font-size: clamp(1.35rem, 4vw, 1.9rem); }
+h3 { margin: 1.8rem 0 0.4rem; font-size: 1.1rem; }
+p, li { max-width: 66ch; }
+.lead { max-width: 55ch; margin: 1.2rem 0 0; color: var(--muted); font-size: 1.16rem; }
+.updated { display: inline-block; margin-top: 1.5rem; padding: 0.35rem 0.65rem; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }
+.callout { margin: 2.3rem 0; padding: 1.2rem 1.3rem; border-left: 4px solid var(--signal); background: var(--signal-soft); }
+.callout p { margin: 0; }
+.data-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-top: 1.2rem; overflow: hidden; border: 1px solid var(--line); background: var(--line); }
+.data-grid div { padding: 1rem; background: var(--panel); }
+.data-grid strong, .data-grid span { display: block; }
+.data-grid strong { font-size: 0.95rem; }
+.data-grid span { margin-top: 0.35rem; color: var(--muted); font-size: 0.88rem; }
+.support-list { display: grid; gap: 0.75rem; padding: 0; list-style: none; }
+.support-list a { display: block; padding: 1.1rem 1.2rem; border: 1px solid var(--line); background: var(--panel); color: var(--ink); text-decoration: none; }
+.support-list a:hover { border-color: var(--signal); }
+.support-list strong, .support-list span { display: block; }
+.support-list span { margin-top: 0.18rem; color: var(--muted); font-size: 0.9rem; }
+footer { margin-top: 5rem; padding-top: 1.2rem; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.86rem; }
+@media (max-width: 34rem) { .data-grid { grid-template-columns: 1fr; } .topline { margin-bottom: 3.5rem; } }

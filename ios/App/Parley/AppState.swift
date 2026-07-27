@@ -15,6 +15,7 @@ final class AppState: NSObject, ObservableObject {
     @Published var orgs: [CloudOrg] = []
     @Published var signingIn = false
     @Published var signInError: String?
+    @Published var pendingUploadCount = MeetingUploader.pendingCount
 
     @AppStorage("theme") var themeRaw: String = AppTheme.system.rawValue
     /// JSON-encoded `SaveDestination` (mirror of desktop `defaultSaveLocation`).
@@ -47,11 +48,13 @@ final class AppState: NSObject, ObservableObject {
     /// `user: null` → session is dead, clear it; a network error keeps the
     /// session so flaky connectivity never signs the user out.
     func refreshSession() async {
+        pendingUploadCount = MeetingUploader.pendingCount
         guard KeychainStore.get(Self.tokenKey) != nil else { return }
         do {
             user = try await cloud.me()
             if user == nil { KeychainStore.delete(Self.tokenKey) }
             await loadAccountExtras()
+            await syncPendingUploads()
         } catch let err as CloudError where err.isAuthExpired {
             KeychainStore.delete(Self.tokenKey)
             user = nil
@@ -91,6 +94,7 @@ final class AppState: NSObject, ObservableObject {
                     KeychainStore.set(token, for: Self.tokenKey)
                     self.user = try await self.cloud.me()
                     await self.loadAccountExtras()
+                    await self.syncPendingUploads()
                 } catch {
                     self.signInError = "登入失敗：\(error.localizedDescription)"
                 }
@@ -104,6 +108,24 @@ final class AppState: NSObject, ObservableObject {
 
     func signOut() async {
         try? await cloud.signOut()
+        clearLocalSession()
+    }
+
+    func syncPendingUploads() async {
+        guard signedIn else {
+            pendingUploadCount = MeetingUploader.pendingCount
+            return
+        }
+        let result = await MeetingUploader.syncPending(cloud: cloud, orgs: orgs)
+        pendingUploadCount = result.remaining
+    }
+
+    func deleteAccount() async throws {
+        try await cloud.deleteAccount()
+        clearLocalSession()
+    }
+
+    private func clearLocalSession() {
         KeychainStore.delete(Self.tokenKey)
         user = nil
         quota = nil
@@ -111,8 +133,7 @@ final class AppState: NSObject, ObservableObject {
     }
 
     #if DEBUG
-        /// Dev shortcut while Sign in with Apple / mobile OAuth UX is pending:
-        /// paste a session token lent by the desktop build.
+        /// Dev-only shortcut for testing a session minted by the desktop build.
         func adoptToken(_ token: String) async {
             KeychainStore.set(token.trimmingCharacters(in: .whitespacesAndNewlines), for: Self.tokenKey)
             await refreshSession()

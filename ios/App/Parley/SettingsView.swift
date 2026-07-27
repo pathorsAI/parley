@@ -9,6 +9,9 @@ struct SettingsView: View {
     @EnvironmentObject private var app: AppState
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
+    @State private var showDeleteConfirmation = false
+    @State private var deletingAccount = false
+    @State private var deleteAccountError: String?
     #if DEBUG
         @State private var devToken = ""
     #endif
@@ -20,6 +23,7 @@ struct SettingsView: View {
                 if app.signedIn {
                     saveDestinationSection
                     usageSection
+                    syncSection
                 }
                 appearanceSection
                 aboutSection
@@ -29,6 +33,16 @@ struct SettingsView: View {
             }
             .navigationTitle("設定")
             .task { await loadFolders() }
+            .confirmationDialog(
+                "永久刪除帳號？", isPresented: $showDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("永久刪除我的帳號與個人資料", role: .destructive) {
+                    Task { await deleteAccount() }
+                }
+            } message: {
+                Text("這會永久移除你的 Parley 帳號、個人錄音、逐字稿、資料夾與使用資料。你仍是擁有者的組織必須先移轉或刪除。")
+            }
         }
     }
 
@@ -59,9 +73,37 @@ struct SettingsView: View {
                 Button("登出", role: .destructive) {
                     Task { await app.signOut() }
                 }
+                Button("刪除帳號", role: .destructive) {
+                    showDeleteConfirmation = true
+                }
+                .disabled(deletingAccount)
+                if let deleteAccountError {
+                    Text(deleteAccountError)
+                        .font(.caption)
+                        .foregroundStyle(Theme.destructive)
+                }
             } else {
                 signInForm
             }
+        }
+    }
+
+    private var syncSection: some View {
+        Section {
+            if app.pendingUploadCount > 0 {
+                Label("\(app.pendingUploadCount) 筆錄音等待同步", systemImage: "icloud.and.arrow.up")
+                    .foregroundStyle(Theme.warning)
+                Button("立即重試同步") {
+                    Task { await app.syncPendingUploads() }
+                }
+            } else {
+                Label("所有錄音都已同步", systemImage: "checkmark.icloud")
+                    .foregroundStyle(Theme.success)
+            }
+        } header: {
+            Text("同步")
+        } footer: {
+            Text("網路中斷、伺服器暫時無回應或額度不足時，手機會保留完成的錄音，直到同步成功。")
         }
     }
 
@@ -205,6 +247,8 @@ struct SettingsView: View {
         Section {
             LabeledContent("版本", value: Bundle.main.shortVersion)
             Link("Parley 桌面版", destination: URL(string: "https://parley.tw")!)
+            Link("隱私權政策", destination: URL(string: "https://parley.tw/privacy/")!)
+            Link("支援與問題回報", destination: URL(string: "https://parley.tw/support/")!)
         } footer: {
             Text("即時教練與深度分析以桌面版為主；手機負責面對面會議的錄音、轉錄與瀏覽。")
         }
@@ -232,6 +276,19 @@ struct SettingsView: View {
         personalFolders = (try? await app.cloud.listFolders()) ?? []
         for org in app.orgs {
             orgFolders[org.id] = (try? await app.cloud.orgFolders(orgId: org.id)) ?? []
+        }
+    }
+
+    private func deleteAccount() async {
+        deletingAccount = true
+        deleteAccountError = nil
+        defer { deletingAccount = false }
+        do {
+            try await app.deleteAccount()
+        } catch let error as CloudError where error.status == 409 {
+            deleteAccountError = "你仍是至少一個組織的擁有者。請先在桌面版移轉或刪除該組織，再刪除帳號。"
+        } catch {
+            deleteAccountError = "帳號尚未刪除。請確認網路後再試一次。"
         }
     }
 }
