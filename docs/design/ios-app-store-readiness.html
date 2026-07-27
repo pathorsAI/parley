@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parley iOS — App Store Readiness</title>
+  <style>
+    :root {
+      --ink: #11151e;
+      --ink-soft: #202735;
+      --paper: #f5f7fb;
+      --panel: #ffffff;
+      --line: #dbe1ec;
+      --muted: #667085;
+      --teal: #57dbd2;
+      --blue: #3baff0;
+      --indigo: #7889f4;
+      --red: #df5963;
+      --amber: #c77c21;
+      --green: #16836d;
+      --font-body: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", sans-serif;
+      --font-data: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --paper: #0d1118; --panel: #151b25; --line: #283141; --muted: #a8b1c1; --ink: #f5f7fb; --ink-soft: #e5eaf2; }
+    }
+    :root[data-theme="light"] { --paper: #f5f7fb; --panel: #ffffff; --line: #dbe1ec; --muted: #667085; --ink: #11151e; --ink-soft: #202735; }
+    :root[data-theme="dark"] { --paper: #0d1118; --panel: #151b25; --line: #283141; --muted: #a8b1c1; --ink: #f5f7fb; --ink-soft: #e5eaf2; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.55 var(--font-body); }
+    .shell { width: min(1100px, calc(100% - 40px)); margin: 0 auto; padding: 28px 0 72px; }
+    .mast { display: grid; grid-template-columns: 1fr auto; gap: 28px; align-items: start; padding: 26px 0 34px; border-bottom: 1px solid var(--line); }
+    .eyebrow, .kicker { color: var(--muted); font: 600 11px/1 var(--font-data); letter-spacing: .12em; text-transform: uppercase; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { max-width: 720px; margin-top: 12px; font-size: clamp(32px, 6vw, 56px); line-height: 1.05; letter-spacing: -.055em; text-wrap: balance; }
+    .lede { max-width: 660px; margin-top: 16px; color: var(--muted); font-size: 17px; }
+    .signal { display: grid; place-items: center; width: 108px; aspect-ratio: 1; overflow: hidden; border-radius: 24px; background: #131821; position: relative; box-shadow: 0 16px 30px #10162233; }
+    .signal::before, .signal::after { position: absolute; content: ""; width: 130%; height: 130%; border: 1px solid #6be3dc2e; border-radius: 50%; }
+    .signal::before { transform: scale(.64); } .signal::after { transform: scale(.94); }
+    .signal img { position: relative; width: 70%; }
+    .summary { display: grid; grid-template-columns: 1.2fr .8fr; gap: 18px; margin: 28px 0; }
+    .card { padding: 22px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; }
+    .card h2 { margin-top: 9px; font-size: 20px; letter-spacing: -.025em; }
+    .card p { margin-top: 9px; color: var(--muted); }
+    .meter { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 18px; }
+    .meter span { height: 6px; border-radius: 999px; background: var(--line); }
+    .meter .ready { background: var(--green); } .meter .watch { background: var(--amber); } .meter .block { background: var(--red); }
+    .metric { font: 600 42px/1 var(--font-data); letter-spacing: -.08em; }
+    section { margin-top: 44px; }
+    .section-head { display: flex; justify-content: space-between; gap: 18px; align-items: baseline; margin-bottom: 14px; }
+    h2 { font-size: 24px; letter-spacing: -.035em; text-wrap: balance; }
+    .options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .option { min-height: 292px; padding: 20px; border: 1px solid var(--line); background: var(--panel); border-radius: 14px; display: flex; flex-direction: column; }
+    .option.recommended { border-color: #48b5e3; box-shadow: inset 0 3px 0 var(--teal); }
+    .option h3 { margin-top: 10px; font-size: 19px; letter-spacing: -.025em; }
+    .option p { margin-top: 8px; color: var(--muted); }
+    .tag { align-self: flex-start; padding: 4px 8px; border-radius: 999px; color: #176d75; background: #57dbd21f; font: 700 10px/1 var(--font-data); letter-spacing: .08em; text-transform: uppercase; }
+    .tag.neutral { color: var(--muted); background: var(--paper); } .tag.risk { color: #9d3a46; background: #df59631f; }
+    .option .effort { margin-top: auto; padding-top: 16px; font: 11px/1.4 var(--font-data); color: var(--muted); }
+    .preview { height: 82px; margin: 16px 0 2px; overflow: hidden; border: 1px solid #ffffff16; border-radius: 10px; background: #121720; position: relative; }
+    .preview.night::before { content: ""; position: absolute; inset: 18px 18px auto; height: 5px; border-radius: 999px; background: linear-gradient(90deg, var(--teal), var(--blue), var(--indigo)); box-shadow: 0 18px 0 #ffffff1c, 0 36px 0 #ffffff12; }
+    .preview.field { background: linear-gradient(135deg, #e9fbfa, #eef4ff); } .preview.field::before { content: ""; position: absolute; inset: 15px; background: repeating-linear-gradient(90deg, transparent 0 12px, #238b9140 12px 14px, transparent 14px 25px); }
+    .preview.mono { background: var(--ink); } .preview.mono::before { content: "P."; position: absolute; left: 18px; top: 4px; color: var(--paper); font: 700 58px/1 var(--font-body); letter-spacing: -.12em; }
+    .audit { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+    table { width: 100%; min-width: 720px; border-collapse: collapse; }
+    th, td { padding: 14px 16px; vertical-align: top; text-align: left; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font: 700 11px/1.3 var(--font-data); letter-spacing: .08em; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+    td:nth-child(1) { width: 118px; font: 700 12px/1.35 var(--font-data); }
+    td:nth-child(2) { width: 190px; font-weight: 650; }
+    td:last-child { color: var(--muted); }
+    .status { display: inline-block; padding: 4px 7px; border-radius: 5px; font: 700 10px/1 var(--font-data); letter-spacing: .05em; }
+    .status.block { background: #df59631f; color: #b33c4c; } .status.watch { background: #c77c211f; color: #a35e0e; } .status.ok { background: #16836d1f; color: #10705b; }
+    .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .flow > div { min-height: 100px; padding: 14px; border-top: 2px solid var(--line); background: var(--panel); }
+    .flow > div:first-child { border-color: var(--teal); } .flow > div:nth-child(2) { border-color: var(--blue); } .flow > div:nth-child(3) { border-color: var(--indigo); } .flow > div:last-child { border-color: var(--green); }
+    .flow strong { display: block; margin-top: 9px; font-size: 16px; } .flow small { display: block; margin-top: 5px; color: var(--muted); }
+    .note { margin-top: 16px; padding: 15px 17px; color: var(--muted); border-left: 3px solid var(--teal); background: color-mix(in srgb, var(--panel) 85%, var(--teal)); }
+    @media (max-width: 720px) { .shell { width: min(100% - 28px, 1100px); } .mast, .summary, .options, .flow { grid-template-columns: 1fr; } .signal { display: none; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="mast">
+      <div>
+        <p class="eyebrow">Parley / iOS release readiness</p>
+        <h1>先把「可信」做成第一個畫面。</h1>
+        <p class="lede">這不是只補一張 icon。Parley 要帶著自己的聲音進 App Store：清楚說明怎麼錄、資料去哪裡、怎麼退出，並讓第一組 screenshots 看起來像同一個產品。</p>
+      </div>
+      <div class="signal"><img src="../../ios/App/Parley/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png" alt="Parley app icon"></div>
+    </header>
+
+    <div class="summary">
+      <article class="card">
+        <p class="kicker">Readiness signal</p>
+        <h2>1 build 已上傳，送審尚未可用</h2>
+        <div class="meter" aria-label="2 ready, 1 watch, 1 block"><span class="ready"></span><span class="ready"></span><span class="watch"></span><span class="block"></span></div>
+        <p>簽章、App ID、Sign in with Apple capability 與 TestFlight upload 已通；商店資料、隱私與帳號生命週期尚未補齊。</p>
+      </article>
+      <article class="card">
+        <p class="kicker">App Store reality</p>
+        <p class="metric">0 / 10</p>
+        <p>目前 App Store Connect 的 screenshots、描述、keywords、Support URL、review credentials、聯絡人與 notes 都是空的。</p>
+      </article>
+    </div>
+
+    <section>
+      <div class="section-head"><h2>品牌處理：三條可選的路</h2><span class="kicker">選一條，整包完成</span></div>
+      <div class="options">
+        <article class="option recommended">
+          <span class="tag">Recommended</span>
+          <h3>Night Signal</h3>
+          <div class="preview night"></div>
+          <p>保留既有深墨底、青藍靛紫 P 與「協議點」。商店截圖以 live transcript 的一條訊號帶作主角；iOS、網站與桌機圖標終於講同一種語言。</p>
+          <p class="effort">Icon refine · 5 screenshot frames · privacy / support pages · in-app consent</p>
+        </article>
+        <article class="option">
+          <span class="tag neutral">Alternative</span>
+          <h3>Listening Field</h3>
+          <div class="preview field"></div>
+          <p>淺色、像會議桌上的聲紋紀錄紙。較溫和、偏專業服務，但會與目前 desktop 的 dark cockpit 拉開距離。</p>
+          <p class="effort">New screenshot art direction · icon variant · copy system</p>
+        </article>
+        <article class="option">
+          <span class="tag risk">Not advised now</span>
+          <h3>Mono Utility</h3>
+          <div class="preview mono"></div>
+          <p>純黑白 P.，像錄音工具。最快、最穩，但捨棄 Parley 已經擁有的辨識度，像一個新的、較冷的產品。</p>
+          <p class="effort">Minimal assets · weaker product continuity</p>
+        </article>
+      </div>
+      <p class="note">推薦 Night Signal：不是再發明一個 logo，而是把目前已經對的 mark、錄音紅點、speaker 色與雲端信任感，整理成同一組商店敘事。</p>
+    </section>
+
+    <section>
+      <div class="section-head"><h2>送審前 audit</h2><span class="kicker">2026-07-27 現況</span></div>
+      <div class="audit">
+        <table>
+          <thead><tr><th>Priority</th><th>項目</th><th>現況</th><th>補法</th></tr></thead>
+          <tbody>
+            <tr><td><span class="status block">BLOCKER</span></td><td>帳號刪除</td><td>Better Auth / app 都沒有 deletion flow。</td><td>雲端刪 session、user、個人 recording/R2；iOS 設定頁內啟動、確認與完成回饋。</td></tr>
+            <tr><td><span class="status block">BLOCKER</span></td><td>隱私政策</td><td><code>parley.tw/privacy</code> 目前 404，app 內也沒有入口。</td><td>上線中英／繁中 policy，描述音訊、逐字稿、帳號、R2、Soniox／Groq、保留／刪除；Settings 加連結。</td></tr>
+            <tr><td><span class="status block">BLOCKER</span></td><td>Store metadata</td><td>Screenshots、描述、keywords、Support URL、copyright、review credentials、聯絡人、notes 均空白。</td><td>產出 Night Signal 5 張 iPhone screenshots，填 zh-Hant 首發資料與 review packet。</td></tr>
+            <tr><td><span class="status watch">WATCH</span></td><td>錄音同意</td><td>目前點「開始錄音」就請求 mic，未提示與會者同意或雲端轉錄。</td><td>首次錄音 sheet：目的、資料流、與會者同意、可在 Settings 關閉；不影響後續一鍵錄音。</td></tr>
+            <tr><td><span class="status watch">WATCH</span></td><td>資料韌性</td><td>停止錄音後若 upload 失敗，temp Ogg 會被刪除，不能重試。</td><td>改成 pending upload queue；顯示同步狀態、保留檔案直到成功或使用者刪除。</td></tr>
+            <tr><td><span class="status watch">WATCH</span></td><td>Login review flow</td><td>Hosted auth 已有 email / Google / Apple；但 review test account 與 Notes 尚未提供。</td><td>建立可測試帳號、資料；Review Notes 說明 ASWebAuthenticationSession handoff 與 hosted STT。</td></tr>
+            <tr><td><span class="status ok">READY</span></td><td>App ID / SIWA</td><td><code>com.pathors.parley.ios</code> 已啟用 Sign in with Apple；hosted auth 已有 Apple 路徑。</td><td>保留，並以 TestFlight 真機驗完整登入。</td></tr>
+            <tr><td><span class="status ok">READY</span></td><td>簽章 / Icon</td><td>Apple Distribution、Store profile、1024 PNG 無 alpha、TestFlight build 1.0 (1) 已上傳。</td><td>Night Signal 只做一致性 refine，不重做識別。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head"><h2>完整完成後的發佈門</h2><span class="kicker">不是分期，是一個可送審包</span></div>
+      <div class="flow">
+        <div><span class="kicker">01 / Trust</span><strong>Privacy 與 consent</strong><small>網站政策、in-app link、首錄提示、privacy label。</small></div>
+        <div><span class="kicker">02 / Account</span><strong>登入與刪除</strong><small>Apple / Google / email 都可登入；帳號和資料都可從 app 內刪除。</small></div>
+        <div><span class="kicker">03 / Product</span><strong>資料不丟失</strong><small>離線與失敗上傳 queue；TestFlight 真機驗 background、lock、interruption。</small></div>
+        <div><span class="kicker">04 / Store</span><strong>Metadata 與 review packet</strong><small>5 screenshots、商店 copy、支援頁、test account、精準 review notes。</small></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

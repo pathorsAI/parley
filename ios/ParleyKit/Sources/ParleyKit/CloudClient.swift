@@ -100,6 +100,13 @@ public actor CloudClient {
         _ = try await request("auth/sign-out", method: "POST")
     }
 
+    /// Permanently removes the first-party account and its personal recordings.
+    /// The server returns 409 when the account still owns a shared organization;
+    /// that workspace must be transferred or removed explicitly first.
+    public func deleteAccount() async throws {
+        _ = try await request("me", method: "DELETE")
+    }
+
     // MARK: recordings (personal)
 
     public func listRecordings() async throws -> [CloudRecordingSummary] {

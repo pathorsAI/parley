@@ -10,6 +10,7 @@ struct LiveView: View {
     @State private var capture: AudioCapture?
     @State private var relay: SttRelayClient?
     @State private var uploader: MeetingUploader?
+    @State private var showRecordingConsent = false
 
     var body: some View {
         NavigationStack {
@@ -30,6 +31,14 @@ struct LiveView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     LevelMeter(level: store.micLevel)
                 }
+            }
+            .alert("開始錄音前請確認", isPresented: $showRecordingConsent) {
+                Button("取消", role: .cancel) {}
+                Button("我已取得所有與會者同意") {
+                    Task { await start() }
+                }
+            } message: {
+                Text("Parley 會收取房間麥克風聲音，將音訊送往你的 Parley 雲端帳號進行即時轉錄，並同步儲存錄音與逐字稿。請先確認所有與會者同意錄音。")
             }
         }
     }
@@ -90,12 +99,22 @@ struct LiveView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(store.isRecording ? Theme.recording : Theme.primary)
+            .disabled(!store.isRecording && !app.signedIn)
+            if !store.isRecording && !app.signedIn {
+                Text("請先到「設定」登入，錄音才會安全同步到你的雲端帳號。")
+                    .font(.caption)
+                    .foregroundStyle(Theme.mutedForeground)
+            }
         }
         .padding(16)
     }
 
     private func toggle() {
-        if store.isRecording { Task { await stop() } } else { Task { await start() } }
+        if store.isRecording {
+            Task { await stop() }
+        } else {
+            showRecordingConsent = true
+        }
     }
 
     private func start() async {
@@ -175,15 +194,18 @@ struct LiveView: View {
                 defaultSave: app.defaultSave,
                 orgs: app.orgs)
             if let outcome {
+                app.pendingUploadCount = MeetingUploader.pendingCount
                 store.status =
                     outcome.sharedToOrgName.map { "已同步，並分享到「\($0)」" } ?? "已同步到雲端"
             } else {
                 store.status = "錄音太短，已捨棄"
             }
         } catch let e as CloudError where e.status == 402 {
-            store.status = "額度已用完，錄音未上傳"
+            app.pendingUploadCount = MeetingUploader.pendingCount
+            store.status = "額度已用完，錄音已安全保留，額度恢復後會自動同步"
         } catch {
-            store.status = "上傳失敗：\(error.localizedDescription)"
+            app.pendingUploadCount = MeetingUploader.pendingCount
+            store.status = "同步暫時失敗，錄音已安全保留，稍後會自動重試"
         }
     }
 
