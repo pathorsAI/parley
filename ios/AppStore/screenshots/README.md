@@ -6,11 +6,23 @@ meeting content, real email addresses, or desktop mockups in screenshots.
 ## Current captured set
 
 Four real frames are checked in, captured from build 1.0 (3) on an iPhone 17 Pro
-simulator signed in as the review account, with the two sample meetings loaded:
-`01-record`, `02-library`, `03-transcript`, `04-settings`. The files at the top
-level are native 1206×2622; [`6.9-inch/`](6.9-inch) holds the same frames scaled
-to the 6.9-inch slot's **1320×2868** (0.06% aspect delta, not visible). Upload
-the `6.9-inch/` set.
+simulator signed in as the review account: `01-record`, `02-library`,
+`03-transcript`, `04-settings`. The files at the top level are native 1206×2622;
+[`6.9-inch/`](6.9-inch) holds the same frames scaled to the 6.9-inch slot's
+**1320×2868** (0.06% aspect delta, not visible). Upload the `6.9-inch/` set.
+
+### About the demo content
+
+The library and transcript frames show two meetings — 續約條件討論 and
+新客戶需求訪談 — written to read the way real B2B conversations actually sound
+(seat counts, onboarding time, invoicing split, a security questionnaire).
+That is deliberate: a screenshot captioned "this is a test" sells nothing and
+tells a reviewer nothing about the product.
+
+The content is **entirely fictional**. It names no real company, person, or
+customer, and no real meeting data was used. Speakers are labelled 我 /
+客戶窗口 via the app's own speaker-naming feature. Regenerate with
+`scratchpad/seed-demo.mjs` against the review account.
 
 Four frames satisfy submission (App Store Connect requires at least one). Two
 more would complete the story and are worth grabbing on the next pass:
