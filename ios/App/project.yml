@@ -23,7 +23,7 @@ targets:
       properties:
         CFBundleDisplayName: Parley
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "2"
+        CFBundleVersion: "3"
         UILaunchScreen: {}
         NSMicrophoneUsageDescription: Parley listens to the meeting to transcribe and coach it live. Audio goes only to the transcription provider tied to your account.
         UIBackgroundModes: [audio]

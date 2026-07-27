@@ -35,6 +35,10 @@ Connect. CI should use an App Store Connect API key with
 
 ## Store metadata
 
+The canonical submission copy, privacy answers, review notes, and screenshot
+brief live in [`AppStore/`](AppStore/README.md). Keep this checklist concise;
+do not copy reviewer credentials into the repository.
+
 - **Support URL:** `https://parley.tw/support/`
 - **Privacy Policy URL:** `https://parley.tw/privacy/`
 - **Copyright:** `© 2026 Pathors AI`
