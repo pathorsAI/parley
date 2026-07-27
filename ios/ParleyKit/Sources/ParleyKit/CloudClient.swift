@@ -67,7 +67,16 @@ public actor CloudClient {
             payload: ["name": name, "email": email, "password": password])
     }
 
-    private func authToken(path: String, payload: [String: String]) async throws -> String {
+    /// `POST /auth/sign-in/social` with a native Apple identity token — the
+    /// server verifies it against Apple's public keys (audience = the app's
+    /// bundle id) and returns a session like any other sign-in.
+    public func signInApple(idToken: String) async throws -> String {
+        try await authToken(
+            path: "auth/sign-in/social",
+            payload: ["provider": "apple", "idToken": ["token": idToken]])
+    }
+
+    private func authToken(path: String, payload: [String: Any]) async throws -> String {
         let body = try JSONSerialization.data(withJSONObject: payload)
         let (_, response) = try await requestWithResponse(
             path, method: "POST", body: body, contentType: "application/json")

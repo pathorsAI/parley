@@ -1,3 +1,4 @@
+import AuthenticationServices
 import ParleyKit
 import SwiftUI
 
@@ -7,6 +8,7 @@ import SwiftUI
 /// rides the hosted providers with the account token (design doc D6).
 struct SettingsView: View {
     @EnvironmentObject private var app: AppState
+    @Environment(\.colorScheme) private var colorScheme
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
     private enum AuthMode { case signIn, signUp }
@@ -105,6 +107,14 @@ struct SettingsView: View {
             }
         }
         .disabled(app.signingIn || email.isEmpty || password.isEmpty)
+        SignInWithAppleButton(.signIn) { request in
+            request.requestedScopes = [.email, .fullName]
+        } onCompletion: { result in
+            app.signInApple(result: result)
+        }
+        .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+        .frame(height: 40)
+        .listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 20))
         Button("使用 Google 登入") { app.signIn() }
             .disabled(app.signingIn)
         if let err = app.signInError {

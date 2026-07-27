@@ -101,6 +101,30 @@ final class AppState: NSObject, ObservableObject {
         session.start()
     }
 
+    /// Native Sign in with Apple: the ASAuthorization identity token goes to
+    /// Better Auth's social sign-in, which verifies it against Apple's public
+    /// keys (audience = our bundle id via APPLE_APP_BUNDLE_ID).
+    func signInApple(result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .failure(let err):
+            if (err as? ASAuthorizationError)?.code != .canceled {
+                signInError = err.localizedDescription
+            }
+        case .success(let auth):
+            guard
+                let cred = auth.credential as? ASAuthorizationAppleIDCredential,
+                let data = cred.identityToken,
+                let idToken = String(data: data, encoding: .utf8)
+            else {
+                signInError = "Apple 沒有回傳身分憑證"
+                return
+            }
+            Task {
+                await adoptAuthResult { try await self.cloud.signInApple(idToken: idToken) }
+            }
+        }
+    }
+
     /// First-party account: Better Auth email+password via the bearer plugin.
     func signIn(email: String, password: String) async {
         await adoptAuthResult { try await self.cloud.signIn(email: email, password: password) }

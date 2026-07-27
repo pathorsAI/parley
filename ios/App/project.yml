@@ -14,6 +14,10 @@ targets:
     sources: [Parley]
     dependencies:
       - package: ParleyKit
+    entitlements:
+      path: Parley/Parley.entitlements
+      properties:
+        com.apple.developer.applesignin: [Default]
     info:
       path: Parley/Info.plist
       properties:
