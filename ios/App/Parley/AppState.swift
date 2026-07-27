@@ -8,7 +8,7 @@ import SwiftUI
 /// the token lives in the Keychain, never UserDefaults.
 @MainActor
 final class AppState: NSObject, ObservableObject {
-    static let tokenKey = "cloud-session-token"
+    nonisolated static let tokenKey = "cloud-session-token"
 
     @Published var user: CloudUser?
     @Published var quota: HostedQuota?
