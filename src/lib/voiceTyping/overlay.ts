@@ -1,6 +1,7 @@
 //! Lifecycle for the floating voice-typing overlay window: a transparent,
-//! always-on-top, non-focusing panel pinned to the bottom-centre of the active
-//! display. Created once (hidden) and shown/repositioned per dictation.
+//! always-on-top, non-focusing panel pinned to the bottom-centre of the display
+//! the mouse pointer sits on. Created once (hidden) and shown/repositioned per
+//! dictation.
 
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
@@ -62,19 +63,65 @@ async function ensureOverlay(): Promise<void> {
   }
 }
 
-/** Place the overlay at the bottom-centre of the active monitor (logical px). */
-async function positionBottomCenter(win: import("@tauri-apps/api/webviewWindow").WebviewWindow): Promise<void> {
-  const { currentMonitor, primaryMonitor, LogicalPosition } = await import("@tauri-apps/api/window");
-  const mon = (await currentMonitor()) ?? (await primaryMonitor());
-  if (!mon) return;
+/** The bits of Tauri's `Monitor` the geometry needs (physical px + scale). */
+export type MonitorGeometry = {
+  position: { x: number; y: number };
+  size: { width: number; height: number };
+  scaleFactor: number;
+};
+
+/**
+ * Bottom-centre of `mon` for the WIDTH×HEIGHT (logical px) overlay, returned in
+ * PHYSICAL px.
+ *
+ * Physical rather than logical because Tauri converts a logical position using
+ * the window's CURRENT scale factor — which is still the old display's while
+ * the overlay is being moved onto another one. On a mixed-DPI setup (Retina +
+ * external 1x) that lands it at double/half the intended offset. Monitor
+ * geometry is already physical, so doing the whole calculation there sidesteps
+ * the conversion.
+ */
+export function bottomCenterPhysical(mon: MonitorGeometry): { x: number; y: number } {
   const scale = mon.scaleFactor || 1;
-  const monX = mon.position.x / scale;
-  const monY = mon.position.y / scale;
-  const monW = mon.size.width / scale;
-  const monH = mon.size.height / scale;
-  const x = Math.round(monX + (monW - WIDTH) / 2);
-  const y = Math.round(monY + monH - HEIGHT - BOTTOM_MARGIN);
-  await win.setPosition(new LogicalPosition(x, y));
+  return {
+    x: Math.round(mon.position.x + (mon.size.width - WIDTH * scale) / 2),
+    y: Math.round(mon.position.y + mon.size.height - (HEIGHT + BOTTOM_MARGIN) * scale),
+  };
+}
+
+/**
+ * The display the mouse pointer is on. That — not `currentMonitor()`, which
+ * reports where the MAIN WINDOW happens to live — is the screen the user is
+ * looking at when they start dictating. Resolved once per dictation (see
+ * showOverlay), so moving the mouse mid-sentence leaves the overlay put.
+ *
+ * Falls back to the old main-window/primary display when the pointer can't be
+ * located: a misplaced overlay still beats no overlay.
+ */
+async function overlayMonitor(): Promise<MonitorGeometry | null> {
+  const { currentMonitor, primaryMonitor, monitorFromPoint, cursorPosition } = await import(
+    "@tauri-apps/api/window"
+  );
+  try {
+    const cursor = await cursorPosition();
+    const mon = await monitorFromPoint(cursor.x, cursor.y);
+    if (mon) return mon;
+    log.warn("voice-typing: no monitor under cursor", { x: cursor.x, y: cursor.y });
+  } catch (error) {
+    log.warn("voice-typing: cursor monitor lookup failed", { error: String(error) });
+  }
+  return (await currentMonitor()) ?? (await primaryMonitor());
+}
+
+/** Place the overlay at the bottom-centre of the monitor under the cursor. */
+async function positionBottomCenter(
+  win: import("@tauri-apps/api/webviewWindow").WebviewWindow,
+): Promise<void> {
+  const { PhysicalPosition } = await import("@tauri-apps/api/window");
+  const mon = await overlayMonitor();
+  if (!mon) return;
+  const { x, y } = bottomCenterPhysical(mon);
+  await win.setPosition(new PhysicalPosition(x, y));
 }
 
 /** Reposition + show the overlay (creating it on first use). Shown natively via
