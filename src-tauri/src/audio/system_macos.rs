@@ -258,6 +258,18 @@ fn run(tx: UnboundedSender<Vec<i16>>, running: Arc<AtomicBool>, app: &AppHandle)
             return Err(anyhow!("AudioDeviceCreateIOProcID failed: {status}"));
         }
         AudioDeviceStart(agg_id, proc_id);
+        // Kick the tap awake. A global process tap only starts ticking once
+        // SOME process renders audio; until then the tap-backed aggregate sits
+        // dormant, and (observed on macOS 15) coreaudiod wedges the START of
+        // the meeting's MIC stream behind the dormant device — nothing is
+        // captured or transcribed until the first system sound (or until stop
+        // tears the tap down, which is why transcripts appeared only after
+        // ending the meeting; issue reproduced with `stream.play()` blocking
+        // 34 s until a sound played, then returning within 150 ms of the tap's
+        // first IOProc frame). Rendering ~300 ms of silence from our own
+        // process gives the tap its first source; once ticking it keeps
+        // ticking (delivering silence) for the life of the tap.
+        std::thread::spawn(kick_system_output);
 
         // 6. Hold the device open until the meeting stops, then tear everything
         // down. Watchdog: an unauthorized tap "starts" fine but its IOProc never
@@ -350,6 +362,43 @@ unsafe fn tap_uuid_string(desc: *mut Object) -> String {
         return String::new();
     }
     CStr::from_ptr(cstr).to_string_lossy().into_owned()
+}
+
+/// Render ~300 ms of silence on the default output device so the process tap
+/// has a source and starts ticking (see the call site in [`run`]). Failures are
+/// logged and otherwise ignored — the tap then simply stays dormant until the
+/// first real system sound, which is the pre-kick behavior.
+fn kick_system_output() {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    let Some(dev) = cpal::default_host().default_output_device() else {
+        log::warn!("[system] tap kick: no default output device");
+        return;
+    };
+    let Ok(cfg) = dev.default_output_config() else {
+        log::warn!("[system] tap kick: no default output config");
+        return;
+    };
+    if cfg.sample_format() != cpal::SampleFormat::F32 {
+        log::warn!(
+            "[system] tap kick: unexpected output format {:?}; skipping",
+            cfg.sample_format()
+        );
+        return;
+    }
+    let cfg: cpal::StreamConfig = cfg.into();
+    match dev.build_output_stream(
+        &cfg,
+        |data: &mut [f32], _| data.fill(0.0),
+        |e| log::warn!("[system] tap kick stream error: {e}"),
+        None,
+    ) {
+        Ok(stream) => {
+            let _ = stream.play();
+            std::thread::sleep(Duration::from_millis(300));
+            drop(stream);
+        }
+        Err(e) => log::warn!("[system] tap kick: output stream failed: {e}"),
+    }
 }
 
 /// Query the tapped stream's sample rate.
