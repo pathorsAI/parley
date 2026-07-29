@@ -111,8 +111,12 @@ export function SaveDestinationPicker({
   // (or the group name when the selection IS a root).
   const groups: ComboGroup[] = useMemo(() => {
     const personalLabel = t("settings.account.defaultSave.personal");
-    const label = (group: string, name: string, isRoot: boolean) =>
-      compact ? (isRoot ? group : name) : `${group} · ${name}`;
+    // Compact triggers have room for one word: the folder, or the group name
+    // when the selection IS that group's root.
+    const label = (group: string, name: string, isRoot: boolean) => {
+      if (!compact) return `${group} · ${name}`;
+      return isRoot ? group : name;
+    };
     const g: ComboGroup[] = [
       {
         label: personalLabel,

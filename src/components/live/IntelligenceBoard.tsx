@@ -2,7 +2,10 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { runIntelExtraction } from "../../lib/intel/extract";
+import { useAccounts } from "../../lib/accounts/store";
 import { useScenarioSet } from "../../lib/accounts/useStageSet";
+import { stageFor } from "../../lib/accounts/currentStage";
+import { applyScenario } from "../../lib/meeting/scenario";
 import type { Scenario } from "../../lib/accounts/bundles";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
@@ -39,8 +42,8 @@ const AUTO_EXTRACT_MS = 30_000;
 export function IntelligenceBoard() {
   const { t } = useI18n();
   const meetingType = useStore((s) => s.settings.meetingType);
-  const evalTemplates = useStore((s) => s.settings.evalTemplates);
-  const updateSettings = useStore((s) => s.updateSettings);
+  const threadId = useStore((s) => s.meetingThreadId);
+  const thread = useAccounts((s) => s.threads.find((x) => x.id === threadId));
   const meetingStage = useStore((s) => s.meetingStage);
   const setMeetingStage = useStore((s) => s.setMeetingStage);
   const intel = useStore((s) => s.intel);
@@ -65,29 +68,20 @@ export function IntelligenceBoard() {
     return () => clearInterval(id);
   }, [recording, scenario]);
 
-  function pickScenario(v: MeetingType) {
-    const next = scenarios.byId[v];
-    // Scenario-bound eval template rides along (when it exists) — the coach
-    // feed's lens follows the board.
-    const tpl = next?.evalTemplateId
-      ? evalTemplates.find((x) => x.id === next.evalTemplateId)
-      : undefined;
-    updateSettings({
-      meetingType: v,
-      ...(tpl ? { evaluations: tpl.evals.map((e) => ({ ...e })) } : {}),
-    });
-  }
 
-  const stage =
-    scenario && meetingStage && scenario.order.includes(meetingStage)
-      ? meetingStage
-      : scenario?.order[0];
+  // Resolve exactly like the board below (and the extraction pass): the picker
+  // ignored the linked thread's stage, so a sales call inherited from a thread
+  // showed one stage in the header while the board ran another.
+  const stage = scenario ? stageFor(scenario, meetingStage, thread) : undefined;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* ONE header line: scenario · stage · refresh (呼吸版). */}
       <div className="flex items-center gap-1.5 px-3 pt-2 pb-2">
-        <Select value={scenario ? meetingType : "general"} onValueChange={pickScenario}>
+        <Select
+          value={scenario ? meetingType : "general"}
+          onValueChange={(v) => applyScenario(v as MeetingType, scenarios)}
+        >
           <SelectTrigger size="sm" className="h-7 w-auto min-w-0 gap-1 border-none bg-transparent px-1.5 text-xs font-medium shadow-none">
             <SelectValue />
           </SelectTrigger>

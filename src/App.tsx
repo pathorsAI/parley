@@ -23,7 +23,7 @@ import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWind
 import { useFindingSolutionHost } from "./components/analysis/useFindingSolutionHost";
 import { DeliveryNudgeHost } from "./components/delivery/DeliveryNudgeHost";
 import { useDeliveryCoach } from "./lib/analysis/useDelivery";
-import { useStore, isMeetingActive } from "./lib/store";
+import { useStore, isMeetingActive, type AppMode } from "./lib/store";
 import {
   isTauri,
   listenForMeetingError,
@@ -106,6 +106,27 @@ function useFullscreen(): boolean {
     };
   }, []);
   return fullscreen;
+}
+
+/** The one top-level screen for the current app mode. The lazily-loaded ones
+ *  are secondary tenses — the live screen is what the app opens to. */
+function MainScreen({ mode }: Readonly<{ mode: AppMode }>) {
+  if (mode === "replay") return <StudyScreen />;
+  if (mode === "accounts") {
+    return (
+      <Suspense fallback={null}>
+        <AccountsScreen />
+      </Suspense>
+    );
+  }
+  if (mode === "preflight") {
+    return (
+      <Suspense fallback={null}>
+        <PreflightScreen />
+      </Suspense>
+    );
+  }
+  return <LiveScreen />;
 }
 
 const App = () => {
@@ -334,19 +355,7 @@ const App = () => {
       {!isTauri() && <FindingSolutionWindow />}
       <TitleBar fullscreen={fullscreen} />
       <DeliveryNudgeHost />
-      {appMode === "replay" ? (
-        <StudyScreen />
-      ) : appMode === "accounts" ? (
-        <Suspense fallback={null}>
-          <AccountsScreen />
-        </Suspense>
-      ) : appMode === "preflight" ? (
-        <Suspense fallback={null}>
-          <PreflightScreen />
-        </Suspense>
-      ) : (
-        <LiveScreen />
-      )}
+      <MainScreen mode={appMode} />
       {/* Interpreter strip: only during a translated live meeting. */}
       <TranslateStrip />
     </div>

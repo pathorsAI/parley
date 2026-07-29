@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useStore, formatClock } from "../../lib/store";
 import { useAccounts, activeClaims, threadsOf } from "../../lib/accounts/store";
 import { useScenarioSet } from "../../lib/accounts/useStageSet";
+import { stageFor } from "../../lib/accounts/currentStage";
 import { boardStates } from "../../lib/accounts/slotState";
 import { boardFromBundle } from "../../lib/intel/boards";
 import { listHistory, loadHistoryEntry } from "../../lib/history/history";
@@ -89,13 +90,9 @@ export function ReviewPanel() {
   );
 
   const thread = companyId ? threadsOf(acc, companyId).find((x) => x.id === threadId) : undefined;
-  const stageId =
-    meetingStage && scenario?.order.includes(meetingStage)
-      ? meetingStage
-      : (scenario?.id === "sales" && thread?.kind === "sales" && thread.stage &&
-          scenario.order.includes(thread.stage)
-          ? thread.stage
-          : scenario?.order[0]);
+  // Same resolver the live board runs — the gap board previewed here has to be
+  // the one the call will actually open with.
+  const stageId = scenario ? stageFor(scenario, meetingStage, thread) : undefined;
 
   const rows = useMemo(() => {
     if (!scenario || !stageId) return [];

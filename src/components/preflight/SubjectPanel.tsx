@@ -3,6 +3,7 @@ import { FolderClosed } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { useAccounts, personsOf, threadsOf } from "../../lib/accounts/store";
 import { ensureCompanyFolder } from "../../lib/accounts/folders";
+import { stageFor } from "../../lib/accounts/currentStage";
 import { useScenarioSet } from "../../lib/accounts/useStageSet";
 import { applyScenario } from "../../lib/meeting/scenario";
 import { resolveMeetingSave } from "../../lib/history/history";
@@ -59,15 +60,8 @@ export function SubjectPanel() {
     [scenario]
   );
   const thread = threads.find((x) => x.id === threadId) ?? null;
-  // Mirrors ScenarioBoard's stageFor: the picker must show the stage the board
-  // will actually run, not an empty slot the user has to guess at.
-  const stage =
-    meetingStage && scenario?.order.includes(meetingStage)
-      ? meetingStage
-      : (scenario?.id === "sales" && thread?.kind === "sales" && thread.stage &&
-          scenario.order.includes(thread.stage)
-          ? thread.stage
-          : scenario?.order[0]) ?? "";
+  // The picker must show the stage the board will actually run — same resolver.
+  const stage = scenario ? stageFor(scenario, meetingStage, thread) : "";
 
   // What the save will actually do, recomputed from the same function the save
   // path calls. Reading `useAccounts()`/store above keeps this reactive.
