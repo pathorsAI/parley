@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Building2, Check, Circle, FileAudio, History, Languages, Loader2, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
 import { useStore, meetingElapsedMs } from "../lib/store";
 import { log } from "../lib/log";
-import { STT_BY_ID, sttApiKey, sttRelayUrl } from "../lib/transcription/providers";
+import { sttApiKey } from "../lib/transcription/providers";
 import { toast } from "sonner";
-import { startMockStream, stopMockStream } from "../lib/mockStream";
+import { stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
 import { openSettingsWindow } from "../lib/settingsSync";
 import { openHistoryWindow } from "../lib/history/history";
@@ -17,9 +17,12 @@ import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
 import { McpStatusChip } from "./McpStatusChip";
 import { ReplayFolderChip } from "./ReplayFolderChip";
-import { SaveDestinationPicker } from "./SaveDestinationPicker";
 import { PostMeetingReviewButton } from "./accounts/PostMeetingReviewButton";
 import { StudyGenerationChip } from "./study/StudyGenerationChip";
+
+const AccountsSheet = lazy(() =>
+  import("./accounts/AccountsSheet").then((m) => ({ default: m.AccountsSheet }))
+);
 
 type TFn = ReturnType<typeof useI18n>["t"];
 type WindowAction = "close" | "minimize" | "fullscreen";
@@ -258,10 +261,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const { t } = useI18n();
   const focused = useWindowFocused();
   const status = useStore((s) => s.meetingStatus);
-  const transcriptionProvider = useStore((s) => s.settings.transcriptionProvider);
   const sttKey = useStore((s) => sttApiKey(s.settings, s.settings.transcriptionProvider));
-  const inputDevice = useStore((s) => s.settings.inputDevice);
-  const startMeeting = useStore((s) => s.startMeeting);
   const stopMeeting = useStore((s) => s.stopMeeting);
   const isFinalizingMeeting = useStore((s) => s.isFinalizingMeeting);
   const setFinalizingMeeting = useStore((s) => s.setFinalizingMeeting);
@@ -270,12 +270,8 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const cancelMeeting = useStore((s) => s.cancelMeeting);
   const translateEnabled = useStore((s) => s.settings.meetingTranslateEnabled);
   const translateLanguage = useStore((s) => s.settings.translateTargetLanguage);
-  const translateOutputDevice = useStore((s) => s.settings.translateOutputDevice);
-  const geminiApiKey = useStore((s) => s.settings.geminiApiKey);
   const layout = useStore((s) => s.settings.layout);
   const updateSettings = useStore((s) => s.updateSettings);
-  const saveLocation = useStore((s) => s.settings.defaultSaveLocation);
-  const syncEnabled = useStore((s) => s.settings.syncEnabled);
   const meetingStartedAt = useStore((s) => s.meetingStartedAt);
   const studyTab = useStore((s) => s.studyTab);
   const setStudyTab = useStore((s) => s.setStudyTab);
@@ -284,6 +280,9 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const exitReplay = useStore((s) => s.exitReplay);
   const enterAccounts = useStore((s) => s.enterAccounts);
   const exitAccounts = useStore((s) => s.exitAccounts);
+  const enterPreflight = useStore((s) => s.enterPreflight);
+  const exitPreflight = useStore((s) => s.exitPreflight);
+  const [accountsSheet, setAccountsSheet] = useState(false);
   // The accounts area only exists for business meeting types (design D12).
   const meetingType = useStore((s) => s.settings.meetingType);
   // Scenario system: every scenario (builtin or custom) can link the mini-CRM;
@@ -303,6 +302,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const meetingActive = recording || paused;
   const replayMode = appMode === "replay";
   const accountsMode = appMode === "accounts";
+  const preflightMode = appMode === "preflight";
 
   // Vitals timer (top-left): elapsed RECORDED time (wall time minus pauses —
   // matching the pause-compacted recording), ticking 1 Hz. While paused the
@@ -336,60 +336,11 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
     }
   }
 
-  async function start() {
-    await guarded(async () => {
-      // Meeting translation needs its own (Gemini) key on top of the STT key;
-      // refuse loudly rather than silently starting an untranslated meeting.
-      if (useRealPipeline && translateEnabled && !geminiApiKey.trim()) {
-        toast.error(t("meeting.translate.noKey"));
-        return;
-      }
-      startMeeting();
-      if (useRealPipeline) {
-        log.info("meeting: start requested", {
-          provider: transcriptionProvider,
-          model: STT_BY_ID[transcriptionProvider].label,
-          diarization: STT_BY_ID[transcriptionProvider].diarization,
-          inputDevice,
-          translate: translateEnabled ? translateLanguage : "off",
-          pipeline: "real",
-        });
-        try {
-          // Hosted "parley" STT: relay audio through Parley Cloud (cloud WSS URL
-          // + the session token as apiKey, via sttApiKey). BYOK providers send no
-          // relay URL and connect straight to their vendor.
-          const relayUrl = sttRelayUrl(transcriptionProvider);
-          await invoke("start_meeting", {
-            provider: transcriptionProvider,
-            apiKey: sttKey,
-            diarization: STT_BY_ID[transcriptionProvider].diarization,
-            inputDevice,
-            relayUrl,
-            // Meeting translation (off → nulls): "me" runs through Gemini
-            // live-translate; the voice goes out the translate output device.
-            translateLanguage: translateEnabled ? translateLanguage : null,
-            translateOutputDevice: translateEnabled ? translateOutputDevice || null : null,
-            translateApiKey: translateEnabled ? geminiApiKey : null,
-          });
-        } catch (e) {
-          log.error("meeting: start failed", {
-            provider: transcriptionProvider,
-            inputDevice,
-            error: String(e),
-          });
-          stopMeeting();
-        }
-      } else if (transcriptionProvider === "parley") {
-        // Hosted STT selected but no usable cloud session — never fake it with a
-        // mock transcript; tell the user to sign in and back out of "recording".
-        log.info("meeting: start blocked (parley, no session)");
-        stopMeeting();
-        toast.error(t("meeting.error.signin"));
-      } else {
-        log.info("meeting: start (mock stream)");
-        startMockStream();
-      }
-    });
+  /** Start = open PRE-FLIGHT, the one path into a live meeting. It resets the
+   *  previous call's prep, so a stale company link (and the folder it drags
+   *  along) can't follow you into the next meeting. */
+  function start() {
+    enterPreflight();
   }
 
   /** End = the meeting's natural finish: save the recording, then the study
@@ -479,19 +430,18 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
       {!fullscreen && <TrafficLights focused={focused} onAction={controlWindow} t={t} />}
 
       {/* Top-left: information, not brand (macOS's menu bar already says
-          Parley). Idle → where this meeting will save (org/folder menu, no
-          Settings trip); recording → the session vitals (rec + elapsed + mic
-          level + translation). */}
+          Parley). Pre-flight → which screen you're on; recording → the session
+          vitals (rec + elapsed + mic level + translation). Where the meeting
+          saves is decided in pre-flight now, next to the company that decides
+          it — a titlebar folder chip here was the second, silently-losing
+          source of truth for that. */}
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
         {replayMode && <ReplayTitle t={t} />}
         {replayMode && <ReplayFolderChip />}
-        {!replayMode && !meetingActive && (
-          <SaveDestinationPicker
-            compact
-            value={saveLocation}
-            syncOn={syncEnabled}
-            onChange={(loc) => updateSettings({ defaultSaveLocation: loc })}
-          />
+        {preflightMode && (
+          <span className="text-xs font-medium text-muted-foreground">
+            {t("preflight.title")}
+          </span>
         )}
         {meetingActive && (
           <>
@@ -529,6 +479,10 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
         {accountsMode ? (
           <span className="px-3 py-1 text-xs font-medium text-muted-foreground">
             {t("accounts.title")}
+          </span>
+        ) : preflightMode ? (
+          <span className="px-3 py-1 text-xs font-medium text-muted-foreground">
+            {t("preflight.subtitle")}
           </span>
         ) : replayMode
           ? (["report", "replay"] as const).map((tab) => (
@@ -582,6 +536,13 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           <Button size="sm" variant="outline" onClick={exitAccounts} className="h-8">
             <LogOut className="size-3.5" />
             {t("accounts.exit")}
+          </Button>
+        ) : preflightMode ? (
+          // Starting happens in the pre-flight footer, next to what it commits
+          // to; up here there is only the way back out.
+          <Button size="sm" variant="outline" onClick={exitPreflight} className="h-8">
+            <X className="size-3.5" />
+            {t("preflight.exit")}
           </Button>
         ) : meetingActive ? (
           // Recorder cluster: pause/resume ⇄, end (save → debrief), cancel
@@ -645,17 +606,27 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           />
         )}
 
-        {businessType && !accountsMode && !meetingActive && (
+        {/* Customer intel, reachable in every state (design D12 still gates it
+            to business scenarios). Mid-call it opens as a SHEET over the live
+            screen — the full workspace is a mode switch and refuses to run
+            while the call owns the screen, which used to make the dossier
+            unreachable exactly when it was needed. */}
+        {businessType && !accountsMode && !preflightMode && (
           <Button
             size="icon"
             variant="ghost"
             className="h-8 w-8"
             aria-label={t("accounts.title")}
             title={t("accounts.title")}
-            onClick={enterAccounts}
+            onClick={() => (meetingActive ? setAccountsSheet(true) : enterAccounts())}
           >
             <Building2 className="size-4" />
           </Button>
+        )}
+        {accountsSheet && (
+          <Suspense fallback={null}>
+            <AccountsSheet open onOpenChange={setAccountsSheet} />
+          </Suspense>
         )}
         <McpStatusChip />
         <Button

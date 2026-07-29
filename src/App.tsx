@@ -10,6 +10,9 @@ import { StudyScreen } from "./components/study/StudyScreen";
 const AccountsScreen = lazy(() =>
   import("./components/accounts/AccountsScreen").then((m) => ({ default: m.AccountsScreen }))
 );
+const PreflightScreen = lazy(() =>
+  import("./components/preflight/PreflightScreen").then((m) => ({ default: m.PreflightScreen }))
+);
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import { ReleaseNotesDialog } from "./components/ReleaseNotesDialog";
@@ -336,6 +339,10 @@ const App = () => {
       ) : appMode === "accounts" ? (
         <Suspense fallback={null}>
           <AccountsScreen />
+        </Suspense>
+      ) : appMode === "preflight" ? (
+        <Suspense fallback={null}>
+          <PreflightScreen />
         </Suspense>
       ) : (
         <LiveScreen />
