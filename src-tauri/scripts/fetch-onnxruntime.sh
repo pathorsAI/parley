@@ -22,7 +22,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 URL="https://github.com/microsoft/onnxruntime/releases/download/v${VERSION}/onnxruntime-osx-universal2-${VERSION}.tgz"
 echo "Downloading $URL"
-curl -fsSL -o "$TMP/ort.tgz" "$URL"
+curl --proto '=https' --tlsv1.2 -fsSL -o "$TMP/ort.tgz" "$URL"
 tar xzf "$TMP/ort.tgz" -C "$TMP"
 cp "$TMP/onnxruntime-osx-universal2-${VERSION}/lib/libonnxruntime.${VERSION}.dylib" "$DEST"
 chmod +w "$DEST"

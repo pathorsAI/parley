@@ -63,7 +63,10 @@ jobs:
           workspaces: src-tauri
 
       - name: Install frontend dependencies
-        run: bun install --frozen-lockfile
+        # --ignore-scripts blocks supply-chain attacks via package lifecycle
+        # scripts (postinstall). Native binaries we need are shipped as prebuilt
+        # artifacts that Bun resolves without running install scripts.
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Prepare release metadata
         id: release
@@ -142,8 +145,8 @@ jobs:
           # GitHub runners usually already have these, in which case `security import`
           # reports "already exists" (non-zero) — tolerate that (and any curl hiccup) so
           # the step does not abort under `bash -e`.
-          curl -fsSL -o "${{ runner.temp }}/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer || true
-          curl -fsSL -o "${{ runner.temp }}/AppleRoot.cer" https://www.apple.com/appleca/AppleIncRootCertificate.cer || true
+          curl --proto '=https' --tlsv1.2 -fsSL -o "${{ runner.temp }}/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer || true
+          curl --proto '=https' --tlsv1.2 -fsSL -o "${{ runner.temp }}/AppleRoot.cer" https://www.apple.com/appleca/AppleIncRootCertificate.cer || true
           security import "${{ runner.temp }}/DeveloperIDG2CA.cer" -k "$KEYCHAIN_PATH" 2>/dev/null || true
           security import "${{ runner.temp }}/AppleRoot.cer" -k "$KEYCHAIN_PATH" 2>/dev/null || true
 
@@ -251,6 +254,6 @@ jobs:
           # Build the updater feed (latest.json) — signature is the .sig file, url
           # points at the Worker download route (which streams the .app.tar.gz from R2).
           SIG_FILE="${TARGZ}.sig" VERSION="${VERSION}" node -e 'const fs=require("fs");const sig=fs.readFileSync(process.env.SIG_FILE,"utf8").trim();fs.writeFileSync("latest.json",JSON.stringify({version:process.env.VERSION,pub_date:new Date().toISOString(),platforms:{"darwin-aarch64":{signature:sig,url:"https://api.parley.tw/download/Parley.app.tar.gz"}}},null,2));'
-          bunx wrangler r2 object put "parley-recordings/downloads/Parley.app.tar.gz" --file "${TARGZ}" --remote
-          bunx wrangler r2 object put "parley-recordings/downloads/Parley.dmg" --file "${DMG}" --remote
-          bunx wrangler r2 object put "parley-recordings/downloads/latest.json" --file latest.json --remote
+          bunx wrangler@4.115.0 r2 object put "parley-recordings/downloads/Parley.app.tar.gz" --file "${TARGZ}" --remote
+          bunx wrangler@4.115.0 r2 object put "parley-recordings/downloads/Parley.dmg" --file "${DMG}" --remote
+          bunx wrangler@4.115.0 r2 object put "parley-recordings/downloads/latest.json" --file latest.json --remote
