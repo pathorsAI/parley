@@ -10,9 +10,9 @@ import { SectionTitle } from "./bits";
  * The drafted plan, rendered as things you can TAKE rather than prose you read.
  *
  * A markdown battle plan is not what anyone opens mid-call — the agenda is. So
- * every line here has a "+" that turns it into a todo the live coach ticks off,
- * and the negotiation setup lands in the same store fields the analysis prompts
- * already read.
+ * every line here has a "+" that turns it into an agenda item the live coach
+ * ticks off, and the negotiation setup lands in the same store fields the
+ * analysis prompts already read.
  */
 export function PlanCard({ plan }: Readonly<{ plan: PrepPlan }>) {
   const { t } = useI18n();

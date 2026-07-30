@@ -126,7 +126,9 @@ export function prepHeadline(facts: PrepFacts): PrepHeadline {
 const GAP_MARK: Record<SlotState, string> = { solid: "✔", thin: "△", empty: "○" };
 
 function block(title: string, lines: string[]): string {
-  return lines.length ? `${title}:\n${lines.map((l) => `- ${l}`).join("\n")}\n\n` : "";
+  if (!lines.length) return "";
+  const body = lines.map((l) => `- ${l}`).join("\n");
+  return `${title}:\n${body}\n\n`;
 }
 
 /**
@@ -134,25 +136,26 @@ function block(title: string, lines: string[]): string {
  * new field can't be added to `PrepFacts` and silently never reach the model.
  */
 export function factsDigest(facts: PrepFacts): string {
-  const head: string[] = [
-    `Company: ${facts.company.name}${facts.company.note ? ` — ${facts.company.note}` : ""}`,
-  ];
+  const note = facts.company.note ? ` — ${facts.company.note}` : "";
+  const head: string[] = [`Company: ${facts.company.name}${note}`];
   if (facts.thread) head.push(`Thread (戰線): ${facts.thread.name} (${facts.thread.kind})`);
   if (facts.stageLabel) head.push(`Stage: ${facts.stageLabel}`);
   head.push(`This will be conversation #${facts.meetings.length + 1} with them.`);
 
   const people = facts.attendees.map((a) => {
     const bits = [a.title, a.role, a.stance].filter(Boolean);
-    return `${a.name}${bits.length ? `（${bits.join("・")}）` : ""}`;
+    const detail = bits.length ? `（${bits.join("・")}）` : "";
+    return `${a.name}${detail}`;
   });
 
   const past = facts.meetings
     .slice(0, 5)
     .map((m) => `${new Date(m.at).toISOString().slice(0, 10)} ${m.title}`);
 
-  const gaps = facts.gaps.map(
-    (g) => `${GAP_MARK[g.state]} ${g.label}${g.top ? `: ${g.top}` : ": (nothing yet)"}`
-  );
+  const gaps = facts.gaps.map((g) => {
+    const filling = g.top ? `: ${g.top}` : ": (nothing yet)";
+    return `${GAP_MARK[g.state]} ${g.label}${filling}`;
+  });
 
   const prep: string[] = [
     `Goal for this call: ${facts.prep.target || "(not set yet)"}`,
