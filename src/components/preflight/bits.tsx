@@ -7,14 +7,24 @@ export function Column({
   step,
   title,
   children,
-}: Readonly<{ step: string; title: string; children: ReactNode }>) {
+  footer,
+  bodyClassName = "px-4 py-3",
+}: Readonly<{
+  step: string;
+  title: string;
+  children: ReactNode;
+  /** Pinned below the scroll — for a column whose input stays put (③'s composer). */
+  footer?: ReactNode;
+  bodyClassName?: string;
+}>) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-4">
         <span className="text-[10px] font-bold tabular-nums text-muted-foreground/70">{step}</span>
         <span className="text-xs font-semibold">{title}</span>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">{children}</div>
+      <div className={`min-h-0 flex-1 overflow-y-auto ${bodyClassName}`}>{children}</div>
+      {footer && <div className="shrink-0 border-t">{footer}</div>}
     </div>
   );
 }

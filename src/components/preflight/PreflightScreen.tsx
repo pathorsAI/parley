@@ -14,7 +14,7 @@ import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { SubjectPanel } from "./SubjectPanel";
 import { ReviewPanel } from "./ReviewPanel";
-import { PrepPanel } from "./PrepPanel";
+import { PrepCopilot } from "./PrepCopilot";
 
 /**
  * 會前 — the room you pass through on the way into a meeting.
@@ -80,8 +80,8 @@ export function PreflightScreen() {
           <ReviewPanel />
         </ResizablePanel>
         <ResizableHandle withHandle />
-        <ResizablePanel id="prep" defaultSize={30} minSize="280px">
-          <PrepPanel />
+        <ResizablePanel id="prep" defaultSize={30} minSize="300px">
+          <PrepCopilot />
         </ResizablePanel>
       </ResizablePanelGroup>
 
