@@ -1,15 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { FileText, Plus, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { useStore, formatClock } from "../../lib/store";
-import { useAccounts, activeClaims, threadsOf } from "../../lib/accounts/store";
-import { useScenarioSet } from "../../lib/accounts/useStageSet";
-import { stageFor } from "../../lib/accounts/currentStage";
-import { boardStates } from "../../lib/accounts/slotState";
-import { boardFromBundle } from "../../lib/intel/boards";
 import { listHistory, loadHistoryEntry } from "../../lib/history/history";
 import type { HistoryEntrySummary } from "../../lib/history/types";
-import { useI18n, type TranslationKey } from "../../i18n";
+import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,6 +18,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { SlotRow } from "../live/SlotBoard";
 import { BriefingSheet } from "../accounts/BriefingSheet";
+import { useMeetingSetup } from "./useMeetingSetup";
 import { Column, EmptyState, SectionTitle } from "./bits";
 
 /** How many past meetings with this company are worth a glance pre-call. */
@@ -38,22 +34,15 @@ const RECENT_MEETINGS = 3;
  */
 export function ReviewPanel() {
   const { t } = useI18n();
-  const acc = useAccounts();
-  const scenarios = useScenarioSet();
+  const { company, scenario, stageId, claims, rows } = useMeetingSetup();
 
-  const meetingType = useStore((s) => s.settings.meetingType);
   const companyId = useStore((s) => s.meetingCompanyId);
-  const threadId = useStore((s) => s.meetingThreadId);
-  const meetingStage = useStore((s) => s.meetingStage);
   const addTodo = useStore((s) => s.addTodo);
 
   const [meetings, setMeetings] = useState<HistoryEntrySummary[]>([]);
   const [briefingOpen, setBriefingOpen] = useState(false);
   /** History id the user is about to open, pending "your prep will be lost". */
   const [leavingTo, setLeavingTo] = useState<string | null>(null);
-
-  const company = acc.companies.find((c) => c.id === companyId) ?? null;
-  const scenario = scenarios.byId[meetingType] ?? null;
 
   useEffect(() => {
     if (!companyId) {
@@ -76,32 +65,6 @@ export function ReviewPanel() {
       alive = false;
     };
   }, [companyId]);
-
-  // This meeting's slice of the claim base: company-level claims plus the
-  // linked thread's (same filter the live board uses).
-  const claims = useMemo(
-    () =>
-      companyId
-        ? activeClaims(acc, companyId).filter(
-            (c) => !threadId || !c.threadId || c.threadId === threadId
-          )
-        : [],
-    [acc, companyId, threadId]
-  );
-
-  const thread = companyId ? threadsOf(acc, companyId).find((x) => x.id === threadId) : undefined;
-  // Same resolver the live board runs — the gap board previewed here has to be
-  // the one the call will actually open with.
-  const stageId = scenario ? stageFor(scenario, meetingStage, thread) : undefined;
-
-  const rows = useMemo(() => {
-    if (!scenario || !stageId) return [];
-    const bundle = scenario.bundles[stageId];
-    if (!bundle) return [];
-    const board = boardFromBundle(scenario, bundle, (k: TranslationKey) => t(k));
-    return boardStates(claims, { ...bundle, slots: board.slots }, Date.now());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scenario, stageId, claims]);
 
   const redlines = claims.filter((c) => c.category === "redline");
   const openQuestions = claims.filter((c) => c.category === "openq");
