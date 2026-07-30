@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import type {
   ActionItem,
   AppLanguage,
+  DefaultSaveLocation,
   DeliveryAssessment,
   DeliveryNudge,
   Evaluation,
@@ -161,9 +162,33 @@ const DEFAULT_SETTINGS: Settings = {
   defaultSaveLocation: { scope: "personal", folderId: null },
 };
 
-/** Which top-level screen is active: capturing live, analyzing an uploaded
- *  recording, or the accounts (客戶) workspace. */
-export type AppMode = "live" | "replay" | "accounts";
+/** Which top-level screen is active: preparing the next meeting, capturing it
+ *  live, analyzing an uploaded recording, or the accounts (客戶) workspace. */
+export type AppMode = "preflight" | "live" | "replay" | "accounts";
+
+/**
+ * Everything the user sets up FOR one meeting, reset as one unit when they
+ * start preparing the next one. Keeping the list in one place is why "the
+ * previous call's company link silently followed you into the next meeting"
+ * can't come back: pre-flight resets this slice wholesale, so a new meeting
+ * always begins blank.
+ *
+ * Deliberately NOT reset on stop: the save pipeline reads `meetingCompanyId`
+ * off the store asynchronously (see history.saveLiveToHistory), and the
+ * post-meeting review files its intel under the same link.
+ */
+const CLEARED_PREP_SLICE = {
+  meetingCompanyId: null,
+  meetingThreadId: null,
+  meetingAttendeeIds: [] as string[],
+  meetingStage: null,
+  meetingSaveOverride: null,
+  meetingContext: "",
+  meetingBatna: "",
+  meetingTarget: "",
+  meetingFloor: "",
+  todos: [] as TodoItem[],
+} satisfies Partial<ParleyState>;
 
 /** Lifecycle status of an async pass (analysis, delivery assessment, action items). */
 export type AsyncTaskStatus = "idle" | "running" | "done" | "error";
@@ -465,13 +490,26 @@ interface ParleyState {
    *  user-changeable per call, never writes back to the thread. */
   meetingStage: SalesStage | null;
   setMeetingStage: (stage: SalesStage | null) => void;
+  /**
+   * Explicit "save this one somewhere else" choice made in pre-flight. null =
+   * derive the destination (company folder, else the settings default) — see
+   * {@link import("./history/history").resolveMeetingSave}. Per meeting: cleared
+   * with the rest of the prep slice.
+   */
+  meetingSaveOverride: DefaultSaveLocation | null;
+  setMeetingSaveOverride: (loc: DefaultSaveLocation | null) => void;
   setMeetingLink: (link: {
     companyId: string | null;
     threadId: string | null;
     attendeeIds: string[];
   }) => void;
-  /** Enter the accounts screen (blocked while recording — the live screen owns
-   *  an active call). */
+  /** Open the pre-flight screen and RESET the previous meeting's prep — the one
+   *  path into a new live meeting, so a stale company link can never ride along. */
+  enterPreflight: () => void;
+  /** Leave pre-flight without starting (back to replay if a recording is loaded). */
+  exitPreflight: () => void;
+  /** Enter the accounts screen (blocked while recording — the live call owns the
+   *  screen; use the accounts SHEET instead, which works mid-call). */
   enterAccounts: () => void;
   /** Leave the accounts screen, back to replay if a recording is loaded. */
   exitAccounts: () => void;
@@ -579,6 +617,7 @@ export const useStore = create<ParleyState>()(
       meetingThreadId: null,
       meetingAttendeeIds: [],
       meetingStage: null,
+      meetingSaveOverride: null,
       meetingBatna: "",
       meetingTarget: "",
       meetingFloor: "",
@@ -587,6 +626,7 @@ export const useStore = create<ParleyState>()(
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setMeetingStage: (stage) => set({ meetingStage: stage }),
+  setMeetingSaveOverride: (meetingSaveOverride) => set({ meetingSaveOverride }),
   setMeetingLink: ({ companyId, threadId, attendeeIds }) =>
     set({
       meetingCompanyId: companyId,
@@ -595,6 +635,16 @@ export const useStore = create<ParleyState>()(
       // Re-linking re-derives this call's stage from the (new) thread (S19).
       meetingStage: null,
     }),
+  enterPreflight: () =>
+    set((s) => {
+      if (isMeetingActive(s.meetingStatus)) return {};
+      log.info("store: pre-flight opened, prep reset");
+      // Blank slate, every time. The last call's company/context/agenda are
+      // cleared HERE (not on stop) so the save pipeline still sees them.
+      return { appMode: "preflight", ...CLEARED_PREP_SLICE };
+    }),
+  exitPreflight: () =>
+    set((s) => (s.appMode === "preflight" ? { appMode: s.replay ? "replay" : "live" } : {})),
   enterAccounts: () =>
     set((s) => (isMeetingActive(s.meetingStatus) ? {} : { appMode: "accounts" })),
   exitAccounts: () => set((s) => ({ appMode: s.replay ? "replay" : "live" })),
@@ -933,6 +983,8 @@ export const useStore = create<ParleyState>()(
       }
       return {
       evaluations,
+      // Started FROM pre-flight (the only path in), so land on the live screen.
+      appMode: "live",
       meetingStatus: "recording",
       meetingStartedAt: Date.now(),
       meetingPausedAt: null,
@@ -973,6 +1025,10 @@ export const useStore = create<ParleyState>()(
   cancelMeeting: () => {
     log.info("store: meeting cancelled");
     set((s) => ({
+      // Back to pre-flight with the prep INTACT: cancelling is "wrong mic /
+      // wrong moment, let me fix it and start again", not "throw my setup away"
+      // (the reset happens when the user next opens pre-flight themselves).
+      appMode: "preflight",
       meetingStatus: "idle",
       meetingStartedAt: null,
       meetingPausedAt: null,
@@ -986,8 +1042,7 @@ export const useStore = create<ParleyState>()(
       filledPauseCounted: {},
       deliveryNudge: null,
       // Red-line guardrails are armed per meeting (startMeeting) — strip them
-      // like stopMeeting does. The meeting context/todos/links stay: the user
-      // may restart the same meeting right away.
+      // like stopMeeting does; they re-arm from the same link on restart.
       evaluations: s.evaluations.filter((e) => !isRedlineEvalId(e.id)),
     }));
   },

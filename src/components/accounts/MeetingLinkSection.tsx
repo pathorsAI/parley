@@ -6,12 +6,22 @@ import { composeBrief } from "../../lib/accounts/brief";
 import { useStageSet } from "../../lib/accounts/useStageSet";
 import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 /**
- * The accounts link inside the meeting-context dialog (design §5.2): pick
- * company → thread → attendees, then compose the pre-meeting brief into the
- * context field and seed the checklist from the thread's open questions.
- * Rendered only for business meeting types (D12).
+ * The accounts link INSIDE a running meeting (design §5.2): re-point the call
+ * at a different company/thread, add someone who just joined, or pull the brief
+ * in late. The same choices are made ahead of time on the pre-flight screen —
+ * this is the mid-call amendment, not the main entry point.
  */
 export function MeetingLinkSection() {
   const { t, language } = useI18n();
@@ -31,13 +41,6 @@ export function MeetingLinkSection() {
 
   function compose() {
     if (!company) return;
-    // Hand-written context is user work — never silently overwrite it.
-    if (useStore.getState().meetingContext.trim() && !confirmOverwrite) {
-      setConfirmOverwrite(true);
-      setTimeout(() => setConfirmOverwrite(false), 4000);
-      return;
-    }
-    setConfirmOverwrite(false);
     const claims = activeClaims(acc, company.id).filter(
       (c) => !threadId || !c.threadId || c.threadId === threadId
     );
@@ -49,7 +52,15 @@ export function MeetingLinkSection() {
       claims,
     });
     useStore.getState().setMeetingContext(brief);
+    setConfirmOverwrite(false);
     toast.success(t("accounts.link.composed"));
+  }
+
+  /** Hand-written context is user work — gate the overwrite behind a real
+   *  confirm rather than a button that briefly changes colour. */
+  function requestCompose() {
+    if (useStore.getState().meetingContext.trim()) setConfirmOverwrite(true);
+    else compose();
   }
 
   function seedTodos() {
@@ -80,20 +91,24 @@ export function MeetingLinkSection() {
         <label className="w-14 shrink-0 text-xs text-muted-foreground">
           {t("accounts.link.company")}
         </label>
-        <select
+        <Combobox
+          size="sm"
           value={companyId ?? ""}
-          onChange={(e) =>
-            setMeetingLink({ companyId: e.target.value || null, threadId: null, attendeeIds: [] })
+          groups={[
+            {
+              options: [
+                { value: "", label: t("accounts.link.none") },
+                ...companies.map((c) => ({ value: c.id, label: c.name })),
+              ],
+            },
+          ]}
+          onChange={(v) =>
+            setMeetingLink({ companyId: v || null, threadId: null, attendeeIds: [] })
           }
-          className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs"
-        >
-          <option value="">{t("accounts.link.none")}</option>
-          {companies.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+          placeholder={t("accounts.link.none")}
+          searchPlaceholder={t("preflight.search")}
+          emptyText={t("preflight.noMatch")}
+        />
       </div>
 
       {company && threads.length > 0 && (
@@ -101,21 +116,26 @@ export function MeetingLinkSection() {
           <label className="w-14 shrink-0 text-xs text-muted-foreground">
             {t("accounts.link.thread")}
           </label>
-          <select
+          <Combobox
+            size="sm"
             value={threadId ?? ""}
-            onChange={(e) =>
-              setMeetingLink({ companyId, threadId: e.target.value || null, attendeeIds })
-            }
-            className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs"
-          >
-            <option value="">{t("accounts.link.none")}</option>
-            {threads.map((x) => (
-              <option key={x.id} value={x.id}>
-                {x.name}
-                {x.stage ? `（${stageSet.names[x.stage] ?? x.stage}）` : ""}
-              </option>
-            ))}
-          </select>
+            groups={[
+              {
+                options: [
+                  { value: "", label: t("accounts.link.none") },
+                  ...threads.map((x) => ({
+                    value: x.id,
+                    label: x.name,
+                    hint: x.stage ? (stageSet.names[x.stage] ?? x.stage) : undefined,
+                  })),
+                ],
+              },
+            ]}
+            onChange={(v) => setMeetingLink({ companyId, threadId: v || null, attendeeIds })}
+            placeholder={t("accounts.link.none")}
+            searchPlaceholder={t("preflight.search")}
+            emptyText={t("preflight.noMatch")}
+          />
         </div>
       )}
 
@@ -140,7 +160,7 @@ export function MeetingLinkSection() {
                         : [...attendeeIds, p.id],
                     })
                   }
-                  className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${
+                  className={`cursor-pointer rounded-full border px-2 py-0.5 text-xs transition-colors ${
                     on
                       ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
                       : "text-muted-foreground hover:text-foreground"
@@ -159,16 +179,24 @@ export function MeetingLinkSection() {
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={seedTodos}>
             {t("accounts.link.seedTodos")}
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className={`h-7 text-xs ${confirmOverwrite ? "border-amber-500/60 text-amber-600 dark:text-amber-400" : ""}`}
-            onClick={compose}
-          >
-            {confirmOverwrite ? t("accounts.link.overwrite") : t("accounts.link.compose")}
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={requestCompose}>
+            {t("accounts.link.compose")}
           </Button>
         </div>
       )}
+
+      <AlertDialog open={confirmOverwrite} onOpenChange={setConfirmOverwrite}>
+        <AlertDialogContent>
+          <AlertDialogTitle>{t("preflight.prep.overwriteTitle")}</AlertDialogTitle>
+          <AlertDialogDescription>{t("preflight.prep.overwriteBody")}</AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("accounts.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={compose}>
+              {t("preflight.prep.overwriteConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

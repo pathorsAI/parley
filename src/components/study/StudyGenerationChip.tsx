@@ -23,7 +23,8 @@ import { LANGUAGE_OPTIONS } from "../../i18n/messages";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import { Flag } from "@/components/ui/flag";
-import { MeetingContextDialog } from "../MeetingContextDialog";
+import { MeetingContextField } from "../MeetingContextField";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
 const ARTIFACT_LABEL: Record<StudyArtifactKey, TranslationKey> = {
@@ -140,19 +141,21 @@ export function StudyGenerationChip() {
 
       {/* Regenerate-all confirm: the context field doubles as the "are you sure"
           step — it overwrites every output, so it never fires on one click. */}
-      {confirming && (
-        <MeetingContextDialog
-          onClose={() => setConfirming(false)}
+      <Sheet open={confirming} onOpenChange={setConfirming}>
+        <SheetContent
           closeLabel={t("common.cancel")}
+          title={t("studyGen.regenAll")}
+          description={t("studyGen.regenAll.hint")}
           footer={
             <>
-              <button
-                type="button"
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8"
                 onClick={() => setConfirming(false)}
-                className="rounded-md border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
               >
                 {t("common.cancel")}
-              </button>
+              </Button>
               <Button size="sm" className="h-8 gap-1.5" onClick={confirmRegenAll}>
                 <Sparkles className="size-3.5" />
                 {t("studyGen.regenAll.confirm")}
@@ -160,9 +163,11 @@ export function StudyGenerationChip() {
             </>
           }
         >
-          <p className="mb-3 text-xs text-muted-foreground">{t("studyGen.regenAll.hint")}</p>
-        </MeetingContextDialog>
-      )}
+          <div className="px-4 py-3">
+            <MeetingContextField rows={5} />
+          </div>
+        </SheetContent>
+      </Sheet>
     </>
   );
 }

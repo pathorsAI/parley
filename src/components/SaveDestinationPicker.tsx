@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Popover as PopoverPrimitive } from "radix-ui";
-import { Check, ChevronDown, FolderClosed, Search } from "lucide-react";
+import { FolderClosed } from "lucide-react";
+import { Combobox, type ComboGroup } from "@/components/ui/combobox";
 import { syncEnabled as cloudSyncEnabled } from "../lib/cloud/client";
 import { listMyOrgs } from "../lib/cloud/orgs";
 import type { CloudOrg } from "../lib/cloud/types";
@@ -13,15 +13,6 @@ import type { DefaultSaveLocation } from "../lib/types";
 async function loadOrgFoldersEntry(orgId: string): Promise<readonly [string, CloudFolder[]]> {
   const folders = await listOrgFolders(orgId).catch(() => [] as CloudFolder[]);
   return [orgId, folders] as const;
-}
-
-interface DestOption {
-  value: string;
-  name: string;
-}
-interface DestGroup {
-  label: string;
-  options: DestOption[];
 }
 
 const serialize = (loc: DefaultSaveLocation): string => {
@@ -43,8 +34,8 @@ const parse = (v: string): DefaultSaveLocation => {
 
 /**
  * Where finished meetings save: a personal folder (or root), or an org folder.
- * A searchable combobox (folder lists grow) shared by Settings and the titlebar
- * destination chip (`compact`), so the loading logic lives once.
+ * Shared by Settings (the fallback default) and the pre-flight screen's
+ * "save somewhere else" override, so the folder/org loading logic lives once.
  */
 export function SaveDestinationPicker({
   value,
@@ -55,14 +46,13 @@ export function SaveDestinationPicker({
   value: DefaultSaveLocation;
   syncOn: boolean;
   onChange: (loc: DefaultSaveLocation) => void;
+  /** Compact: the trigger shows the folder name only (rail/inline use). */
   compact?: boolean;
 }>) {
   const { t } = useI18n();
   const [personal, setPersonal] = useState<LocalFolder[]>(() => listLocalFolders());
   const [orgs, setOrgs] = useState<CloudOrg[]>([]);
   const [orgFolders, setOrgFolders] = useState<Record<string, CloudFolder[]>>({});
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
 
   // Personal folders: prefer the cloud list when sync is on (cross-device truth).
   useEffect(() => {
@@ -117,13 +107,25 @@ export function SaveDestinationPicker({
   }, [syncOn]);
 
   const root = t("settings.account.defaultSave.root");
-  const groups: DestGroup[] = useMemo(() => {
-    const g: DestGroup[] = [
+  // Non-compact triggers spell out "group · folder"; compact shows the folder
+  // (or the group name when the selection IS a root).
+  const groups: ComboGroup[] = useMemo(() => {
+    const personalLabel = t("settings.account.defaultSave.personal");
+    // Compact triggers have room for one word: the folder, or the group name
+    // when the selection IS that group's root.
+    const label = (group: string, name: string, isRoot: boolean) => {
+      if (!compact) return `${group} · ${name}`;
+      return isRoot ? group : name;
+    };
+    const g: ComboGroup[] = [
       {
-        label: t("settings.account.defaultSave.personal"),
+        label: personalLabel,
         options: [
-          { value: "personal", name: root },
-          ...personal.map((f) => ({ value: `personal:${f.id}`, name: f.name })),
+          { value: "personal", label: label(personalLabel, root, true) },
+          ...personal.map((f) => ({
+            value: `personal:${f.id}`,
+            label: label(personalLabel, f.name, false),
+          })),
         ],
       },
     ];
@@ -132,107 +134,34 @@ export function SaveDestinationPicker({
         g.push({
           label: o.name,
           options: [
-            { value: `org:${o.id}`, name: root },
-            ...(orgFolders[o.id] ?? []).map((f) => ({ value: `org:${o.id}:${f.id}`, name: f.name })),
+            { value: `org:${o.id}`, label: label(o.name, root, true) },
+            ...(orgFolders[o.id] ?? []).map((f) => ({
+              value: `org:${o.id}:${f.id}`,
+              label: label(o.name, f.name, false),
+            })),
           ],
         });
       }
     }
     return g;
-  }, [personal, orgs, orgFolders, syncOn, root, t]);
-
-  const selected = serialize(value);
-  // Trigger label: "folder" compact; "group / folder" in settings.
-  const current = useMemo(() => {
-    for (const g of groups) {
-      const hit = g.options.find((o) => o.value === selected);
-      if (hit) return compact ? (hit.value.includes(":") ? hit.name : g.label) : `${g.label} · ${hit.name}`;
-    }
-    return root;
-  }, [groups, selected, compact, root]);
-
-  const q = query.trim().toLowerCase();
-  const filtered = q
-    ? groups
-        .map((g) => ({
-          ...g,
-          options: g.label.toLowerCase().includes(q)
-            ? g.options
-            : g.options.filter((o) => o.name.toLowerCase().includes(q)),
-        }))
-        .filter((g) => g.options.length > 0)
-    : groups;
+  }, [personal, orgs, orgFolders, syncOn, root, compact, t]);
 
   return (
-    <PopoverPrimitive.Root
-      open={open}
-      onOpenChange={(o) => {
-        setOpen(o);
-        if (!o) setQuery("");
-      }}
-    >
-      <PopoverPrimitive.Trigger asChild>
-        <button
-          type="button"
-          title={t("settings.account.defaultSave.title")}
-          className={
-            compact
-              ? "flex max-w-48 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              : "flex h-9 w-full max-w-md items-center gap-1.5 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-primary"
-          }
-        >
-          <FolderClosed className={compact ? "size-3 shrink-0" : "size-3.5 shrink-0 text-muted-foreground"} />
-          <span className="truncate">{current}</span>
-          <ChevronDown className="size-3 shrink-0 opacity-60" />
-        </button>
-      </PopoverPrimitive.Trigger>
-      <PopoverPrimitive.Portal>
-        <PopoverPrimitive.Content
-          align="start"
-          sideOffset={6}
-          className="z-50 w-64 rounded-lg border bg-popover text-popover-foreground shadow-lg"
-        >
-          <div className="flex items-center gap-1.5 border-b px-2.5 py-1.5">
-            <Search className="size-3.5 shrink-0 text-muted-foreground" />
-            {/* eslint-disable-next-line jsx-a11y/no-autofocus -- combobox pattern */}
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t("saveDest.search")}
-              className="h-6 w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground"
-            />
-          </div>
-          <div className="max-h-64 overflow-y-auto p-1">
-            {filtered.length === 0 && (
-              <p className="px-2 py-3 text-center text-xs text-muted-foreground">{t("saveDest.empty")}</p>
-            )}
-            {filtered.map((g) => (
-              <div key={g.label} className="mb-0.5">
-                <p className="px-2 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  {g.label}
-                </p>
-                {g.options.map((o) => (
-                  <button
-                    key={o.value}
-                    type="button"
-                    onClick={() => {
-                      onChange(parse(o.value));
-                      setOpen(false);
-                    }}
-                    className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted ${
-                      o.value === selected ? "font-medium" : ""
-                    }`}
-                  >
-                    <span className="flex-1 truncate">{o.name}</span>
-                    {o.value === selected && <Check className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />}
-                  </button>
-                ))}
-              </div>
-            ))}
-          </div>
-        </PopoverPrimitive.Content>
-      </PopoverPrimitive.Portal>
-    </PopoverPrimitive.Root>
+    <Combobox
+      value={serialize(value)}
+      groups={groups}
+      onChange={(v) => onChange(parse(v))}
+      title={t("settings.account.defaultSave.title")}
+      placeholder={root}
+      searchPlaceholder={t("saveDest.search")}
+      emptyText={t("saveDest.empty")}
+      size={compact ? "bare" : "default"}
+      className={compact ? "max-w-48" : "max-w-md"}
+      icon={
+        <FolderClosed
+          className={compact ? "size-3 shrink-0" : "size-3.5 shrink-0 text-muted-foreground"}
+        />
+      }
+    />
   );
 }

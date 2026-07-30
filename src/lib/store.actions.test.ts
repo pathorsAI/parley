@@ -451,6 +451,77 @@ describe("speaker names", () => {
   });
 });
 
+describe("pre-flight", () => {
+  /** The whole prep slice, set as if the previous meeting had just ended. */
+  function seedPreviousMeeting() {
+    useStore.setState({
+      meetingCompanyId: "co-1",
+      meetingThreadId: "th-1",
+      meetingAttendeeIds: ["p-1"],
+      meetingStage: "negotiation",
+      meetingSaveOverride: { scope: "personal", folderId: "fld-1" },
+      meetingContext: "last call's background",
+      meetingBatna: "walk away",
+      meetingTarget: "1.2M",
+      meetingFloor: "800k",
+      todos: [{ id: "t1", text: "last call's agenda", done: true }],
+    });
+  }
+
+  it("enterPreflight wipes the previous meeting's prep", () => {
+    seedPreviousMeeting();
+
+    useStore.getState().enterPreflight();
+
+    const s = useStore.getState();
+    expect(s.appMode).toBe("preflight");
+    expect(s.meetingCompanyId).toBeNull();
+    expect(s.meetingThreadId).toBeNull();
+    expect(s.meetingAttendeeIds).toEqual([]);
+    expect(s.meetingStage).toBeNull();
+    expect(s.meetingSaveOverride).toBeNull();
+    expect(s.meetingContext).toBe("");
+    expect(s.meetingBatna).toBe("");
+    expect(s.meetingTarget).toBe("");
+    expect(s.meetingFloor).toBe("");
+    expect(s.todos).toEqual([]);
+  });
+
+  it("refuses to open mid-meeting, leaving the live prep alone", () => {
+    seedPreviousMeeting();
+    useStore.setState({ meetingStatus: "recording" });
+
+    useStore.getState().enterPreflight();
+
+    const s = useStore.getState();
+    expect(s.appMode).not.toBe("preflight");
+    expect(s.meetingCompanyId).toBe("co-1");
+  });
+
+  it("keeps the prep intact when the meeting is CANCELLED, back on pre-flight", () => {
+    seedPreviousMeeting();
+    useStore.getState().startMeeting();
+
+    useStore.getState().cancelMeeting();
+
+    const s = useStore.getState();
+    expect(s.meetingStatus).toBe("idle");
+    expect(s.appMode).toBe("preflight");
+    // Cancelling is "let me fix this and start again" — the setup survives.
+    expect(s.meetingCompanyId).toBe("co-1");
+    expect(s.meetingContext).toBe("last call's background");
+  });
+
+  it("keeps the link through stopMeeting so the save can still file it", () => {
+    seedPreviousMeeting();
+    useStore.getState().startMeeting();
+
+    useStore.getState().stopMeeting();
+
+    expect(useStore.getState().meetingCompanyId).toBe("co-1");
+  });
+});
+
 describe("meeting lifecycle", () => {
   it("startMeeting resets the transcript + analysis and marks recording", () => {
     useStore.setState({ segments: [seg({ id: "old" })], findings: [makeFinding("f")] });

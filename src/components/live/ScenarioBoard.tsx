@@ -4,6 +4,7 @@ import { activeClaims, useAccounts } from "../../lib/accounts/store";
 import { suggestSlotQuestions, type SlotQuestion } from "../../lib/accounts/suggest";
 import { boardStates } from "../../lib/accounts/slotState";
 import { backfillSlotIds } from "../../lib/accounts/backfill";
+import { stageFor } from "../../lib/accounts/currentStage";
 import { hasProviderKey } from "../../lib/ai/settings";
 import type { Scenario } from "../../lib/accounts/bundles";
 import { boardFromBundle, applyNextStepGate } from "../../lib/intel/boards";
@@ -20,18 +21,6 @@ import { FocusBanner, SlotRow } from "./SlotBoard";
  * "how to ask" lines for THAT slot. The stage picker lives in the rail header
  * (IntelligenceBoard); this board renders the resolved stage.
  */
-function stageFor(
-  scenario: Scenario,
-  meetingStage: string | null | undefined,
-  threadStage: string | undefined
-): string {
-  if (meetingStage && scenario.order.includes(meetingStage)) return meetingStage;
-  if (scenario.id === "sales" && threadStage && scenario.order.includes(threadStage)) {
-    return threadStage;
-  }
-  return scenario.order[0];
-}
-
 export function ScenarioBoard({ scenario }: Readonly<{ scenario: Scenario }>) {
   const { t } = useI18n();
   const acc = useAccounts();
@@ -42,10 +31,8 @@ export function ScenarioBoard({ scenario }: Readonly<{ scenario: Scenario }>) {
   const intel = useStore((s) => s.intel);
   const recording = useStore((s) => s.meetingStatus === "recording");
 
-  // Reactive mirror of resolveScenarioStageId (keep the two in step).
   const thread = acc.threads.find((x) => x.id === threadId) ?? null;
-  const threadStage = thread?.kind === "sales" ? thread.stage : undefined;
-  const stage = stageFor(scenario, meetingStage, threadStage);
+  const stage = stageFor(scenario, meetingStage, thread);
   const bundle = scenario.bundles[stage];
 
   const board = useMemo(

@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Building2, Check, Circle, FileAudio, History, Languages, Loader2, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
-import { useStore, meetingElapsedMs } from "../lib/store";
+import { useStore, meetingElapsedMs, type AppMode } from "../lib/store";
+import type { Settings as AppSettings } from "../lib/types";
 import { log } from "../lib/log";
-import { STT_BY_ID, sttApiKey, sttRelayUrl } from "../lib/transcription/providers";
+import { sttApiKey } from "../lib/transcription/providers";
 import { toast } from "sonner";
-import { startMockStream, stopMockStream } from "../lib/mockStream";
+import { stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
 import { openSettingsWindow } from "../lib/settingsSync";
 import { openHistoryWindow } from "../lib/history/history";
@@ -17,12 +18,17 @@ import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
 import { McpStatusChip } from "./McpStatusChip";
 import { ReplayFolderChip } from "./ReplayFolderChip";
-import { SaveDestinationPicker } from "./SaveDestinationPicker";
 import { PostMeetingReviewButton } from "./accounts/PostMeetingReviewButton";
 import { StudyGenerationChip } from "./study/StudyGenerationChip";
 
+const AccountsSheet = lazy(() =>
+  import("./accounts/AccountsSheet").then((m) => ({ default: m.AccountsSheet }))
+);
+
 type TFn = ReturnType<typeof useI18n>["t"];
 type WindowAction = "close" | "minimize" | "fullscreen";
+type StudyTab = "report" | "replay";
+type Layout = AppSettings["layout"];
 
 /**
  * Track main-window focus so the traffic lights can dim to grey when the window
@@ -246,6 +252,226 @@ function CancelMeetingDialog({
   );
 }
 
+/** One pill in the center switcher. */
+function SwitchTab({
+  active,
+  accent = false,
+  label,
+  onClick,
+}: Readonly<{ active: boolean; accent?: boolean; label: string; onClick: () => void }>) {
+  const activeClass = accent
+    ? "bg-background text-violet-600 shadow-sm dark:text-violet-400"
+    : "bg-background text-foreground shadow-sm";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`cursor-pointer rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+        active ? activeClass : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * The center slot, one per tense: pre-flight and accounts just name themselves
+ * (they have a single view); a loaded recording gets the study tabs in the
+ * replay accent; live gets the coach/transcript posture switch.
+ */
+function CenterSwitcher({
+  mode,
+  studyTab,
+  layout,
+  onStudyTab,
+  onLayout,
+  t,
+}: Readonly<{
+  mode: AppMode;
+  studyTab: StudyTab;
+  layout: Layout;
+  onStudyTab: (tab: StudyTab) => void;
+  onLayout: (layout: Layout) => void;
+  t: TFn;
+}>) {
+  if (mode === "accounts" || mode === "preflight") {
+    return (
+      <span className="px-3 py-1 text-xs font-medium text-muted-foreground">
+        {t(mode === "accounts" ? "accounts.title" : "preflight.subtitle")}
+      </span>
+    );
+  }
+  if (mode === "replay") {
+    return (
+      <>
+        {(["report", "replay"] as const).map((tab) => (
+          <SwitchTab
+            key={tab}
+            accent
+            active={studyTab === tab}
+            label={t(`study.${tab}`)}
+            onClick={() => onStudyTab(tab)}
+          />
+        ))}
+      </>
+    );
+  }
+  return (
+    <>
+      {(["coach", "transcript"] as const).map((posture) => (
+        <SwitchTab
+          key={posture}
+          active={layout === posture}
+          label={t(`layout.${posture}`)}
+          onClick={() => onLayout(posture)}
+        />
+      ))}
+    </>
+  );
+}
+
+/** Pause/resume ⇄, end (save → debrief), cancel (discard, confirm-gated). All
+ *  three live in both states, so 繼續／結束／取消 are always at hand. */
+function RecorderCluster({
+  paused,
+  busy,
+  onTogglePause,
+  onEnd,
+  onRequestCancel,
+  t,
+}: Readonly<{
+  paused: boolean;
+  busy: boolean;
+  onTogglePause: () => void;
+  onEnd: () => void;
+  onRequestCancel: () => void;
+  t: TFn;
+}>) {
+  return (
+    <>
+      <Button
+        size="sm"
+        variant={paused ? "default" : "outline"}
+        onClick={onTogglePause}
+        // Held while a start/end/cancel invoke is in flight: pausing mid-start
+        // could land set_meeting_paused BEFORE start_meeting resets the flag,
+        // splitting UI and backend pause state.
+        disabled={busy}
+        className="h-8"
+      >
+        {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+        {paused ? t("titlebar.resume") : t("titlebar.pause")}
+      </Button>
+      <Button size="sm" variant="destructive" onClick={onEnd} disabled={busy} className="h-8">
+        <Square className="size-3.5" />
+        {t("titlebar.end")}
+      </Button>
+      <Button
+        size="icon"
+        variant="ghost"
+        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+        aria-label={t("titlebar.cancelMeeting")}
+        title={t("titlebar.cancelMeeting")}
+        disabled={busy}
+        onClick={onRequestCancel}
+      >
+        <X className="size-4" />
+      </Button>
+    </>
+  );
+}
+
+/**
+ * The trailing action for the current tense — exactly one of: leave this mode,
+ * drive the running recorder, wait out the post-stop save, or start.
+ */
+function PrimaryAction({
+  mode,
+  meetingActive,
+  paused,
+  finalizing,
+  busy,
+  onExitReplay,
+  onExitAccounts,
+  onExitPreflight,
+  onTogglePause,
+  onEnd,
+  onRequestCancel,
+  onStart,
+  t,
+}: Readonly<{
+  mode: AppMode;
+  meetingActive: boolean;
+  paused: boolean;
+  finalizing: boolean;
+  busy: boolean;
+  onExitReplay: () => void;
+  onExitAccounts: () => void;
+  onExitPreflight: () => void;
+  onTogglePause: () => void;
+  onEnd: () => void;
+  onRequestCancel: () => void;
+  onStart: () => void;
+  t: TFn;
+}>) {
+  if (mode === "replay") {
+    return (
+      <Button size="sm" variant="outline" onClick={onExitReplay} className="h-8">
+        <LogOut className="size-3.5" />
+        {t("replay.exit")}
+      </Button>
+    );
+  }
+  if (mode === "accounts") {
+    return (
+      <Button size="sm" variant="outline" onClick={onExitAccounts} className="h-8">
+        <LogOut className="size-3.5" />
+        {t("accounts.exit")}
+      </Button>
+    );
+  }
+  if (mode === "preflight") {
+    // Starting happens in the pre-flight footer, next to what it commits to;
+    // up here there is only the way back out.
+    return (
+      <Button size="sm" variant="outline" onClick={onExitPreflight} className="h-8">
+        <X className="size-3.5" />
+        {t("preflight.exit")}
+      </Button>
+    );
+  }
+  if (meetingActive) {
+    return (
+      <RecorderCluster
+        paused={paused}
+        busy={busy}
+        onTogglePause={onTogglePause}
+        onEnd={onEnd}
+        onRequestCancel={onRequestCancel}
+        t={t}
+      />
+    );
+  }
+  if (finalizing) {
+    // Post-"End" save window: the recording is encoding + persisting +
+    // re-diarizing off-thread. Hold a disabled spinner here (not the Start
+    // button) so the seconds-long wait doesn't read as a hang or a no-op.
+    return (
+      <Button size="sm" variant="default" disabled className="h-8">
+        <Loader2 className="size-3.5 animate-spin" />
+        {t("titlebar.finalizing")}
+      </Button>
+    );
+  }
+  return (
+    <Button size="sm" variant="default" onClick={onStart} disabled={busy} className="h-8">
+      <Mic className="size-3.5" />
+      {t("titlebar.startMeeting")}
+    </Button>
+  );
+}
+
 /**
  * Custom window titlebar. The main Tauri window is undecorated, so this header
  * owns both the draggable region and the window controls.
@@ -258,10 +484,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const { t } = useI18n();
   const focused = useWindowFocused();
   const status = useStore((s) => s.meetingStatus);
-  const transcriptionProvider = useStore((s) => s.settings.transcriptionProvider);
   const sttKey = useStore((s) => sttApiKey(s.settings, s.settings.transcriptionProvider));
-  const inputDevice = useStore((s) => s.settings.inputDevice);
-  const startMeeting = useStore((s) => s.startMeeting);
   const stopMeeting = useStore((s) => s.stopMeeting);
   const isFinalizingMeeting = useStore((s) => s.isFinalizingMeeting);
   const setFinalizingMeeting = useStore((s) => s.setFinalizingMeeting);
@@ -270,12 +493,8 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const cancelMeeting = useStore((s) => s.cancelMeeting);
   const translateEnabled = useStore((s) => s.settings.meetingTranslateEnabled);
   const translateLanguage = useStore((s) => s.settings.translateTargetLanguage);
-  const translateOutputDevice = useStore((s) => s.settings.translateOutputDevice);
-  const geminiApiKey = useStore((s) => s.settings.geminiApiKey);
   const layout = useStore((s) => s.settings.layout);
   const updateSettings = useStore((s) => s.updateSettings);
-  const saveLocation = useStore((s) => s.settings.defaultSaveLocation);
-  const syncEnabled = useStore((s) => s.settings.syncEnabled);
   const meetingStartedAt = useStore((s) => s.meetingStartedAt);
   const studyTab = useStore((s) => s.studyTab);
   const setStudyTab = useStore((s) => s.setStudyTab);
@@ -284,6 +503,9 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const exitReplay = useStore((s) => s.exitReplay);
   const enterAccounts = useStore((s) => s.enterAccounts);
   const exitAccounts = useStore((s) => s.exitAccounts);
+  const enterPreflight = useStore((s) => s.enterPreflight);
+  const exitPreflight = useStore((s) => s.exitPreflight);
+  const [accountsSheet, setAccountsSheet] = useState(false);
   // The accounts area only exists for business meeting types (design D12).
   const meetingType = useStore((s) => s.settings.meetingType);
   // Scenario system: every scenario (builtin or custom) can link the mini-CRM;
@@ -303,6 +525,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const meetingActive = recording || paused;
   const replayMode = appMode === "replay";
   const accountsMode = appMode === "accounts";
+  const preflightMode = appMode === "preflight";
 
   // Vitals timer (top-left): elapsed RECORDED time (wall time minus pauses —
   // matching the pause-compacted recording), ticking 1 Hz. While paused the
@@ -336,60 +559,11 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
     }
   }
 
-  async function start() {
-    await guarded(async () => {
-      // Meeting translation needs its own (Gemini) key on top of the STT key;
-      // refuse loudly rather than silently starting an untranslated meeting.
-      if (useRealPipeline && translateEnabled && !geminiApiKey.trim()) {
-        toast.error(t("meeting.translate.noKey"));
-        return;
-      }
-      startMeeting();
-      if (useRealPipeline) {
-        log.info("meeting: start requested", {
-          provider: transcriptionProvider,
-          model: STT_BY_ID[transcriptionProvider].label,
-          diarization: STT_BY_ID[transcriptionProvider].diarization,
-          inputDevice,
-          translate: translateEnabled ? translateLanguage : "off",
-          pipeline: "real",
-        });
-        try {
-          // Hosted "parley" STT: relay audio through Parley Cloud (cloud WSS URL
-          // + the session token as apiKey, via sttApiKey). BYOK providers send no
-          // relay URL and connect straight to their vendor.
-          const relayUrl = sttRelayUrl(transcriptionProvider);
-          await invoke("start_meeting", {
-            provider: transcriptionProvider,
-            apiKey: sttKey,
-            diarization: STT_BY_ID[transcriptionProvider].diarization,
-            inputDevice,
-            relayUrl,
-            // Meeting translation (off → nulls): "me" runs through Gemini
-            // live-translate; the voice goes out the translate output device.
-            translateLanguage: translateEnabled ? translateLanguage : null,
-            translateOutputDevice: translateEnabled ? translateOutputDevice || null : null,
-            translateApiKey: translateEnabled ? geminiApiKey : null,
-          });
-        } catch (e) {
-          log.error("meeting: start failed", {
-            provider: transcriptionProvider,
-            inputDevice,
-            error: String(e),
-          });
-          stopMeeting();
-        }
-      } else if (transcriptionProvider === "parley") {
-        // Hosted STT selected but no usable cloud session — never fake it with a
-        // mock transcript; tell the user to sign in and back out of "recording".
-        log.info("meeting: start blocked (parley, no session)");
-        stopMeeting();
-        toast.error(t("meeting.error.signin"));
-      } else {
-        log.info("meeting: start (mock stream)");
-        startMockStream();
-      }
-    });
+  /** Start = open PRE-FLIGHT, the one path into a live meeting. It resets the
+   *  previous call's prep, so a stale company link (and the folder it drags
+   *  along) can't follow you into the next meeting. */
+  function start() {
+    enterPreflight();
   }
 
   /** End = the meeting's natural finish: save the recording, then the study
@@ -479,19 +653,18 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
       {!fullscreen && <TrafficLights focused={focused} onAction={controlWindow} t={t} />}
 
       {/* Top-left: information, not brand (macOS's menu bar already says
-          Parley). Idle → where this meeting will save (org/folder menu, no
-          Settings trip); recording → the session vitals (rec + elapsed + mic
-          level + translation). */}
+          Parley). Pre-flight → which screen you're on; recording → the session
+          vitals (rec + elapsed + mic level + translation). Where the meeting
+          saves is decided in pre-flight now, next to the company that decides
+          it — a titlebar folder chip here was the second, silently-losing
+          source of truth for that. */}
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
         {replayMode && <ReplayTitle t={t} />}
         {replayMode && <ReplayFolderChip />}
-        {!replayMode && !meetingActive && (
-          <SaveDestinationPicker
-            compact
-            value={saveLocation}
-            syncOn={syncEnabled}
-            onChange={(loc) => updateSettings({ defaultSaveLocation: loc })}
-          />
+        {preflightMode && (
+          <span className="text-xs font-medium text-muted-foreground">
+            {t("preflight.title")}
+          </span>
         )}
         {meetingActive && (
           <>
@@ -526,117 +699,38 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           chip (the ONE generation surface for the whole study tense). */}
       <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2">
         <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
-        {accountsMode ? (
-          <span className="px-3 py-1 text-xs font-medium text-muted-foreground">
-            {t("accounts.title")}
-          </span>
-        ) : replayMode
-          ? (["report", "replay"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setStudyTab(tab)}
-                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                  studyTab === tab
-                    ? "bg-background text-violet-600 shadow-sm dark:text-violet-400"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {t(`study.${tab}`)}
-              </button>
-            ))
-          : (["coach", "transcript"] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => updateSettings({ layout: mode })}
-                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                  layout === mode
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {t(`layout.${mode}`)}
-              </button>
-            ))}
+          <CenterSwitcher
+            mode={appMode}
+            studyTab={studyTab}
+            layout={layout}
+            onStudyTab={setStudyTab}
+            onLayout={(v) => updateSettings({ layout: v })}
+            t={t}
+          />
         </div>
         {replayMode && <StudyGenerationChip />}
       </div>
 
       <div className="flex items-center gap-2">
         {replayMode && <PostMeetingReviewButton />}
-        {replayMode ? (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              exitReplay();
-              setStudyTab("report");
-            }}
-            className="h-8"
-          >
-            <LogOut className="size-3.5" />
-            {t("replay.exit")}
-          </Button>
-        ) : accountsMode ? (
-          <Button size="sm" variant="outline" onClick={exitAccounts} className="h-8">
-            <LogOut className="size-3.5" />
-            {t("accounts.exit")}
-          </Button>
-        ) : meetingActive ? (
-          // Recorder cluster: pause/resume ⇄, end (save → debrief), cancel
-          // (discard, confirm-gated). All three live in both states, so the
-          // user always has 繼續/結束/取消 at hand — the ask in issue terms.
-          <>
-            <Button
-              size="sm"
-              variant={paused ? "default" : "outline"}
-              onClick={togglePause}
-              // Held while a start/end/cancel invoke is in flight: pausing
-              // mid-start could land set_meeting_paused BEFORE start_meeting
-              // resets the flag, splitting UI and backend pause state.
-              disabled={toggleBusy}
-              className="h-8"
-            >
-              {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
-              {paused ? t("titlebar.resume") : t("titlebar.pause")}
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={end}
-              disabled={toggleBusy}
-              className="h-8"
-            >
-              <Square className="size-3.5" />
-              {t("titlebar.end")}
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-8 w-8 text-muted-foreground hover:text-foreground"
-              aria-label={t("titlebar.cancelMeeting")}
-              title={t("titlebar.cancelMeeting")}
-              disabled={toggleBusy}
-              onClick={() => setConfirmCancel(true)}
-            >
-              <X className="size-4" />
-            </Button>
-          </>
-        ) : isFinalizingMeeting ? (
-          // Post-"End" save window: the recording is encoding + persisting +
-          // re-diarizing off-thread. Hold a disabled spinner here (not the Start
-          // button) so the seconds-long wait doesn't read as a hang or a no-op.
-          <Button size="sm" variant="default" disabled className="h-8">
-            <Loader2 className="size-3.5 animate-spin" />
-            {t("titlebar.finalizing")}
-          </Button>
-        ) : (
-          <Button size="sm" variant="default" onClick={start} disabled={toggleBusy} className="h-8">
-            <Mic className="size-3.5" />
-            {t("titlebar.startMeeting")}
-          </Button>
-        )}
+        <PrimaryAction
+          mode={appMode}
+          meetingActive={meetingActive}
+          paused={paused}
+          finalizing={isFinalizingMeeting}
+          busy={toggleBusy}
+          onExitReplay={() => {
+            exitReplay();
+            setStudyTab("report");
+          }}
+          onExitAccounts={exitAccounts}
+          onExitPreflight={exitPreflight}
+          onTogglePause={togglePause}
+          onEnd={() => void end()}
+          onRequestCancel={() => setConfirmCancel(true)}
+          onStart={start}
+          t={t}
+        />
         {confirmCancel && (
           <CancelMeetingDialog
             t={t}
@@ -645,17 +739,27 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           />
         )}
 
-        {businessType && !accountsMode && !meetingActive && (
+        {/* Customer intel, reachable in every state (design D12 still gates it
+            to business scenarios). Mid-call it opens as a SHEET over the live
+            screen — the full workspace is a mode switch and refuses to run
+            while the call owns the screen, which used to make the dossier
+            unreachable exactly when it was needed. */}
+        {businessType && !accountsMode && !preflightMode && (
           <Button
             size="icon"
             variant="ghost"
             className="h-8 w-8"
             aria-label={t("accounts.title")}
             title={t("accounts.title")}
-            onClick={enterAccounts}
+            onClick={() => (meetingActive ? setAccountsSheet(true) : enterAccounts())}
           >
             <Building2 className="size-4" />
           </Button>
+        )}
+        {accountsSheet && (
+          <Suspense fallback={null}>
+            <AccountsSheet open onOpenChange={setAccountsSheet} />
+          </Suspense>
         )}
         <McpStatusChip />
         <Button

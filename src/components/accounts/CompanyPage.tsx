@@ -26,10 +26,11 @@ import { formatClock, useStore } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
 import { ClaimCard, ClaimList } from "./ClaimCard";
 import { ConflictPairCard } from "./ConflictPairCard";
 import { FeedDataDialog } from "./FeedDataDialog";
-import { BriefingDialog } from "./BriefingDialog";
+import { BriefingSheet } from "./BriefingSheet";
 import {
   AliasesEdit,
   ArchiveButton,
@@ -224,17 +225,24 @@ export function CompanyPage({
               setThreadName("");
             }}
           >
-            <select
-              value={threadKind}
-              onChange={(e) => setThreadKind(e.target.value as ThreadKind)}
-              className="h-7 shrink-0 rounded-md border bg-background px-1.5 text-xs"
-            >
-              {THREAD_KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {t(`accounts.kind.${k}`)}
-                </option>
-              ))}
-            </select>
+            <div className="w-28 shrink-0">
+              <Combobox
+                size="sm"
+                value={threadKind}
+                groups={[
+                  {
+                    options: THREAD_KINDS.map((k) => ({
+                      value: k,
+                      label: t(`accounts.kind.${k}`),
+                    })),
+                  },
+                ]}
+                onChange={(v) => setThreadKind(v as ThreadKind)}
+                placeholder={t("accounts.kind.sales")}
+                searchPlaceholder={t("preflight.search")}
+                emptyText={t("preflight.noMatch")}
+              />
+            </div>
             <input
               value={threadName}
               onChange={(e) => setThreadName(e.target.value)}
@@ -328,7 +336,9 @@ export function CompanyPage({
       </div>
 
       {feedOpen && <FeedDataDialog company={company} onClose={() => setFeedOpen(false)} />}
-      {briefingOpen && <BriefingDialog company={company} onClose={() => setBriefingOpen(false)} />}
+      {briefingOpen && (
+        <BriefingSheet company={company} open onOpenChange={setBriefingOpen} />
+      )}
       {viewingAttachment && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center p-6">
           <button

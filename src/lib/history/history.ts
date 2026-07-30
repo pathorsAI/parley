@@ -23,7 +23,7 @@ import { listLocalFolders } from "./folders";
 import { rediarizeSegments } from "../speakers/postDiarize";
 import { translate } from "../../i18n/messages";
 import type { ReplaySession } from "../replay/types";
-import type { TranscriptSegment } from "../types";
+import type { DefaultSaveLocation, TranscriptSegment } from "../types";
 import type { HistoryEntry, HistoryEntrySummary } from "./types";
 
 const HISTORY_OPEN_EVENT = "history://open";
@@ -162,43 +162,76 @@ async function pushToCloud(id: string): Promise<void> {
   await sync.pushLocalEntrySafe(id);
 }
 
-// ── Default save location ─────────────────────────────────────────────────────
+// ── Save location ─────────────────────────────────────────────────────────────
 
-/**
- * Resolve where a finished meeting should be saved, per the user's default-save
- * setting + the org-default guard. The LOCAL entry always lands in a personal
- * folder (or the personal root): when the default targets an org, the local copy
- * stays at the personal root and the org gets an auto-shared COPY afterward (so the
- * user never loses their own recording). On any guard miss (org default but signed
- * out / sync off / not the cloud edition) we fall back to the personal root and
- * report it so the caller can surface a toast.
- */
-function resolveDefaultSave(): {
+/** Where a finished meeting lands, and WHICH rule decided it (pre-flight shows
+ *  the rule, so "why did it save there" is never a guess). */
+export interface MeetingSaveTarget {
   folderId: string | null;
   autoShare: { orgId: string; folderId: string | null } | null;
   fallback: "syncOff" | null;
-} {
-  const loc = useStore.getState().settings.defaultSaveLocation;
+  /** "override" = an explicit per-meeting choice; "company" = the linked
+   *  company's paired folder; "default" = the settings fallback. */
+  origin: "override" | "company" | "default";
+}
+
+/**
+ * Resolve one save LOCATION (personal folder / org) into a concrete target. The
+ * LOCAL entry always lands in a personal folder (or the personal root): when the
+ * location targets an org, the local copy stays at the personal root and the org
+ * gets an auto-shared COPY afterward (so the user never loses their own
+ * recording). On any guard miss (org target but signed out / sync off / not the
+ * cloud edition) we fall back to the personal root and report it so the caller
+ * can surface a toast.
+ */
+function resolveLocation(
+  loc: DefaultSaveLocation | null | undefined,
+  origin: MeetingSaveTarget["origin"],
+): MeetingSaveTarget {
   if (!loc || loc.scope === "personal") {
     const fid = loc?.folderId ?? null;
     // A personal folder deleted since it was chosen → save at the root (orphan→root).
     if (fid && !listLocalFolders().some((f) => f.id === fid)) {
-      return { folderId: null, autoShare: null, fallback: null };
+      return { folderId: null, autoShare: null, fallback: null, origin };
     }
-    return { folderId: fid, autoShare: null, fallback: null };
+    return { folderId: fid, autoShare: null, fallback: null, origin };
   }
   // scope === "org": needs the cloud edition, signed in, sync on.
   if (!CLOUD_ENABLED || !loc.orgId || !syncEnabled()) {
-    return { folderId: null, autoShare: null, fallback: loc.orgId ? "syncOff" : null };
+    return { folderId: null, autoShare: null, fallback: loc.orgId ? "syncOff" : null, origin };
   }
-  return { folderId: null, autoShare: { orgId: loc.orgId, folderId: loc.folderId ?? null }, fallback: null };
+  return {
+    folderId: null,
+    autoShare: { orgId: loc.orgId, folderId: loc.folderId ?? null },
+    fallback: null,
+    origin,
+  };
+}
+
+/**
+ * THE one place that answers "where does this meeting save?", with a single
+ * documented precedence — previously the company link silently overrode the
+ * user's chosen folder at the save call sites, which is how meetings ended up
+ * filed under the wrong customer with nothing on screen explaining it:
+ *
+ *   1. an explicit per-meeting override (pre-flight's "save somewhere else"),
+ *   2. else the linked company's paired folder (issue #132),
+ *   3. else the settings default.
+ *
+ * Exported so the pre-flight screen displays exactly what the save will do.
+ */
+export function resolveMeetingSave(): MeetingSaveTarget {
+  const s = useStore.getState();
+  if (s.meetingSaveOverride) return resolveLocation(s.meetingSaveOverride, "override");
+  const companyFolder = companyFolderId(s.meetingCompanyId);
+  if (companyFolder) {
+    return { folderId: companyFolder, autoShare: null, fallback: null, origin: "company" };
+  }
+  return resolveLocation(s.settings.defaultSaveLocation, "default");
 }
 
 /** After a save, auto-share into the default org folder — or toast why it fell back. */
-async function applyDefaultOrgShare(
-  id: string,
-  res: ReturnType<typeof resolveDefaultSave>,
-): Promise<void> {
+async function applyDefaultOrgShare(id: string, res: MeetingSaveTarget): Promise<void> {
   const lang = useStore.getState().settings.language;
   if (res.fallback === "syncOff") {
     toast.message(translate(lang, "history.defaultSave.orgNeedsSync"));
@@ -253,7 +286,8 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
   const micOnlyRecording = !s.segments.some((seg) => seg.source === "mix");
   const speechRateHz =
     s.micSessionRateHz ?? (micOnlyRecording ? await measureRecordingRate(audioTempPath) : null);
-  const save = resolveDefaultSave();
+  const save = resolveMeetingSave();
+  log.info("history: live save destination", { origin: save.origin, folderId: save.folderId });
   const entry: HistoryEntry = {
     id: crypto.randomUUID(),
     title: `${translate(s.settings.language, "history.liveTitle")} · ${dateLabel}`,
@@ -261,9 +295,7 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
     createdAt,
     durationMs,
     audio: "audio.ogg",
-    // A company-linked meeting files itself under the company's folder
-    // (issue #132); otherwise the configured default location applies.
-    folderId: companyFolderId(useStore.getState().meetingCompanyId) ?? save.folderId,
+    folderId: save.folderId,
     ...snapshotAnalysis(),
     speechRateHz,
   };
@@ -343,7 +375,8 @@ async function applyPostSaveDiarization(entry: HistoryEntry): Promise<void> {
 export async function saveUploadToHistory(session: ReplaySession): Promise<string | null> {
   if (!isTauri()) return null;
   const id = crypto.randomUUID();
-  const save = resolveDefaultSave();
+  const save = resolveMeetingSave();
+  log.info("history: upload save destination", { origin: save.origin, folderId: save.folderId });
   const entry: HistoryEntry = {
     id,
     title: session.name,
@@ -351,9 +384,7 @@ export async function saveUploadToHistory(session: ReplaySession): Promise<strin
     createdAt: session.createdAt,
     durationMs: session.durationMs,
     audio: "audio.ogg",
-    // A company-linked meeting files itself under the company's folder
-    // (issue #132); otherwise the configured default location applies.
-    folderId: companyFolderId(useStore.getState().meetingCompanyId) ?? save.folderId,
+    folderId: save.folderId,
     ...snapshotAnalysis(),
   };
   // Mark this as the loaded entry BEFORE the (multi-second Opus) compress runs, so
