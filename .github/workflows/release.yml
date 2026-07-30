@@ -63,7 +63,7 @@ jobs:
           workspaces: src-tauri
 
       - name: Install frontend dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Prepare release metadata
         id: release
