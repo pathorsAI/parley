@@ -116,15 +116,3 @@ describe("draftPlan", () => {
     expect(prompt).toContain("COACH: 那就從擴編切入");
   });
 });
-
-describe("suggestGoals", () => {
-  it("trims, drops blanks, and never returns more than three", async () => {
-    resolveWith({ goals: ["  問出核決權限  ", "", "要到下次會期", "確認競品報價", "第四個"] });
-    const { suggestGoals } = await import("./prep");
-    expect(await suggestGoals({ settings, facts })).toEqual([
-      "問出核決權限",
-      "要到下次會期",
-      "確認競品報價",
-    ]);
-  });
-});

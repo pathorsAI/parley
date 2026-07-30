@@ -101,44 +101,6 @@ export async function streamPrepChat(opts: {
   return full;
 }
 
-// ── Goal candidates ─────────────────────────────────────────────────────────
-
-const goalsSchema = z.object({
-  goals: z
-    .array(z.string())
-    .describe(
-      "exactly 3 candidate goals for THIS single call, each winnable in one conversation"
-    ),
-});
-
-const GOALS_SYSTEM =
-  "You propose candidate goals for ONE upcoming sales/negotiation call, from what is already known " +
-  "about the account. Each goal must be: winnable inside a single conversation; concrete enough " +
-  "that afterwards it is obvious whether it was won; and aimed at a gap the board shows is empty or " +
-  "thin, or at the next move the account is already waiting on. Keep each under 20 characters of " +
-  "Chinese or 8 words of English. Never propose relationship fluff (\"build rapport\", \"建立信任\"), " +
-  "and never propose something the facts show is already settled." +
-  JSON_MODE_INSTRUCTION;
-
-/** Three things worth walking out with — the only field the user still picks. */
-export async function suggestGoals(opts: {
-  settings: Settings;
-  facts: PrepFacts;
-}): Promise<string[]> {
-  const { settings, facts } = opts;
-  const { object, usage } = await generateObjectResilient({
-    settings,
-    workload: "realtime",
-    schema: goalsSchema,
-    system: GOALS_SYSTEM + outputLanguageInstruction(settings),
-    prompt: grounding(settings, facts),
-  });
-  void recordLlmUsage(settings, "realtime", "prep-goals", usage);
-  const goals = object.goals.map((g) => g.trim()).filter(Boolean).slice(0, 3);
-  log.info("ai.prep: goals", { company: facts.company.name, n: goals.length });
-  return goals;
-}
-
 // ── The battle plan ─────────────────────────────────────────────────────────
 
 const planSchema = z.object({

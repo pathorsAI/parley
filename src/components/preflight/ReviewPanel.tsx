@@ -1,9 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { FileText, Plus, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { useStore, formatClock } from "../../lib/store";
-import { listHistory, loadHistoryEntry } from "../../lib/history/history";
-import type { HistoryEntrySummary } from "../../lib/history/types";
+import { loadHistoryEntry } from "../../lib/history/history";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
@@ -34,37 +33,17 @@ const RECENT_MEETINGS = 3;
  */
 export function ReviewPanel() {
   const { t } = useI18n();
-  const { company, scenario, stageId, claims, rows } = useMeetingSetup();
+  // Past meetings come from the shared setup rather than a second listHistory()
+  // here: the copilot counts them for "第 N 次" and this column lists the newest
+  // few, and two independent reads meant two disk hits per company switch.
+  const { company, scenario, stageId, claims, rows, meetings: allMeetings } = useMeetingSetup();
+  const meetings = allMeetings.slice(0, RECENT_MEETINGS);
 
-  const companyId = useStore((s) => s.meetingCompanyId);
   const addTodo = useStore((s) => s.addTodo);
 
-  const [meetings, setMeetings] = useState<HistoryEntrySummary[]>([]);
   const [briefingOpen, setBriefingOpen] = useState(false);
   /** History id the user is about to open, pending "your prep will be lost". */
   const [leavingTo, setLeavingTo] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!companyId) {
-      setMeetings([]);
-      return;
-    }
-    let alive = true;
-    listHistory()
-      .then((all) => {
-        if (!alive) return;
-        setMeetings(
-          all
-            .filter((m) => m.companyId === companyId)
-            .sort((a, b) => b.createdAt - a.createdAt)
-            .slice(0, RECENT_MEETINGS)
-        );
-      })
-      .catch((e) => log.warn("preflight: list meetings failed", { error: String(e) }));
-    return () => {
-      alive = false;
-    };
-  }, [companyId]);
 
   const redlines = claims.filter((c) => c.category === "redline");
   const openQuestions = claims.filter((c) => c.category === "openq");

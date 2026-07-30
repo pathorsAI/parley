@@ -19,9 +19,8 @@ import { toast } from "sonner";
 import { useStore } from "../../lib/store";
 import { useAccounts, activeClaims, personsOf, threadsOf } from "../../lib/accounts/store";
 import type { ExtractedOps } from "../../lib/accounts/store";
-import { usePreflightIntel } from "../../lib/preflight/useIntel";
+import { useMeetingSetup } from "./useMeetingSetup";
 import { collectPrepFacts, prepHeadline, type PrepFacts } from "../../lib/preflight/facts";
-import type { PrepPlan } from "../../lib/ai/prep";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { useI18n, type TranslationKey } from "../../i18n";
 import { log } from "../../lib/log";
@@ -31,7 +30,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { MeetingContextField } from "../MeetingContextField";
 import { ReviewOpsPanel } from "../accounts/ReviewOpsPanel";
-import { PlanCard } from "./PlanCard";
+import { splitObjection } from "../../lib/preflight/objections";
+import { PlanCard, type PlanView } from "./PlanCard";
 import { Column, EmptyState, SectionTitle } from "./bits";
 
 /** A paste this long is source material, not a sentence someone typed. */
@@ -39,8 +39,7 @@ const PASTE_THRESHOLD = 200;
 
 type Msg =
   | { id: string; kind: "text"; role: "user" | "assistant"; content: string; reasoning?: string }
-  | { id: string; kind: "goals"; goals: string[] }
-  | { id: string; kind: "plan"; plan: PrepPlan };
+  | { id: string; kind: "plan"; plan: PlanView };
 
 /**
  * Pre-flight column ③: the coach, not the form.
@@ -57,7 +56,7 @@ type Msg =
  */
 export function PrepCopilot() {
   const { t } = useI18n();
-  const intel = usePreflightIntel();
+  const setup = useMeetingSetup();
   const acc = useAccounts();
 
   const settings = useStore((s) => s.settings);
@@ -67,11 +66,10 @@ export function PrepCopilot() {
   const context = useStore((s) => s.meetingContext);
   const todos = useStore((s) => s.todos);
   const setMeetingContext = useStore((s) => s.setMeetingContext);
-  const setField = useStore((s) => s.setNegotiationField);
 
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState<null | "chat" | "goals" | "plan" | "extract">(null);
+  const [busy, setBusy] = useState<null | "chat" | "draft" | "plan" | "extract">(null);
   const [pasted, setPasted] = useState<string | null>(null);
   /** Proposed ops kept WITH the text they came from — the attachment written on
    *  approval cites it, and the paste bar it came from may already be gone. */
@@ -79,7 +77,7 @@ export function PrepCopilot() {
   const [fieldsOpen, setFieldsOpen] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
-  const company = intel.company;
+  const company = setup.company;
   const chatReady = hasProviderKey(settings, "realtime");
   const deepReady = hasProviderKey(settings, "deep");
 
@@ -88,11 +86,11 @@ export function PrepCopilot() {
   useEffect(() => {
     setMessages([]);
     setPasted(null);
-  }, [intel.company?.id, intel.thread?.id]);
+  }, [setup.company?.id, setup.thread?.id]);
 
   // Destructured so the memo keys off the pieces, not the fresh object the hook
   // returns every render (which would make the memo a no-op).
-  const { thread, attendees, claims, rows, stageLabel, meetings } = intel;
+  const { thread, attendees, claims, rows, stageLabel, meetings } = setup;
   const facts: PrepFacts | null = useMemo(() => {
     if (!company) return null;
     return collectPrepFacts({
@@ -188,16 +186,49 @@ export function PrepCopilot() {
     }
   }
 
-  async function goals() {
-    if (busy || !facts) return;
-    setBusy("goals");
+  /**
+   * The five-minute path (#189): one pass over the claim base and the stage
+   * bundle, no conversation required, pressable the moment you land. The
+   * thirty-minute path is `plan()` below, which reads what you and the coach
+   * actually worked out.
+   */
+  async function draft() {
+    const { company: co, scenario, stageId } = setup;
+    if (busy || !co || !scenario || !stageId) return;
+    setBusy("draft");
     try {
-      const { suggestGoals } = await import("../../lib/ai/prep");
-      const list = await suggestGoals({ settings, facts });
-      if (list.length) push({ id: crypto.randomUUID(), kind: "goals", goals: list });
+      const bundle = scenario.bundles[stageId];
+      const { draftPrep } = await import("../../lib/ai/prepDraft");
+      const result = await draftPrep({
+        settings,
+        input: {
+          company: co,
+          thread,
+          attendees,
+          claims,
+          stageName: scenario.names[stageId] ?? stageId,
+          stageGoal: bundle?.goal ?? "",
+          exitCriteria: bundle?.exitCriteria ?? [],
+          gaps: rows.map((r) => ({ label: r.slot.label, hint: r.slot.hint, state: r.state })),
+          context,
+        },
+      });
+      push({
+        id: crypto.randomUUID(),
+        kind: "plan",
+        plan: {
+          goals: result.goals,
+          agenda: result.agenda,
+          idealPath: [],
+          edgeCases: result.objections.map(splitObjection),
+          target: "",
+          batna: result.batna,
+          floor: result.floor,
+        },
+      });
       scrollDown();
     } catch (e) {
-      log.error("preflight: copilot goals failed", { error: String(e) });
+      log.error("preflight: copilot draft failed", { error: String(e) });
       toast.error(t("preflight.copilot.failed", { error: String(e) }));
     } finally {
       setBusy(null);
@@ -255,7 +286,7 @@ export function PrepCopilot() {
     });
     store.applyExtractedOps({
       companyId: company.id,
-      threadId: intel.thread?.id,
+      threadId: setup.thread?.id,
       ops: approved,
       provenance: { kind: "import", attachmentId: attachment.id },
     });
@@ -276,7 +307,7 @@ export function PrepCopilot() {
     if (!company) return;
     useAccounts.getState().addClaim({
       companyId: company.id,
-      threadId: intel.thread?.id,
+      threadId: setup.thread?.id,
       subjects: [company.id],
       category: "redline",
       text: text.trim(),
@@ -460,7 +491,7 @@ export function PrepCopilot() {
             glyph="notes"
             title={t("preflight.copilot.emptyTitle")}
             hint={
-              intel.hasScenario
+              setup.hasScenario
                 ? t("preflight.copilot.emptyHint")
                 : t("preflight.review.emptyHintGeneral")
             }
@@ -507,27 +538,25 @@ export function PrepCopilot() {
 
           <div className="flex flex-col gap-3 px-4 py-3">
             <p className="text-xs leading-relaxed">{t("preflight.copilot.opener")}</p>
-            {!messages.some((m) => m.kind === "goals") && (
+            {messages.length === 0 && (
               <Button
                 size="sm"
                 variant="outline"
                 className="h-7 self-start text-[11px]"
-                disabled={!chatReady || !!busy}
-                onClick={() => void goals()}
+                disabled={!deepReady || !!busy || !setup.stageId}
+                title={!setup.stageId ? t("preflight.copilot.needStage") : undefined}
+                onClick={() => void draft()}
               >
-                {busy === "goals" ? (
+                {busy === "draft" ? (
                   <Loader2 className="size-3 animate-spin" />
                 ) : (
                   <Target className="size-3" />
                 )}
-                {t("preflight.copilot.suggestGoals")}
+                {t("preflight.copilot.draftNow")}
               </Button>
             )}
 
             {messages.map((m) => {
-              if (m.kind === "goals") {
-                return <GoalChips key={m.id} goals={m.goals} chosen={target} onPick={(g) => setField("meetingTarget", g)} />;
-              }
               if (m.kind === "plan") return <PlanCard key={m.id} plan={m.plan} />;
               if (m.role === "user") {
                 return (
@@ -575,36 +604,6 @@ export function PrepCopilot() {
         </Sheet>
       )}
     </Column>
-  );
-}
-
-/** The one field the user still picks — three drafted options, or type your own. */
-function GoalChips({
-  goals,
-  chosen,
-  onPick,
-}: Readonly<{ goals: string[]; chosen: string; onPick: (goal: string) => void }>) {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {goals.map((g) => {
-        const on = chosen === g;
-        return (
-          <button
-            key={g}
-            type="button"
-            onClick={() => onPick(g)}
-            className={`cursor-pointer rounded-full border px-2.5 py-1 text-[11px] leading-snug transition-colors ${
-              on
-                ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {on && <Check className="mr-1 inline size-3" />}
-            {g}
-          </button>
-        );
-      })}
-    </div>
   );
 }
 
