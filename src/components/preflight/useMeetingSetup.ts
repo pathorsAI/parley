@@ -1,14 +1,17 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore } from "../../lib/store";
 import { useAccounts, activeClaims, personsOf, threadsOf } from "../../lib/accounts/store";
 import { useScenarioSet } from "../../lib/accounts/useStageSet";
 import { stageFor } from "../../lib/accounts/currentStage";
 import { boardStates } from "../../lib/accounts/slotState";
 import { boardFromBundle } from "../../lib/intel/boards";
+import { listHistory } from "../../lib/history/history";
 import { useI18n, type TranslationKey } from "../../i18n";
+import { log } from "../../lib/log";
 import type { Scenario, SlotDef } from "../../lib/accounts/bundles";
 import type { SlotState } from "../../lib/accounts/slotState";
 import type { Claim, Company, Person, Thread } from "../../lib/accounts/types";
+import type { HistoryEntrySummary } from "../../lib/history/types";
 
 /**
  * The one resolution of "what is this meeting" that every pre-flight column
@@ -29,6 +32,14 @@ export interface MeetingSetup {
   claims: Claim[];
   /** Every slot of the stage's board with its current 空／薄／實 state. */
   rows: { slot: SlotDef; claims: Claim[]; state: SlotState }[];
+  /** Display name of `stageId`, or null when the scenario has no board. */
+  stageLabel: string | null;
+  /** False for the "general" scenario, which links no customer at all. */
+  hasScenario: boolean;
+  /** Every past meeting with this company, newest first. Loaded async — empty
+   *  on the first render, which is why the copilot's "第 N 次" is derived from
+   *  it rather than stored. */
+  meetings: HistoryEntrySummary[];
 }
 
 export function useMeetingSetup(): MeetingSetup {
@@ -63,6 +74,26 @@ export function useMeetingSetup(): MeetingSetup {
 
   const stageId = scenario ? stageFor(scenario, meetingStage, thread) : undefined;
 
+  const [meetings, setMeetings] = useState<HistoryEntrySummary[]>([]);
+  useEffect(() => {
+    if (!companyId) {
+      setMeetings([]);
+      return;
+    }
+    let alive = true;
+    listHistory()
+      .then((all) => {
+        if (!alive) return;
+        setMeetings(
+          all.filter((m) => m.companyId === companyId).sort((a, b) => b.createdAt - a.createdAt)
+        );
+      })
+      .catch((e) => log.warn("preflight: list meetings failed", { error: String(e) }));
+    return () => {
+      alive = false;
+    };
+  }, [companyId]);
+
   const rows = useMemo(() => {
     if (!scenario || !stageId) return [];
     const bundle = scenario.bundles[stageId];
@@ -72,5 +103,16 @@ export function useMeetingSetup(): MeetingSetup {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenario, stageId, claims]);
 
-  return { company, thread, scenario, stageId, attendees, claims, rows };
+  return {
+    company,
+    thread,
+    scenario,
+    stageId,
+    attendees,
+    claims,
+    rows,
+    stageLabel: stageId ? (scenario?.names[stageId] ?? stageId) : null,
+    hasScenario: !!scenario,
+    meetings,
+  };
 }

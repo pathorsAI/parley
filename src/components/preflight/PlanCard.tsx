@@ -3,8 +3,26 @@ import { Check, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { useStore } from "../../lib/store";
 import { useI18n } from "../../i18n";
-import type { PrepPlan } from "../../lib/ai/prep";
 import { SectionTitle } from "./bits";
+
+/**
+ * What a drafted plan looks like on screen, whichever path produced it: the
+ * one-shot draft (`ai/prepDraft`, no conversation needed) or the conversational
+ * one (`ai/prep` → `draftPlan`, which also sequences an ideal path). Sections
+ * with nothing in them simply don't render, so the two shapes share one card
+ * instead of two near-identical ones.
+ */
+export interface PlanView {
+  /** Candidate objectives to pick between — only the one-shot draft offers these. */
+  goals?: string[];
+  agenda: string[];
+  /** Ordered moves. Empty for the one-shot draft. */
+  idealPath: { move: string; why: string }[];
+  edgeCases: { trigger: string; move: string }[];
+  target: string;
+  batna: string;
+  floor: string;
+}
 
 /**
  * The drafted plan, rendered as things you can TAKE rather than prose you read.
@@ -14,10 +32,11 @@ import { SectionTitle } from "./bits";
  * ticks off, and the negotiation setup lands in the same store fields the
  * analysis prompts already read.
  */
-export function PlanCard({ plan }: Readonly<{ plan: PrepPlan }>) {
+export function PlanCard({ plan }: Readonly<{ plan: PlanView }>) {
   const { t } = useI18n();
   const addTodo = useStore((s) => s.addTodo);
   const setField = useStore((s) => s.setNegotiationField);
+  const chosenTarget = useStore((s) => s.meetingTarget);
   const [taken, setTaken] = useState<Set<string>>(new Set());
 
   function take(text: string) {
@@ -42,6 +61,32 @@ export function PlanCard({ plan }: Readonly<{ plan: PrepPlan }>) {
 
   return (
     <div className="flex flex-col gap-3.5 rounded-lg border bg-muted/25 px-3 py-2.5">
+      {plan.goals && plan.goals.length > 0 && (
+        <section className="flex flex-col gap-1.5">
+          <SectionTitle>{t("preflight.copilot.plan.goals")}</SectionTitle>
+          <div className="flex flex-wrap gap-1.5">
+            {plan.goals.map((g) => {
+              const on = chosenTarget === g;
+              return (
+                <button
+                  key={g}
+                  type="button"
+                  onClick={() => setField("meetingTarget", g)}
+                  className={`cursor-pointer rounded-full border px-2.5 py-1 text-[11px] leading-snug transition-colors ${
+                    on
+                      ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {on && <Check className="mr-1 inline size-3" />}
+                  {g}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       {plan.agenda.length > 0 && (
         <section className="flex flex-col gap-1">
           <div className="flex items-baseline gap-2">
@@ -103,11 +148,15 @@ export function PlanCard({ plan }: Readonly<{ plan: PrepPlan }>) {
 
       <section className="flex flex-col gap-1 border-t pt-2.5">
         <SectionTitle>{t("preflight.copilot.plan.setup")}</SectionTitle>
-        <SetupRow
-          label={t("analyze.targetLabel")}
-          value={plan.target}
-          onFill={() => setField("meetingTarget", plan.target)}
-        />
+        {/* When candidates were offered, the chips above ARE the goal picker —
+            a second, empty 目標 row here would read as a missing answer. */}
+        {!plan.goals?.length && (
+          <SetupRow
+            label={t("analyze.targetLabel")}
+            value={plan.target}
+            onFill={() => setField("meetingTarget", plan.target)}
+          />
+        )}
         <SetupRow
           label={t("analyze.batnaLabel")}
           value={plan.batna}
