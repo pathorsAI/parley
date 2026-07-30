@@ -7,6 +7,7 @@ import {
   ClipboardPaste,
   Loader2,
   Plus,
+  ShieldAlert,
   Sparkles,
   Square,
   Target,
@@ -265,6 +266,28 @@ export function PrepCopilot() {
     setInput("");
   }
 
+  /**
+   * Lock a line the coach just surfaced (or one you typed) as a red line, so
+   * the live guardrail fires on it. Goes straight in as a user-authored claim —
+   * the review gate exists for what the MODEL proposes, and this is the user's
+   * own sentence; the same path CompanyPage's claim list uses.
+   */
+  function asRedline(text: string) {
+    if (!company) return;
+    useAccounts.getState().addClaim({
+      companyId: company.id,
+      threadId: intel.thread?.id,
+      subjects: [company.id],
+      category: "redline",
+      text: text.trim(),
+      provenance: [{ kind: "user" }],
+      confidence: "confirmed",
+    });
+    setInput("");
+    setPasted(null);
+    toast.success(t("preflight.copilot.redlineAdded"));
+  }
+
   function asBackground(text: string) {
     setMeetingContext(context.trim() ? `${context.trim()}\n\n${text}` : text);
     setPasted(null);
@@ -400,6 +423,18 @@ export function PrepCopilot() {
                   <Sparkles className="size-3" />
                 )}
                 {t("preflight.copilot.draftPlan")}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 text-[11px] text-muted-foreground"
+                disabled={!input.trim() || !company}
+                title={t("preflight.copilot.redlineHint")}
+                onClick={() => asRedline(input)}
+              >
+                <ShieldAlert className="size-3" />
+                {t("preflight.copilot.redline")}
               </Button>
               <span className="flex-1" />
               <Button
