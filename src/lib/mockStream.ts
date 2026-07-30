@@ -65,7 +65,7 @@ export function startMockStream() {
         });
       });
       if (!isFinal) {
-        timer = setTimeout(emitWord, 90 + Math.random() * 120);
+        timer = setTimeout(emitWord, 90 + Math.random() * 120); // NOSONAR — non-cryptographic jitter for mock stream timing, not security-sensitive
       } else {
         line++;
         timer = setTimeout(emitLine, 1200);

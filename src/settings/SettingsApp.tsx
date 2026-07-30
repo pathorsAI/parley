@@ -279,6 +279,7 @@ export function SettingsApp() {
         {NAV.filter((n) => CLOUD_ENABLED || !n.cloudOnly).map((n) => (
           <button
             key={n.id}
+            type="button"
             onClick={() => setCat(n.id)}
             className={`rounded-md px-2.5 py-1.5 text-left text-sm transition-colors ${
               cat === n.id ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
