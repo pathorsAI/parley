@@ -6,9 +6,8 @@ import { stageFor } from "../../lib/accounts/currentStage";
 import { boardStates } from "../../lib/accounts/slotState";
 import { boardFromBundle } from "../../lib/intel/boards";
 import { useI18n, type TranslationKey } from "../../i18n";
-import type { Scenario } from "../../lib/accounts/bundles";
+import type { Scenario, SlotDef } from "../../lib/accounts/bundles";
 import type { SlotState } from "../../lib/accounts/slotState";
-import type { SlotDef } from "../../lib/accounts/bundles";
 import type { Claim, Company, Person, Thread } from "../../lib/accounts/types";
 
 /**

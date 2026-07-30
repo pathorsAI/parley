@@ -113,6 +113,11 @@ function claimLines(claims: Claim[], persons: Person[]): string {
     .join("\n");
 }
 
+/** `- a\n- b` — the only list shape this prompt uses. */
+function bullets(lines: string[]): string {
+  return lines.map((x) => `- ${x}`).join("\n");
+}
+
 /**
  * Assemble the user prompt. Pure and exported so a test can assert the board
  * gaps and red lines actually reach the model — the two inputs that make this
@@ -123,21 +128,22 @@ export function buildPrepPrompt(settings: Settings, input: PrepDraftInput): stri
     input;
   const parts: string[] = [profileContext(settings)];
 
-  parts.push(`Meeting with: ${company.name}${company.note ? ` — ${company.note}` : ""}`);
+  const note = company.note ? ` — ${company.note}` : "";
+  parts.push(`Meeting with: ${company.name}${note}`);
   if (thread) {
     parts.push(`Thread (戰線): ${thread.name} · kind=${thread.kind} · status=${thread.status}`);
   }
-  parts.push(`Stage: ${stageName}${stageGoal ? ` — ${stageGoal}` : ""}`);
-  if (exitCriteria.length) {
-    parts.push(`Stage is finished when:\n${exitCriteria.map((x) => `- ${x}`).join("\n")}`);
-  }
+  const goalSuffix = stageGoal ? ` — ${stageGoal}` : "";
+  parts.push(`Stage: ${stageName}${goalSuffix}`);
+  if (exitCriteria.length) parts.push(`Stage is finished when:\n${bullets(exitCriteria)}`);
 
   if (attendees.length) {
     const lines = attendees.map((p) => {
       const bits = [p.title, p.committeeRole, p.stance?.value].filter(Boolean);
-      return `- ${p.name}${bits.length ? ` (${bits.join(", ")})` : ""}`;
+      const detail = bits.length ? ` (${bits.join(", ")})` : "";
+      return `${p.name}${detail}`;
     });
-    parts.push(`Attending from their side:\n${lines.join("\n")}`);
+    parts.push(`Attending from their side:\n${bullets(lines)}`);
   }
 
   // The gap board is the sharpest signal we have about what this meeting is
@@ -146,14 +152,15 @@ export function buildPrepPrompt(settings: Settings, input: PrepDraftInput): stri
   const open = gaps.filter((g) => g.state !== "solid");
   const solid = gaps.filter((g) => g.state === "solid");
   if (open.length) {
-    parts.push(
-      `Board gaps to close (empty = nothing known, thin = weak or stale):\n${open
-        .map((g) => `- [${g.state}] ${g.label}${g.hint && g.hint !== g.label ? `：${g.hint}` : ""}`)
-        .join("\n")}`
-    );
+    const lines = open.map((g) => {
+      const hint = g.hint && g.hint !== g.label ? `：${g.hint}` : "";
+      return `[${g.state}] ${g.label}${hint}`;
+    });
+    parts.push(`Board gaps to close (empty = nothing known, thin = weak or stale):\n${bullets(lines)}`);
   }
   if (solid.length) {
-    parts.push(`Already solid — do NOT spend meeting time here:\n${solid.map((g) => `- ${g.label}`).join("\n")}`);
+    const lines = solid.map((g) => g.label);
+    parts.push(`Already solid — do NOT spend meeting time here:\n${bullets(lines)}`);
   }
 
   parts.push(

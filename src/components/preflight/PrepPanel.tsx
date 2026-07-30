@@ -131,7 +131,7 @@ export function PrepPanel() {
     setDraft((d) => (d ? { ...d, [key]: d[key].filter((x) => x !== text) } : d));
   }
 
-  /** Add a todo unless the exact line is already on the agenda. */
+  /** Put a line on the agenda unless that exact line is already there. */
   function addAgendaLine(text: string): boolean {
     if (useStore.getState().todos.some((x) => x.text === text)) return false;
     addTodo(text);
@@ -142,6 +142,10 @@ export function PrepPanel() {
   const goalPicked = target.trim().length > 0;
   const showGoals = !!draft?.goals.length && (!goalPicked || goalsOpen);
   const setupFilled = [batna, floor].filter((x) => x.trim()).length;
+
+  let draftLabel = t("preflight.prep.draft");
+  if (drafting) draftLabel = t("preflight.prep.drafting");
+  else if (draft) draftLabel = t("preflight.prep.redraft");
 
   return (
     <Column step="③" title={t("preflight.prep.title")}>
@@ -160,11 +164,7 @@ export function PrepPanel() {
             ) : (
               <Wand2 className="size-3.5" />
             )}
-            {drafting
-              ? t("preflight.prep.drafting")
-              : draft
-                ? t("preflight.prep.redraft")
-                : t("preflight.prep.draft")}
+            {draftLabel}
           </Button>
           <p className="text-[10px] leading-relaxed text-muted-foreground">
             {company ? t("preflight.prep.draftHint") : t("preflight.prep.draftNeedsCompany")}
