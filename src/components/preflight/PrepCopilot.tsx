@@ -22,8 +22,9 @@ import type { ExtractedOps } from "../../lib/accounts/store";
 import { useMeetingSetup } from "./useMeetingSetup";
 import { collectPrepFacts, prepHeadline, type PrepFacts } from "../../lib/preflight/facts";
 import { hasProviderKey } from "../../lib/ai/settings";
+import { AI_FAILURE_HINT_KEY, classifyAiFailure } from "../../lib/ai/failure";
+import { toastAiFailure } from "../../lib/ai/failureToast";
 import { useI18n, type TranslationKey } from "../../i18n";
-import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -173,11 +174,17 @@ export function PrepCopilot() {
         },
       });
     } catch (e) {
-      log.error("preflight: copilot chat failed", { error: String(e) });
+      // The half-written answer bubble stays put and carries the actionable
+      // line; the toast carries the provider's detail plus the way to Settings.
+      const failure = classifyAiFailure(e, settings, "realtime");
+      toastAiFailure("preflight: copilot chat", e, "realtime");
       setMessages((m) =>
         m.map((x) =>
           x.id === answerId && x.kind === "text"
-            ? { ...x, content: t("preflight.copilot.failed", { error: String(e) }) }
+            ? {
+                ...x,
+                content: t(AI_FAILURE_HINT_KEY[failure.kind], { provider: failure.providerLabel }),
+              }
             : x
         )
       );
@@ -228,8 +235,7 @@ export function PrepCopilot() {
       });
       scrollDown();
     } catch (e) {
-      log.error("preflight: copilot draft failed", { error: String(e) });
-      toast.error(t("preflight.copilot.failed", { error: String(e) }));
+      toastAiFailure("preflight: copilot draft", e, "deep");
     } finally {
       setBusy(null);
     }
@@ -244,8 +250,7 @@ export function PrepCopilot() {
       push({ id: crypto.randomUUID(), kind: "plan", plan: drafted });
       scrollDown();
     } catch (e) {
-      log.error("preflight: copilot plan failed", { error: String(e) });
-      toast.error(t("preflight.copilot.failed", { error: String(e) }));
+      toastAiFailure("preflight: copilot plan", e, "deep");
     } finally {
       setBusy(null);
     }
@@ -268,8 +273,7 @@ export function PrepCopilot() {
       });
       setReview({ ops: proposed, source: text });
     } catch (e) {
-      log.error("preflight: copilot extract failed", { error: String(e) });
-      toast.error(t("preflight.copilot.failed", { error: String(e) }));
+      toastAiFailure("preflight: copilot extract", e, "deep");
     } finally {
       setBusy(null);
     }

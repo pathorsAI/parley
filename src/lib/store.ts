@@ -162,9 +162,35 @@ const DEFAULT_SETTINGS: Settings = {
   defaultSaveLocation: { scope: "personal", folderId: null },
 };
 
-/** Which top-level screen is active: preparing the next meeting, capturing it
- *  live, analyzing an uploaded recording, or the accounts (客戶) workspace. */
-export type AppMode = "preflight" | "live" | "replay" | "accounts";
+/**
+ * Which top-level screen is active. Since #195 these are ROUTES under a
+ * persistent shell, not modes you enter and exit: the left tree is always on
+ * screen (except while a meeting owns it), so "accounts" and "library" are two
+ * views of the same tree rather than two windows.
+ *
+ * "library" (the recordings grid) and "settings" used to be their own OS
+ * windows. Two windows meant two sidebars — a company tree here, a folder tree
+ * there — which is why the company a meeting was linked to and the folder it
+ * saved into read as unrelated things even though the data layer pairs them 1:1.
+ */
+export type AppMode = "preflight" | "live" | "replay" | "accounts" | "library" | "settings";
+
+/**
+ * Which node of the one tree the library route is showing.
+ *
+ * `personal` + a company's folderId IS that company's recordings — the company
+ * ↔ folder pairing (accounts/folders.ts) is what makes "這家公司的錄音" and "這個
+ * 資料夾" the same place instead of two competing filing systems. `personal`
+ * with a null folderId is 未歸戶錄音: everything with no folder, plus anything
+ * whose folder no longer exists, so nothing can become unreachable.
+ */
+export type LibrarySelection =
+  | { kind: "personal"; folderId: string | null }
+  | { kind: "org"; id: string; name: string; folderId: string | null }
+  | { kind: "voice" };
+
+/** Which part of a company's war room the sidebar asked for. */
+export type AccountsFocus = "intel" | "people";
 
 /**
  * Everything the user sets up FOR one meeting, reset as one unit when they
@@ -508,11 +534,28 @@ interface ParleyState {
   enterPreflight: () => void;
   /** Leave pre-flight without starting (back to replay if a recording is loaded). */
   exitPreflight: () => void;
-  /** Enter the accounts screen (blocked while recording — the live call owns the
-   *  screen; use the accounts SHEET instead, which works mid-call). */
-  enterAccounts: () => void;
+  /** Show a company's war room (blocked while recording — the live call owns the
+   *  screen; use the accounts SHEET instead, which works mid-call). Omit
+   *  `companyId` to keep whichever company was last open. */
+  openAccounts: (companyId?: string | null, focus?: AccountsFocus) => void;
   /** Leave the accounts screen, back to replay if a recording is loaded. */
   exitAccounts: () => void;
+  /** Which company the accounts route is showing (null = none selected yet).
+   *  Lives here, not inside AccountsScreen, because the left tree drives it. */
+  accountsCompanyId: string | null;
+  /** Which facet of that company the tree selected. Persistent (not a one-shot
+   *  request) so the tree can keep the row it highlighted highlighted. */
+  accountsFocus: AccountsFocus;
+  setAccountsCompany: (id: string | null) => void;
+  /** Show the recordings library at `selection` (blocked while recording). */
+  openLibrary: (selection: LibrarySelection) => void;
+  librarySelection: LibrarySelection;
+  /** Show Settings as a route in this window (blocked while recording). */
+  openSettings: () => void;
+  /** Go back to the recording that is already loaded. Navigating the tree away
+   *  from a loaded recording used to strand it: nothing on screen still pointed
+   *  at it, and only exitReplay (which THROWS IT AWAY) was reachable. */
+  showReplay: () => void;
 
   /**
    * A transcript time (ms) the UI should jump to and briefly highlight — set by
@@ -571,6 +614,9 @@ export const useStore = create<ParleyState>()(
   persist(
     (set) => ({
       appMode: "live",
+      accountsCompanyId: null,
+      accountsFocus: "intel",
+      librarySelection: { kind: "personal", folderId: null },
       replay: null,
       loadedHistoryId: null,
       replayReadOnly: false,
@@ -645,9 +691,24 @@ export const useStore = create<ParleyState>()(
     }),
   exitPreflight: () =>
     set((s) => (s.appMode === "preflight" ? { appMode: s.replay ? "replay" : "live" } : {})),
-  enterAccounts: () =>
-    set((s) => (isMeetingActive(s.meetingStatus) ? {} : { appMode: "accounts" })),
+  openAccounts: (companyId, focus = "intel") =>
+    set((s) => {
+      if (isMeetingActive(s.meetingStatus)) return {};
+      return {
+        appMode: "accounts",
+        accountsCompanyId: companyId === undefined ? s.accountsCompanyId : companyId,
+        accountsFocus: focus,
+      };
+    }),
   exitAccounts: () => set((s) => ({ appMode: s.replay ? "replay" : "live" })),
+  setAccountsCompany: (accountsCompanyId) => set({ accountsCompanyId }),
+  openLibrary: (librarySelection) =>
+    set((s) =>
+      isMeetingActive(s.meetingStatus) ? {} : { appMode: "library", librarySelection }
+    ),
+  openSettings: () =>
+    set((s) => (isMeetingActive(s.meetingStatus) ? {} : { appMode: "settings" })),
+  showReplay: () => set((s) => (s.replay ? { appMode: "replay" } : {})),
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
   setCloudAuth: (cloudAuth) =>

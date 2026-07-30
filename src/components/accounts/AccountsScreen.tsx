@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
 import {
   ResizablePanelGroup,
@@ -6,8 +6,8 @@ import {
   ResizableHandle,
 } from "@/components/ui/resizable";
 import { useAccounts } from "../../lib/accounts/store";
+import { useStore } from "../../lib/store";
 import { useI18n } from "../../i18n";
-import { CompanySidebar } from "./CompanySidebar";
 import { CompanyPage } from "./CompanyPage";
 import { ThreadPage } from "./ThreadPage";
 import { PeopleRail } from "./PeopleRail";
@@ -15,10 +15,13 @@ import { PeopleRail } from "./PeopleRail";
 type CenterView = { kind: "overview" } | { kind: "thread"; id: string };
 
 /**
- * The accounts (客戶) workspace — same three-pane DNA as the live screen:
- * company switcher (left, always one click away) | war room (center — the
- * deal is the work axis: threads, triage, intel) | stakeholder roster
- * (right — who's who and where they stand, always at hand).
+ * One company's war room: the deal is the work axis (threads, triage, intel)
+ * with the stakeholder roster always at hand on the right.
+ *
+ * The company SWITCHER used to be this screen's left column. Since #195 it's
+ * the app shell's tree — the same tree that holds the company's recordings — so
+ * picking a company can't mean one thing here and another thing in a second
+ * window.
  */
 export function AccountsScreen() {
   const { t } = useI18n();
@@ -26,17 +29,37 @@ export function AccountsScreen() {
   const threads = useAccounts((s) => s.threads);
   const active = useMemo(() => companies.filter((c) => !c.archived), [companies]);
 
-  const [companyId, setCompanyId] = useState<string | null>(null);
+  const companyId = useStore((s) => s.accountsCompanyId);
+  const setCompanyId = useStore((s) => s.setAccountsCompany);
+  const focus = useStore((s) => s.accountsFocus);
   const [center, setCenter] = useState<CenterView>({ kind: "overview" });
+  const [pulse, setPulse] = useState(false);
+  const peopleRef = useRef<HTMLDivElement>(null);
 
   // Land on the first company once data is there. Archived companies stay
   // selectable (viewed with a restore banner); only a vanished id recovers.
   useEffect(() => {
     if (!companyId || !companies.some((c) => c.id === companyId)) {
       setCompanyId(active[0]?.id ?? null);
-      setCenter({ kind: "overview" });
     }
-  }, [companies, active, companyId]);
+  }, [companies, active, companyId, setCompanyId]);
+
+  // A company switch is a different war room — never keep the previous
+  // company's thread open underneath it.
+  useEffect(() => {
+    setCenter({ kind: "overview" });
+  }, [companyId]);
+
+  // The tree can select a specific facet ("人 · 4 位"). The SELECTION persists
+  // (the tree keeps that row lit); the emphasis is a one-off pulse, because a
+  // ring that never goes away stops meaning anything.
+  useEffect(() => {
+    if (focus !== "people") return;
+    peopleRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    setPulse(true);
+    const id = setTimeout(() => setPulse(false), 1200);
+    return () => clearTimeout(id);
+  }, [focus, companyId]);
 
   const company = companies.find((c) => c.id === companyId) ?? null;
   const thread =
@@ -44,7 +67,7 @@ export function AccountsScreen() {
 
   const saved = useDefaultLayout({
     id: "parley:accounts",
-    panelIds: ["companies", "main", "people"],
+    panelIds: ["main", "people"],
     storage: window.localStorage,
   });
 
@@ -55,17 +78,7 @@ export function AccountsScreen() {
       defaultLayout={saved.defaultLayout}
       onLayoutChanged={saved.onLayoutChanged}
     >
-      <ResizablePanel id="companies" defaultSize={17} minSize={12}>
-        <CompanySidebar
-          selectedId={companyId}
-          onSelect={(id) => {
-            setCompanyId(id);
-            setCenter({ kind: "overview" });
-          }}
-        />
-      </ResizablePanel>
-      <ResizableHandle withHandle />
-      <ResizablePanel id="main" defaultSize={57} minSize={38}>
+      <ResizablePanel id="main" defaultSize={68} minSize={40}>
         {company ? (
           thread && center.kind === "thread" ? (
             <ThreadPage thread={thread} onBack={() => setCenter({ kind: "overview" })} />
@@ -84,8 +97,15 @@ export function AccountsScreen() {
         )}
       </ResizablePanel>
       <ResizableHandle withHandle />
-      <ResizablePanel id="people" defaultSize={26} minSize={16}>
-        {company && <PeopleRail key={company.id} companyId={company.id} />}
+      <ResizablePanel id="people" defaultSize={32} minSize={18}>
+        <div
+          ref={peopleRef}
+          className={`h-full min-h-0 transition-shadow ${
+            pulse ? "ring-2 ring-inset ring-primary/60" : ""
+          }`}
+        >
+          {company && <PeopleRail key={company.id} companyId={company.id} />}
+        </div>
       </ResizablePanel>
     </ResizablePanelGroup>
   );

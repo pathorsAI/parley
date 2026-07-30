@@ -2,9 +2,10 @@
 // disk and reload it into the replay UI later.
 //
 // Rust owns the files (see src-tauri/src/history.rs); this module owns the JSON
-// shapes, builds entries from the live store, and drives the cross-window flow:
-// the History window lists summaries and emits `history://open <id>`; the main
-// window listens, reads the entry, and loads it into replay.
+// shapes, builds entries from the live store, and turns a saved entry back into
+// a replay session. Since #195 the library that lists these entries is a route
+// in the main window, so opening one is a plain `loadHistoryEntry` call rather
+// than a `history://open` message from a second window.
 
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -26,8 +27,6 @@ import type { ReplaySession } from "../replay/types";
 import type { DefaultSaveLocation, TranscriptSegment } from "../types";
 import type { HistoryEntry, HistoryEntrySummary } from "./types";
 
-const HISTORY_OPEN_EVENT = "history://open";
-const HISTORY_OPEN_ORG_EVENT = "history://open-org";
 const HISTORY_UPDATED_EVENT = "history://updated";
 const RECORDING_SAVED_EVENT = "meeting://recording-saved";
 // Rust emits this instead of `recording-saved` when the stopped meeting produced
@@ -712,113 +711,12 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
   }
 }
 
-// ── History window + cross-window events ─────────────────────────────────────
-
-/** Open (or focus) the dedicated History window (`#history` route). */
-export async function openHistoryWindow(): Promise<void> {
-  if (!isTauri()) {
-    window.location.hash = "history";
-    return;
-  }
-  const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-  const existing = await WebviewWindow.getByLabel("history");
-  log.info("history: open window", { existing: !!existing });
-  if (existing) {
-    await existing.setFocus();
-    return;
-  }
-  const win = new WebviewWindow("history", {
-    url: "index.html#history",
-    title: "Parley History",
-    width: 960,
-    height: 680,
-    minWidth: 720,
-    minHeight: 480,
-    resizable: true,
-    // The folder sidebar uses HTML5 drag-and-drop (drag a card onto a folder). Tauri's
-    // native OS drag-drop handler is ON by default and SWALLOWS the webview's dragover/
-    // drop events, so without this the drop zones never highlight and nothing moves.
-    // This window has no OS file-drop needs (uploads happen in the main window), so it's
-    // safe to hand drag-drop to the webview.
-    dragDropEnabled: false,
-  });
-  win.once("tauri://error", (e) => log.error("history: window error", { error: String(e) }));
-}
-
-/** From the History window: ask the main window to load an entry. */
-export async function emitHistoryOpen(id: string): Promise<void> {
-  if (!isTauri()) return;
-  await emit(HISTORY_OPEN_EVENT, { id });
-}
-
-/** Main-window listener: load the entry requested by the History window. */
-export async function listenForHistoryOpen(): Promise<UnlistenFn> {
-  if (!isTauri()) return () => {};
-  return listen<{ id: string }>(HISTORY_OPEN_EVENT, (e) => {
-    loadHistoryEntry(e.payload.id).catch((err) =>
-      log.error("history: load failed", { id: e.payload.id, error: String(err) }),
-    );
-  });
-}
-
-const HISTORY_IMPORT_EVENT = "history://import";
-
-/** From the History window: hand a picked audio file to the main window's ingest wizard. */
-export async function emitHistoryImport(path: string): Promise<void> {
-  if (!isTauri()) return;
-  await emit(HISTORY_IMPORT_EVENT, { path });
-}
-
-/** Main-window listener: open the ingest wizard for a file picked in History. */
-export async function listenForHistoryImport(): Promise<UnlistenFn> {
-  if (!isTauri()) return () => {};
-  return listen<{ path: string }>(HISTORY_IMPORT_EVENT, (e) => {
-    if (isMeetingActive(useStore.getState().meetingStatus)) return;
-    useStore.getState().openIngestWizard(e.payload.path);
-    import("@tauri-apps/api/webviewWindow")
-      .then(({ WebviewWindow }) => WebviewWindow.getByLabel("main"))
-      .then((w) => w?.setFocus())
-      .catch(() => {});
-  });
-}
-
-const HISTORY_IMPORT_TRANSCRIPT_EVENT = "history://import-transcript";
-
-/** From the History window: hand picked transcript files to the main window's
- *  import dialog (the text sibling of {@link emitHistoryImport}). */
-export async function emitHistoryImportTranscript(paths: string[]): Promise<void> {
-  if (!isTauri()) return;
-  await emit(HISTORY_IMPORT_TRANSCRIPT_EVENT, { paths });
-}
-
-/** Main-window listener: open the transcript-import dialog for files picked in History. */
-export async function listenForHistoryImportTranscript(): Promise<UnlistenFn> {
-  if (!isTauri()) return () => {};
-  return listen<{ paths: string[] }>(HISTORY_IMPORT_TRANSCRIPT_EVENT, (e) => {
-    if (isMeetingActive(useStore.getState().meetingStatus)) return;
-    useStore.getState().openTranscriptImport(e.payload.paths);
-    import("@tauri-apps/api/webviewWindow")
-      .then(({ WebviewWindow }) => WebviewWindow.getByLabel("main"))
-      .then((w) => w?.setFocus())
-      .catch(() => {});
-  });
-}
-
-/** From the History window: ask the main window to load an ORG recording. */
-export async function emitHistoryOpenOrg(orgId: string, id: string): Promise<void> {
-  if (!isTauri()) return;
-  await emit(HISTORY_OPEN_ORG_EVENT, { orgId, id });
-}
-
-/** Main-window listener: load the org recording requested by the History window. */
-export async function listenForHistoryOpenOrg(): Promise<UnlistenFn> {
-  if (!isTauri()) return () => {};
-  return listen<{ orgId: string; id: string }>(HISTORY_OPEN_ORG_EVENT, (e) => {
-    loadOrgEntry(e.payload.orgId, e.payload.id).catch((err) =>
-      log.error("history: org load failed", { id: e.payload.id, error: String(err) }),
-    );
-  });
-}
+// ── Cross-window events ─────────────────────────────────────────────────────
+//
+// The History window is gone (#195): the recordings library is a route in the
+// main window, so opening an entry is a direct loadHistoryEntry / loadOrgEntry
+// call and needs no `history://open` round trip. What remains here is the
+// broadcast that a saved entry CHANGED, which several surfaces still listen to.
 
 /** Main-window listener: auto-save the meeting once Rust finishes encoding it,
  *  and release the titlebar "finalizing" state when the save settles — or when

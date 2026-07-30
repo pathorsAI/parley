@@ -1,18 +1,10 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TitleBar } from "./components/TitleBar";
 import { TranslateStrip } from "./components/TranslateStrip";
-import { LiveScreen } from "./components/live/LiveScreen";
-import { StudyScreen } from "./components/study/StudyScreen";
-
-const AccountsScreen = lazy(() =>
-  import("./components/accounts/AccountsScreen").then((m) => ({ default: m.AccountsScreen }))
-);
-const PreflightScreen = lazy(() =>
-  import("./components/preflight/PreflightScreen").then((m) => ({ default: m.PreflightScreen }))
-);
+import { AppShell } from "./components/shell/AppShell";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import { ReleaseNotesDialog } from "./components/ReleaseNotesDialog";
@@ -23,7 +15,7 @@ import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWind
 import { useFindingSolutionHost } from "./components/analysis/useFindingSolutionHost";
 import { DeliveryNudgeHost } from "./components/delivery/DeliveryNudgeHost";
 import { useDeliveryCoach } from "./lib/analysis/useDelivery";
-import { useStore, isMeetingActive, type AppMode } from "./lib/store";
+import { useStore, isMeetingActive } from "./lib/store";
 import {
   isTauri,
   listenForMeetingError,
@@ -43,14 +35,7 @@ import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 import { initStudyPipeline } from "./lib/analysis/studyPipeline";
 import { initAccounts } from "./lib/accounts/store";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
-import {
-  initHistoryPersistSync,
-  listenForHistoryImport,
-  listenForHistoryImportTranscript,
-  listenForHistoryOpen,
-  listenForHistoryOpenOrg,
-  listenForRecordingSaved,
-} from "./lib/history/history";
+import { initHistoryPersistSync, listenForRecordingSaved } from "./lib/history/history";
 import { checkForUpdate } from "./lib/update";
 import {
   getPendingInstalledReleaseNotes,
@@ -108,30 +93,8 @@ function useFullscreen(): boolean {
   return fullscreen;
 }
 
-/** The one top-level screen for the current app mode. The lazily-loaded ones
- *  are secondary tenses — the live screen is what the app opens to. */
-function MainScreen({ mode }: Readonly<{ mode: AppMode }>) {
-  if (mode === "replay") return <StudyScreen />;
-  if (mode === "accounts") {
-    return (
-      <Suspense fallback={null}>
-        <AccountsScreen />
-      </Suspense>
-    );
-  }
-  if (mode === "preflight") {
-    return (
-      <Suspense fallback={null}>
-        <PreflightScreen />
-      </Suspense>
-    );
-  }
-  return <LiveScreen />;
-}
-
 const App = () => {
   useThemePreference();
-  const appMode = useStore((s) => s.appMode);
   const onboarded = useStore((s) => s.settings.onboarded);
   const fullscreen = useFullscreen();
   const rounded = isTauri() && !fullscreen;
@@ -167,10 +130,9 @@ const App = () => {
     track(listenForViewLogsMenu());
     track(listenForLiveTranslateMenu());
     track(listenForRecordingSaved());
-    track(listenForHistoryOpen());
-    track(listenForHistoryImport());
-    track(listenForHistoryImportTranscript());
-    if (CLOUD_ENABLED) track(listenForHistoryOpenOrg());
+    // The history://open + history://import listeners are gone with the standalone
+    // History window (#195): the library is a route in THIS window now, so it
+    // opens an entry by calling loadHistoryEntry directly.
     // These return a synchronous UnlistenFn.
     const unTemplates = initTemplatesSync();
     const unSession = initSessionSync();
@@ -355,7 +317,7 @@ const App = () => {
       {!isTauri() && <FindingSolutionWindow />}
       <TitleBar fullscreen={fullscreen} />
       <DeliveryNudgeHost />
-      <MainScreen mode={appMode} />
+      <AppShell />
       {/* Interpreter strip: only during a translated live meeting. */}
       <TranslateStrip />
     </div>

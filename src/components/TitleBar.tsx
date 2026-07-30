@@ -10,10 +10,8 @@ import { sttApiKey } from "../lib/transcription/providers";
 import { toast } from "sonner";
 import { stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
-import { openSettingsWindow } from "../lib/settingsSync";
-import { openHistoryWindow } from "../lib/history/history";
 import { openLiveTranslateWindow } from "../lib/liveTranslate";
-import { useI18n } from "../i18n";
+import { useI18n, type TranslationKey } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { LevelMeter } from "./LevelMeter";
 import { McpStatusChip } from "./McpStatusChip";
@@ -295,11 +293,19 @@ function CenterSwitcher({
   onLayout: (layout: Layout) => void;
   t: TFn;
 }>) {
-  if (mode === "accounts" || mode === "preflight") {
+  // Routes with no posture to switch just name themselves here. Without this,
+  // the library and Settings would show the live coach/transcript toggle, which
+  // does nothing on those screens.
+  const LABEL: Partial<Record<AppMode, TranslationKey>> = {
+    accounts: "accounts.title",
+    preflight: "preflight.subtitle",
+    library: "shell.recordings",
+    settings: "common.settings",
+  };
+  const label = LABEL[mode];
+  if (label) {
     return (
-      <span className="px-3 py-1 text-xs font-medium text-muted-foreground">
-        {t(mode === "accounts" ? "accounts.title" : "preflight.subtitle")}
-      </span>
+      <span className="px-3 py-1 text-xs font-medium text-muted-foreground">{t(label)}</span>
     );
   }
   if (mode === "replay") {
@@ -393,7 +399,6 @@ function PrimaryAction({
   finalizing,
   busy,
   onExitReplay,
-  onExitAccounts,
   onExitPreflight,
   onTogglePause,
   onEnd,
@@ -407,7 +412,6 @@ function PrimaryAction({
   finalizing: boolean;
   busy: boolean;
   onExitReplay: () => void;
-  onExitAccounts: () => void;
   onExitPreflight: () => void;
   onTogglePause: () => void;
   onEnd: () => void;
@@ -423,14 +427,8 @@ function PrimaryAction({
       </Button>
     );
   }
-  if (mode === "accounts") {
-    return (
-      <Button size="sm" variant="outline" onClick={onExitAccounts} className="h-8">
-        <LogOut className="size-3.5" />
-        {t("accounts.exit")}
-      </Button>
-    );
-  }
+  // "accounts", "library" and "settings" have no exit button: the tree beside
+  // them is always on screen, so leaving is picking somewhere else (#195).
   if (mode === "preflight") {
     // Starting happens in the pre-flight footer, next to what it commits to;
     // up here there is only the way back out.
@@ -501,8 +499,11 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const [elapsed, setElapsed] = useState("00:00");
   const appMode = useStore((s) => s.appMode);
   const exitReplay = useStore((s) => s.exitReplay);
-  const enterAccounts = useStore((s) => s.enterAccounts);
-  const exitAccounts = useStore((s) => s.exitAccounts);
+  const openAccounts = useStore((s) => s.openAccounts);
+  const openLibrary = useStore((s) => s.openLibrary);
+  const openSettingsRoute = useStore((s) => s.openSettings);
+  const showReplay = useStore((s) => s.showReplay);
+  const replayName = useStore((s) => s.replay?.name ?? null);
   const enterPreflight = useStore((s) => s.enterPreflight);
   const exitPreflight = useStore((s) => s.exitPreflight);
   const [accountsSheet, setAccountsSheet] = useState(false);
@@ -661,6 +662,20 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
         {replayMode && <ReplayTitle t={t} />}
         {replayMode && <ReplayFolderChip />}
+        {/* A loaded recording stays reachable while you look at something else.
+            Navigating the tree away from it used to leave nothing on screen
+            pointing back — the only route out was 離開, which discards it. */}
+        {!replayMode && !meetingActive && replayName && (
+          <button
+            type="button"
+            onClick={showReplay}
+            title={replayName}
+            className="flex min-w-0 items-center gap-1.5 rounded-md border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <FileAudio className="size-3.5 shrink-0" />
+            <span className="max-w-40 truncate">{replayName}</span>
+          </button>
+        )}
         {preflightMode && (
           <span className="text-xs font-medium text-muted-foreground">
             {t("preflight.title")}
@@ -723,7 +738,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             exitReplay();
             setStudyTab("report");
           }}
-          onExitAccounts={exitAccounts}
           onExitPreflight={exitPreflight}
           onTogglePause={togglePause}
           onEnd={() => void end()}
@@ -751,7 +765,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             className="h-8 w-8"
             aria-label={t("accounts.title")}
             title={t("accounts.title")}
-            onClick={() => (meetingActive ? setAccountsSheet(true) : enterAccounts())}
+            onClick={() => (meetingActive ? setAccountsSheet(true) : openAccounts())}
           >
             <Building2 className="size-4" />
           </Button>
@@ -773,13 +787,16 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           <Languages className="size-4" />
         </Button>
 
+        {/* History and Settings are ROUTES in this window now (#195) — a second
+            window is exactly what made the folder tree read as a separate
+            filing system from the company tree. */}
         <Button
           size="icon"
           variant="ghost"
           className="h-8 w-8"
           aria-label={t("titlebar.history")}
           title={t("titlebar.history")}
-          onClick={() => openHistoryWindow().catch((error) => log.error("history: open window failed", { error: String(error) }))}
+          onClick={() => openLibrary({ kind: "personal", folderId: null })}
         >
           <History className="size-4" />
         </Button>
@@ -788,7 +805,9 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           size="icon"
           variant="ghost"
           className="h-8 w-8"
-          onClick={() => openSettingsWindow().catch((error) => log.error("settings: open window failed", { error: String(error) }))}
+          aria-label={t("common.settings")}
+          title={t("common.settings")}
+          onClick={openSettingsRoute}
         >
           <Settings className="size-4" />
         </Button>

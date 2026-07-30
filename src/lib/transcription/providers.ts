@@ -76,7 +76,11 @@ export const STT_BY_ID = Object.fromEntries(STT_PROVIDERS.map((p) => [p.id, p]))
  */
 export function sttApiKey(settings: Settings, id: SttProviderId): string {
   if (id === "parley") return cloudToken() ?? "";
-  return (settings[STT_BY_ID[id].apiKeyField] as string) ?? "";
+  // Trimmed: a pasted key routinely carries a trailing newline, and the callers
+  // that gate on `sttApiKey(...).trim()` would then start a session with the
+  // untrimmed value and fail auth at the vendor. Same class of bug as the LLM
+  // keys (see ai/provider.ts).
+  return ((settings[STT_BY_ID[id].apiKeyField] as string) ?? "").trim();
 }
 
 /**
