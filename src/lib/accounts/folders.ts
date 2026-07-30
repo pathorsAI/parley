@@ -13,7 +13,7 @@ import type { Company } from "./types";
  * Company ↔ history-folder pairing (issue #132): every company owns a personal
  * folder, created with the company and following its renames, so linked
  * meetings file themselves under the customer. Deleting/archiving a company
- * deliberately leaves the folder alone. Mirrors HistoryApp's creation pattern:
+ * deliberately leaves the folder alone. Mirrors the library's folder-creation pattern:
  * local first, cloud push best-effort (pushUnsyncedFolders retries offline).
  */
 

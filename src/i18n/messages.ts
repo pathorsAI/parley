@@ -392,6 +392,26 @@ export const zhTW = {
   "preflight.copilot.redlineAdded": "已存成紅線",
   "preflight.copilot.failed": "出錯了：{error}",
   "preflight.copilot.pasteOffer": "貼了 {n} 個字。要拆成情報卡，還是留成這場的背景？",
+
+  // ── App shell：一棵樹（#195）──
+  "shell.facet.intel": "戰情 · {n} 條戰線",
+  "shell.facet.recordings": "錄音 · {n} 場",
+  "shell.facet.people": "人 · {n} 位",
+  "shell.otherFolders": "其他資料夾",
+  "shell.recordings": "錄音",
+  "shell.toggle": "展開／收合 {name}",
+  "library.unfiled": "未歸戶錄音",
+  "library.unfiled.emptyHint": "沒有歸到公司的錄音會落在這裡。把會議連到公司，之後就自動存進那家公司的資料夾。",
+  "library.company.note": "這是 {name} 的資料夾——會議連到這家公司就存進這裡",
+  "library.company.emptyHint": "{name} 還沒有錄音。開始會議時把公司選成 {name}，錄音就會存進這裡。",
+
+  // ── LLM 失敗（可行動的版本，取代 provider 的原始字串）──
+  "ai.fail.missingKey": "{provider} 還沒填 API 金鑰。到設定填好就能用。",
+  "ai.fail.auth": "{provider} 的 API 金鑰被拒絕。到設定重貼一次（貼上時常會多帶到空白或換行）。",
+  "ai.fail.rate": "{provider} 目前達到速率或額度上限。稍等再試，或在設定換一個供應商。",
+  "ai.fail.model": "{provider} 沒有這個模型。到設定換成可用的模型。",
+  "ai.fail.generic": "{provider} 呼叫失敗。",
+  "ai.fail.openSettings": "開啟設定",
   "preflight.copilot.pasteExtract": "拆成情報卡",
   "preflight.copilot.pasteBackground": "留成背景",
   "preflight.copilot.pasteName": "會前貼上的資料",
@@ -1693,6 +1713,28 @@ export const en = {
   "preflight.copilot.redlineAdded": "Saved as a red line",
   "preflight.copilot.failed": "That failed: {error}",
   "preflight.copilot.pasteOffer": "{n} characters pasted. Pull out intel cards, or keep it as background?",
+
+  // ── App shell: the one tree (#195) ──
+  "shell.facet.intel": "Intel · {n} threads",
+  "shell.facet.recordings": "Recordings · {n}",
+  "shell.facet.people": "People · {n}",
+  "shell.otherFolders": "Other folders",
+  "shell.recordings": "Recordings",
+  "shell.toggle": "Expand or collapse {name}",
+  "library.unfiled": "Unfiled recordings",
+  "library.unfiled.emptyHint":
+    "Recordings with no company land here. Link a meeting to a company and it files itself under that company from then on.",
+  "library.company.note": "This is {name}'s folder — meetings linked to {name} save here",
+  "library.company.emptyHint":
+    "No recordings for {name} yet. Pick {name} as the company when you start a meeting and the recording lands here.",
+
+  // ── LLM failures (actionable, in place of the provider's raw string) ──
+  "ai.fail.missingKey": "No API key for {provider} yet. Add one in Settings.",
+  "ai.fail.auth": "{provider} rejected the API key. Re-paste it in Settings — pasted keys often carry a stray space or newline.",
+  "ai.fail.rate": "{provider} is rate- or quota-limited right now. Wait and retry, or switch provider in Settings.",
+  "ai.fail.model": "{provider} has no such model. Pick an available one in Settings.",
+  "ai.fail.generic": "The {provider} call failed.",
+  "ai.fail.openSettings": "Open Settings",
   "preflight.copilot.pasteExtract": "Pull out intel",
   "preflight.copilot.pasteBackground": "Keep as background",
   "preflight.copilot.pasteName": "Pasted before the call",

@@ -105,7 +105,14 @@ const NAV: { id: Category; labelKey: TranslationKey; cloudOnly?: boolean }[] = [
   { id: "usage", labelKey: "settings.nav.usage" },
 ];
 
-export function SettingsApp() {
+/**
+ * Settings. Renders both as its own OS window (`#settings`, still how a
+ * SECONDARY window reaches it) and — since #195 — as a route inside the main
+ * window's shell. `embedded` is the difference between the two: a route fills
+ * the pane it was given and leaves the window chrome, the toaster and the
+ * release-notes dialog to the shell that already owns them.
+ */
+export function SettingsApp({ embedded = false }: Readonly<{ embedded?: boolean }> = {}) {
   const { t } = useI18n();
   useThemePreference();
 
@@ -262,8 +269,12 @@ export function SettingsApp() {
   }
 
   return (
-    <div className="flex h-screen bg-background text-foreground">
-      <Toaster />
+    <div
+      className={`flex bg-background text-foreground ${
+        embedded ? "min-h-0 flex-1" : "h-screen"
+      }`}
+    >
+      {!embedded && <Toaster />}
       {releaseNotes && (
         <ReleaseNotesDialog
           notes={releaseNotes}
@@ -437,7 +448,9 @@ export function SettingsApp() {
                   patch({ onboarded: false, onboardingStep: 0 });
                   // The onboarding renders on the MAIN window — bring it forward
                   // and close this Settings window so it isn't hidden behind it.
-                  if (!isTauri()) return;
+                  // Embedded, Settings IS the main window: onboarding already
+                  // covers it, so there is nothing to focus or close.
+                  if (embedded || !isTauri()) return;
                   try {
                     const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
                     const { getCurrentWindow } = await import("@tauri-apps/api/window");

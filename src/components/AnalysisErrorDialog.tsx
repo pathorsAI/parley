@@ -2,7 +2,7 @@ import { AlertTriangle, RefreshCw, Settings, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { hasProviderKey } from "../lib/ai/settings";
 import { PROVIDER_BY_ID } from "../lib/ai/providers";
-import { openSettingsWindow } from "../lib/settingsSync";
+import { openSettings } from "../lib/nav";
 import { runAnalysis } from "../lib/analysis/engine";
 import { useI18n } from "../i18n";
 import { log } from "../lib/log";
@@ -149,7 +149,7 @@ export function AnalysisErrorDialog() {
             <button
               type="button"
               onClick={() => {
-                openSettingsWindow().catch((error) => log.error("settings: open failed", { error: String(error) }));
+                openSettings();
                 dismiss();
               }}
               className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"

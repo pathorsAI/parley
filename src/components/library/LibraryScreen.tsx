@@ -1,0 +1,508 @@
+import { useCallback, useEffect, useState } from "react";
+import { Building2, ChevronRight, Folder, Loader2, Plus, RefreshCw, Search, UsersRound, X } from "lucide-react";
+import { toast } from "sonner";
+import { useI18n } from "../../i18n";
+import { useStore } from "../../lib/store";
+import { useAccounts } from "../../lib/accounts/store";
+import {
+  deleteHistoryEntry,
+  loadHistoryEntry,
+  loadOrgEntry,
+  listenForHistoryUpdated,
+  renameHistoryEntry,
+  setEntryFolder,
+} from "../../lib/history/history";
+import { setOrgRecordingFolder } from "../../lib/cloud/folders";
+import {
+  deleteCloudRecording,
+  deleteOrgRecording,
+  downloadCloudEntry,
+  listMergedHistory,
+  listOrgRecordings,
+  moveRecordingToOrg,
+  pushUnsyncedToCloud,
+  shareRecordingToOrg,
+  type HistoryCardItem,
+} from "../../lib/cloud/sync";
+import { inFolderNode } from "../../lib/library/scope";
+import { log } from "../../lib/log";
+import { isTauri } from "../../lib/tauriEvents";
+import { VoiceTypingHistory } from "../../history/VoiceTypingHistory";
+import { LibraryCard, MoveDialog } from "./LibraryCards";
+import type { LibraryTree } from "../shell/useLibraryTree";
+import type { CloudOrg, CloudRecordingSummary } from "../../lib/cloud/types";
+
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** Map a cloud org recording to the card shape the grid renders. */
+function orgCard(c: CloudRecordingSummary): HistoryCardItem {
+  return {
+    id: c.id,
+    title: c.title,
+    source: c.source,
+    createdAt: c.createdAt,
+    durationMs: c.durationMs,
+    speakerCount: c.speakerCount,
+    findingsCount: c.findingsCount,
+    actionItemsCount: c.actionItemsCount,
+    hasAudio: c.hasAudio,
+    snippet: c.snippet,
+    folderId: c.folderId ?? null,
+    sync: "cloud",
+    cloudUpdatedAt: c.updatedAt,
+  };
+}
+
+/** "+ Import": audio goes to the ingest wizard, .txt transcripts to the direct
+ *  import dialog. In-window now, so it opens the dialog here instead of asking
+ *  another window to. */
+async function importRecording(): Promise<void> {
+  const { settings, openIngestWizard, openTranscriptImport } = useStore.getState();
+  try {
+    const { pickImportFiles } = await import("../../lib/replay/ingest");
+    const pick = await pickImportFiles(settings);
+    if (!pick) return;
+    if (pick.kind === "audio") openIngestWizard(pick.path);
+    else openTranscriptImport(pick.paths);
+  } catch (e) {
+    log.error("library: import pick failed", { error: String(e) });
+  }
+}
+
+/**
+ * The recordings library — what used to be the standalone History window's
+ * right-hand pane (issue #195). The tree that selects into it now lives in the
+ * app shell next to the companies, so "這家公司的錄音" and "這個資料夾" are one
+ * node instead of two trees in two windows.
+ */
+export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
+  const { t, language } = useI18n();
+  const locale = language === "en" ? "en-US" : "zh-TW";
+  const selection = useStore((s) => s.librarySelection);
+  const companies = useAccounts((s) => s.companies);
+
+  const [entries, setEntries] = useState<HistoryCardItem[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [sharingId, setSharingId] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [movePrompt, setMovePrompt] = useState<{ item: HistoryCardItem; org: CloudOrg } | null>(
+    null
+  );
+
+  const isOrg = selection.kind === "org";
+  const isVoice = selection.kind === "voice";
+  const folderId = selection.kind === "voice" ? null : selection.folderId;
+
+  // ── Entries for the selected scope ────────────────────────────────────────
+  const refresh = useCallback(() => {
+    if (selection.kind === "voice") return;
+    setEntries(null);
+    if (selection.kind === "org") {
+      const orgId = selection.id;
+      listOrgRecordings(orgId)
+        .then((recs) => setEntries(recs.map(orgCard)))
+        .catch((e) => {
+          log.error("library: org list failed", { error: String(e) });
+          setEntries([]);
+        });
+      return;
+    }
+    listMergedHistory()
+      .then(setEntries)
+      .catch((e) => {
+        log.error("library: list failed", { error: String(e) });
+        setEntries([]);
+      });
+  }, [selection]);
+
+  // Re-list when the SCOPE changes (personal ⇄ a specific org), but NOT when only
+  // the folder changes — folder filtering happens client-side over `entries`.
+  const scopeKey = selection.kind === "org" ? `org:${selection.id}` : selection.kind;
+  useEffect(() => {
+    refresh();
+    setQuery(""); // a search is scoped; don't carry it into another scope
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeKey]);
+
+  useEffect(() => {
+    const un = listenForHistoryUpdated(() => refresh());
+    return () => {
+      un.then((fn) => fn()).catch(() => {});
+    };
+  }, [refresh]);
+
+  // Background: push folders + any unsynced entries, then re-list so badges flip.
+  useEffect(() => {
+    if (scopeKey !== "personal") return;
+    let alive = true;
+    setSyncing(true);
+    async function syncInBackground() {
+      await tree.reloadFolders();
+      const n = await pushUnsyncedToCloud().catch((e) => {
+        log.warn("library: background sync failed", { error: String(e) });
+        return 0;
+      });
+      if (alive && n) refresh();
+    }
+    syncInBackground().finally(() => {
+      if (alive) setSyncing(false);
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeKey]);
+
+  // ── Folder visibility (the orphan→root rule) ──────────────────────────────
+  const scopeFolders =
+    selection.kind === "org" ? tree.orgFolders[selection.id] ?? [] : tree.personalFolders;
+  const liveFolderIds = new Set(scopeFolders.map((f) => f.id));
+  const searchQuery = query.trim().toLowerCase();
+  const visible = (entries ?? []).filter((e) => {
+    // A search spans the whole scope regardless of the selected folder.
+    if (searchQuery) {
+      return (
+        e.title.toLowerCase().includes(searchQuery) ||
+        (e.snippet ?? "").toLowerCase().includes(searchQuery)
+      );
+    }
+    // Same predicate the tree counts with (lib/library/scope) — the number on a
+    // node and what the node opens can't drift apart.
+    return inFolderNode(e, folderId, liveFolderIds);
+  });
+
+  // ── Card actions ──────────────────────────────────────────────────────────
+  const openItem = useCallback(
+    async (item: HistoryCardItem) => {
+      if (selection.kind === "org") {
+        await loadOrgEntry(selection.id, item.id);
+        return;
+      }
+      if (item.sync === "cloud" || item.sync === "stale") {
+        setDownloadingId(item.id);
+        try {
+          await downloadCloudEntry(item);
+        } catch (e) {
+          log.error("library: download failed", { id: item.id, error: String(e) });
+          toast.error(t("history.sync.downloadFailed", { error: errText(e) }));
+          setDownloadingId(null);
+          return;
+        }
+        setDownloadingId(null);
+      }
+      await loadHistoryEntry(item.id);
+    },
+    [selection, t]
+  );
+
+  const remove = useCallback(
+    async (item: HistoryCardItem) => {
+      setBusyId(item.id);
+      try {
+        if (selection.kind === "org") {
+          await deleteOrgRecording(selection.id, item.id);
+        } else {
+          if (item.sync !== "local") await deleteCloudRecording(item.id);
+          if (item.sync !== "cloud") await deleteHistoryEntry(item.id);
+        }
+        setEntries((prev) => prev?.filter((e) => e.id !== item.id) ?? null);
+        tree.reloadSummaries();
+      } catch (e) {
+        log.error("library: delete failed", { id: item.id, error: String(e) });
+        const key =
+          selection.kind === "org" ? "history.org.removeFailed" : "history.sync.deleteFailed";
+        toast.error(t(key, { error: errText(e) }));
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [selection, t, tree]
+  );
+
+  const rename = useCallback(
+    async (id: string, title: string) => {
+      const clean = title.trim();
+      if (!clean) return;
+      try {
+        await renameHistoryEntry(id, clean);
+        setEntries((prev) => prev?.map((e) => (e.id === id ? { ...e, title: clean } : e)) ?? null);
+      } catch (e) {
+        log.error("library: rename failed", { id, error: String(e) });
+        toast.error(t("history.renameFailed", { error: errText(e) }));
+      }
+    },
+    [t]
+  );
+
+  /** Refile a card. A cloud-only card has no local meta to retag, and a "stale"
+   *  one would re-push its OLDER local meta over a newer cloud re-analysis — in
+   *  both cases the fix is to open it first (which pulls the latest). */
+  const move = useCallback(
+    async (item: HistoryCardItem, target: string | null) => {
+      if ((item.folderId ?? null) === target) return;
+      try {
+        if (selection.kind === "org") {
+          await setOrgRecordingFolder(selection.id, item.id, target);
+        } else {
+          if (item.sync === "cloud" || item.sync === "stale") {
+            toast.message(t("history.move.needsDownload"));
+            return;
+          }
+          await setEntryFolder(item.id, target);
+        }
+        setEntries((prev) =>
+          prev?.map((e) => (e.id === item.id ? { ...e, folderId: target } : e)) ?? null
+        );
+        tree.reloadSummaries();
+      } catch (e) {
+        log.error("library: move failed", { id: item.id, error: String(e) });
+        toast.error(t("history.move.failed", { error: errText(e) }));
+      }
+    },
+    [selection, t, tree]
+  );
+
+  const resolveOrgHandoff = useCallback(
+    async (mode: "copy" | "move") => {
+      const p = movePrompt;
+      setMovePrompt(null);
+      if (!p) return;
+      setSharingId(p.item.id);
+      try {
+        if (mode === "copy") {
+          await shareRecordingToOrg(p.item.id, p.org.id);
+          toast.success(t("history.move.copied", { org: p.org.name }));
+        } else {
+          await moveRecordingToOrg(p.item.id, p.org.id);
+          setEntries((prev) => prev?.filter((e) => e.id !== p.item.id) ?? null);
+          toast.success(t("history.move.moved", { org: p.org.name }));
+        }
+        tree.reloadSummaries();
+      } catch (e) {
+        log.error("library: org handoff failed", { id: p.item.id, error: String(e) });
+        toast.error(t("history.move.failed", { error: errText(e) }));
+      } finally {
+        setSharingId(null);
+      }
+    },
+    [movePrompt, t, tree]
+  );
+
+  if (!isTauri()) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
+        {t("history.browserOnly")}
+      </div>
+    );
+  }
+
+  if (isVoice) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <VoiceTypingHistory locale={locale} />
+      </div>
+    );
+  }
+
+  // ── Header identity: name the node the way the tree names it ──────────────
+  const company =
+    selection.kind === "personal" && folderId
+      ? companies.find((c) => c.folderId === folderId) ?? null
+      : null;
+  const folderName = folderId ? scopeFolders.find((f) => f.id === folderId)?.name ?? null : null;
+
+  const searching = searchQuery.length > 0;
+  let emptyTitle: string;
+  if (searching) emptyTitle = t("history.searchEmpty");
+  else if (folderId) emptyTitle = t("history.folder.empty");
+  else if (isOrg) emptyTitle = t("history.org.empty");
+  else emptyTitle = t("history.empty");
+
+  let emptyHint: string;
+  if (searching) emptyHint = t("history.searchEmptyHint");
+  else if (company) emptyHint = t("library.company.emptyHint", { name: company.name });
+  else if (folderId) emptyHint = t("history.folder.emptyHint");
+  else if (isOrg) emptyHint = t("history.org.emptyHint");
+  else emptyHint = t("library.unfiled.emptyHint");
+
+  let body;
+  if (entries === null) {
+    body = (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        <Loader2 className="mr-2 size-4 animate-spin" />
+        {t("history.loading")}
+      </div>
+    );
+  } else if (visible.length === 0) {
+    body = (
+      <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
+        <p className="text-sm text-muted-foreground">{emptyTitle}</p>
+        <p className="max-w-80 text-xs text-muted-foreground/70">{emptyHint}</p>
+      </div>
+    );
+  } else {
+    body = (
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
+        {visible.map((entry) => (
+          <LibraryCard
+            key={entry.id}
+            entry={entry}
+            locale={locale}
+            signedIn={tree.signedIn}
+            isOrgContext={isOrg}
+            orgs={tree.orgs}
+            busy={busyId === entry.id}
+            downloading={downloadingId === entry.id}
+            sharing={sharingId === entry.id}
+            folders={scopeFolders}
+            onOpen={() => {
+              openItem(entry).catch((error) =>
+                log.error("library: open failed", { id: entry.id, error: String(error) })
+              );
+            }}
+            onDelete={() => {
+              remove(entry).catch(() => {});
+            }}
+            onRename={(title) => {
+              rename(entry.id, title).catch(() => {});
+            }}
+            onShare={(org) => setMovePrompt({ item: entry, org })}
+            onMove={(target) => {
+              move(entry, target).catch(() => {});
+            }}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <header className="flex shrink-0 items-center gap-2 border-b px-4 py-3">
+        <ScopeTitle
+          isOrg={isOrg}
+          orgName={selection.kind === "org" ? selection.name : null}
+          companyName={company?.name ?? null}
+          folderName={folderName}
+          rootLabel={t("library.unfiled")}
+        />
+        <span className="text-xs text-muted-foreground">
+          {t("history.count", { count: visible.length })}
+        </span>
+        {!isOrg && syncing && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+        <div className="relative ml-auto w-48 min-w-0 shrink">
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/70" />
+          <input
+            value={query}
+            onChange={(ev) => setQuery(ev.target.value)}
+            onKeyDown={(ev) => {
+              if (ev.key === "Escape") setQuery("");
+            }}
+            placeholder={t("history.searchPlaceholder")}
+            className="h-7 w-full rounded-md border bg-background pl-7 pr-6 text-xs outline-none placeholder:text-muted-foreground/60 focus:border-primary"
+          />
+          {searching && (
+            <button
+              type="button"
+              aria-label={t("history.searchClear")}
+              onClick={() => setQuery("")}
+              className="absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-3" />
+            </button>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => void importRecording()}
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <Plus className="size-3.5" />
+          {t("history.import")}
+        </button>
+        <button
+          type="button"
+          onClick={refresh}
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <RefreshCw className="size-3.5" />
+          {t("history.refresh")}
+        </button>
+      </header>
+
+      {/* A company's recordings ARE its folder — say so once, here, so the two
+          never read as separate filing systems again. */}
+      {company && (
+        <button
+          type="button"
+          onClick={() => useStore.getState().openAccounts(company.id)}
+          className="flex shrink-0 items-center gap-1.5 border-b bg-muted/30 px-4 py-1.5 text-left text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <Building2 className="size-3 shrink-0" />
+          {t("library.company.note", { name: company.name })}
+          <ChevronRight className="size-3 shrink-0" />
+        </button>
+      )}
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">{body}</div>
+
+      {movePrompt && (
+        <MoveDialog
+          orgName={movePrompt.org.name}
+          target={`${movePrompt.org.name} ${t("history.move.rootLabel")}`}
+          onCopy={() => void resolveOrgHandoff("copy")}
+          onMove={() => void resolveOrgHandoff("move")}
+          onCancel={() => setMovePrompt(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ScopeTitle({
+  isOrg,
+  orgName,
+  companyName,
+  folderName,
+  rootLabel,
+}: Readonly<{
+  isOrg: boolean;
+  orgName: string | null;
+  companyName: string | null;
+  folderName: string | null;
+  rootLabel: string;
+}>) {
+  if (isOrg) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
+        <UsersRound className="size-4 text-sky-500" />
+        {orgName}
+        {folderName && (
+          <>
+            <ChevronRight className="size-3.5 text-muted-foreground" />
+            <span className="inline-flex items-center gap-1">
+              <Folder className="size-3.5 text-muted-foreground" />
+              {folderName}
+            </span>
+          </>
+        )}
+      </span>
+    );
+  }
+  if (companyName) {
+    return (
+      <h1 className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
+        <Building2 className="size-4 text-muted-foreground" />
+        {companyName}
+      </h1>
+    );
+  }
+  return (
+    <h1 className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
+      {folderName ? <Folder className="size-4 text-muted-foreground" /> : null}
+      {folderName ?? rootLabel}
+    </h1>
+  );
+}
