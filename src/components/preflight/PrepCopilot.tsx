@@ -22,7 +22,7 @@ import { usePreflightIntel } from "../../lib/preflight/useIntel";
 import { collectPrepFacts, prepHeadline, type PrepFacts } from "../../lib/preflight/facts";
 import type { PrepPlan } from "../../lib/ai/prep";
 import { hasProviderKey } from "../../lib/ai/settings";
-import { useI18n } from "../../i18n";
+import { useI18n, type TranslationKey } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -72,7 +72,9 @@ export function PrepCopilot() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState<null | "chat" | "goals" | "plan" | "extract">(null);
   const [pasted, setPasted] = useState<string | null>(null);
-  const [ops, setOps] = useState<ExtractedOps | null>(null);
+  /** Proposed ops kept WITH the text they came from — the attachment written on
+   *  approval cites it, and the paste bar it came from may already be gone. */
+  const [review, setReview] = useState<{ ops: ExtractedOps; source: string } | null>(null);
   const [fieldsOpen, setFieldsOpen] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -87,20 +89,37 @@ export function PrepCopilot() {
     setPasted(null);
   }, [intel.company?.id, intel.thread?.id]);
 
+  // Destructured so the memo keys off the pieces, not the fresh object the hook
+  // returns every render (which would make the memo a no-op).
+  const { thread, attendees, claims, rows, stageLabel, meetings } = intel;
   const facts: PrepFacts | null = useMemo(() => {
     if (!company) return null;
     return collectPrepFacts({
       company,
-      thread: intel.thread,
-      attendees: intel.attendees,
-      claims: intel.claims,
-      boardRows: intel.rows,
-      stageLabel: intel.stageLabel,
-      meetings: intel.meetings.map((m) => ({ title: m.title, createdAt: m.createdAt })),
+      thread,
+      attendees,
+      claims,
+      boardRows: rows,
+      stageLabel,
+      meetings: meetings.map((m) => ({ title: m.title, createdAt: m.createdAt })),
       prep: { target, batna, floor, context, agenda: todos.map((x) => x.text) },
-      roleLabel: (role) => t(`accounts.role.${role}` as never),
+      roleLabel: (role) => t(`accounts.role.${role}` as TranslationKey),
     });
-  }, [company, intel, target, batna, floor, context, todos, t]);
+  }, [
+    company,
+    thread,
+    attendees,
+    claims,
+    rows,
+    stageLabel,
+    meetings,
+    target,
+    batna,
+    floor,
+    context,
+    todos,
+    t,
+  ]);
 
   const head = facts ? prepHeadline(facts) : null;
 
@@ -215,7 +234,7 @@ export function PrepCopilot() {
         sourceText: text,
         sourceLabel: "pre-meeting notes pasted by the user",
       });
-      setOps(proposed);
+      setReview({ ops: proposed, source: text });
     } catch (e) {
       log.error("preflight: copilot extract failed", { error: String(e) });
       toast.error(t("preflight.copilot.failed", { error: String(e) }));
@@ -225,13 +244,13 @@ export function PrepCopilot() {
   }
 
   function applyOps(approved: ExtractedOps) {
-    if (!company || !pasted) return;
+    if (!company || !review) return;
     const store = useAccounts.getState();
     const attachment = store.addAttachment({
       companyId: company.id,
       name: t("preflight.copilot.pasteName"),
       kind: "note",
-      text: pasted,
+      text: review.source,
     });
     store.applyExtractedOps({
       companyId: company.id,
@@ -241,7 +260,7 @@ export function PrepCopilot() {
     });
     const n = approved.newPersons.length + approved.newClaims.length + approved.claimUpdates.length;
     toast.success(t("accounts.review.applied", { n }));
-    setOps(null);
+    setReview(null);
     setPasted(null);
     setInput("");
   }
@@ -502,8 +521,8 @@ export function PrepCopilot() {
         </>
       )}
 
-      {ops && company && (
-        <Sheet open onOpenChange={(o) => !o && setOps(null)}>
+      {review && company && (
+        <Sheet open onOpenChange={(o) => !o && setReview(null)}>
           <SheetContent
             className="max-w-xl"
             closeLabel={t("common.close")}
@@ -511,10 +530,10 @@ export function PrepCopilot() {
           >
             <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
               <ReviewOpsPanel
-                ops={ops}
+                ops={review.ops}
                 existingClaims={activeClaims(acc, company.id)}
                 onApply={applyOps}
-                onCancel={() => setOps(null)}
+                onCancel={() => setReview(null)}
               />
             </div>
           </SheetContent>
