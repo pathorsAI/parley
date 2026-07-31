@@ -26,10 +26,20 @@ export const LevelMeter = ({
   useEffect(() => {
     if (!isTauri()) return;
     let unlisten: (() => void) | undefined;
+    let active = true;
     listen<LevelPayload>(eventName, (e) => {
       if (e.payload.source === source) setLevel(e.payload.level);
-    }).then((fn) => (unlisten = fn));
-    return () => unlisten?.();
+    }).then((fn) => {
+      if (!active) {
+        fn();
+        return;
+      }
+      unlisten = fn;
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
   }, [eventName, source]);
 
   // Smoothly decay toward 0 when events stop arriving.
