@@ -160,8 +160,10 @@ export function ObjectionsLedger({
   if (!objections?.length) return null;
   const open = objections.filter((o) => !o.addressed);
   const addressed = objections.filter((o) => o.addressed);
+  // Each rail section below the board owns its own top rule (the board itself
+  // draws none) — so an absent section can never leave two stacked lines.
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1 border-t pt-2">
       <div className="flex items-baseline gap-2">
         <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
           {open.length > 0
