@@ -19,7 +19,7 @@ import { MeetingLinkSection } from "./accounts/MeetingLinkSection";
 export function MeetingContextButton({ className }: Readonly<{ className?: string }>) {
   const { t } = useI18n();
   const hasContext = useStore((s) => !!s.meetingContext.trim());
-  const meetingType = useStore((s) => s.settings.meetingType);
+  const meetingType = useStore((s) => s.meetingType);
   // Scenario system: every scenario (builtin or custom) can link the mini-CRM;
   // only "general" (no board) stays personal.
   const businessType = meetingType !== "general";

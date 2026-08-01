@@ -20,7 +20,7 @@ export async function runDeliveryAnalysis(): Promise<void> {
   // Match runAnalysis's replay scoping: exclude trimmed-away speech so the
   // delivery verdict sees exactly what the findings + action items see.
   const segments =
-    state.appMode === "replay"
+    state.appMode === "study"
       ? state.segments.filter((s) => !isTrimmed(s, state.replayTrim))
       : state.segments;
   if (!hasProviderKey(settings, "deep")) return;

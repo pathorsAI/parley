@@ -56,15 +56,15 @@ export interface StudyPipelineFacts {
   briefStatus: AsyncTaskStatus;
   deliveryStatus: AsyncTaskStatus;
   intelStatus: AsyncTaskStatus;
-  studyMeetingType: MeetingType;
+  meetingType: MeetingType;
   /** Type of the intel board currently in the store, or null. */
   intelType: MeetingType | null;
 }
 
 export function factsOf(s: StoreState): StudyPipelineFacts {
-  const trim = s.appMode === "replay" ? s.replayTrim : null;
+  const trim = s.appMode === "study" ? s.replayTrim : null;
   return {
-    inReplay: s.appMode === "replay" && s.replay != null,
+    inReplay: s.appMode === "study" && s.replay != null,
     wizardOpen: s.ingestWizardOpen,
     hasDeepKey: hasProviderKey(s.settings, "deep"),
     hasTranscript: hasSpokenSegment(s.segments, trim),
@@ -74,7 +74,7 @@ export function factsOf(s: StoreState): StudyPipelineFacts {
     briefStatus: s.briefStatus,
     deliveryStatus: s.deliveryStatus,
     intelStatus: s.intelStatus,
-    studyMeetingType: s.studyMeetingType,
+    meetingType: s.meetingType,
     intelType: s.intel?.meetingType ?? null,
   };
 }
@@ -87,10 +87,10 @@ function settled(status: AsyncTaskStatus): boolean {
  *  invalidation, or a discarded stale pass); "done" only re-runs when the board
  *  on hand is for a different template than the one picked. */
 function intelWanted(f: StudyPipelineFacts): boolean {
-  if (f.studyMeetingType === "general" || !f.intelExtractable) return false;
+  if (f.meetingType === "general" || !f.intelExtractable) return false;
   return (
     f.intelStatus === "idle" ||
-    (f.intelStatus === "done" && f.intelType !== f.studyMeetingType)
+    (f.intelStatus === "done" && f.intelType !== f.meetingType)
   );
 }
 
@@ -129,7 +129,7 @@ const RUNNERS: Record<StudyArtifactKey, () => Promise<unknown> | void> = {
   actions: () => runActionItems(),
   brief: () => runBriefGeneration(),
   delivery: () => runDeliveryAnalysis(),
-  intel: () => runIntelExtraction(useStore.getState().studyMeetingType, "deep"),
+  intel: () => runIntelExtraction(useStore.getState().meetingType, "deep"),
 };
 
 const STATUS_FIELD = {
@@ -192,7 +192,7 @@ const WATCHED = [
   "deliveryStatus",
   "intelStatus",
   "intel",
-  "studyMeetingType",
+  "meetingType",
   "loadedHistoryId",
   "replayReadOnly",
 ] as const satisfies readonly (keyof StoreState)[];
@@ -216,7 +216,7 @@ export function initStudyPipeline(): () => void {
   return useStore.subscribe((state, prev) => {
     // The pipeline is inert outside replay — skip the live screen's high-rate
     // transcript/prosody traffic outright, then the unrelated store changes.
-    if (state.appMode !== "replay" && prev.appMode !== "replay") return;
+    if (state.appMode !== "study" && prev.appMode !== "study") return;
     if (WATCHED.every((k) => state[k] === prev[k])) return;
 
     dispatchReady(state);
@@ -233,7 +233,7 @@ export function initStudyPipeline(): () => void {
       prev.actionItemsStatus === "running" && settled(state.actionItemsStatus);
     const analysisDone =
       prev.analysisStatus === "running" && state.analysisStatus === "done";
-    if (state.appMode !== "replay" || !state.replay || state.loadedHistoryId) return;
+    if (state.appMode !== "study" || !state.replay || state.loadedHistoryId) return;
     if (state.replayReadOnly) {
       if (actionsSettled || analysisDone) {
         persistStudyOutputs().catch((e) =>
@@ -299,7 +299,7 @@ export function deriveStudyPipeline(f: StudyPipelineFacts): StudyPipelineState {
   const chained = (status: AsyncTaskStatus): StudyArtifactDisplay =>
     status !== "idle" ? status : chainQueued(f) ? "queued" : "idle";
 
-  const intelApplicable = f.studyMeetingType !== "general" && f.intelExtractable;
+  const intelApplicable = f.meetingType !== "general" && f.intelExtractable;
   const intel: StudyArtifactDisplay =
     f.intelStatus !== "idle" ? f.intelStatus : intelApplicable && can ? "queued" : "idle";
 

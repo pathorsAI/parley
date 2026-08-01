@@ -30,7 +30,7 @@ export function SubjectPanel() {
   const acc = useAccounts();
   const scenarios = useScenarioSet();
 
-  const meetingType = useStore((s) => s.settings.meetingType);
+  const meetingType = useStore((s) => s.meetingType);
   const companyId = useStore((s) => s.meetingCompanyId);
   const threadId = useStore((s) => s.meetingThreadId);
   const attendeeIds = useStore((s) => s.meetingAttendeeIds);

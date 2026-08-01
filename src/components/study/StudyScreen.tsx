@@ -318,12 +318,12 @@ function BoardReadout({ intel }: Readonly<{ intel: IntelState }>) {
 }
 
 /** 情報: the intelligence board run over the full recording. The meeting type is
- *  PER-RECORDING (store.studyMeetingType, persisted on the entry) — switching it
+ *  PER-RECORDING (store.meetingType, persisted on the entry) — switching it
  *  here never touches the global live default or other recordings. */
 function IntelSection() {
   const { t } = useI18n();
-  const meetingType = useStore((s) => s.studyMeetingType);
-  const setStudyMeetingType = useStore((s) => s.setStudyMeetingType);
+  const meetingType = useStore((s) => s.meetingType);
+  const setMeetingType = useStore((s) => s.setMeetingType);
   const intel = useStore((s) => s.intel);
   const intelStatus = useStore((s) => s.intelStatus);
   const running = intelStatus === "running";
@@ -333,7 +333,7 @@ function IntelSection() {
   // the type (switching it re-extracts automatically); the manual re-run lives
   // in the titlebar's analysis chip.
   const pickType = (v: MeetingType) => {
-    setStudyMeetingType(v);
+    setMeetingType(v);
     // Remember the choice on the entry right away (extraction saves again later).
     void persistStudyOutputs().catch((e) =>
       log.warn("study: meeting-type persist failed", { error: String(e) })

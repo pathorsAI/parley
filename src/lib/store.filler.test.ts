@@ -47,7 +47,7 @@ describe("live filler-sound counting (upsertSegment)", () => {
   });
 
   it("does not count while viewing a replay", () => {
-    useStore.setState({ appMode: "replay" });
+    useStore.setState({ appMode: "study" });
     useStore.getState().upsertSegment(seg({ id: "a", source: "me", text: "um uh" }));
     expect(useStore.getState().filledPauseCount).toBe(0);
   });

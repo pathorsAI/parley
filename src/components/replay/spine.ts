@@ -16,7 +16,7 @@ export type { ReplaySession };
 export function useAppMode(): "live" | "replay" {
   // The accounts screen never hosts a replay spine; treat it as live for the
   // recording/analysis contract this hook publishes.
-  return useStore((s) => (s.appMode === "replay" ? "replay" : "live"));
+  return useStore((s) => (s.appMode === "study" ? "replay" : "live"));
 }
 
 export function useReplaySession(): ReplaySession | null {

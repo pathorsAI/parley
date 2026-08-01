@@ -41,7 +41,7 @@ const AUTO_EXTRACT_MS = 30_000;
  */
 export function IntelligenceBoard() {
   const { t } = useI18n();
-  const meetingType = useStore((s) => s.settings.meetingType);
+  const meetingType = useStore((s) => s.meetingType);
   const threadId = useStore((s) => s.meetingThreadId);
   const thread = useAccounts((s) => s.threads.find((x) => x.id === threadId));
   const meetingStage = useStore((s) => s.meetingStage);

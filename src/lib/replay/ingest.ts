@@ -11,6 +11,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import type { Settings, TranscriptSegment } from "../types";
+import { useStore } from "../store";
 import type { ReplaySession } from "./types";
 import { STT_BY_ID, sttApiKey } from "../transcription/providers";
 import { toTraditional } from "../zhConvert";
@@ -127,6 +128,21 @@ export type ImportPick =
  * runs only when audio was actually chosen, so transcript import works with any
  * provider and no STT key.
  */
+/**
+ * THE import entry point (R7): every "import a recording" affordance — Home,
+ * the library header, a company page, the coach-feed empty state — runs this
+ * one flow, so the accepted formats and the audio-vs-transcript arbitration
+ * can never drift between doors. Callers only differ in what they pre-link
+ * (e.g. a company page pre-links its company before calling).
+ */
+export async function startImportFlow(): Promise<void> {
+  const { settings, openIngestWizard, openTranscriptImport } = useStore.getState();
+  const pick = await pickImportFiles(settings);
+  if (!pick) return;
+  if (pick.kind === "audio") openIngestWizard(pick.path);
+  else openTranscriptImport(pick.paths);
+}
+
 export async function pickImportFiles(settings: Settings): Promise<ImportPick | null> {
   const selected = await open({
     multiple: true,

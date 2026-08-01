@@ -100,7 +100,7 @@ function snapshotAnalysis() {
     // save records the type the live board ran with; replay uses the per-entry one.
     brief: s.brief,
     intel: s.intel,
-    meetingType: s.appMode === "replay" ? s.studyMeetingType : s.settings.meetingType,
+    meetingType: s.meetingType,
   };
 }
 
@@ -497,7 +497,7 @@ export async function persistStudyOutputs(): Promise<void> {
       brief: s.brief,
       intel: s.intel,
       deliveryAssessment: s.deliveryAssessment,
-      meetingType: s.studyMeetingType,
+      meetingType: s.meetingType,
     });
     log.info("history: study outputs cached (read-only entry)", { id: s.replay.id });
     return;
@@ -510,7 +510,7 @@ export async function persistStudyOutputs(): Promise<void> {
     ...meta,
     brief: s.brief ?? meta.brief ?? null,
     intel: s.intel ?? meta.intel ?? null,
-    meetingType: s.studyMeetingType,
+    meetingType: s.meetingType,
     deliveryAssessment: s.deliveryAssessment ?? meta.deliveryAssessment ?? null,
   };
   await invoke("save_history_entry", {

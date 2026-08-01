@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/resizable";
 import { LiveScreen } from "../live/LiveScreen";
 import { StudyScreen } from "../study/StudyScreen";
+import { HomeScreen } from "../home/HomeScreen";
 import { AppSidebar } from "./AppSidebar";
 import { useLibraryTree } from "./useLibraryTree";
 import { useStore, isMeetingActive, type AppMode } from "../../lib/store";
@@ -82,7 +83,7 @@ function RouteContent({
   mode,
   tree,
 }: Readonly<{ mode: AppMode; tree: ReturnType<typeof useLibraryTree> }>) {
-  if (mode === "replay") return <StudyScreen />;
+  if (mode === "study") return <StudyScreen />;
   if (mode === "accounts") {
     return (
       <Suspense fallback={null}>
@@ -111,5 +112,9 @@ function RouteContent({
       </Suspense>
     );
   }
-  return <LiveScreen />;
+  // The cockpit exists only while a meeting owns the screen (R8c); idle lands
+  // on Home. "live" with no active meeting can still occur transiently between
+  // stop and save — the cockpit stays up so the finalizing state has a floor.
+  if (mode === "live") return <LiveScreen />;
+  return <HomeScreen tree={tree} />;
 }

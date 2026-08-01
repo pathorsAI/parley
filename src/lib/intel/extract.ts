@@ -207,7 +207,7 @@ const guard = makeRunGuard();
 function extractableTranscript(workload: LlmWorkload): string | null {
   const state = useStore.getState();
   // REPLAY honors the trim keep-window, same as every other study pass.
-  const trim = state.appMode === "replay" ? state.replayTrim : null;
+  const trim = state.appMode === "study" ? state.replayTrim : null;
   const segments = trim ? state.segments.filter((s) => !isTrimmed(s, trim)) : state.segments;
   return intelTranscriptReady(segments)
     ? transcriptText(segments, state.speakerNames, CAP_CHARS[workload])
@@ -220,7 +220,7 @@ function extractableTranscript(workload: LlmWorkload): string | null {
 function degradeUnknownScenario(type: MeetingType): void {
   log.warn("intel: unknown scenario — degrading to general", { type });
   const s = useStore.getState();
-  if (s.appMode === "replay" && s.studyMeetingType === type) s.setStudyMeetingType("general");
+  if (s.appMode === "study" && s.meetingType === type) s.setMeetingType("general");
   s.setIntelStatus("idle");
 }
 
@@ -251,7 +251,7 @@ export async function runIntelExtraction(
   // belongs to the OLD type: discard it and hand the status back to "idle" so
   // the pipeline dispatches the currently-picked type.
   const staleType = () =>
-    useStore.getState().appMode === "replay" && useStore.getState().studyMeetingType !== type;
+    useStore.getState().appMode === "study" && useStore.getState().meetingType !== type;
 
   state.setIntelStatus("running");
   try {

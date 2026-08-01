@@ -383,8 +383,11 @@ export interface Settings {
    *  Gemini live-translate (bilingual transcript + translated voice to the
    *  translate output device) instead of the STT provider. */
   meetingTranslateEnabled: boolean;
-  /** Which intelligence template the board runs (remembered across meetings). */
-  meetingType: MeetingType;
+  /** The DEFAULT scenario for a new meeting. The scenario a given meeting
+   *  actually runs under is per-meeting state (store.meetingType, persisted on
+   *  the history entry) — this is only the seed. Legacy persisted key:
+   *  `meetingType`. */
+  defaultMeetingType: MeetingType;
   /** Voice typing: whether push-to-talk dictation is active. Option+Space works
    *  without extra permission; fn/Globe additionally needs Input Monitoring.
    *  While enabled, releasing the key always auto-pastes (simulated ⌘V, needs

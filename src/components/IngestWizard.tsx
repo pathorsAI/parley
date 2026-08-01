@@ -255,7 +255,7 @@ export function IngestWizard() {
     // upload isn't lost. Before that (count/transcribing, app still LIVE) there's
     // nothing to save; exitReplay would wipe a stopped live meeting's transcript,
     // so just close.
-    if (useStore.getState().appMode === "replay") {
+    if (useStore.getState().appMode === "study") {
       finishTranscriptOnly();
     } else {
       close();
