@@ -148,7 +148,7 @@ export function ScenarioBoard({ scenario }: Readonly<{ scenario: Scenario }>) {
   }, [scenario.id, companyId, threadId, bundle.stage]);
 
   return (
-    <div className="flex flex-col gap-2 border-b pb-2.5">
+    <div className="flex flex-col gap-2">
       {/* Counter-the-challenge focus: outranks gap-chasing, one at a time. */}
       {focus?.kind === "objection" && (
         <FocusBanner label={t("board.stage.counter")} question={focus.question} reason={focus.reason} />
