@@ -8,6 +8,7 @@ import { AppShell } from "./components/shell/AppShell";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import { ReleaseNotesDialog } from "./components/ReleaseNotesDialog";
+import { toast } from "sonner";
 import { Toaster } from "./components/ui/sonner";
 import { IngestWizard } from "./components/IngestWizard";
 import { TranscriptImportDialog } from "./components/TranscriptImportDialog";
@@ -235,10 +236,10 @@ const App = () => {
     };
   }, []);
 
-  // Drop an audio file anywhere on the window → straight into the ingest
-  // wizard (the header upload button's replacement). Dropped .txt transcripts
-  // (one or many) go to the transcript-import dialog instead; audio wins when
-  // a drop mixes both kinds.
+  // Drop files anywhere on the window → the same import flow as every picker
+  // door (R7): arbitration + STT gate live in lib/replay/ingest.ts, imported
+  // lazily on drop so the ingest module (STT registry + dialog plugin) stays
+  // out of the initial bundle.
   useEffect(() => {
     if (!isTauri()) return;
     let active = true;
@@ -248,22 +249,14 @@ const App = () => {
         getCurrentWebview().onDragDropEvent((e) => {
           if (e.payload.type !== "drop") return;
           if (isMeetingActive(useStore.getState().meetingStatus)) return;
-          const audio = e.payload.paths.find((p) =>
-            /\.(mp3|m4a|wav|ogg|oga|flac|aac|mp4|webm|opus)$/i.test(p)
-          );
-          if (audio) {
-            log.info("replay: file dropped, opening ingest wizard");
-            useStore.getState().openIngestWizard(audio);
-            return;
-          }
-          // Keep in sync with isTranscriptPath (lib/replay/ingest.ts) — inlined
-          // here so the drop handler doesn't pull the ingest module (STT
-          // registry + dialog plugin) into the initial bundle.
-          const transcripts = e.payload.paths.filter((p) => /\.txt$/i.test(p));
-          if (transcripts.length) {
-            log.info("import: transcripts dropped", { count: transcripts.length });
-            useStore.getState().openTranscriptImport(transcripts);
-          }
+          const { paths } = e.payload;
+          log.info("import: files dropped", { count: paths.length });
+          import("./lib/replay/ingest")
+            .then(({ importDroppedPaths }) => importDroppedPaths(paths))
+            .catch((error) => {
+              log.error("import: drop failed", { error: String(error) });
+              toast.error(error instanceof Error ? error.message : String(error));
+            });
         })
       )
       .then((fn) => {

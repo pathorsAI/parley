@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Building2, Check, Circle, FileAudio, History, Languages, Loader2, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
+import { Building2, Check, ChevronDown, Circle, ClipboardList, Eraser, FileAudio, History, Languages, Loader2, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
 import { useStore, meetingElapsedMs, type AppMode } from "../lib/store";
 import type { Settings as AppSettings } from "../lib/types";
 import { log } from "../lib/log";
@@ -10,11 +10,19 @@ import { sttApiKey } from "../lib/transcription/providers";
 import { toast } from "sonner";
 import { stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
-import { openLiveTranslateWindow } from "../lib/liveTranslate";
-import { useI18n, type TranslationKey } from "../i18n";
+import { beginMeeting } from "../lib/meeting/start";
+import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { LevelMeter } from "./LevelMeter";
 import { McpStatusChip } from "./McpStatusChip";
+import { TranslateMenu } from "./TranslateMenu";
 import { ReplayFolderChip } from "./ReplayFolderChip";
 import { PostMeetingReviewButton } from "./accounts/PostMeetingReviewButton";
 import { StudyGenerationChip } from "./study/StudyGenerationChip";
@@ -274,9 +282,10 @@ function SwitchTab({
 }
 
 /**
- * The center slot, one per tense: pre-flight and accounts just name themselves
- * (they have a single view); a loaded recording gets the study tabs in the
- * replay accent; live gets the coach/transcript posture switch.
+ * The center slot does ONE thing (R6): page tabs for a tense that has pages —
+ * the live postures, or the study report/replay pair. Every other route
+ * renders nothing here; "where am I" is the sidebar highlight + the tense
+ * badge on the left, not a passive label in a control slot.
  */
 function CenterSwitcher({
   mode,
@@ -293,22 +302,7 @@ function CenterSwitcher({
   onLayout: (layout: Layout) => void;
   t: TFn;
 }>) {
-  // Routes with no posture to switch just name themselves here. Without this,
-  // the library and Settings would show the live coach/transcript toggle, which
-  // does nothing on those screens.
-  const LABEL: Partial<Record<AppMode, TranslationKey>> = {
-    accounts: "accounts.title",
-    preflight: "preflight.subtitle",
-    library: "shell.recordings",
-    settings: "common.settings",
-  };
-  const label = LABEL[mode];
-  if (label) {
-    return (
-      <span className="px-3 py-1 text-xs font-medium text-muted-foreground">{t(label)}</span>
-    );
-  }
-  if (mode === "replay") {
+  if (mode === "study") {
     return (
       <>
         {(["report", "replay"] as const).map((tab) => (
@@ -323,18 +317,21 @@ function CenterSwitcher({
       </>
     );
   }
-  return (
-    <>
-      {(["coach", "transcript"] as const).map((posture) => (
-        <SwitchTab
-          key={posture}
-          active={layout === posture}
-          label={t(`layout.${posture}`)}
-          onClick={() => onLayout(posture)}
-        />
-      ))}
-    </>
-  );
+  if (mode === "live") {
+    return (
+      <>
+        {(["coach", "transcript"] as const).map((posture) => (
+          <SwitchTab
+            key={posture}
+            active={layout === posture}
+            label={t(`layout.${posture}`)}
+            onClick={() => onLayout(posture)}
+          />
+        ))}
+      </>
+    );
+  }
+  return null;
 }
 
 /** Pause/resume ⇄, end (save → debrief), cancel (discard, confirm-gated). All
@@ -398,12 +395,15 @@ function PrimaryAction({
   paused,
   finalizing,
   busy,
+  hasPrepDraft,
   onExitReplay,
   onExitPreflight,
   onTogglePause,
   onEnd,
   onRequestCancel,
   onStart,
+  onStartDirect,
+  onResetPrep,
   t,
 }: Readonly<{
   mode: AppMode;
@@ -411,15 +411,18 @@ function PrimaryAction({
   paused: boolean;
   finalizing: boolean;
   busy: boolean;
+  hasPrepDraft: boolean;
   onExitReplay: () => void;
   onExitPreflight: () => void;
   onTogglePause: () => void;
   onEnd: () => void;
   onRequestCancel: () => void;
   onStart: () => void;
+  onStartDirect: () => void;
+  onResetPrep: () => void;
   t: TFn;
 }>) {
-  if (mode === "replay") {
+  if (mode === "study") {
     return (
       <Button size="sm" variant="outline" onClick={onExitReplay} className="h-8">
         <LogOut className="size-3.5" />
@@ -462,11 +465,59 @@ function PrimaryAction({
       </Button>
     );
   }
+  // R3: two speeds out of one button. The main face opens pre-flight (the
+  // prepared path, never destructive now); the chevron offers "start right
+  // now" and — only when a draft exists — the ONE explicit way to clear it.
   return (
-    <Button size="sm" variant="default" onClick={onStart} disabled={busy} className="h-8">
-      <Mic className="size-3.5" />
-      {t("titlebar.startMeeting")}
-    </Button>
+    <div className="flex items-center">
+      <Button
+        size="sm"
+        variant="default"
+        onClick={onStart}
+        disabled={busy}
+        className="h-8 rounded-r-none"
+      >
+        <Mic className="size-3.5" />
+        {t("titlebar.startMeeting")}
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            size="icon"
+            variant="default"
+            disabled={busy}
+            aria-label={t("titlebar.startOptions")}
+            className="h-8 w-6 rounded-l-none border-l border-primary-foreground/20"
+          >
+            <ChevronDown className="size-3.5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem onSelect={onStartDirect}>
+            <Play className="size-3.5" />
+            <span className="flex flex-col">
+              <span>{t("titlebar.startDirect")}</span>
+              <span className="text-[11px] text-muted-foreground">
+                {t("titlebar.startDirectHint")}
+              </span>
+            </span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onStart}>
+            <ClipboardList className="size-3.5" />
+            {t("titlebar.startPrepared")}
+          </DropdownMenuItem>
+          {hasPrepDraft && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={onResetPrep} className="text-muted-foreground">
+                <Eraser className="size-3.5" />
+                {t("titlebar.resetPrep")}
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 
@@ -507,11 +558,15 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const enterPreflight = useStore((s) => s.enterPreflight);
   const exitPreflight = useStore((s) => s.exitPreflight);
   const [accountsSheet, setAccountsSheet] = useState(false);
-  // The accounts area only exists for business meeting types (design D12).
-  const meetingType = useStore((s) => s.settings.meetingType);
-  // Scenario system: every scenario (builtin or custom) can link the mini-CRM;
-  // only "general" (no board) stays personal.
-  const businessType = meetingType !== "general";
+  const resetPrep = useStore((s) => s.resetPrep);
+  // R3: a non-empty prep draft unlocks the explicit "clear prep" menu item.
+  const hasPrepDraft = useStore(
+    (s) =>
+      !!s.meetingCompanyId ||
+      !!s.meetingContext.trim() ||
+      !!s.meetingTarget.trim() ||
+      s.todos.length > 0
+  );
   // Guard the start/stop toggle so a rapid double-click can't fire two overlapping
   // start/stop invokes (which is what could race two transcription sessions open,
   // or interleave a stop with a start). The ref blocks re-entry synchronously
@@ -524,7 +579,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const paused = status === "paused";
   // Recording OR paused: the meeting owns the session (recorder controls show).
   const meetingActive = recording || paused;
-  const replayMode = appMode === "replay";
+  const studyMode = appMode === "study";
   const accountsMode = appMode === "accounts";
   const preflightMode = appMode === "preflight";
 
@@ -560,11 +615,17 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
     }
   }
 
-  /** Start = open PRE-FLIGHT, the one path into a live meeting. It resets the
-   *  previous call's prep, so a stale company link (and the folder it drags
-   *  along) can't follow you into the next meeting. */
+  /** Start (prepared path) = open PRE-FLIGHT. Non-destructive since R3: an
+   *  existing prep draft is picked up where it was left, never wiped. */
   function start() {
     enterPreflight();
+  }
+
+  /** Start (fast path, R3) = skip pre-flight and record right now, riding
+   *  whatever prep draft / scenario is already set. Same gate-checked sequence
+   *  as the pre-flight footer (lib/meeting/start), same re-entrancy guard. */
+  function startDirect() {
+    void guarded(() => beginMeeting());
   }
 
   /** End = the meeting's natural finish: save the recording, then the study
@@ -660,12 +721,25 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           it — a titlebar folder chip here was the second, silently-losing
           source of truth for that. */}
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
-        {replayMode && <ReplayTitle t={t} />}
-        {replayMode && <ReplayFolderChip />}
+        {/* Tense badge (R6): the ONE fixed "which tense am I in" signal —
+            green while a live meeting runs, purple while a recording is open.
+            The center slot is pure page tabs, so this carries the identity. */}
+        {meetingActive && (
+          <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold tracking-wider text-emerald-600 dark:text-emerald-400">
+            LIVE
+          </span>
+        )}
+        {studyMode && (
+          <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-bold tracking-wider text-violet-600 dark:text-violet-400">
+            {t("tense.study")}
+          </span>
+        )}
+        {studyMode && <ReplayTitle t={t} />}
+        {studyMode && <ReplayFolderChip />}
         {/* A loaded recording stays reachable while you look at something else.
             Navigating the tree away from it used to leave nothing on screen
             pointing back — the only route out was 離開, which discards it. */}
-        {!replayMode && !meetingActive && replayName && (
+        {!studyMode && !meetingActive && replayName && (
           <button
             type="button"
             onClick={showReplay}
@@ -723,17 +797,18 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             t={t}
           />
         </div>
-        {replayMode && <StudyGenerationChip />}
+        {studyMode && <StudyGenerationChip />}
       </div>
 
       <div className="flex items-center gap-2">
-        {replayMode && <PostMeetingReviewButton />}
+        {studyMode && <PostMeetingReviewButton />}
         <PrimaryAction
           mode={appMode}
           meetingActive={meetingActive}
           paused={paused}
           finalizing={isFinalizingMeeting}
           busy={toggleBusy}
+          hasPrepDraft={hasPrepDraft}
           onExitReplay={() => {
             exitReplay();
             setStudyTab("report");
@@ -743,6 +818,8 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           onEnd={() => void end()}
           onRequestCancel={() => setConfirmCancel(true)}
           onStart={start}
+          onStartDirect={startDirect}
+          onResetPrep={resetPrep}
           t={t}
         />
         {confirmCancel && (
@@ -753,12 +830,13 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           />
         )}
 
-        {/* Customer intel, reachable in every state (design D12 still gates it
-            to business scenarios). Mid-call it opens as a SHEET over the live
+        {/* Customer intel, reachable in EVERY state (R5: no more scenario
+            gating — an entry that vanishes because of a picker three screens
+            away is a bug, not a feature; the accounts screen carries its own
+            empty-state guidance). Mid-call it opens as a SHEET over the live
             screen — the full workspace is a mode switch and refuses to run
-            while the call owns the screen, which used to make the dossier
-            unreachable exactly when it was needed. */}
-        {businessType && !accountsMode && !preflightMode && (
+            while the call owns the screen. */}
+        {!accountsMode && !preflightMode && (
           <Button
             size="icon"
             variant="ghost"
@@ -776,41 +854,44 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           </Suspense>
         )}
         <McpStatusChip />
-        <Button
-          size="icon"
-          variant="ghost"
-          className="h-8 w-8"
-          aria-label={t("titlebar.liveTranslate")}
-          title={t("titlebar.liveTranslate")}
-          onClick={() => openLiveTranslateWindow().catch((error) => log.error("live-translate: open window failed", { error: String(error) }))}
-        >
-          <Languages className="size-4" />
-        </Button>
+        {/* ONE 🌐 entry (R4): the popover fronts the meeting-translate switch,
+            language, HUD pop-out, the standalone window and the settings link. */}
+        <TranslateMenu />
 
-        {/* History and Settings are ROUTES in this window now (#195) — a second
-            window is exactly what made the folder tree read as a separate
-            filing system from the company tree. */}
-        <Button
-          size="icon"
-          variant="ghost"
-          className="h-8 w-8"
-          aria-label={t("titlebar.history")}
-          title={t("titlebar.history")}
-          onClick={() => openLibrary({ kind: "personal", folderId: null })}
-        >
-          <History className="size-4" />
-        </Button>
+        {/* History and Settings are ROUTES in this window now (#195). While a
+            meeting runs the screen belongs to the call, so these two are
+            HONESTLY disabled (R2) — greyed with a reason — instead of looking
+            clickable and silently doing nothing. */}
+        {/* The wrapping spans exist because a disabled button has
+            pointer-events:none — the reason-tooltip must live on a hoverable
+            parent or it never shows. */}
+        <span title={meetingActive ? t("titlebar.lockedWhileMeeting") : t("titlebar.history")}>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8"
+            aria-label={t("titlebar.history")}
+            disabled={meetingActive}
+            onClick={() => openLibrary({ kind: "personal", folderId: null })}
+          >
+            <History className="size-4" />
+          </Button>
+        </span>
 
-        <Button
-          size="icon"
-          variant="ghost"
-          className="h-8 w-8"
-          aria-label={t("common.settings")}
-          title={t("common.settings")}
-          onClick={openSettingsRoute}
-        >
-          <Settings className="size-4" />
-        </Button>
+        <span title={meetingActive ? t("titlebar.lockedWhileMeeting") : t("common.settings")}>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8"
+            aria-label={t("common.settings")}
+            disabled={meetingActive}
+            // Arrow, not a bare reference: openSettings takes an optional
+            // category, and a passed-through MouseEvent would land in it.
+            onClick={() => openSettingsRoute()}
+          >
+            <Settings className="size-4" />
+          </Button>
+        </span>
       </div>
     </header>
   );

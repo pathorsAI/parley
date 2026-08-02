@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
-import { Loader2, Mic } from "lucide-react";
+import { Languages, Loader2, Mic } from "lucide-react";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -15,6 +15,7 @@ import { log } from "../../lib/log";
 import { SubjectPanel } from "./SubjectPanel";
 import { ReviewPanel } from "./ReviewPanel";
 import { PrepCopilot } from "./PrepCopilot";
+import { TranslateLanguagePicker, TranslateSwitch } from "../TranslateQuickControls";
 
 /**
  * 會前 — the room you pass through on the way into a meeting.
@@ -30,7 +31,6 @@ export function PreflightScreen() {
   const provider = useStore((s) => s.settings.transcriptionProvider);
   const inputDevice = useStore((s) => s.settings.inputDevice);
   const translateEnabled = useStore((s) => s.settings.meetingTranslateEnabled);
-  const translateLanguage = useStore((s) => s.settings.translateTargetLanguage);
   const companyId = useStore((s) => s.meetingCompanyId);
   const hasContext = useStore((s) => !!s.meetingContext.trim());
   const hasAgenda = useStore((s) => s.todos.length > 0);
@@ -90,8 +90,16 @@ export function PreflightScreen() {
           <Mic className="size-3 shrink-0" />
           <span className="truncate">
             {inputDevice || t("preflight.defaultMic")} · {STT_BY_ID[provider].label}
-            {translateEnabled ? ` · ${translateLanguage.toUpperCase()}` : ""}
           </span>
+        </span>
+        {/* Meeting translation is decided HERE (start locks it in) — so the
+            footer offers the actual switch + language, not a read-only echo of
+            a setting that lives three screens away. */}
+        <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Languages className="size-3 shrink-0" />
+          <span>{t("translate.menu.meeting")}</span>
+          <TranslateSwitch />
+          {translateEnabled && <TranslateLanguagePicker className="h-6 w-40 text-[11px]" />}
         </span>
         <span className="flex-1" />
         {untouched && (

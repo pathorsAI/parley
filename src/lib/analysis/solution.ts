@@ -28,7 +28,7 @@ export async function runFindingSolution(findingId: string): Promise<void> {
       segments,
       meetingContext,
       names: speakerNames,
-      mode: appMode === "replay" ? "replay" : "live",
+      mode: appMode === "study" ? "replay" : "live",
     });
     useStore.getState().setFindingSolution(findingId, { status: "done", solution, error: null });
   } catch (err) {

@@ -22,7 +22,8 @@ import { THREAD_KINDS } from "../../lib/accounts/types";
 import { listHistory, loadHistoryEntry } from "../../lib/history/history";
 import { renameCompanyFolder } from "../../lib/accounts/folders";
 import type { HistoryEntrySummary } from "../../lib/history/types";
-import { formatClock, useStore } from "../../lib/store";
+import { toast } from "sonner";
+import { formatClock } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
@@ -78,22 +79,17 @@ export function CompanyPage({
       .catch((e) => log.warn("accounts: list meetings failed", { error: String(e) }));
   }, [company.id]);
 
-  // Import a recording AS this company's meeting: pre-link the meeting, then
-  // hand off to the regular ingest wizard (which lives at the app root). The
-  // saved entry carries companyId, so it lands in this company's meeting list
-  // and the post-meeting review can file its intel here.
+  // Import a recording or transcript AS this company's meeting: the shared
+  // flow (R7) with this company pre-linked, so the saved entry carries
+  // companyId (it shows in this company's meeting list, and the post-meeting
+  // review can file its intel here) and lands in the company's paired folder.
   async function importRecording() {
-    const { settings, setMeetingLink, exitAccounts, openIngestWizard } = useStore.getState();
-    setMeetingLink({ companyId: company.id, threadId: null, attendeeIds: [] });
     try {
-      const { pickRecordingFile } = await import("../../lib/replay/ingest");
-      const audioPath = await pickRecordingFile(settings);
-      if (audioPath) {
-        exitAccounts();
-        openIngestWizard(audioPath);
-      }
+      const { startImportFlow } = await import("../../lib/replay/ingest");
+      await startImportFlow({ companyId: company.id });
     } catch (e) {
       log.error("accounts: import recording failed", { error: String(e) });
+      toast.error(e instanceof Error ? e.message : String(e));
     }
   }
 

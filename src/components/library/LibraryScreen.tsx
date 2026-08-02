@@ -53,19 +53,16 @@ function orgCard(c: CloudRecordingSummary): HistoryCardItem {
   };
 }
 
-/** "+ Import": audio goes to the ingest wizard, .txt transcripts to the direct
- *  import dialog. In-window now, so it opens the dialog here instead of asking
- *  another window to. */
+/** "+ Import": the shared import flow (R7) — audio → ingest wizard, .txt →
+ *  transcript import. Lazy-loaded so the ingest module stays out of the
+ *  initial bundle. */
 async function importRecording(): Promise<void> {
-  const { settings, openIngestWizard, openTranscriptImport } = useStore.getState();
   try {
-    const { pickImportFiles } = await import("../../lib/replay/ingest");
-    const pick = await pickImportFiles(settings);
-    if (!pick) return;
-    if (pick.kind === "audio") openIngestWizard(pick.path);
-    else openTranscriptImport(pick.paths);
+    const { startImportFlow } = await import("../../lib/replay/ingest");
+    await startImportFlow();
   } catch (e) {
-    log.error("library: import pick failed", { error: String(e) });
+    log.error("library: import failed", { error: String(e) });
+    toast.error(e instanceof Error ? e.message : String(e));
   }
 }
 

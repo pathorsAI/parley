@@ -54,7 +54,7 @@ describe("enterReplay / exitReplay", () => {
     useStore.getState().enterReplay(session);
 
     const s = useStore.getState();
-    expect(s.appMode).toBe("replay");
+    expect(s.appMode).toBe("study");
     expect(s.replay).toBe(session);
     expect(s.segments).toEqual(session.segments);
     expect(s.speakerNames).toEqual({ "them-1": "Alice" });
@@ -87,7 +87,7 @@ describe("enterReplay / exitReplay", () => {
     useStore.getState().exitReplay();
 
     const s = useStore.getState();
-    expect(s.appMode).toBe("live");
+    expect(s.appMode).toBe("home");
     expect(s.replay).toBeNull();
     expect(s.segments).toEqual([]);
     expect(s.speakerNames).toEqual({});
@@ -129,7 +129,7 @@ describe("loadHistory", () => {
     useStore.getState().loadHistory(entry, session);
 
     const s = useStore.getState();
-    expect(s.appMode).toBe("replay");
+    expect(s.appMode).toBe("study");
     expect(s.replay).toBe(session);
     expect(s.segments).toEqual(session.segments);
     expect(s.speakerNames).toEqual({ "them-1": "Bob" });
@@ -249,34 +249,34 @@ describe("ingest wizard", () => {
   });
 });
 
-describe("setStudyMeetingType re-aims the intel status", () => {
+describe("setMeetingType re-aims the intel status", () => {
   it("switching to a type whose board exists restores 'done'; otherwise invalidates to 'idle'", () => {
     useStore.setState({
-      studyMeetingType: "sales",
+      meetingType: "sales",
       intelStatus: "done",
       intel: { meetingType: "sales", budget: "", timeline: "", decisionMaker: "", objections: [], commitments: [], competitors: [] },
     });
 
     // Away from the board's type → idle, so the pipeline extracts the new type.
-    useStore.getState().setStudyMeetingType("negotiation");
+    useStore.getState().setMeetingType("negotiation");
     expect(useStore.getState().intelStatus).toBe("idle");
 
     // Back to the type the existing board matches → done again, no re-spend.
-    useStore.getState().setStudyMeetingType("sales");
+    useStore.getState().setMeetingType("sales");
     expect(useStore.getState().intelStatus).toBe("done");
   });
 
   it("a failed extraction unblocks when the user switches type", () => {
-    useStore.setState({ studyMeetingType: "sales", intelStatus: "error", intel: null });
-    useStore.getState().setStudyMeetingType("negotiation");
+    useStore.setState({ meetingType: "sales", intelStatus: "error", intel: null });
+    useStore.getState().setMeetingType("negotiation");
     expect(useStore.getState().intelStatus).toBe("idle");
   });
 
   it("an in-flight run keeps 'running' — the runner itself discards a stale-type result", () => {
-    useStore.setState({ studyMeetingType: "sales", intelStatus: "running", intel: null });
-    useStore.getState().setStudyMeetingType("negotiation");
+    useStore.setState({ meetingType: "sales", intelStatus: "running", intel: null });
+    useStore.getState().setMeetingType("negotiation");
     expect(useStore.getState().intelStatus).toBe("running");
-    expect(useStore.getState().studyMeetingType).toBe("negotiation");
+    expect(useStore.getState().meetingType).toBe("negotiation");
   });
 });
 
@@ -468,13 +468,24 @@ describe("pre-flight", () => {
     });
   }
 
-  it("enterPreflight wipes the previous meeting's prep", () => {
+  it("enterPreflight KEEPS the prep draft (R3 — clearing is explicit, never a side effect)", () => {
     seedPreviousMeeting();
 
     useStore.getState().enterPreflight();
 
     const s = useStore.getState();
     expect(s.appMode).toBe("preflight");
+    expect(s.meetingCompanyId).toBe("co-1");
+    expect(s.meetingContext).toBe("last call's background");
+    expect(s.todos).toHaveLength(1);
+  });
+
+  it("resetPrep is the one path that wipes the draft", () => {
+    seedPreviousMeeting();
+
+    useStore.getState().resetPrep();
+
+    const s = useStore.getState();
     expect(s.meetingCompanyId).toBeNull();
     expect(s.meetingThreadId).toBeNull();
     expect(s.meetingAttendeeIds).toEqual([]);
@@ -485,6 +496,16 @@ describe("pre-flight", () => {
     expect(s.meetingTarget).toBe("");
     expect(s.meetingFloor).toBe("");
     expect(s.todos).toEqual([]);
+    expect(s.meetingType).toBe(useStore.getState().settings.defaultMeetingType);
+  });
+
+  it("resetPrep refuses mid-meeting", () => {
+    seedPreviousMeeting();
+    useStore.setState({ meetingStatus: "recording" });
+
+    useStore.getState().resetPrep();
+
+    expect(useStore.getState().meetingCompanyId).toBe("co-1");
   });
 
   it("refuses to open mid-meeting, leaving the live prep alone", () => {

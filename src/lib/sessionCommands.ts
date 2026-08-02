@@ -253,6 +253,7 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
           durationMs: file.parsed.durationMs,
           createdAt: file.createdAt,
           folderId,
+          companyId: null,
         });
         if (id) imported.push({
           id,

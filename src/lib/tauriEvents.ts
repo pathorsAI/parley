@@ -165,10 +165,9 @@ export async function listenForMeetingWarning(): Promise<UnlistenFn> {
     if (code !== "system-audio-silent" && code !== "system-audio-unavailable") return;
     if (warnedSystemAudio) return;
     warnedSystemAudio = true;
-    toast.warning(
-      translate(useStore.getState().settings.language, "meeting.warning.systemAudio"),
-      { duration: 10000 },
-    );
+    // A persistent live-screen banner, not a toast (⑥): the damage — a silent
+    // counterpart — is only noticed minutes later, long after 10s expire.
+    useStore.getState().setSystemAudioWarning(true);
   });
   return () => {
     unStatus();

@@ -91,7 +91,7 @@ export async function runAnalysis(opts?: {
   // The brief folds the per-deal BATNA / target / bottom line into the context, so
   // it both feeds the prompt AND keys the cache (editing setup → re-analysis).
   const meetingContext = meetingBriefText(state);
-  const mode = opts?.mode ?? (state.appMode === "replay" ? "replay" : "live");
+  const mode = opts?.mode ?? (state.appMode === "study" ? "replay" : "live");
   // REPLAY: honor the trim keep-window — trimmed segments are excluded from analysis.
   const segments =
     mode === "replay" ? state.segments.filter((s) => !isTrimmed(s, state.replayTrim)) : state.segments;
@@ -199,8 +199,16 @@ export function useAnalysisEngine() {
     lastRun.current = { analysis: 0, todos: 0, tone: 0 };
 
     const tick = () => {
-      const { autoAnalyze, autoAnalyzeSec, todos, settings, segments, speakerNames, markTodosDone } =
-        useStore.getState();
+      const {
+        autoAnalyze,
+        autoAnalyzeSec,
+        todos,
+        settings,
+        meetingType,
+        segments,
+        speakerNames,
+        markTodosDone,
+      } = useStore.getState();
       const now = Date.now();
 
       if (autoAnalyze && now >= lastRun.current.analysis + autoAnalyzeSec * 1000) {
@@ -212,7 +220,7 @@ export function useAnalysisEngine() {
       // meetings only: typed meetings ride the intel board's 30s pass, which
       // returns todoChecks in the same call (one LLM loop per meeting).
       if (
-        settings.meetingType === "general" &&
+        meetingType === "general" &&
         now >= lastRun.current.todos + 45_000 &&
         !todoBusy.current &&
         hasProviderKey(settings, "realtime") &&

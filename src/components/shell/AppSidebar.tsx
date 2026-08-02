@@ -7,6 +7,7 @@ import {
   Folder,
   FolderClosed,
   FolderPlus,
+  House,
   Mic,
   Pencil,
   Plus,
@@ -52,12 +53,15 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   const openAccounts = useStore((s) => s.openAccounts);
   const openLibrary = useStore((s) => s.openLibrary);
   const openSettings = useStore((s) => s.openSettings);
+  const openHome = useStore((s) => s.openHome);
   const enterPreflight = useStore((s) => s.enterPreflight);
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [newFolderScope, setNewFolderScope] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
-  const [newCompany, setNewCompany] = useState("");
+  // R8a: creation lives behind the section header's ＋ — the tree is
+  // navigation, not a permanently-open data-entry form.
+  const [newCompanyOpen, setNewCompanyOpen] = useState(false);
 
   const companies = acc.companies.filter((c) => !c.archived);
   const archived = acc.companies.filter((c) => c.archived);
@@ -103,19 +107,29 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
       <button
         type="button"
         onClick={enterPreflight}
-        className="mb-2 flex shrink-0 items-center gap-2 rounded-md border border-dashed px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:border-solid hover:bg-muted hover:text-foreground"
+        className="mb-1 flex shrink-0 items-center gap-2 rounded-md border border-dashed px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:border-solid hover:bg-muted hover:text-foreground"
       >
         <Mic className="size-3.5 shrink-0" />
         {t("titlebar.startMeeting")}
       </button>
 
-      <GroupLabel>{t("accounts.title")}</GroupLabel>
+      <Row
+        icon={<House className="size-3.5" />}
+        label={t("home.title")}
+        active={appMode === "home"}
+        onSelect={openHome}
+      />
 
-      {companies.length === 0 && (
-        <p className="px-2 py-3 text-center text-[11px] leading-snug text-muted-foreground/70">
-          {t("accounts.empty")}
-        </p>
-      )}
+      <GroupLabel
+        action={
+          <HeaderAdd
+            label={t("accounts.newCompany")}
+            onClick={() => setNewCompanyOpen(true)}
+          />
+        }
+      >
+        {t("accounts.title")}
+      </GroupLabel>
 
       {companies.map((c) => {
         const open = expanded[c.id] ?? c.id === accountsCompanyId;
@@ -182,18 +196,20 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         );
       })}
 
-      <NewCompanyForm
-        value={newCompany}
-        onChange={setNewCompany}
-        onCreate={(name) => {
-          const company = useAccounts.getState().addCompany({ name });
-          ensureCompanyFolder(company);
-          setNewCompany("");
-          setExpanded((p) => ({ ...p, [company.id]: true }));
-          openAccounts(company.id);
-          tree.reloadFolders().catch(() => {});
-        }}
-      />
+      {newCompanyOpen && (
+        <NewNameInput
+          placeholder={t("accounts.companyName")}
+          onCommit={(name) => {
+            const company = useAccounts.getState().addCompany({ name });
+            ensureCompanyFolder(company);
+            setNewCompanyOpen(false);
+            setExpanded((p) => ({ ...p, [company.id]: true }));
+            openAccounts(company.id);
+            tree.reloadFolders().catch(() => {});
+          }}
+          onCancel={() => setNewCompanyOpen(false)}
+        />
+      )}
 
       {/* Archived companies stay reachable: view on click, restore in one. */}
       {archived.length > 0 && (
@@ -240,7 +256,7 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
 
       {/* Folders that belong to no company — kept so nothing filed before the
           company pairing existed becomes unreachable. */}
-      {(looseFolders.length > 0 || newFolderScope === "personal") && (
+      {looseFolders.length > 0 && (
         <>
           <GroupLabel>{t("shell.otherFolders")}</GroupLabel>
           {looseFolders.map((f) => (
@@ -262,19 +278,26 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
           ))}
         </>
       )}
-      {newFolderScope === "personal" ? (
-        <NewFolderInput
+      <GroupLabel
+        action={
+          <HeaderAdd
+            label={t("history.folder.create")}
+            onClick={() => setNewFolderScope("personal")}
+          />
+        }
+      >
+        {t("shell.recordings")}
+      </GroupLabel>
+      {newFolderScope === "personal" && (
+        <NewNameInput
+          placeholder={t("history.folder.namePlaceholder")}
           onCommit={(name) => {
             tree.createPersonalFolder(name);
             setNewFolderScope(null);
           }}
           onCancel={() => setNewFolderScope(null)}
         />
-      ) : (
-        <AddFolderButton onClick={() => setNewFolderScope("personal")} />
       )}
-
-      <GroupLabel>{t("shell.recordings")}</GroupLabel>
       <Row
         icon={<FolderClosed className="size-3.5" />}
         label={t("library.unfiled")}
@@ -348,8 +371,9 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
                   ))}
                 {open &&
                   (newFolderScope === o.id ? (
-                    <NewFolderInput
+                    <NewNameInput
                       depth={1}
+                      placeholder={t("history.folder.namePlaceholder")}
                       onCommit={(name) => {
                         tree.createOrgFolder(o.id, name).catch(() => {});
                         setNewFolderScope(null);
@@ -382,11 +406,31 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   );
 }
 
-function GroupLabel({ children }: Readonly<{ children: ReactNode }>) {
+function GroupLabel({
+  children,
+  action,
+}: Readonly<{ children: ReactNode; action?: ReactNode }>) {
   return (
-    <div className="mt-3 shrink-0 px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-      {children}
+    <div className="group/label mt-3 flex shrink-0 items-center px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+      <span className="min-w-0 flex-1 truncate">{children}</span>
+      {action}
     </div>
+  );
+}
+
+/** The section header's ＋ (R8a): visible on hover/focus, so creation is one
+ *  click away without living in the tree as a permanent form. */
+function HeaderAdd({ label, onClick }: Readonly<{ label: string; onClick: () => void }>) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className="grid size-4 shrink-0 place-items-center rounded text-muted-foreground/0 transition-colors hover:!text-foreground focus-visible:text-muted-foreground group-hover/label:text-muted-foreground"
+    >
+      <Plus className="size-3.5" />
+    </button>
   );
 }
 
@@ -533,44 +577,19 @@ function Row({
   );
 }
 
-function NewCompanyForm({
-  value,
-  onChange,
-  onCreate,
-}: Readonly<{ value: string; onChange: (v: string) => void; onCreate: (name: string) => void }>) {
-  const { t } = useI18n();
-  return (
-    <form
-      className="flex shrink-0 items-center gap-1.5 px-1 pt-1"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (value.trim()) onCreate(value.trim());
-      }}
-    >
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={t("accounts.companyName")}
-        className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
-      />
-      <button
-        type="submit"
-        disabled={!value.trim()}
-        title={t("accounts.newCompany")}
-        className="flex size-7 shrink-0 items-center justify-center rounded-md border text-muted-foreground hover:text-foreground disabled:opacity-40"
-      >
-        <Plus className="size-3.5" />
-      </button>
-    </form>
-  );
-}
-
-/** Inline "+ new folder" composer. */
-function NewFolderInput({
+/** Inline name composer, opened on demand from a section header's ＋ (company
+ *  or folder — the placeholder is the only difference). */
+function NewNameInput({
   depth = 0,
+  placeholder,
   onCommit,
   onCancel,
-}: Readonly<{ depth?: number; onCommit: (name: string) => void; onCancel: () => void }>) {
+}: Readonly<{
+  depth?: number;
+  placeholder: string;
+  onCommit: (name: string) => void;
+  onCancel: () => void;
+}>) {
   const { t } = useI18n();
   const [value, setValue] = useState("");
   const ref = useRef<HTMLInputElement>(null);
@@ -585,7 +604,7 @@ function NewFolderInput({
       <input
         ref={ref}
         value={value}
-        placeholder={t("history.folder.namePlaceholder")}
+        placeholder={placeholder}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") {

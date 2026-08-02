@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Loader2, Sparkles } from "lucide-react";
+import { ArrowUp, ChevronDown, Loader2, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { toast } from "sonner";
 import { useStore, meetingBriefText } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { runAnalysis } from "../../lib/analysis/engine";
@@ -11,7 +12,63 @@ import { FindingRow } from "../analysis/FindingRow";
 import { openSolution, selectAndSeek } from "../analysis/useAnalysis";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+
+/**
+ * Auto-analysis cadence, reachable from the coach posture (⑥). The same two
+ * controls used to exist ONLY in the transcript posture's findings panel, so
+ * whether the feed refreshed itself depended on a posture the user might never
+ * open — the setting is global, its door was not.
+ */
+function AutoAnalyzeMenu() {
+  const { t } = useI18n();
+  const autoAnalyze = useStore((s) => s.autoAnalyze);
+  const autoAnalyzeSec = useStore((s) => s.autoAnalyzeSec);
+  const setAutoAnalyze = useStore((s) => s.setAutoAnalyze);
+  const setAutoAnalyzeSec = useStore((s) => s.setAutoAnalyzeSec);
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          size="icon"
+          variant="outline"
+          className="h-7 w-6 rounded-l-none"
+          aria-label={t("evaluations.autoEvery")}
+          title={
+            autoAnalyze
+              ? t("evaluations.autoOnHint", { sec: autoAnalyzeSec })
+              : t("evaluations.autoOffHint")
+          }
+        >
+          <ChevronDown className="size-3" />
+          {autoAnalyze && (
+            <span className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-emerald-500" />
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-60">
+        <label className="flex cursor-pointer items-center gap-1.5 text-xs">
+          <input
+            type="checkbox"
+            checked={autoAnalyze}
+            onChange={(e) => setAutoAnalyze(e.target.checked)}
+            className="size-3.5 accent-primary"
+          />
+          {t("evaluations.autoEvery")}
+          <Input
+            type="number"
+            value={autoAnalyzeSec}
+            onChange={(e) => setAutoAnalyzeSec(Number(e.target.value))}
+            className="h-6 w-14 px-1 text-center text-xs"
+            disabled={!autoAnalyze}
+          />
+          {t("evaluations.autoSeconds")}
+        </label>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 interface AskCard {
   id: string;
@@ -148,15 +205,15 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
   const empty = findings.length === 0 && askCards.length === 0;
   const recording = useStore((s) => s.meetingStatus === "recording");
 
-  // The header upload button's other replacement: import from the idle feed.
+  // The header upload button's other replacement: import from the idle feed —
+  // the shared flow (R7), so it takes .txt transcripts too, not just audio.
   async function importRecording() {
-    const { settings, openIngestWizard } = useStore.getState();
     try {
-      const { pickRecordingFile } = await import("../../lib/replay/ingest");
-      const audioPath = await pickRecordingFile(settings);
-      if (audioPath) openIngestWizard(audioPath);
+      const { startImportFlow } = await import("../../lib/replay/ingest");
+      await startImportFlow();
     } catch (e) {
       log.error("feed: import failed", { error: String(e) });
+      toast.error(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -167,20 +224,23 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {t("feed.title")}
         </span>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7"
-          disabled={running}
-          onClick={() =>
-            runAnalysis({ mode: "live" }).catch((e) =>
-              log.error("analysis: live run failed", { error: String(e) })
-            )
-          }
-        >
-          {running ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-          {t("feed.analyze")}
-        </Button>
+        <div className="flex items-center">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 rounded-r-none border-r-0"
+            disabled={running}
+            onClick={() =>
+              runAnalysis({ mode: "live" }).catch((e) =>
+                log.error("analysis: live run failed", { error: String(e) })
+              )
+            }
+          >
+            {running ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+            {t("feed.analyze")}
+          </Button>
+          <AutoAnalyzeMenu />
+        </div>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">

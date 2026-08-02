@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -68,19 +68,9 @@ import { ScenarioSettings } from "./StageBundleSettings";
 import { SaveDestinationPicker } from "../components/SaveDestinationPicker";
 import { PermissionsPanel } from "./PermissionsPanel";
 
-type Category =
-  | "basic"
-  | "account"
-  | "provider"
-  | "transcription"
-  | "translate"
-  | "voiceTyping"
-  | "permissions"
-  | "evaluations"
-  | "todos"
-  | "stages"
-  | "mcp"
-  | "usage";
+// The panel ids live in the store as SettingsCategory so other surfaces (e.g.
+// the titlebar 🌐 menu) can deep-link a panel without importing this file.
+type Category = import("../lib/store").SettingsCategory;
 
 interface McpServerInfo {
   running: boolean;
@@ -90,19 +80,29 @@ interface McpServerInfo {
 
 // `cloudOnly` entries (the account/orgs page) are compiled out of the OSS edition,
 // which has no sign-in at all — so they never appear in that build's nav.
-const NAV: { id: Category; labelKey: TranslationKey; cloudOnly?: boolean }[] = [
-  { id: "basic", labelKey: "settings.nav.basic" },
-  { id: "account", labelKey: "settings.nav.account", cloudOnly: true },
-  { id: "provider", labelKey: "settings.nav.provider" },
-  { id: "transcription", labelKey: "settings.nav.transcription" },
-  { id: "translate", labelKey: "settings.nav.translate" },
-  { id: "voiceTyping", labelKey: "settings.nav.voiceTyping" },
-  { id: "permissions", labelKey: "settings.nav.permissions" },
-  { id: "evaluations", labelKey: "settings.nav.evaluations" },
-  { id: "todos", labelKey: "settings.nav.todos" },
-  { id: "stages", labelKey: "settings.nav.stages" },
-  { id: "mcp", labelKey: "settings.nav.mcp" },
-  { id: "usage", labelKey: "settings.nav.usage" },
+//
+// `keywordsKey` is what the nav's search box matches BESIDES the label: twelve
+// panels deep enough to hold API keys, rubrics and an MCP endpoint can't be
+// found by their one-word titles alone ("金鑰" lives under 供應商, "麥克風"
+// under 轉錄). The keyword strings are translated, so search works per-language.
+const NAV: {
+  id: Category;
+  labelKey: TranslationKey;
+  keywordsKey: TranslationKey;
+  cloudOnly?: boolean;
+}[] = [
+  { id: "basic", labelKey: "settings.nav.basic", keywordsKey: "settings.kw.basic" },
+  { id: "account", labelKey: "settings.nav.account", keywordsKey: "settings.kw.account", cloudOnly: true },
+  { id: "provider", labelKey: "settings.nav.provider", keywordsKey: "settings.kw.provider" },
+  { id: "transcription", labelKey: "settings.nav.transcription", keywordsKey: "settings.kw.transcription" },
+  { id: "translate", labelKey: "settings.nav.translate", keywordsKey: "settings.kw.translate" },
+  { id: "voiceTyping", labelKey: "settings.nav.voiceTyping", keywordsKey: "settings.kw.voiceTyping" },
+  { id: "permissions", labelKey: "settings.nav.permissions", keywordsKey: "settings.kw.permissions" },
+  { id: "evaluations", labelKey: "settings.nav.evaluations", keywordsKey: "settings.kw.evaluations" },
+  { id: "todos", labelKey: "settings.nav.todos", keywordsKey: "settings.kw.todos" },
+  { id: "stages", labelKey: "settings.nav.stages", keywordsKey: "settings.kw.stages" },
+  { id: "mcp", labelKey: "settings.nav.mcp", keywordsKey: "settings.kw.mcp" },
+  { id: "usage", labelKey: "settings.nav.usage", keywordsKey: "settings.kw.usage" },
 ];
 
 /**
@@ -119,6 +119,25 @@ export function SettingsApp({ embedded = false }: Readonly<{ embedded?: boolean 
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
   const [cat, setCat] = useState<Category>("basic");
+  // Deep-link from another surface (openSettings("translate") etc): jump to
+  // the requested panel once, then clear so manual nav isn't overridden.
+  const requestedCat = useStore((s) => s.settingsCategory);
+  useEffect(() => {
+    if (!requestedCat) return;
+    setCat(requestedCat);
+    useStore.setState({ settingsCategory: null });
+  }, [requestedCat]);
+  // Nav search (⑥): label OR translated keywords, so "金鑰"/"key" finds the
+  // provider panel and "麥克風"/"mic" finds transcription.
+  const [navQuery, setNavQuery] = useState("");
+  const navMatches = useMemo(() => {
+    const visible = NAV.filter((n) => CLOUD_ENABLED || !n.cloudOnly);
+    const q = navQuery.trim().toLowerCase();
+    if (!q) return visible;
+    return visible.filter((n) =>
+      `${t(n.labelKey)} ${t(n.keywordsKey)}`.toLowerCase().includes(q)
+    );
+  }, [navQuery, t]);
   const [devices, setDevices] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
   // A meeting is recording in the main window → lock the mic test + device picker
@@ -285,19 +304,29 @@ export function SettingsApp({ embedded = false }: Readonly<{ embedded?: boolean 
         />
       )}
       {/* Left nav */}
-      <nav className="flex w-48 shrink-0 flex-col gap-0.5 border-r bg-muted/30 p-2">
+      <nav className="flex w-48 shrink-0 flex-col gap-0.5 overflow-y-auto border-r bg-muted/30 p-2">
         <div className="px-2 pb-2 pt-1 text-sm font-semibold tracking-tight">{t("common.settings")}</div>
-        {NAV.filter((n) => CLOUD_ENABLED || !n.cloudOnly).map((n) => (
+        <input
+          value={navQuery}
+          onChange={(e) => setNavQuery(e.target.value)}
+          placeholder={t("settings.searchPlaceholder")}
+          aria-label={t("settings.searchPlaceholder")}
+          className="mb-1 h-7 w-full rounded-md border bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+        />
+        {navMatches.map((n) => (
           <button
             key={n.id}
             onClick={() => setCat(n.id)}
-            className={`rounded-md px-2.5 py-1.5 text-left text-sm transition-colors ${
+            className={`cursor-pointer rounded-md px-2.5 py-1.5 text-left text-sm transition-colors ${
               cat === n.id ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
           >
             {t(n.labelKey)}
           </button>
         ))}
+        {navMatches.length === 0 && (
+          <p className="px-2.5 py-2 text-xs text-muted-foreground">{t("settings.searchEmpty")}</p>
+        )}
       </nav>
 
       {/* Content */}

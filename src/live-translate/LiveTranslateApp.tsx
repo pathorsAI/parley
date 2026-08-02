@@ -5,7 +5,8 @@ import { Languages, Mic, Speaker, Loader2, AlertTriangle, CheckCircle2, Download
 import { useStore } from "../lib/store";
 import { isTauri } from "../lib/tauriEvents";
 import { log } from "../lib/log";
-import { TRANSLATE_LANGUAGES } from "../lib/translateLanguages";
+import { TRANSLATE_LANGUAGES, TRANSLATE_USD_PER_MINUTE } from "../lib/translateLanguages";
+import { useI18n } from "../i18n";
 import { Flag } from "../components/ui/flag";
 import { LevelMeter } from "../components/LevelMeter";
 import { Button } from "@/components/ui/button";
@@ -20,90 +21,6 @@ import { PasswordInput } from "@/components/ui/password-input";
 
 /** Empty device value ("") ↔ this sentinel, since Radix Select forbids "". */
 const DEFAULT_DEVICE = "__default__";
-
-/** Combined audio-token price for gemini-3.5-live-translate-preview: input
- *  $0.0053/min + output $0.0315/min. Output audio dominates. Used for the live
- *  estimate only — real billing is metered server-side. */
-const USD_PER_MINUTE = 0.0053 + 0.0315;
-
-type Lang = "zh-TW" | "en";
-
-const STRINGS = {
-  "zh-TW": {
-    title: "即時語音翻譯",
-    subtitle: "麥克風 → Gemini 翻譯 → 輸出裝置",
-    sourceMic: "來源麥克風（你的聲音）",
-    targetLang: "翻譯成",
-    outputDevice: "輸出裝置",
-    systemDefault: "系統預設",
-    start: "開始翻譯",
-    stop: "停止",
-    starting: "啟動中…",
-    running: "翻譯中",
-    yourVoice: "你的聲音",
-    translated: "翻譯輸出",
-    heard: "聽到（原文）",
-    speaking: "說出（譯文）",
-    noKey: "尚未設定 Gemini API key，請先到 Parley 設定頁填入。",
-    apiKey: "Gemini API key",
-    apiKeyHint: "此功能用 Gemini 翻譯，需要有 gemini-3.5-live-translate-preview 權限的金鑰（可到 Google AI Studio 取得）。填在這裡即可，會和設定頁共用。",
-    outputHint:
-      "翻譯後的語音會從所選輸出裝置播出。要讓 Google Meet 聽到，Phase 2 會提供「Parley 虛擬麥克風」；現在可先選耳機自行驗證。",
-    costHint: "約 US${rate}/分鐘（輸出音訊佔大宗）",
-    estCost: "本次估計花費",
-    elapsed: "已進行",
-    errKey: "Gemini API key 無效或被拒絕。",
-    errQuota: "已達額度上限或請求過於頻繁。",
-    errConnect: "連線失敗，請檢查網路後重試。",
-    vmicTitle: "Parley 虛擬麥克風",
-    vmicNotInstalled:
-      "安裝後，Google Meet / Zoom 等 app 的麥克風清單就會出現「Parley Microphone」，選它就能讓對方聽到翻譯後的聲音。",
-    vmicInstall: "安裝虛擬麥克風",
-    vmicInstalling: "安裝中…（會跳出系統的管理員授權視窗）",
-    vmicInstalled: "已安裝",
-    vmicUse: "設為輸出裝置",
-    vmicInUse: "已設為輸出裝置 — 在 Google Meet 選「Parley Microphone」當麥克風即可。",
-    vmicNoPkg: "此開發版沒有附安裝檔（請先在 repo 執行 virtual-mic/build.sh 與 make-pkg.sh）。",
-    vmicFailed: "安裝失敗：",
-  },
-  en: {
-    title: "Live Translation",
-    subtitle: "Microphone → Gemini translate → output device",
-    sourceMic: "Source microphone (your voice)",
-    targetLang: "Translate to",
-    outputDevice: "Output device",
-    systemDefault: "System default",
-    start: "Start translating",
-    stop: "Stop",
-    starting: "Starting…",
-    running: "Translating",
-    yourVoice: "Your voice",
-    translated: "Translated out",
-    heard: "Heard (source)",
-    speaking: "Spoken (translation)",
-    noKey: "No Gemini API key set — add one in Parley settings first.",
-    apiKey: "Gemini API key",
-    apiKeyHint: "This uses Gemini to translate — needs a key with access to gemini-3.5-live-translate-preview (from Google AI Studio). Enter it here; it's shared with Settings.",
-    outputHint:
-      "The translated voice plays out the chosen output device. To have Google Meet hear it, Phase 2 adds a “Parley virtual microphone”; for now pick your headphones to validate.",
-    costHint: "≈ US${rate}/min (output audio dominates)",
-    estCost: "Estimated cost this session",
-    elapsed: "Elapsed",
-    errKey: "The Gemini API key is invalid or was rejected.",
-    errQuota: "Quota reached or too many requests.",
-    errConnect: "Connection failed — check your network and retry.",
-    vmicTitle: "Parley virtual microphone",
-    vmicNotInstalled:
-      "Once installed, “Parley Microphone” appears in Google Meet / Zoom's mic list — select it there and the other side hears the translated voice.",
-    vmicInstall: "Install virtual microphone",
-    vmicInstalling: "Installing… (macOS will ask for admin authorization)",
-    vmicInstalled: "Installed",
-    vmicUse: "Use as output device",
-    vmicInUse: "Set as output — pick “Parley Microphone” as the mic in Google Meet.",
-    vmicNoPkg: "This dev build has no installer (run virtual-mic/build.sh + make-pkg.sh in the repo first).",
-    vmicFailed: "Install failed: ",
-  },
-} as const;
 
 interface TranscriptPayload {
   input: string;
@@ -120,9 +37,11 @@ interface VirtualMicStatus {
   deviceName: string;
 }
 
+/** Known backend error codes → i18n; anything else reads as a connect failure. */
+type TranslateErrorCode = "key" | "quota" | "connect";
+
 export function LiveTranslateApp() {
-  const lang = useStore((s) => s.settings.language) as Lang;
-  const t = STRINGS[lang] ?? STRINGS["zh-TW"];
+  const { t } = useI18n();
 
   const geminiApiKey = useStore((s) => s.settings.geminiApiKey);
   const inputDevice = useStore((s) => s.settings.translateInputDevice);
@@ -135,7 +54,10 @@ export function LiveTranslateApp() {
   const [running, setRunning] = useState(false);
   const [starting, setStarting] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptPayload>({ input: "", output: "" });
-  const [error, setError] = useState<string | null>(null);
+  // Backend errors arrive as a code (translated at render, so a language
+  // switch retranslates them); a failed start invoke keeps its raw message.
+  const [errorCode, setErrorCode] = useState<TranslateErrorCode | null>(null);
+  const [rawError, setRawError] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const startedAt = useRef<number | null>(null);
   const [micStatus, setMicStatus] = useState<VirtualMicStatus | null>(null);
@@ -207,7 +129,8 @@ export function LiveTranslateApp() {
         setStarting(false);
         if (isRunning) {
           startedAt.current = Date.now();
-          setError(null);
+          setErrorCode(null);
+          setRawError(null);
         } else {
           startedAt.current = null;
           setTranscript({ input: "", output: "" });
@@ -223,14 +146,15 @@ export function LiveTranslateApp() {
         setStarting(false);
         startedAt.current = null;
         const code = e.payload.code;
-        setError(code === "key" ? t.errKey : code === "quota" ? t.errQuota : t.errConnect);
+        setErrorCode(code === "key" ? "key" : code === "quota" ? "quota" : "connect");
+        setRawError(null);
       })
     );
     return () => {
       active = false;
       unlisteners.forEach((fn) => fn());
     };
-  }, [t]);
+  }, []);
 
   // Tick the elapsed timer while running (drives the cost estimate).
   useEffect(() => {
@@ -248,7 +172,8 @@ export function LiveTranslateApp() {
 
   const start = useCallback(() => {
     if (!hasKey || starting || running) return;
-    setError(null);
+    setErrorCode(null);
+    setRawError(null);
     setStarting(true);
     invoke("start_translate", {
       apiKey: geminiApiKey,
@@ -258,7 +183,7 @@ export function LiveTranslateApp() {
       outputDevice: outputDevice || undefined,
     }).catch((e) => {
       setStarting(false);
-      setError(String(e));
+      setRawError(String(e));
       log.error("translate: start failed", { error: String(e) });
     });
   }, [hasKey, starting, running, geminiApiKey, targetLanguage, inputDevice, outputDevice]);
@@ -269,9 +194,18 @@ export function LiveTranslateApp() {
     setStarting(false);
   }, []);
 
-  const estCost = ((elapsedSec / 60) * USD_PER_MINUTE).toFixed(3);
+  const estCost = ((elapsedSec / 60) * TRANSLATE_USD_PER_MINUTE).toFixed(3);
   const mm = String(Math.floor(elapsedSec / 60)).padStart(2, "0");
   const ss = String(elapsedSec % 60).padStart(2, "0");
+  const errorText = errorCode
+    ? t(
+        errorCode === "key"
+          ? "liveTranslate.errKey"
+          : errorCode === "quota"
+            ? "liveTranslate.errQuota"
+            : "liveTranslate.errConnect"
+      )
+    : rawError;
 
   const deviceValue = (d: string) => d || DEFAULT_DEVICE;
   const setDevice = (key: "translateInputDevice" | "translateOutputDevice", v: string) =>
@@ -281,15 +215,15 @@ export function LiveTranslateApp() {
     <div className="flex h-screen flex-col overflow-y-auto bg-background p-5 text-foreground">
       <header className="mb-4">
         <h1 className="flex items-center gap-2 text-lg font-semibold">
-          <Languages className="size-5" /> {t.title}
+          <Languages className="size-5" /> {t("liveTranslate.title")}
         </h1>
-        <p className="mt-0.5 text-xs text-muted-foreground">{t.subtitle}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{t("liveTranslate.subtitle")}</p>
       </header>
 
       {/* Gemini API key — a direct entry point to the shared geminiApiKey
           setting, so the feature is usable without hunting through Settings. */}
       <div className="mb-4 flex flex-col gap-1.5">
-        <label className="text-sm font-medium">{t.apiKey}</label>
+        <label className="text-sm font-medium">{t("settings.translate.apiKey")}</label>
         <PasswordInput
           value={geminiApiKey}
           onChange={(e) => updateSettings({ geminiApiKey: e.target.value })}
@@ -298,14 +232,16 @@ export function LiveTranslateApp() {
           autoComplete="off"
           spellCheck={false}
         />
-        <p className="text-xs leading-relaxed text-muted-foreground">{t.apiKeyHint}</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {t("liveTranslate.apiKeyHint")}
+        </p>
       </div>
 
       <div className="flex flex-col gap-4">
         {/* Source microphone */}
         <div className="flex flex-col gap-1.5">
           <label className="flex items-center gap-1.5 text-sm font-medium">
-            <Mic className="size-3.5" /> {t.sourceMic}
+            <Mic className="size-3.5" /> {t("liveTranslate.sourceMic")}
           </label>
           <Select
             value={deviceValue(inputDevice)}
@@ -316,7 +252,9 @@ export function LiveTranslateApp() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={DEFAULT_DEVICE}>{t.systemDefault}</SelectItem>
+              <SelectItem value={DEFAULT_DEVICE}>
+                {t("settings.transcription.systemDefault")}
+              </SelectItem>
               {inputDevices.map((d) => (
                 <SelectItem key={d} value={d}>
                   {d}
@@ -329,7 +267,7 @@ export function LiveTranslateApp() {
         {/* Target language */}
         <div className="flex flex-col gap-1.5">
           <label className="flex items-center gap-1.5 text-sm font-medium">
-            <Languages className="size-3.5" /> {t.targetLang}
+            <Languages className="size-3.5" /> {t("meeting.translate.language")}
           </label>
           <Select
             value={targetLanguage}
@@ -354,7 +292,7 @@ export function LiveTranslateApp() {
         {/* Output device */}
         <div className="flex flex-col gap-1.5">
           <label className="flex items-center gap-1.5 text-sm font-medium">
-            <Speaker className="size-3.5" /> {t.outputDevice}
+            <Speaker className="size-3.5" /> {t("meeting.translate.output")}
           </label>
           <Select
             value={deviceValue(outputDevice)}
@@ -365,7 +303,9 @@ export function LiveTranslateApp() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={DEFAULT_DEVICE}>{t.systemDefault}</SelectItem>
+              <SelectItem value={DEFAULT_DEVICE}>
+                {t("settings.transcription.systemDefault")}
+              </SelectItem>
               {outputDevices.map((d) => (
                 <SelectItem key={d} value={d}>
                   {d}
@@ -373,33 +313,38 @@ export function LiveTranslateApp() {
               ))}
             </SelectContent>
           </Select>
-          <p className="text-xs leading-relaxed text-muted-foreground">{t.outputHint}</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {t("liveTranslate.outputHint")}
+          </p>
         </div>
 
         {/* Parley virtual microphone: install card / installed state */}
         {micStatus && !micStatus.deviceVisible && (
           <div className="flex flex-col gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
-            <span className="text-sm font-medium">{t.vmicTitle}</span>
-            <p className="text-xs leading-relaxed text-muted-foreground">{t.vmicNotInstalled}</p>
+            <span className="text-sm font-medium">{t("liveTranslate.vmicTitle")}</span>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {t("liveTranslate.vmicNotInstalled")}
+            </p>
             {micStatus.pkgAvailable ? (
               <Button size="sm" onClick={installVirtualMic} disabled={installing}>
                 {installing ? (
                   <>
-                    <Loader2 className="size-3.5 animate-spin" /> {t.vmicInstalling}
+                    <Loader2 className="size-3.5 animate-spin" /> {t("liveTranslate.vmicInstalling")}
                   </>
                 ) : (
                   <>
-                    <Download className="size-3.5" /> {t.vmicInstall}
+                    <Download className="size-3.5" /> {t("liveTranslate.vmicInstall")}
                   </>
                 )}
               </Button>
             ) : (
-              <p className="text-xs text-amber-600 dark:text-amber-400">{t.vmicNoPkg}</p>
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                {t("liveTranslate.vmicNoPkg")}
+              </p>
             )}
             {installError && (
               <p className="text-xs text-red-600 dark:text-red-400">
-                {t.vmicFailed}
-                {installError}
+                {t("liveTranslate.vmicFailed", { error: installError })}
               </p>
             )}
           </div>
@@ -407,10 +352,12 @@ export function LiveTranslateApp() {
         {micStatus?.deviceVisible && (
           <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs">
             <CheckCircle2 className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-            <span className="font-medium">{t.vmicTitle}</span>
-            <span className="text-muted-foreground">{t.vmicInstalled}</span>
+            <span className="font-medium">{t("liveTranslate.vmicTitle")}</span>
+            <span className="text-muted-foreground">{t("liveTranslate.vmicInstalled")}</span>
             {outputDevice === micStatus.deviceName ? (
-              <span className="ml-auto text-right text-muted-foreground">{t.vmicInUse}</span>
+              <span className="ml-auto text-right text-muted-foreground">
+                {t("liveTranslate.vmicInUse")}
+              </span>
             ) : (
               <Button
                 size="sm"
@@ -419,38 +366,44 @@ export function LiveTranslateApp() {
                 disabled={running}
                 onClick={() => updateSettings({ translateOutputDevice: micStatus.deviceName })}
               >
-                {t.vmicUse}
+                {t("liveTranslate.vmicUse")}
               </Button>
             )}
           </div>
         )}
 
-        {error && (
+        {errorText && (
           <div className="flex items-start gap-2 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-400">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-            <span>{error}</span>
+            <span>{errorText}</span>
           </div>
         )}
 
         {/* Start / Stop */}
         {running ? (
           <Button variant="destructive" onClick={stop} className="w-full">
-            {t.stop}
+            {t("liveTranslate.stop")}
           </Button>
         ) : (
           <Button onClick={start} disabled={!hasKey || starting} className="w-full">
             {starting ? (
               <>
-                <Loader2 className="size-4 animate-spin" /> {t.starting}
+                <Loader2 className="size-4 animate-spin" /> {t("liveTranslate.starting")}
               </>
             ) : (
-              t.start
+              t("liveTranslate.start")
             )}
           </Button>
         )}
 
+        {!hasKey && (
+          <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+            {t("liveTranslate.noKey")}
+          </p>
+        )}
+
         <p className="text-center text-xs text-muted-foreground">
-          {t.costHint.replace("{rate}", USD_PER_MINUTE.toFixed(4))}
+          {t("liveTranslate.costHint", { rate: TRANSLATE_USD_PER_MINUTE.toFixed(4) })}
         </p>
 
         {/* Live panel */}
@@ -458,29 +411,39 @@ export function LiveTranslateApp() {
           <div className="mt-1 flex flex-col gap-3 rounded-lg border bg-muted/30 p-3">
             <div className="flex items-center justify-between text-xs">
               <span className="flex items-center gap-1.5 font-medium text-emerald-600 dark:text-emerald-400">
-                <span className="size-2 animate-pulse rounded-full bg-emerald-500" /> {t.running}
+                <span className="size-2 animate-pulse rounded-full bg-emerald-500" />{" "}
+                {t("liveTranslate.running")}
               </span>
               <span className="text-muted-foreground">
-                {t.elapsed} {mm}:{ss} · {t.estCost} ≈ US${estCost}
+                {t("liveTranslate.elapsed")} {mm}:{ss} · {t("liveTranslate.estCost")} ≈ US$
+                {estCost}
               </span>
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="w-16 shrink-0 text-xs text-muted-foreground">{t.yourVoice}</span>
+              <span className="w-16 shrink-0 text-xs text-muted-foreground">
+                {t("liveTranslate.yourVoice")}
+              </span>
               <LevelMeter source="translate-in" className="flex-1" />
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-16 shrink-0 text-xs text-muted-foreground">{t.translated}</span>
+              <span className="w-16 shrink-0 text-xs text-muted-foreground">
+                {t("liveTranslate.translated")}
+              </span>
               <LevelMeter source="translate-out" className="flex-1" />
             </div>
 
             <div className="flex flex-col gap-1 border-t pt-2 text-sm">
               <div>
-                <span className="mr-1 text-xs text-muted-foreground">{t.heard}:</span>
+                <span className="mr-1 text-xs text-muted-foreground">
+                  {t("liveTranslate.heard")}:
+                </span>
                 <span>{transcript.input || "…"}</span>
               </div>
               <div>
-                <span className="mr-1 text-xs text-muted-foreground">{t.speaking}:</span>
+                <span className="mr-1 text-xs text-muted-foreground">
+                  {t("liveTranslate.speaking")}:
+                </span>
                 <span className="font-medium">{transcript.output || "…"}</span>
               </div>
             </div>

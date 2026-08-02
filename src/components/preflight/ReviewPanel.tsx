@@ -70,12 +70,20 @@ export function ReviewPanel() {
     openQuestions.length > 0 ||
     rows.some((r) => r.claims.length > 0);
 
-  /** Opening a past recording switches the app into replay AND reloads that
-   *  meeting's own context/link over the current prep, so anything typed here
-   *  would vanish without warning. Ask first when there IS something to lose. */
+  /** Opening a past recording switches the app into the study tense AND
+   *  reloads that meeting's own context/link over the current prep, so
+   *  anything set up here would vanish without warning. A chosen company /
+   *  thread / attendee set IS prep too (⑥) — losing the link silently was the
+   *  original bug, so it gates the confirm the same as typed context. */
   function openMeeting(id: string) {
     const s = useStore.getState();
-    if (s.meetingContext.trim() || s.todos.length > 0) {
+    if (
+      s.meetingContext.trim() ||
+      s.todos.length > 0 ||
+      s.meetingCompanyId ||
+      s.meetingAttendeeIds.length > 0 ||
+      s.meetingTarget.trim()
+    ) {
       setLeavingTo(id);
       return;
     }

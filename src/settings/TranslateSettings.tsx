@@ -7,6 +7,7 @@ import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
 import { log } from "../lib/log";
 import { TRANSLATE_LANGUAGES, TRANSLATE_USD_PER_MINUTE } from "../lib/translateLanguages";
+import { TranslateSwitch } from "../components/TranslateQuickControls";
 import { Flag } from "../components/ui/flag";
 import type { Settings } from "../lib/types";
 import { Button } from "@/components/ui/button";
@@ -30,9 +31,10 @@ interface VirtualMicStatus {
 }
 
 /**
- * Settings → 即時翻譯: the meeting-translation configuration (enable, target
- * language, output device, virtual-mic install). The titlebar 🌐 button is just
- * the on/off switch; everything configurable lives here.
+ * Settings → 即時翻譯: the full meeting-translation configuration (API key,
+ * enable, target language, output device, virtual-mic install). The titlebar
+ * 🌐 menu fronts the quick controls (the same enable switch + target language)
+ * and deep-links here for everything else.
  */
 export function TranslateSettings() {
   const { t } = useI18n();
@@ -112,21 +114,7 @@ export function TranslateSettings() {
             {t("meeting.translate.hint", { rate: TRANSLATE_USD_PER_MINUTE.toFixed(4) })}
           </p>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={settings.meetingTranslateEnabled}
-          onClick={() => patch({ meetingTranslateEnabled: !settings.meetingTranslateEnabled })}
-          className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-            settings.meetingTranslateEnabled ? "bg-emerald-500" : "bg-muted-foreground/30"
-          }`}
-        >
-          <span
-            className={`absolute top-0.5 size-4 rounded-full bg-white shadow transition-all ${
-              settings.meetingTranslateEnabled ? "left-[18px]" : "left-0.5"
-            }`}
-          />
-        </button>
+        <TranslateSwitch />
       </div>
 
       {/* Target language */}
