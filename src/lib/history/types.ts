@@ -63,9 +63,10 @@ export interface HistoryEntry {
    *  this field existed omit it → the brief page generates once on open and saves
    *  the result back, so a given recording only ever pays for it once. */
   brief?: string | null;
-  /** THIS recording's meeting type (which intel template applies). Per-entry on
-   *  purpose — the global settings.meetingType is only the live-meeting default,
-   *  and switching it while reviewing one recording must not leak into others. */
+  /** THIS recording's scenario, frozen at save (which intel template applies).
+   *  Per-entry on purpose — settings.defaultMeetingType only seeds a NEW
+   *  meeting, and switching scenario while reviewing one recording must never
+   *  leak into the default or into other recordings. */
   meetingType?: MeetingType;
   /** Last intel extraction over this recording (its meetingType tells which
    *  template produced it). Saved so reopening doesn't re-spend the eval model. */

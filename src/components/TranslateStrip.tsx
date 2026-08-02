@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ExternalLink, Languages, Pause, Play } from "lucide-react";
 import { useStore } from "../lib/store";
-import { isTauri } from "../lib/tauriEvents";
-import { TRANSLATE_USD_PER_MINUTE } from "../lib/translateLanguages";
+import { formatElapsed, translateCostUsd, useMeetingTranslateElapsed } from "../lib/translateCost";
 import { openInterpreterWindow } from "../lib/liveTranslate";
 import { useI18n } from "../i18n";
 import { log } from "../lib/log";
@@ -18,41 +17,22 @@ import { LevelMeter } from "./LevelMeter";
  */
 export function TranslateStrip() {
   const { t } = useI18n();
-  const status = useStore((s) => s.meetingStatus);
-  const enabled = useStore((s) => s.settings.meetingTranslateEnabled);
   const language = useStore((s) => s.settings.translateTargetLanguage);
 
   const [live, setLive] = useState<{ input: string; output: string }>({ input: "", output: "" });
   const [paused, setPaused] = useState(false);
-  const [elapsedSec, setElapsedSec] = useState(0);
-  const startedAt = useRef<number | null>(null);
 
-  // Meeting-paused counts as active: the strip must survive a titlebar ⏸
-  // (unmounting would reset the cost ticker), it just freezes while paused.
-  const active = (status === "recording" || status === "paused") && enabled && isTauri();
+  // Elapsed/cost from the shared meeting clock (lib/translateCost): while the
+  // MEETING is paused no audio is uploaded (nothing billed), so it holds.
+  const { active, elapsedSec } = useMeetingTranslateElapsed();
 
-  // Elapsed/cost ticker + per-meeting reset (pause state included: the backend
-  // re-arms unpaused on every start). While the MEETING is paused no audio is
-  // uploaded (nothing billed), so the ticker holds instead of counting.
+  // Per-meeting reset (pause state included: the backend re-arms unpaused on
+  // every start).
   useEffect(() => {
     if (!active) {
-      startedAt.current = null;
-      setElapsedSec(0);
       setPaused(false);
       setLive({ input: "", output: "" });
-      return;
     }
-    startedAt.current ??= Date.now();
-    const id = setInterval(() => {
-      if (!startedAt.current) return;
-      if (useStore.getState().meetingStatus === "paused") {
-        // Freeze: shift the baseline forward so paused time never bills.
-        startedAt.current += 1000;
-        return;
-      }
-      setElapsedSec(Math.floor((Date.now() - startedAt.current) / 1000));
-    }, 1000);
-    return () => clearInterval(id);
   }, [active]);
 
   // Live bilingual line + pause sync (the pause state is broadcast so the
@@ -83,10 +63,6 @@ export function TranslateStrip() {
   }, [paused]);
 
   if (!active) return null;
-
-  const mm = String(Math.floor(elapsedSec / 60)).padStart(2, "0");
-  const ss = String(elapsedSec % 60).padStart(2, "0");
-  const cost = ((elapsedSec / 60) * TRANSLATE_USD_PER_MINUTE).toFixed(3);
 
   return (
     <div
@@ -119,7 +95,7 @@ export function TranslateStrip() {
 
       <LevelMeter source="translate-out" className="h-1.5 w-12" />
       <span className="tabular-nums text-muted-foreground">
-        {mm}:{ss} · ${cost}
+        {formatElapsed(elapsedSec)} · ${translateCostUsd(elapsedSec)}
       </span>
 
       <button

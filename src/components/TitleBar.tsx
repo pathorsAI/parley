@@ -11,7 +11,6 @@ import { toast } from "sonner";
 import { stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
 import { beginMeeting } from "../lib/meeting/start";
-import { openLiveTranslateWindow } from "../lib/liveTranslate";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LevelMeter } from "./LevelMeter";
 import { McpStatusChip } from "./McpStatusChip";
+import { TranslateMenu } from "./TranslateMenu";
 import { ReplayFolderChip } from "./ReplayFolderChip";
 import { PostMeetingReviewButton } from "./accounts/PostMeetingReviewButton";
 import { StudyGenerationChip } from "./study/StudyGenerationChip";
@@ -854,16 +854,9 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           </Suspense>
         )}
         <McpStatusChip />
-        <Button
-          size="icon"
-          variant="ghost"
-          className="h-8 w-8"
-          aria-label={t("titlebar.liveTranslate")}
-          title={t("titlebar.liveTranslate")}
-          onClick={() => openLiveTranslateWindow().catch((error) => log.error("live-translate: open window failed", { error: String(error) }))}
-        >
-          <Languages className="size-4" />
-        </Button>
+        {/* ONE 🌐 entry (R4): the popover fronts the meeting-translate switch,
+            language, HUD pop-out, the standalone window and the settings link. */}
+        <TranslateMenu />
 
         {/* History and Settings are ROUTES in this window now (#195). While a
             meeting runs the screen belongs to the call, so these two are
@@ -892,7 +885,9 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             className="h-8 w-8"
             aria-label={t("common.settings")}
             disabled={meetingActive}
-            onClick={openSettingsRoute}
+            // Arrow, not a bare reference: openSettings takes an optional
+            // category, and a passed-through MouseEvent would land in it.
+            onClick={() => openSettingsRoute()}
           >
             <Settings className="size-4" />
           </Button>

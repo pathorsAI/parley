@@ -1,6 +1,7 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "./tauriEvents";
 import { log } from "./log";
+import { useStore, meetingElapsedMs } from "./store";
 
 /** Emitted by the native "Translate → Live Translation" menu item (see menu.rs). */
 const LIVE_TRANSLATE_MENU = "menu://live-translate";
@@ -60,8 +61,12 @@ export async function openInterpreterWindow(): Promise<void> {
     return;
   }
   log.info("interpreter: open floating window");
+  // Seed the HUD's cost ticker with the meeting's pause-compacted clock: the
+  // HUD webview has its own (empty) store, so the billed-time base must travel
+  // in the URL — otherwise the ticker restarts from zero on every pop-out.
+  const elapsedMs = Math.floor(meetingElapsedMs(useStore.getState()));
   const win = new WebviewWindow("interpreter", {
-    url: "index.html#interpreter",
+    url: `index.html?translateElapsedMs=${elapsedMs}#interpreter`,
     title: "Parley — Interpreter",
     width: 380,
     height: 132,

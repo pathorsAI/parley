@@ -182,6 +182,21 @@ export type AppMode =
   | "library"
   | "settings";
 
+/** Left-nav panels of the Settings route (see settings/SettingsApp.tsx). */
+export type SettingsCategory =
+  | "basic"
+  | "account"
+  | "provider"
+  | "transcription"
+  | "translate"
+  | "voiceTyping"
+  | "permissions"
+  | "evaluations"
+  | "todos"
+  | "stages"
+  | "mcp"
+  | "usage";
+
 /**
  * Which node of the one tree the library route is showing.
  *
@@ -365,7 +380,10 @@ interface ParleyState {
   // ── Transcript import (issue #130 text-ingest: .txt → history entry) ────────
   /** Absolute paths queued in the transcript-import dialog; null = closed. */
   transcriptImportPaths: string[] | null;
-  openTranscriptImport: (paths: string[]) => void;
+  /** Company pre-link carried by a company-page import door (R7): the dialog
+   *  stamps it (plus the company's paired folder) onto every saved entry. */
+  transcriptImportCompanyId: string | null;
+  openTranscriptImport: (paths: string[], companyId?: string | null) => void;
   closeTranscriptImport: () => void;
 
   // ── Unified analysis (shared by LIVE + REPLAY) ──────────────────────────────
@@ -434,6 +452,13 @@ interface ParleyState {
   /** Lazy per-finding solution cache, keyed by TimelineEvent.id. */
   findingSolutions: Record<string, FindingSolutionEntry>;
   setFindingSolution: (id: string, patch: Partial<FindingSolutionEntry>) => void;
+
+  /** System-audio tap failed for THIS meeting: mic-only capture, the other
+   *  side won't be transcribed. Drives the persistent live banner (⑥) — a
+   *  10-second toast is gone before the user notices the silence. Reset on
+   *  meeting start; dismissable. */
+  systemAudioWarning: boolean;
+  setSystemAudioWarning: (on: boolean) => void;
 
   /** Auto-run the analysis on an interval while recording (LIVE; default off). */
   autoAnalyze: boolean;
@@ -562,8 +587,12 @@ interface ParleyState {
   /** Show the recordings library at `selection` (blocked while recording). */
   openLibrary: (selection: LibrarySelection) => void;
   librarySelection: LibrarySelection;
-  /** Show Settings as a route in this window (blocked while recording). */
-  openSettings: () => void;
+  /** Show Settings as a route in this window (blocked while recording).
+   *  `category` deep-links a nav panel (e.g. the titlebar 🌐 menu → 翻譯). */
+  openSettings: (category?: SettingsCategory) => void;
+  /** One-shot deep-link target for the Settings route — SettingsApp consumes
+   *  (and clears) it on arrival, so later manual nav isn't overridden. */
+  settingsCategory: SettingsCategory | null;
   /** Go back to the recording that is already loaded. Navigating the tree away
    *  from a loaded recording used to strand it: nothing on screen still pointed
    *  at it, and only exitReplay (which THROWS IT AWAY) was reachable. */
@@ -626,6 +655,7 @@ export const useStore = create<ParleyState>()(
   persist(
     (set) => ({
       appMode: "home",
+      settingsCategory: null,
       accountsCompanyId: null,
       accountsFocus: "intel",
       librarySelection: { kind: "personal", folderId: null },
@@ -641,6 +671,7 @@ export const useStore = create<ParleyState>()(
       ingestWizardError: null,
       ingestAudioPath: null,
       transcriptImportPaths: null,
+      transcriptImportCompanyId: null,
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
@@ -730,8 +761,12 @@ export const useStore = create<ParleyState>()(
     set((s) =>
       isMeetingActive(s.meetingStatus) ? {} : { appMode: "library", librarySelection }
     ),
-  openSettings: () =>
-    set((s) => (isMeetingActive(s.meetingStatus) ? {} : { appMode: "settings" })),
+  openSettings: (category) =>
+    set((s) =>
+      isMeetingActive(s.meetingStatus)
+        ? {}
+        : { appMode: "settings", settingsCategory: category ?? null }
+    ),
   showReplay: () => set((s) => (s.replay ? { appMode: "study" } : {})),
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
@@ -882,8 +917,10 @@ export const useStore = create<ParleyState>()(
     set({ ingestWizardStep: step, ingestWizardError: error }),
   closeIngestWizard: () => set({ ingestWizardOpen: false, ingestAudioPath: null }),
 
-  openTranscriptImport: (paths) => set({ transcriptImportPaths: paths }),
-  closeTranscriptImport: () => set({ transcriptImportPaths: null }),
+  openTranscriptImport: (paths, companyId = null) =>
+    set({ transcriptImportPaths: paths, transcriptImportCompanyId: companyId }),
+  closeTranscriptImport: () =>
+    set({ transcriptImportPaths: null, transcriptImportCompanyId: null }),
 
   // Replace the findings list, keeping the selection + cached solutions of any
   // finding that STILL EXISTS in the new list. During streaming, partials commit
@@ -1007,6 +1044,8 @@ export const useStore = create<ParleyState>()(
     }),
   pushDeliveryNudge: (n) => set({ deliveryNudge: n }),
   clearDeliveryNudge: () => set({ deliveryNudge: null }),
+  systemAudioWarning: false,
+  setSystemAudioWarning: (systemAudioWarning) => set({ systemAudioWarning }),
   setDeliveryAssessment: (a) => set({ deliveryAssessment: a }),
   setDeliveryStatus: (s) => set({ deliveryStatus: s }),
 
@@ -1085,6 +1124,7 @@ export const useStore = create<ParleyState>()(
       filledPauseCount: 0,
       filledPauseCounted: {},
       deliveryNudge: null,
+      systemAudioWarning: false,
       };
     });
   },

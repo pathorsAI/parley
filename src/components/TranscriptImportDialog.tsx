@@ -13,6 +13,8 @@ import {
   listLocalFolders,
   type Folder,
 } from "../lib/history/folders";
+import { ensureCompanyFolder } from "../lib/accounts/folders";
+import { useAccounts } from "../lib/accounts/store";
 import { log } from "../lib/log";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
@@ -39,6 +41,7 @@ const ROOT = "__root__";
 export function TranscriptImportDialog() {
   const { t } = useI18n();
   const paths = useStore((s) => s.transcriptImportPaths);
+  const companyId = useStore((s) => s.transcriptImportCompanyId);
   const close = useStore((s) => s.closeTranscriptImport);
 
   const [files, setFiles] = useState<PreparedTranscriptFile[] | null>(null);
@@ -56,7 +59,13 @@ export function TranscriptImportDialog() {
     }
     let alive = true;
     setFiles(null);
-    setFolderId(ROOT);
+    // A company door pre-links its company (R7): default the target folder to
+    // the company's paired folder (created on demand) so the entries file
+    // under the customer, mirroring where a pre-linked audio import lands.
+    const company = companyId
+      ? useAccounts.getState().companies.find((c) => c.id === companyId)
+      : undefined;
+    setFolderId(company ? ensureCompanyFolder(company) : ROOT);
     setFolders(listLocalFolders());
     setNewFolderOpen(false);
     setNewFolderName("");
@@ -66,7 +75,7 @@ export function TranscriptImportDialog() {
     return () => {
       alive = false;
     };
-  }, [paths]);
+  }, [paths, companyId]);
 
   if (!paths) return null;
 
@@ -105,6 +114,9 @@ export function TranscriptImportDialog() {
           durationMs: parsed.durationMs,
           createdAt: f.createdAt,
           folderId: target,
+          // The pre-link sticks even when the user re-targets the folder —
+          // same contract as the audio path (folder override ≠ unlink).
+          companyId,
         });
         if (id) imported.push(id);
       }

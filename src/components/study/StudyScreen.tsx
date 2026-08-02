@@ -16,6 +16,7 @@ import { useScenarioSet } from "../../lib/accounts/useStageSet";
 import { BUILTIN_SCENARIO_IDS, type SlotDef } from "../../lib/accounts/bundleFile";
 import { ActionItemsPanel } from "../replay/ActionItemsPanel";
 import { AskPanel } from "../sidebar/AskPanel";
+import { StudyLinkBar } from "./StudyLinkBar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -105,6 +106,7 @@ function ReportPage() {
     <div className="relative min-h-0 flex-1">
       <ScrollArea className="h-full">
         <div ref={scrollRef} className="mx-auto max-w-2xl px-6 py-5">
+          <StudyLinkBar />
           <div className="flex flex-col gap-8 pb-10">
             <ReportSection id="study-brief" title={t("study.brief")}>
               <BriefSection onSeek={seek} />

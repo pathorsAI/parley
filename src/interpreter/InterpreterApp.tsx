@@ -5,7 +5,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Languages, Pause, Play, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isTauri } from "../lib/tauriEvents";
-import { TRANSLATE_LANGUAGES, TRANSLATE_USD_PER_MINUTE } from "../lib/translateLanguages";
+import { TRANSLATE_LANGUAGES } from "../lib/translateLanguages";
+import { formatElapsed, translateCostUsd } from "../lib/translateCost";
 import { useI18n } from "../i18n";
 import { Flag } from "../components/ui/flag";
 import { LevelMeter } from "../components/LevelMeter";
@@ -28,9 +29,16 @@ export function InterpreterApp() {
   const [live, setLive] = useState<{ input: string; output: string }>({ input: "", output: "" });
   const [paused, setPaused] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
-  const startedAt = useRef(Date.now());
+  // The opener passes the meeting's translate elapsed in the URL (this webview
+  // has its own store, so it can't read the meeting clock directly) — the
+  // ticker counts from the translate session's start, matching TranslateStrip,
+  // not from whenever this window happened to open.
+  const startedAt = useRef(
+    Date.now() -
+      (Number(new URLSearchParams(window.location.search).get("translateElapsedMs")) || 0)
+  );
 
-  // Cost/elapsed ticker (from window open — close enough for a HUD).
+  // Cost/elapsed ticker, seeded from the meeting clock above.
   useEffect(() => {
     const id = setInterval(
       () => setElapsedSec(Math.floor((Date.now() - startedAt.current) / 1000)),
@@ -68,9 +76,6 @@ export function InterpreterApp() {
     invoke("set_translate_paused", { paused: !paused }).catch(() => {});
   }, [paused]);
 
-  const mm = String(Math.floor(elapsedSec / 60)).padStart(2, "0");
-  const ss = String(elapsedSec % 60).padStart(2, "0");
-  const cost = ((elapsedSec / 60) * TRANSLATE_USD_PER_MINUTE).toFixed(3);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
@@ -94,7 +99,7 @@ export function InterpreterApp() {
         <LevelMeter source="translate-out" className="h-1.5 w-10" />
         <span className="flex-1" data-tauri-drag-region />
         <span className="tabular-nums text-muted-foreground">
-          {mm}:{ss} · ${cost}
+          {formatElapsed(elapsedSec)} · ${translateCostUsd(elapsedSec)}
         </span>
         <button
           type="button"

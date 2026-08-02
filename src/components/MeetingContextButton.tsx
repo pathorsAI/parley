@@ -19,10 +19,6 @@ import { MeetingLinkSection } from "./accounts/MeetingLinkSection";
 export function MeetingContextButton({ className }: Readonly<{ className?: string }>) {
   const { t } = useI18n();
   const hasContext = useStore((s) => !!s.meetingContext.trim());
-  const meetingType = useStore((s) => s.meetingType);
-  // Scenario system: every scenario (builtin or custom) can link the mini-CRM;
-  // only "general" (no board) stays personal.
-  const businessType = meetingType !== "general";
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -35,22 +31,41 @@ export function MeetingContextButton({ className }: Readonly<{ className?: strin
         {t("meeting.contextButton")}
         {hasContext && <span className="size-1.5 rounded-full bg-emerald-400" />}
       </button>
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent
-          closeLabel={t("common.done")}
-          title={t("meeting.contextButton")}
-          footer={
-            <Button size="sm" className="h-8" onClick={() => setOpen(false)}>
-              {t("common.done")}
-            </Button>
-          }
-        >
-          <div className="px-4 py-3">
-            {businessType && <MeetingLinkSection />}
-            <MeetingContextField rows={5} />
-          </div>
-        </SheetContent>
-      </Sheet>
+      <MeetingContextSheet open={open} onOpenChange={setOpen} />
     </>
+  );
+}
+
+/** The context sheet itself, controlled — so surfaces that already have their
+ *  own trigger (the study link bar's "…" menu) can open it without rendering a
+ *  second titlebar-style button. */
+export function MeetingContextSheet({
+  open,
+  onOpenChange,
+}: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void }>) {
+  const { t } = useI18n();
+  const meetingType = useStore((s) => s.meetingType);
+  const readOnly = useStore((s) => s.replayReadOnly);
+  // Scenario system: every scenario (builtin or custom) can link the mini-CRM;
+  // only "general" (no board) stays personal. A read-only org recording is
+  // someone else's — the link can't be written back, so don't offer it.
+  const businessType = meetingType !== "general" && !readOnly;
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        closeLabel={t("common.done")}
+        title={t("meeting.contextButton")}
+        footer={
+          <Button size="sm" className="h-8" onClick={() => onOpenChange(false)}>
+            {t("common.done")}
+          </Button>
+        }
+      >
+        <div className="px-4 py-3">
+          {businessType && <MeetingLinkSection />}
+          <MeetingContextField rows={5} />
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }

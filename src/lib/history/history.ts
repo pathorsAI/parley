@@ -412,6 +412,8 @@ export interface TranscriptImportSave {
   durationMs: number;
   createdAt: number;
   folderId: string | null;
+  /** Explicit company pre-link from a company import door (R7); null = none. */
+  companyId: string | null;
 }
 
 /**
@@ -419,9 +421,11 @@ export interface TranscriptImportSave {
  * D11: source "upload", audio null — replay's audio-less degradation already
  * handles it). Unlike {@link saveUploadToHistory} this never snapshots the live
  * store: a bulk import must not inherit whatever meeting context/company the
- * store happens to hold. Saved with `analyzed: false` and no findings, so the
- * study pipeline analyzes it on FIRST OPEN — importing a folder's worth of
- * transcripts spends zero model calls up front. Returns the new entry id.
+ * store happens to hold — a company link arrives only as the EXPLICIT
+ * `save.companyId` a company import door passed. Saved with `analyzed: false`
+ * and no findings, so the study pipeline analyzes it on FIRST OPEN — importing
+ * a folder's worth of transcripts spends zero model calls up front. Returns
+ * the new entry id.
  */
 export async function saveTranscriptToHistory(save: TranscriptImportSave): Promise<string | null> {
   if (!isTauri()) return null;
@@ -442,6 +446,7 @@ export async function saveTranscriptToHistory(save: TranscriptImportSave): Promi
     meetingFloor: "",
     audio: null,
     folderId: save.folderId,
+    companyId: save.companyId,
   };
   await persist(entry, null, /* compress */ false);
   // The import usually starts FROM the History window — tell its grid to re-list.
@@ -527,6 +532,40 @@ export async function persistStudyOutputs(): Promise<void> {
     intel: !!updated.intel,
     meetingType: updated.meetingType,
   });
+}
+
+/**
+ * Persist the loaded entry's ACCOUNTS LINK (company/thread/attendees) — the
+ * study report's after-the-fact "掛上公司/戰線". Same read-modify-write as
+ * {@link persistStudyOutputs}: only the link fields are patched, so a
+ * concurrently generating brief/intel can't be clobbered by a stale snapshot.
+ * The rewritten summary.json carries the new companyId, which is what the
+ * company page's meeting timeline and the library tree filter on. No-op for
+ * read-only org recordings (someone else's entry) and when nothing is loaded.
+ */
+export async function persistEntryLink(): Promise<void> {
+  const s = useStore.getState();
+  const id = s.loadedHistoryId;
+  if (!isTauri() || !id || s.replayReadOnly) return;
+  // An upload's initial save may still be compressing — wait so the entry exists.
+  await Promise.resolve(uploadSaveInFlight).catch(() => {});
+  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+  const updated: HistoryEntry = {
+    ...meta,
+    companyId: s.meetingCompanyId,
+    threadId: s.meetingThreadId,
+    attendeePersonIds: s.meetingAttendeeIds,
+  };
+  await invoke("save_history_entry", {
+    id,
+    summaryJson: JSON.stringify(buildSummary(updated)),
+    metaJson: JSON.stringify(updated),
+    audioSourcePath: null, // leave the recording untouched
+    compress: false,
+  });
+  await emitHistoryUpdated(id); // library / company timeline re-list on the new companyId
+  pushToCloud(id); // sync the new link (best-effort; gated by the sync toggle)
+  log.info("history: entry link saved", { id, companyId: updated.companyId ?? null });
 }
 
 // ── List / read / delete ─────────────────────────────────────────────────────
