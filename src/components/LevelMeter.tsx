@@ -25,11 +25,22 @@ export const LevelMeter = ({
 
   useEffect(() => {
     if (!isTauri()) return;
+    // listen() resolves async: when cleanup wins the race (StrictMode double
+    // effects, fast eventName/source flips), the subscription must be dropped
+    // ON resolution — the same late-unlisten pattern every other listener in
+    // the app uses (IngestWizard, Onboarding, VoiceDiarizeDialog…).
+    let alive = true;
     let unlisten: (() => void) | undefined;
     listen<LevelPayload>(eventName, (e) => {
       if (e.payload.source === source) setLevel(e.payload.level);
-    }).then((fn) => (unlisten = fn));
-    return () => unlisten?.();
+    }).then((u) => {
+      if (alive) unlisten = u;
+      else u();
+    });
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
   }, [eventName, source]);
 
   // Smoothly decay toward 0 when events stop arriving.
