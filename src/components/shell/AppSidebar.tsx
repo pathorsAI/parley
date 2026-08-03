@@ -11,7 +11,6 @@ import {
   Mic,
   Pencil,
   Plus,
-  Settings,
   Swords,
   Trash2,
   UsersRound,
@@ -52,7 +51,6 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   const selection = useStore((s) => s.librarySelection);
   const openAccounts = useStore((s) => s.openAccounts);
   const openLibrary = useStore((s) => s.openLibrary);
-  const openSettings = useStore((s) => s.openSettings);
   const openHome = useStore((s) => s.openHome);
   const enterPreflight = useStore((s) => s.enterPreflight);
 
@@ -394,14 +392,6 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         </>
       )}
 
-      <div className="mt-auto shrink-0 pt-2">
-        <Row
-          icon={<Settings className="size-3.5" />}
-          label={t("common.settings")}
-          active={appMode === "settings"}
-          onSelect={openSettings}
-        />
-      </div>
     </nav>
   );
 }

@@ -9,7 +9,7 @@ import { log } from "../lib/log";
 import { Check, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, Plus, ScrollText, Sun, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
-import { broadcastSettings } from "../lib/settingsSync";
+import { broadcastSettings, SETTINGS_NAVIGATE_EVENT } from "../lib/settingsSync";
 import { signInWithGoogle, signOut, CloudError } from "../lib/cloud/client";
 import { CLOUD_ENABLED } from "../lib/flags";
 import { Flag } from "../components/ui/flag";
@@ -105,28 +105,42 @@ const NAV: {
   { id: "usage", labelKey: "settings.nav.usage", keywordsKey: "settings.kw.usage" },
 ];
 
+/** The nav panel a `#settings/<category>` deep-link hash asks for, if valid. */
+function categoryFromHash(): Category | null {
+  const seg = window.location.hash.replace(/^#settings\/?/, "");
+  return NAV.some((n) => n.id === seg) ? (seg as Category) : null;
+}
+
 /**
- * Settings. Renders both as its own OS window (`#settings`, still how a
- * SECONDARY window reaches it) and — since #195 — as a route inside the main
- * window's shell. `embedded` is the difference between the two: a route fills
- * the pane it was given and leaves the window chrome, the toaster and the
- * release-notes dialog to the shell that already owns them.
+ * Settings — its own OS window (`#settings`), opened from any window via
+ * lib/nav.ts. Deep-links land on a specific nav panel two ways: a fresh window
+ * reads the category off its URL hash; an already-open window gets it pushed
+ * over the `settings://navigate` event.
  */
-export function SettingsApp({ embedded = false }: Readonly<{ embedded?: boolean }> = {}) {
+export function SettingsApp() {
   const { t } = useI18n();
   useThemePreference();
 
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
-  const [cat, setCat] = useState<Category>("basic");
-  // Deep-link from another surface (openSettings("translate") etc): jump to
-  // the requested panel once, then clear so manual nav isn't overridden.
-  const requestedCat = useStore((s) => s.settingsCategory);
+  const [cat, setCat] = useState<Category>(() => categoryFromHash() ?? "basic");
   useEffect(() => {
-    if (!requestedCat) return;
-    setCat(requestedCat);
-    useStore.setState({ settingsCategory: null });
-  }, [requestedCat]);
+    if (!isTauri()) return;
+    // Guard the cleanup-beats-listen() race: if unmount wins, detach the
+    // listener the moment the promise resolves instead of leaving it attached.
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    listen<Category>(SETTINGS_NAVIGATE_EVENT, (e) => {
+      if (NAV.some((n) => n.id === e.payload)) setCat(e.payload);
+    }).then((un) => {
+      if (active) unlisten = un;
+      else un();
+    }).catch((error) => log.warn("settings: navigate listener failed", { error: String(error) }));
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
   // Nav search (⑥): label OR translated keywords, so "金鑰"/"key" finds the
   // provider panel and "麥克風"/"mic" finds transcription.
   const [navQuery, setNavQuery] = useState("");
@@ -288,12 +302,8 @@ export function SettingsApp({ embedded = false }: Readonly<{ embedded?: boolean 
   }
 
   return (
-    <div
-      className={`flex bg-background text-foreground ${
-        embedded ? "min-h-0 flex-1" : "h-screen"
-      }`}
-    >
-      {!embedded && <Toaster />}
+    <div className="flex h-screen bg-background text-foreground">
+      <Toaster />
       {releaseNotes && (
         <ReleaseNotesDialog
           notes={releaseNotes}
@@ -477,9 +487,7 @@ export function SettingsApp({ embedded = false }: Readonly<{ embedded?: boolean 
                   patch({ onboarded: false, onboardingStep: 0 });
                   // The onboarding renders on the MAIN window — bring it forward
                   // and close this Settings window so it isn't hidden behind it.
-                  // Embedded, Settings IS the main window: onboarding already
-                  // covers it, so there is nothing to focus or close.
-                  if (embedded || !isTauri()) return;
+                  if (!isTauri()) return;
                   try {
                     const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
                     const { getCurrentWindow } = await import("@tauri-apps/api/window");

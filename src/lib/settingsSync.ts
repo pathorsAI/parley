@@ -1,5 +1,5 @@
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { useStore } from "./store";
+import { useStore, type SettingsCategory } from "./store";
 import { isTauri } from "./tauriEvents";
 import { log } from "./log";
 import type { Settings } from "./types";
@@ -7,25 +7,32 @@ import type { CloudAuth } from "./cloud/types";
 
 const SETTINGS_EVENT = "settings://updated";
 
+/** Deep-link broadcast for an ALREADY-open Settings window: the payload is the
+ *  nav category to jump to (a fresh window gets it via the URL hash instead). */
+export const SETTINGS_NAVIGATE_EVENT = "settings://navigate";
+
 /**
  * Open (or focus) the dedicated Settings window. It loads the same bundle at the
- * `#settings` hash, which main.tsx routes to <SettingsApp/>. Falls back to a hash
+ * `#settings` hash (optionally `#settings/<category>` to land on a specific nav
+ * panel), which main.tsx routes to <SettingsApp/>. Falls back to a hash
  * navigation when not running under Tauri (plain browser dev).
  */
-export async function openSettingsWindow(): Promise<void> {
+export async function openSettingsWindow(category?: SettingsCategory): Promise<void> {
+  const hash = category ? `settings/${category}` : "settings";
   if (!isTauri()) {
-    window.location.hash = "settings";
+    window.location.hash = hash;
     return;
   }
   const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
   const existing = await WebviewWindow.getByLabel("settings");
-  log.info("settings: open window", { existing: !!existing });
+  log.info("settings: open window", { existing: !!existing, category });
   if (existing) {
     await existing.setFocus();
+    if (category) await emit(SETTINGS_NAVIGATE_EVENT, category);
     return;
   }
   const win = new WebviewWindow("settings", {
-    url: "index.html#settings",
+    url: `index.html#${hash}`,
     title: "Parley Settings",
     width: 880,
     height: 760,

@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { stopMockStream } from "../lib/mockStream";
 import { isTauri } from "../lib/tauriEvents";
 import { beginMeeting } from "../lib/meeting/start";
+import { openSettings } from "../lib/nav";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import {
@@ -430,8 +431,8 @@ function PrimaryAction({
       </Button>
     );
   }
-  // "accounts", "library" and "settings" have no exit button: the tree beside
-  // them is always on screen, so leaving is picking somewhere else (#195).
+  // "accounts" and "library" have no exit button: the tree beside them is
+  // always on screen, so leaving is picking somewhere else (#195).
   if (mode === "preflight") {
     // Starting happens in the pre-flight footer, next to what it commits to;
     // up here there is only the way back out.
@@ -552,7 +553,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const exitReplay = useStore((s) => s.exitReplay);
   const openAccounts = useStore((s) => s.openAccounts);
   const openLibrary = useStore((s) => s.openLibrary);
-  const openSettingsRoute = useStore((s) => s.openSettings);
   const showReplay = useStore((s) => s.showReplay);
   const replayName = useStore((s) => s.replay?.name ?? null);
   const enterPreflight = useStore((s) => s.enterPreflight);
@@ -858,13 +858,12 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             language, HUD pop-out, the standalone window and the settings link. */}
         <TranslateMenu />
 
-        {/* History and Settings are ROUTES in this window now (#195). While a
-            meeting runs the screen belongs to the call, so these two are
-            HONESTLY disabled (R2) — greyed with a reason — instead of looking
-            clickable and silently doing nothing. */}
-        {/* The wrapping spans exist because a disabled button has
-            pointer-events:none — the reason-tooltip must live on a hoverable
-            parent or it never shows. */}
+        {/* History is a ROUTE in this window (#195). While a meeting runs the
+            screen belongs to the call, so it is HONESTLY disabled (R2) —
+            greyed with a reason — instead of looking clickable and silently
+            doing nothing. The wrapping span exists because a disabled button
+            has pointer-events:none — the reason-tooltip must live on a
+            hoverable parent or it never shows. */}
         <span title={meetingActive ? t("titlebar.lockedWhileMeeting") : t("titlebar.history")}>
           <Button
             size="icon"
@@ -878,20 +877,21 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           </Button>
         </span>
 
-        <span title={meetingActive ? t("titlebar.lockedWhileMeeting") : t("common.settings")}>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-8 w-8"
-            aria-label={t("common.settings")}
-            disabled={meetingActive}
-            // Arrow, not a bare reference: openSettings takes an optional
-            // category, and a passed-through MouseEvent would land in it.
-            onClick={() => openSettingsRoute()}
-          >
-            <Settings className="size-4" />
-          </Button>
-        </span>
+        {/* Settings is its own OS window, so unlike History it never takes the
+            screen from a live call — no meeting lock. This gear is the ONE
+            settings entry in the app (the sidebar deliberately has none). */}
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-8 w-8"
+          aria-label={t("common.settings")}
+          title={t("common.settings")}
+          // Arrow, not a bare reference: openSettings takes an optional
+          // category, and a passed-through MouseEvent would land in it.
+          onClick={() => openSettings()}
+        >
+          <Settings className="size-4" />
+        </Button>
       </div>
     </header>
   );
