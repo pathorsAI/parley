@@ -7,6 +7,7 @@ import { isTauri } from "../lib/tauriEvents";
 import { log } from "../lib/log";
 import { formatElapsed, translateCostUsd, useMeetingTranslateElapsed } from "../lib/translateCost";
 import { openInterpreterWindow, openLiveTranslateWindow } from "../lib/liveTranslate";
+import { openSettings } from "../lib/nav";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -59,7 +60,6 @@ export function TranslateMenu() {
   const { t } = useI18n();
   const enabled = useStore((s) => s.settings.meetingTranslateEnabled);
   const status = useStore((s) => s.meetingStatus);
-  const openSettingsRoute = useStore((s) => s.openSettings);
   const meetingActive = status === "recording" || status === "paused";
   const { active: translating, elapsedSec } = useMeetingTranslateElapsed();
   const [open, setOpen] = useState(false);
@@ -152,12 +152,12 @@ export function TranslateMenu() {
         </div>
 
         <div className="border-t p-1">
+          {/* Settings opens as its own OS window, so it works mid-call too —
+              no meeting lock, unlike the routes that would take the screen. */}
           <MenuAction
             icon={Settings2}
-            disabled={meetingActive}
-            hint={t("titlebar.lockedWhileMeeting")}
             onClick={() => {
-              openSettingsRoute("translate");
+              openSettings("translate");
               setOpen(false);
             }}
           >

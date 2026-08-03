@@ -168,10 +168,12 @@ const DEFAULT_SETTINGS: Settings = {
  * screen (except while a meeting owns it), so "accounts" and "library" are two
  * views of the same tree rather than two windows.
  *
- * "library" (the recordings grid) and "settings" used to be their own OS
- * windows. Two windows meant two sidebars — a company tree here, a folder tree
- * there — which is why the company a meeting was linked to and the folder it
- * saved into read as unrelated things even though the data layer pairs them 1:1.
+ * "library" (the recordings grid) used to be its own OS window. Two windows
+ * meant two sidebars — a company tree here, a folder tree there — which is why
+ * the company a meeting was linked to and the folder it saved into read as
+ * unrelated things even though the data layer pairs them 1:1. Settings is NOT
+ * a route: it is its own OS window (lib/nav.ts → openSettingsWindow), so
+ * tweaking a knob never navigates the shell away from what it was showing.
  */
 export type AppMode =
   | "home"
@@ -179,10 +181,9 @@ export type AppMode =
   | "live"
   | "study"
   | "accounts"
-  | "library"
-  | "settings";
+  | "library";
 
-/** Left-nav panels of the Settings route (see settings/SettingsApp.tsx). */
+/** Left-nav panels of the Settings window (see settings/SettingsApp.tsx). */
 export type SettingsCategory =
   | "basic"
   | "account"
@@ -587,12 +588,6 @@ interface ParleyState {
   /** Show the recordings library at `selection` (blocked while recording). */
   openLibrary: (selection: LibrarySelection) => void;
   librarySelection: LibrarySelection;
-  /** Show Settings as a route in this window (blocked while recording).
-   *  `category` deep-links a nav panel (e.g. the titlebar 🌐 menu → 翻譯). */
-  openSettings: (category?: SettingsCategory) => void;
-  /** One-shot deep-link target for the Settings route — SettingsApp consumes
-   *  (and clears) it on arrival, so later manual nav isn't overridden. */
-  settingsCategory: SettingsCategory | null;
   /** Go back to the recording that is already loaded. Navigating the tree away
    *  from a loaded recording used to strand it: nothing on screen still pointed
    *  at it, and only exitReplay (which THROWS IT AWAY) was reachable. */
@@ -655,7 +650,6 @@ export const useStore = create<ParleyState>()(
   persist(
     (set) => ({
       appMode: "home",
-      settingsCategory: null,
       accountsCompanyId: null,
       accountsFocus: "intel",
       librarySelection: { kind: "personal", folderId: null },
@@ -760,12 +754,6 @@ export const useStore = create<ParleyState>()(
   openLibrary: (librarySelection) =>
     set((s) =>
       isMeetingActive(s.meetingStatus) ? {} : { appMode: "library", librarySelection }
-    ),
-  openSettings: (category) =>
-    set((s) =>
-      isMeetingActive(s.meetingStatus)
-        ? {}
-        : { appMode: "settings", settingsCategory: category ?? null }
     ),
   showReplay: () => set((s) => (s.replay ? { appMode: "study" } : {})),
   setNegotiationField: (field, value) => set({ [field]: value }),

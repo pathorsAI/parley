@@ -21,10 +21,6 @@ const PreflightScreen = lazy(() =>
 const LibraryScreen = lazy(() =>
   import("../library/LibraryScreen").then((m) => ({ default: m.LibraryScreen }))
 );
-const SettingsApp = lazy(() =>
-  import("../../settings/SettingsApp").then((m) => ({ default: m.SettingsApp }))
-);
-
 /**
  * The app shell (issue #195): one persistent left tree, and the route beside it.
  *
@@ -33,8 +29,9 @@ const SettingsApp = lazy(() =>
  *   - a RUNNING meeting (the live coach owns the window; the account dossier is
  *     still reachable mid-call through the titlebar sheet), and
  *   - pre-flight, which is a focused three-column commitment to one call.
- * Everything else — live idle, a loaded recording, a company, the library,
- * settings — keeps the tree on screen, so nothing is a mode you have to exit.
+ * Everything else — live idle, a loaded recording, a company, the library —
+ * keeps the tree on screen, so nothing is a mode you have to exit. (Settings is
+ * not a route here: it opens as its own OS window, see lib/nav.ts.)
  */
 export function AppShell() {
   const appMode = useStore((s) => s.appMode);
@@ -102,13 +99,6 @@ function RouteContent({
     return (
       <Suspense fallback={null}>
         <LibraryScreen tree={tree} />
-      </Suspense>
-    );
-  }
-  if (mode === "settings") {
-    return (
-      <Suspense fallback={null}>
-        <SettingsApp embedded />
       </Suspense>
     );
   }
