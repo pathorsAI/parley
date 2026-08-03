@@ -36,11 +36,16 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const recent = tree.summaries.slice(0, 6);
   const locale = language === "en" ? "en-US" : "zh-TW";
 
+  // Staged entrance: sections land in reading order (start → triage → recent),
+  // then the recent rows cascade. Delays are inline so the sequence stays put
+  // when a section is conditionally absent.
+  const delay = (ms: number) => ({ animationDelay: `${ms}ms` });
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex max-w-2xl flex-col gap-8 px-6 py-10">
         {/* ── Start ─────────────────────────────────────────────────────── */}
-        <section className="flex flex-col gap-3">
+        <section className="animate-fade-up flex flex-col gap-3">
           <h1 className="text-lg font-semibold">
             {userName ? t("home.greetingNamed", { name: userName }) : t("home.greeting")}
           </h1>
@@ -83,7 +88,7 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
 
         {/* ── Triage backlog: conflicts queue, they must stay visible ────── */}
         {triage.length > 0 && (
-          <section className="flex flex-col gap-1.5">
+          <section className="animate-fade-up flex flex-col gap-1.5" style={delay(90)}>
             <h2 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
               {t("home.triage")}
             </h2>
@@ -106,15 +111,21 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
 
         {/* ── Recent recordings ───────────────────────────────────────────── */}
         <section className="flex flex-col gap-1.5">
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+          <h2
+            className="animate-fade-up text-[11px] font-bold uppercase tracking-wider text-muted-foreground"
+            style={delay(180)}
+          >
             {t("home.recent")}
           </h2>
           {recent.length === 0 && (
-            <p className="rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
+            <p
+              className="animate-fade-up rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground"
+              style={delay(220)}
+            >
               {t("home.emptyRecordings")}
             </p>
           )}
-          {recent.map((e) => {
+          {recent.map((e, i) => {
             const company = e.companyId
               ? acc.companies.find((c) => c.id === e.companyId)
               : undefined;
@@ -128,7 +139,8 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
                     toast.error(String(err instanceof Error ? err.message : err));
                   })
                 }
-                className="flex cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 text-left transition-colors hover:bg-muted/50"
+                className="animate-fade-up flex cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 text-left transition-colors hover:bg-muted/50"
+                style={delay(220 + i * 40)}
               >
                 <FileAudio className="size-4 shrink-0 text-muted-foreground" />
                 <span className="flex min-w-0 flex-1 flex-col">

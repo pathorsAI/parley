@@ -186,6 +186,28 @@ textarea,
   }
 }
 
+/* Staged entrance for landing surfaces (Home): each block fades up in reading
+   order, sequenced by an inline animation-delay. `both` keeps a delayed block
+   invisible until its turn instead of flashing in at full opacity first. */
+@keyframes fade-up-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-up {
+  animation: fade-up-in 0.4s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up {
+    animation: none;
+  }
+}
+
 /* Cursor behaviour: interactive controls (buttons, tabs, dropdown triggers
    and items, links, and custom role="button" elements) use the pointing-hand
    cursor. Text inputs keep their default I-beam; disabled controls do not. */
