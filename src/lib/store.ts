@@ -156,6 +156,10 @@ const DEFAULT_SETTINGS: Settings = {
   // Pace + pauses are free (timing/DSP) so default on; pitch + tone (LLM cost)
   // are opt-in. See DeliveryToggles.
   delivery: { pace: true, pitch: false, pauses: true, tone: false },
+  // The board refreshes itself while recording, as it always has — but the
+  // header switch can stop it when a long meeting makes the per-pass cost of
+  // re-reading the full transcript add up. See Settings.autoIntel.
+  autoIntel: true,
   // Signed-in accounts sync by default (prior behavior); the toggle lets a user
   // keep this device local-only. Finished meetings save to the personal root.
   syncEnabled: true,
