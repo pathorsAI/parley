@@ -69,7 +69,7 @@ struct LiveView: View {
             Image(systemName: "waveform")
                 .font(.title2)
                 .foregroundStyle(Theme.mutedForeground)
-            Text(app.signedIn ? "按下錄音，把手機放在桌上收整個房間。" : "登入後即可即時轉錄——設定 → 帳號。")
+            Text(app.hasAccount ? "按下錄音，把手機放在桌上收整個房間。" : "重新登入後即可繼續錄音。")
                 .font(.subheadline)
                 .foregroundStyle(Theme.mutedForeground)
                 .multilineTextAlignment(.center)
@@ -88,32 +88,49 @@ struct LiveView: View {
                     .multilineTextAlignment(.center)
             }
             Button(action: toggle) {
-                Label(
-                    store.isRecording ? "結束會議" : "開始錄音",
-                    systemImage: store.isRecording ? "stop.circle.fill" : "record.circle"
-                )
-                .font(.body.weight(.medium))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .foregroundStyle(store.isRecording ? Color.white : Theme.primaryForeground)
+                Label(buttonTitle, systemImage: buttonIcon)
+                    .font(.body.weight(.medium))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .foregroundStyle(store.isRecording ? Color.white : Theme.primaryForeground)
             }
             .buttonStyle(.borderedProminent)
             .tint(store.isRecording ? Theme.recording : Theme.primary)
-            .disabled(!store.isRecording && !app.signedIn)
-            if !store.isRecording && !app.signedIn {
-                Text("請先到「設定」登入，錄音才會安全同步到你的雲端帳號。")
+            if !store.isRecording && !app.hasAccount {
+                Text("登入已過期。按上面的按鈕重新登入，就能繼續錄音。")
                     .font(.caption)
                     .foregroundStyle(Theme.mutedForeground)
+                    .multilineTextAlignment(.center)
             }
         }
         .padding(16)
     }
 
+    /// The button says what pressing it will actually do, so the signed-out case
+    /// reads as a next step rather than a broken control.
+    private var buttonTitle: String {
+        if store.isRecording { return "結束會議" }
+        return app.hasAccount ? "開始錄音" : "重新登入以開始錄音"
+    }
+
+    private var buttonIcon: String {
+        if store.isRecording { return "stop.circle.fill" }
+        return app.hasAccount ? "record.circle" : "person.crop.circle"
+    }
+
+    /// The record button is never disabled. Before this, a signed-out launch put
+    /// a permanently greyed-out 開始錄音 on screen with no way to act on it — the
+    /// bug App Review reported. A button that can't be pressed teaches nothing;
+    /// one that opens sign-in does.
     private func toggle() {
         if store.isRecording {
             Task { await stop() }
-        } else {
+        } else if app.hasAccount {
             showRecordingConsent = true
+        } else {
+            // The gate in RootView normally keeps this unreachable, but a
+            // session can expire while the app is open and on this screen.
+            app.signIn()
         }
     }
 

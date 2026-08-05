@@ -23,6 +23,11 @@ struct SettingsView: View {
                 if app.signedIn {
                     saveDestinationSection
                     usageSection
+                }
+                // Sync reads only on-device state, so it stays available while
+                // offline — that is exactly when someone needs to see that a
+                // finished recording is queued rather than lost.
+                if app.hasAccount {
                     syncSection
                 }
                 appearanceSection
@@ -82,6 +87,12 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(Theme.destructive)
                 }
+            } else if app.hasAccount {
+                // Signed in, but `me()` hasn't come back — offline, or the
+                // server is unreachable. The session is deliberately kept, so
+                // say that instead of showing a sign-in button that implies the
+                // account is gone.
+                unreachableAccountRow
             } else {
                 signInForm
             }
@@ -104,6 +115,19 @@ struct SettingsView: View {
             Text("同步")
         } footer: {
             Text("網路中斷、伺服器暫時無回應或額度不足時，手機會保留完成的錄音，直到同步成功。")
+        }
+    }
+
+    @ViewBuilder
+    private var unreachableAccountRow: some View {
+        Label("目前連不上伺服器，帳號資訊稍後會自動更新。", systemImage: "wifi.exclamationmark")
+            .font(.subheadline)
+            .foregroundStyle(Theme.warning)
+        Button("重新整理") {
+            Task { await app.refreshSession() }
+        }
+        Button("登出", role: .destructive) {
+            Task { await app.signOut() }
         }
     }
 

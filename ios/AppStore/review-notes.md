@@ -31,15 +31,36 @@ Google or Apple identity.
 > hosted transcription relay for live transcription, then syncs the completed
 > recording and transcript to that account.
 >
-> To test: sign in with the supplied email/password account, tap Recording,
-> confirm the consent message, and allow microphone access. Speak near the
-> device, then tap End Meeting. Open Library to view the saved recording. In
-> Settings, the reviewer can verify System/Light/Dark appearance, sync status,
-> privacy/support links, and account deletion. Account deletion is available in
-> Settings → Account → Delete Account.
+> To test: the app opens on a welcome screen with a single 登入或註冊 (Sign in
+> or register) button. Tap it, sign in with the supplied email/password account
+> on the page that opens, and the app goes straight to the Recording tab. Tap
+> 開始錄音 (Start Recording), confirm the consent message, and allow microphone
+> access. Speak near the device, then tap 結束會議 (End Meeting). Open Library to
+> view the saved recording. In Settings, the reviewer can verify System/Light/Dark
+> appearance, sync status, privacy/support links, and account deletion. Account
+> deletion is available in Settings → Account → Delete Account.
 >
 > If the test network is unavailable, the completed recording remains in an
 > on-device pending-upload queue and can be retried from Settings → Sync.
+
+## Responses to previous review feedback
+
+Submission 9ebcfa58 (version 1.0 build 3) was rejected under guideline 2.1(a)
+for two bugs. Both are fixed in build 4:
+
+- **"An error occurred when we tapped the login button."** The hosted sign-in
+  page the app opens returned HTTP 404. The three `/sign-in*` routes had been
+  deleted from the backend as collateral in an unrelated refactor; nothing in
+  the app had changed. The routes are restored, covered by an automated test,
+  and verified in production before resubmitting.
+- **"開始錄音 was disabled and not functional."** The Start Recording button was
+  disabled whenever no account was signed in — which, because of the bug above,
+  was every reviewer. The app now opens on a sign-in screen that explains why an
+  account is needed, so the tab bar is only reached with a usable account, and
+  the record button is never disabled: if a session expires while the app is
+  open, pressing it reopens sign-in instead of doing nothing.
+
+Before resubmitting, confirm `https://api.parley.tw/sign-in` returns HTTP 200.
 
 ## Export compliance
 

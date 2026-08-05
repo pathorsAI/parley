@@ -25,9 +25,7 @@ struct LibraryView: View {
         NavigationStack {
             Group {
                 if !app.signedIn {
-                    ContentUnavailableView(
-                        "尚未登入", systemImage: "icloud.slash",
-                        description: Text("到「設定 → 帳號」登入後，這裡會列出你在雲端的錄音。"))
+                    unavailable
                 } else {
                     list
                 }
@@ -39,6 +37,19 @@ struct LibraryView: View {
             .refreshable { await load() }
             .task(id: "\(scope ?? "personal")-\(app.signedIn)") { await load() }
         }
+    }
+
+    /// The library is the account's cloud recordings, so it needs a confirmed
+    /// session — not just a stored token. Holding a token but failing `me()`
+    /// means offline, which is a different message from being signed out.
+    private var unavailable: some View {
+        let title: String = app.hasAccount ? "暫時連不上雲端" : "尚未登入"
+        let detail: String =
+            app.hasAccount
+            ? "網路恢復後會自動載入你的錄音。"
+            : "到「設定 → 帳號」登入後，這裡會列出你在雲端的錄音。"
+        return ContentUnavailableView(
+            title, systemImage: "icloud.slash", description: Text(detail))
     }
 
     // MARK: scope switcher (desktop sidebar, phone-sized)

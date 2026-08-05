@@ -7,8 +7,9 @@ record in sync whenever product data practices change.
 
 ## Submission order
 
-1. In **Distribution**, create iOS version `1.0` and select build `1.0 (3)`
-   after it finishes processing.
+1. In **Distribution**, create iOS version `1.0` and select build `1.0 (4)`
+   after it finishes processing. Build 3 was rejected — see the previous-review
+   section of [`review-notes.md`](review-notes.md).
 2. Apply [`metadata/zh-Hant.md`](metadata/zh-Hant.md) to the primary locale.
 3. Apply [`privacy-label.md`](privacy-label.md) in **App Privacy**, including
    the privacy-policy URL. Publish the label before submission.
