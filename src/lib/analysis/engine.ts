@@ -218,9 +218,13 @@ export function useAnalysisEngine() {
 
       // Auto-check the TODO checklist every ~45s while recording — GENERAL
       // meetings only: typed meetings ride the intel board's 30s pass, which
-      // returns todoChecks in the same call (one LLM loop per meeting).
+      // returns todoChecks in the same call (one LLM loop per meeting). Same
+      // `autoIntel` switch as that pass, since this IS that pass for general
+      // meetings — one switch on the board header stops the background
+      // extraction whichever meeting type is running.
       if (
         meetingType === "general" &&
+        settings.autoIntel &&
         now >= lastRun.current.todos + 45_000 &&
         !todoBusy.current &&
         hasProviderKey(settings, "realtime") &&

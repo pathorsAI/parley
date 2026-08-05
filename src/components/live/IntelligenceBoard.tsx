@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, Pause, Play, RefreshCw } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { runIntelExtraction } from "../../lib/intel/extract";
 import { useAccounts } from "../../lib/accounts/store";
@@ -49,6 +49,8 @@ export function IntelligenceBoard() {
   const intel = useStore((s) => s.intel);
   const intelStatus = useStore((s) => s.intelStatus);
   const recording = useStore((s) => s.meetingStatus === "recording");
+  const autoIntel = useStore((s) => s.settings.autoIntel);
+  const updateSettings = useStore((s) => s.updateSettings);
   const running = intelStatus === "running";
 
   const scenarios = useScenarioSet();
@@ -57,8 +59,14 @@ export function IntelligenceBoard() {
 
   // Slow auto-extraction while a typed meeting is recording; immediate first
   // run on scenario switch so the board isn't empty for 30s.
+  //
+  // Gated on `autoIntel`: every pass re-reads the WHOLE transcript, so an hour
+  // of meeting is ~120 passes over an ever-growing prompt. With the switch off
+  // NOTHING runs on its own — not even the first pass — because a timer the
+  // user has explicitly stopped must not fire once more on the next scenario
+  // switch. The header's re-extract button stays the manual trigger.
   useEffect(() => {
-    if (!recording || !scenario) return;
+    if (!recording || !scenario || !autoIntel) return;
     const run = () =>
       runIntelExtraction(scenario.id, "realtime").catch((e) =>
         log.warn("intel: run failed", { error: String(e) })
@@ -66,7 +74,7 @@ export function IntelligenceBoard() {
     run();
     const id = setInterval(run, AUTO_EXTRACT_MS);
     return () => clearInterval(id);
-  }, [recording, scenario]);
+  }, [recording, scenario, autoIntel]);
 
 
   // Resolve exactly like the board below (and the extraction pass): the picker
@@ -109,6 +117,21 @@ export function IntelligenceBoard() {
           </Select>
         )}
         <span className="flex-1" />
+        {/* Auto-refresh switch. The running cost of this rail is one
+            full-transcript LLM pass every 30s (plus the agenda auto-check on
+            general meetings), so the off switch belongs right where the cadence
+            is — not buried in Settings. Shown for general meetings too: the
+            checklist pass it stops is the general-mode half of the same loop. */}
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-6 w-6"
+          aria-pressed={autoIntel}
+          title={autoIntel ? t("board.auto.on") : t("board.auto.off")}
+          onClick={() => updateSettings({ autoIntel: !autoIntel })}
+        >
+          {autoIntel ? <Pause className="size-3" /> : <Play className="size-3 text-muted-foreground" />}
+        </Button>
         {scenario && (
           <Button
             size="icon"

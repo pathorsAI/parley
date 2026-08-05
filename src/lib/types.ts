@@ -406,6 +406,12 @@ export interface Settings {
   todoTemplates: TodoTemplate[];
   /** Per-metric opt-in for live delivery coaching (see DeliveryToggles). */
   delivery: DeliveryToggles;
+  /** Whether the live intelligence board re-extracts on its own timer while
+   *  recording (and, with it, the agenda checklist auto-check). Each pass reads
+   *  the WHOLE transcript, so on a long meeting the cost compounds — turning
+   *  this off leaves the board's manual re-extract button as the only trigger.
+   *  Default on (the prior behavior); the switch lives on the board header. */
+  autoIntel: boolean;
   /** Whether to sync personal recordings + folders to Parley Cloud while signed in.
    *  Off → this device keeps everything local (no automatic push/pull); explicit
    *  org sharing still works. Default on (preserves the prior signed-in behavior). */
