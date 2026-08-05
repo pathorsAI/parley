@@ -14,8 +14,10 @@ Prerequisites already configured for the Pathors Apple team (`SXHVCQXJHZ`):
 - Sign in with Apple capability and hosted Better Auth Apple provider
 - Hosted login page: `https://api.parley.tw/sign-in`
 
-Each upload needs a new build number. Update `CFBundleVersion` in
-`App/Parley/Info.plist`, then generate and archive:
+Each upload needs a new build number. `xcodegen generate` writes
+`App/Parley/Info.plist` from `App/project.yml`, so bump `CFBundleVersion` in
+**`App/project.yml`** — editing the plist alone is overwritten on the next
+generate. Keep the checked-in plist in step with it, then archive:
 
 ```bash
 cd ios/App

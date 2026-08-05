@@ -24,9 +24,14 @@ customer, and no real meeting data was used. Speakers are labelled 我 /
 客戶窗口 via the app's own speaker-naming feature. Regenerate with
 `scratchpad/seed-demo.mjs` against the review account.
 
-Four frames satisfy submission (App Store Connect requires at least one). Two
+The four frames are all signed-in states, so build 4's sign-in gate does not
+invalidate them — they still match what the app shows once an account is in.
+
+Four frames satisfy submission (App Store Connect requires at least one). Three
 more would complete the story and are worth grabbing on the next pass:
 
+- **welcome / sign-in** — build 4's first screen, the app's actual first
+  impression and the one frame nothing in the current set covers.
 - **consent + live recording** — tap Start Recording to show the consent sheet,
   confirm, then capture the red recording state with the level meter.
 - **save destination** — Settings → Default save location with the picker open.
