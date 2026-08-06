@@ -70,13 +70,19 @@ struct VtInner {
 /// `source: "voice-typing"` label (kept separate from meeting usage). A failed
 /// session raises `voicetyping://error`, which the overlay renders (voice
 /// typing has no other error surface — see `run_metered_session`).
+///
+/// `async` so it runs on the async runtime, NOT the main thread: dictation must
+/// stay usable while the app is busy with something else (saving, exporting,
+/// transcribing an upload), and a sync command would simply queue behind
+/// whatever main-thread work is in flight. Nothing here touches AppKit — the
+/// overlay/clipboard commands, which do, stay synchronous.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn start_voice_typing(
+pub async fn start_voice_typing(
     app: AppHandle,
-    coord: State<MicCoordinator>,
-    tap: State<MicTap>,
-    state: State<VoiceTypingState>,
+    coord: State<'_, MicCoordinator>,
+    tap: State<'_, MicTap>,
+    state: State<'_, VoiceTypingState>,
     provider: String,
     api_key: String,
     model: Option<String>,
@@ -262,8 +268,15 @@ pub fn write_voice_history(app: AppHandle, content: String) -> Result<(), String
 /// direct-cancel safety net — abort the task once the flush window has long
 /// passed. Guarded by `seq` so a backstop from THIS session can never abort a
 /// newer one started during the grace.
+///
+/// `async` for the same reason as [`start_voice_typing`], with one extra: the
+/// `coord.stop` below joins the capture threads with a bounded grace, and doing
+/// that on the main thread hitched every window on every key release.
 #[tauri::command]
-pub fn stop_voice_typing(coord: State<MicCoordinator>, state: State<VoiceTypingState>) {
+pub async fn stop_voice_typing(
+    coord: State<'_, MicCoordinator>,
+    state: State<'_, VoiceTypingState>,
+) -> Result<(), String> {
     // Hard cut FIRST: stop forwarding audio to the STT session immediately so
     // nothing captured after release is transcribed, and its input closes now
     // for a prompt final flush — set before `coord.stop` so forwarding ceases
@@ -283,6 +296,7 @@ pub fn stop_voice_typing(coord: State<MicCoordinator>, state: State<VoiceTypingS
             }
         }
     });
+    Ok(())
 }
 
 /// Copy text to the system clipboard via the native pasteboard. Needed because

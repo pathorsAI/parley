@@ -242,22 +242,32 @@ async function startSession() {
   clearTimeout(settleTimer);
   clearTimeout(hideTimer);
   clearTimeout(capTimer);
-  await showOverlay();
-  await emit("voicetyping://session", { phase: "start" });
   // The hosted "parley" plan caps a single dictation; BYOK is uncapped. Pass
   // the cap to the backend as a safety net (a hung webview can't stream the
   // paid relay forever) and mirror it with a frontend timer that finalizes
   // gracefully (delivering the transcript). null = no cap for BYOK.
   const hosted = provider === "parley";
+  // MIC FIRST, overlay second. Placing the overlay costs four round-trips to
+  // the app's main thread (cursor position → monitor list → setPosition →
+  // present), and the capture used to wait behind all of them — so roughly the
+  // first second of every dictation was never recorded, and any main-thread
+  // work elsewhere in the app stretched that window arbitrarily. The overlay
+  // webview is prewarmed and already subscribed, so it can be told the session
+  // started before its window is on screen and simply catch up.
+  const starting = invoke("start_voice_typing", {
+    provider,
+    apiKey,
+    languageHints: [],
+    inputDevice: settings.inputDevice ?? null,
+    relayUrl: sttRelayUrl(provider),
+    maxDurationSecs: hosted ? HOSTED_VOICE_TYPING_MAX_SECONDS : null,
+  });
+  const shown = showOverlay().catch((error) =>
+    log.warn("voice-typing: overlay show failed", { error: String(error) }),
+  );
+  await emit("voicetyping://session", { phase: "start" });
   try {
-    await invoke("start_voice_typing", {
-      provider,
-      apiKey,
-      languageHints: [],
-      inputDevice: settings.inputDevice ?? null,
-      relayUrl: sttRelayUrl(provider),
-      maxDurationSecs: hosted ? HOSTED_VOICE_TYPING_MAX_SECONDS : null,
-    });
+    await starting;
     log.info("voice-typing: session started", { provider });
     if (hosted) {
       capTimer = setTimeout(() => {
@@ -269,6 +279,10 @@ async function startSession() {
   } catch (e) {
     log.error("voice-typing: start failed", { error: String(e) });
     busy = false;
+    // The overlay is this failure's only surface, so let it finish coming up
+    // before the error is announced — it raced the start, and a message sent
+    // to a window that never appeared is a silent dead session.
+    await shown;
     await emit("voicetyping://session", { phase: "error", message: String(e) });
     scheduleHide();
   }
