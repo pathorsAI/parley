@@ -1,8 +1,10 @@
+import ParleyKit
 import SwiftUI
 
 @main
 struct ParleyApp: App {
     @StateObject private var app = AppState()
+    @StateObject private var dictation = DictationCoordinator.shared
 
     var body: some Scene {
         WindowGroup {
@@ -10,7 +12,28 @@ struct ParleyApp: App {
                 .environmentObject(app)
                 .preferredColorScheme(app.theme.colorScheme)
                 .task { await app.refreshSession() }
+                // The keyboard extension can't record, so its mic button opens
+                // `parley://dictate`; the app records and hands the transcript
+                // back through the App Group. (Auth callbacks use the same
+                // scheme but arrive through ASWebAuthenticationSession, not here.)
+                .onOpenURL { url in
+                    if let session = DictationChannel.session(fromStart: url) {
+                        Task { await dictation.begin(session: session) }
+                    }
+                }
+                // Presented for both entry points: the keyboard URL and the
+                // Action Button intent (which starts a session while the app is
+                // in the background — the cover is ready when it next appears).
+                .fullScreenCover(isPresented: dictationPresented) {
+                    DictationView(coordinator: dictation)
+                }
         }
+    }
+
+    private var dictationPresented: Binding<Bool> {
+        Binding(
+            get: { dictation.active },
+            set: { if !$0 { Task { await dictation.dismiss() } } })
     }
 }
 

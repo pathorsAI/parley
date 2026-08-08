@@ -14,16 +14,21 @@ targets:
     sources: [Parley]
     dependencies:
       - package: ParleyKit
+      # Embeds the keyboard extension into the app bundle.
+      - target: ParleyKeyboard
     entitlements:
       path: Parley/Parley.entitlements
       properties:
         com.apple.developer.applesignin: [Default]
+        # Shared with the keyboard extension: the dictation transcript handoff
+        # lives in this App Group container (see DictationChannel).
+        com.apple.security.application-groups: [group.com.pathors.parley.ios]
     info:
       path: Parley/Info.plist
       properties:
         CFBundleDisplayName: Parley
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "4"
+        CFBundleVersion: "5"
         UILaunchScreen: {}
         NSMicrophoneUsageDescription: Parley listens to the meeting to transcribe and coach it live. Audio goes only to the transcription provider tied to your account.
         UIBackgroundModes: [audio]
@@ -40,4 +45,39 @@ targets:
         CODE_SIGN_STYLE: Automatic
         # 科技派斯 (Pathors). Xcode manages the certificate and profile; CI can
         # pass an App Store Connect API key with -allowProvisioningUpdates.
+        DEVELOPMENT_TEAM: SXHVCQXJHZ
+
+  ParleyKeyboard:
+    type: app-extension
+    platform: iOS
+    sources: [../Keyboard]
+    dependencies:
+      - package: ParleyKit
+    entitlements:
+      path: ../Keyboard/ParleyKeyboard.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.pathors.parley.ios]
+    info:
+      path: ../Keyboard/Info.plist
+      properties:
+        CFBundleDisplayName: Parley 語音
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "5"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.keyboard-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
+          NSExtensionAttributes:
+            IsASCIICapable: false
+            PrefersRightToLeft: false
+            PrimaryLanguage: zh-Hant
+            # Dictation streams audio to the Parley account for transcription,
+            # so the keyboard needs Full Access (network + App Group). Without
+            # it the keyboard still offers the minimal key row (App Review 4.4.1).
+            RequestsOpenAccess: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pathors.parley.ios.keyboard
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: SXHVCQXJHZ
