@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, ChevronDown, Plus, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -47,6 +47,8 @@ export function Combobox({
   className,
   disabled = false,
   title,
+  onCreate,
+  createLabel,
 }: Readonly<{
   /** Selected option value; "" (or an unknown value) renders the placeholder. */
   value: string;
@@ -63,9 +65,24 @@ export function Combobox({
   className?: string;
   disabled?: boolean;
   title?: string;
+  /** Make the typed query itself an option: "建立「和運租車」". Typing a name
+   *  that doesn't exist yet is the most common way a new customer/thread/person
+   *  gets mentioned, and "找不到符合項目" turned that moment into a dead end. */
+  onCreate?: (name: string) => void;
+  /** Renders the create row's text from the typed name. */
+  createLabel?: (name: string) => string;
 }>) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+
+  /** Close after a pick. Clearing the query here is not optional: Radix only
+   *  calls `onOpenChange` for closes IT initiates, so closing from our own
+   *  handlers left the search text behind — reopening then showed a filtered
+   *  list, and typing again appended to the old name ("和運租車裕隆汽車"). */
+  function closeAfterPick() {
+    setQuery("");
+    setOpen(false);
+  }
 
   const selected = useMemo(() => {
     for (const g of groups) {
@@ -88,6 +105,14 @@ export function Combobox({
         }))
         .filter((g) => g.options.length > 0)
     : groups;
+
+  // Offer creation only for a name that isn't already on the list — an exact
+  // match means the user is searching for the row right below, not adding.
+  const trimmed = query.trim();
+  const exactExists = groups.some((g) =>
+    g.options.some((o) => o.label.trim().toLowerCase() === q)
+  );
+  const canCreate = !!onCreate && trimmed.length > 0 && !exactExists;
 
   const triggerClass = {
     default:
@@ -149,13 +174,37 @@ export function Combobox({
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter on a name that isn't there yet creates it — the whole
+                // point of the create row is that it needs no second gesture.
+                if (e.key === "Enter" && canCreate) {
+                  e.preventDefault();
+                  onCreate?.(trimmed);
+                  closeAfterPick();
+                }
+              }}
               placeholder={searchPlaceholder}
               className="h-6 w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground"
             />
           </div>
           <div className="max-h-72 overflow-y-auto p-1">
-            {filtered.length === 0 && (
+            {filtered.length === 0 && !canCreate && (
               <p className="px-2 py-3 text-center text-xs text-muted-foreground">{emptyText}</p>
+            )}
+            {canCreate && (
+              <button
+                type="button"
+                onClick={() => {
+                  onCreate?.(trimmed);
+                  closeAfterPick();
+                }}
+                className="mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium text-primary transition-colors hover:bg-muted"
+              >
+                <Plus className="size-3.5 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">
+                  {createLabel ? createLabel(trimmed) : trimmed}
+                </span>
+              </button>
             )}
             {filtered.map((g, gi) => (
               <div key={g.label ?? `g${gi}`} className="mb-0.5">
@@ -170,7 +219,7 @@ export function Combobox({
                     type="button"
                     onClick={() => {
                       onChange(o.value);
-                      setOpen(false);
+                      closeAfterPick();
                     }}
                     className={cn(
                       "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted",

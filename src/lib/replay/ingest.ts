@@ -147,9 +147,10 @@ export function importDroppedPaths(paths: string[]): void {
 /** Open the right dialog for an arbitrated pick. `companyId` pre-links first:
  *  audio via the meeting link (the wizard's save snapshots `meetingCompanyId`
  *  and resolveMeetingSave files it under the company folder), transcripts by
- *  riding on the import dialog (which stamps companyId + the company folder
- *  onto each saved entry). A null companyId deliberately leaves any existing
- *  meeting link alone — plain doors never re-link. */
+ *  riding on the import dialog. A null companyId leaves any existing meeting
+ *  link alone rather than clearing it — and since #211 both dialogs SHOW the
+ *  customer they are about to file under, so an inherited link is on screen and
+ *  one click from being changed instead of being applied silently. */
 function routeImportPick(pick: ImportPick, companyId: string | null): void {
   const { openIngestWizard, openTranscriptImport, setMeetingLink } = useStore.getState();
   if (pick.kind === "audio") {

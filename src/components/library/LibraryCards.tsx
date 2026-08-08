@@ -8,6 +8,7 @@ import {
   Folder,
   FolderClosed,
   FolderInput,
+  Building2,
   ListChecks,
   Loader2,
   Mic,
@@ -25,6 +26,7 @@ import {
 import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
 import type { Folder as LocalFolder } from "../../lib/history/folders";
+import type { Company } from "../../lib/accounts/types";
 import type { HistoryCardItem, HistorySyncState } from "../../lib/cloud/sync";
 import type { CloudOrg } from "../../lib/cloud/types";
 
@@ -132,11 +134,74 @@ function MenuShell({
 }
 
 /**
- * Per-card "move to folder" menu. Since #195 this is the ONLY way to refile a
- * recording (see the note at the top of this file), so it carries a company's
- * folder under the company's own name — the tree and this menu name the same
- * place the same way.
+ * Per-card "歸給哪個客戶" menu. Since #211 a recording's node IS its customer,
+ * so this menu lists customers — not folders. It used to write `folderId`
+ * alone, which quietly put the card in a company's tree node while the company
+ * page went on not knowing about it; it now goes through the one write that
+ * moves both halves (history.assignEntryCompany).
  */
+function AssignMenu({
+  companies,
+  currentCompanyId,
+  onAssign,
+}: Readonly<{
+  companies: Company[];
+  currentCompanyId: string | null;
+  onAssign: (companyId: string | null) => void;
+}>) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const options: { id: string | null; name: string }[] = [
+    { id: null, name: t("owner.unassigned") },
+    ...companies.map((c) => ({ id: c.id, name: c.name })),
+  ];
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        aria-label={t("owner.assign")}
+        title={t("owner.assign")}
+        onClick={(ev) => {
+          ev.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="grid size-6 place-items-center rounded-md bg-background/70 text-muted-foreground backdrop-blur transition-colors hover:bg-muted hover:text-foreground"
+      >
+        <Building2 className="size-3.5" />
+      </button>
+      {open && (
+        <MenuShell title={t("owner.assign")} onClose={() => setOpen(false)}>
+          {options.map((o) => {
+            const current = currentCompanyId === o.id;
+            return (
+              <button
+                key={o.id ?? "__none"}
+                type="button"
+                disabled={current}
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  setOpen(false);
+                  onAssign(o.id);
+                }}
+                className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs hover:bg-muted disabled:opacity-60 disabled:hover:bg-transparent"
+              >
+                {o.id === null ? (
+                  <FolderClosed className="size-3 shrink-0" />
+                ) : (
+                  <Building2 className="size-3 shrink-0" />
+                )}
+                <span className="truncate">{o.name}</span>
+                {current && <Check className="ml-auto size-3 shrink-0" />}
+              </button>
+            );
+          })}
+        </MenuShell>
+      )}
+    </div>
+  );
+}
+
+/** The ORG grid keeps folders: a shared org has no companies to file under. */
 function MoveMenu({
   folders,
   currentFolderId,
@@ -313,11 +378,13 @@ export function LibraryCard({
   downloading,
   sharing,
   folders,
+  companies,
   onOpen,
   onDelete,
   onRename,
   onShare,
-  onMove,
+  onAssign,
+  onMoveInOrg,
 }: Readonly<{
   entry: HistoryCardItem;
   locale: string;
@@ -327,13 +394,16 @@ export function LibraryCard({
   busy: boolean;
   downloading: boolean;
   sharing: boolean;
-  /** The current scope's folders (personal or the open org's) for the move menu. */
+  /** The open ORG's folders — the org grid still files by folder. */
   folders: LocalFolder[];
+  /** Active customers, for the personal grid's "歸給哪個客戶" menu. */
+  companies: Company[];
   onOpen: () => void;
   onDelete: () => void;
   onRename: (title: string) => void;
   onShare: (org: CloudOrg) => void;
-  onMove: (folderId: string | null) => void;
+  onAssign: (companyId: string | null) => void;
+  onMoveInOrg: (folderId: string | null) => void;
 }>) {
   const { t } = useI18n();
   const isLive = entry.source === "live";
@@ -440,9 +510,21 @@ export function LibraryCard({
     >
       {!editing && (
         <div className="absolute right-2 top-2 z-10 flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
-          {folders.length > 0 && (
-            <MoveMenu folders={folders} currentFolderId={entry.folderId ?? null} onMove={onMove} />
-          )}
+          {isOrgContext
+            ? folders.length > 0 && (
+                <MoveMenu
+                  folders={folders}
+                  currentFolderId={entry.folderId ?? null}
+                  onMove={onMoveInOrg}
+                />
+              )
+            : !isCloudOnly && (
+                <AssignMenu
+                  companies={companies}
+                  currentCompanyId={entry.companyId ?? null}
+                  onAssign={onAssign}
+                />
+              )}
           {canShare && <ShareMenu orgs={orgs} sharing={sharing} onPick={onShare} />}
           {!isCloudOnly && !isOrgContext && (
             <button

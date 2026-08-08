@@ -24,7 +24,7 @@ import {
 import { LevelMeter } from "./LevelMeter";
 import { McpStatusChip } from "./McpStatusChip";
 import { TranslateMenu } from "./TranslateMenu";
-import { ReplayFolderChip } from "./ReplayFolderChip";
+import { ReplayOwnerChip } from "./ReplayOwnerChip";
 import { PostMeetingReviewButton } from "./accounts/PostMeetingReviewButton";
 import { StudyGenerationChip } from "./study/StudyGenerationChip";
 
@@ -735,7 +735,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           </span>
         )}
         {studyMode && <ReplayTitle t={t} />}
-        {studyMode && <ReplayFolderChip />}
+        {studyMode && <ReplayOwnerChip />}
         {/* A loaded recording stays reachable while you look at something else.
             Navigating the tree away from it used to leave nothing on screen
             pointing back — the only route out was 離開, which discards it. */}
@@ -871,7 +871,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             className="h-8 w-8"
             aria-label={t("titlebar.history")}
             disabled={meetingActive}
-            onClick={() => openLibrary({ kind: "personal", folderId: null })}
+            onClick={() => openLibrary({ kind: "personal", node: { kind: "unassigned" } })}
           >
             <History className="size-4" />
           </Button>

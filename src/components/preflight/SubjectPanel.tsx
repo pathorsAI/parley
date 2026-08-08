@@ -42,8 +42,9 @@ export function SubjectPanel() {
   const syncEnabled = useStore((s) => s.settings.syncEnabled);
   const defaultSave = useStore((s) => s.settings.defaultSaveLocation);
 
-  // Which inline-create row is open (at most one — each takes over its field).
-  const [creating, setCreating] = useState<"company" | "thread" | "person" | null>(null);
+  // The attendee ＋ still swaps into an inline input: it sits in a chip row,
+  // not a picker, so there is no query box to grow a create row out of.
+  const [creating, setCreating] = useState<"person" | null>(null);
 
   // Only "general" has no board and no customer side (design D12).
   const scenario = scenarios.byId[meetingType] ?? null;
@@ -118,72 +119,59 @@ export function SubjectPanel() {
 
           {scenario && (
             <>
+              {/* Typing a customer that doesn't exist yet CREATES it, right
+                  here (Combobox's create row). The old ＋ beside the picker
+                  did the same thing, but you had to know the unlabelled icon
+                  was there — and typing the name first got you a dead-end
+                  "找不到符合項目". */}
               <Field label={t("accounts.link.company")}>
-                {creating !== "company" && (
-                  <Combobox
-                    size="sm"
-                    value={companyId ?? ""}
-                    groups={[
-                      {
-                        options: [
-                          { value: "", label: t("accounts.link.none") },
-                          ...companies.map((c) => ({ value: c.id, label: c.name })),
-                        ],
-                      },
-                    ]}
-                    onChange={(v) =>
-                      setMeetingLink({ companyId: v || null, threadId: null, attendeeIds: [] })
-                    }
-                    placeholder={t("accounts.link.none")}
-                    searchPlaceholder={t("preflight.search")}
-                    emptyText={t("preflight.noMatch")}
-                  />
-                )}
-                <InlineCreate
-                  label={t("preflight.newCompany")}
-                  placeholder={t("preflight.newCompanyPlaceholder")}
-                  confirmLabel={t("preflight.createConfirm")}
-                  cancelLabel={t("accounts.cancel")}
-                  open={creating === "company"}
-                  onOpenChange={(o) => setCreating(o ? "company" : null)}
+                <Combobox
+                  size="sm"
+                  value={companyId ?? ""}
+                  groups={[
+                    {
+                      options: [
+                        { value: "", label: t("accounts.link.none") },
+                        ...companies.map((c) => ({ value: c.id, label: c.name })),
+                      ],
+                    },
+                  ]}
+                  onChange={(v) =>
+                    setMeetingLink({ companyId: v || null, threadId: null, attendeeIds: [] })
+                  }
                   onCreate={createCompany}
+                  createLabel={(name) => t("owner.create", { name })}
+                  placeholder={t("accounts.link.none")}
+                  searchPlaceholder={t("preflight.search")}
+                  emptyText={t("preflight.noMatch")}
                 />
               </Field>
 
               {company && (
                 <Field label={t("accounts.link.thread")}>
-                  {creating !== "thread" && (
-                    <Combobox
-                      size="sm"
-                      value={threadId ?? ""}
-                      groups={[
-                        {
-                          options: [
-                            { value: "", label: t("accounts.link.none") },
-                            ...threads.map((x) => ({
-                              value: x.id,
-                              label: x.name,
-                              hint: x.stage ? (scenario.names[x.stage] ?? x.stage) : undefined,
-                            })),
-                          ],
-                        },
-                      ]}
-                      onChange={(v) =>
-                        setMeetingLink({ companyId: company.id, threadId: v || null, attendeeIds })
-                      }
-                      placeholder={t("accounts.link.none")}
-                      searchPlaceholder={t("preflight.search")}
-                      emptyText={t("preflight.noMatch")}
-                    />
-                  )}
-                  <InlineCreate
-                    label={t("preflight.newThread")}
-                    placeholder={t("preflight.newThreadPlaceholder")}
-                    confirmLabel={t("preflight.createConfirm")}
-                    cancelLabel={t("accounts.cancel")}
-                    open={creating === "thread"}
-                    onOpenChange={(o) => setCreating(o ? "thread" : null)}
+                  <Combobox
+                    size="sm"
+                    value={threadId ?? ""}
+                    groups={[
+                      {
+                        options: [
+                          { value: "", label: t("accounts.link.none") },
+                          ...threads.map((x) => ({
+                            value: x.id,
+                            label: x.name,
+                            hint: x.stage ? (scenario.names[x.stage] ?? x.stage) : undefined,
+                          })),
+                        ],
+                      },
+                    ]}
+                    onChange={(v) =>
+                      setMeetingLink({ companyId: company.id, threadId: v || null, attendeeIds })
+                    }
                     onCreate={createThread}
+                    createLabel={(name) => t("owner.create", { name })}
+                    placeholder={t("accounts.link.none")}
+                    searchPlaceholder={t("preflight.search")}
+                    emptyText={t("preflight.noMatch")}
                   />
                 </Field>
               )}

@@ -20,6 +20,8 @@ import {
 import type { Company, CompanyAttachment, ThreadKind } from "../../lib/accounts/types";
 import { THREAD_KINDS } from "../../lib/accounts/types";
 import { listHistory, loadHistoryEntry } from "../../lib/history/history";
+import { buildOwnershipIndex, recordingsOfCompany } from "../../lib/library/scope";
+import { listLocalFolders } from "../../lib/history/folders";
 import { renameCompanyFolder } from "../../lib/accounts/folders";
 import type { HistoryEntrySummary } from "../../lib/history/types";
 import { toast } from "sonner";
@@ -74,8 +76,19 @@ export function CompanyPage({
   const [viewingAttachment, setViewingAttachment] = useState<CompanyAttachment | null>(null);
 
   useEffect(() => {
+    // Same ownership rule as the tree (lib/library/scope), not a raw companyId
+    // match: a recording placed only by the folder fallback belongs on this page
+    // too, or the sidebar's "錄音 · N 場" and this list disagree again.
     listHistory()
-      .then((all) => setMeetings(all.filter((m) => m.companyId === company.id)))
+      .then((all) =>
+        setMeetings(
+          recordingsOfCompany(
+            all,
+            company.id,
+            buildOwnershipIndex(useAccounts.getState().companies, listLocalFolders())
+          )
+        )
+      )
       .catch((e) => log.warn("accounts: list meetings failed", { error: String(e) }));
   }, [company.id]);
 

@@ -1,5 +1,6 @@
 import { useStore } from "../../lib/store";
 import { useAccounts, personsOf, threadsOf } from "../../lib/accounts/store";
+import { ensureCompanyFolder } from "../../lib/accounts/folders";
 import { useStageSet } from "../../lib/accounts/useStageSet";
 import { persistEntryLink } from "../../lib/history/history";
 import { log } from "../../lib/log";
@@ -58,6 +59,12 @@ export function MeetingLinkPicker() {
             },
           ]}
           onChange={(v) => apply({ companyId: v || null, threadId: null, attendeeIds: [] })}
+          onCreate={(name) => {
+            const created = acc.addCompany({ name });
+            ensureCompanyFolder(created);
+            apply({ companyId: created.id, threadId: null, attendeeIds: [] });
+          }}
+          createLabel={(name) => t("owner.create", { name })}
           placeholder={t("accounts.link.none")}
           searchPlaceholder={t("preflight.search")}
           emptyText={t("preflight.noMatch")}
@@ -85,6 +92,11 @@ export function MeetingLinkPicker() {
               },
             ]}
             onChange={(v) => apply({ companyId, threadId: v || null, attendeeIds })}
+            onCreate={(name) => {
+              const created = acc.addThread({ companyId: company.id, kind: "sales", name });
+              apply({ companyId, threadId: created.id, attendeeIds });
+            }}
+            createLabel={(name) => t("owner.create", { name })}
             placeholder={t("accounts.link.none")}
             searchPlaceholder={t("preflight.search")}
             emptyText={t("preflight.noMatch")}

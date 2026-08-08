@@ -23,6 +23,7 @@ import type {
 import type { ReplaySession } from "./replay/types";
 import type { CloudAuth } from "./cloud/types";
 import type { HistoryEntry } from "./history/types";
+import type { LibraryNode } from "./library/scope";
 import {
   buildBuiltinEvalLabels,
   buildPresetEvalDefs,
@@ -205,14 +206,14 @@ export type SettingsCategory =
 /**
  * Which node of the one tree the library route is showing.
  *
- * `personal` + a company's folderId IS that company's recordings — the company
- * ↔ folder pairing (accounts/folders.ts) is what makes "這家公司的錄音" and "這個
- * 資料夾" the same place instead of two competing filing systems. `personal`
- * with a null folderId is 未歸戶錄音: everything with no folder, plus anything
- * whose folder no longer exists, so nothing can become unreachable.
+ * `personal` carries a {@link LibraryNode}: the customer IS the node. Folders
+ * used to be the personal tree's unit, which meant the library and the company
+ * page could disagree about whose recording something was — see the module
+ * comment in lib/library/scope. Orgs still select by folder; they have no
+ * companies.
  */
 export type LibrarySelection =
-  | { kind: "personal"; folderId: string | null }
+  | { kind: "personal"; node: LibraryNode }
   | { kind: "org"; id: string; name: string; folderId: string | null }
   | { kind: "voice" };
 
@@ -656,7 +657,7 @@ export const useStore = create<ParleyState>()(
       appMode: "home",
       accountsCompanyId: null,
       accountsFocus: "intel",
-      librarySelection: { kind: "personal", folderId: null },
+      librarySelection: { kind: "personal", node: { kind: "unassigned" } },
       replay: null,
       loadedHistoryId: null,
       replayReadOnly: false,

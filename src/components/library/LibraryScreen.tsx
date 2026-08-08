@@ -5,12 +5,12 @@ import { useI18n } from "../../i18n";
 import { useStore } from "../../lib/store";
 import { useAccounts } from "../../lib/accounts/store";
 import {
+  assignEntryCompany,
   deleteHistoryEntry,
   loadHistoryEntry,
   loadOrgEntry,
   listenForHistoryUpdated,
   renameHistoryEntry,
-  setEntryFolder,
 } from "../../lib/history/history";
 import { setOrgRecordingFolder } from "../../lib/cloud/folders";
 import {
@@ -24,7 +24,7 @@ import {
   shareRecordingToOrg,
   type HistoryCardItem,
 } from "../../lib/cloud/sync";
-import { inFolderNode } from "../../lib/library/scope";
+import { buildOwnershipIndex, inFolderNode, inNode } from "../../lib/library/scope";
 import { log } from "../../lib/log";
 import { isTauri } from "../../lib/tauriEvents";
 import { VoiceTypingHistory } from "../../history/VoiceTypingHistory";
@@ -55,11 +55,12 @@ function orgCard(c: CloudRecordingSummary): HistoryCardItem {
 
 /** "+ Import": the shared import flow (R7) — audio → ingest wizard, .txt →
  *  transcript import. Lazy-loaded so the ingest module stays out of the
- *  initial bundle. */
-async function importRecording(): Promise<void> {
+ *  initial bundle. Importing while a customer's node is open pre-links that
+ *  customer: the answer is already on screen, so asking again is noise. */
+async function importRecording(companyId: string | null): Promise<void> {
   try {
     const { startImportFlow } = await import("../../lib/replay/ingest");
-    await startImportFlow();
+    await startImportFlow({ companyId });
   } catch (e) {
     log.error("library: import failed", { error: String(e) });
     toast.error(e instanceof Error ? e.message : String(e));
@@ -90,7 +91,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
 
   const isOrg = selection.kind === "org";
   const isVoice = selection.kind === "voice";
-  const folderId = selection.kind === "voice" ? null : selection.folderId;
+  const node = selection.kind === "personal" ? selection.node : null;
 
   // ── Entries for the selected scope ────────────────────────────────────────
   const refresh = useCallback(() => {
@@ -152,22 +153,25 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey]);
 
-  // ── Folder visibility (the orphan→root rule) ──────────────────────────────
+  // ── Node visibility ───────────────────────────────────────────────────────
   const scopeFolders =
     selection.kind === "org" ? tree.orgFolders[selection.id] ?? [] : tree.personalFolders;
   const liveFolderIds = new Set(scopeFolders.map((f) => f.id));
+  const index = buildOwnershipIndex(companies, tree.personalFolders);
   const searchQuery = query.trim().toLowerCase();
   const visible = (entries ?? []).filter((e) => {
-    // A search spans the whole scope regardless of the selected folder.
+    // A search spans the whole scope regardless of the selected node.
     if (searchQuery) {
       return (
         e.title.toLowerCase().includes(searchQuery) ||
         (e.snippet ?? "").toLowerCase().includes(searchQuery)
       );
     }
-    // Same predicate the tree counts with (lib/library/scope) — the number on a
-    // node and what the node opens can't drift apart.
-    return inFolderNode(e, folderId, liveFolderIds);
+    // Same rule the tree counts with (lib/library/scope) — the number on a node
+    // and what the node opens can't drift apart. Orgs have no companies, so
+    // they keep the plain folder rule.
+    if (selection.kind === "org") return inFolderNode(e, selection.folderId, liveFolderIds);
+    return !!node && inNode(e, node, index);
   });
 
   // ── Card actions ──────────────────────────────────────────────────────────
@@ -233,32 +237,45 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     [t]
   );
 
-  /** Refile a card. A cloud-only card has no local meta to retag, and a "stale"
-   *  one would re-push its OLDER local meta over a newer cloud re-analysis — in
-   *  both cases the fix is to open it first (which pulls the latest). */
-  const move = useCallback(
-    async (item: HistoryCardItem, target: string | null) => {
-      if ((item.folderId ?? null) === target) return;
+  /** Hand a card to a customer (or take it back to 還沒歸戶). A cloud-only card
+   *  has no local meta to retag, and a "stale" one would re-push its OLDER local
+   *  meta over a newer cloud re-analysis — in both cases the fix is to open it
+   *  first (which pulls the latest). */
+  const assign = useCallback(
+    async (item: HistoryCardItem, companyId: string | null) => {
+      if ((item.companyId ?? null) === companyId) return;
       try {
-        if (selection.kind === "org") {
-          await setOrgRecordingFolder(selection.id, item.id, target);
-        } else {
-          if (item.sync === "cloud" || item.sync === "stale") {
-            toast.message(t("history.move.needsDownload"));
-            return;
-          }
-          await setEntryFolder(item.id, target);
+        if (item.sync === "cloud" || item.sync === "stale") {
+          toast.message(t("history.move.needsDownload"));
+          return;
         }
-        setEntries((prev) =>
-          prev?.map((e) => (e.id === item.id ? { ...e, folderId: target } : e)) ?? null
-        );
+        await assignEntryCompany(item.id, companyId);
+        // Drop it from the grid immediately: it now belongs to another node.
+        setEntries((prev) => prev?.filter((e) => e.id !== item.id) ?? null);
         tree.reloadSummaries();
       } catch (e) {
-        log.error("library: move failed", { id: item.id, error: String(e) });
+        log.error("library: assign failed", { id: item.id, error: String(e) });
         toast.error(t("history.move.failed", { error: errText(e) }));
       }
     },
-    [selection, t, tree]
+    [t, tree]
+  );
+
+  /** The org grid still files by folder — an org has no companies. */
+  const moveInOrg = useCallback(
+    async (item: HistoryCardItem, target: string | null) => {
+      if (selection.kind !== "org" || (item.folderId ?? null) === target) return;
+      try {
+        await setOrgRecordingFolder(selection.id, item.id, target);
+        setEntries((prev) =>
+          prev?.map((e) => (e.id === item.id ? { ...e, folderId: target } : e)) ?? null
+        );
+      } catch (e) {
+        log.error("library: org move failed", { id: item.id, error: String(e) });
+        toast.error(t("history.move.failed", { error: errText(e) }));
+      }
+    },
+    [selection, t]
   );
 
   const resolveOrgHandoff = useCallback(
@@ -305,24 +322,28 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
 
   // ── Header identity: name the node the way the tree names it ──────────────
   const company =
-    selection.kind === "personal" && folderId
-      ? companies.find((c) => c.folderId === folderId) ?? null
-      : null;
-  const folderName = folderId ? scopeFolders.find((f) => f.id === folderId)?.name ?? null : null;
+    node?.kind === "company" ? companies.find((c) => c.id === node.companyId) ?? null : null;
+  let folderName: string | null = null;
+  if (isOrg && selection.kind === "org" && selection.folderId) {
+    folderName = scopeFolders.find((f) => f.id === selection.folderId)?.name ?? null;
+  } else if (node?.kind === "folder") {
+    folderName = scopeFolders.find((f) => f.id === node.folderId)?.name ?? null;
+  }
 
   const searching = searchQuery.length > 0;
   let emptyTitle: string;
   if (searching) emptyTitle = t("history.searchEmpty");
-  else if (folderId) emptyTitle = t("history.folder.empty");
+  else if (company) emptyTitle = t("history.folder.empty");
+  else if (folderName) emptyTitle = t("history.folder.empty");
   else if (isOrg) emptyTitle = t("history.org.empty");
-  else emptyTitle = t("history.empty");
+  else emptyTitle = t("library.unassigned.empty");
 
   let emptyHint: string;
   if (searching) emptyHint = t("history.searchEmptyHint");
   else if (company) emptyHint = t("library.company.emptyHint", { name: company.name });
-  else if (folderId) emptyHint = t("history.folder.emptyHint");
+  else if (folderName) emptyHint = t("history.folder.emptyHint");
   else if (isOrg) emptyHint = t("history.org.emptyHint");
-  else emptyHint = t("library.unfiled.emptyHint");
+  else emptyHint = t("library.unassigned.emptyHint");
 
   let body;
   if (entries === null) {
@@ -354,6 +375,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
             downloading={downloadingId === entry.id}
             sharing={sharingId === entry.id}
             folders={scopeFolders}
+            companies={companies.filter((c) => !c.archived)}
             onOpen={() => {
               openItem(entry).catch((error) =>
                 log.error("library: open failed", { id: entry.id, error: String(error) })
@@ -366,8 +388,11 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
               rename(entry.id, title).catch(() => {});
             }}
             onShare={(org) => setMovePrompt({ item: entry, org })}
-            onMove={(target) => {
-              move(entry, target).catch(() => {});
+            onAssign={(companyId) => {
+              assign(entry, companyId).catch(() => {});
+            }}
+            onMoveInOrg={(target) => {
+              moveInOrg(entry, target).catch(() => {});
             }}
           />
         ))}
@@ -383,7 +408,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           orgName={selection.kind === "org" ? selection.name : null}
           companyName={company?.name ?? null}
           folderName={folderName}
-          rootLabel={t("library.unfiled")}
+          rootLabel={t("library.unassigned")}
         />
         <span className="text-xs text-muted-foreground">
           {t("history.count", { count: visible.length })}
@@ -413,7 +438,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         </div>
         <button
           type="button"
-          onClick={() => void importRecording()}
+          onClick={() => void importRecording(company?.id ?? null)}
           className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <Plus className="size-3.5" />
