@@ -577,6 +577,12 @@ export function initAccounts(): void {
       try {
         const { migrateCompanyFolders } = await import("./folders");
         migrateCompanyFolders();
+        // Pairing first, THEN the recordings: the backfill reads
+        // Company.folderId, so it has to run after every company has one.
+        const { migrateEntryOwners } = await import("../history/history");
+        migrateEntryOwners().catch((e) =>
+          log.warn("accounts: recording owner backfill failed", { error: String(e) })
+        );
       } catch (e) {
         log.warn("accounts: folder migration failed", { error: String(e) });
       }

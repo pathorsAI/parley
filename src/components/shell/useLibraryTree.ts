@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  createLocalFolder,
   deleteLocalFolder,
   emitFoldersUpdated,
   listLocalFolders,
@@ -11,7 +10,6 @@ import {
   type Folder as LocalFolder,
 } from "../../lib/history/folders";
 import {
-  createCloudFolder,
   createOrgFolder,
   deleteCloudFolder,
   deleteOrgFolder,
@@ -52,7 +50,6 @@ export interface LibraryTree {
   ensureOrgFolders: (orgId: string, force?: boolean) => void;
   reloadFolders: () => Promise<void>;
   reloadSummaries: () => void;
-  createPersonalFolder: (name: string) => void;
   renamePersonalFolder: (id: string, name: string) => void;
   deletePersonalFolder: (folder: LocalFolder) => void;
   createOrgFolder: (orgId: string, name: string) => Promise<void>;
@@ -166,22 +163,9 @@ export function useLibraryTree(): LibraryTree {
   }, []);
 
   // ── Folder mutations ────────────────────────────────────────────────────────
-  const createPersonalFolder = useCallback(
-    (name: string) => {
-      const clean = name.trim();
-      if (!clean) return;
-      const f = createLocalFolder(clean);
-      setPersonalFolders(listLocalFolders());
-      if (CLOUD_ENABLED && syncEnabled()) {
-        createCloudFolder(f).catch((e) =>
-          toast.error(t("history.folder.createFailed", { error: errText(e) }))
-        );
-      }
-      emitFoldersUpdated().catch(() => {});
-    },
-    [t]
-  );
-
+  // No create: since #211 a personal folder is created only as the byproduct of
+  // a company owning recordings (accounts/folders.ensureCompanyFolder). Rename
+  // and delete stay for the legacy folders that predate that.
   const renamePersonalFolder = useCallback(
     (id: string, name: string) => {
       const clean = name.trim();
@@ -267,7 +251,6 @@ export function useLibraryTree(): LibraryTree {
     ensureOrgFolders,
     reloadFolders,
     reloadSummaries,
-    createPersonalFolder,
     renamePersonalFolder,
     deletePersonalFolder,
     createOrgFolder: createOrgFolderUI,

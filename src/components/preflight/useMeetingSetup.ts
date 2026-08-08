@@ -6,6 +6,8 @@ import { stageFor } from "../../lib/accounts/currentStage";
 import { boardStates } from "../../lib/accounts/slotState";
 import { boardFromBundle } from "../../lib/intel/boards";
 import { listHistory } from "../../lib/history/history";
+import { buildOwnershipIndex, recordingsOfCompany } from "../../lib/library/scope";
+import { listLocalFolders } from "../../lib/history/folders";
 import { useI18n, type TranslationKey } from "../../i18n";
 import { log } from "../../lib/log";
 import type { Scenario, SlotDef } from "../../lib/accounts/bundles";
@@ -84,8 +86,11 @@ export function useMeetingSetup(): MeetingSetup {
     listHistory()
       .then((all) => {
         if (!alive) return;
+        // The tree's ownership rule, so "第 N 次" counts the same meetings the
+        // customer's own node shows.
+        const idx = buildOwnershipIndex(useAccounts.getState().companies, listLocalFolders());
         setMeetings(
-          all.filter((m) => m.companyId === companyId).sort((a, b) => b.createdAt - a.createdAt)
+          recordingsOfCompany(all, companyId, idx).sort((a, b) => b.createdAt - a.createdAt)
         );
       })
       .catch((e) => log.warn("preflight: list meetings failed", { error: String(e) }));

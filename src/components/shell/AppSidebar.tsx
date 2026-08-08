@@ -17,29 +17,28 @@ import {
 } from "lucide-react";
 import { useAccounts, threadsOf, triageClaims, personsOf } from "../../lib/accounts/store";
 import { ensureCompanyFolder } from "../../lib/accounts/folders";
-import { countInFolderNode } from "../../lib/library/scope";
+import { buildOwnershipIndex, countByNode, nodeKey, type LibraryNode } from "../../lib/library/scope";
 import { useStore, type LibrarySelection } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import type { LibraryTree } from "./useLibraryTree";
 
 /**
- * The one tree (issue #195).
+ * The one tree (issue #195, finished in #211).
  *
- * Before this, a company lived in the main window's account switcher and its
- * recordings lived in a separate History window's folder tree. The data layer
- * already paired them 1:1 (`Company.folderId`), but two trees in two windows is
- * a claim that they are two things — so "I picked a company, why is the folder
- * a different question?" was the only reading available.
- *
- * Here the company IS the trunk and its folder is one of its facets:
+ * #195 put the company and its recordings in one tree. #211 made them one
+ * THING: a recording's node is decided by its customer (lib/library/scope), not
+ * by which folder it happens to sit in, so there is no longer a second kind of
+ * container to file things into — and no way for the count here to disagree
+ * with the company page.
  *
  *   公司
  *     和運租車  ⚠2
  *       戰情 · 2 條戰線
- *       錄音 · 3 場       ← Company.folderId, named after the company
+ *       錄音 · 8 場       ← every recording linked to this customer
  *       人 · 4 位
- *   其他資料夾            ← folders that belong to no company
- *   未歸戶錄音 · 12        ← no folder, or a folder that no longer exists
+ *   還沒歸戶 · 7           ← no customer yet, one click from having one
+ *   語音輸入
+ *   其他資料夾（舊資料）    ← pre-#211 folders that belong to no company
  *   組織共享              ← never mixed into the personal tree
  */
 export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
@@ -64,39 +63,29 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   const companies = acc.companies.filter((c) => !c.archived);
   const archived = acc.companies.filter((c) => c.archived);
 
-  const liveFolderIds = useMemo(
-    () => new Set(tree.personalFolders.map((f) => f.id)),
-    [tree.personalFolders]
+  // Ownership facts + every node's count in one pass. The grid filters with the
+  // SAME index and the SAME rule (lib/library/scope), so "錄音 · 8 場" is a count
+  // of exactly the eight cards clicking it opens.
+  const index = useMemo(
+    () => buildOwnershipIndex(acc.companies, tree.personalFolders),
+    [acc.companies, tree.personalFolders]
   );
-
-  // How many recordings sit on each node. Counted with the SAME predicate the
-  // grid filters by (lib/library/scope) over the SAME folderId the save path
-  // writes (resolveMeetingSave → Company.folderId) — so "錄音 · 3 場" is a count
-  // of exactly the three cards clicking it opens, and 未歸戶 sweeps up anything
-  // whose folder is gone rather than letting it fall out of the tree.
-  const countAt = useMemo(() => {
-    // Keyed on the folderId itself (null included) so there is no sentinel
-    // string that a real id could ever collide with.
-    const cache = new Map<string | null, number>();
-    return (folderId: string | null) => {
-      const hit = cache.get(folderId);
-      if (hit !== undefined) return hit;
-      const n = countInFolderNode(tree.summaries, folderId, liveFolderIds);
-      cache.set(folderId, n);
-      return n;
-    };
-  }, [tree.summaries, liveFolderIds]);
-
-  // Folders that belong to no company. They still hold recordings, so they stay
-  // reachable — demoting folders must never make an old recording disappear.
-  const companyFolderIds = new Set(
-    acc.companies.map((c) => c.folderId).filter((id): id is string => !!id)
+  const counts = useMemo(
+    () => countByNode(tree.summaries, index),
+    [tree.summaries, index]
   );
-  const looseFolders = tree.personalFolders.filter((f) => !companyFolderIds.has(f.id));
+  const countAt = (node: LibraryNode) => counts.get(nodeKey(node)) ?? 0;
+
+  // Folders that belong to no company: pre-#211 filing. They still hold
+  // recordings, so they stay reachable — retiring folders as a concept must
+  // never make an old recording disappear.
+  const looseFolders = tree.personalFolders.filter((f) => index.looseFolders.has(f.id));
 
   const libraryActive = appMode === "library";
   const personalSel = selection.kind === "personal" ? selection : null;
   const orgSel = selection.kind === "org" ? selection : null;
+  const nodeActive = (node: LibraryNode) =>
+    libraryActive && !!personalSel && nodeKey(personalSel.node) === nodeKey(node);
 
   const selectLibrary = (sel: LibrarySelection) => openLibrary(sel);
 
@@ -134,10 +123,10 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         const nTriage = triageClaims(acc, c.id).length;
         const nThreads = threadsOf(acc, c.id).filter((x) => x.status === "active").length;
         const nPeople = personsOf(acc, c.id).length;
-        const folderId = c.folderId ?? null;
-        const nRecordings = folderId ? countAt(folderId) : 0;
+        const node: LibraryNode = { kind: "company", companyId: c.id };
+        const nRecordings = countAt(node);
         const companyActive = appMode === "accounts" && accountsCompanyId === c.id;
-        const recordingsActive = libraryActive && personalSel?.folderId === folderId && !!folderId;
+        const recordingsActive = nodeActive(node);
         return (
           <Fragment key={c.id}>
             <Row
@@ -173,13 +162,10 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
                   icon={<Folder className="size-3.5" />}
                   label={t("shell.facet.recordings", { n: nRecordings })}
                   active={recordingsActive}
-                  onSelect={() => {
-                    // A company that predates the pairing (or whose folder was
-                    // deleted) gets one here and now, so the node it just showed
-                    // is a real place before the grid tries to read it.
-                    const fid = folderId ?? ensureCompanyFolder(c);
-                    selectLibrary({ kind: "personal", folderId: fid });
-                  }}
+                  // No folder needed to LOOK at a customer's recordings — the
+                  // node is the customer. A folder is created when something is
+                  // actually filed there (assignEntryCompany / the save path).
+                  onSelect={() => selectLibrary({ kind: "personal", node })}
                 />
                 <Row
                   depth={1}
@@ -252,56 +238,15 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         </div>
       )}
 
-      {/* Folders that belong to no company — kept so nothing filed before the
-          company pairing existed becomes unreachable. */}
-      {looseFolders.length > 0 && (
-        <>
-          <GroupLabel>{t("shell.otherFolders")}</GroupLabel>
-          {looseFolders.map((f) => (
-            <Row
-              key={f.id}
-              icon={<Folder className="size-3.5" />}
-              label={f.name}
-              count={countAt(f.id)}
-              active={libraryActive && personalSel?.folderId === f.id}
-              onSelect={() => selectLibrary({ kind: "personal", folderId: f.id })}
-              onRename={(name) => tree.renamePersonalFolder(f.id, name)}
-              onDelete={() => {
-                tree.deletePersonalFolder(f);
-                if (personalSel?.folderId === f.id) {
-                  selectLibrary({ kind: "personal", folderId: null });
-                }
-              }}
-            />
-          ))}
-        </>
-      )}
-      <GroupLabel
-        action={
-          <HeaderAdd
-            label={t("history.folder.create")}
-            onClick={() => setNewFolderScope("personal")}
-          />
-        }
-      >
-        {t("shell.recordings")}
-      </GroupLabel>
-      {newFolderScope === "personal" && (
-        <NewNameInput
-          placeholder={t("history.folder.namePlaceholder")}
-          onCommit={(name) => {
-            tree.createPersonalFolder(name);
-            setNewFolderScope(null);
-          }}
-          onCancel={() => setNewFolderScope(null)}
-        />
-      )}
+      {/* Everything without a customer, in one place — and the reason there is
+          no "new folder" button anywhere near it: the way out of here is to
+          give a recording an owner, not to invent a second filing system. */}
       <Row
         icon={<FolderClosed className="size-3.5" />}
-        label={t("library.unfiled")}
-        count={countAt(null)}
-        active={libraryActive && personalSel?.folderId === null}
-        onSelect={() => selectLibrary({ kind: "personal", folderId: null })}
+        label={t("library.unassigned")}
+        count={countAt({ kind: "unassigned" })}
+        active={nodeActive({ kind: "unassigned" })}
+        onSelect={() => selectLibrary({ kind: "personal", node: { kind: "unassigned" } })}
       />
       <Row
         icon={<Mic className="size-3.5" />}
@@ -309,6 +254,36 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         active={libraryActive && selection.kind === "voice"}
         onSelect={() => selectLibrary({ kind: "voice" })}
       />
+
+      {/* Folders that belong to no company: filing done before customers owned
+          recordings. Reachable and renameable, but no longer creatable — the
+          section exists to carry old data forward, not to keep the old model
+          alive alongside the new one. */}
+      {looseFolders.length > 0 && (
+        <>
+          <GroupLabel>{t("shell.legacyFolders")}</GroupLabel>
+          {looseFolders.map((f) => {
+            const node: LibraryNode = { kind: "folder", folderId: f.id };
+            return (
+              <Row
+                key={f.id}
+                icon={<Folder className="size-3.5" />}
+                label={f.name}
+                count={countAt(node)}
+                active={nodeActive(node)}
+                onSelect={() => selectLibrary({ kind: "personal", node })}
+                onRename={(name) => tree.renamePersonalFolder(f.id, name)}
+                onDelete={() => {
+                  tree.deletePersonalFolder(f);
+                  if (nodeActive(node)) {
+                    selectLibrary({ kind: "personal", node: { kind: "unassigned" } });
+                  }
+                }}
+              />
+            );
+          })}
+        </>
+      )}
 
       {/* Org-shared recordings are their own tree on purpose: a shared copy is
           someone else's file, and folding it into the personal tree would make

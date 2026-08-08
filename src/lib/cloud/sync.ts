@@ -192,6 +192,10 @@ export async function listMergedHistory(): Promise<HistoryCardItem[]> {
       actionItemsCount: c.actionItemsCount,
       hasAudio: c.hasAudio,
       snippet: c.snippet,
+      // No companyId: the cloud summary doesn't carry one. The tree's legacy
+      // fallback (lib/library/scope) reads the folder instead, which for a
+      // company folder lands the card under that company anyway — and opening
+      // it downloads the meta that has the real link.
       folderId: c.folderId ?? null,
       sync: "cloud",
       cloudUpdatedAt: c.updatedAt,
