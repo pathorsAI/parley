@@ -30,6 +30,9 @@ struct SettingsView: View {
                 if app.hasAccount {
                     syncSection
                 }
+                if app.hasAccount {
+                    dictationSection
+                }
                 appearanceSection
                 aboutSection
                 #if DEBUG
@@ -265,6 +268,52 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
         }
+    }
+
+    // MARK: voice keyboard
+
+    /// How to turn on the Parley keyboard and the Action Button trigger. Both
+    /// live in the system Settings app, so this section explains the steps and
+    /// jumps there — iOS gives no API to toggle them for the user.
+    private var dictationSection: some View {
+        Section {
+            dictationStep(
+                number: "1", title: "加入 Parley 鍵盤",
+                detail: "設定 › 一般 › 鍵盤 › 鍵盤 › 加入新鍵盤，選 Parley 語音。")
+            dictationStep(
+                number: "2", title: "開啟「允許完整取用權限」",
+                detail: "語音要送到你的 Parley 帳號轉錄，需要這項權限才能運作。")
+            dictationStep(
+                number: "3", title: "（選用）設定動作按鈕免切換直接說",
+                detail: "設定 › 動作按鈕 › 快捷指令 › Parley 語音輸入，在任何 App 一按就開始，不用切鍵盤。")
+            Button {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            } label: {
+                Label("打開系統設定", systemImage: "keyboard")
+            }
+        } header: {
+            Text("語音鍵盤")
+        } footer: {
+            Text("在任何 App 的輸入框切到 Parley 鍵盤，按麥克風就會跳到 Parley 開始聽寫；回到輸入框後，文字會即時打進去。")
+        }
+    }
+
+    private func dictationStep(number: String, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(number)
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(Theme.primaryForeground)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(Theme.primary))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.weight(.medium))
+                Text(detail).font(.caption).foregroundStyle(Theme.mutedForeground)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     private var aboutSection: some View {
