@@ -154,6 +154,64 @@ export function ownerBackfill(entry: FiledRecording, idx: OwnershipIndex): strin
   return idx.folderOwner.get(folderId) ?? null;
 }
 
+/** One same-name folder group the dedupe migration should merge. */
+export interface FolderMerge {
+  /** The folder that survives. */
+  canonicalId: string;
+  /** Folders whose recordings move to the canonical, then get deleted. */
+  twinIds: string[];
+  name: string;
+}
+
+export interface DedupeFolderRef {
+  id: string;
+  name: string;
+  createdAt: number;
+}
+
+/**
+ * Which same-name personal folders to merge, and into which survivor.
+ *
+ * The registry can genuinely hold two folders per name: the pre-file registry
+ * era let a dev and a packaged instance each mint their own ids, and the cloud
+ * mirror kept both (see the history/folders.ts header). ensureCompanyFolder
+ * then adopts ONE of them by name — the twin lives on, shows up beside it in
+ * every folder list, and splits the company's recordings across two ids.
+ *
+ * The survivor is the company-paired folder when the group has exactly one;
+ * otherwise the oldest. A group where SEVERAL companies claim folders of the
+ * same name is skipped outright — that's two same-named companies, and merging
+ * their filing on a name match would move recordings between customers.
+ */
+export function planFolderDedupe(
+  folders: readonly DedupeFolderRef[],
+  companies: readonly CompanyRef[]
+): FolderMerge[] {
+  const paired = new Set(
+    companies.map((c) => c.folderId).filter((id): id is string => !!id)
+  );
+  const byName = new Map<string, DedupeFolderRef[]>();
+  for (const f of folders) {
+    const key = f.name.trim();
+    if (!key) continue;
+    byName.set(key, [...(byName.get(key) ?? []), f]);
+  }
+  const merges: FolderMerge[] = [];
+  for (const [name, group] of byName) {
+    if (group.length < 2) continue;
+    const pairedInGroup = group.filter((f) => paired.has(f.id));
+    if (pairedInGroup.length > 1) continue; // two same-named companies — hands off
+    const canonical =
+      pairedInGroup[0] ?? [...group].sort((a, b) => a.createdAt - b.createdAt)[0];
+    merges.push({
+      canonicalId: canonical.id,
+      twinIds: group.filter((f) => f.id !== canonical.id).map((f) => f.id),
+      name,
+    });
+  }
+  return merges;
+}
+
 // ── Org scope ───────────────────────────────────────────────────────────────
 // A shared org has folders and no companies, so its tree keeps the plain
 // folder rule. Nothing here is used by the personal tree.

@@ -7,6 +7,7 @@ import {
   nodeKey,
   ownerBackfill,
   ownerNode,
+  planFolderDedupe,
   recordingsOfCompany,
   type FiledRecording,
   type LibraryNode,
@@ -164,6 +165,50 @@ describe("ownerBackfill", () => {
       })
       .map((e) => nodeKey(ownerNode(e, idx)));
     expect(after).toEqual(before);
+  });
+});
+
+describe("planFolderDedupe", () => {
+  const f = (id: string, name: string, createdAt: number) => ({ id, name, createdAt });
+
+  it("merges same-name twins into the company-paired folder", () => {
+    const merges = planFolderDedupe(
+      [f("old", "台數科", 1), f("paired", "台數科", 2)],
+      [{ id: "co", folderId: "paired" }]
+    );
+    expect(merges).toEqual([{ canonicalId: "paired", twinIds: ["old"], name: "台數科" }]);
+  });
+
+  it("falls back to the oldest when no company claims the name", () => {
+    const merges = planFolderDedupe([f("b", "測試", 2), f("a", "測試", 1)], []);
+    expect(merges).toEqual([{ canonicalId: "a", twinIds: ["b"], name: "測試" }]);
+  });
+
+  it("skips a name claimed by more than one company", () => {
+    // Two same-named companies: merging on the name would move recordings
+    // between customers.
+    const merges = planFolderDedupe(
+      [f("x", "台哥大", 1), f("y", "台哥大", 2)],
+      [
+        { id: "co1", folderId: "x" },
+        { id: "co2", folderId: "y" },
+      ]
+    );
+    expect(merges).toEqual([]);
+  });
+
+  it("leaves unique names and blank names alone", () => {
+    expect(planFolderDedupe([f("a", "Ai3", 1), f("b", "東森", 2), f("c", " ", 3)], [])).toEqual(
+      []
+    );
+  });
+
+  it("handles a 3-way clone group", () => {
+    const merges = planFolderDedupe(
+      [f("a", "Ai3", 3), f("b", "Ai3", 1), f("c", "Ai3", 2)],
+      []
+    );
+    expect(merges).toEqual([{ canonicalId: "b", twinIds: ["a", "c"], name: "Ai3" }]);
   });
 });
 
