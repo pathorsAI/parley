@@ -23,12 +23,19 @@ final class KeyboardViewController: UIInputViewController {
     /// session is a leftover from a previous dictation and is ignored.
     private var session = ""
     private var insertedCount = 0
+    private var host: UIHostingController<KeyboardRootView>?
+
+    /// A keyboard has no intrinsic height — without this it collapses to the
+    /// system minimum and the layout looks broken. 258 leaves room for the
+    /// status line, the preview well, the mic control, and the key row without
+    /// crowding, and sits in the same band as the system keyboard.
+    private static let preferredHeight: CGFloat = 258
 
     override func viewDidLoad() {
         super.viewDidLoad()
         bridge.controller = self
 
-        let root = UIHostingController(rootView: KeyboardRootView(bridge: bridge))
+        let root = UIHostingController(rootView: makeRoot())
         root.view.backgroundColor = .clear
         addChild(root)
         view.addSubview(root.view)
@@ -40,6 +47,14 @@ final class KeyboardViewController: UIInputViewController {
             root.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         root.didMove(toParent: self)
+        self.host = root
+
+        // Priority just below required: the system still gets to shrink the
+        // keyboard in a compact-height (landscape) layout rather than fighting
+        // an unsatisfiable constraint.
+        let height = view.heightAnchor.constraint(equalToConstant: Self.preferredHeight)
+        height.priority = .defaultHigh
+        height.isActive = true
 
         // The app fires this when the transcript grows; we also drain on every
         // appearance in case the keyboard was suspended through the notification.
@@ -53,7 +68,30 @@ final class KeyboardViewController: UIInputViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         bridge.hasFullAccess = hasFullAccess
+        refreshAppearance()
         drainDownlink()
+    }
+
+    /// A keyboard follows the appearance of the *field* it is typing into, not
+    /// the system's: a dark-themed host app asks for a dark keyboard even while
+    /// iOS is in light mode. `textInputMode` changes as the user moves between
+    /// fields, so this is re-read whenever the keyboard comes back.
+    override func textDidChange(_ textInput: UITextInput?) {
+        super.textDidChange(textInput)
+        refreshAppearance()
+    }
+
+    private func refreshAppearance() {
+        let dark = textDocumentProxy.keyboardAppearance == .dark
+        if host?.rootView.dark != dark {
+            host?.rootView = makeRoot(dark: dark)
+        }
+    }
+
+    private func makeRoot(dark: Bool? = nil) -> KeyboardRootView {
+        KeyboardRootView(
+            bridge: bridge,
+            dark: dark ?? (textDocumentProxy.keyboardAppearance == .dark))
     }
 
     // MARK: dictation control (called from SwiftUI)
