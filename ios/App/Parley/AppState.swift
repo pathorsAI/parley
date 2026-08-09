@@ -68,6 +68,20 @@ final class AppState: NSObject, ObservableObject {
     func refreshSession() async {
         pendingUploadCount = MeetingUploader.pendingCount
 
+        #if DEBUG
+            if ScreenshotDemo.isActive {
+                hasStoredSession = ScreenshotDemo.startsSignedIn
+                if ScreenshotDemo.startsSignedIn {
+                    user = ScreenshotDemo.user
+                    quota = ScreenshotDemo.quota
+                    orgs = ScreenshotDemo.orgs
+                }
+                pendingUploadCount = 0
+                bootstrapped = true
+                return
+            }
+        #endif
+
         // Decide the gate from the Keychain alone, before any await: it is
         // instant and always right about whether this device has an account.
         // Waiting on `me()` first would park a returning user behind a spinner
@@ -148,7 +162,7 @@ final class AppState: NSObject, ObservableObject {
             user = try await cloud.me()
         } catch let err as CloudError where err.isAuthExpired {
             clearStoredToken()
-            signInError = "登入沒有完成，請再試一次。"
+            signInError = String(localized: "Sign-in didn't finish. Please try again.")
             return
         } catch {
             signInError = signInFailureMessage(error)
@@ -156,7 +170,7 @@ final class AppState: NSObject, ObservableObject {
         }
         guard user != nil else {
             clearStoredToken()
-            signInError = "登入沒有完成，請再試一次。"
+            signInError = String(localized: "Sign-in didn't finish. Please try again.")
             return
         }
         await loadAccountExtras()
@@ -169,10 +183,15 @@ final class AppState: NSObject, ObservableObject {
         if let cloudError = error as? CloudError {
             // status 0 = the callback itself was malformed (no token / an
             // ?error= from the page), not an HTTP status worth showing.
-            if cloudError.status == 0 { return "登入沒有完成，請再試一次。" }
-            return "登入失敗（伺服器回應 \(cloudError.status)）。請稍後再試一次。"
+            if cloudError.status == 0 {
+                return String(localized: "Sign-in didn't finish. Please try again.")
+            }
+            return String(
+                localized: "Sign-in failed (server said \(cloudError.status)). Try again shortly.")
         }
-        return "連線不穩，登入沒有完成。請確認網路後再試一次。"
+        return String(
+            localized: "The connection dropped before sign-in finished. Check your network and try again."
+        )
     }
 
     func signOut() async {

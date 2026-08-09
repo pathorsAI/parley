@@ -26,7 +26,7 @@ struct KeyboardRootView: View {
 
     private var dictationArea: some View {
         VStack(spacing: 8) {
-            Text(bridge.listening ? preview : "按住麥克風開始說話，文字會直接打在這裡")
+            Text(bridge.listening ? preview : String(localized: "Tap the mic and talk — your words land right here"))
                 .font(.callout)
                 .foregroundStyle(bridge.listening ? Color.primary : Color.secondary)
                 .lineLimit(2)
@@ -38,7 +38,7 @@ struct KeyboardRootView: View {
                 HStack(spacing: 10) {
                     Image(systemName: bridge.listening ? "stop.fill" : "mic.fill")
                         .font(.title3)
-                    Text(bridge.listening ? "結束" : "語音輸入")
+                    Text(bridge.listening ? "Stop" : "Voice typing")
                         .font(.body.weight(.semibold))
                 }
                 .frame(maxWidth: .infinity)
@@ -53,7 +53,7 @@ struct KeyboardRootView: View {
     }
 
     private var preview: String {
-        bridge.partial.isEmpty ? "正在聽…" : bridge.partial
+        bridge.partial.isEmpty ? String(localized: "Listening…") : bridge.partial
     }
 
     private func toggle() {
@@ -76,9 +76,11 @@ struct KeyboardRootView: View {
             Image(systemName: "mic.slash")
                 .font(.title2)
                 .foregroundStyle(.secondary)
-            Text("語音輸入需要「完整取用權限」")
+            Text("Voice typing needs Full Access")
                 .font(.callout.weight(.medium))
-            Text("設定 › 一般 › 鍵盤 › Parley，開啟「允許完整取用權限」。語音要送到 Parley 帳號轉錄，所以需要這項權限。")
+            Text(
+                "Settings › General › Keyboard › Parley, then turn on Allow Full Access. Your voice goes to your Parley account to be transcribed, which is why it's needed."
+            )
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

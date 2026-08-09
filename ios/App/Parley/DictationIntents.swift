@@ -11,8 +11,9 @@ import AppIntents
 /// `AudioRecordingIntent` was introduced.
 @available(iOS 18.0, *)
 struct StartDictationIntent: AppIntent, AudioRecordingIntent {
-    static var title: LocalizedStringResource = "開始語音輸入"
-    static var description = IntentDescription("在目前的 App 直接開始 Parley 語音輸入，不用切換畫面。")
+    static var title: LocalizedStringResource = "Start Voice Typing"
+    static var description = IntentDescription(
+        "Start Parley voice typing right where you are, without switching apps.")
 
     /// The whole point: do not bring the app forward.
     static var openAppWhenRun = false
@@ -28,13 +29,18 @@ struct StartDictationIntent: AppIntent, AudioRecordingIntent {
 @available(iOS 18.0, *)
 struct ParleyShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
+        // Both languages are listed rather than localized: Siri matches against
+        // every phrase in the array regardless of the device language, so a
+        // bilingual user gets both without a locale switch in between.
         AppShortcut(
             intent: StartDictationIntent(),
             phrases: [
+                "Voice type with \(.applicationName)",
+                "\(.applicationName) voice typing",
                 "用 \(.applicationName) 語音輸入",
                 "\(.applicationName) 語音輸入",
             ],
-            shortTitle: "語音輸入",
+            shortTitle: "Voice Typing",
             systemImageName: "mic.fill")
     }
 }

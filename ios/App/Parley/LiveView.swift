@@ -32,14 +32,17 @@ struct LiveView: View {
                     LevelMeter(level: store.micLevel)
                 }
             }
-            .alert("開始錄音前請確認", isPresented: $showRecordingConsent) {
-                Button("取消", role: .cancel) {}
-                Button("我已取得所有與會者同意") {
+            .alert("Before you start recording", isPresented: $showRecordingConsent) {
+                Button("Cancel", role: .cancel) {}
+                Button("Everyone has agreed") {
                     Task { await start() }
                 }
             } message: {
-                Text("Parley 會收取房間麥克風聲音，將音訊送往你的 Parley 雲端帳號進行即時轉錄，並同步儲存錄音與逐字稿。請先確認所有與會者同意錄音。")
+                Text("Parley picks up the room through the microphone, sends the audio to your Parley account for live transcription, and syncs the recording and transcript there. Confirm that everyone present has agreed to be recorded.")
             }
+            #if DEBUG
+                .task { ScreenshotDemo.seedLive(store) }
+            #endif
         }
     }
 
@@ -69,7 +72,9 @@ struct LiveView: View {
             Image(systemName: "waveform")
                 .font(.title2)
                 .foregroundStyle(Theme.mutedForeground)
-            Text(app.hasAccount ? "按下錄音，把手機放在桌上收整個房間。" : "重新登入後即可繼續錄音。")
+            Text(app.hasAccount
+                ? "Hit record and put the phone on the table to catch the whole room."
+                : "Sign in again to pick up where you left off.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.mutedForeground)
                 .multilineTextAlignment(.center)
@@ -97,7 +102,7 @@ struct LiveView: View {
             .buttonStyle(.borderedProminent)
             .tint(store.isRecording ? Theme.recording : Theme.primary)
             if !store.isRecording && !app.hasAccount {
-                Text("登入已過期。按上面的按鈕重新登入，就能繼續錄音。")
+                Text("Your session expired. Sign in with the button above and recording works again.")
                     .font(.caption)
                     .foregroundStyle(Theme.mutedForeground)
                     .multilineTextAlignment(.center)
@@ -109,8 +114,10 @@ struct LiveView: View {
     /// The button says what pressing it will actually do, so the signed-out case
     /// reads as a next step rather than a broken control.
     private var buttonTitle: String {
-        if store.isRecording { return "結束會議" }
-        return app.hasAccount ? "開始錄音" : "重新登入以開始錄音"
+        if store.isRecording { return String(localized: "End meeting") }
+        return app.hasAccount
+            ? String(localized: "Start recording")
+            : String(localized: "Sign in again to record")
     }
 
     private var buttonIcon: String {
@@ -119,7 +126,7 @@ struct LiveView: View {
     }
 
     /// The record button is never disabled. Before this, a signed-out launch put
-    /// a permanently greyed-out 開始錄音 on screen with no way to act on it — the
+    /// a permanently greyed-out Start recording on screen with no way to act on it — the
     /// bug App Review reported. A button that can't be pressed teaches nothing;
     /// one that opens sign-in does.
     private func toggle() {
@@ -136,7 +143,7 @@ struct LiveView: View {
 
     private func start() async {
         guard await AudioCapture.requestPermission() else {
-            store.status = "需要麥克風權限"
+            store.status = String(localized: "Microphone access is required")
             return
         }
         store.clear()
@@ -152,12 +159,12 @@ struct LiveView: View {
             do {
                 try await client.start()
                 relayClient = client
-                store.status = "即時轉錄中"
+                store.status = String(localized: "Transcribing live")
             } catch {
-                store.status = "relay 連線失敗，僅錄音"
+                store.status = String(localized: "Relay connection failed — recording audio only")
             }
         } else {
-            store.status = "未登入——僅收音測試"
+            store.status = String(localized: "Not signed in — microphone test only")
         }
         self.relay = relayClient
 
@@ -176,7 +183,7 @@ struct LiveView: View {
             capture = cap
             store.isRecording = true
         } catch {
-            store.status = "audio error: \(error.localizedDescription)"
+            store.status = String(localized: "Audio error: \(error.localizedDescription)")
             await relayClient?.finish()
         }
     }
@@ -187,7 +194,7 @@ struct LiveView: View {
         store.isRecording = false
         store.micLevel = 0
         if let relay {
-            store.status = "收尾中…"
+            store.status = String(localized: "Wrapping up…")
             await relay.finish()  // drain: the relay flushes the last utterance
         }
         await upload()
@@ -200,10 +207,10 @@ struct LiveView: View {
         }
         self.uploader = nil
         guard app.signedIn else {
-            store.status = "未登入——錄音未上傳"
+            store.status = String(localized: "Not signed in — the recording was not uploaded")
             return
         }
-        store.status = "上傳中…"
+        store.status = String(localized: "Uploading…")
         do {
             let outcome = try await uploader.finishAndUpload(
                 segments: store.segments,
@@ -213,16 +220,23 @@ struct LiveView: View {
             if let outcome {
                 app.pendingUploadCount = MeetingUploader.pendingCount
                 store.status =
-                    outcome.sharedToOrgName.map { "已同步，並分享到「\($0)」" } ?? "已同步到雲端"
+                    outcome.sharedToOrgName.map { String(localized: "Synced, and shared to “\($0)”") }
+                    ?? String(localized: "Synced to the cloud")
             } else {
-                store.status = "錄音太短，已捨棄"
+                store.status = String(localized: "That recording was too short to keep")
             }
         } catch let e as CloudError where e.status == 402 {
             app.pendingUploadCount = MeetingUploader.pendingCount
-            store.status = "額度已用完，錄音已安全保留，額度恢復後會自動同步"
+            store.status = String(
+                localized:
+                    "You're out of quota. The recording is safe on this phone and will sync once the quota resets."
+            )
         } catch {
             app.pendingUploadCount = MeetingUploader.pendingCount
-            store.status = "同步暫時失敗，錄音已安全保留，稍後會自動重試"
+            store.status = String(
+                localized:
+                    "Sync failed for now. The recording is safe on this phone and will retry automatically."
+            )
         }
     }
 
@@ -231,7 +245,8 @@ struct LiveView: View {
         case .segment(let seg):
             store.upsert(seg)
         case .closed(let reason):
-            store.status = store.isRecording ? "relay 已關閉（\(reason)）" : "idle"
+            store.status =
+                store.isRecording ? String(localized: "Relay closed (\(reason))") : "idle"
             relay = nil
         case .error(let message):
             store.status = message

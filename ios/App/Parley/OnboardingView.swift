@@ -25,7 +25,7 @@ struct OnboardingView: View {
                     header
                     Spacer(minLength: 28)
                     VStack(alignment: .leading, spacing: 22) {
-                        ForEach(Self.points, id: \.title) { point in
+                        ForEach(Self.points, id: \.icon) { point in
                             pointRow(point)
                         }
                     }
@@ -57,7 +57,7 @@ struct OnboardingView: View {
             Text("Parley")
                 .font(.largeTitle.weight(.semibold))
                 .foregroundStyle(Theme.foreground)
-            Text("面對面會議的口袋錄音機——邊錄邊出逐字稿，講完就在雲端。")
+            Text("A pocket recorder for the meetings you have in person — live transcript while you talk, in the cloud by the time you stand up.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.mutedForeground)
                 .multilineTextAlignment(.center)
@@ -69,23 +69,23 @@ struct OnboardingView: View {
 
     private struct Point {
         let icon: String
-        let title: String
-        let detail: String
+        let title: LocalizedStringKey
+        let detail: LocalizedStringKey
     }
 
     private static let points: [Point] = [
         Point(
             icon: "record.circle",
-            title: "把手機放桌上就能錄",
-            detail: "收整個房間的聲音，自動分辨不同說話者。"),
+            title: "Put the phone on the table",
+            detail: "It picks up the whole room and keeps the speakers apart."),
         Point(
             icon: "text.bubble",
-            title: "即時轉錄，不必自備 API key",
-            detail: "登入後就用我們代管的轉錄服務，免費額度足夠日常使用。"),
+            title: "Live transcription, no API key",
+            detail: "Sign in and ride our hosted transcription. The free tier covers everyday use."),
         Point(
             icon: "icloud",
-            title: "錄音與逐字稿同步到你的帳號",
-            detail: "手機錄的會議，桌面版打開就能做深度分析。"),
+            title: "Recordings sync to your account",
+            detail: "Open a meeting you recorded on the phone in the desktop app for the deep analysis."),
     ]
 
     private func pointRow(_ point: Point) -> some View {
@@ -117,7 +117,7 @@ struct OnboardingView: View {
             } label: {
                 HStack(spacing: 8) {
                     if app.signingIn { ProgressView().tint(Theme.primaryForeground) }
-                    Text(app.signingIn ? "登入中…" : "登入或註冊")
+                    Text(app.signingIn ? "Signing in…" : "Sign in or create an account")
                         .font(.body.weight(.semibold))
                 }
                 .frame(maxWidth: .infinity)
@@ -136,13 +136,13 @@ struct OnboardingView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Text("支援信箱密碼、Google 與 Apple 登入。開始錄音前，Parley 一定會先請你確認已取得所有與會者同意。")
+            Text("Email and password, Google, and Apple all work. Before any recording starts, Parley asks you to confirm everyone in the room has agreed to it.")
                 .font(.caption)
                 .foregroundStyle(Theme.mutedForeground)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Link("隱私權政策", destination: URL(string: "https://parley.tw/privacy/")!)
+            Link("Privacy Policy", destination: URL(string: "https://parley.tw/privacy/")!)
                 .font(.caption)
         }
         .frame(maxWidth: 420)
@@ -163,6 +163,6 @@ struct LaunchView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background)
-        .accessibilityLabel("正在載入 Parley")
+        .accessibilityLabel("Loading Parley")
     }
 }

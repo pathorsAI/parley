@@ -34,7 +34,7 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Parley listens to the meeting to transcribe and coach it live. Audio goes only to the transcription provider tied to your account.</string>
+	<string>Parley records the meeting in the room so it can transcribe it live. Audio goes only to the transcription provider tied to your account.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

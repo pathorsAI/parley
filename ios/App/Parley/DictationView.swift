@@ -78,24 +78,27 @@ struct DictationView: View {
 
     private var statusTitle: String {
         switch coordinator.state {
-        case .starting: return "準備中…"
-        case .listening: return "正在聽…"
-        case .finishing: return "整理中…"
-        case .done: return "完成"
-        case .error: return "沒能開始"
+        case .starting: return String(localized: "Getting ready…")
+        case .listening: return String(localized: "Listening…")
+        case .finishing: return String(localized: "Wrapping up…")
+        case .done: return String(localized: "Done")
+        case .error: return String(localized: "Couldn't start")
         }
     }
 
     private var statusSubtitle: String {
         if coordinator.state == .error {
-            return coordinator.errorMessage ?? "請再試一次。"
+            return coordinator.errorMessage ?? String(localized: "Please try again.")
         }
         // The manual hand-off only matters while the app is actually the thing
         // on screen, i.e. when auto-return didn't (or couldn't) fire.
         if coordinator.returnableHost == nil {
-            return "說話就會即時打進剛才的輸入框。在底部橫條上往右滑，回到剛才的 App。"
+            return String(
+                localized:
+                    "Speak and the words go straight into the field you were typing in. Swipe right on the home bar to get back to that app."
+            )
         }
-        return "已經幫你回到剛才的 App，直接說話就好。"
+        return String(localized: "You're back in your app — just talk.")
     }
 
     // MARK: transcript preview
@@ -104,7 +107,7 @@ struct DictationView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 4) {
                 if coordinator.committed.isEmpty && coordinator.partial.isEmpty {
-                    Text("等你開口……")
+                    Text("Waiting for you to speak…")
                         .font(.body)
                         .foregroundStyle(Theme.mutedForeground)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -137,7 +140,7 @@ struct DictationView: View {
                 }
             } label: {
                 Label(
-                    coordinator.state == .listening ? "結束並插入文字" : "完成",
+                    coordinator.state == .listening ? "Stop and insert" : "Done",
                     systemImage: "stop.circle.fill"
                 )
                 .font(.body.weight(.medium))
@@ -178,7 +181,7 @@ private struct SwipeBackGuide: View {
             }
             .frame(height: 20)
             .frame(maxWidth: 180)
-            Text("往右滑，回到剛才的 App")
+            Text("Swipe right to go back")
                 .font(.caption)
                 .foregroundStyle(Theme.mutedForeground)
         }

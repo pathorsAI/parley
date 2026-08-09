@@ -18,6 +18,25 @@ For every row select **No** for Tracking. For data use, select only **App
 Functionality** unless the implementation begins using data for analytics,
 advertising, or personalization outside the service the user requested.
 
+## The keyboard extension does not add a row
+
+The Parley Voice keyboard (1.1) requests Full Access, which reviewers and
+privacy-conscious buyers both read as "this keyboard can phone home". The label
+still needs no extra data type, and the reason is worth being able to state:
+
+- The keyboard never opens a network connection. It writes a session handle into
+  the App Group and opens the containing app; the app records and transcribes.
+- It does not read the document context, retain what the user types, or keep any
+  typing history. Its only writes to the text field are the finished transcript,
+  a space, a newline, and backspace.
+- The dictation audio and its transcript are already covered above under
+  **User Content → Audio Data** and **Other User Content**: same account, same
+  hosted transcription relay, same retention.
+
+Full Access is a capability grant, not a data type. If the keyboard ever gains
+its own network path or any keystroke persistence, this section stops being true
+and the label has to change with it.
+
 ## URLs
 
 - Privacy Policy: `https://parley.tw/privacy/`

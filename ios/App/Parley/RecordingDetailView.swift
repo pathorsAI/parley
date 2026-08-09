@@ -1,7 +1,7 @@
 import ParleyKit
 import SwiftUI
 
-/// Read-only transcript view for a synced recording — the phone's 書房.
+/// Read-only transcript view for a synced recording — the phone's reading room.
 /// No streaming replay theatrics: the transcript is a document here, rendered
 /// at once, scrollable, with the desktop's speaker-label rules.
 struct RecordingDetailView: View {
@@ -19,13 +19,14 @@ struct RecordingDetailView: View {
                 transcript(meta)
             } else if let error {
                 ContentUnavailableView(
-                    "載入失敗", systemImage: "exclamationmark.triangle",
+                    "Couldn't load", systemImage: "exclamationmark.triangle",
                     description: Text(error))
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .navigationTitle(summary.title.isEmpty ? "未命名錄音" : summary.title)
+        .navigationTitle(
+            summary.title.isEmpty ? String(localized: "Untitled recording") : summary.title)
         .navigationBarTitleDisplayMode(.inline)
         .background(Theme.background)
         .task { await load() }
@@ -38,7 +39,7 @@ struct RecordingDetailView: View {
                 Divider()
                 let segs = meta.segments.filter { $0.isFinal }
                 if segs.isEmpty {
-                    Text("這場錄音沒有逐字稿。")
+                    Text("This recording has no transcript.")
                         .font(.subheadline)
                         .foregroundStyle(Theme.mutedForeground)
                 }
@@ -67,7 +68,7 @@ struct RecordingDetailView: View {
     private var header: some View {
         HStack(spacing: 12) {
             Label(Self.duration(summary.durationMs), systemImage: "clock")
-            Label("\(summary.speakerCount ?? 0) 人", systemImage: "person.2")
+            Label("\(summary.speakerCount ?? 0) speakers", systemImage: "person.2")
             if let n = summary.findingsCount, n > 0 {
                 Label("\(n) findings", systemImage: "lightbulb")
             }
@@ -78,6 +79,12 @@ struct RecordingDetailView: View {
     }
 
     private func load() async {
+        #if DEBUG
+            if ScreenshotDemo.servesFixtures {
+                meta = ScreenshotDemo.meta
+                return
+            }
+        #endif
         do {
             meta =
                 orgId == nil
