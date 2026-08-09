@@ -4,6 +4,13 @@ options:
   deploymentTarget:
     iOS: "17.0"
   xcodeVersion: "26.0"
+  # Source strings are English (repo convention); Traditional Chinese is a
+  # first-class translation, not an afterthought. Both have to be listed here
+  # or the String Catalogs compile to English only.
+  developmentLanguage: en
+# knownRegions drives which localizations `Localizable.xcstrings` /
+# `InfoPlist.xcstrings` actually compile into the bundle.
+knownRegions: [en, zh-Hant, Base]
 packages:
   ParleyKit:
     path: ../ParleyKit
@@ -30,7 +37,8 @@ targets:
         CFBundleShortVersionString: "1.1"
         CFBundleVersion: "5"
         UILaunchScreen: {}
-        NSMicrophoneUsageDescription: Parley listens to the meeting to transcribe and coach it live. Audio goes only to the transcription provider tied to your account.
+        # Localized in Parley/InfoPlist.xcstrings; this is the fallback value.
+        NSMicrophoneUsageDescription: Parley records the meeting in the room so it can transcribe it live. Audio goes only to the transcription provider tied to your account.
         UIBackgroundModes: [audio]
         ITSAppUsesNonExemptEncryption: false
         CFBundleURLTypes:
@@ -60,7 +68,8 @@ targets:
     info:
       path: ../Keyboard/Info.plist
       properties:
-        CFBundleDisplayName: Parley 語音
+        # Localized in ../Keyboard/InfoPlist.xcstrings; this is the fallback.
+        CFBundleDisplayName: Parley Voice
         CFBundleShortVersionString: "1.1"
         CFBundleVersion: "5"
         NSExtension:
@@ -69,7 +78,11 @@ targets:
           NSExtensionAttributes:
             IsASCIICapable: false
             PrefersRightToLeft: false
-            PrimaryLanguage: zh-Hant
+            # Dictation is language-agnostic — the transcription provider
+            # decides, not the key layout — so the keyboard declares itself
+            # multilingual rather than Chinese-only, which is how it read to an
+            # English user before.
+            PrimaryLanguage: mul
             # Dictation streams audio to the Parley account for transcription,
             # so the keyboard needs Full Access (network + App Group). Without
             # it the keyboard still offers the minimal key row (App Review 4.4.1).

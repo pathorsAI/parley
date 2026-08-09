@@ -17,6 +17,9 @@ struct ParleyApp: App {
                 // back through the App Group. (Auth callbacks use the same
                 // scheme but arrive through ASWebAuthenticationSession, not here.)
                 .onOpenURL { url in
+                    #if DEBUG
+                        if ScreenshotDemo.shared.handle(url) { return }
+                    #endif
                     if let session = DictationChannel.session(fromStart: url) {
                         Task { await dictation.begin(session: session) }
                     }
@@ -57,14 +60,30 @@ struct RootView: View {
 }
 
 struct MainTabs: View {
+    /// Selection is bound rather than implicit only so the DEBUG screenshot
+    /// routes can land on a tab without a tap; behaviour is otherwise identical.
+    @State private var tab: ScreenshotTab = .record
+
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             LiveView()
-                .tabItem { Label("錄音", systemImage: "record.circle") }
+                .tabItem { Label("Record", systemImage: "record.circle") }
+                .tag(ScreenshotTab.record)
             LibraryView()
-                .tabItem { Label("錄音庫", systemImage: "rectangle.stack") }
+                .tabItem { Label("Library", systemImage: "rectangle.stack") }
+                .tag(ScreenshotTab.library)
             SettingsView()
-                .tabItem { Label("設定", systemImage: "gearshape") }
+                .tabItem { Label("Settings", systemImage: "gearshape") }
+                .tag(ScreenshotTab.settings)
         }
+        #if DEBUG
+            .onReceive(ScreenshotDemo.shared.$tab) { tab = $0 }
+        #endif
     }
 }
+
+#if DEBUG
+    typealias ScreenshotTab = ScreenshotDemo.Tab
+#else
+    enum ScreenshotTab: Hashable { case record, library, settings }
+#endif

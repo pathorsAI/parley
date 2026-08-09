@@ -1,7 +1,7 @@
 import ParleyKit
 import SwiftUI
 
-/// 錄音庫 — phone mirror of the desktop History window: personal + org
+/// Library — phone mirror of the desktop History window: personal + org
 /// scopes, one-level folders, and the same move semantics:
 /// - share to org  = server-side COPY (original untouched)
 /// - move to org   = share, then delete the personal original (that order —
@@ -20,6 +20,9 @@ struct LibraryView: View {
     @State private var error: String?
     @State private var busyId: String?
     @State private var search = ""
+    #if DEBUG
+        @ObservedObject private var demo = ScreenshotDemo.shared
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -31,11 +34,19 @@ struct LibraryView: View {
                 }
             }
             .background(Theme.background)
-            .navigationTitle("錄音庫")
+            .navigationTitle("Library")
             .toolbar { scopeMenu }
-            .searchable(text: $search, prompt: "搜尋標題或摘要")
+            .searchable(text: $search, prompt: Text("Search titles and snippets"))
             .refreshable { await load() }
             .task(id: "\(scope ?? "personal")-\(app.signedIn)") { await load() }
+            // `parley://demo/transcript` pushes the demo recording, so the
+            // transcript frame is captured through the real navigation stack
+            // (back chevron and all) rather than as a detached view.
+            #if DEBUG
+                .navigationDestination(isPresented: $demo.showTranscript) {
+                    RecordingDetailView(summary: ScreenshotDemo.featured, orgId: nil)
+                }
+            #endif
         }
     }
 
@@ -43,11 +54,14 @@ struct LibraryView: View {
     /// session — not just a stored token. Holding a token but failing `me()`
     /// means offline, which is a different message from being signed out.
     private var unavailable: some View {
-        let title: String = app.hasAccount ? "暫時連不上雲端" : "尚未登入"
+        let title: String =
+            app.hasAccount
+            ? String(localized: "Can't reach the cloud right now")
+            : String(localized: "Not signed in")
         let detail: String =
             app.hasAccount
-            ? "網路恢復後會自動載入你的錄音。"
-            : "到「設定 → 帳號」登入後，這裡會列出你在雲端的錄音。"
+            ? String(localized: "Your recordings load automatically once the network is back.")
+            : String(localized: "Sign in under Settings → Account and your cloud recordings show up here.")
         return ContentUnavailableView(
             title, systemImage: "icloud.slash", description: Text(detail))
     }
@@ -61,7 +75,7 @@ struct LibraryView: View {
                     scope = nil
                     folderFilter = nil
                 } label: {
-                    Label("個人", systemImage: scope == nil ? "checkmark" : "folder")
+                    Label("Personal", systemImage: scope == nil ? "checkmark" : "folder")
                 }
                 ForEach(app.orgs) { org in
                     Button {
@@ -76,7 +90,7 @@ struct LibraryView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: scope == nil ? "folder" : "person.2")
-                    Text(scopeName)
+                    Text(verbatim: scopeName)
                 }
                 .font(.subheadline)
                 .foregroundStyle(scope == nil ? Theme.foreground : Theme.org)
@@ -85,7 +99,8 @@ struct LibraryView: View {
     }
 
     private var scopeName: String {
-        scope.flatMap { id in app.orgs.first { $0.id == id }?.name } ?? "個人"
+        scope.flatMap { id in app.orgs.first { $0.id == id }?.name }
+            ?? String(localized: "Personal")
     }
 
     // MARK: list
@@ -105,7 +120,7 @@ struct LibraryView: View {
                     RecordingCard(summary: rec, folders: folders)
                 }
                 .swipeActions(edge: .trailing) {
-                    Button("刪除", systemImage: "trash", role: .destructive) {
+                    Button("Delete", systemImage: "trash", role: .destructive) {
                         Task { await remove(rec) }
                     }
                 }
@@ -114,7 +129,7 @@ struct LibraryView: View {
                 .opacity(busyId == rec.id ? 0.5 : 1)
             }
             if !loading && filtered.isEmpty && error == nil {
-                Text(search.isEmpty ? "這裡還沒有錄音。" : "沒有符合的結果。")
+                Text(search.isEmpty ? "No recordings here yet." : "No matches.")
                     .font(.subheadline)
                     .foregroundStyle(Theme.mutedForeground)
                     .frame(maxWidth: .infinity)
@@ -128,8 +143,10 @@ struct LibraryView: View {
     private var folderChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                chip("全部", selected: folderFilter == nil) { folderFilter = nil }
-                chip("未分類", selected: folderFilter == "root") { folderFilter = "root" }
+                chip(String(localized: "All"), selected: folderFilter == nil) { folderFilter = nil }
+                chip(String(localized: "Unfiled"), selected: folderFilter == "root") {
+                    folderFilter = "root"
+                }
                 ForEach(folders) { f in
                     chip(f.name, selected: folderFilter == f.id) { folderFilter = f.id }
                 }
@@ -140,9 +157,11 @@ struct LibraryView: View {
         .listRowBackground(Color.clear)
     }
 
+    /// `label` is either an already-localized chip name or a user-created folder
+    /// name, so it renders verbatim either way.
     private func chip(_ label: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(label)
+            Text(verbatim: label)
                 .font(.caption.weight(selected ? .semibold : .regular))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
@@ -177,26 +196,26 @@ struct LibraryView: View {
     @ViewBuilder
     private func actions(for rec: CloudRecordingSummary) -> some View {
         if !folders.isEmpty {
-            Menu("移到資料夾") {
-                Button("未分類（根目錄）") { Task { await moveToFolder(rec, folderId: nil) } }
+            Menu("Move to folder") {
+                Button("Unfiled (top level)") { Task { await moveToFolder(rec, folderId: nil) } }
                 ForEach(folders) { f in
                     Button(f.name) { Task { await moveToFolder(rec, folderId: f.id) } }
                 }
             }
         }
         if scope == nil && !app.orgs.isEmpty {
-            Menu("分享到組織（複製）") {
+            Menu("Share to organization (copy)") {
                 ForEach(app.orgs) { org in
                     Button(org.name) { Task { await shareToOrg(rec, org: org, thenDelete: false) } }
                 }
             }
-            Menu("搬移到組織") {
+            Menu("Move to organization") {
                 ForEach(app.orgs) { org in
                     Button(org.name) { Task { await shareToOrg(rec, org: org, thenDelete: true) } }
                 }
             }
         }
-        Button("刪除", systemImage: "trash", role: .destructive) {
+        Button("Delete", systemImage: "trash", role: .destructive) {
             Task { await remove(rec) }
         }
     }
@@ -205,6 +224,14 @@ struct LibraryView: View {
 
     private func load() async {
         guard app.signedIn else { return }
+        #if DEBUG
+            if ScreenshotDemo.servesFixtures {
+                recordings = ScreenshotDemo.recordings
+                folders = ScreenshotDemo.folders
+                loading = false
+                return
+            }
+        #endif
         loading = true
         error = nil
         do {
@@ -220,9 +247,12 @@ struct LibraryView: View {
                 folders = try await f.filter { $0.orgId == nil }
             }
         } catch let e as CloudError {
-            error = e.isAuthExpired ? "登入已過期，請重新登入。" : "載入失敗（\(e.status)）"
+            error =
+                e.isAuthExpired
+                ? String(localized: "Your session expired. Please sign in again.")
+                : String(localized: "Couldn't load (\(e.status))")
         } catch {
-            self.error = "載入失敗：離線或伺服器無回應"
+            self.error = String(localized: "Couldn't load — offline or the server isn't responding")
         }
         loading = false
     }
@@ -244,7 +274,7 @@ struct LibraryView: View {
             }
             await load()
         } catch {
-            self.error = "搬移失敗：\(error.localizedDescription)"
+            self.error = String(localized: "Move failed: \(error.localizedDescription)")
         }
     }
 
@@ -259,9 +289,9 @@ struct LibraryView: View {
             }
             await load()
         } catch let e as CloudError where e.status == 403 {
-            error = "沒有權限分享到「\(org.name)」"
+            error = String(localized: "You don't have permission to share to “\(org.name)”")
         } catch {
-            self.error = "分享失敗：\(error.localizedDescription)"
+            self.error = String(localized: "Share failed: \(error.localizedDescription)")
         }
     }
 
@@ -276,9 +306,9 @@ struct LibraryView: View {
             }
             recordings.removeAll { $0.id == rec.id }
         } catch let e as CloudError where e.status == 403 {
-            error = "只有上傳者或管理員可以刪除這筆錄音"
+            error = String(localized: "Only the uploader or an admin can delete this recording")
         } catch {
-            self.error = "刪除失敗：\(error.localizedDescription)"
+            self.error = String(localized: "Delete failed: \(error.localizedDescription)")
         }
     }
 }
@@ -293,35 +323,50 @@ private struct RecordingCard: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 badge
-                Text(summary.title.isEmpty ? "未命名錄音" : summary.title)
+                Text(
+                    verbatim: summary.title.isEmpty
+                        ? String(localized: "Untitled recording") : summary.title)
                     .font(.subheadline.weight(.medium))
                     .lineLimit(2)
             }
             if let snippet = summary.snippet, !snippet.isEmpty {
-                Text(snippet)
+                Text(verbatim: snippet)
                     .font(.caption)
                     .foregroundStyle(Theme.mutedForeground)
                     .lineLimit(2)
             }
+            // Everything here is short and fixed except the folder name, so the
+            // fixed parts are pinned and only the folder is allowed to
+            // truncate. Without this the row wraps mid-value — "18:4 / 2" for a
+            // duration, "New busi- / ness" for a folder — which it did in both
+            // languages, worst in Chinese where the labels are widest.
             HStack(spacing: 10) {
                 Label(
-                    RecordingDetailView.duration(summary.durationMs), systemImage: "clock")
+                    RecordingDetailView.duration(summary.durationMs), systemImage: "clock"
+                )
+                .fixedSize()
                 if let n = summary.speakerCount, n > 0 {
-                    Label("\(n)", systemImage: "person.2")
+                    Label("\(n)", systemImage: "person.2").fixedSize()
                 }
                 if let n = summary.findingsCount, n > 0 {
-                    Label("\(n)", systemImage: "sparkles")
+                    Label("\(n)", systemImage: "sparkles").fixedSize()
                 }
                 if let fid = summary.folderId, let f = folders.first(where: { $0.id == fid }) {
                     Label(f.name, systemImage: "folder")
+                        .truncationMode(.tail)
                 }
-                Spacer()
-                Text(Self.dateLabel(summary.createdAt))
+                Spacer(minLength: 4)
+                Text(verbatim: Self.dateLabel(summary.createdAt)).fixedSize()
                 if summary.hasAudio {
                     Image(systemName: "speaker.wave.2")
                 }
             }
             .font(.caption2)
+            .lineLimit(1)
+            // Under pressure `Label` quietly falls back to icon-only, which
+            // leaves a row of glyphs with no values at all — worse than the
+            // wrapping it replaced. Pin the style so the numbers always show.
+            .labelStyle(.titleAndIcon)
             .foregroundStyle(Theme.mutedForeground)
         }
         .padding(.vertical, 3)
@@ -329,7 +374,7 @@ private struct RecordingCard: View {
 
     private var badge: some View {
         let live = summary.source == "live"
-        return Text(live ? "LIVE" : "上傳")
+        return Text(live ? "LIVE" : "UPLOAD")
             .font(.caption2.weight(.semibold))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -339,10 +384,10 @@ private struct RecordingCard: View {
             .foregroundStyle(live ? Theme.recording : Theme.org)
     }
 
+    /// Locale-formatted rather than one hard-coded `M/d HH:mm`: an English phone
+    /// expects Aug 9, 3:20 PM where a Chinese one expects 8月9日 下午3:20.
     static func dateLabel(_ epochMs: Double) -> String {
-        let d = Date(timeIntervalSince1970: epochMs / 1000)
-        let fmt = DateFormatter()
-        fmt.dateFormat = "M/d HH:mm"
-        return fmt.string(from: d)
+        Date(timeIntervalSince1970: epochMs / 1000)
+            .formatted(.dateTime.month(.abbreviated).day().hour().minute())
     }
 }

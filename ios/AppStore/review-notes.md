@@ -1,5 +1,7 @@
 # App Review information
 
+Current target: **1.1 (build 5)** — adds the Parley Voice keyboard extension.
+
 ## Contact
 
 Use the release owner’s current name, `contact@pathors.com`, and an actively
@@ -13,9 +15,14 @@ service. Enter its email and password directly in App Store Connect; store the
 credentials only in the approved secret manager.
 
 The account **`appreview@pathors.com`** already exists in production and holds
-two clearly-labelled sample meetings (`示範會議…`) so Library and the transcript
-view can be reviewed without recording anything. Its password lives in the team
-secret manager, never in this repository.
+two clearly-labelled sample meetings so Library and the transcript view can be
+reviewed without recording anything. Its password lives in the team secret
+manager, never in this repository.
+
+> **Refresh the sample meetings before submitting 1.1.** They are titled in
+> Chinese (`示範會議…`) from the 1.0 pass, and English is now the primary
+> locale — a reviewer on an English device should not land in a library of
+> Chinese titles. Re-seed them with English titles, or one of each.
 
 The app opens the hosted first-party sign-in page in an Apple authentication
 session. That page offers email/password, Google, and Sign in with Apple. The
@@ -24,29 +31,60 @@ Google or Apple identity.
 
 ## Notes to App Review
 
-> Parley is a microphone-based recorder for in-person meetings. It does not
-> record phone calls, FaceTime, or other apps’ audio. Recording begins only
-> after the reviewer taps Start Recording and confirms they have consent from
-> participants. The app sends microphone audio to the signed-in account’s
-> hosted transcription relay for live transcription, then syncs the completed
-> recording and transcript to that account.
+> Parley is a microphone-based recorder for in-person meetings, plus a voice
+> keyboard that dictates into other apps. It does not record phone calls,
+> FaceTime, or other apps’ audio — iOS provides no such API and the app does not
+> attempt it. Recording begins only after the reviewer taps Start Recording and
+> confirms they have consent from participants. The app sends microphone audio
+> to the signed-in account’s hosted transcription relay for live transcription,
+> then syncs the completed recording and transcript to that account.
 >
-> To test: the app opens on a welcome screen with a single 登入或註冊 (Sign in
-> or register) button. Tap it, sign in with the supplied email/password account
-> on the page that opens, and the app goes straight to the Recording tab. Tap
-> 開始錄音 (Start Recording), confirm the consent message, and allow microphone
-> access. Speak near the device, then tap 結束會議 (End Meeting). Open Library to
-> view the saved recording. In Settings, the reviewer can verify System/Light/Dark
-> appearance, sync status, privacy/support links, and account deletion. Account
-> deletion is available in Settings → Account → Delete Account.
+> **To test recording:** the app opens on a welcome screen with a single "Sign in
+> or create an account" button. Tap it, sign in with the supplied email/password
+> account on the page that opens, and the app goes to the Record tab. Tap "Start
+> recording", confirm the consent message, and allow microphone access. Speak
+> near the device, then tap "End meeting". Open Library to see the saved
+> recording and tap it for the transcript.
+>
+> **To test the voice keyboard:** Settings › General › Keyboard › Keyboards ›
+> Add New Keyboard › Parley Voice, then tap it and enable "Allow Full Access".
+> In any app with a text field (Notes works), switch to the Parley keyboard with
+> the globe key and tap the microphone button. Parley opens, records, and the
+> transcript types into the field you started from. Without Full Access the
+> keyboard still functions: it shows the reason and keeps a working key row
+> (globe, space, return, delete).
+>
+> **Settings** verifies System/Light/Dark appearance, sync status, hosted usage,
+> the app’s Language setting, privacy/support links, and account deletion.
+> Account deletion is at Settings → Account → Delete Account.
 >
 > If the test network is unavailable, the completed recording remains in an
 > on-device pending-upload queue and can be retried from Settings → Sync.
 
+## Why the keyboard requests Full Access (guideline 4.4.1)
+
+Expect this to be asked; answer it in the notes rather than waiting.
+
+- **What Full Access is used for.** Exactly two things: reaching the App Group
+  container shared with the containing app, and letting the containing app’s
+  network request run. The keyboard itself never opens a socket, and it never
+  transmits, stores, or logs anything the user types.
+- **Why it cannot work without it.** Dictation audio has to reach the account’s
+  transcription relay. A keyboard extension cannot record audio at all, so the
+  keyboard hands off to the containing app, which records; the transcript comes
+  back through the App Group. Both halves of that handoff are gated on Full
+  Access.
+- **What happens when it is denied.** The keyboard degrades instead of breaking:
+  it explains what Full Access buys, and keeps a functional key row (globe,
+  space, return, delete). It is never a dead rectangle.
+- **Keystroke handling.** The keyboard inserts text and deletes backwards. It
+  does not read the document context, does not build a typing history, and has
+  no analytics.
+
 ## Responses to previous review feedback
 
 Submission 9ebcfa58 (version 1.0 build 3) was rejected under guideline 2.1(a)
-for two bugs. Both are fixed in build 4:
+for two bugs. Both were fixed in build 4 and remain fixed in build 5:
 
 - **"An error occurred when we tapped the login button."** The hosted sign-in
   page the app opens returned HTTP 404. The three `/sign-in*` routes had been

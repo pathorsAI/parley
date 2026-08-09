@@ -14,7 +14,7 @@ import UIKit
 ///
 /// Every private symbol is assembled at runtime from fragments so it never
 /// appears as a literal string in the binary — the deliberate trade the project
-/// accepted (隱蔽 + 版本閘門): lower the odds of a static-scanner 2.5.1 flag,
+/// accepted (obfuscation + a version gate): lower the odds of a static-scanner 2.5.1 flag,
 /// while keeping the behavior only where it actually works.
 enum HostReturn {
     /// True only where the private launch still returns to the host app. iOS

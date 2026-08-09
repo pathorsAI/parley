@@ -99,12 +99,15 @@ final class DictationCoordinator: ObservableObject {
         // the token — recording and the relay are the app's job), but a session
         // can still have expired. Fail loudly into the keyboard, not silently.
         guard let token = KeychainStore.get(AppState.tokenKey) else {
-            fail("請先在 Parley App 登入，再用語音鍵盤。")
+            fail(String(localized: "Sign in to the Parley app before using the voice keyboard."))
             return
         }
 
         guard await AudioCapture.requestPermission() else {
-            fail("需要麥克風權限才能聽寫。請到「設定 › Parley」開啟麥克風。")
+            fail(
+                String(
+                    localized:
+                        "Dictation needs microphone access. Turn it on in Settings › Parley."))
             return
         }
 
@@ -117,7 +120,7 @@ final class DictationCoordinator: ObservableObject {
             try await client.start()
             relay = client
         } catch {
-            fail("連線失敗，請稍後再試。")
+            fail(String(localized: "Connection failed. Please try again."))
             return
         }
 
@@ -133,7 +136,7 @@ final class DictationCoordinator: ObservableObject {
         } catch {
             await relay?.finish()
             relay = nil
-            fail("無法開啟麥克風。")
+            fail(String(localized: "Couldn't open the microphone."))
             return
         }
 
