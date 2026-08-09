@@ -2,22 +2,48 @@
 
 Parley iOS is the cloud companion for face-to-face meetings. It records the
 phone microphone, streams it through the hosted Parley relay, and syncs the
-Ogg recording plus transcript to the same account as the desktop app. It does
-not capture phone calls or other apps' audio.
+Ogg recording plus transcript to the same account as the desktop app. Since 1.1
+it also ships a voice-typing keyboard extension. It does not capture phone calls
+or other apps' audio.
 
-## Release build
+Already configured for the Pathors Apple team (`SXHVCQXJHZ`):
 
-Prerequisites already configured for the Pathors Apple team (`SXHVCQXJHZ`):
-
-- Bundle ID: `com.pathors.parley.ios`
+- Bundle IDs: `com.pathors.parley.ios`, `com.pathors.parley.ios.keyboard`
+- App Group: `group.com.pathors.parley.ios` (the app ↔ keyboard transcript handoff)
 - App Store Connect app: `Parley` (`6795031201`)
 - Sign in with Apple capability and hosted Better Auth Apple provider
 - Hosted login page: `https://api.parley.tw/sign-in`
 
-Each upload needs a new build number. `xcodegen generate` writes
-`App/Parley/Info.plist` from `App/project.yml`, so bump `CFBundleVersion` in
-**`App/project.yml`** — editing the plist alone is overwritten on the next
-generate. Keep the checked-in plist in step with it, then archive:
+## Release build
+
+**Preferred: tag and let CI do it.**
+
+```bash
+# bump CFBundleVersion in ios/App/project.yml first — see below
+git tag ios-v1.1 && git push origin ios-v1.1
+```
+
+[`ios-release.yml`](../.github/workflows/ios-release.yml) archives, exports, and
+uploads to TestFlight. It refuses to build if the tag disagrees with
+`CFBundleShortVersionString`, and keeps the `.ipa` and dSYMs as run artifacts —
+a TestFlight crash report is unreadable without the dSYMs from the exact archive
+that produced the build.
+
+It authenticates with the `APPLE_API_KEY_CONTENT` / `APPLE_API_KEY` /
+`APPLE_API_ISSUER` secrets, the same App Store Connect API key the desktop
+workflow notarizes with. If upload fails with a permissions error, that key's
+role is too narrow: create a new key with **App Manager** in App Store Connect →
+Users and Access → Integrations, and update those three secrets.
+
+**Build numbers.** Every upload needs a `CFBundleVersion` App Store Connect has
+not seen. `xcodegen generate` writes `App/Parley/Info.plist` from
+`App/project.yml`, so bump it in **`project.yml`** — editing the plist alone is
+overwritten on the next generate — and commit the regenerated plist with it.
+Both targets carry the number and both must move together. To re-upload without
+a commit, run the workflow manually with the `build_number` input.
+
+<details>
+<summary>Building and uploading by hand</summary>
 
 ```bash
 cd ios/App
@@ -31,43 +57,64 @@ xcodebuild -exportArchive -archivePath build/Parley.xcarchive \
 ```
 
 With an Xcode account signed in, the export uploads directly to App Store
-Connect. CI should use an App Store Connect API key with
-`-authenticationKeyPath`, `-authenticationKeyID`, and
-`-authenticationKeyIssuerID` instead of a GUI account.
+Connect.
+</details>
 
 ## Store metadata
 
-The canonical submission copy, privacy answers, review notes, and screenshot
-brief live in [`AppStore/`](AppStore/README.md). Keep this checklist concise;
-do not copy reviewer credentials into the repository.
+The canonical submission copy, privacy answers, review notes, and screenshots
+live in [`AppStore/`](AppStore/README.md), which has the ordered Connect
+checklist. Do not duplicate field values here and do not copy reviewer
+credentials into the repository.
 
-- **Support URL:** `https://parley.tw/support/`
-- **Privacy Policy URL:** `https://parley.tw/privacy/`
-- **Copyright:** `© 2026 Pathors AI`
-- **Screenshots:** upload 1–10 iPhone 6.5-inch PNG/JPEG screenshots without
-  alpha. Use an actual app session that shows live transcription, recording
-  library, and settings; do not use mocked desktop UI.
-- **App Privacy:** declare contact info (email), user content (audio recordings
-  and transcripts), and identifiers/account data. Mark the information as used
-  for app functionality; do not mark it as used for tracking.
+Two things in that checklist are easy to skip and expensive to skip:
 
-## Review notes
-
-Provide a working review account on the hosted email/password sign-in page and
-include this note:
-
-> Parley is a microphone-based, in-person meeting recorder. It does not record
-> phone calls or other app audio. The microphone starts only after the user taps
-> Start Recording and confirms they have consent from participants. Audio is
-> sent to the signed-in account's hosted transcription relay, and the completed
-> recording plus transcript sync to that account. Account deletion is available
-> in Settings → Account.
+- **English (U.S.) is the primary locale.** It is what every region without its
+  own localization sees. Connect restricts when primary language can change, so
+  it goes first.
+- **Screenshots are per-locale**, `AppStore/screenshots/en-US/` and
+  `zh-Hant/`, 1320×2868 (the 6.9-inch slot). Regenerate with
+  [`AppStore/capture-screenshots.sh`](AppStore/capture-screenshots.sh) whenever
+  the UI moves; it fails rather than shipping a blank or mis-sized frame.
 
 ## Before submission
 
-- [ ] Test hosted email/password, Google, and Apple login end-to-end on device.
-- [ ] Test microphone permission denial, background/lock-screen recording, an
-      interrupted network, and later queued-upload retry.
-- [ ] Verify personal folders, organization share/move, and account deletion.
-- [ ] Confirm the public privacy and support URLs load over HTTPS.
+Run on a real device, not only the simulator. Nothing below is covered by the
+unit tests.
+
+**Account and recording**
+
+- [ ] Hosted email/password, Google, and Apple sign-in end-to-end.
+- [ ] Microphone permission denial, and recovery after granting it in Settings.
+- [ ] Background and lock-screen recording survives; a phone call interrupts and
+      resumes cleanly.
+- [ ] Network dropped mid-recording → the finished recording queues, and
+      Settings → Sync retries it successfully.
+- [ ] Personal folders, organization share/move, and account deletion.
+
+**Voice keyboard (new in 1.1)**
+
+- [ ] Adding the keyboard in Settings → General → Keyboard, then enabling Full
+      Access.
+- [ ] **With Full Access off**, the keyboard still shows the explanation and a
+      working key row (globe, space, return, delete) — never a dead rectangle.
+      This is what guideline 4.4.1 review looks at.
+- [ ] Mic button → Parley records → the transcript types into the field you
+      started from, in a third-party app (Notes, Messages, Mail).
+- [ ] The Action Button intent starts dictation without bringing Parley forward.
+- [ ] A session left running stops itself at the 120-second cap.
+
+**Localization**
+
+- [ ] The app in both languages, switched via Settings → Parley → Language: no
+      English leaking into the Chinese build, no clipped or wrapped rows.
+- [ ] The keyboard's name in the system keyboard list is localized.
+
+**Public surfaces**
+
+- [ ] `https://parley.tw/privacy/` and `https://parley.tw/support/` load over
+      HTTPS, and the support page covers iOS in both languages.
+
+**Then**
+
 - [ ] Assign the processed TestFlight build and submit only after the above.
