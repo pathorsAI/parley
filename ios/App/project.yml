@@ -27,7 +27,7 @@ targets:
       path: Parley/Info.plist
       properties:
         CFBundleDisplayName: Parley
-        CFBundleShortVersionString: "1.0"
+        CFBundleShortVersionString: "1.1"
         CFBundleVersion: "5"
         UILaunchScreen: {}
         NSMicrophoneUsageDescription: Parley listens to the meeting to transcribe and coach it live. Audio goes only to the transcription provider tied to your account.
@@ -61,7 +61,7 @@ targets:
       path: ../Keyboard/Info.plist
       properties:
         CFBundleDisplayName: Parley 語音
-        CFBundleShortVersionString: "1.0"
+        CFBundleShortVersionString: "1.1"
         CFBundleVersion: "5"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.keyboard-service
