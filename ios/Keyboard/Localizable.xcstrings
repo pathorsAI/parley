@@ -102,6 +102,28 @@
           }
         }
       }
+    },
+    "Tap to talk — your words land at the cursor": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按一下就能說，說的話會落在游標位置"
+          }
+        }
+      }
+    },
+    "Settings › General › Keyboard › Keyboards › Parley → Allow Full Access. Your voice is sent to your Parley account to be transcribed.": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定 › 一般 › 鍵盤 › 鍵盤 › Parley → 允許完整取用權限。你的語音會送到 Parley 帳號進行轉錄。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
