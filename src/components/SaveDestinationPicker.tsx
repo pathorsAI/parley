@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { FolderClosed } from "lucide-react";
 import { Combobox, type ComboGroup } from "@/components/ui/combobox";
-import { syncEnabled as cloudSyncEnabled } from "../lib/cloud/client";
 import { listMyOrgs } from "../lib/cloud/orgs";
 import type { CloudOrg } from "../lib/cloud/types";
-import { listCloudFolders, listOrgFolders, type CloudFolder } from "../lib/cloud/folders";
-import { listLocalFolders, listenForFoldersUpdated, type Folder as LocalFolder } from "../lib/history/folders";
+import { listOrgFolders, type CloudFolder } from "../lib/cloud/folders";
 import { useI18n } from "../i18n";
 import { log } from "../lib/log";
 import type { DefaultSaveLocation } from "../lib/types";
@@ -33,9 +31,16 @@ const parse = (v: string): DefaultSaveLocation => {
 };
 
 /**
- * Where finished meetings save: a personal folder (or root), or an org folder.
+ * Where finished meetings save: the personal root, or an org folder.
  * Shared by Settings (the fallback default) and the pre-flight screen's
- * "save somewhere else" override, so the folder/org loading logic lives once.
+ * "save somewhere else" override, so the org loading logic lives once.
+ *
+ * Personal NAMED folders are deliberately not offered (#211): the customer
+ * picked one field above decides personal filing, and this picker listing the
+ * same folders was the last surviving "second answer" — the exact two-controls
+ * split the refactor removed everywhere else. A legacy personal-folder value
+ * still resolves (resolveLocation), it just can't be chosen anew; the startup
+ * normalization rewrites stored ones to the root.
  */
 export function SaveDestinationPicker({
   value,
@@ -50,38 +55,8 @@ export function SaveDestinationPicker({
   compact?: boolean;
 }>) {
   const { t } = useI18n();
-  const [personal, setPersonal] = useState<LocalFolder[]>(() => listLocalFolders());
   const [orgs, setOrgs] = useState<CloudOrg[]>([]);
   const [orgFolders, setOrgFolders] = useState<Record<string, CloudFolder[]>>({});
-
-  // Personal folders: prefer the cloud list when sync is on (cross-device truth).
-  useEffect(() => {
-    async function loadPersonalFolders() {
-      if (!syncOn || !cloudSyncEnabled()) {
-        setPersonal(listLocalFolders());
-        return;
-      }
-      try {
-        const cloud = await listCloudFolders();
-        setPersonal(cloud.map((f) => ({ id: f.id, name: f.name, createdAt: f.createdAt })));
-      } catch {
-        setPersonal(listLocalFolders());
-      }
-    }
-    loadPersonalFolders().catch((error) =>
-      log.warn("save-dest: personal folders load failed", { error: String(error) })
-    );
-  }, [syncOn]);
-
-  // Reflect personal-folder create/rename/delete done in the History window live.
-  useEffect(() => {
-    const un = listenForFoldersUpdated(() => setPersonal(listLocalFolders()));
-    return () => {
-      un.then((fn) => fn()).catch((error) =>
-        log.warn("save-dest: folder listener cleanup failed", { error: String(error) })
-      );
-    };
-  }, []);
 
   // Org folders only matter for an org default, which needs sync on.
   useEffect(() => {
@@ -120,13 +95,7 @@ export function SaveDestinationPicker({
     const g: ComboGroup[] = [
       {
         label: personalLabel,
-        options: [
-          { value: "personal", label: label(personalLabel, root, true) },
-          ...personal.map((f) => ({
-            value: `personal:${f.id}`,
-            label: label(personalLabel, f.name, false),
-          })),
-        ],
+        options: [{ value: "personal", label: label(personalLabel, root, true) }],
       },
     ];
     if (syncOn) {
@@ -144,7 +113,7 @@ export function SaveDestinationPicker({
       }
     }
     return g;
-  }, [personal, orgs, orgFolders, syncOn, root, compact, t]);
+  }, [orgs, orgFolders, syncOn, root, compact, t]);
 
   return (
     <Combobox

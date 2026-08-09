@@ -21,8 +21,9 @@ import { log } from "../log";
 import { CLOUD_ENABLED } from "../flags";
 import { markDirty } from "../cloud/syncState";
 import { CLOUD_URL, cloudFetch, cloudToken, syncEnabled } from "../cloud/client";
-import { listLocalFolders } from "./folders";
-import { buildOwnershipIndex, ownerBackfill } from "../library/scope";
+import { deleteLocalFolder, emitFoldersUpdated, listLocalFolders } from "./folders";
+import { deleteCloudFolder } from "../cloud/folders";
+import { buildOwnershipIndex, ownerBackfill, planFolderDedupe } from "../library/scope";
 import { rediarizeSegments } from "../speakers/postDiarize";
 import { translate } from "../../i18n/messages";
 import type { ReplaySession } from "../replay/types";
@@ -697,6 +698,77 @@ export async function setEntryFolder(id: string, folderId: string | null): Promi
   });
   log.info("history: entry folder set", { id, folderId });
   pushToCloud(id); // sync the new folderId (best-effort; gated by the sync toggle)
+}
+
+/**
+ * Upgrade dedupe (#211 follow-up): merge same-name personal folder twins.
+ *
+ * The plan comes from {@link planFolderDedupe} (see its comment for how the
+ * twins came to exist). This applies it: repoint every recording filed in a
+ * twin onto the survivor, delete the twins locally, and delete them in the
+ * cloud so the mirror-down in reloadFolders doesn't resurrect them next
+ * launch. When sync is off the cloud delete no-ops and the twins WILL come
+ * back from the mirror after sign-in — which is fine, because this runs every
+ * startup and converges the next time around.
+ *
+ * Runs after the company↔folder pairing (the survivor prefers the paired
+ * folder) and before the owner backfill (which should see the merged mapping).
+ * Like the backfill: idempotent, no flag, no cloud push of entries (a push
+ * re-uploads audio).
+ */
+export async function migrateDuplicateFolders(): Promise<number> {
+  if (!isTauri()) return 0;
+  const merges = planFolderDedupe(listLocalFolders(), useAccounts.getState().companies);
+  if (!merges.length) return 0;
+  const survivorOf = new Map<string, string>();
+  for (const m of merges) for (const twin of m.twinIds) survivorOf.set(twin, m.canonicalId);
+
+  let moved = 0;
+  try {
+    for (const summary of await listHistory()) {
+      const target = summary.folderId ? survivorOf.get(summary.folderId) : undefined;
+      if (!target) continue;
+      try {
+        const { meta } = await invoke<HistoryReadResult>("read_history_entry", {
+          id: summary.id,
+        });
+        const updated: HistoryEntry = { ...meta, folderId: target };
+        await invoke("save_history_entry", {
+          id: summary.id,
+          summaryJson: JSON.stringify(buildSummary(updated)),
+          metaJson: JSON.stringify(updated),
+          audioSourcePath: null, // leave the recording untouched
+          compress: false,
+        });
+        moved++;
+      } catch (e) {
+        log.warn("history: folder dedupe failed for entry", {
+          id: summary.id,
+          error: String(e),
+        });
+      }
+    }
+  } catch (e) {
+    log.warn("history: folder dedupe sweep failed", { error: String(e) });
+    return moved;
+  }
+
+  // Recordings are safely off the twins — now the twins can go.
+  for (const [twin] of survivorOf) {
+    deleteLocalFolder(twin);
+    if (CLOUD_ENABLED) {
+      deleteCloudFolder(twin).catch((e) =>
+        log.warn("history: twin folder cloud delete failed", { twin, error: String(e) })
+      );
+    }
+  }
+  await emitFoldersUpdated().catch(() => {});
+  if (moved) await emitHistoryUpdated();
+  log.info("history: folder dedupe complete", {
+    merged: merges.map((m) => ({ name: m.name, twins: m.twinIds.length })),
+    movedRecordings: moved,
+  });
+  return moved;
 }
 
 /**

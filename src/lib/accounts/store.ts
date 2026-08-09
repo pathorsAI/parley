@@ -577,12 +577,31 @@ export function initAccounts(): void {
       try {
         const { migrateCompanyFolders } = await import("./folders");
         migrateCompanyFolders();
-        // Pairing first, THEN the recordings: the backfill reads
-        // Company.folderId, so it has to run after every company has one.
-        const { migrateEntryOwners } = await import("../history/history");
-        migrateEntryOwners().catch((e) =>
+        // Strict order: pairing → twin dedupe → owner backfill. Dedupe wants
+        // the pairing done (the survivor prefers the company-paired folder);
+        // the backfill reads Company.folderId AND should see the merged
+        // registry, not twins about to be deleted.
+        const { migrateDuplicateFolders, migrateEntryOwners } = await import(
+          "../history/history"
+        );
+        await migrateDuplicateFolders().catch((e) =>
+          log.warn("accounts: folder dedupe failed", { error: String(e) })
+        );
+        await migrateEntryOwners().catch((e) =>
           log.warn("accounts: recording owner backfill failed", { error: String(e) })
         );
+        // A personal-FOLDER default save predates #211 (the customer decides
+        // personal filing now; the default only matters for customer-less
+        // meetings, which by definition go to the root). Normalize so the
+        // picker — which no longer offers personal folders — shows the truth.
+        const { useStore } = await import("../store");
+        const loc = useStore.getState().settings.defaultSaveLocation;
+        if (loc.scope === "personal" && loc.folderId) {
+          useStore.getState().updateSettings({
+            defaultSaveLocation: { scope: "personal", folderId: null },
+          });
+          log.info("accounts: personal-folder default save normalized to root");
+        }
       } catch (e) {
         log.warn("accounts: folder migration failed", { error: String(e) });
       }
