@@ -3,7 +3,6 @@ import { persist } from "zustand/middleware";
 import type {
   ActionItem,
   AppLanguage,
-  DefaultSaveLocation,
   DeliveryAssessment,
   DeliveryNudge,
   Evaluation,
@@ -23,6 +22,7 @@ import type {
 import type { ReplaySession } from "./replay/types";
 import type { CloudAuth } from "./cloud/types";
 import type { HistoryEntry } from "./history/types";
+import type { MeetingShare } from "./history/history";
 import type { LibraryNode } from "./library/scope";
 import {
   buildBuiltinEvalLabels,
@@ -236,7 +236,7 @@ const CLEARED_PREP_SLICE = {
   meetingThreadId: null,
   meetingAttendeeIds: [] as string[],
   meetingStage: null,
-  meetingSaveOverride: null,
+  meetingOrgShare: null,
   meetingContext: "",
   meetingBatna: "",
   meetingTarget: "",
@@ -555,13 +555,13 @@ interface ParleyState {
   meetingStage: SalesStage | null;
   setMeetingStage: (stage: SalesStage | null) => void;
   /**
-   * Explicit "save this one somewhere else" choice made in pre-flight. null =
-   * derive the destination (company folder, else the settings default) — see
-   * {@link import("./history/history").resolveMeetingSave}. Per meeting: cleared
-   * with the rest of the prep slice.
+   * This meeting's org-share choice. null = follow the settings default;
+   * "off" = suppress a default share for this one meeting. Filing is NOT here
+   * (#211): the customer link decides that — see resolveMeetingSave. Per
+   * meeting: cleared with the rest of the prep slice.
    */
-  meetingSaveOverride: DefaultSaveLocation | null;
-  setMeetingSaveOverride: (loc: DefaultSaveLocation | null) => void;
+  meetingOrgShare: MeetingShare;
+  setMeetingOrgShare: (share: MeetingShare) => void;
   setMeetingLink: (link: {
     companyId: string | null;
     threadId: string | null;
@@ -705,7 +705,7 @@ export const useStore = create<ParleyState>()(
       meetingThreadId: null,
       meetingAttendeeIds: [],
       meetingStage: null,
-      meetingSaveOverride: null,
+      meetingOrgShare: null,
       meetingBatna: "",
       meetingTarget: "",
       meetingFloor: "",
@@ -714,7 +714,7 @@ export const useStore = create<ParleyState>()(
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setMeetingStage: (stage) => set({ meetingStage: stage }),
-  setMeetingSaveOverride: (meetingSaveOverride) => set({ meetingSaveOverride }),
+  setMeetingOrgShare: (meetingOrgShare) => set({ meetingOrgShare }),
   setMeetingLink: ({ companyId, threadId, attendeeIds }) =>
     set({
       meetingCompanyId: companyId,

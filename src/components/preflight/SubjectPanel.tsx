@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { FolderClosed } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { useAccounts, personsOf, threadsOf } from "../../lib/accounts/store";
 import { ensureCompanyFolder } from "../../lib/accounts/folders";
@@ -7,23 +6,22 @@ import { stageFor } from "../../lib/accounts/currentStage";
 import { useScenarioSet } from "../../lib/accounts/useStageSet";
 import { applyScenario } from "../../lib/meeting/scenario";
 import { resolveMeetingSave } from "../../lib/history/history";
-import { listLocalFolders } from "../../lib/history/folders";
+import { CLOUD_ENABLED } from "../../lib/flags";
 import { useI18n } from "../../i18n";
 import type { MeetingType } from "../../lib/types";
 import { Combobox, type ComboGroup } from "@/components/ui/combobox";
-import { SaveDestinationPicker } from "../SaveDestinationPicker";
+import { OrgSharePicker } from "../OrgSharePicker";
 import { Column, Field, InlineCreate, SectionTitle } from "./bits";
 
 /**
  * Pre-flight column ①: WHO this call is with.
  *
- * The save destination lives here as a RESULT, not a second control. Linking a
- * company decides the folder (every company owns one — see accounts/folders);
- * "save somewhere else" is an explicit opt-out that sets a per-meeting
- * override. Before this screen, a titlebar folder chip and a buried company
- * dropdown both claimed to decide where a recording landed and the company
- * link silently won — meetings filed themselves under the wrong customer with
- * nothing on screen to explain it.
+ * That question is also the whole filing story (#211): the customer decides
+ * where the recording lives, so no folder control appears here — the only
+ * save decision left is whether an org gets a shared copy, and that choice is
+ * independent of the customer link. Before this, a folder picker sat beside
+ * the customer picker and the two could disagree about whose recording this
+ * was going to be.
  */
 export function SubjectPanel() {
   const { t } = useI18n();
@@ -37,8 +35,9 @@ export function SubjectPanel() {
   const meetingStage = useStore((s) => s.meetingStage);
   const setMeetingStage = useStore((s) => s.setMeetingStage);
   const setMeetingLink = useStore((s) => s.setMeetingLink);
-  const saveOverride = useStore((s) => s.meetingSaveOverride);
-  const setSaveOverride = useStore((s) => s.setMeetingSaveOverride);
+  const orgShare = useStore((s) => s.meetingOrgShare);
+  const setOrgShare = useStore((s) => s.setMeetingOrgShare);
+  const signedIn = useStore((s) => !!s.cloudAuth);
   const syncEnabled = useStore((s) => s.settings.syncEnabled);
   const defaultSave = useStore((s) => s.settings.defaultSaveLocation);
 
@@ -67,11 +66,6 @@ export function SubjectPanel() {
   // What the save will actually do, recomputed from the same function the save
   // path calls. Reading `useAccounts()`/store above keeps this reactive.
   const save = resolveMeetingSave();
-  const folderName =
-    save.folderId
-      ? (listLocalFolders().find((f) => f.id === save.folderId)?.name ??
-        t("settings.account.defaultSave.root"))
-      : t("settings.account.defaultSave.root");
 
   function createCompany(name: string) {
     const created = acc.addCompany({ name });
@@ -235,50 +229,33 @@ export function SubjectPanel() {
           </div>
         )}
 
-        {/* Where it lands — the consequence of the choices above. */}
-        <div className="flex flex-col gap-1.5 border-t pt-3">
-          <SectionTitle>{t("preflight.saveTo")}</SectionTitle>
-          {saveOverride ? (
-            <div className="flex flex-col items-start gap-1">
-              <SaveDestinationPicker
-                value={saveOverride}
-                syncOn={syncEnabled}
-                onChange={setSaveOverride}
-              />
-              <button
-                type="button"
-                onClick={() => setSaveOverride(null)}
-                className="cursor-pointer text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
-              >
-                {t("preflight.saveAuto")}
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-col items-start gap-1">
-              <span className="flex items-center gap-1.5 text-sm">
-                <FolderClosed className="size-3.5 shrink-0 text-muted-foreground" />
-                {folderName}
-              </span>
-              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                <span>
-                  {save.origin === "company"
-                    ? t("preflight.saveFollowsCompany")
-                    : t("preflight.saveFollowsDefault")}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSaveOverride(defaultSave)}
-                  className="cursor-pointer underline underline-offset-2 hover:text-foreground"
-                >
-                  {t("preflight.saveElsewhere")}
-                </button>
-              </div>
-            </div>
-          )}
-          {save.autoShare && (
-            <p className="text-[11px] text-muted-foreground">{t("preflight.saveOrgCopy")}</p>
-          )}
-        </div>
+        {/* The only save decision left: an org copy. Filing is the customer
+            picked above — there is nothing to choose about it, so nothing is
+            shown. (Signed-out / OSS: this whole block is absent.) */}
+        {CLOUD_ENABLED && signedIn && syncEnabled && (
+          <div className="flex flex-col gap-1.5 border-t pt-3">
+            <SectionTitle>{t("share.toOrg")}</SectionTitle>
+            <OrgSharePicker
+              value={
+                orgShare === "off"
+                  ? null
+                  : orgShare ??
+                    (defaultSave.scope === "org" && defaultSave.orgId
+                      ? { orgId: defaultSave.orgId, folderId: defaultSave.folderId ?? null }
+                      : null)
+              }
+              onChange={(target) => {
+                // Picking "off" while the settings default would share needs an
+                // explicit suppression, not just null (null = follow default).
+                if (target) setOrgShare(target);
+                else setOrgShare(defaultSave.scope === "org" ? "off" : null);
+              }}
+            />
+            {save.autoShare && (
+              <p className="text-[11px] text-muted-foreground">{t("preflight.saveOrgCopy")}</p>
+            )}
+          </div>
+        )}
       </div>
     </Column>
   );
