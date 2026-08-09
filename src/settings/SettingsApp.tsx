@@ -65,7 +65,7 @@ import type { AppLanguage, AppTheme, EvalDef, LlmProvider,
 import { VoiceTypingSettings } from "./VoiceTypingSettings";
 import { TranslateSettings } from "./TranslateSettings";
 import { ScenarioSettings } from "./StageBundleSettings";
-import { SaveDestinationPicker } from "../components/SaveDestinationPicker";
+import { OrgSharePicker } from "../components/OrgSharePicker";
 import { PermissionsPanel } from "./PermissionsPanel";
 
 // The panel ids live in the store as SettingsCategory so other surfaces (e.g.
@@ -380,10 +380,23 @@ export function SettingsApp() {
             {cloudAuth && (
               <Field label={t("settings.account.defaultSave.title")}>
                 <div className="flex max-w-md flex-col gap-2">
-                  <SaveDestinationPicker
-                    value={settings.defaultSaveLocation}
-                    syncOn={settings.syncEnabled}
-                    onChange={(loc) => patch({ defaultSaveLocation: loc })}
+                  <OrgSharePicker
+                    value={
+                      settings.defaultSaveLocation.scope === "org" &&
+                      settings.defaultSaveLocation.orgId
+                        ? {
+                            orgId: settings.defaultSaveLocation.orgId,
+                            folderId: settings.defaultSaveLocation.folderId ?? null,
+                          }
+                        : null
+                    }
+                    onChange={(target) =>
+                      patch({
+                        defaultSaveLocation: target
+                          ? { scope: "org", orgId: target.orgId, folderId: target.folderId }
+                          : { scope: "personal", folderId: null },
+                      })
+                    }
                   />
                   <p className="text-[11px] text-muted-foreground">{t("settings.account.defaultSave.desc")}</p>
                   {!settings.syncEnabled && (

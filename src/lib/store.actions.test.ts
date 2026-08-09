@@ -459,7 +459,7 @@ describe("pre-flight", () => {
       meetingThreadId: "th-1",
       meetingAttendeeIds: ["p-1"],
       meetingStage: "negotiation",
-      meetingSaveOverride: { scope: "personal", folderId: "fld-1" },
+      meetingOrgShare: { orgId: "org-1", folderId: null },
       meetingContext: "last call's background",
       meetingBatna: "walk away",
       meetingTarget: "1.2M",
@@ -490,7 +490,7 @@ describe("pre-flight", () => {
     expect(s.meetingThreadId).toBeNull();
     expect(s.meetingAttendeeIds).toEqual([]);
     expect(s.meetingStage).toBeNull();
-    expect(s.meetingSaveOverride).toBeNull();
+    expect(s.meetingOrgShare).toBeNull();
     expect(s.meetingContext).toBe("");
     expect(s.meetingBatna).toBe("");
     expect(s.meetingTarget).toBe("");

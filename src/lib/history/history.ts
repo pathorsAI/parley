@@ -27,7 +27,7 @@ import { buildOwnershipIndex, ownerBackfill, planFolderDedupe } from "../library
 import { rediarizeSegments } from "../speakers/postDiarize";
 import { translate } from "../../i18n/messages";
 import type { ReplaySession } from "../replay/types";
-import type { DefaultSaveLocation, TranscriptSegment } from "../types";
+import type { TranscriptSegment } from "../types";
 import type { HistoryEntry, HistoryEntrySummary } from "./types";
 
 const HISTORY_UPDATED_EVENT = "history://updated";
@@ -166,70 +166,58 @@ async function pushToCloud(id: string): Promise<void> {
 
 // ── Save location ─────────────────────────────────────────────────────────────
 
-/** Where a finished meeting lands, and WHICH rule decided it (pre-flight shows
- *  the rule, so "why did it save there" is never a guess). */
+/** What saving this meeting will do: where the local entry files, and whether
+ *  an org gets an auto-shared copy. */
 export interface MeetingSaveTarget {
   folderId: string | null;
   autoShare: { orgId: string; folderId: string | null } | null;
   fallback: "syncOff" | null;
-  /** "override" = an explicit per-meeting choice; "company" = the linked
-   *  company's paired folder; "default" = the settings fallback. */
-  origin: "override" | "company" | "default";
+  /** "company" = filed under the linked customer; "default" = no customer. */
+  origin: "company" | "default";
 }
 
-/**
- * Resolve one save LOCATION (personal folder / org) into a concrete target. The
- * LOCAL entry always lands in a personal folder (or the personal root): when the
- * location targets an org, the local copy stays at the personal root and the org
- * gets an auto-shared COPY afterward (so the user never loses their own
- * recording). On any guard miss (org target but signed out / sync off / not the
- * cloud edition) we fall back to the personal root and report it so the caller
- * can surface a toast.
- */
-function resolveLocation(
-  loc: DefaultSaveLocation | null | undefined,
-  origin: MeetingSaveTarget["origin"],
-): MeetingSaveTarget {
-  if (!loc || loc.scope === "personal") {
-    const fid = loc?.folderId ?? null;
-    // A personal folder deleted since it was chosen → save at the root (orphan→root).
-    if (fid && !listLocalFolders().some((f) => f.id === fid)) {
-      return { folderId: null, autoShare: null, fallback: null, origin };
-    }
-    return { folderId: fid, autoShare: null, fallback: null, origin };
-  }
-  // scope === "org": needs the cloud edition, signed in, sync on.
-  if (!CLOUD_ENABLED || !loc.orgId || !syncEnabled()) {
-    return { folderId: null, autoShare: null, fallback: loc.orgId ? "syncOff" : null, origin };
-  }
-  return {
-    folderId: null,
-    autoShare: { orgId: loc.orgId, folderId: loc.folderId ?? null },
-    fallback: null,
-    origin,
-  };
-}
+/** The per-meeting org-share choice. `null` follows the settings default;
+ *  `"off"` suppresses a default share for this one meeting. */
+export type MeetingShare = { orgId: string; folderId: string | null } | "off" | null;
 
 /**
- * THE one place that answers "where does this meeting save?", with a single
- * documented precedence — previously the company link silently overrode the
- * user's chosen folder at the save call sites, which is how meetings ended up
- * filed under the wrong customer with nothing on screen explaining it:
+ * THE one place that answers "what does saving this meeting do?".
  *
- *   1. an explicit per-meeting override (pre-flight's "save somewhere else"),
- *   2. else the linked company's paired folder (issue #132),
- *   3. else the settings default.
+ * Filing is not a choice anymore (#211): the linked customer's folder, or the
+ * personal root when there is no customer. The only real decision left is
+ * whether an org gets a shared copy — per-meeting choice first, else the
+ * settings default — and that decision is INDEPENDENT of the customer link.
+ * The old model let a "save somewhere else" override beat the company link,
+ * which silently unfiled the customer's own recording; there is no override
+ * to express that mistake with now.
  *
- * Exported so the pre-flight screen displays exactly what the save will do.
+ * Exported so pre-flight displays exactly what the save will do.
  */
 export function resolveMeetingSave(): MeetingSaveTarget {
   const s = useStore.getState();
-  if (s.meetingSaveOverride) return resolveLocation(s.meetingSaveOverride, "override");
   const companyFolder = companyFolderId(s.meetingCompanyId);
-  if (companyFolder) {
-    return { folderId: companyFolder, autoShare: null, fallback: null, origin: "company" };
+  const base: MeetingSaveTarget = {
+    folderId: companyFolder,
+    autoShare: null,
+    fallback: null,
+    origin: companyFolder ? "company" : "default",
+  };
+
+  let wanted: { orgId: string; folderId: string | null } | null = null;
+  if (s.meetingOrgShare === "off") {
+    wanted = null;
+  } else if (s.meetingOrgShare) {
+    wanted = s.meetingOrgShare;
+  } else {
+    const def = s.settings.defaultSaveLocation;
+    if (def.scope === "org" && def.orgId) {
+      wanted = { orgId: def.orgId, folderId: def.folderId ?? null };
+    }
   }
-  return resolveLocation(s.settings.defaultSaveLocation, "default");
+  if (!wanted) return base;
+  // An org share needs the cloud edition, signed in, sync on.
+  if (!CLOUD_ENABLED || !syncEnabled()) return { ...base, fallback: "syncOff" };
+  return { ...base, autoShare: wanted };
 }
 
 /** After a save, auto-share into the default org folder — or toast why it fell back. */

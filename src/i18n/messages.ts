@@ -306,7 +306,6 @@ export const zhTW = {
   "feed.empty": "教練待命中——警示、進度與答案會出現在這裡",
   "feed.askPlaceholder": "問教練任何事…",
   "board.title": "情報板",
-  "saveDest.search": "搜尋資料夾…",
   "saveDest.empty": "找不到符合的資料夾",
 
   // ── 會前（pre-flight）──
@@ -325,11 +324,6 @@ export const zhTW = {
   "preflight.createConfirm": "建立",
   "preflight.newPerson": "新增出席者",
   "preflight.newPersonPlaceholder": "姓名，Enter 建立",
-  "preflight.saveTo": "存到",
-  "preflight.saveFollowsCompany": "跟著這家公司的資料夾走",
-  "preflight.saveFollowsDefault": "使用設定裡的預設位置",
-  "preflight.saveElsewhere": "改存別處",
-  "preflight.saveAuto": "改回自動決定",
   "preflight.saveOrgCopy": "另外會分享一份到組織空間",
   "preflight.review.title": "上次談到哪",
   "preflight.review.emptyTitle": "還沒選客戶",
@@ -407,6 +401,9 @@ export const zhTW = {
   "library.company.emptyHint": "{name} 還沒有錄音。開始會議時把客戶選成 {name}，錄音就會歸到這裡。",
 
   // ── 歸戶：一場錄音是誰的（#211）──
+  "share.toOrg": "同時分享到組織",
+  "share.off": "不分享",
+  "share.search": "搜尋組織…",
   "owner.label": "客戶",
   "owner.assign": "歸給哪個客戶",
   "owner.unassigned": "還沒歸戶",
@@ -1386,11 +1383,10 @@ export const zhTW = {
   "settings.account.signedOutHelp": "登入後即可跨裝置同步錄音與分析，並在團隊中分享。",
   "settings.account.sync.title": "雲端同步",
   "settings.account.sync.desc": "把個人錄音與資料夾同步到雲端，可在裝置間共用。關閉則此裝置只保留在本機（手動分享到組織仍可使用）。",
-  "settings.account.defaultSave.title": "預設儲存位置",
-  "settings.account.defaultSave.desc": "結束的會議預設存到這裡。選團隊資料夾時，會在存檔後自動分享一份到該組織。",
-  "settings.account.defaultSave.personal": "個人",
+  "settings.account.defaultSave.title": "自動分享到組織",
+  "settings.account.defaultSave.desc": "每場會議存檔後，自動分享一份到選定的組織。錄音本身歸在它的客戶底下，與這裡無關。",
   "settings.account.defaultSave.root": "（根目錄）",
-  "settings.account.defaultSave.syncOffHint": "開啟雲端同步後才能選擇團隊資料夾。",
+  "settings.account.defaultSave.syncOffHint": "開啟雲端同步後才能分享到組織。",
   "settings.account.desktopOnly": "登入功能只在 Parley App 中可用。",
   "settings.account.cancel": "取消",
 } as const satisfies Dict;
@@ -1695,7 +1691,6 @@ export const en = {
   "feed.empty": "Your coach is standing by — alerts, progress and answers land here",
   "feed.askPlaceholder": "Ask your coach anything…",
   "board.title": "Intel board",
-  "saveDest.search": "Search folders…",
   "saveDest.empty": "No matching folder",
 
   // ── Pre-flight ──
@@ -1714,11 +1709,6 @@ export const en = {
   "preflight.createConfirm": "Create",
   "preflight.newPerson": "New attendee",
   "preflight.newPersonPlaceholder": "Name, Enter to create",
-  "preflight.saveTo": "Saves to",
-  "preflight.saveFollowsCompany": "Follows this company's folder",
-  "preflight.saveFollowsDefault": "Uses the default from Settings",
-  "preflight.saveElsewhere": "Save somewhere else",
-  "preflight.saveAuto": "Back to automatic",
   "preflight.saveOrgCopy": "A copy is also shared to the org.",
   "preflight.review.title": "Where you left off",
   "preflight.review.emptyTitle": "No customer selected",
@@ -1807,6 +1797,9 @@ export const en = {
     "No recordings for {name} yet. Pick {name} as the customer when you start a meeting and the recording lands here.",
 
   // ── Ownership: whose recording is this (#211) ──
+  "share.toOrg": "Also share to an organization",
+  "share.off": "Don't share",
+  "share.search": "Search organizations…",
   "owner.label": "Customer",
   "owner.assign": "Assign to a customer",
   "owner.unassigned": "No customer yet",
@@ -2785,11 +2778,10 @@ export const en = {
   "settings.account.signedOutHelp": "Sign in to sync your recordings & analysis across devices and share within your team.",
   "settings.account.sync.title": "Cloud sync",
   "settings.account.sync.desc": "Sync your personal recordings and folders to the cloud across devices. Off keeps this device local-only (you can still share into an org manually).",
-  "settings.account.defaultSave.title": "Default save location",
-  "settings.account.defaultSave.desc": "Where finished meetings are saved by default. Choosing a team folder auto-shares a copy into that org after saving.",
-  "settings.account.defaultSave.personal": "Personal",
+  "settings.account.defaultSave.title": "Auto-share to an organization",
+  "settings.account.defaultSave.desc": "After each meeting saves, share a copy into the chosen organization. The recording itself files under its customer, regardless of this setting.",
   "settings.account.defaultSave.root": "(root)",
-  "settings.account.defaultSave.syncOffHint": "Turn on cloud sync to choose a team folder.",
+  "settings.account.defaultSave.syncOffHint": "Turn on cloud sync to share into an organization.",
   "settings.account.desktopOnly": "Sign-in is only available in the Parley app.",
   "settings.account.cancel": "Cancel",
 } as const satisfies Record<keyof typeof zhTW, string>;
