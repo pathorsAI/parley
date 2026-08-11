@@ -13,7 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.0",
+    "@ai-sdk/anthropic": "^3.0.109",
     "@ai-sdk/openai-compatible": "^2.0.0",
     "@fontsource-variable/geist": "^5.2.9",
     "@tailwindcss/typography": "^0.5.20",
