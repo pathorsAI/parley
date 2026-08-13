@@ -16,6 +16,7 @@ import { useScenarioSet } from "../../lib/accounts/useStageSet";
 import { BUILTIN_SCENARIO_IDS, type SlotDef } from "../../lib/accounts/bundleFile";
 import { ActionItemsPanel } from "../replay/ActionItemsPanel";
 import { AskPanel } from "../sidebar/AskPanel";
+import { StudyLinkBar } from "./StudyLinkBar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -105,6 +106,7 @@ function ReportPage() {
     <div className="relative min-h-0 flex-1">
       <ScrollArea className="h-full">
         <div ref={scrollRef} className="mx-auto max-w-2xl px-6 py-5">
+          <StudyLinkBar />
           <div className="flex flex-col gap-8 pb-10">
             <ReportSection id="study-brief" title={t("study.brief")}>
               <BriefSection onSeek={seek} />
@@ -318,12 +320,12 @@ function BoardReadout({ intel }: Readonly<{ intel: IntelState }>) {
 }
 
 /** 情報: the intelligence board run over the full recording. The meeting type is
- *  PER-RECORDING (store.studyMeetingType, persisted on the entry) — switching it
+ *  PER-RECORDING (store.meetingType, persisted on the entry) — switching it
  *  here never touches the global live default or other recordings. */
 function IntelSection() {
   const { t } = useI18n();
-  const meetingType = useStore((s) => s.studyMeetingType);
-  const setStudyMeetingType = useStore((s) => s.setStudyMeetingType);
+  const meetingType = useStore((s) => s.meetingType);
+  const setMeetingType = useStore((s) => s.setMeetingType);
   const intel = useStore((s) => s.intel);
   const intelStatus = useStore((s) => s.intelStatus);
   const running = intelStatus === "running";
@@ -333,7 +335,7 @@ function IntelSection() {
   // the type (switching it re-extracts automatically); the manual re-run lives
   // in the titlebar's analysis chip.
   const pickType = (v: MeetingType) => {
-    setStudyMeetingType(v);
+    setMeetingType(v);
     // Remember the choice on the entry right away (extraction saves again later).
     void persistStudyOutputs().catch((e) =>
       log.warn("study: meeting-type persist failed", { error: String(e) })

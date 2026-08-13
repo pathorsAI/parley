@@ -18,7 +18,7 @@ function facts(patch: Partial<StudyPipelineFacts> = {}): StudyPipelineFacts {
     briefStatus: "idle",
     deliveryStatus: "idle",
     intelStatus: "idle",
-    studyMeetingType: "general",
+    meetingType: "general",
     intelType: null,
     ...patch,
   };
@@ -37,11 +37,11 @@ describe("evaluateStages (the scheduler's whole topology)", () => {
     // Not just findings: intel is independent of the findings pass and used to
     // leak a deep extraction over the pre-trim, un-diarized transcript.
     expect(
-      evaluateStages(facts({ wizardOpen: true, studyMeetingType: "sales" }))
+      evaluateStages(facts({ wizardOpen: true, meetingType: "sales" }))
     ).toEqual([]);
     // ...and simply closing it un-defers. No gate to release, nothing to leak.
     expect(
-      evaluateStages(facts({ wizardOpen: false, studyMeetingType: "sales" }))
+      evaluateStages(facts({ wizardOpen: false, meetingType: "sales" }))
     ).toEqual(["findings", "intel"]);
   });
 
@@ -73,7 +73,7 @@ describe("evaluateStages (the scheduler's whole topology)", () => {
   });
 
   it("intel: 'idle' always wants a run (fresh pick OR invalidation); 'done' only re-runs on a type mismatch", () => {
-    const base = facts({ analysisStatus: "running", studyMeetingType: "sales" });
+    const base = facts({ analysisStatus: "running", meetingType: "sales" });
     // No board yet → extract.
     expect(evaluateStages(base)).toContain("intel");
     // Invalidated over a MATCHING board (manual regenerate) → extract again.
@@ -94,7 +94,7 @@ describe("evaluateStages (the scheduler's whole topology)", () => {
 
   it("intel never dispatches on a transcript too short to extract — the chip must not queue forever", () => {
     expect(
-      evaluateStages(facts({ studyMeetingType: "sales", intelExtractable: false }))
+      evaluateStages(facts({ meetingType: "sales", intelExtractable: false }))
     ).not.toContain("intel");
   });
 });
@@ -149,7 +149,7 @@ describe("deriveStudyPipeline (what the chip + sections say)", () => {
         briefStatus: "done",
         deliveryStatus: "done",
         intelStatus: "done",
-        studyMeetingType: "sales",
+        meetingType: "sales",
         intelType: "sales",
       })
     );
@@ -163,12 +163,12 @@ describe("deriveStudyPipeline (what the chip + sections say)", () => {
     expect(general.total).toBe(4);
     expect(general.artifacts.find((a) => a.key === "intel")?.applicable).toBe(false);
 
-    const typed = deriveStudyPipeline(facts({ studyMeetingType: "negotiation" }));
+    const typed = deriveStudyPipeline(facts({ meetingType: "negotiation" }));
     expect(typed.total).toBe(5);
     expect(displayOf(typed, "intel")).toBe("queued");
 
     const short = deriveStudyPipeline(
-      facts({ studyMeetingType: "negotiation", intelExtractable: false })
+      facts({ meetingType: "negotiation", intelExtractable: false })
     );
     expect(short.total).toBe(4);
     expect(displayOf(short, "intel")).toBe("idle");

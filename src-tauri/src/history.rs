@@ -59,8 +59,15 @@ pub struct HistoryRead {
 ///   - `compress = false` (live): the source is already an encoded temp `.ogg`,
 ///     so just move it into place.
 /// Returns the absolute entry directory.
+///
+/// `async` + `spawn_blocking` deliberately: a plain `#[tauri::command]` runs on
+/// the MAIN THREAD, and the `compress = true` branch decodes and re-encodes the
+/// whole source recording — over a minute of CPU for a long meeting. Every other
+/// command (and every window) queues behind the main thread while that runs, so
+/// saving an uploaded recording used to freeze the app outright — voice typing
+/// included, which is exactly when the user wants to dictate elsewhere.
 #[tauri::command]
-pub fn save_history_entry(
+pub async fn save_history_entry(
     app: AppHandle,
     id: String,
     summary_json: String,
@@ -69,7 +76,23 @@ pub fn save_history_entry(
     compress: bool,
 ) -> Result<String, String> {
     let dir = history_dir(&app)?.join(safe_id(&id));
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        write_entry(&dir, summary_json, meta_json, audio_source_path, compress)
+    })
+    .await
+    .map_err(|e| format!("history save task panicked: {e}"))?
+}
+
+/// The file-side of [`save_history_entry`], split out so it can run on a
+/// blocking worker. Synchronous by design; do not call it from the main thread.
+fn write_entry(
+    dir: &Path,
+    summary_json: String,
+    meta_json: String,
+    audio_source_path: Option<String>,
+    compress: bool,
+) -> Result<String, String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
 
     if let Some(src) = audio_source_path.filter(|s| !s.trim().is_empty()) {
         let src = PathBuf::from(src);

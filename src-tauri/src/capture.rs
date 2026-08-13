@@ -273,6 +273,62 @@ pub type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
 /// keepalives, and since providers timestamp by received-audio time, the
 /// transcript timeline stays aligned with the pause-compacted recording.
 /// Voice typing passes `None`.
+/// The sample counter interposed between capture and the STT adapter: forwards
+/// every chunk untouched, tees into the recording buffer, and yields the total
+/// sample count once the input closes so the caller can bill the audio actually
+/// streamed. See [`run_metered_session`] for what `recorder` / `cutoff` /
+/// `paused` mean; split out as a free async fn so the cutoff policy below is
+/// testable without an `AppHandle`.
+async fn meter_chunks(
+    mut rx: UnboundedReceiver<Vec<i16>>,
+    count_tx: UnboundedSender<Vec<i16>>,
+    recorder: Option<RecorderBuf>,
+    cutoff: Option<Arc<AtomicBool>>,
+    paused: Option<Arc<AtomicBool>>,
+) -> u64 {
+    let mut samples: u64 = 0;
+    // Chunks still queued when the cutoff fired. `None` until then; `Some(n)`
+    // means "forward n more, they predate the release", and `Some(0)` ends it.
+    let mut backlog: Option<usize> = None;
+    while let Some(chunk) = rx.recv().await {
+        // Voice-typing release: stop forwarding (and billing) audio captured
+        // after the key is let go. But the cutoff flips while chunks recorded
+        // BEFORE it are still sitting in this channel, and dropping those
+        // truncated the last words of a dictation — worst exactly when the
+        // runtime was busy enough for a backlog to build. So snapshot the queue
+        // depth the instant the cutoff is observed and forward that much more:
+        // everything already queued is pre-release speech, everything arriving
+        // afterwards is not. Draining to empty instead would race the mic
+        // thread, which keeps capturing until it sees the cleared gate (~100 ms
+        // later) — that is the audio we do want to drop.
+        if backlog.is_none() && cutoff.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+            backlog = Some(rx.len());
+        }
+        if paused.as_ref().is_some_and(|p| p.load(Ordering::SeqCst)) {
+            continue;
+        }
+        samples += chunk.len() as u64;
+        // Tee into the recording buffer (kept while the meeting is armed).
+        if let Some(rec) = &recorder {
+            if let Some(buf) = rec.lock().unwrap().as_mut() {
+                buf.extend_from_slice(&chunk);
+            }
+        }
+        if count_tx.send(chunk).is_err() {
+            break;
+        }
+        // Past the cutoff this chunk was one of the queued ones. Dropping
+        // `count_tx` by leaving the loop closes the STT input, triggering its
+        // final flush of only the pre-release speech.
+        match backlog {
+            Some(0) => break,
+            Some(n) => backlog = Some(n - 1),
+            None => {}
+        }
+    }
+    samples
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run_metered_session(
     app: &AppHandle,
@@ -292,33 +348,8 @@ pub fn run_metered_session(
         // forwards every chunk untouched, then yields the total once the input
         // closes so we can bill the audio duration actually streamed.
         let (count_tx, count_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-        let counter = tauri::async_runtime::spawn(async move {
-            let mut rx = rx;
-            let mut samples: u64 = 0;
-            while let Some(chunk) = rx.recv().await {
-                // Voice-typing release: stop the instant the key is let go so no
-                // audio captured after release is forwarded (or billed). Dropping
-                // `count_tx` by leaving the loop closes the STT input now, which
-                // triggers its final flush of only the pre-release speech.
-                if cutoff.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
-                    break;
-                }
-                if paused.as_ref().is_some_and(|p| p.load(Ordering::SeqCst)) {
-                    continue;
-                }
-                samples += chunk.len() as u64;
-                // Tee into the recording buffer (kept while the meeting is armed).
-                if let Some(rec) = &recorder {
-                    if let Some(buf) = rec.lock().unwrap().as_mut() {
-                        buf.extend_from_slice(&chunk);
-                    }
-                }
-                if count_tx.send(chunk).is_err() {
-                    break;
-                }
-            }
-            samples
-        });
+        let counter =
+            tauri::async_runtime::spawn(meter_chunks(rx, count_tx, recorder, cutoff, paused));
 
         // Hosted mode and BYOK fail for different reasons and need different
         // guidance, so classify against the mode (captured before `config` is
@@ -447,5 +478,86 @@ mod mic_tap_tests {
             Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
         ));
         assert_eq!(rx2.try_recv().unwrap(), vec![7]);
+    }
+}
+
+#[cfg(test)]
+mod meter_tests {
+    use super::meter_chunks;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    /// Feed `chunks` (one i16 each, so a chunk's value identifies it), with the
+    /// cutoff already armed as `cutoff` says, and collect what reaches the STT
+    /// adapter. Everything is queued BEFORE the meter runs, which is the case
+    /// this cares about: a backlog that built up while the task was starved.
+    async fn run(chunks: &[i16], cutoff: Option<Arc<AtomicBool>>) -> (Vec<i16>, u64) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        for c in chunks {
+            tx.send(vec![*c]).unwrap();
+        }
+        drop(tx); // capture ended: the meter runs to the end of the queue
+        let samples = meter_chunks(rx, out_tx, None, cutoff, None).await;
+        let mut got = Vec::new();
+        while let Ok(chunk) = out_rx.try_recv() {
+            got.push(chunk[0]);
+        }
+        (got, samples)
+    }
+
+    #[tokio::test]
+    async fn forwards_and_counts_everything_without_a_cutoff() {
+        let (got, samples) = run(&[1, 2, 3], None).await;
+        assert_eq!(got, vec![1, 2, 3]);
+        assert_eq!(samples, 3);
+    }
+
+    #[tokio::test]
+    async fn a_cutoff_still_delivers_audio_captured_before_the_release() {
+        // The regression: releasing the key used to drop the whole queue, so a
+        // dictation lost its last words whenever chunks had piled up.
+        let cutoff = Arc::new(AtomicBool::new(true));
+        let (got, samples) = run(&[1, 2, 3, 4], Some(cutoff)).await;
+        assert_eq!(got, vec![1, 2, 3, 4]);
+        assert_eq!(samples, 4);
+    }
+
+    /// The cut still ENDS the stream: the meter stops at the pre-release
+    /// backlog instead of following a mic that keeps capturing for the few ms
+    /// before it notices the cleared gate. Proven by leaving the capture side
+    /// open — a meter that didn't stop would park on `recv` forever — and by
+    /// sending more audio once it has returned.
+    #[tokio::test]
+    async fn a_cutoff_ends_the_stream_at_the_pre_release_backlog() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        tx.send(vec![1]).unwrap();
+        tx.send(vec![2]).unwrap();
+        let cutoff = Arc::new(AtomicBool::new(true)); // key released, 2 chunks queued
+        let samples = meter_chunks(rx, out_tx, None, Some(cutoff), None).await;
+        // It returned rather than parking on a still-open capture side, and the
+        // input is closed — post-release audio the mic emits while its thread
+        // winds down has nowhere to go.
+        assert!(tx.send(vec![8]).is_err());
+        let mut got = Vec::new();
+        while let Ok(chunk) = out_rx.try_recv() {
+            got.push(chunk[0]);
+        }
+        assert_eq!(got, vec![1, 2]);
+        assert_eq!(samples, 2);
+    }
+
+    #[tokio::test]
+    async fn a_paused_meeting_drops_chunks_without_ending_the_session() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        let paused = Arc::new(AtomicBool::new(true));
+        tx.send(vec![1]).unwrap();
+        tx.send(vec![2]).unwrap();
+        drop(tx);
+        let samples = meter_chunks(rx, out_tx, None, None, Some(paused)).await;
+        assert!(out_rx.try_recv().is_err());
+        assert_eq!(samples, 0);
     }
 }

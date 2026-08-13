@@ -383,8 +383,11 @@ export interface Settings {
    *  Gemini live-translate (bilingual transcript + translated voice to the
    *  translate output device) instead of the STT provider. */
   meetingTranslateEnabled: boolean;
-  /** Which intelligence template the board runs (remembered across meetings). */
-  meetingType: MeetingType;
+  /** The DEFAULT scenario for a new meeting. The scenario a given meeting
+   *  actually runs under is per-meeting state (store.meetingType, persisted on
+   *  the history entry) — this is only the seed. Legacy persisted key:
+   *  `meetingType`. */
+  defaultMeetingType: MeetingType;
   /** Voice typing: whether push-to-talk dictation is active. Option+Space works
    *  without extra permission; fn/Globe additionally needs Input Monitoring.
    *  While enabled, releasing the key always auto-pastes (simulated ⌘V, needs
@@ -403,6 +406,12 @@ export interface Settings {
   todoTemplates: TodoTemplate[];
   /** Per-metric opt-in for live delivery coaching (see DeliveryToggles). */
   delivery: DeliveryToggles;
+  /** Whether the live intelligence board re-extracts on its own timer while
+   *  recording (and, with it, the agenda checklist auto-check). Each pass reads
+   *  the WHOLE transcript, so on a long meeting the cost compounds — turning
+   *  this off leaves the board's manual re-extract button as the only trigger.
+   *  Default on (the prior behavior); the switch lives on the board header. */
+  autoIntel: boolean;
   /** Whether to sync personal recordings + folders to Parley Cloud while signed in.
    *  Off → this device keeps everything local (no automatic push/pull); explicit
    *  org sharing still works. Default on (preserves the prior signed-in behavior). */

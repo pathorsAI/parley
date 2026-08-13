@@ -1,0 +1,23 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "NSMicrophoneUsageDescription": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley records the meeting in the room so it can transcribe it live. Audio goes only to the transcription provider tied to your account."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley 會收取現場會議的聲音以進行即時轉錄。音訊只會送往你帳號綁定的轉錄服務。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

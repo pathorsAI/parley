@@ -20,9 +20,12 @@ import {
 import type { Company, CompanyAttachment, ThreadKind } from "../../lib/accounts/types";
 import { THREAD_KINDS } from "../../lib/accounts/types";
 import { listHistory, loadHistoryEntry } from "../../lib/history/history";
+import { buildOwnershipIndex, recordingsOfCompany } from "../../lib/library/scope";
+import { listLocalFolders } from "../../lib/history/folders";
 import { renameCompanyFolder } from "../../lib/accounts/folders";
 import type { HistoryEntrySummary } from "../../lib/history/types";
-import { formatClock, useStore } from "../../lib/store";
+import { toast } from "sonner";
+import { formatClock } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
@@ -73,27 +76,33 @@ export function CompanyPage({
   const [viewingAttachment, setViewingAttachment] = useState<CompanyAttachment | null>(null);
 
   useEffect(() => {
+    // Same ownership rule as the tree (lib/library/scope), not a raw companyId
+    // match: a recording placed only by the folder fallback belongs on this page
+    // too, or the sidebar's "錄音 · N 場" and this list disagree again.
     listHistory()
-      .then((all) => setMeetings(all.filter((m) => m.companyId === company.id)))
+      .then((all) =>
+        setMeetings(
+          recordingsOfCompany(
+            all,
+            company.id,
+            buildOwnershipIndex(useAccounts.getState().companies, listLocalFolders())
+          )
+        )
+      )
       .catch((e) => log.warn("accounts: list meetings failed", { error: String(e) }));
   }, [company.id]);
 
-  // Import a recording AS this company's meeting: pre-link the meeting, then
-  // hand off to the regular ingest wizard (which lives at the app root). The
-  // saved entry carries companyId, so it lands in this company's meeting list
-  // and the post-meeting review can file its intel here.
+  // Import a recording or transcript AS this company's meeting: the shared
+  // flow (R7) with this company pre-linked, so the saved entry carries
+  // companyId (it shows in this company's meeting list, and the post-meeting
+  // review can file its intel here) and lands in the company's paired folder.
   async function importRecording() {
-    const { settings, setMeetingLink, exitAccounts, openIngestWizard } = useStore.getState();
-    setMeetingLink({ companyId: company.id, threadId: null, attendeeIds: [] });
     try {
-      const { pickRecordingFile } = await import("../../lib/replay/ingest");
-      const audioPath = await pickRecordingFile(settings);
-      if (audioPath) {
-        exitAccounts();
-        openIngestWizard(audioPath);
-      }
+      const { startImportFlow } = await import("../../lib/replay/ingest");
+      await startImportFlow({ companyId: company.id });
     } catch (e) {
       log.error("accounts: import recording failed", { error: String(e) });
+      toast.error(e instanceof Error ? e.message : String(e));
     }
   }
 

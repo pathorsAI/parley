@@ -3,7 +3,6 @@ import { persist } from "zustand/middleware";
 import type {
   ActionItem,
   AppLanguage,
-  DefaultSaveLocation,
   DeliveryAssessment,
   DeliveryNudge,
   Evaluation,
@@ -23,6 +22,8 @@ import type {
 import type { ReplaySession } from "./replay/types";
 import type { CloudAuth } from "./cloud/types";
 import type { HistoryEntry } from "./history/types";
+import type { MeetingShare } from "./history/history";
+import type { LibraryNode } from "./library/scope";
 import {
   buildBuiltinEvalLabels,
   buildPresetEvalDefs,
@@ -146,7 +147,7 @@ const DEFAULT_SETTINGS: Settings = {
   translateOutputDevice: "",
   translateTargetLanguage: "en",
   meetingTranslateEnabled: false,
-  meetingType: "general",
+  defaultMeetingType: "general",
   voiceTypingEnabled: true,
   voiceTypingShortcut: "alt-space",
   voiceTypingMode: "hold",
@@ -156,15 +157,68 @@ const DEFAULT_SETTINGS: Settings = {
   // Pace + pauses are free (timing/DSP) so default on; pitch + tone (LLM cost)
   // are opt-in. See DeliveryToggles.
   delivery: { pace: true, pitch: false, pauses: true, tone: false },
+  // The board refreshes itself while recording, as it always has — but the
+  // header switch can stop it when a long meeting makes the per-pass cost of
+  // re-reading the full transcript add up. See Settings.autoIntel.
+  autoIntel: true,
   // Signed-in accounts sync by default (prior behavior); the toggle lets a user
   // keep this device local-only. Finished meetings save to the personal root.
   syncEnabled: true,
   defaultSaveLocation: { scope: "personal", folderId: null },
 };
 
-/** Which top-level screen is active: preparing the next meeting, capturing it
- *  live, analyzing an uploaded recording, or the accounts (客戶) workspace. */
-export type AppMode = "preflight" | "live" | "replay" | "accounts";
+/**
+ * Which top-level screen is active. Since #195 these are ROUTES under a
+ * persistent shell, not modes you enter and exit: the left tree is always on
+ * screen (except while a meeting owns it), so "accounts" and "library" are two
+ * views of the same tree rather than two windows.
+ *
+ * "library" (the recordings grid) used to be its own OS window. Two windows
+ * meant two sidebars — a company tree here, a folder tree there — which is why
+ * the company a meeting was linked to and the folder it saved into read as
+ * unrelated things even though the data layer pairs them 1:1. Settings is NOT
+ * a route: it is its own OS window (lib/nav.ts → openSettingsWindow), so
+ * tweaking a knob never navigates the shell away from what it was showing.
+ */
+export type AppMode =
+  | "home"
+  | "preflight"
+  | "live"
+  | "study"
+  | "accounts"
+  | "library";
+
+/** Left-nav panels of the Settings window (see settings/SettingsApp.tsx). */
+export type SettingsCategory =
+  | "basic"
+  | "account"
+  | "provider"
+  | "transcription"
+  | "translate"
+  | "voiceTyping"
+  | "permissions"
+  | "evaluations"
+  | "todos"
+  | "stages"
+  | "mcp"
+  | "usage";
+
+/**
+ * Which node of the one tree the library route is showing.
+ *
+ * `personal` carries a {@link LibraryNode}: the customer IS the node. Folders
+ * used to be the personal tree's unit, which meant the library and the company
+ * page could disagree about whose recording something was — see the module
+ * comment in lib/library/scope. Orgs still select by folder; they have no
+ * companies.
+ */
+export type LibrarySelection =
+  | { kind: "personal"; node: LibraryNode }
+  | { kind: "org"; id: string; name: string; folderId: string | null }
+  | { kind: "voice" };
+
+/** Which part of a company's war room the sidebar asked for. */
+export type AccountsFocus = "intel" | "people";
 
 /**
  * Everything the user sets up FOR one meeting, reset as one unit when they
@@ -182,7 +236,7 @@ const CLEARED_PREP_SLICE = {
   meetingThreadId: null,
   meetingAttendeeIds: [] as string[],
   meetingStage: null,
-  meetingSaveOverride: null,
+  meetingOrgShare: null,
   meetingContext: "",
   meetingBatna: "",
   meetingTarget: "",
@@ -332,7 +386,10 @@ interface ParleyState {
   // ── Transcript import (issue #130 text-ingest: .txt → history entry) ────────
   /** Absolute paths queued in the transcript-import dialog; null = closed. */
   transcriptImportPaths: string[] | null;
-  openTranscriptImport: (paths: string[]) => void;
+  /** Company pre-link carried by a company-page import door (R7): the dialog
+   *  stamps it (plus the company's paired folder) onto every saved entry. */
+  transcriptImportCompanyId: string | null;
+  openTranscriptImport: (paths: string[], companyId?: string | null) => void;
   closeTranscriptImport: () => void;
 
   // ── Unified analysis (shared by LIVE + REPLAY) ──────────────────────────────
@@ -367,12 +424,12 @@ interface ParleyState {
   /** Append a streamed chunk to the brief (streaming render). */
   appendBrief: (chunk: string) => void;
   setBriefStatus: (status: AsyncTaskStatus) => void;
-  /** The CURRENT SESSION's meeting type (which intel template applies). Seeded
-   *  from settings.meetingType (the live default) on enter, restored from the
-   *  entry on load — switching it while studying one recording never leaks into
-   *  the global setting or other recordings. */
-  studyMeetingType: MeetingType;
-  setStudyMeetingType: (type: MeetingType) => void;
+  /** THE scenario of the meeting at hand (R5: one per-meeting source of truth).
+   *  Seeded from settings.defaultMeetingType, set in pre-flight or on the live
+   *  rail, frozen onto the entry on save, restored from the entry on load —
+   *  switching it never writes the global default or leaks across recordings. */
+  meetingType: MeetingType;
+  setMeetingType: (type: MeetingType) => void;
   /** Insert one finding (MCP/external add) without replacing the list, keeping it
    *  ordered by atMs. A colliding id is reassigned so existing findings are safe. */
   addFinding: (event: TimelineEvent) => void;
@@ -401,6 +458,13 @@ interface ParleyState {
   /** Lazy per-finding solution cache, keyed by TimelineEvent.id. */
   findingSolutions: Record<string, FindingSolutionEntry>;
   setFindingSolution: (id: string, patch: Partial<FindingSolutionEntry>) => void;
+
+  /** System-audio tap failed for THIS meeting: mic-only capture, the other
+   *  side won't be transcribed. Drives the persistent live banner (⑥) — a
+   *  10-second toast is gone before the user notices the silence. Reset on
+   *  meeting start; dismissable. */
+  systemAudioWarning: boolean;
+  setSystemAudioWarning: (on: boolean) => void;
 
   /** Auto-run the analysis on an interval while recording (LIVE; default off). */
   autoAnalyze: boolean;
@@ -491,28 +555,48 @@ interface ParleyState {
   meetingStage: SalesStage | null;
   setMeetingStage: (stage: SalesStage | null) => void;
   /**
-   * Explicit "save this one somewhere else" choice made in pre-flight. null =
-   * derive the destination (company folder, else the settings default) — see
-   * {@link import("./history/history").resolveMeetingSave}. Per meeting: cleared
-   * with the rest of the prep slice.
+   * This meeting's org-share choice. null = follow the settings default;
+   * "off" = suppress a default share for this one meeting. Filing is NOT here
+   * (#211): the customer link decides that — see resolveMeetingSave. Per
+   * meeting: cleared with the rest of the prep slice.
    */
-  meetingSaveOverride: DefaultSaveLocation | null;
-  setMeetingSaveOverride: (loc: DefaultSaveLocation | null) => void;
+  meetingOrgShare: MeetingShare;
+  setMeetingOrgShare: (share: MeetingShare) => void;
   setMeetingLink: (link: {
     companyId: string | null;
     threadId: string | null;
     attendeeIds: string[];
   }) => void;
-  /** Open the pre-flight screen and RESET the previous meeting's prep — the one
-   *  path into a new live meeting, so a stale company link can never ride along. */
+  /** Open the pre-flight screen. NON-destructive (R3): the previous prep is a
+   *  draft that survives — clearing it is {@link resetPrep}, an explicit act. */
   enterPreflight: () => void;
-  /** Leave pre-flight without starting (back to replay if a recording is loaded). */
+  /** Throw the current prep draft away (link, context, agenda, negotiation
+   *  fields) and fall back to the default scenario. The ONLY prep-clearing path. */
+  resetPrep: () => void;
+  /** Leave pre-flight without starting (back to study if a recording is loaded). */
   exitPreflight: () => void;
-  /** Enter the accounts screen (blocked while recording — the live call owns the
-   *  screen; use the accounts SHEET instead, which works mid-call). */
-  enterAccounts: () => void;
+  /** Show the Home overview (idle landing — blocked while recording). */
+  openHome: () => void;
+  /** Show a company's war room (blocked while recording — the live call owns the
+   *  screen; use the accounts SHEET instead, which works mid-call). Omit
+   *  `companyId` to keep whichever company was last open. */
+  openAccounts: (companyId?: string | null, focus?: AccountsFocus) => void;
   /** Leave the accounts screen, back to replay if a recording is loaded. */
   exitAccounts: () => void;
+  /** Which company the accounts route is showing (null = none selected yet).
+   *  Lives here, not inside AccountsScreen, because the left tree drives it. */
+  accountsCompanyId: string | null;
+  /** Which facet of that company the tree selected. Persistent (not a one-shot
+   *  request) so the tree can keep the row it highlighted highlighted. */
+  accountsFocus: AccountsFocus;
+  setAccountsCompany: (id: string | null) => void;
+  /** Show the recordings library at `selection` (blocked while recording). */
+  openLibrary: (selection: LibrarySelection) => void;
+  librarySelection: LibrarySelection;
+  /** Go back to the recording that is already loaded. Navigating the tree away
+   *  from a loaded recording used to strand it: nothing on screen still pointed
+   *  at it, and only exitReplay (which THROWS IT AWAY) was reachable. */
+  showReplay: () => void;
 
   /**
    * A transcript time (ms) the UI should jump to and briefly highlight — set by
@@ -570,7 +654,10 @@ interface ParleyState {
 export const useStore = create<ParleyState>()(
   persist(
     (set) => ({
-      appMode: "live",
+      appMode: "home",
+      accountsCompanyId: null,
+      accountsFocus: "intel",
+      librarySelection: { kind: "personal", node: { kind: "unassigned" } },
       replay: null,
       loadedHistoryId: null,
       replayReadOnly: false,
@@ -583,6 +670,7 @@ export const useStore = create<ParleyState>()(
       ingestWizardError: null,
       ingestAudioPath: null,
       transcriptImportPaths: null,
+      transcriptImportCompanyId: null,
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
@@ -617,7 +705,7 @@ export const useStore = create<ParleyState>()(
       meetingThreadId: null,
       meetingAttendeeIds: [],
       meetingStage: null,
-      meetingSaveOverride: null,
+      meetingOrgShare: null,
       meetingBatna: "",
       meetingTarget: "",
       meetingFloor: "",
@@ -626,7 +714,7 @@ export const useStore = create<ParleyState>()(
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setMeetingStage: (stage) => set({ meetingStage: stage }),
-  setMeetingSaveOverride: (meetingSaveOverride) => set({ meetingSaveOverride }),
+  setMeetingOrgShare: (meetingOrgShare) => set({ meetingOrgShare }),
   setMeetingLink: ({ companyId, threadId, attendeeIds }) =>
     set({
       meetingCompanyId: companyId,
@@ -638,16 +726,41 @@ export const useStore = create<ParleyState>()(
   enterPreflight: () =>
     set((s) => {
       if (isMeetingActive(s.meetingStatus)) return {};
-      log.info("store: pre-flight opened, prep reset");
-      // Blank slate, every time. The last call's company/context/agenda are
-      // cleared HERE (not on stop) so the save pipeline still sees them.
-      return { appMode: "preflight", ...CLEARED_PREP_SLICE };
+      log.info("store: pre-flight opened");
+      // R3: opening pre-flight is no longer destructive — the previous prep is
+      // a DRAFT that survives navigation. Throwing it away is an explicit
+      // action (resetPrep), never a side effect of walking through a door.
+      return { appMode: "preflight" };
+    }),
+  resetPrep: () =>
+    set((s) => {
+      if (isMeetingActive(s.meetingStatus)) return {};
+      log.info("store: prep reset");
+      return { ...CLEARED_PREP_SLICE, meetingType: s.settings.defaultMeetingType };
     }),
   exitPreflight: () =>
-    set((s) => (s.appMode === "preflight" ? { appMode: s.replay ? "replay" : "live" } : {})),
-  enterAccounts: () =>
-    set((s) => (isMeetingActive(s.meetingStatus) ? {} : { appMode: "accounts" })),
-  exitAccounts: () => set((s) => ({ appMode: s.replay ? "replay" : "live" })),
+    set((s) => (s.appMode === "preflight" ? { appMode: s.replay ? "study" : "home" } : {})),
+  openAccounts: (companyId, focus = "intel") =>
+    set((s) => {
+      if (isMeetingActive(s.meetingStatus)) return {};
+      return {
+        appMode: "accounts",
+        accountsCompanyId: companyId === undefined ? s.accountsCompanyId : companyId,
+        accountsFocus: focus,
+      };
+    }),
+  exitAccounts: () =>
+    set((s) => ({
+      appMode: s.replay ? "study" : isMeetingActive(s.meetingStatus) ? "live" : "home",
+    })),
+  openHome: () =>
+    set((s) => (isMeetingActive(s.meetingStatus) ? {} : { appMode: "home" })),
+  setAccountsCompany: (accountsCompanyId) => set({ accountsCompanyId }),
+  openLibrary: (librarySelection) =>
+    set((s) =>
+      isMeetingActive(s.meetingStatus) ? {} : { appMode: "library", librarySelection }
+    ),
+  showReplay: () => set((s) => (s.replay ? { appMode: "study" } : {})),
   setNegotiationField: (field, value) => set({ [field]: value }),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
   setCloudAuth: (cloudAuth) =>
@@ -673,7 +786,7 @@ export const useStore = create<ParleyState>()(
       durationMs: session.durationMs,
     });
     set((state) => ({
-      appMode: "replay",
+      appMode: "study",
       replay: session,
       // A fresh upload isn't a saved entry yet — cleared until its auto-save.
       loadedHistoryId: null,
@@ -690,7 +803,7 @@ export const useStore = create<ParleyState>()(
       // A fresh session gets fresh study outputs — a previous recording's brief
       // or intel must never render over this one.
       ...CLEARED_STUDY_SLICE,
-      studyMeetingType: state.settings.meetingType,
+      meetingType: state.settings.defaultMeetingType,
     }));
   },
 
@@ -710,7 +823,7 @@ export const useStore = create<ParleyState>()(
     const analysisDone =
       entry.analyzed || entry.findings.length > 0 || entry.actionItems.length > 0;
     set((state) => ({
-      appMode: "replay",
+      appMode: "study",
       replay: session,
       // Re-running the analysis overwrites THIS saved entry on disk — but only for
       // an own/local entry. A read-only org recording leaves this null so the
@@ -744,7 +857,7 @@ export const useStore = create<ParleyState>()(
       briefStatus: entry.brief ? "done" : "idle",
       intel: entry.intel ?? null,
       intelStatus: entry.intel ? "done" : "idle",
-      studyMeetingType: entry.meetingType ?? entry.intel?.meetingType ?? state.settings.meetingType,
+      meetingType: entry.meetingType ?? entry.intel?.meetingType ?? state.settings.defaultMeetingType,
       // Restore the per-meeting context + negotiation setup.
       meetingContext: entry.meetingContext,
       meetingCompanyId: entry.companyId ?? null,
@@ -759,8 +872,9 @@ export const useStore = create<ParleyState>()(
 
   exitReplay: () => {
     log.info("store: exit replay");
-    set({
-      appMode: "live",
+    set((s) => ({
+      appMode: "home",
+      meetingType: s.settings.defaultMeetingType,
       replay: null,
       loadedHistoryId: null,
       replayReadOnly: false,
@@ -774,7 +888,7 @@ export const useStore = create<ParleyState>()(
       meetingStatus: "idle",
       highlightMs: null,
       ...CLEARED_STUDY_SLICE,
-    });
+    }));
   },
 
   setReplayPlayhead: (ms) => set({ replayPlayheadMs: Math.max(0, ms) }),
@@ -796,8 +910,10 @@ export const useStore = create<ParleyState>()(
     set({ ingestWizardStep: step, ingestWizardError: error }),
   closeIngestWizard: () => set({ ingestWizardOpen: false, ingestAudioPath: null }),
 
-  openTranscriptImport: (paths) => set({ transcriptImportPaths: paths }),
-  closeTranscriptImport: () => set({ transcriptImportPaths: null }),
+  openTranscriptImport: (paths, companyId = null) =>
+    set({ transcriptImportPaths: paths, transcriptImportCompanyId: companyId }),
+  closeTranscriptImport: () =>
+    set({ transcriptImportPaths: null, transcriptImportCompanyId: null }),
 
   // Replace the findings list, keeping the selection + cached solutions of any
   // finding that STILL EXISTS in the new list. During streaming, partials commit
@@ -815,19 +931,19 @@ export const useStore = create<ParleyState>()(
   setBrief: (brief) => set({ brief }),
   appendBrief: (chunk) => set((s) => ({ brief: (s.brief ?? "") + chunk })),
   setBriefStatus: (status) => set({ briefStatus: status }),
-  studyMeetingType: "general",
-  // Switching the template re-aims the intel STATUS at the new type: a board
+  meetingType: "general",
+  // Switching the scenario re-aims the intel STATUS at the new type: a board
   // that already matches it is simply "done" again (switching away and back is
   // free), anything else resets to "idle" so the pipeline extracts — including
   // after a failed run, where "error" would otherwise block the new type
   // forever. An in-flight run keeps "running"; the runner discards a stale
   // result itself (see runIntelExtraction's alive/type checks).
-  setStudyMeetingType: (type) =>
+  setMeetingType: (type) =>
     set((s) => {
-      if (type === s.studyMeetingType) return {};
-      if (s.intelStatus === "running") return { studyMeetingType: type };
+      if (type === s.meetingType) return {};
+      if (s.intelStatus === "running") return { meetingType: type };
       return {
-        studyMeetingType: type,
+        meetingType: type,
         intelStatus: s.intel?.meetingType === type ? ("done" as const) : ("idle" as const),
       };
     }),
@@ -921,6 +1037,8 @@ export const useStore = create<ParleyState>()(
     }),
   pushDeliveryNudge: (n) => set({ deliveryNudge: n }),
   clearDeliveryNudge: () => set({ deliveryNudge: null }),
+  systemAudioWarning: false,
+  setSystemAudioWarning: (systemAudioWarning) => set({ systemAudioWarning }),
   setDeliveryAssessment: (a) => set({ deliveryAssessment: a }),
   setDeliveryStatus: (s) => set({ deliveryStatus: s }),
 
@@ -999,6 +1117,7 @@ export const useStore = create<ParleyState>()(
       filledPauseCount: 0,
       filledPauseCounted: {},
       deliveryNudge: null,
+      systemAudioWarning: false,
       };
     });
   },
@@ -1082,7 +1201,7 @@ export const useStore = create<ParleyState>()(
       // Live transcript events must never mutate a loaded REPLAY recording — drop a
       // stray live event (e.g. a leaked listener) while viewing a saved session.
       // (Live finalize after stop is appMode "live"/"stopped", so it's unaffected.)
-      if (state.appMode === "replay") return {};
+      if (state.appMode === "study") return {};
 
       // Tally filler sounds ("um/嗯…") from the USER'S OWN speech, live. Interim
       // segments grow and rewrite as they finalize, so re-count this segment and
@@ -1172,11 +1291,20 @@ export const useStore = create<ParleyState>()(
         const layout: Settings["layout"] =
           rawLayout === "transcript" ? "transcript" : DEFAULT_SETTINGS.layout;
 
+        // R5: the scenario became per-meeting state; the setting is only the
+        // default for a new meeting. Old states stored it as `meetingType`.
+        const defaultMeetingType: MeetingType =
+          p.defaultMeetingType ??
+          (p as { meetingType?: MeetingType }).meetingType ??
+          DEFAULT_SETTINGS.defaultMeetingType;
+
         return {
           ...current,
+          meetingType: defaultMeetingType,
           settings: {
             ...DEFAULT_SETTINGS,
             ...p,
+            defaultMeetingType,
             layout,
             llmProviders,
             // Per-provider models, legacy {ask,eval} roles already remapped;

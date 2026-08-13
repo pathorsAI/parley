@@ -1,0 +1,175 @@
+import SwiftUI
+
+/// The hand-off screen shown while a keyboard-triggered dictation is live.
+///
+/// Deliberately *not* a transcription screen. Dictation is experienced in the
+/// keyboard — the transcript streams into the Parley keyboard and lands at the
+/// cursor of the app the user was typing in. This screen exists only because
+/// the mic has to open in the app process, so the user briefly lands here; its
+/// one job is to send them back. Showing a live transcript here taught people
+/// the wrong model ("I talk on this screen, then paste"), so it doesn't.
+///
+/// Two shapes, decided by `HostReturn.canReturn`:
+///   - Older iOS: the app has already bounced the user back automatically, so
+///     this is only glimpsed in passing.
+///   - iOS 26.4+: the automatic jump-back is gone; the headline is the swipe
+///     gesture, and the guide sits at the very bottom, pointing at the real
+///     home indicator it wants swiped.
+struct DictationView: View {
+    @ObservedObject var coordinator = DictationCoordinator.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The user is stranded here and has to swipe back themselves.
+    private var needsManualReturn: Bool {
+        coordinator.returnableHost == nil
+            && (coordinator.state == .starting || coordinator.state == .listening)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            status
+            Spacer()
+            footer
+        }
+        .frame(maxWidth: .infinity)
+        .background(Theme.background)
+    }
+
+    // MARK: status — icon + the one instruction
+
+    private var status: some View {
+        VStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(Theme.recording.opacity(0.15))
+                    .frame(width: 84, height: 84)
+                    .scaleEffect(pulse)
+                    .animation(
+                        reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(),
+                        value: coordinator.micLevel)
+                Circle()
+                    .fill(Theme.recording.opacity(0.28))
+                    .frame(width: 84 * CGFloat(1 + min(0.6, coordinator.micLevel * 4)))
+                    .animation(.linear(duration: 0.08), value: coordinator.micLevel)
+                Image(systemName: statusIcon)
+                    .font(.system(size: 30, weight: .regular))
+                    .foregroundStyle(Theme.recording)
+            }
+            .frame(height: 120)
+            .accessibilityHidden(true)
+
+            Text(statusTitle)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Theme.foreground)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Text(statusSubtitle)
+                .font(.subheadline)
+                .foregroundStyle(Theme.mutedForeground)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 32)
+        }
+    }
+
+    private var pulse: CGFloat {
+        coordinator.state == .listening ? 1.06 : 1
+    }
+
+    private var statusIcon: String {
+        switch coordinator.state {
+        case .error: return "exclamationmark.triangle"
+        case .finishing, .done: return "checkmark"
+        default: return "waveform"
+        }
+    }
+
+    /// The headline is whatever the user must do next. Stranded here, that is
+    /// the swipe back — "Listening…" would be answering the wrong question.
+    private var statusTitle: String {
+        if needsManualReturn {
+            return String(localized: "Swipe back to your app")
+        }
+        switch coordinator.state {
+        case .starting: return String(localized: "Getting ready…")
+        case .listening: return String(localized: "Listening…")
+        case .finishing: return String(localized: "Wrapping up…")
+        case .done: return String(localized: "Done")
+        case .error: return String(localized: "Couldn't start")
+        }
+    }
+
+    private var statusSubtitle: String {
+        if coordinator.state == .error {
+            return coordinator.errorMessage ?? String(localized: "Please try again.")
+        }
+        if needsManualReturn {
+            return String(
+                localized:
+                    "Your words show up on the Parley keyboard and land at the cursor as you talk — nothing happens on this screen."
+            )
+        }
+        return String(localized: "You're back in your app — just talk.")
+    }
+
+    // MARK: footer — only the swipe guide, hugging the home indicator
+
+    /// No stop control here on purpose: stopping (like everything else about
+    /// dictation) belongs to the keyboard's red ⏹. This screen never competes
+    /// with the keyboard for the session — its whole vocabulary is "go back".
+    private var footer: some View {
+        VStack(spacing: 14) {
+            // Last element on the screen, right above the real home indicator,
+            // and shown on every stranded session — a gesture nobody has ever
+            // performed isn't learned from one viewing.
+            if needsManualReturn {
+                SwipeBackGuide(animated: !reduceMotion)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 16)
+        .padding(.bottom, 8)
+    }
+}
+
+/// The one gesture that replaces auto-return on iOS 26.4+: an arrow sweeping
+/// right across a stand-in for the home indicator, drawn directly above the
+/// real one so the guide points at the thing it means.
+private struct SwipeBackGuide: View {
+    let animated: Bool
+    @State private var go = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Text("Swipe right on the bar below")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Theme.foreground)
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Theme.muted)
+                    .frame(height: 5)
+                    .frame(maxWidth: .infinity)
+                Image(systemName: "arrow.right")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(Theme.primary)
+                    .offset(x: go ? 150 : 0)
+                    .opacity(go ? 0 : 1)
+                    .animation(
+                        animated
+                            ? .easeInOut(duration: 1.1).repeatForever(autoreverses: false)
+                            : nil,
+                        value: go)
+            }
+            .frame(height: 20)
+            .frame(maxWidth: 220)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.radius)
+                .fill(Theme.card))
+        .onAppear { if animated { go = true } }
+    }
+}

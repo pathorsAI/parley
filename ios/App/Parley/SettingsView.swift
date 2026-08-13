@@ -2,9 +2,9 @@ import ParleyKit
 import SwiftUI
 
 /// Settings — phone-sized mirror of the desktop Settings window's cloud
-/// sections: 帳號 (sign in/out)、預設儲存位置、外觀 (theme)、用量 (hosted
-/// quota bars). Provider/transcription config stays desktop-side: the phone
-/// rides the hosted providers with the account token (design doc D6).
+/// sections: account (sign in/out), default save location, appearance, and the
+/// hosted quota bars. Provider/transcription config stays desktop-side: the
+/// phone rides the hosted providers with the account token (design doc D6).
 struct SettingsView: View {
     @EnvironmentObject private var app: AppState
     @State private var personalFolders: [CloudFolder] = []
@@ -18,44 +18,66 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                accountSection
-                if app.signedIn {
-                    saveDestinationSection
-                    usageSection
-                    syncSection
+            ScrollViewReader { proxy in
+                Form {
+                    accountSection
+                    if app.signedIn {
+                        saveDestinationSection
+                        usageSection
+                    }
+                    // Sync reads only on-device state, so it stays available while
+                    // offline — that is exactly when someone needs to see that a
+                    // finished recording is queued rather than lost.
+                    if app.hasAccount {
+                        syncSection
+                    }
+                    if app.hasAccount {
+                        dictationSection.id(Self.keyboardSectionID)
+                    }
+                    appearanceSection
+                    languageSection
+                    aboutSection
+                    #if DEBUG
+                        debugSection
+                    #endif
                 }
-                appearanceSection
-                aboutSection
                 #if DEBUG
-                    debugSection
+                    .onReceive(ScreenshotDemo.shared.$focusKeyboardSection) { focus in
+                        // .center, not .top: scrollTo ignores the navigation
+                        // bar's safe-area inset, so a top anchor slides the
+                        // section header under the blur.
+                        if focus { proxy.scrollTo(Self.keyboardSectionID, anchor: .center) }
+                    }
                 #endif
             }
-            .navigationTitle("設定")
+            .navigationTitle("Settings")
             .task { await loadFolders() }
             .confirmationDialog(
-                "永久刪除帳號？", isPresented: $showDeleteConfirmation,
+                "Delete your account permanently?", isPresented: $showDeleteConfirmation,
                 titleVisibility: .visible
             ) {
-                Button("永久刪除我的帳號與個人資料", role: .destructive) {
+                Button("Delete my account and personal data", role: .destructive) {
                     Task { await deleteAccount() }
                 }
             } message: {
-                Text("這會永久移除你的 Parley 帳號、個人錄音、逐字稿、資料夾與使用資料。你仍是擁有者的組織必須先移轉或刪除。")
+                Text("This permanently removes your Parley account, personal recordings, transcripts, folders, and usage data. Organizations you still own have to be transferred or deleted first.")
             }
         }
     }
 
+    private static let keyboardSectionID = "voice-keyboard"
+
     // MARK: account
 
     private var accountSection: some View {
-        Section("帳號") {
+        Section("Account") {
             if let user = app.user {
                 HStack(spacing: 12) {
                     avatar(user)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(user.name ?? user.email).font(.body.weight(.medium))
-                        Text(user.email).font(.caption).foregroundStyle(Theme.mutedForeground)
+                        Text(verbatim: user.name ?? user.email).font(.body.weight(.medium))
+                        Text(verbatim: user.email).font(.caption)
+                            .foregroundStyle(Theme.mutedForeground)
                     }
                 }
                 if !app.orgs.isEmpty {
@@ -64,24 +86,30 @@ struct SettingsView: View {
                             Label(org.name, systemImage: "person.2")
                                 .foregroundStyle(Theme.org)
                             Spacer()
-                            Text(roleLabel(org.role))
+                            Text(verbatim: roleLabel(org.role))
                                 .font(.caption)
                                 .foregroundStyle(Theme.mutedForeground)
                         }
                     }
                 }
-                Button("登出", role: .destructive) {
+                Button("Sign out", role: .destructive) {
                     Task { await app.signOut() }
                 }
-                Button("刪除帳號", role: .destructive) {
+                Button("Delete account", role: .destructive) {
                     showDeleteConfirmation = true
                 }
                 .disabled(deletingAccount)
                 if let deleteAccountError {
-                    Text(deleteAccountError)
+                    Text(verbatim: deleteAccountError)
                         .font(.caption)
                         .foregroundStyle(Theme.destructive)
                 }
+            } else if app.hasAccount {
+                // Signed in, but `me()` hasn't come back — offline, or the
+                // server is unreachable. The session is deliberately kept, so
+                // say that instead of showing a sign-in button that implies the
+                // account is gone.
+                unreachableAccountRow
             } else {
                 signInForm
             }
@@ -91,19 +119,38 @@ struct SettingsView: View {
     private var syncSection: some View {
         Section {
             if app.pendingUploadCount > 0 {
-                Label("\(app.pendingUploadCount) 筆錄音等待同步", systemImage: "icloud.and.arrow.up")
-                    .foregroundStyle(Theme.warning)
-                Button("立即重試同步") {
+                Label(
+                    "\(app.pendingUploadCount) recordings waiting to sync",
+                    systemImage: "icloud.and.arrow.up"
+                )
+                .foregroundStyle(Theme.warning)
+                Button("Retry sync now") {
                     Task { await app.syncPendingUploads() }
                 }
             } else {
-                Label("所有錄音都已同步", systemImage: "checkmark.icloud")
+                Label("Everything is synced", systemImage: "checkmark.icloud")
                     .foregroundStyle(Theme.success)
             }
         } header: {
-            Text("同步")
+            Text("Sync")
         } footer: {
-            Text("網路中斷、伺服器暫時無回應或額度不足時，手機會保留完成的錄音，直到同步成功。")
+            Text("When the network drops, the server goes quiet, or you run out of quota, the phone holds on to finished recordings until they sync.")
+        }
+    }
+
+    @ViewBuilder
+    private var unreachableAccountRow: some View {
+        Label(
+            "Can't reach the server right now. Account details refresh automatically.",
+            systemImage: "wifi.exclamationmark"
+        )
+        .font(.subheadline)
+        .foregroundStyle(Theme.warning)
+        Button("Refresh") {
+            Task { await app.refreshSession() }
+        }
+        Button("Sign out", role: .destructive) {
+            Task { await app.signOut() }
         }
     }
 
@@ -116,16 +163,16 @@ struct SettingsView: View {
         } label: {
             HStack {
                 if app.signingIn { ProgressView().padding(.trailing, 6) }
-                Text("登入或註冊")
+                Text("Sign in or create an account")
                     .font(.body.weight(.medium))
                     .frame(maxWidth: .infinity)
             }
         }
         .disabled(app.signingIn)
         if let err = app.signInError {
-            Text(err).font(.caption).foregroundStyle(Theme.destructive)
+            Text(verbatim: err).font(.caption).foregroundStyle(Theme.destructive)
         }
-        Text("會開啟 Parley 的登入頁——支援信箱密碼、Google 與 Apple。登入後即可即時轉錄（免帶 API key）、同步錄音與逐字稿。")
+        Text("Opens Parley's sign-in page — email and password, Google, and Apple. Once you're in you get live transcription with no API key, plus recording and transcript sync.")
             .font(.caption)
             .foregroundStyle(Theme.mutedForeground)
     }
@@ -142,9 +189,9 @@ struct SettingsView: View {
 
     private func roleLabel(_ role: String?) -> String {
         switch role {
-        case "owner": return "擁有者"
-        case "admin": return "管理員"
-        default: return "成員"
+        case "owner": return String(localized: "Owner")
+        case "admin": return String(localized: "Admin")
+        default: return String(localized: "Member")
         }
     }
 
@@ -152,20 +199,20 @@ struct SettingsView: View {
 
     private var saveDestinationSection: some View {
         Section {
-            Picker("預設儲存位置", selection: destinationBinding) {
-                Text("個人").tag("personal")
+            Picker("Default save location", selection: destinationBinding) {
+                Text("Personal").tag("personal")
                 ForEach(personalFolders.filter { $0.orgId == nil }) { f in
-                    Text("個人 · \(f.name)").tag("personal:\(f.id)")
+                    Text("Personal · \(f.name)").tag("personal:\(f.id)")
                 }
                 ForEach(app.orgs) { org in
-                    Text(org.name).tag("org:\(org.id)")
+                    Text(verbatim: org.name).tag("org:\(org.id)")
                     ForEach(orgFolders[org.id] ?? []) { f in
-                        Text("\(org.name) · \(f.name)").tag("org:\(org.id):\(f.id)")
+                        Text(verbatim: "\(org.name) · \(f.name)").tag("org:\(org.id):\(f.id)")
                     }
                 }
             }
         } footer: {
-            Text("選擇組織時，錄音仍會保存在個人空間，並自動分享一份到該組織——與桌面版行為一致。")
+            Text("Picking an organization still saves the recording to your personal space and shares a copy there — same as the desktop app.")
         }
     }
 
@@ -199,17 +246,17 @@ struct SettingsView: View {
     @ViewBuilder
     private var usageSection: some View {
         if let quota = app.quota {
-            Section("用量（本期）") {
+            Section("Usage (this period)") {
                 quotaBar(
-                    label: "轉錄時數",
+                    label: String(localized: "Transcription hours"),
                     used: (quota.sttSecondsUsed ?? 0) / 3600,
                     limit: (quota.sttSecondsLimit ?? 0) / 3600,
-                    unit: "小時")
+                    unit: String(localized: "hr", comment: "Short unit for hours, e.g. 2.5 / 10 hr"))
                 quotaBar(
-                    label: "AI 額度",
+                    label: String(localized: "AI credits"),
                     used: quota.llmCreditsUsed ?? 0,
                     limit: quota.llmCreditsLimit ?? 0,
-                    unit: "credits")
+                    unit: String(localized: "credits"))
             }
         }
     }
@@ -217,9 +264,9 @@ struct SettingsView: View {
     private func quotaBar(label: String, used: Double, limit: Double, unit: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(label).font(.subheadline)
+                Text(verbatim: label).font(.subheadline)
                 Spacer()
-                Text(String(format: "%.1f / %.0f %@", used, limit, unit))
+                Text(verbatim: String(format: "%.1f / %.0f %@", used, limit, unit))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(Theme.mutedForeground)
             }
@@ -233,34 +280,144 @@ struct SettingsView: View {
     // MARK: appearance / about
 
     private var appearanceSection: some View {
-        Section("外觀") {
-            Picker("主題", selection: $app.themeRaw) {
+        Section("Appearance") {
+            Picker("Theme", selection: $app.themeRaw) {
                 ForEach(AppTheme.allCases) { t in
-                    Text(t.label).tag(t.rawValue)
+                    Text(verbatim: t.label).tag(t.rawValue)
                 }
             }
             .pickerStyle(.segmented)
         }
     }
 
+    // MARK: language
+
+    /// iOS owns per-app language: once a bundle ships more than one localization
+    /// the system Settings page for the app grows a Language picker. Rather than
+    /// keep a second, competing switch in here — which could only take effect on
+    /// the next launch anyway — this row names the current language and opens the
+    /// place that actually changes it.
+    private var languageSection: some View {
+        Section {
+            Button {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            } label: {
+                HStack {
+                    Label("Language", systemImage: "globe")
+                    Spacer()
+                    Text(verbatim: Self.currentLanguageName)
+                        .foregroundStyle(Theme.mutedForeground)
+                }
+            }
+        } footer: {
+            Text("Parley speaks English and Traditional Chinese, and follows your iPhone's language by default. Change it for Parley alone in Settings › Parley › Language.")
+        }
+    }
+
+    /// The active localization, named in itself — 繁體中文 rather than
+    /// "Chinese, Traditional" when that is the language on screen.
+    private static var currentLanguageName: String {
+        let code = Bundle.main.preferredLocalizations.first ?? "en"
+        let locale = Locale(identifier: code)
+        return locale.localizedString(forIdentifier: code)?.capitalized(with: locale) ?? code
+    }
+
+    // MARK: voice keyboard
+
+    /// Onboarding for the voice keyboard. Deliberately not a wall of steps:
+    /// one line on what it does, one button to the place that actually has the
+    /// toggles (a keyboard app's own Settings page carries the Keyboards row
+    /// and the Allow Full Access switch), and the detailed steps folded away
+    /// for the people who want them. iOS gives no API to flip these for the
+    /// user, so a jump plus on-demand steps is as far as it goes.
+    private var dictationSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 12) {
+                    Image(systemName: "mic.fill")
+                        .font(.headline)
+                        .foregroundStyle(Theme.primary)
+                        .frame(width: 40, height: 40)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Theme.primary.opacity(0.12)))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Type by voice in any app")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Tap the mic on the Parley keyboard and your words land at the cursor.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.mutedForeground)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Button {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                } label: {
+                    Text("Set up in Settings").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            }
+            .padding(.vertical, 4)
+
+            DisclosureGroup {
+                dictationStep(
+                    number: 1, title: "Add the keyboard",
+                    detail: "In Keyboards → Add New Keyboard, pick Parley Voice.")
+                dictationStep(
+                    number: 2, title: "Allow Full Access",
+                    detail: "Lets your voice reach your Parley account to be transcribed.")
+                dictationStep(
+                    number: 3, title: "Action Button (optional)",
+                    detail: "Map it to Parley Voice Typing to start dictation without switching keyboards.")
+            } label: {
+                Text("Set-up steps").font(.subheadline)
+            }
+        } header: {
+            Text("Voice keyboard")
+        }
+    }
+
+    private func dictationStep(number: Int, title: LocalizedStringKey, detail: LocalizedStringKey)
+        -> some View
+    {
+        HStack(alignment: .top, spacing: 12) {
+            Text(number, format: .number)
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(Theme.primaryForeground)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(Theme.primary))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.weight(.medium))
+                Text(detail).font(.caption).foregroundStyle(Theme.mutedForeground)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
     private var aboutSection: some View {
         Section {
-            LabeledContent("版本", value: Bundle.main.shortVersion)
-            Link("Parley 桌面版", destination: URL(string: "https://parley.tw")!)
-            Link("隱私權政策", destination: URL(string: "https://parley.tw/privacy/")!)
-            Link("支援與問題回報", destination: URL(string: "https://parley.tw/support/")!)
+            LabeledContent("Version", value: Bundle.main.shortVersion)
+            Link("Parley for Mac", destination: URL(string: "https://parley.tw")!)
+            Link("Privacy Policy", destination: URL(string: "https://parley.tw/privacy/")!)
+            Link("Support & feedback", destination: URL(string: "https://parley.tw/support/")!)
         } footer: {
-            Text("即時教練與深度分析以桌面版為主；手機負責面對面會議的錄音、轉錄與瀏覽。")
+            Text("Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings.")
         }
     }
 
     #if DEBUG
         private var debugSection: some View {
-            Section("開發") {
-                TextField("貼上桌機的 session token", text: $devToken)
+            Section("Developer") {
+                TextField("Paste a desktop session token", text: $devToken)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                Button("使用此 token") {
+                Button("Use this token") {
                     Task {
                         await app.adoptToken(devToken)
                         devToken = ""
@@ -273,6 +430,12 @@ struct SettingsView: View {
 
     private func loadFolders() async {
         guard app.signedIn else { return }
+        #if DEBUG
+            if ScreenshotDemo.servesFixtures {
+                personalFolders = ScreenshotDemo.folders
+                return
+            }
+        #endif
         personalFolders = (try? await app.cloud.listFolders()) ?? []
         for org in app.orgs {
             orgFolders[org.id] = (try? await app.cloud.orgFolders(orgId: org.id)) ?? []
@@ -286,9 +449,13 @@ struct SettingsView: View {
         do {
             try await app.deleteAccount()
         } catch let error as CloudError where error.status == 409 {
-            deleteAccountError = "你仍是至少一個組織的擁有者。請先在桌面版移轉或刪除該組織，再刪除帳號。"
+            deleteAccountError = String(
+                localized:
+                    "You still own at least one organization. Transfer or delete it in the desktop app first, then delete your account."
+            )
         } catch {
-            deleteAccountError = "帳號尚未刪除。請確認網路後再試一次。"
+            deleteAccountError = String(
+                localized: "Your account was not deleted. Check your connection and try again.")
         }
     }
 }

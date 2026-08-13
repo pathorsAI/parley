@@ -46,7 +46,13 @@ export function getModel(
   const provider = settings.llmProviders[workload];
   const info = PROVIDER_BY_ID[provider];
   const modelId = settings.models[provider][workload];
-  const apiKey = settings[info.apiKeyField];
+  // TRIM. A key pasted from a browser or a password manager routinely carries a
+  // leading/trailing space or newline. `hasProviderKey` trims before deciding
+  // the key "exists", so every pre-flight gate said yes and the request then
+  // went out with the whitespace still in the header — Anthropic answers that
+  // with a bare `invalid x-api-key`, which reads as "your key is wrong" rather
+  // than "your key has a space on the end".
+  const apiKey = settings[info.apiKeyField].trim();
 
   if (info.kind === "anthropic") {
     const anthropic = createAnthropic({

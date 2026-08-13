@@ -8,6 +8,7 @@ import { runAnalysis } from "../lib/analysis/engine";
 import { saveUploadToHistory } from "../lib/history/history";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
+import { CompanyPicker } from "./accounts/CompanyPicker";
 import { Input } from "@/components/ui/input";
 import { MeetingContextField } from "./MeetingContextField";
 import { ReplayTranscript } from "./replay/ReplayTranscript";
@@ -53,6 +54,8 @@ export function IngestWizard() {
   const { t } = useI18n();
   const open = useStore((s) => s.ingestWizardOpen);
   const step = useStore((s) => s.ingestWizardStep);
+  const ownerCompanyId = useStore((s) => s.meetingCompanyId);
+  const setMeetingLink = useStore((s) => s.setMeetingLink);
   const wizardError = useStore((s) => s.ingestWizardError);
   const setStep = useStore((s) => s.setIngestWizardStep);
   const close = useStore((s) => s.closeIngestWizard);
@@ -255,7 +258,7 @@ export function IngestWizard() {
     // upload isn't lost. Before that (count/transcribing, app still LIVE) there's
     // nothing to save; exitReplay would wipe a stopped live meeting's transcript,
     // so just close.
-    if (useStore.getState().appMode === "replay") {
+    if (useStore.getState().appMode === "study") {
       finishTranscriptOnly();
     } else {
       close();
@@ -281,6 +284,20 @@ export function IngestWizard() {
           {step === "count" && (
             <>
               <p className="text-[12px] leading-relaxed text-muted-foreground">{t("ingest.countIntro")}</p>
+              {/* Whose call is this? Asked on the way IN, because the import
+                  doors that skipped the question are precisely the ones that
+                  produced recordings needing after-the-fact linking. The save
+                  reads meetingCompanyId (resolveMeetingSave), so setting the
+                  link here is all the filing this needs. */}
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[11px] text-muted-foreground">{t("owner.label")}</span>
+                <CompanyPicker
+                  value={ownerCompanyId}
+                  onChange={(id) =>
+                    setMeetingLink({ companyId: id, threadId: null, attendeeIds: [] })
+                  }
+                />
+              </div>
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] text-muted-foreground">{t("speakers.voiceCount")}</span>
                 <div className="flex flex-wrap gap-1.5">

@@ -118,7 +118,8 @@ final class MeetingUploader {
         var outcome = Outcome()
         if pending.defaultSave.isOrg, let orgId = pending.defaultSave.orgId {
             try await cloud.shareRecording(id: pending.id, orgId: orgId, folderId: pending.defaultSave.folderId)
-            outcome.sharedToOrgName = orgs.first { $0.id == orgId }?.name ?? "組織"
+            outcome.sharedToOrgName =
+                orgs.first { $0.id == orgId }?.name ?? String(localized: "Organization")
         }
 
         removePending(id: pending.id)
@@ -174,10 +175,13 @@ final class MeetingUploader {
             folderId: folderId, updatedAt: nil)
     }
 
+    /// The default title a recording carries into the library. Formatted in the
+    /// user's locale — a Chinese phone reads 8/9 下午3:20, an English one Aug 9,
+    /// 3:20 PM — rather than one hard-coded pattern for everybody.
     private static func title(for date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "M/d HH:mm"
-        return "會議 \(formatter.string(from: date))"
+        let stamp = date.formatted(
+            .dateTime.month(.abbreviated).day().hour().minute())
+        return String(localized: "Meeting \(stamp)")
     }
 
     private static func pendingDirectory() throws -> URL {

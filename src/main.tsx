@@ -22,11 +22,12 @@ void initFolderRegistry().catch((error) =>
 // Secondary windows load the same bundle at a `#<route>` hash; main.tsx routes
 // each to its own root component (Settings / Field Log / How-to-reply).
 const route = window.location.hash.replace(/^#/, "");
+// `history` is deliberately NOT here: the recordings library is a route inside
+// the main window's shell now (#195), not a window of its own.
 const ROUTES = [
   "settings",
   "finding-solution",
   "diagnostics",
-  "history",
   "voice-typing",
   "live-translate",
   "interpreter",
@@ -48,9 +49,6 @@ const FindingSolutionApp = lazy(() =>
 const DiagnosticsApp = lazy(() =>
   import("./diagnostics/DiagnosticsApp").then((module) => ({ default: module.DiagnosticsApp }))
 );
-const HistoryApp = lazy(() =>
-  import("./history/HistoryApp").then((module) => ({ default: module.HistoryApp }))
-);
 const VoiceTypingApp = lazy(() =>
   import("./voice-typing/VoiceTypingApp").then((module) => ({ default: module.VoiceTypingApp }))
 );
@@ -69,8 +67,6 @@ function Root() {
       return <FindingSolutionApp />;
     case "diagnostics":
       return <DiagnosticsApp />;
-    case "history":
-      return <HistoryApp />;
     case "voice-typing":
       return <VoiceTypingApp />;
     case "live-translate":

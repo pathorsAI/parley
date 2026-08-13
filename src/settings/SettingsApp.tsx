@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -9,7 +9,7 @@ import { log } from "../lib/log";
 import { Check, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, Plus, ScrollText, Sun, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
-import { broadcastSettings } from "../lib/settingsSync";
+import { broadcastSettings, SETTINGS_NAVIGATE_EVENT } from "../lib/settingsSync";
 import { signInWithGoogle, signOut, CloudError } from "../lib/cloud/client";
 import { CLOUD_ENABLED } from "../lib/flags";
 import { Flag } from "../components/ui/flag";
@@ -65,22 +65,12 @@ import type { AppLanguage, AppTheme, EvalDef, LlmProvider,
 import { VoiceTypingSettings } from "./VoiceTypingSettings";
 import { TranslateSettings } from "./TranslateSettings";
 import { ScenarioSettings } from "./StageBundleSettings";
-import { SaveDestinationPicker } from "../components/SaveDestinationPicker";
+import { OrgSharePicker } from "../components/OrgSharePicker";
 import { PermissionsPanel } from "./PermissionsPanel";
 
-type Category =
-  | "basic"
-  | "account"
-  | "provider"
-  | "transcription"
-  | "translate"
-  | "voiceTyping"
-  | "permissions"
-  | "evaluations"
-  | "todos"
-  | "stages"
-  | "mcp"
-  | "usage";
+// The panel ids live in the store as SettingsCategory so other surfaces (e.g.
+// the titlebar 🌐 menu) can deep-link a panel without importing this file.
+type Category = import("../lib/store").SettingsCategory;
 
 interface McpServerInfo {
   running: boolean;
@@ -90,28 +80,78 @@ interface McpServerInfo {
 
 // `cloudOnly` entries (the account/orgs page) are compiled out of the OSS edition,
 // which has no sign-in at all — so they never appear in that build's nav.
-const NAV: { id: Category; labelKey: TranslationKey; cloudOnly?: boolean }[] = [
-  { id: "basic", labelKey: "settings.nav.basic" },
-  { id: "account", labelKey: "settings.nav.account", cloudOnly: true },
-  { id: "provider", labelKey: "settings.nav.provider" },
-  { id: "transcription", labelKey: "settings.nav.transcription" },
-  { id: "translate", labelKey: "settings.nav.translate" },
-  { id: "voiceTyping", labelKey: "settings.nav.voiceTyping" },
-  { id: "permissions", labelKey: "settings.nav.permissions" },
-  { id: "evaluations", labelKey: "settings.nav.evaluations" },
-  { id: "todos", labelKey: "settings.nav.todos" },
-  { id: "stages", labelKey: "settings.nav.stages" },
-  { id: "mcp", labelKey: "settings.nav.mcp" },
-  { id: "usage", labelKey: "settings.nav.usage" },
+//
+// `keywordsKey` is what the nav's search box matches BESIDES the label: twelve
+// panels deep enough to hold API keys, rubrics and an MCP endpoint can't be
+// found by their one-word titles alone ("金鑰" lives under 供應商, "麥克風"
+// under 轉錄). The keyword strings are translated, so search works per-language.
+const NAV: {
+  id: Category;
+  labelKey: TranslationKey;
+  keywordsKey: TranslationKey;
+  cloudOnly?: boolean;
+}[] = [
+  { id: "basic", labelKey: "settings.nav.basic", keywordsKey: "settings.kw.basic" },
+  { id: "account", labelKey: "settings.nav.account", keywordsKey: "settings.kw.account", cloudOnly: true },
+  { id: "provider", labelKey: "settings.nav.provider", keywordsKey: "settings.kw.provider" },
+  { id: "transcription", labelKey: "settings.nav.transcription", keywordsKey: "settings.kw.transcription" },
+  { id: "translate", labelKey: "settings.nav.translate", keywordsKey: "settings.kw.translate" },
+  { id: "voiceTyping", labelKey: "settings.nav.voiceTyping", keywordsKey: "settings.kw.voiceTyping" },
+  { id: "permissions", labelKey: "settings.nav.permissions", keywordsKey: "settings.kw.permissions" },
+  { id: "evaluations", labelKey: "settings.nav.evaluations", keywordsKey: "settings.kw.evaluations" },
+  { id: "todos", labelKey: "settings.nav.todos", keywordsKey: "settings.kw.todos" },
+  { id: "stages", labelKey: "settings.nav.stages", keywordsKey: "settings.kw.stages" },
+  { id: "mcp", labelKey: "settings.nav.mcp", keywordsKey: "settings.kw.mcp" },
+  { id: "usage", labelKey: "settings.nav.usage", keywordsKey: "settings.kw.usage" },
 ];
 
+/** The nav panel a `#settings/<category>` deep-link hash asks for, if valid. */
+function categoryFromHash(): Category | null {
+  const seg = window.location.hash.replace(/^#settings\/?/, "");
+  return NAV.some((n) => n.id === seg) ? (seg as Category) : null;
+}
+
+/**
+ * Settings — its own OS window (`#settings`), opened from any window via
+ * lib/nav.ts. Deep-links land on a specific nav panel two ways: a fresh window
+ * reads the category off its URL hash; an already-open window gets it pushed
+ * over the `settings://navigate` event.
+ */
 export function SettingsApp() {
   const { t } = useI18n();
   useThemePreference();
 
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
-  const [cat, setCat] = useState<Category>("basic");
+  const [cat, setCat] = useState<Category>(() => categoryFromHash() ?? "basic");
+  useEffect(() => {
+    if (!isTauri()) return;
+    // Guard the cleanup-beats-listen() race: if unmount wins, detach the
+    // listener the moment the promise resolves instead of leaving it attached.
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    listen<Category>(SETTINGS_NAVIGATE_EVENT, (e) => {
+      if (NAV.some((n) => n.id === e.payload)) setCat(e.payload);
+    }).then((un) => {
+      if (active) unlisten = un;
+      else un();
+    }).catch((error) => log.warn("settings: navigate listener failed", { error: String(error) }));
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+  // Nav search (⑥): label OR translated keywords, so "金鑰"/"key" finds the
+  // provider panel and "麥克風"/"mic" finds transcription.
+  const [navQuery, setNavQuery] = useState("");
+  const navMatches = useMemo(() => {
+    const visible = NAV.filter((n) => CLOUD_ENABLED || !n.cloudOnly);
+    const q = navQuery.trim().toLowerCase();
+    if (!q) return visible;
+    return visible.filter((n) =>
+      `${t(n.labelKey)} ${t(n.keywordsKey)}`.toLowerCase().includes(q)
+    );
+  }, [navQuery, t]);
   const [devices, setDevices] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
   // A meeting is recording in the main window → lock the mic test + device picker
@@ -274,20 +314,30 @@ export function SettingsApp() {
         />
       )}
       {/* Left nav */}
-      <nav className="flex w-48 shrink-0 flex-col gap-0.5 border-r bg-muted/30 p-2">
+      <nav className="flex w-48 shrink-0 flex-col gap-0.5 overflow-y-auto border-r bg-muted/30 p-2">
         <div className="px-2 pb-2 pt-1 text-sm font-semibold tracking-tight">{t("common.settings")}</div>
-        {NAV.filter((n) => CLOUD_ENABLED || !n.cloudOnly).map((n) => (
+        <input
+          value={navQuery}
+          onChange={(e) => setNavQuery(e.target.value)}
+          placeholder={t("settings.searchPlaceholder")}
+          aria-label={t("settings.searchPlaceholder")}
+          className="mb-1 h-7 w-full rounded-md border bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+        />
+        {navMatches.map((n) => (
           <button
             key={n.id}
             type="button"
             onClick={() => setCat(n.id)}
-            className={`rounded-md px-2.5 py-1.5 text-left text-sm transition-colors ${
+            className={`cursor-pointer rounded-md px-2.5 py-1.5 text-left text-sm transition-colors ${
               cat === n.id ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
           >
             {t(n.labelKey)}
           </button>
         ))}
+        {navMatches.length === 0 && (
+          <p className="px-2.5 py-2 text-xs text-muted-foreground">{t("settings.searchEmpty")}</p>
+        )}
       </nav>
 
       {/* Content */}
@@ -331,10 +381,23 @@ export function SettingsApp() {
             {cloudAuth && (
               <Field label={t("settings.account.defaultSave.title")}>
                 <div className="flex max-w-md flex-col gap-2">
-                  <SaveDestinationPicker
-                    value={settings.defaultSaveLocation}
-                    syncOn={settings.syncEnabled}
-                    onChange={(loc) => patch({ defaultSaveLocation: loc })}
+                  <OrgSharePicker
+                    value={
+                      settings.defaultSaveLocation.scope === "org" &&
+                      settings.defaultSaveLocation.orgId
+                        ? {
+                            orgId: settings.defaultSaveLocation.orgId,
+                            folderId: settings.defaultSaveLocation.folderId ?? null,
+                          }
+                        : null
+                    }
+                    onChange={(target) =>
+                      patch({
+                        defaultSaveLocation: target
+                          ? { scope: "org", orgId: target.orgId, folderId: target.folderId }
+                          : { scope: "personal", folderId: null },
+                      })
+                    }
                   />
                   <p className="text-[11px] text-muted-foreground">{t("settings.account.defaultSave.desc")}</p>
                   {!settings.syncEnabled && (

@@ -1,15 +1,44 @@
 import { useMemo } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
+import { MicOff, X } from "lucide-react";
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
 import { useStore } from "../../lib/store";
+import { useI18n } from "../../i18n";
 import { MeetingView } from "../MeetingView";
 import { CoachFeed } from "./CoachFeed";
 import { IntelligenceBoard } from "./IntelligenceBoard";
 import { FindingsPanel } from "../analysis/FindingsPanel";
+
+/**
+ * Persistent mic-only warning (⑥): the system-audio tap failing means the
+ * OTHER side never reaches the transcript — a 10s toast is gone long before
+ * the user notices the silence, so this stays up for the rest of the call
+ * (dismissable, re-armed per meeting).
+ */
+function SystemAudioBanner() {
+  const { t } = useI18n();
+  const warning = useStore((s) => s.systemAudioWarning);
+  const setSystemAudioWarning = useStore((s) => s.setSystemAudioWarning);
+  if (!warning) return null;
+  return (
+    <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-400">
+      <MicOff className="size-3.5 shrink-0" />
+      <span className="min-w-0 flex-1">{t("meeting.warning.systemAudioBanner")}</span>
+      <button
+        type="button"
+        aria-label={t("common.dismiss")}
+        onClick={() => setSystemAudioWarning(false)}
+        className="grid size-5 shrink-0 place-items-center rounded hover:bg-amber-500/20"
+      >
+        <X className="size-3.5" />
+      </button>
+    </div>
+  );
+}
 
 /**
  * The LIVE screen, in one of two postures (titlebar-center switcher):
@@ -31,6 +60,8 @@ export function LiveScreen() {
   const saved = useDefaultLayout({ id: "parley:live", panelIds, storage: window.localStorage });
 
   return (
+    <div className="flex min-h-0 flex-1 flex-col">
+    <SystemAudioBanner />
     <ResizablePanelGroup
       key={layout}
       orientation="horizontal"
@@ -66,5 +97,6 @@ export function LiveScreen() {
         </>
       )}
     </ResizablePanelGroup>
+    </div>
   );
 }

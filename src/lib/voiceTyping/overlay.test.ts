@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bottomCenterPhysical, type MonitorGeometry } from "./overlay";
+import { bottomCenterPhysical, monitorContaining, type MonitorGeometry } from "./overlay";
 
 // Mirrors the module's own constants (the overlay is 460x180 logical px and
 // clears the Dock by 64).
@@ -61,5 +61,45 @@ describe("bottomCenterPhysical", () => {
     );
     expect(Number.isInteger(x)).toBe(true);
     expect(Number.isInteger(y)).toBe(true);
+  });
+});
+
+describe("monitorContaining", () => {
+  // A Retina laptop (2x) with a 1x display to its right — the setup where the
+  // physical/logical mix-up used to send the overlay to the wrong screen.
+  const laptop = monitor({
+    position: { x: 0, y: 0 },
+    size: { width: 3456, height: 2234 },
+    scaleFactor: 2,
+  });
+  const external = monitor({
+    position: { x: 3456, y: 0 },
+    size: { width: 1920, height: 1080 },
+    scaleFactor: 1,
+  });
+
+  it("hit-tests in PHYSICAL space — a cursor low on a Retina screen still matches", () => {
+    // y=1860 physical is only y=930 logical: the old logical-space lookup found
+    // nothing here (the display is 1117 logical px tall) and fell back.
+    expect(monitorContaining([laptop, external], 1214, 1860)).toBe(laptop);
+  });
+
+  it("picks the display the point actually falls in, not the first one", () => {
+    expect(monitorContaining([laptop, external], 4000, 500)).toBe(external);
+  });
+
+  it("treats the origin as inside and the far edge as outside", () => {
+    expect(monitorContaining([external], 3456, 0)).toBe(external);
+    expect(monitorContaining([external], 3456 + 1920, 0)).toBeNull();
+  });
+
+  it("handles displays positioned left of / above the primary", () => {
+    const left = monitor({ position: { x: -2560, y: -200 }, size: { width: 2560, height: 1440 } });
+    expect(monitorContaining([laptop, left], -100, -100)).toBe(left);
+  });
+
+  it("returns null when the point is off every display", () => {
+    expect(monitorContaining([laptop, external], 9999, 9999)).toBeNull();
+    expect(monitorContaining([], 0, 0)).toBeNull();
   });
 });

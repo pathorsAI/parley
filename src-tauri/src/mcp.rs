@@ -1174,6 +1174,12 @@ fn focus_context(s: &Value) -> Value {
     let focus = match app_mode {
         "replay" => "replay",
         "accounts" => "accounts",
+        // Since the app shell landed (#195) the recordings library and settings
+        // are routes in the main window rather than separate windows, so they
+        // show up here. Neither has content loaded — say so rather than letting
+        // them fall through to a meeting-status guess.
+        "library" => "library",
+        "settings" => "settings",
         _ => match meeting_status {
             // A paused meeting is still THE live meeting (capture held, resume
             // is one click) — same focus, the summary spells out the pause.
@@ -1202,6 +1208,12 @@ fn focus_context(s: &Value) -> Value {
         }
         "accounts" => "The user is on the accounts (mini-CRM) screen — no meeting is active \
                        and no recording is loaded."
+            .to_string(),
+        "library" => "The user is browsing the saved-recordings library — no meeting is \
+                      active and no recording is loaded."
+            .to_string(),
+        "settings" => "The user is in Settings — no meeting is active and no recording is \
+                       loaded."
             .to_string(),
         "live-meeting" => {
             if meeting_status == "paused" {

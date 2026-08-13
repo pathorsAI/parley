@@ -1,64 +1,67 @@
-# iPhone screenshot set — Night Signal
+# iPhone screenshot set
 
-Use only a real build on a simulator or physical iPhone. Do not place user
-meeting content, real email addresses, or desktop mockups in screenshots.
+Two locale sets, six frames each, produced by one command:
 
-## Current captured set
+```bash
+ios/AppStore/capture-screenshots.sh
+```
 
-Four real frames are checked in, captured from build 1.0 (3) on an iPhone 17 Pro
-simulator signed in as the review account: `01-record`, `02-library`,
-`03-transcript`, `04-settings`. The files at the top level are native 1206×2622;
-[`6.9-inch/`](6.9-inch) holds the same frames scaled to the 6.9-inch slot's
-**1320×2868** (0.06% aspect delta, not visible). Upload the `6.9-inch/` set.
+| Directory | Upload to | Frames |
+| --- | --- | --- |
+| [`en-US/`](en-US) | English (U.S.) — the primary locale | 6 |
+| [`zh-Hant/`](zh-Hant) | Traditional Chinese | 6 |
 
-### About the demo content
+Captured on an **iPhone 17 Pro Max**, whose native 1320×2868 is exactly the App
+Store 6.9-inch slot — no rescaling, no aspect drift. The script verifies the
+dimensions before it exits.
 
-The library and transcript frames show two meetings — 續約條件討論 and
-新客戶需求訪談 — written to read the way real B2B conversations actually sound
-(seat counts, onboarding time, invoicing split, a security questionnaire).
-That is deliberate: a screenshot captioned "this is a test" sells nothing and
-tells a reviewer nothing about the product.
+| File | App state | What it has to sell |
+| --- | --- | --- |
+| `01-welcome` | First launch, signed out | What the app is and what an account buys, before it asks for one. |
+| `02-record` | Recording in progress | The phone is listening to the room and the transcript is already there, speakers apart. |
+| `03-library` | Personal library | The result is kept: titles, durations, speaker and finding counts, folders. |
+| `04-transcript` | Saved recording | A transcript is a document you read and quote from, with named speakers and timestamps. |
+| `05-voice-keyboard` | Settings → Voice keyboard | The 1.1 headline: dictation into any app. |
+| `06-settings` | Settings | Trust and control — account, usage, sync state, appearance, language. |
 
-The content is **entirely fictional**. It names no real company, person, or
-customer, and no real meeting data was used. Speakers are labelled 我 /
-客戶窗口 via the app's own speaker-naming feature. Regenerate with
-`scratchpad/seed-demo.mjs` against the review account.
+## How the frames are produced
 
-Four frames satisfy submission (App Store Connect requires at least one). Two
-more would complete the story and are worth grabbing on the next pass:
+`App/Parley/ScreenshotDemo.swift` is a `#if DEBUG` demo mode. Launched with
+`-ParleyDemo signedIn` the app serves fixed fictional fixtures instead of the
+cloud, and it is navigated entirely by `parley://demo/…` URLs. So capturing
+needs **no review account, no network, and no taps** — which is the point:
 
-- **consent + live recording** — tap Start Recording to show the consent sheet,
-  confirm, then capture the red recording state with the level meter.
-- **save destination** — Settings → Default save location with the picker open.
+- The previous set could only be produced by signing a simulator into the live
+  review account by hand. That put a real account's data one mis-tap away from a
+  public screenshot, and it could never be reproduced exactly next release.
+- Input automation in the Simulator is genuinely unreliable: the Simulator MCP
+  tool binds its input channel to the first device it connects to and does not
+  recover after the Simulator app restarts (`machPortNotConnected`), AppleScript
+  `click at` lands on the menu bar, and posting `CGEvent`s from a shell needs
+  Accessibility permission the sandbox does not have. `simctl openurl` has none
+  of those problems.
 
-> Driving the simulator: `xcrun simctl io <device> screenshot <path>` captures
-> reliably on any booted device. Input is the fragile part — the iOS Simulator
-> MCP tool binds its input channel to the first device it connects to and does
-> not recover after the Simulator app is restarted (`machPortNotConnected`);
-> AppleScript `click at` lands on the menu bar, and posting `CGEvent`s from a
-> shell needs Accessibility permission the sandbox does not have. Fastest path:
-> keep exactly one simulator booted, do not restart the Simulator app mid-session,
-> and if input dies, tap by hand and capture with `simctl`.
+The script also pins the status bar to 9:41 with full battery and Wi-Fi, so the
+frames are consistent with each other and with every other app on the store.
 
-Export 5 PNG/JPEG images without alpha at one accepted iPhone size (for
-example, the current 6.9-inch or 6.5-inch App Store slot shown in Connect).
-Capture each after setting the same appearance and system time.
+Still true, and still worth keeping true: only real frames from a real build. No
+mockups, no user meeting content, no real email addresses.
 
-| File | App state | Story | Required visible detail |
-| --- | --- | --- | --- |
-| `01-live-transcript` | Recording in progress | The phone listens in the room. | Red recording signal, live transcript, stop action. |
-| `02-recording-library` | Personal library | The result is kept, not ephemeral. | Several clearly synthetic recordings, duration, sync state. |
-| `03-recording-detail` | Saved recording | Replay is deliberate review, not streamed text replay. | Playback control, timestamps, transcript reading surface. |
-| `04-destination` | Save/move flow | The same meeting belongs in the right scope. | Personal folder and organization target labels. |
-| `05-settings` | Settings | Trust and control are in the product. | Theme picker, sync state, privacy/support links. |
+## About the demo content
 
-## Capture procedure
+The recordings are a renewal negotiation, a discovery call, and a quarterly
+review, written the way B2B conversations actually sound — a seat count against
+a quote, a price hold, an onboarding estimate with an SSO condition attached. A
+screenshot captioned "test test" sells nothing and tells a reviewer nothing.
 
-1. Use a dedicated reviewer/demo account and synthetic spoken content.
-2. Disable notification previews and use a clean simulator state.
-3. Record a short synthetic meeting so the transcript, library, and detail
-   screens show actual app data.
-4. Capture with `xcrun simctl io booted screenshot <path>` or the device’s
-   screenshot control. Inspect pixels at 100% before upload.
-5. Upload through the current App Store Connect screenshot slot; its accepted
-   dimensions change over time, so treat the Connect UI as authoritative.
+The content is **entirely fictional**: no real company, person, customer,
+account, or meeting. The demo address is `alex@example.com`, in the
+RFC-reserved domain. The copy is written separately in English and Traditional
+Chinese rather than translated in one direction, so each store's set reads
+natively.
+
+## If you change the app
+
+Re-run the script. That is the whole procedure. If a new screen belongs in the
+set, add a route to `ScreenshotDemo.handle(_:)` and a line to `FRAMES` in the
+script — do not go back to capturing by hand.

@@ -704,13 +704,22 @@ pub fn save_transcript(filename: String, contents: String) -> Result<String, Str
 
 /// Copy a recording's audio file to a user-chosen destination (the replay
 /// "Save audio…" action — the frontend picks `dst` via the save dialog).
+///
+/// Copied on a blocking worker rather than inline: a sync command runs on the
+/// main thread, where a multi-GB copy would freeze every window and stall every
+/// other command until it finished (see `save_history_entry`).
 #[tauri::command]
-pub fn export_recording(src: String, dst: String) -> Result<(), String> {
+pub async fn export_recording(src: String, dst: String) -> Result<(), String> {
     if !std::path::Path::new(&src).exists() {
         return Err(format!("source recording not found: {src}"));
     }
-    std::fs::copy(&src, &dst).map_err(|e| e.to_string())?;
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::copy(&src, &dst)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("export task panicked: {e}"))?
 }
 
 /// Minimal percent-decoder for the loopback query (the token is encodeURIComponent'd).

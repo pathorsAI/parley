@@ -8,6 +8,13 @@ public struct CloudUser: Codable, Equatable, Sendable {
     public let name: String?
     public let email: String
     public let image: String?
+
+    public init(id: String, name: String?, email: String, image: String?) {
+        self.id = id
+        self.name = name
+        self.email = email
+        self.image = image
+    }
 }
 
 public struct CloudRecordingSummary: Codable, Equatable, Identifiable, Sendable {
@@ -51,6 +58,16 @@ public struct CloudFolder: Codable, Equatable, Identifiable, Sendable {
     public let orgId: String?
     public let createdAt: Double?
     public let updatedAt: Double?
+
+    public init(
+        id: String, name: String, orgId: String?, createdAt: Double?, updatedAt: Double?
+    ) {
+        self.id = id
+        self.name = name
+        self.orgId = orgId
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
 }
 
 public struct CloudOrg: Codable, Equatable, Identifiable, Sendable {
@@ -59,6 +76,13 @@ public struct CloudOrg: Codable, Equatable, Identifiable, Sendable {
     public let slug: String?
     /// Present only from `/orgs/mine` (better-auth's own list drops it).
     public let role: String?
+
+    public init(id: String, name: String, slug: String?, role: String?) {
+        self.id = id
+        self.name = name
+        self.slug = slug
+        self.role = role
+    }
 }
 
 public struct HostedQuota: Codable, Equatable, Sendable {
@@ -68,6 +92,18 @@ public struct HostedQuota: Codable, Equatable, Sendable {
     public let llmCreditsUsed: Double?
     public let llmCreditsLimit: Double?
     public let periodResetTs: Double?
+
+    public init(
+        plan: String?, sttSecondsUsed: Double?, sttSecondsLimit: Double?,
+        llmCreditsUsed: Double?, llmCreditsLimit: Double?, periodResetTs: Double?
+    ) {
+        self.plan = plan
+        self.sttSecondsUsed = sttSecondsUsed
+        self.sttSecondsLimit = sttSecondsLimit
+        self.llmCreditsUsed = llmCreditsUsed
+        self.llmCreditsLimit = llmCreditsLimit
+        self.periodResetTs = periodResetTs
+    }
 }
 
 /// Transcript-bearing recording meta — the subset of the desktop's

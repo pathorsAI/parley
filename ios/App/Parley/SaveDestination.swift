@@ -19,15 +19,15 @@ struct SaveDestination: Codable, Equatable {
 
     func label(orgs: [CloudOrg], folders: [CloudFolder]) -> String {
         if isOrg {
-            let orgName = orgs.first { $0.id == orgId }?.name ?? "組織"
+            let orgName = orgs.first { $0.id == orgId }?.name ?? String(localized: "Organization")
             if let folderId, let f = folders.first(where: { $0.id == folderId }) {
                 return "\(orgName) · \(f.name)"
             }
             return orgName
         }
         if let folderId, let f = folders.first(where: { $0.id == folderId }) {
-            return "個人 · \(f.name)"
+            return String(localized: "Personal · \(f.name)")
         }
-        return "個人"
+        return String(localized: "Personal")
     }
 }

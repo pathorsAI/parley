@@ -11,6 +11,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import type { Settings, TranscriptSegment } from "../types";
+import { useStore } from "../store";
 import type { ReplaySession } from "./types";
 import { STT_BY_ID, sttApiKey } from "../transcription/providers";
 import { toTraditional } from "../zhConvert";
@@ -38,6 +39,7 @@ const AUDIO_EXTENSIONS = [
   "aac",
   "flac",
   "ogg",
+  "oga",
   "opus",
   "wma",
   "webm",
@@ -50,6 +52,13 @@ const TRANSCRIPT_EXTENSIONS = ["txt"];
 /** Whether a picked/dropped path is a text transcript rather than audio. */
 export function isTranscriptPath(path: string): boolean {
   return /\.txt$/i.test(path);
+}
+
+const AUDIO_RE = new RegExp(`\\.(${AUDIO_EXTENSIONS.join("|")})$`, "i");
+
+/** Whether a picked/dropped path is an audio recording we can transcribe. */
+export function isAudioPath(path: string): boolean {
+  return AUDIO_RE.test(path);
 }
 
 /** Shape returned by the Rust `transcribe_file` command (serde camelCase). */
@@ -67,33 +76,6 @@ interface RustTranscriptionResult {
   cached: boolean;
   /** Acoustically measured articulation rate (syllables/sec); 0 if unmeasurable. */
   speechRateHz: number;
-}
-
-/**
- * Open a file picker, transcribe the chosen recording via Soniox's batch API,
- * and resolve to a `ReplaySession`. Returns `null` if the user cancels.
- *
- * Every segment is tagged `source: "them"` (single mixed file — speakers are
- * told apart by diarization) and `isFinal: true`.
- */
-/**
- * Validate the provider + open the native file picker. Returns the chosen audio
- * path, or `null` if the user cancelled. Throws if the selected provider can't do
- * file uploads, or has no key configured. Split out from transcription so the
- * ingest wizard can ask the speaker count BEFORE the (slow) transcription runs.
- */
-export async function pickRecordingFile(settings: Settings): Promise<string | null> {
-  assertUploadTranscribable(settings);
-
-  const selected = await open({
-    multiple: false,
-    directory: false,
-    title: "Choose a recording",
-    filters: [{ name: "Audio", extensions: AUDIO_EXTENSIONS }],
-  });
-  if (selected === null) return null; // user cancelled
-  const audioPath = Array.isArray(selected) ? selected[0] : selected;
-  return audioPath || null;
 }
 
 /** Throw (with the actionable message) unless the configured STT provider can
@@ -121,11 +103,69 @@ export type ImportPick =
   | { kind: "transcript"; paths: string[] };
 
 /**
+ * The one audio-vs-transcript arbitration rule, shared by the picker
+ * ({@link pickImportFiles}) and the window drag-drop ({@link importDroppedPaths})
+ * so it literally cannot drift: audio wins when the set mixes kinds (a
+ * transcription run takes one file), an only-.txt set imports ALL of them, and
+ * anything else is ignored.
+ */
+export function arbitrateImportPaths(paths: string[]): ImportPick | null {
+  const audio = paths.find(isAudioPath);
+  if (audio) return { kind: "audio", path: audio };
+  const transcripts = paths.filter(isTranscriptPath);
+  return transcripts.length ? { kind: "transcript", paths: transcripts } : null;
+}
+
+/**
+ * THE import entry point (R7): every "import a recording" affordance — Home,
+ * the library header, a company page, the coach-feed empty state — runs this
+ * one flow, so the accepted formats and the audio-vs-transcript arbitration
+ * can never drift between doors. Doors differ only in prefill: a company page
+ * passes its `companyId` so the resulting entry is pre-linked to the company
+ * (and lands in its paired folder). Throws the STT-gate errors from
+ * {@link pickImportFiles} — callers toast them.
+ */
+export async function startImportFlow(
+  opts: { companyId?: string | null } = {},
+): Promise<void> {
+  const pick = await pickImportFiles(useStore.getState().settings);
+  if (!pick) return;
+  routeImportPick(pick, opts.companyId ?? null);
+}
+
+/**
+ * The drag-drop door (no picker): same arbitration + STT gate as every picker
+ * door. Throws the same errors as {@link pickImportFiles}; callers toast them.
+ */
+export function importDroppedPaths(paths: string[]): void {
+  const pick = arbitrateImportPaths(paths);
+  if (!pick) return;
+  if (pick.kind === "audio") assertUploadTranscribable(useStore.getState().settings);
+  routeImportPick(pick, null);
+}
+
+/** Open the right dialog for an arbitrated pick. `companyId` pre-links first:
+ *  audio via the meeting link (the wizard's save snapshots `meetingCompanyId`
+ *  and resolveMeetingSave files it under the company folder), transcripts by
+ *  riding on the import dialog. A null companyId leaves any existing meeting
+ *  link alone rather than clearing it — and since #211 both dialogs SHOW the
+ *  customer they are about to file under, so an inherited link is on screen and
+ *  one click from being changed instead of being applied silently. */
+function routeImportPick(pick: ImportPick, companyId: string | null): void {
+  const { openIngestWizard, openTranscriptImport, setMeetingLink } = useStore.getState();
+  if (pick.kind === "audio") {
+    if (companyId) setMeetingLink({ companyId, threadId: null, attendeeIds: [] });
+    openIngestWizard(pick.path);
+  } else {
+    openTranscriptImport(pick.paths, companyId);
+  }
+}
+
+/**
  * One picker for both import flavors — audio recordings AND .txt transcripts
- * (multi-select; a folder's worth of transcripts imports in one go). Audio wins
- * when the selection mixes kinds, mirroring the drag-drop rule. The STT gate
- * runs only when audio was actually chosen, so transcript import works with any
- * provider and no STT key.
+ * (multi-select; a folder's worth of transcripts imports in one go). The STT
+ * gate runs only when audio was actually chosen, so transcript import works
+ * with any provider and no STT key.
  */
 export async function pickImportFiles(settings: Settings): Promise<ImportPick | null> {
   const selected = await open({
@@ -139,14 +179,11 @@ export async function pickImportFiles(settings: Settings): Promise<ImportPick | 
     ],
   });
   if (selected === null) return null; // user cancelled
-  const paths = (Array.isArray(selected) ? selected : [selected]).filter(Boolean);
-  if (!paths.length) return null;
-  const audio = paths.find((p) => !isTranscriptPath(p));
-  if (audio) {
-    assertUploadTranscribable(settings);
-    return { kind: "audio", path: audio };
-  }
-  return { kind: "transcript", paths: paths.filter(isTranscriptPath) };
+  const pick = arbitrateImportPaths(
+    (Array.isArray(selected) ? selected : [selected]).filter(Boolean),
+  );
+  if (pick?.kind === "audio") assertUploadTranscribable(settings);
+  return pick;
 }
 
 /**
@@ -243,16 +280,6 @@ export async function transcribeRecording(
     speakerNames: {},
     speechRateHz: result.speechRateHz || null,
   };
-}
-
-/** Pick a recording then transcribe it — the original one-shot ingest. */
-export async function ingestRecording(
-  settings: Settings,
-  opts: IngestOptions = {},
-): Promise<ReplaySession | null> {
-  const audioPath = await pickRecordingFile(settings);
-  if (!audioPath) return null;
-  return transcribeRecording(settings, audioPath, opts);
 }
 
 /** Surface a progress stage to both the UI callback and the log file. */

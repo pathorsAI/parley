@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FileText, FolderPlus, Loader2, Users } from "lucide-react";
+import { FileText, Loader2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { formatClock, useStore } from "../lib/store";
 import {
@@ -7,26 +7,13 @@ import {
   type PreparedTranscriptFile,
 } from "../lib/replay/importFiles";
 import { loadHistoryEntry, saveTranscriptToHistory } from "../lib/history/history";
-import {
-  createLocalFolder,
-  emitFoldersUpdated,
-  listLocalFolders,
-  type Folder,
-} from "../lib/history/folders";
+import { ensureCompanyFolder } from "../lib/accounts/folders";
+import { useAccounts } from "../lib/accounts/store";
 import { log } from "../lib/log";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-
-/** Sentinel for "personal root" in the folder <Select> (its values can't be null). */
-const ROOT = "__root__";
+import { CompanyPicker } from "./accounts/CompanyPicker";
 
 /**
  * Import picked/dropped .txt transcripts as audio-less history entries (issue
@@ -39,13 +26,14 @@ const ROOT = "__root__";
 export function TranscriptImportDialog() {
   const { t } = useI18n();
   const paths = useStore((s) => s.transcriptImportPaths);
+  const companyId = useStore((s) => s.transcriptImportCompanyId);
   const close = useStore((s) => s.closeTranscriptImport);
 
   const [files, setFiles] = useState<PreparedTranscriptFile[] | null>(null);
-  const [folderId, setFolderId] = useState<string>(ROOT);
-  const [folders, setFolders] = useState<Folder[]>([]);
-  const [newFolderOpen, setNewFolderOpen] = useState(false);
-  const [newFolderName, setNewFolderName] = useState("");
+  // Who these transcripts belong to. Asked HERE because a transcript imported
+  // with no customer is exactly the recording that later needs after-the-fact
+  // linking — the flow that used to strand it.
+  const [owner, setOwner] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
 
   // (Re)prepare whenever the dialog opens with a new set of paths.
@@ -56,17 +44,16 @@ export function TranscriptImportDialog() {
     }
     let alive = true;
     setFiles(null);
-    setFolderId(ROOT);
-    setFolders(listLocalFolders());
-    setNewFolderOpen(false);
-    setNewFolderName("");
+    // A company door pre-links its company (R7); every other door starts blank
+    // and asks.
+    setOwner(companyId ?? null);
     Promise.all(paths.map(prepareTranscriptFile)).then((prepared) => {
       if (alive) setFiles(prepared);
     });
     return () => {
       alive = false;
     };
-  }, [paths]);
+  }, [paths, companyId]);
 
   if (!paths) return null;
 
@@ -77,22 +64,14 @@ export function TranscriptImportDialog() {
     setFiles((prev) => prev?.map((f) => (f.path === path ? { ...f, title } : f)) ?? null);
   }
 
-  function createFolder() {
-    const name = newFolderName.trim();
-    if (!name) return;
-    const existing = listLocalFolders().find((f) => f.name === name);
-    const folder = existing ?? createLocalFolder(name);
-    if (!existing) emitFoldersUpdated().catch(() => {});
-    setFolders(listLocalFolders());
-    setFolderId(folder.id);
-    setNewFolderOpen(false);
-    setNewFolderName("");
-  }
-
   async function confirm() {
     if (!valid.length || importing) return;
     setImporting(true);
-    const target = folderId === ROOT ? null : folderId;
+    // The customer decides the folder — one answer, not two questions.
+    const company = owner
+      ? useAccounts.getState().companies.find((c) => c.id === owner)
+      : undefined;
+    const target = company ? ensureCompanyFolder(company) : null;
     const imported: string[] = [];
     try {
       for (const f of valid) {
@@ -105,6 +84,7 @@ export function TranscriptImportDialog() {
           durationMs: parsed.durationMs,
           createdAt: f.createdAt,
           folderId: target,
+          companyId: owner,
         });
         if (id) imported.push(id);
       }
@@ -182,55 +162,8 @@ export function TranscriptImportDialog() {
 
           {ready && (
             <div className="flex flex-col gap-1.5 border-t pt-3">
-              <span className="text-[11px] text-muted-foreground">{t("import.folder")}</span>
-              <div className="flex items-center gap-2">
-                <Select value={folderId} onValueChange={setFolderId}>
-                  <SelectTrigger className="h-8 flex-1 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ROOT}>{t("import.folderRoot")}</SelectItem>
-                    {folders.map((f) => (
-                      <SelectItem key={f.id} value={f.id}>
-                        {f.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-8 gap-1 px-2 text-[11px]"
-                  onClick={() => setNewFolderOpen((v) => !v)}
-                >
-                  <FolderPlus className="size-3.5" />
-                  {t("import.newFolder")}
-                </Button>
-              </div>
-              {newFolderOpen && (
-                <div className="flex items-center gap-2">
-                  <Input
-                    value={newFolderName}
-                    onChange={(e) => setNewFolderName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") createFolder();
-                    }}
-                    placeholder={t("import.newFolderPlaceholder")}
-                    className="h-7 flex-1 text-xs"
-                    autoFocus
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-7 px-2 text-[11px]"
-                    disabled={!newFolderName.trim()}
-                    onClick={createFolder}
-                  >
-                    {t("import.create")}
-                  </Button>
-                </div>
-              )}
+              <span className="text-[11px] text-muted-foreground">{t("owner.label")}</span>
+              <CompanyPicker value={owner} onChange={setOwner} />
             </div>
           )}
         </div>

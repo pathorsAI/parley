@@ -178,9 +178,20 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
       const id = argStr(a.id);
       if (!id) throw new Error("id is required");
       const folderId = a.folderId ? argStr(a.folderId) : null;
-      const { setEntryFolder, emitHistoryUpdated } = await import("./history/history");
-      await setEntryFolder(id, folderId);
-      await emitHistoryUpdated(id);
+      // Moving into a COMPANY's folder is a change of customer, not a filing
+      // tweak — route it through the one write that keeps companyId and
+      // folderId together, or the tree and the company page disagree again.
+      const { useAccounts: accStore } = await import("./accounts/store");
+      const owner = accStore.getState().companies.find((c) => c.folderId === folderId);
+      const { assignEntryCompany, setEntryFolder, emitHistoryUpdated } = await import(
+        "./history/history"
+      );
+      if (owner) {
+        await assignEntryCompany(id, owner.id);
+      } else {
+        await setEntryFolder(id, folderId);
+        await emitHistoryUpdated(id);
+      }
       return { id, folderId };
     }
     case "list_folders": {
@@ -230,11 +241,26 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
         "./history/folders"
       );
       let folderId: string | null = null;
+      let companyId: string | null = null;
       if (folderName) {
-        // Fresh read (cross-instance registry), adopt an existing name, else create.
-        const existing = (await listFoldersFresh()).find((f) => f.name === folderName);
-        folderId = existing?.id ?? createLocalFolder(folderName).id;
-        if (!existing) await emitFoldersUpdated().catch(() => {});
+        // A folder name that names a CUSTOMER is a customer, not a filing hint:
+        // resolve it to that company (creating its folder if needed) so an
+        // MCP-imported transcript is owned the same way every other import door
+        // owns it. Only a name no company answers to falls back to a plain
+        // folder — fresh read (cross-instance registry), adopt, else create.
+        const { useAccounts: accStore } = await import("./accounts/store");
+        const company = accStore
+          .getState()
+          .companies.find((c) => !c.archived && c.name === folderName);
+        if (company) {
+          const { ensureCompanyFolder } = await import("./accounts/folders");
+          companyId = company.id;
+          folderId = ensureCompanyFolder(company);
+        } else {
+          const existing = (await listFoldersFresh()).find((f) => f.name === folderName);
+          folderId = existing?.id ?? createLocalFolder(folderName).id;
+          if (!existing) await emitFoldersUpdated().catch(() => {});
+        }
       }
       const { prepareTranscriptFile } = await import("./replay/importFiles");
       const { saveTranscriptToHistory } = await import("./history/history");
@@ -253,6 +279,7 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
           durationMs: file.parsed.durationMs,
           createdAt: file.createdAt,
           folderId,
+          companyId,
         });
         if (id) imported.push({
           id,
@@ -261,7 +288,7 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
           format: file.parsed.format,
         });
       }
-      return { imported, failed, folderId, folder: folderName || null };
+      return { imported, failed, folderId, companyId, folder: folderName || null };
     }
     case "create_company_from_folder": {
       // Folder → Accounts sync: turn an imported history folder into a mini-CRM
@@ -299,11 +326,11 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
       // company's meeting timeline.
       let meetingsLinked = 0;
       if (folderId) {
-        const { listHistory, setEntryCompany } = await import("./history/history");
+        const { listHistory, assignEntryCompany } = await import("./history/history");
         const summaries = await listHistory();
         for (const s of summaries) {
           if (s.folderId === folderId && s.companyId !== companyId) {
-            await setEntryCompany(s.id, companyId);
+            await assignEntryCompany(s.id, companyId);
             meetingsLinked++;
           }
         }

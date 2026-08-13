@@ -3321,7 +3321,7 @@ dependencies = [
 
 [[package]]
 name = "parley"
-version = "0.20.0"
+version = "0.22.8"
 dependencies = [
  "anyhow",
  "audiopus",

@@ -1,6 +1,22 @@
 import type { Settings } from "../types";
 
 /**
+ * Just the "who am I" block, with no transcript-attribution instruction. Used
+ * on its own before a meeting exists (pre-flight coaching), where there are no
+ * speakers to disambiguate yet and the longer preamble would invent a
+ * transcript the model was never given.
+ */
+export function profileFacts(settings: Settings): string {
+  const facts: string[] = [];
+  if (settings.userName.trim()) facts.push(`- Name: ${settings.userName.trim()}`);
+  if (settings.userRole.trim()) facts.push(`- Role: ${settings.userRole.trim()}`);
+  if (settings.userCompany.trim()) facts.push(`- Company / side: ${settings.userCompany.trim()}`);
+  if (settings.userBackground?.trim()) facts.push(`- Background: ${settings.userBackground.trim()}`);
+  if (facts.length === 0) return "";
+  return `ABOUT ME / US (the side you are advising):\n${facts.join("\n")}\n\n`;
+}
+
+/**
  * A preamble describing who "ME / US" is, injected into every meeting prompt
  * (ask / evaluations / todos / timeline / action items / solutions). Beyond
  * tailoring advice, it pins down WHICH SIDE the user is on so the model stops
@@ -8,14 +24,10 @@ import type { Settings } from "../types";
  * especially under diarization, where speakers arrive as bare numbers.
  */
 export function profileContext(settings: Settings): string {
-  const facts: string[] = [];
-  if (settings.userName.trim()) facts.push(`- Name: ${settings.userName.trim()}`);
-  if (settings.userRole.trim()) facts.push(`- Role: ${settings.userRole.trim()}`);
-  if (settings.userCompany.trim()) facts.push(`- Company / side: ${settings.userCompany.trim()}`);
-  if (settings.userBackground?.trim()) facts.push(`- Background: ${settings.userBackground.trim()}`);
-  if (facts.length === 0) return "";
+  const block = profileFacts(settings);
+  if (!block) return "";
   return (
-    `ABOUT ME / US (the side you are advising):\n${facts.join("\n")}\n\n` +
+    block +
     `FIRST work out which named speaker in the transcript is ME / US: match the name/role/company/` +
     `background above, the meeting context, and HOW each speaker talks (which side's interests, asks, ` +
     `and concerns they voice). Everyone else is the OTHER PARTY ("them"). Then attribute every ` +

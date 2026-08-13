@@ -1,0 +1,168 @@
+name: iOS Release
+
+# Archives the iPhone app and uploads it to App Store Connect / TestFlight.
+#
+# Separate from `release.yml` on purpose (design doc D5): the desktop app builds
+# on `v*.*.*` tags and ships a GitHub Release; iOS builds on `ios-v*` tags and
+# ships to TestFlight, where Apple — not this repo — decides what users get.
+#
+# Signing is Xcode-managed. The App Store Connect API key below is the same one
+# the desktop workflow uses for notarization; it is passed to both the archive
+# and the export so `-allowProvisioningUpdates` can mint profiles on a runner
+# that has never seen this team before.
+#
+#   git tag ios-v1.1 && git push origin ios-v1.1
+#
+# Every upload needs a CFBundleVersion App Store Connect has not seen. It comes
+# from `ios/App/project.yml`; the `build_number` input overrides it for a
+# re-upload without a commit (see ios/RELEASING.md).
+
+on:
+  push:
+    tags:
+      - "ios-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build, for example ios-v1.1"
+        required: true
+        type: string
+      build_number:
+        description: "Override CFBundleVersion (leave empty to use project.yml)"
+        required: false
+        type: string
+
+# Read-only: the deliverable goes to App Store Connect, not to a GitHub Release.
+permissions:
+  contents: read
+
+# Two archives racing to upload the same build number is a wasted 20 minutes and
+# a confusing error from Apple, not a merge conflict.
+concurrency:
+  group: ios-release
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    name: Archive and upload to TestFlight
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      # Pick the newest Xcode installed rather than pinning a runner image path,
+      # which Apple and GitHub both move. String Catalogs need 15, and the
+      # keyboard's App Intents need an 18 SDK to compile the @available branch,
+      # so fail loudly rather than producing a build with dictation missing.
+      - name: Select Xcode
+        run: |
+          newest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "Using $newest"
+          sudo xcode-select -s "$newest"
+          xcodebuild -version
+          major="$(xcodebuild -version | head -1 | sed -E 's/Xcode ([0-9]+).*/\1/')"
+          if [ "$major" -lt 16 ]; then
+            echo "::error::Xcode $major is too old for this project (need 16+)"
+            exit 1
+          fi
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # The transcript core runs on macOS with no simulator, so it is cheap and
+      # there is no reason to ship a build whose segment logic is broken.
+      - name: Test ParleyKit
+        run: swift test --package-path ios/ParleyKit
+
+      - name: Override build number
+        if: inputs.build_number != ''
+        run: |
+          cd ios/App
+          sed -i '' -E "s/CFBundleVersion: \"[0-9]+\"/CFBundleVersion: \"${{ inputs.build_number }}\"/g" project.yml
+          grep -n 'CFBundleVersion' project.yml
+
+      - name: Generate project
+        run: cd ios/App && xcodegen generate
+
+      # A tag that disagrees with the plist ships the wrong thing under the right
+      # name, and it is only noticed once the build is sitting in TestFlight.
+      - name: Check the tag matches the marketing version
+        run: |
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          want="${tag#ios-v}"
+          got="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' ios/App/Parley/Info.plist)"
+          build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' ios/App/Parley/Info.plist)"
+          echo "tag=$tag  version=$got  build=$build"
+          if [ "$want" != "$got" ]; then
+            echo "::error::tag $tag expects CFBundleShortVersionString $want, but the project says $got"
+            exit 1
+          fi
+
+      # `-authenticationKeyPath` needs a file. Written outside the workspace so
+      # it cannot be picked up by a later step or an artifact upload, and removed
+      # in an always() step below.
+      - name: Write the App Store Connect API key
+        env:
+          KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: |
+          if [ -z "$KEY_CONTENT" ]; then
+            echo "::error::APPLE_API_KEY_CONTENT is empty — see ios/RELEASING.md"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/asc"
+          chmod 700 "$RUNNER_TEMP/asc"
+          printf '%s' "$KEY_CONTENT" > "$RUNNER_TEMP/asc/AuthKey.p8"
+          chmod 600 "$RUNNER_TEMP/asc/AuthKey.p8"
+
+      - name: Archive
+        run: |
+          cd ios/App
+          xcodebuild -project Parley.xcodeproj -scheme Parley \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Parley.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey.p8" \
+            -authenticationKeyID "${{ secrets.APPLE_API_KEY }}" \
+            -authenticationKeyIssuerID "${{ secrets.APPLE_API_ISSUER }}" \
+            archive
+
+      - name: Export and upload to App Store Connect
+        run: |
+          cd ios/App
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Parley.xcarchive" \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey.p8" \
+            -authenticationKeyID "${{ secrets.APPLE_API_KEY }}" \
+            -authenticationKeyIssuerID "${{ secrets.APPLE_API_ISSUER }}"
+
+      # Keep the symbols: a crash report from TestFlight is unreadable without
+      # the dSYMs from the exact archive that produced the build.
+      - name: Collect dSYMs
+        if: always()
+        run: |
+          if [ -d "$RUNNER_TEMP/Parley.xcarchive/dSYMs" ]; then
+            ditto -c -k --keepParent "$RUNNER_TEMP/Parley.xcarchive/dSYMs" "$RUNNER_TEMP/dSYMs.zip"
+          fi
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: parley-ios-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/export/*.ipa
+            ${{ runner.temp }}/dSYMs.zip
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Remove the API key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/asc"

@@ -1,21 +1,14 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TitleBar } from "./components/TitleBar";
 import { TranslateStrip } from "./components/TranslateStrip";
-import { LiveScreen } from "./components/live/LiveScreen";
-import { StudyScreen } from "./components/study/StudyScreen";
-
-const AccountsScreen = lazy(() =>
-  import("./components/accounts/AccountsScreen").then((m) => ({ default: m.AccountsScreen }))
-);
-const PreflightScreen = lazy(() =>
-  import("./components/preflight/PreflightScreen").then((m) => ({ default: m.PreflightScreen }))
-);
+import { AppShell } from "./components/shell/AppShell";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import { ReleaseNotesDialog } from "./components/ReleaseNotesDialog";
+import { toast } from "sonner";
 import { Toaster } from "./components/ui/sonner";
 import { IngestWizard } from "./components/IngestWizard";
 import { TranscriptImportDialog } from "./components/TranscriptImportDialog";
@@ -23,7 +16,7 @@ import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWind
 import { useFindingSolutionHost } from "./components/analysis/useFindingSolutionHost";
 import { DeliveryNudgeHost } from "./components/delivery/DeliveryNudgeHost";
 import { useDeliveryCoach } from "./lib/analysis/useDelivery";
-import { useStore, isMeetingActive, type AppMode } from "./lib/store";
+import { useStore, isMeetingActive } from "./lib/store";
 import {
   isTauri,
   listenForMeetingError,
@@ -43,14 +36,7 @@ import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 import { initStudyPipeline } from "./lib/analysis/studyPipeline";
 import { initAccounts } from "./lib/accounts/store";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
-import {
-  initHistoryPersistSync,
-  listenForHistoryImport,
-  listenForHistoryImportTranscript,
-  listenForHistoryOpen,
-  listenForHistoryOpenOrg,
-  listenForRecordingSaved,
-} from "./lib/history/history";
+import { initHistoryPersistSync, listenForRecordingSaved } from "./lib/history/history";
 import { checkForUpdate } from "./lib/update";
 import {
   getPendingInstalledReleaseNotes,
@@ -108,30 +94,8 @@ function useFullscreen(): boolean {
   return fullscreen;
 }
 
-/** The one top-level screen for the current app mode. The lazily-loaded ones
- *  are secondary tenses — the live screen is what the app opens to. */
-function MainScreen({ mode }: Readonly<{ mode: AppMode }>) {
-  if (mode === "replay") return <StudyScreen />;
-  if (mode === "accounts") {
-    return (
-      <Suspense fallback={null}>
-        <AccountsScreen />
-      </Suspense>
-    );
-  }
-  if (mode === "preflight") {
-    return (
-      <Suspense fallback={null}>
-        <PreflightScreen />
-      </Suspense>
-    );
-  }
-  return <LiveScreen />;
-}
-
 const App = () => {
   useThemePreference();
-  const appMode = useStore((s) => s.appMode);
   const onboarded = useStore((s) => s.settings.onboarded);
   const fullscreen = useFullscreen();
   const rounded = isTauri() && !fullscreen;
@@ -167,10 +131,9 @@ const App = () => {
     track(listenForViewLogsMenu());
     track(listenForLiveTranslateMenu());
     track(listenForRecordingSaved());
-    track(listenForHistoryOpen());
-    track(listenForHistoryImport());
-    track(listenForHistoryImportTranscript());
-    if (CLOUD_ENABLED) track(listenForHistoryOpenOrg());
+    // The history://open + history://import listeners are gone with the standalone
+    // History window (#195): the library is a route in THIS window now, so it
+    // opens an entry by calling loadHistoryEntry directly.
     // These return a synchronous UnlistenFn.
     const unTemplates = initTemplatesSync();
     const unSession = initSessionSync();
@@ -273,10 +236,10 @@ const App = () => {
     };
   }, []);
 
-  // Drop an audio file anywhere on the window → straight into the ingest
-  // wizard (the header upload button's replacement). Dropped .txt transcripts
-  // (one or many) go to the transcript-import dialog instead; audio wins when
-  // a drop mixes both kinds.
+  // Drop files anywhere on the window → the same import flow as every picker
+  // door (R7): arbitration + STT gate live in lib/replay/ingest.ts, imported
+  // lazily on drop so the ingest module (STT registry + dialog plugin) stays
+  // out of the initial bundle.
   useEffect(() => {
     if (!isTauri()) return;
     let active = true;
@@ -286,22 +249,14 @@ const App = () => {
         getCurrentWebview().onDragDropEvent((e) => {
           if (e.payload.type !== "drop") return;
           if (isMeetingActive(useStore.getState().meetingStatus)) return;
-          const audio = e.payload.paths.find((p) =>
-            /\.(mp3|m4a|wav|ogg|oga|flac|aac|mp4|webm|opus)$/i.test(p)
-          );
-          if (audio) {
-            log.info("replay: file dropped, opening ingest wizard");
-            useStore.getState().openIngestWizard(audio);
-            return;
-          }
-          // Keep in sync with isTranscriptPath (lib/replay/ingest.ts) — inlined
-          // here so the drop handler doesn't pull the ingest module (STT
-          // registry + dialog plugin) into the initial bundle.
-          const transcripts = e.payload.paths.filter((p) => /\.txt$/i.test(p));
-          if (transcripts.length) {
-            log.info("import: transcripts dropped", { count: transcripts.length });
-            useStore.getState().openTranscriptImport(transcripts);
-          }
+          const { paths } = e.payload;
+          log.info("import: files dropped", { count: paths.length });
+          import("./lib/replay/ingest")
+            .then(({ importDroppedPaths }) => importDroppedPaths(paths))
+            .catch((error) => {
+              log.error("import: drop failed", { error: String(error) });
+              toast.error(error instanceof Error ? error.message : String(error));
+            });
         })
       )
       .then((fn) => {
@@ -355,7 +310,7 @@ const App = () => {
       {!isTauri() && <FindingSolutionWindow />}
       <TitleBar fullscreen={fullscreen} />
       <DeliveryNudgeHost />
-      <MainScreen mode={appMode} />
+      <AppShell />
       {/* Interpreter strip: only during a translated live meeting. */}
       <TranslateStrip />
     </div>

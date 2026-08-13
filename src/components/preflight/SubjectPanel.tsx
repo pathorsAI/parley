@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { FolderClosed } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { useAccounts, personsOf, threadsOf } from "../../lib/accounts/store";
 import { ensureCompanyFolder } from "../../lib/accounts/folders";
@@ -7,43 +6,44 @@ import { stageFor } from "../../lib/accounts/currentStage";
 import { useScenarioSet } from "../../lib/accounts/useStageSet";
 import { applyScenario } from "../../lib/meeting/scenario";
 import { resolveMeetingSave } from "../../lib/history/history";
-import { listLocalFolders } from "../../lib/history/folders";
+import { CLOUD_ENABLED } from "../../lib/flags";
 import { useI18n } from "../../i18n";
 import type { MeetingType } from "../../lib/types";
 import { Combobox, type ComboGroup } from "@/components/ui/combobox";
-import { SaveDestinationPicker } from "../SaveDestinationPicker";
+import { OrgSharePicker } from "../OrgSharePicker";
 import { Column, Field, InlineCreate, SectionTitle } from "./bits";
 
 /**
  * Pre-flight column ①: WHO this call is with.
  *
- * The save destination lives here as a RESULT, not a second control. Linking a
- * company decides the folder (every company owns one — see accounts/folders);
- * "save somewhere else" is an explicit opt-out that sets a per-meeting
- * override. Before this screen, a titlebar folder chip and a buried company
- * dropdown both claimed to decide where a recording landed and the company
- * link silently won — meetings filed themselves under the wrong customer with
- * nothing on screen to explain it.
+ * That question is also the whole filing story (#211): the customer decides
+ * where the recording lives, so no folder control appears here — the only
+ * save decision left is whether an org gets a shared copy, and that choice is
+ * independent of the customer link. Before this, a folder picker sat beside
+ * the customer picker and the two could disagree about whose recording this
+ * was going to be.
  */
 export function SubjectPanel() {
   const { t } = useI18n();
   const acc = useAccounts();
   const scenarios = useScenarioSet();
 
-  const meetingType = useStore((s) => s.settings.meetingType);
+  const meetingType = useStore((s) => s.meetingType);
   const companyId = useStore((s) => s.meetingCompanyId);
   const threadId = useStore((s) => s.meetingThreadId);
   const attendeeIds = useStore((s) => s.meetingAttendeeIds);
   const meetingStage = useStore((s) => s.meetingStage);
   const setMeetingStage = useStore((s) => s.setMeetingStage);
   const setMeetingLink = useStore((s) => s.setMeetingLink);
-  const saveOverride = useStore((s) => s.meetingSaveOverride);
-  const setSaveOverride = useStore((s) => s.setMeetingSaveOverride);
+  const orgShare = useStore((s) => s.meetingOrgShare);
+  const setOrgShare = useStore((s) => s.setMeetingOrgShare);
+  const signedIn = useStore((s) => !!s.cloudAuth);
   const syncEnabled = useStore((s) => s.settings.syncEnabled);
   const defaultSave = useStore((s) => s.settings.defaultSaveLocation);
 
-  // Which inline-create row is open (at most one — each takes over its field).
-  const [creating, setCreating] = useState<"company" | "thread" | "person" | null>(null);
+  // The attendee ＋ still swaps into an inline input: it sits in a chip row,
+  // not a picker, so there is no query box to grow a create row out of.
+  const [creating, setCreating] = useState<"person" | null>(null);
 
   // Only "general" has no board and no customer side (design D12).
   const scenario = scenarios.byId[meetingType] ?? null;
@@ -66,11 +66,6 @@ export function SubjectPanel() {
   // What the save will actually do, recomputed from the same function the save
   // path calls. Reading `useAccounts()`/store above keeps this reactive.
   const save = resolveMeetingSave();
-  const folderName =
-    save.folderId
-      ? (listLocalFolders().find((f) => f.id === save.folderId)?.name ??
-        t("settings.account.defaultSave.root"))
-      : t("settings.account.defaultSave.root");
 
   function createCompany(name: string) {
     const created = acc.addCompany({ name });
@@ -118,72 +113,59 @@ export function SubjectPanel() {
 
           {scenario && (
             <>
+              {/* Typing a customer that doesn't exist yet CREATES it, right
+                  here (Combobox's create row). The old ＋ beside the picker
+                  did the same thing, but you had to know the unlabelled icon
+                  was there — and typing the name first got you a dead-end
+                  "找不到符合項目". */}
               <Field label={t("accounts.link.company")}>
-                {creating !== "company" && (
-                  <Combobox
-                    size="sm"
-                    value={companyId ?? ""}
-                    groups={[
-                      {
-                        options: [
-                          { value: "", label: t("accounts.link.none") },
-                          ...companies.map((c) => ({ value: c.id, label: c.name })),
-                        ],
-                      },
-                    ]}
-                    onChange={(v) =>
-                      setMeetingLink({ companyId: v || null, threadId: null, attendeeIds: [] })
-                    }
-                    placeholder={t("accounts.link.none")}
-                    searchPlaceholder={t("preflight.search")}
-                    emptyText={t("preflight.noMatch")}
-                  />
-                )}
-                <InlineCreate
-                  label={t("preflight.newCompany")}
-                  placeholder={t("preflight.newCompanyPlaceholder")}
-                  confirmLabel={t("preflight.createConfirm")}
-                  cancelLabel={t("accounts.cancel")}
-                  open={creating === "company"}
-                  onOpenChange={(o) => setCreating(o ? "company" : null)}
+                <Combobox
+                  size="sm"
+                  value={companyId ?? ""}
+                  groups={[
+                    {
+                      options: [
+                        { value: "", label: t("accounts.link.none") },
+                        ...companies.map((c) => ({ value: c.id, label: c.name })),
+                      ],
+                    },
+                  ]}
+                  onChange={(v) =>
+                    setMeetingLink({ companyId: v || null, threadId: null, attendeeIds: [] })
+                  }
                   onCreate={createCompany}
+                  createLabel={(name) => t("owner.create", { name })}
+                  placeholder={t("accounts.link.none")}
+                  searchPlaceholder={t("preflight.search")}
+                  emptyText={t("preflight.noMatch")}
                 />
               </Field>
 
               {company && (
                 <Field label={t("accounts.link.thread")}>
-                  {creating !== "thread" && (
-                    <Combobox
-                      size="sm"
-                      value={threadId ?? ""}
-                      groups={[
-                        {
-                          options: [
-                            { value: "", label: t("accounts.link.none") },
-                            ...threads.map((x) => ({
-                              value: x.id,
-                              label: x.name,
-                              hint: x.stage ? (scenario.names[x.stage] ?? x.stage) : undefined,
-                            })),
-                          ],
-                        },
-                      ]}
-                      onChange={(v) =>
-                        setMeetingLink({ companyId: company.id, threadId: v || null, attendeeIds })
-                      }
-                      placeholder={t("accounts.link.none")}
-                      searchPlaceholder={t("preflight.search")}
-                      emptyText={t("preflight.noMatch")}
-                    />
-                  )}
-                  <InlineCreate
-                    label={t("preflight.newThread")}
-                    placeholder={t("preflight.newThreadPlaceholder")}
-                    confirmLabel={t("preflight.createConfirm")}
-                    cancelLabel={t("accounts.cancel")}
-                    open={creating === "thread"}
-                    onOpenChange={(o) => setCreating(o ? "thread" : null)}
+                  <Combobox
+                    size="sm"
+                    value={threadId ?? ""}
+                    groups={[
+                      {
+                        options: [
+                          { value: "", label: t("accounts.link.none") },
+                          ...threads.map((x) => ({
+                            value: x.id,
+                            label: x.name,
+                            hint: x.stage ? (scenario.names[x.stage] ?? x.stage) : undefined,
+                          })),
+                        ],
+                      },
+                    ]}
+                    onChange={(v) =>
+                      setMeetingLink({ companyId: company.id, threadId: v || null, attendeeIds })
+                    }
                     onCreate={createThread}
+                    createLabel={(name) => t("owner.create", { name })}
+                    placeholder={t("accounts.link.none")}
+                    searchPlaceholder={t("preflight.search")}
+                    emptyText={t("preflight.noMatch")}
                   />
                 </Field>
               )}
@@ -247,50 +229,33 @@ export function SubjectPanel() {
           </div>
         )}
 
-        {/* Where it lands — the consequence of the choices above. */}
-        <div className="flex flex-col gap-1.5 border-t pt-3">
-          <SectionTitle>{t("preflight.saveTo")}</SectionTitle>
-          {saveOverride ? (
-            <div className="flex flex-col items-start gap-1">
-              <SaveDestinationPicker
-                value={saveOverride}
-                syncOn={syncEnabled}
-                onChange={setSaveOverride}
-              />
-              <button
-                type="button"
-                onClick={() => setSaveOverride(null)}
-                className="cursor-pointer text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
-              >
-                {t("preflight.saveAuto")}
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-col items-start gap-1">
-              <span className="flex items-center gap-1.5 text-sm">
-                <FolderClosed className="size-3.5 shrink-0 text-muted-foreground" />
-                {folderName}
-              </span>
-              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                <span>
-                  {save.origin === "company"
-                    ? t("preflight.saveFollowsCompany")
-                    : t("preflight.saveFollowsDefault")}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSaveOverride(defaultSave)}
-                  className="cursor-pointer underline underline-offset-2 hover:text-foreground"
-                >
-                  {t("preflight.saveElsewhere")}
-                </button>
-              </div>
-            </div>
-          )}
-          {save.autoShare && (
-            <p className="text-[11px] text-muted-foreground">{t("preflight.saveOrgCopy")}</p>
-          )}
-        </div>
+        {/* The only save decision left: an org copy. Filing is the customer
+            picked above — there is nothing to choose about it, so nothing is
+            shown. (Signed-out / OSS: this whole block is absent.) */}
+        {CLOUD_ENABLED && signedIn && syncEnabled && (
+          <div className="flex flex-col gap-1.5 border-t pt-3">
+            <SectionTitle>{t("share.toOrg")}</SectionTitle>
+            <OrgSharePicker
+              value={
+                orgShare === "off"
+                  ? null
+                  : orgShare ??
+                    (defaultSave.scope === "org" && defaultSave.orgId
+                      ? { orgId: defaultSave.orgId, folderId: defaultSave.folderId ?? null }
+                      : null)
+              }
+              onChange={(target) => {
+                // Picking "off" while the settings default would share needs an
+                // explicit suppression, not just null (null = follow default).
+                if (target) setOrgShare(target);
+                else setOrgShare(defaultSave.scope === "org" ? "off" : null);
+              }}
+            />
+            {save.autoShare && (
+              <p className="text-[11px] text-muted-foreground">{t("preflight.saveOrgCopy")}</p>
+            )}
+          </div>
+        )}
       </div>
     </Column>
   );

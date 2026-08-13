@@ -90,6 +90,38 @@ export function bottomCenterPhysical(mon: MonitorGeometry): { x: number; y: numb
 }
 
 /**
+ * The monitor whose PHYSICAL bounds contain the physical point `(x, y)`, or
+ * null when the point sits in no display's rectangle.
+ *
+ * We do this hit-test ourselves rather than calling Tauri's `monitorFromPoint`
+ * because the two APIs speak different coordinate spaces: `cursorPosition()`
+ * returns a PhysicalPosition, while `monitorFromPoint` bottoms out in
+ * `CGDisplayBounds`, which is LOGICAL points. On any Retina display the
+ * physical cursor position is roughly double the logical one, so it lands
+ * outside every display's logical rectangle and the lookup returns null —
+ * silently dropping the overlay onto the fallback (main-window) display for
+ * the whole bottom-right ~3/4 of the screen. `availableMonitors()` reports
+ * physical geometry, so comparing there needs no unit conversion at all.
+ *
+ * Exported for tests.
+ */
+export function monitorContaining<T extends MonitorGeometry>(
+  monitors: T[],
+  x: number,
+  y: number,
+): T | null {
+  return (
+    monitors.find(
+      (m) =>
+        x >= m.position.x &&
+        x < m.position.x + m.size.width &&
+        y >= m.position.y &&
+        y < m.position.y + m.size.height,
+    ) ?? null
+  );
+}
+
+/**
  * The display the mouse pointer is on. That — not `currentMonitor()`, which
  * reports where the MAIN WINDOW happens to live — is the screen the user is
  * looking at when they start dictating. Resolved once per dictation (see
@@ -99,12 +131,12 @@ export function bottomCenterPhysical(mon: MonitorGeometry): { x: number; y: numb
  * located: a misplaced overlay still beats no overlay.
  */
 async function overlayMonitor(): Promise<MonitorGeometry | null> {
-  const { currentMonitor, primaryMonitor, monitorFromPoint, cursorPosition } = await import(
+  const { currentMonitor, primaryMonitor, availableMonitors, cursorPosition } = await import(
     "@tauri-apps/api/window"
   );
   try {
     const cursor = await cursorPosition();
-    const mon = await monitorFromPoint(cursor.x, cursor.y);
+    const mon = monitorContaining(await availableMonitors(), cursor.x, cursor.y);
     if (mon) return mon;
     log.warn("voice-typing: no monitor under cursor", { x: cursor.x, y: cursor.y });
   } catch (error) {

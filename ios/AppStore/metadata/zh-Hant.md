@@ -1,39 +1,68 @@
 # zh-Hant App Store metadata
 
 Copy each field into the Traditional Chinese localization in App Store Connect.
-The character limits below are Apple limits; keep punctuation intact when
-copying.
+English ([`en-US.md`](en-US.md)) is the primary locale; this file is the
+localization Taiwan and Hong Kong see. It is a peer of the English copy, not a
+translation of it — the Chinese reads as Chinese.
+
+Character limits below are Apple's; keep punctuation intact when copying.
 
 | Field | Value |
 | --- | --- |
-| Name | Parley |
-| Subtitle (≤ 30 chars) | 面對面會議的錄音與逐字稿 |
-| Promotional text (≤ 170 chars) | 把 iPhone 放在桌上，取得即時逐字稿；完成後自動同步到同一個 Parley 帳號，在手機與桌面繼續查看。 |
-| Keywords (≤ 100 bytes) | 會議錄音,逐字稿,語音轉文字,會議紀錄,商務會議,訪談,同步 |
+| Name (≤ 30) | Parley 語音輸入與會議 |
+| Subtitle (≤ 30) | 語音打字，會議即時逐字稿 |
+| Promotional text (≤ 170) | 在任何 App 用語音輸入——在 Parley 鍵盤上按麥克風，說的話就落在游標的位置；或把手機放在桌上，會議就邊講邊變成即時逐字稿。 |
+| Keywords (≤ 100 bytes) | 語音輸入,聽寫,語音轉文字,會議錄音,逐字稿,會議紀錄,銷售,談判,訪談 |
 | Support URL | https://parley.tw/support/ |
+| Marketing URL | https://parley.tw |
 | Privacy Policy URL | https://parley.tw/privacy/ |
 | Copyright | © 2026 Pathors AI |
 
 ## Description (≤ 4,000 chars)
 
-Parley 把 iPhone 變成面對面會議的錄音與逐字稿工具。
+Parley 讓 iPhone 用兩種方式把你的聲音變成文字——而且兩者都跑在同一套轉錄上，也就是驅動 Parley 的那套。Parley 是為銷售、談判與面談這類高風險對話打造的會議 copilot。
 
-開始會議前，先確認所有與會者同意錄音；把手機放在桌上，Parley 就會使用麥克風收取房間聲音，透過你的 Parley 帳號提供即時逐字稿。結束後，錄音與逐字稿會安全同步到雲端，讓你在手機或桌面版繼續查看。
+在任何 App 用語音輸入
 
-你可以：
+切到 Parley 鍵盤，在任何有輸入框的地方——訊息、郵件、備忘錄——按下麥克風，說的話就直接打進游標的位置。設定到動作按鈕，連切鍵盤都不用就能開始聽寫。停下後再開始，也不會把你踢出正在用的那個 App。
 
-• 以手機麥克風錄下現場會議
-• 在錄音進行中查看即時逐字稿與說話者分段
-• 瀏覽、播放與搜尋自己的錄音
-• 將錄音存入個人資料夾，或分享／搬移到組織資料夾
-• 在網路中斷時保留完成錄音，回到網路後自動重試同步
-• 使用同一個帳號，與 Parley 桌面版保有一致的雲端錄音庫
-• 選擇跟隨系統、淺色或深色外觀
+錄下你面對面的會議
 
-Parley iOS 專注於面對面情境：它不會擷取電話通話、FaceTime 或其他 app 的系統音訊。即時教練與深度分析功能以桌面版為主。
+把手機放在桌上，會議還在進行，即時逐字稿就邊講邊長出來，並自動分辨不同說話者——咖啡廳、客戶辦公室，那些不會有人打開筆電的桌子。你留下的是一份讀得懂、搜尋得到、可以直接引用的紀錄，而不是一整片分不出誰講的文字。
 
-你的資料由你掌控。你可從 app 的「設定 → 帳號 → 刪除帳號」永久刪除個人帳號與個人資料；詳情請見隱私權政策。
+App 裡還有
 
-## What’s New — 1.0
+• 每一次錄音開始前都會先請你確認已取得在場者同意
+• 一個可以瀏覽、搜尋、用資料夾整理的錄音庫
+• 個人與組織兩種空間，之間可以分享與搬移
+• 錄完就算斷網也不會消失：手機會先排隊保留，恢復連線後自動同步
+• 全介面支援繁體中文與英文，預設跟隨 iPhone 的語言
+• 跟隨系統、淺色與深色外觀
+
+自己選技術堆疊
+
+Parley 是開源專案，重點就在於「會議這一層」始終是你的。在桌面版，轉錄廠商與模型供應商都由你依成本、隱私、語言與延遲需求自行挑選——Parley 是介面層，不是另一包封閉的 AI 套餐。在 iPhone 上，登入後就能使用代管的轉錄服務，不必自備 API key，免費額度也足夠日常使用。
+
+一個帳號，兩台裝置
+
+錄音與逐字稿會同步到你的 Parley 帳號，手機上錄到的會議，在 Mac 版打開就能繼續深入：可點擊時間軸的報告、雙方各自答應了什麼、待辦事項、成交情報，以及一份你這場表現如何的評分。Parley 是為銷售、談判與面談打造的會議 copilot，手機負責的是把現場收下來。
+
+它不會做的事
+
+Parley iOS 版對平台的限制講得很直白。iOS 不開放任何第三方 App 取得系統音訊，所以這個 App 不會錄電話、FaceTime 或其他 App 的聲音，也不會假裝做得到。線上會議請交給能正確擷取系統音訊的 Mac 版；手機負責的是你正坐在裡面的那個房間。
+
+你的資料
+
+沒有你確認在場所有人都同意，錄音不會開始。你可以在「設定 → 帳號 → 刪除帳號」永久刪除帳號與個人資料，詳情請見隱私權政策。
+
+Parley 採用 Apache-2.0 授權。原始碼：github.com/pathorsAI/parley
+
+## What's New — 1.1
+
+語音輸入來到手機了。加入 Parley 鍵盤，就能在任何 App 聽寫——訊息、郵件、備忘錄，任何有輸入框的地方——用的是跟你會議同一套轉錄服務。設定到動作按鈕，連切鍵盤這一步都省下。
+
+這一版還有：全介面同時支援英文與繁體中文，預設跟隨 iPhone 的語言；新的歡迎畫面會先說清楚帳號能換到什麼，再請你登入；錄音按鈕不再會是死的——登入過期時按下去會帶你重新登入，而不是毫無反應。
+
+## What's New — 1.0（已被取代，保留備查）
 
 Parley iOS 首次推出：面對面會議錄音、即時逐字稿、雲端同步、個人／組織錄音庫、離線重試與帳號管理。

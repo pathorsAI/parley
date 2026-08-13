@@ -4,6 +4,13 @@ options:
   deploymentTarget:
     iOS: "17.0"
   xcodeVersion: "26.0"
+  # Source strings are English (repo convention); Traditional Chinese is a
+  # first-class translation, not an afterthought. Both have to be listed here
+  # or the String Catalogs compile to English only.
+  developmentLanguage: en
+# knownRegions drives which localizations `Localizable.xcstrings` /
+# `InfoPlist.xcstrings` actually compile into the bundle.
+knownRegions: [en, zh-Hant, Base]
 packages:
   ParleyKit:
     path: ../ParleyKit
@@ -14,18 +21,24 @@ targets:
     sources: [Parley]
     dependencies:
       - package: ParleyKit
+      # Embeds the keyboard extension into the app bundle.
+      - target: ParleyKeyboard
     entitlements:
       path: Parley/Parley.entitlements
       properties:
         com.apple.developer.applesignin: [Default]
+        # Shared with the keyboard extension: the dictation transcript handoff
+        # lives in this App Group container (see DictationChannel).
+        com.apple.security.application-groups: [group.com.pathors.parley.ios]
     info:
       path: Parley/Info.plist
       properties:
         CFBundleDisplayName: Parley
-        CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "3"
+        CFBundleShortVersionString: "1.2"
+        CFBundleVersion: "8"
         UILaunchScreen: {}
-        NSMicrophoneUsageDescription: Parley listens to the meeting to transcribe and coach it live. Audio goes only to the transcription provider tied to your account.
+        # Localized in Parley/InfoPlist.xcstrings; this is the fallback value.
+        NSMicrophoneUsageDescription: Parley records the meeting in the room so it can transcribe it live. Audio goes only to the transcription provider tied to your account.
         UIBackgroundModes: [audio]
         ITSAppUsesNonExemptEncryption: false
         CFBundleURLTypes:
@@ -40,4 +53,44 @@ targets:
         CODE_SIGN_STYLE: Automatic
         # 科技派斯 (Pathors). Xcode manages the certificate and profile; CI can
         # pass an App Store Connect API key with -allowProvisioningUpdates.
+        DEVELOPMENT_TEAM: SXHVCQXJHZ
+
+  ParleyKeyboard:
+    type: app-extension
+    platform: iOS
+    sources: [../Keyboard]
+    dependencies:
+      - package: ParleyKit
+    entitlements:
+      path: ../Keyboard/ParleyKeyboard.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.pathors.parley.ios]
+    info:
+      path: ../Keyboard/Info.plist
+      properties:
+        # Localized in ../Keyboard/InfoPlist.xcstrings; this is the fallback.
+        CFBundleDisplayName: Parley Voice
+        CFBundleShortVersionString: "1.2"
+        CFBundleVersion: "8"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.keyboard-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
+          NSExtensionAttributes:
+            IsASCIICapable: false
+            PrefersRightToLeft: false
+            # Dictation is language-agnostic — the transcription provider
+            # decides, not the key layout — so the keyboard declares itself
+            # multilingual rather than Chinese-only, which is how it read to an
+            # English user before.
+            PrimaryLanguage: mul
+            # Dictation streams audio to the Parley account for transcription,
+            # so the keyboard needs Full Access (network + App Group). Without
+            # it the keyboard still offers the minimal key row (App Review 4.4.1).
+            RequestsOpenAccess: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pathors.parley.ios.keyboard
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: SXHVCQXJHZ

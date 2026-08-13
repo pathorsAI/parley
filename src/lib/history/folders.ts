@@ -18,7 +18,7 @@
 // A recording's folder membership is NOT here — it rides on the entry's own
 // meta.json (HistoryEntry.folderId). This file is only the folder list (ids+names).
 // Folders are one level deep (no nesting). A folderId that no longer matches any
-// folder here renders at the personal root (the orphan→root rule in HistoryApp).
+// folder here renders at the personal root (the orphan→root rule in the library grid).
 
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
