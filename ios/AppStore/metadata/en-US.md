@@ -1,18 +1,21 @@
-# en-US App Store metadata (primary locale)
+# en-US App Store metadata
 
 Copy each field into the English (U.S.) localization in App Store Connect.
-English is the **primary** language: it is what every region without its own
-localization sees, so this file is the listing most of the world reads.
+English and Traditional Chinese are Parley's two primary markets — this copy is a
+peer of [`zh-Hant.md`](zh-Hant.md), not a source for it. (The App Store *primary
+locale* is currently zh-Hant, so regions without their own localization see the
+Chinese listing; flip the primary locale in App Store Connect if English should
+be the global default.)
 
 Character limits below are Apple's. Keep the punctuation as written — the em
 dashes and curly quotes are deliberate.
 
 | Field | Value |
 | --- | --- |
-| Name (≤ 30) | Parley: Meeting Recorder |
-| Subtitle (≤ 30) | Transcribe the room you're in |
-| Promotional text (≤ 170) | Put the phone on the table and the transcript arrives as people talk. Then keep the same voice for typing — tap the mic in any app and your words land at the cursor. |
-| Keywords (≤ 100 bytes) | meeting,transcript,recorder,voice typing,dictation,speech to text,minutes,interview,notes |
+| Name (≤ 30) | Parley: Dictation & Meetings |
+| Subtitle (≤ 30) | Voice typing + meeting notes |
+| Promotional text (≤ 170) | Voice typing in any app: tap the mic on the Parley keyboard and your words land at the cursor. Or put the phone on the table and record the meeting as a live transcript. |
+| Keywords (≤ 100 bytes) | voice typing,dictation,meeting,transcript,sales,negotiation,interview,speech to text,minutes |
 | Support URL | https://parley.tw/support/ |
 | Marketing URL | https://parley.tw |
 | Privacy Policy URL | https://parley.tw/privacy/ |
@@ -20,19 +23,27 @@ dashes and curly quotes are deliberate.
 
 ## Description (≤ 4,000 chars)
 
-Parley turns your iPhone into a recorder and a live transcript for the meetings
-you have in person — the coffee shop, the customer's office, the table where
-nobody is going to open a laptop.
+Parley turns your voice into text on your iPhone two ways — and both run on the
+same transcription that powers Parley, your copilot for the high-stakes
+conversations of sales, negotiation, and interviews.
 
-Put the phone down and the transcript arrives while people are still talking.
-Speakers are separated automatically, so what you keep is a record you can read,
-search, and quote from — not a wall of undifferentiated text.
+TYPE BY VOICE, ANYWHERE
 
-WHAT IT DOES
+Switch to the Parley keyboard in any app — Messages, Mail, Notes, anything with a
+text field — tap the mic, and your words type themselves in at the cursor. Put it
+on the Action Button and dictation starts without even switching keyboards. Stop
+and pick it up again without being bounced out of the app you are in.
 
-• Records in-person meetings through the microphone, with a consent prompt before every single session
-• Live transcript with automatic speaker separation while the meeting is still running
-• Voice typing anywhere: switch to the Parley keyboard in any app, tap the mic, and your words type themselves in — or put it on the Action Button and skip the keyboard entirely
+RECORD THE MEETINGS YOU HAVE IN PERSON
+
+Put the phone on the table and a live, speaker-separated transcript arrives while
+people are still talking — the coffee shop, the customer's office, the table
+where nobody opens a laptop. What you keep is a record you can read, search, and
+quote from, not a wall of undifferentiated text.
+
+ALSO IN THE APP
+
+• A consent prompt before every single recording session
 • A library of your recordings to browse, search, and file into folders
 • Personal and organization spaces, with sharing and moving between them
 • Finished recordings survive a dead network: they queue on the phone and sync themselves once you are back
@@ -52,7 +63,8 @@ ONE ACCOUNT, TWO DEVICES
 Recordings and transcripts sync to your Parley account, so a meeting you caught
 on the phone opens on the Mac app — where the deeper work happens: the report
 with clickable timestamps, what each side committed to, action items, deal
-intelligence, and a scorecard on how you delivered.
+intelligence, and a scorecard on how you delivered. Parley is a meeting copilot
+built for sales, negotiation, and interviews; the phone is its capture end.
 
 WHAT IT DOES NOT DO
 
