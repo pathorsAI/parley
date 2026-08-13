@@ -1,34 +1,44 @@
 import SwiftUI
 
-/// The screen the app shows while a keyboard-triggered dictation is live.
+/// The hand-off screen shown while a keyboard-triggered dictation is live.
+///
+/// Deliberately *not* a transcription screen. Dictation is experienced in the
+/// keyboard — the transcript streams into the Parley keyboard and lands at the
+/// cursor of the app the user was typing in. This screen exists only because
+/// the mic has to open in the app process, so the user briefly lands here; its
+/// one job is to send them back. Showing a live transcript here taught people
+/// the wrong model ("I talk on this screen, then paste"), so it doesn't.
 ///
 /// Two shapes, decided by `HostReturn.canReturn`:
-///   - Older iOS: the app has already bounced the user back to their app, so
-///     this is only seen briefly (or if they switch back to Parley). It shows
-///     the live transcript and a stop control.
-///   - iOS 26.4+: the automatic jump-back is gone, so this screen owns the
-///     hand-off — it teaches the one gesture that replaces it (swipe right on
-///     the home bar) and reassures that talking still works from the other app.
+///   - Older iOS: the app has already bounced the user back automatically, so
+///     this is only glimpsed in passing.
+///   - iOS 26.4+: the automatic jump-back is gone; the headline is the swipe
+///     gesture, and the guide sits at the very bottom, pointing at the real
+///     home indicator it wants swiped.
 struct DictationView: View {
     @ObservedObject var coordinator = DictationCoordinator.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("dictationSwipeGuideSeen") private var guideSeen = false
+
+    /// The user is stranded here and has to swipe back themselves.
+    private var needsManualReturn: Bool {
+        coordinator.returnableHost == nil
+            && (coordinator.state == .starting || coordinator.state == .listening)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider().overlay(Theme.border)
-            transcript
-            Divider().overlay(Theme.border)
+            Spacer()
+            status
+            Spacer()
             footer
         }
+        .frame(maxWidth: .infinity)
         .background(Theme.background)
-        .onDisappear { guideSeen = true }
     }
 
-    // MARK: header — state + level
+    // MARK: status — icon + the one instruction
 
-    private var header: some View {
+    private var status: some View {
         VStack(spacing: 14) {
             ZStack {
                 Circle()
@@ -52,6 +62,8 @@ struct DictationView: View {
             Text(statusTitle)
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(Theme.foreground)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
             Text(statusSubtitle)
                 .font(.subheadline)
                 .foregroundStyle(Theme.mutedForeground)
@@ -59,9 +71,6 @@ struct DictationView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 32)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 40)
-        .padding(.bottom, 24)
     }
 
     private var pulse: CGFloat {
@@ -76,7 +85,12 @@ struct DictationView: View {
         }
     }
 
+    /// The headline is whatever the user must do next. Stranded here, that is
+    /// the swipe back — "Listening…" would be answering the wrong question.
     private var statusTitle: String {
+        if needsManualReturn {
+            return String(localized: "Swipe back to your app")
+        }
         switch coordinator.state {
         case .starting: return String(localized: "Getting ready…")
         case .listening: return String(localized: "Listening…")
@@ -90,80 +104,47 @@ struct DictationView: View {
         if coordinator.state == .error {
             return coordinator.errorMessage ?? String(localized: "Please try again.")
         }
-        // The manual hand-off only matters while the app is actually the thing
-        // on screen, i.e. when auto-return didn't (or couldn't) fire.
-        if coordinator.returnableHost == nil {
+        if needsManualReturn {
             return String(
                 localized:
-                    "Speak and the words go straight into the field you were typing in. Swipe right on the home bar to get back to that app."
+                    "Your words show up on the Parley keyboard and land at the cursor as you talk — nothing happens on this screen."
             )
         }
         return String(localized: "You're back in your app — just talk.")
     }
 
-    // MARK: transcript preview
+    // MARK: footer — only the swipe guide, hugging the home indicator
 
-    private var transcript: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 4) {
-                if coordinator.committed.isEmpty && coordinator.partial.isEmpty {
-                    Text("Waiting for you to speak…")
-                        .font(.body)
-                        .foregroundStyle(Theme.mutedForeground)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 20)
-                } else {
-                    (Text(coordinator.committed).foregroundStyle(Theme.foreground)
-                        + Text(coordinator.partial).foregroundStyle(Theme.mutedForeground))
-                        .font(.body)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .padding(20)
-        }
-        .frame(maxHeight: .infinity)
-    }
-
-    // MARK: footer — swipe guide + stop
-
+    /// No stop control here on purpose: stopping (like everything else about
+    /// dictation) belongs to the keyboard's red ⏹. This screen never competes
+    /// with the keyboard for the session — its whole vocabulary is "go back".
     private var footer: some View {
-        VStack(spacing: 16) {
-            if coordinator.returnableHost == nil && !guideSeen
-                && coordinator.state == .listening
-            {
+        VStack(spacing: 14) {
+            // Last element on the screen, right above the real home indicator,
+            // and shown on every stranded session — a gesture nobody has ever
+            // performed isn't learned from one viewing.
+            if needsManualReturn {
                 SwipeBackGuide(animated: !reduceMotion)
             }
-            Button {
-                Task {
-                    await coordinator.stop()
-                    await coordinator.dismiss()
-                }
-            } label: {
-                Label(
-                    coordinator.state == .listening ? "Stop and insert" : "Done",
-                    systemImage: "stop.circle.fill"
-                )
-                .font(.body.weight(.medium))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .foregroundStyle(.white)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.recording)
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.top, 16)
+        .padding(.bottom, 8)
     }
 }
 
 /// The one gesture that replaces auto-return on iOS 26.4+: an arrow sweeping
-/// right across a stand-in for the home indicator. Loops until the user has
-/// seen it once.
+/// right across a stand-in for the home indicator, drawn directly above the
+/// real one so the guide points at the thing it means.
 private struct SwipeBackGuide: View {
     let animated: Bool
     @State private var go = false
 
     var body: some View {
         VStack(spacing: 10) {
+            Text("Swipe right on the bar below")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Theme.foreground)
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(Theme.muted)
@@ -172,7 +153,8 @@ private struct SwipeBackGuide: View {
                 Image(systemName: "arrow.right")
                     .font(.footnote.weight(.bold))
                     .foregroundStyle(Theme.primary)
-                    .offset(x: go ? 120 : 0)
+                    .offset(x: go ? 150 : 0)
+                    .opacity(go ? 0 : 1)
                     .animation(
                         animated
                             ? .easeInOut(duration: 1.1).repeatForever(autoreverses: false)
@@ -180,12 +162,9 @@ private struct SwipeBackGuide: View {
                         value: go)
             }
             .frame(height: 20)
-            .frame(maxWidth: 180)
-            Text("Swipe right to go back")
-                .font(.caption)
-                .foregroundStyle(Theme.mutedForeground)
+            .frame(maxWidth: 220)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity)
         .background(

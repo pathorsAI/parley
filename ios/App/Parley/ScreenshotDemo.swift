@@ -22,7 +22,8 @@
     ///     xcrun simctl launch <device> com.pathors.parley.ios -ParleyDemo signedIn
     ///     xcrun simctl openurl <device> parley://demo/library
     ///
-    /// Routes: `record`, `library`, `transcript`, `keyboard`, `settings`.
+    /// Routes: `record`, `library`, `transcript`, `keyboard`, `settings`,
+    /// `dictation`.
     @MainActor
     final class ScreenshotDemo: ObservableObject {
         static let shared = ScreenshotDemo()
@@ -66,6 +67,14 @@
                 tab = .settings
                 focusKeyboardSection = true
             case "settings": tab = .settings
+            case "dictation":
+                // The keyboard hand-off screen in its stranded-listening state
+                // (manual swipe-back, the iOS 26.4+ regime).
+                DictationCoordinator.shared.seedDemoListening(
+                    committed: Self.t(
+                        "Hi Anna, just wanted to let you know that my new number is ",
+                        "安納你好，跟你說一聲我的新電話號碼是"),
+                    partial: Self.t("four zero eight", "零九一二"))
             default: return false
             }
             return true
@@ -80,6 +89,28 @@
         }
 
         private static func t(_ en: String, _ zh: String) -> String { isChinese ? zh : en }
+
+        // MARK: dictation fixture
+
+        /// The dictation transcript, pre-chunked roughly the way the relay
+        /// settles text. `DictationCoordinator.streamDemoTranscript` plays it
+        /// back at speaking pace.
+        static var dictationScript: [String] {
+            let text = t(
+                "Hi Anna, just wanted to let you know that my new number is 0912 345 678. Talk soon!",
+                "嗨 Anna，跟你說一聲我的新電話號碼是 0912345678，之後再聊！")
+            var chunks: [String] = []
+            var current = ""
+            for ch in text {
+                current.append(ch)
+                if current.count >= 3 {
+                    chunks.append(current)
+                    current = ""
+                }
+            }
+            if !current.isEmpty { chunks.append(current) }
+            return chunks
+        }
 
         // MARK: account fixtures
 

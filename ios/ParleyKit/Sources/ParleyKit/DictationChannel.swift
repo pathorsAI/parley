@@ -52,6 +52,11 @@ public enum DictationChannel {
         public var partial: String
         public var state: State
         public var errorMessage: String?
+        /// When the app last wrote this file (stamped by `writeDownlink`).
+        /// Optional so files written before the field existed still decode. The
+        /// keyboard uses it to bound how long a finished session's tail is still
+        /// worth inserting after a relaunch (see `KeyboardViewController`).
+        public var updatedAt: Date?
 
         public enum State: String, Codable, Sendable {
             case starting, listening, finishing, done, error
@@ -59,18 +64,22 @@ public enum DictationChannel {
 
         public init(
             session: String, committed: String = "", partial: String = "",
-            state: State = .starting, errorMessage: String? = nil
+            state: State = .starting, errorMessage: String? = nil,
+            updatedAt: Date? = nil
         ) {
             self.session = session
             self.committed = committed
             self.partial = partial
             self.state = state
             self.errorMessage = errorMessage
+            self.updatedAt = updatedAt
         }
     }
 
     public static func writeDownlink(_ value: Downlink) {
-        write(value, to: "dictation-down.json")
+        var stamped = value
+        stamped.updatedAt = Date()
+        write(stamped, to: "dictation-down.json")
         post(downNote)
     }
 
