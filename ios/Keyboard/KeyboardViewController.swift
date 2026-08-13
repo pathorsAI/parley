@@ -26,10 +26,12 @@ final class KeyboardViewController: UIInputViewController {
     private var host: UIHostingController<KeyboardRootView>?
 
     /// A keyboard has no intrinsic height — without this it collapses to the
-    /// system minimum and the layout looks broken. 258 leaves room for the
-    /// status line, the preview well, the mic control, and the key row without
-    /// crowding, and sits in the same band as the system keyboard.
-    private static let preferredHeight: CGFloat = 258
+    /// system minimum and the layout looks broken. The taller variant makes
+    /// room for the globe row that only exists on devices where the system
+    /// doesn't draw its own input switcher next to the home indicator.
+    private var preferredHeight: CGFloat {
+        needsInputModeSwitchKey ? 252 : 216
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -52,7 +54,7 @@ final class KeyboardViewController: UIInputViewController {
         // Priority just below required: the system still gets to shrink the
         // keyboard in a compact-height (landscape) layout rather than fighting
         // an unsatisfiable constraint.
-        let height = view.heightAnchor.constraint(equalToConstant: Self.preferredHeight)
+        let height = view.heightAnchor.constraint(equalToConstant: preferredHeight)
         height.priority = .defaultHigh
         height.isActive = true
 
@@ -68,6 +70,10 @@ final class KeyboardViewController: UIInputViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         bridge.hasFullAccess = hasFullAccess
+        // Only devices where the system doesn't draw its own switcher beside
+        // the home indicator need a globe inside the keyboard (4.4.1 — the
+        // user must always have a way out of this keyboard).
+        bridge.needsGlobe = needsInputModeSwitchKey
         refreshAppearance()
         drainDownlink()
     }
@@ -96,12 +102,22 @@ final class KeyboardViewController: UIInputViewController {
 
     // MARK: dictation control (called from SwiftUI)
 
-    /// Prepare a session: mint an id, capture the host app for the app's
-    /// auto-return, and publish the request. Returns the URL the SwiftUI view
-    /// should open (its `openURL` action is the path that still works on iOS
-    /// 18+); `openContainerApp` is the older-system fallback.
-    func prepareDictation() -> URL? {
-        guard hasFullAccess else { return nil }
+    /// How long the keyboard waits for the app to acknowledge a start request
+    /// before falling back to opening the app. An awake app publishes the
+    /// `starting` downlink within milliseconds of the Darwin note; a suspended
+    /// or dead app never will, and the only thing that can wake it is the URL.
+    private static let startAckWindow: Duration = .milliseconds(700)
+
+    /// Start a session, preferring the path with no app switch: publish the
+    /// request to the App Group (which posts the uplink note) and wait briefly
+    /// for the app to acknowledge by publishing our session's downlink. The
+    /// app hears the note whenever it is awake — foreground, or lingering in
+    /// the background right after a previous dictation — and starts the mic
+    /// there, so the user never leaves the app they're typing in. Only when
+    /// the ack never comes does `completion` hand back the `parley://dictate`
+    /// URL for the visible round trip.
+    func startDictation(completion: @escaping (URL?) -> Void) {
+        guard hasFullAccess else { return }
         session = UUID().uuidString
         insertedCount = 0
         DictationChannel.writeUplink(
@@ -112,7 +128,21 @@ final class KeyboardViewController: UIInputViewController {
                 insertedCount: 0))
         bridge.listening = true
         bridge.partial = ""
-        return DictationChannel.startURL(session: session)
+        bridge.errorText = nil
+
+        let target = session
+        Task { @MainActor [weak self] in
+            let deadline = ContinuousClock.now + Self.startAckWindow
+            while ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(80))
+                guard let self, self.session == target else { return }
+                if DictationChannel.readDownlink()?.session == target {
+                    return  // acked — the app is recording, nobody moved
+                }
+            }
+            guard let self, self.session == target else { return }
+            completion(DictationChannel.startURL(session: target))
+        }
     }
 
     /// Ask the app to stop and flush the tail. The app is running during
@@ -127,12 +157,41 @@ final class KeyboardViewController: UIInputViewController {
         bridge.listening = false
     }
 
+    /// How old a downlink may be and still get adopted by a keyboard that
+    /// didn't mint its session. Sessions are hard-capped at 120 s (the app's
+    /// `maxSeconds`), and every segment and state change re-stamps the file, so
+    /// anything older is a leftover — a crashed app's frozen `listening` file
+    /// or a long-finished transcript that would land in the wrong field.
+    private static let adoptionWindow: TimeInterval = 150
+
     /// Read the transcript the app has published and insert whatever is new.
     /// Idempotent: `insertedCount` is the high-water mark, so a keyboard that
     /// was killed and relaunched mid-session never re-inserts settled text.
     private func drainDownlink() {
-        guard hasFullAccess, let d = DictationChannel.readDownlink(), d.session == session
-        else { return }
+        guard hasFullAccess, let d = DictationChannel.readDownlink() else { return }
+
+        // Adopt a session this process didn't mint. iOS kills the keyboard
+        // almost every time the user bounces to the app, so on the way back the
+        // downlink belongs to a session the (relaunched) keyboard has never
+        // heard of — refusing it is what made returning feel dead. (This also
+        // covers Action Button sessions, which no keyboard minted.)
+        //
+        // A foreign downlink is adopted only when it answers the *standing*
+        // uplink request and is fresh. The uplink match is what makes this
+        // safe: it proves the high-water mark in that uplink belongs to this
+        // very session, so nothing already inserted can re-insert — and a
+        // keyboard that just minted a new session (its uplink carries the new
+        // id) can never resurrect the previous transcript. Errors are never
+        // adopted; the message belongs on the app's screen, not in a field.
+        if d.session != session {
+            guard d.state != .error,
+                let at = d.updatedAt,
+                Date().timeIntervalSince(at) < Self.adoptionWindow,
+                DictationChannel.readUplink()?.session == d.session
+            else { return }
+            session = d.session
+            insertedCount = 0
+        }
 
         // A relaunched keyboard restores its position from the uplink it wrote.
         if insertedCount == 0, let up = DictationChannel.readUplink(), up.session == session {
@@ -153,9 +212,15 @@ final class KeyboardViewController: UIInputViewController {
         switch d.state {
         case .starting, .listening: bridge.listening = true
         case .finishing: bridge.listening = true
-        case .done, .error:
+        case .done:
             bridge.listening = false
             bridge.partial = ""
+        case .error:
+            bridge.listening = false
+            bridge.partial = ""
+            // Surface the app's failure where the user actually is. Swallowing
+            // it (the old behavior) read as "the mic button does nothing".
+            bridge.errorText = d.errorMessage ?? String(localized: "Couldn't start. Try again.")
         }
     }
 
@@ -178,8 +243,6 @@ final class KeyboardViewController: UIInputViewController {
 
     // MARK: minimal keys (called from SwiftUI)
 
-    func insertSpace() { textDocumentProxy.insertText(" ") }
-    func insertNewline() { textDocumentProxy.insertText("\n") }
     func deleteBackward() { textDocumentProxy.deleteBackward() }
     func switchKeyboard() { advanceToNextInputMode() }
 }
@@ -193,14 +256,22 @@ final class KeyboardBridge: ObservableObject {
     @Published var hasFullAccess = false
     @Published var listening = false
     @Published var partial = ""
+    /// The app's failure for the last session (sign-in, mic permission,
+    /// connection), shown in the caption slot until the next start.
+    @Published var errorText: String?
+    /// Whether this device needs a globe inside the keyboard (no system
+    /// switcher next to the home indicator).
+    @Published var needsGlobe = false
 
-    /// Mint the session and return the URL for the SwiftUI `openURL` action.
-    func prepare() -> URL? { controller?.prepareDictation() }
+    /// Start a session. `completion` fires only when the app has to be opened
+    /// (the no-jump Darwin start wasn't acknowledged) with the URL for the
+    /// SwiftUI `openURL` action.
+    func start(completion: @escaping (URL?) -> Void) {
+        controller?.startDictation(completion: completion)
+    }
     /// Older-iOS fallback when `openURL` reports the app didn't open.
     func fallbackOpen(_ url: URL) { controller?.openContainerApp(url) }
     func stop() { controller?.stopDictation() }
-    func space() { controller?.insertSpace() }
-    func newline() { controller?.insertNewline() }
     func backspace() { controller?.deleteBackward() }
     func nextKeyboard() { controller?.switchKeyboard() }
 }

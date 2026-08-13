@@ -1,6 +1,7 @@
 import Foundation
 import ParleyKit
 import SwiftUI
+import UIKit
 
 /// Drives a keyboard-triggered dictation session inside the app, and hands the
 /// transcript back to the keyboard through the App Group.
@@ -35,7 +36,14 @@ final class DictationCoordinator: ObservableObject {
     private var capture: AudioCapture?
     private var relay: SttRelayClient?
     private var capTimer: Task<Void, Never>?
-    private var stopObserver: DarwinObserver?
+    /// Persistent uplink listener (armed for the process's whole life): stop
+    /// requests for the running session, and — the no-jump path — start
+    /// requests from a keyboard while this process is awake in the background.
+    private var requestObserver: DarwinObserver?
+    /// Keeps the process awake ~30 s after a session ends so an immediate
+    /// re-tap of the keyboard's mic starts over the Darwin channel with no
+    /// app switch. `.invalid` when no window is open.
+    private var lingerTask: UIBackgroundTaskIdentifier = .invalid
 
     /// Flatten the diarized segment stream to plain text: non-tail segments are
     /// settled runs (`mix-0`, `mix-1`, …) kept by id in arrival order; `mix-tail`
@@ -47,14 +55,17 @@ final class DictationCoordinator: ObservableObject {
     /// quota. The backstop stops the mic; the tail still flushes.
     private let maxSeconds: UInt64 = 120
 
-    private init() {}
+    private init() {
+        armRequestObserver()
+    }
 
     // MARK: entry points
 
     /// Start from the keyboard's `parley://dictate?session=…`.
     func begin(session: String) async {
         // A fresh open for the session the keyboard just wrote. If the same
-        // session is already running (double-delivery of the URL), ignore.
+        // session is already running (double-delivery of the URL, or the
+        // Darwin start raced the URL), ignore.
         if active && session == self.session { return }
         if active { await stop() }
         self.session = session
@@ -62,10 +73,15 @@ final class DictationCoordinator: ObservableObject {
         let host = DictationChannel.readUplink()?.hostBundleID
         await launch()
 
-        // Only offer the jump-back when the host resolved AND this iOS still
-        // honors it. On success `HostReturn` sends us to the background; the
-        // audio session keeps the mic alive (UIBackgroundModes: audio).
-        if state == .listening, let host, HostReturn.canReturn {
+        // Only offer the jump-back when the host resolved, this iOS still
+        // honors it, AND the app actually came forward (the URL path). A
+        // session started over the Darwin channel never left the host app, so
+        // there is nothing to return from. On success `HostReturn` sends us to
+        // the background; the audio session keeps the mic alive
+        // (UIBackgroundModes: audio).
+        if state == .listening, let host, HostReturn.canReturn,
+            UIApplication.shared.applicationState == .active
+        {
             returnableHost = host
             HostReturn.attempt(bundleID: host)
         } else {
@@ -87,6 +103,7 @@ final class DictationCoordinator: ObservableObject {
     // MARK: engine
 
     private func launch() async {
+        endLinger()  // the live audio session keeps the process awake from here
         errorMessage = nil
         runs = []
         committed = ""
@@ -94,6 +111,25 @@ final class DictationCoordinator: ObservableObject {
         state = .starting
         active = true
         publish()
+
+        #if DEBUG
+            // ScreenshotDemo: fake the session so the whole flow can be
+            // experienced (and captured) with no account, mic, or network.
+            // Only the transcript source is faked — the App Group hand-off,
+            // keyboard insertion, and stop path are the production code.
+            if ScreenshotDemo.servesFixtures {
+                state = .listening
+                publish()
+                armCap()
+                // The real path stays awake through the live audio session;
+                // the fake one has no audio, so it needs background-task time
+                // or iOS suspends the app the moment the user swipes back and
+                // the stream (and the Darwin channel) freezes.
+                beginLinger()
+                demoTask = Task { [weak self] in await self?.streamDemoTranscript() }
+                return
+            }
+        #endif
 
         // The keyboard reaches the app only for signed-in users (it never sees
         // the token — recording and the relay are the app's job), but a session
@@ -142,17 +178,24 @@ final class DictationCoordinator: ObservableObject {
 
         state = .listening
         publish()
-        armStopObserver()
         armCap()
     }
 
-    /// Listen for the keyboard's stop request (its ⏹ button) while recording.
-    private func armStopObserver() {
-        stopObserver = DarwinObserver(DictationChannel.upNote) { [weak self] in
+    /// The uplink channel, listened to for the process's whole life:
+    ///   - stop: the keyboard's ⏹ for the running session.
+    ///   - start: a keyboard minted a new session while this process happens
+    ///     to be awake (foreground, or lingering in the background right after
+    ///     a session). Starting here means the user never leaves their app —
+    ///     the keyboard only falls back to `parley://dictate` when this note
+    ///     lands on nobody (see `KeyboardViewController.startDictation`).
+    private func armRequestObserver() {
+        requestObserver = DarwinObserver(DictationChannel.upNote) { [weak self] in
             Task { @MainActor in
-                guard let self, self.active else { return }
-                if DictationChannel.readUplink()?.stopRequested == true {
-                    await self.stop()
+                guard let self, let up = DictationChannel.readUplink() else { return }
+                if up.stopRequested {
+                    if self.active, up.session == self.session { await self.stop() }
+                } else if !up.session.isEmpty, up.session != self.session {
+                    await self.begin(session: up.session)
                 }
             }
         }
@@ -190,6 +233,10 @@ final class DictationCoordinator: ObservableObject {
 
     func stop() async {
         guard active else { return }
+        #if DEBUG
+            demoTask?.cancel()
+            demoTask = nil
+        #endif
         capTimer?.cancel()
         capTimer = nil
         capture?.stop()
@@ -205,7 +252,6 @@ final class DictationCoordinator: ObservableObject {
 
     private func finishUp() {
         relay = nil
-        stopObserver = nil
         state = .done
         // Fold the last partial into the committed text so nothing said right
         // before the endpoint is dropped from what the keyboard inserts.
@@ -215,6 +261,7 @@ final class DictationCoordinator: ObservableObject {
         }
         publish()
         active = false
+        beginLinger()
     }
 
     private func fail(_ message: String) {
@@ -224,9 +271,29 @@ final class DictationCoordinator: ObservableObject {
         capTimer = nil
         capture?.stop()
         capture = nil
-        stopObserver = nil
         publish()
         active = false
+        beginLinger()
+    }
+
+    // MARK: background linger
+
+    /// With the audio session closed the system suspends this process within
+    /// seconds, and a suspended process can't hear the keyboard's next start
+    /// note — the user would get bounced through the app again. ~30 s of
+    /// background-task time covers the common "stop, think, dictate again"
+    /// beat with no app switch.
+    private func beginLinger() {
+        endLinger()
+        lingerTask = UIApplication.shared.beginBackgroundTask(withName: "dictation-relaunch") {
+            [weak self] in self?.endLinger()
+        }
+    }
+
+    private func endLinger() {
+        guard lingerTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(lingerTask)
+        lingerTask = .invalid
     }
 
     /// Mirror the live state into the downlink the keyboard reads.
@@ -243,4 +310,51 @@ final class DictationCoordinator: ObservableObject {
         if active { await stop() }
         active = false
     }
+
+    #if DEBUG
+        private var demoTask: Task<Void, Never>?
+
+        /// Feed the scripted transcript through the same
+        /// committed/partial/publish path the relay events drive, at roughly
+        /// speaking pace. Whatever is left as the tail when the user stops is
+        /// folded in by `finishUp`, exactly like a real session.
+        private func streamDemoTranscript() async {
+            // Real STT takes a beat before the first words settle (connect +
+            // actually speaking). Matching it also means text never lands in
+            // the sliver between the mic tap and the app switch, where a
+            // dying keyboard's insertText silently goes nowhere.
+            try? await Task.sleep(for: .milliseconds(1500))
+            var settled = ""
+            var tail = ""
+            for piece in ScreenshotDemo.dictationScript {
+                guard !Task.isCancelled, active else { return }
+                tail += piece
+                if tail.count >= 9 {
+                    settled += tail
+                    tail = ""
+                }
+                committed = settled
+                partial = tail
+                micLevel = Float.random(in: 0.08...0.45)
+                publish()
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            micLevel = 0.1
+        }
+
+        /// ScreenshotDemo (`parley://demo/dictation`): the stranded-listening
+        /// state — no host to bounce back to, so the screen shows the swipe
+        /// guide — with a fixture transcript. No mic, no relay, no account.
+        func seedDemoListening(committed: String, partial: String) {
+            guard ScreenshotDemo.isActive else { return }
+            session = "demo"
+            self.committed = committed
+            self.partial = partial
+            errorMessage = nil
+            micLevel = 0.15
+            returnableHost = nil
+            state = .listening
+            active = true
+        }
+    #endif
 }

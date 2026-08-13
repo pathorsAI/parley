@@ -1704,23 +1704,6 @@
         }
       }
     },
-    "Speak and the words go straight into the field you were typing in. Swipe right on the home bar to get back to that app.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Speak and the words go straight into the field you were typing in. Swipe right on the home bar to get back to that app."
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "說話就會即時打進剛才的輸入框。在底部橫條上往右滑，回到剛才的 App。"
-          }
-        }
-      }
-    },
     "Start Parley voice typing right where you are, without switching apps.": {
       "extractionState": "manual",
       "localizations": {
@@ -1772,23 +1755,6 @@
         }
       }
     },
-    "Stop and insert": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Stop and insert"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "結束並插入文字"
-          }
-        }
-      }
-    },
     "Support & feedback": {
       "extractionState": "manual",
       "localizations": {
@@ -1806,19 +1772,34 @@
         }
       }
     },
-    "Swipe right to go back": {
-      "extractionState": "manual",
+    "Swipe back to your app": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Swipe right to go back"
+            "value": "Swipe back to your app"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "往右滑，回到剛才的 App"
+            "value": "滑回剛才的 App"
+          }
+        }
+      }
+    },
+    "Swipe right on the bar below": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Swipe right on the bar below"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在下面的橫條上往右滑"
           }
         }
       }
@@ -2214,23 +2195,6 @@
         }
       }
     },
-    "Waiting for you to speak…": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Waiting for you to speak…"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "等你開口……"
-          }
-        }
-      }
-    },
     "When the network drops, the server goes quiet, or you run out of quota, the phone holds on to finished recordings until they sync.": {
       "extractionState": "manual",
       "localizations": {
@@ -2414,6 +2378,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "語音要送到你的 Parley 帳號轉錄，需要這項權限才能運作。"
+          }
+        }
+      }
+    },
+    "Your words show up on the Parley keyboard and land at the cursor as you talk — nothing happens on this screen.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your words show up on the Parley keyboard and land at the cursor as you talk — nothing happens on this screen."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "說話的內容會直接顯示在 Parley 鍵盤上、即時打進游標處——這個畫面不會顯示任何東西。"
           }
         }
       }

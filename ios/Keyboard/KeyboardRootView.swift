@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// The Parley keyboard's face: a status line that shows the session is alive, a
-/// preview of the words not yet inserted, one large dictation control, and a
-/// minimal key row so the keyboard still types without Full Access (App Review
-/// 4.4.1).
+/// The Parley keyboard's face, in the shape dictation keyboards have settled
+/// on (Typeless, Wispr Flow): a brand mark and a delete key on top, one large
+/// mic pill in the middle under a short status caption, and a minimal
+/// space/return/globe row at the bottom so the keyboard still types without
+/// Full Access (App Review 4.4.1).
 ///
 /// Everything here is presentation only — no audio, no transcript history — so
 /// the extension stays well under the jetsam limit keyboard processes run
@@ -17,165 +18,162 @@ struct KeyboardRootView: View {
     var dark: Bool
 
     var body: some View {
-        VStack(spacing: 8) {
-            if bridge.hasFullAccess {
-                dictationArea
-            } else {
-                fullAccessNotice
+        VStack(spacing: 0) {
+            topBar
+            Spacer(minLength: 6)
+            caption
+            Spacer(minLength: 12)
+            micPill
+            Spacer(minLength: 12)
+            // Only devices without the system's own input switcher (next to
+            // the home indicator) get a globe here — everyone else already has
+            // one right below the keyboard, and a second would be noise.
+            if bridge.needsGlobe {
+                HStack {
+                    circleKey(system: "globe") { bridge.nextKeyboard() }
+                    Spacer()
+                }
             }
-            keyRow
         }
-        .padding(.horizontal, 4)
-        .padding(.top, 6)
-        .padding(.bottom, 4)
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(KBTheme.canvas(dark))
     }
 
-    // MARK: dictation
+    // MARK: top bar — brand + delete
 
-    private var dictationArea: some View {
-        VStack(spacing: 8) {
-            statusLine
-            preview
-            micButton
+    private var topBar: some View {
+        HStack {
+            HStack(spacing: 5) {
+                Image(systemName: "waveform")
+                    .font(.footnote.weight(.semibold))
+                Text(verbatim: "Parley")
+                    .font(.footnote.weight(.semibold))
+            }
+            .foregroundStyle(KBTheme.inkSoft(dark))
+            Spacer()
+            circleKey(system: "delete.left") { bridge.backspace() }
         }
+        .frame(height: 38)
     }
 
-    /// A live indicator beats a static word: three bars that keep moving say the
-    /// app on the other side of the App Group is still listening, which is the
-    /// one thing a person cannot otherwise tell from inside another app.
-    private var statusLine: some View {
-        HStack(spacing: 7) {
-            if bridge.listening {
-                PulseBars(color: KBTheme.accent)
-                Text("Listening…")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(KBTheme.accent)
+    // MARK: caption — the state line above the mic
+
+    /// One fixed-height slot so the layout never jumps between states: the
+    /// Full Access explainer, the idle prompt, the listening indicator, or the
+    /// tentative tail (the words heard but not yet settled — settled text is
+    /// already in the document behind the keyboard, so it is never echoed).
+    private var caption: some View {
+        Group {
+            if !bridge.hasFullAccess {
+                VStack(spacing: 3) {
+                    Text("Voice typing needs Full Access")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(KBTheme.ink(dark))
+                    Text("Settings › General › Keyboard › Keyboards › Parley → Allow Full Access. Your voice is sent to your Parley account to be transcribed.")
+                        .font(.caption2)
+                        .foregroundStyle(KBTheme.inkSoft(dark))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 12)
+                }
+            } else if let error = bridge.errorText, !bridge.listening {
+                Text(error)
+                    .font(.footnote)
+                    .foregroundStyle(KBTheme.recording)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 16)
+            } else if bridge.listening && !bridge.partial.isEmpty {
+                Text(bridge.partial)
+                    .font(.callout)
+                    .foregroundStyle(KBTheme.ink(dark).opacity(0.8))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 16)
+            } else if bridge.listening {
+                HStack(spacing: 7) {
+                    PulseBars(color: KBTheme.recording)
+                    Text("Listening…")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(KBTheme.recording)
+                }
             } else {
-                Image(systemName: "mic")
-                    .font(.caption)
+                Text("Tap to speak")
+                    .font(.subheadline)
                     .foregroundStyle(KBTheme.inkSoft(dark))
-                Text("Tap to talk — your words land at the cursor")
-                    .font(.caption)
-                    .foregroundStyle(KBTheme.inkSoft(dark))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
             }
         }
-        .frame(height: 16)
-        .animation(.easeInOut(duration: 0.2), value: bridge.listening)
+        .frame(height: 48)
+        .frame(maxWidth: .infinity)
+        .animation(.easeInOut(duration: 0.15), value: bridge.listening)
+        .animation(.easeOut(duration: 0.15), value: bridge.partial)
     }
 
-    /// The tentative tail — the words the app has heard but not yet settled.
-    /// Settled text is already in the document, so echoing it here would only
-    /// duplicate what the person can see behind the keyboard.
-    private var preview: some View {
-        Text(bridge.partial.isEmpty ? " " : bridge.partial)
-            .font(.callout)
-            .foregroundStyle(KBTheme.ink(dark).opacity(0.75))
-            .lineLimit(2)
-            .multilineTextAlignment(.leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .frame(height: 52)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(KBTheme.well(dark)))
-            .padding(.horizontal, 4)
-            .animation(.easeOut(duration: 0.15), value: bridge.partial)
-    }
+    // MARK: the mic pill
 
-    private var micButton: some View {
+    private var micPill: some View {
         PressableButton(action: toggle) { pressed in
-            HStack(spacing: 9) {
-                Image(systemName: bridge.listening ? "stop.fill" : "mic.fill")
-                    .font(.system(size: 17, weight: .semibold))
-                Text(bridge.listening ? "Stop" : "Voice typing")
-                    .font(.system(size: 17, weight: .semibold))
-            }
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
-            .frame(height: 50)
-            .background(
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(bridge.listening ? KBTheme.recording : KBTheme.accent)
-                    .brightness(pressed ? -0.08 : 0))
+            Image(systemName: bridge.listening ? "stop.fill" : "mic.fill")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(micInk)
+                .frame(width: 150, height: 52)
+                .background(
+                    Capsule().fill(micFill).brightness(pressed ? -0.08 : 0))
         }
-        .padding(.horizontal, 4)
+        .disabled(!bridge.hasFullAccess)
+        .accessibilityLabel(
+            bridge.listening
+                ? Text("Stop dictation") : Text("Start dictation"))
+    }
+
+    /// Idle: the Typeless-style ink pill — near-black on a light canvas, white
+    /// on a dark one. Recording: the shared recording red. Disabled (no Full
+    /// Access): a key-colored pill so it reads inert.
+    private var micFill: Color {
+        if !bridge.hasFullAccess { return KBTheme.key(dark) }
+        if bridge.listening { return KBTheme.recording }
+        return dark ? .white : Color(white: 0.10)
+    }
+
+    private var micInk: Color {
+        if !bridge.hasFullAccess { return KBTheme.inkSoft(dark) }
+        if bridge.listening { return .white }
+        return dark ? Color(white: 0.10) : .white
     }
 
     private func toggle() {
         if bridge.listening {
             bridge.stop()
-        } else if let url = bridge.prepare() {
-            // SwiftUI's openURL is the path that still opens the container app
-            // from a keyboard on iOS 18+. If the system declines, fall back to
-            // the responder-chain walk for older releases.
-            openURL(url) { accepted in
-                if !accepted { bridge.fallbackOpen(url) }
-            }
-        }
-    }
-
-    // MARK: no Full Access
-
-    /// Without Full Access the keyboard has no network and no App Group, so
-    /// dictation cannot run. The key row below still types — the keyboard is
-    /// never a dead brick — and this explains the one switch that unlocks it.
-    private var fullAccessNotice: some View {
-        VStack(spacing: 5) {
-            Image(systemName: "mic.slash")
-                .font(.title3)
-                .foregroundStyle(KBTheme.inkSoft(dark))
-            Text("Voice typing needs Full Access")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(KBTheme.ink(dark))
-            Text("Settings › General › Keyboard › Keyboards › Parley → Allow Full Access. Your voice is sent to your Parley account to be transcribed.")
-                .font(.caption)
-                .foregroundStyle(KBTheme.inkSoft(dark))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 18)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    // MARK: minimal keys — keeps the keyboard functional without Full Access
-
-    private var keyRow: some View {
-        HStack(spacing: 6) {
-            key(system: "globe", width: 46) { bridge.nextKeyboard() }
-            key(text: "space", wide: true) { bridge.space() }
-            key(system: "return", width: 60) { bridge.newline() }
-            key(system: "delete.left", width: 46) { bridge.backspace() }
-        }
-        .frame(height: 44)
-        .padding(.horizontal, 3)
-    }
-
-    private func key(
-        text: String? = nil, system: String? = nil,
-        width: CGFloat? = nil, wide: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        PressableButton(action: action) { pressed in
-            Group {
-                if let system {
-                    Image(systemName: system).font(.system(size: 18, weight: .regular))
-                } else {
-                    Text(text ?? "").font(.system(size: 15))
+        } else {
+            // The bridge tries the no-jump start first; the completion only
+            // fires when the app really has to come forward. SwiftUI's openURL
+            // is the path that still opens the container app from a keyboard
+            // on iOS 18+; the responder-chain walk covers older releases.
+            bridge.start { url in
+                guard let url else { return }
+                openURL(url) { accepted in
+                    if !accepted { bridge.fallbackOpen(url) }
                 }
             }
-            .foregroundStyle(KBTheme.ink(dark))
-            .frame(maxWidth: wide ? .infinity : width, maxHeight: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(pressed ? KBTheme.keyPressed(dark) : KBTheme.key(dark))
-                    .shadow(color: .black.opacity(dark ? 0 : 0.28), radius: 0, x: 0, y: 1))
         }
-        .frame(maxWidth: wide ? .infinity : width)
+    }
+
+    // MARK: key shapes
+
+    private func circleKey(system: String, action: @escaping () -> Void) -> some View {
+        PressableButton(action: action) { pressed in
+            Image(systemName: system)
+                .font(.system(size: 16, weight: .regular))
+                .foregroundStyle(KBTheme.ink(dark))
+                .frame(width: 44, height: 38)
+                .background(
+                    Capsule()
+                        .fill(pressed ? KBTheme.keyPressed(dark) : KBTheme.key(dark))
+                        .shadow(
+                            color: .black.opacity(dark ? 0 : 0.28),
+                            radius: 0, x: 0, y: 1))
+        }
     }
 }
 
