@@ -326,31 +326,59 @@ struct SettingsView: View {
 
     // MARK: voice keyboard
 
-    /// How to turn on the Parley keyboard and the Action Button trigger. Both
-    /// live in the system Settings app, so this section explains the steps and
-    /// jumps there — iOS gives no API to toggle them for the user.
+    /// Onboarding for the voice keyboard. Deliberately not a wall of steps:
+    /// one line on what it does, one button to the place that actually has the
+    /// toggles (a keyboard app's own Settings page carries the Keyboards row
+    /// and the Allow Full Access switch), and the detailed steps folded away
+    /// for the people who want them. iOS gives no API to flip these for the
+    /// user, so a jump plus on-demand steps is as far as it goes.
     private var dictationSection: some View {
         Section {
-            dictationStep(
-                number: 1, title: "Add the Parley keyboard",
-                detail: "Settings › General › Keyboard › Keyboards › Add New Keyboard, then pick Parley Voice.")
-            dictationStep(
-                number: 2, title: "Turn on Allow Full Access",
-                detail: "Your voice goes to your Parley account to be transcribed, and that needs this permission.")
-            dictationStep(
-                number: 3, title: "(Optional) Put it on the Action Button",
-                detail: "Settings › Action Button › Shortcut › Parley Voice Typing. One press starts dictation in any app, no keyboard switch.")
-            Button {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 12) {
+                    Image(systemName: "mic.fill")
+                        .font(.headline)
+                        .foregroundStyle(Theme.primary)
+                        .frame(width: 40, height: 40)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Theme.primary.opacity(0.12)))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Type by voice in any app")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Tap the mic on the Parley keyboard and your words land at the cursor.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.mutedForeground)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+                Button {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                } label: {
+                    Text("Set up in Settings").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            }
+            .padding(.vertical, 4)
+
+            DisclosureGroup {
+                dictationStep(
+                    number: 1, title: "Add the keyboard",
+                    detail: "In Keyboards → Add New Keyboard, pick Parley Voice.")
+                dictationStep(
+                    number: 2, title: "Allow Full Access",
+                    detail: "Lets your voice reach your Parley account to be transcribed.")
+                dictationStep(
+                    number: 3, title: "Action Button (optional)",
+                    detail: "Map it to Parley Voice Typing to start dictation without switching keyboards.")
             } label: {
-                Label("Open system settings", systemImage: "keyboard")
+                Text("Set-up steps").font(.subheadline)
             }
         } header: {
             Text("Voice keyboard")
-        } footer: {
-            Text("Switch to the Parley keyboard in any text field and tap the mic — Parley opens and starts listening. Back in the text field, the words type themselves in.")
         }
     }
 

@@ -106,23 +106,6 @@
         }
       }
     },
-    "(Optional) Put it on the Action Button": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "(Optional) Put it on the Action Button"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "（選用）設定到動作按鈕"
-          }
-        }
-      }
-    },
     "A pocket recorder for the meetings you have in person — live transcript while you talk, in the cloud by the time you stand up.": {
       "extractionState": "manual",
       "localizations": {
@@ -174,6 +157,22 @@
         }
       }
     },
+    "Action Button (optional)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Action Button (optional)"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "動作按鈕（選用）"
+          }
+        }
+      }
+    },
     "Add the Parley keyboard": {
       "extractionState": "manual",
       "localizations": {
@@ -187,6 +186,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "加入 Parley 鍵盤"
+          }
+        }
+      }
+    },
+    "Add the keyboard": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add the keyboard"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加入鍵盤"
           }
         }
       }
@@ -221,6 +236,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "全部"
+          }
+        }
+      }
+    },
+    "Allow Full Access": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow Full Access"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許完全取用"
           }
         }
       }
@@ -701,6 +732,22 @@
         }
       }
     },
+    "In Keyboards → Add New Keyboard, pick Parley Voice.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In Keyboards → Add New Keyboard, pick Parley Voice."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在「鍵盤 → 加入新的鍵盤」選 Parley Voice。"
+          }
+        }
+      }
+    },
     "It picks up the whole room and keeps the speakers apart.": {
       "extractionState": "manual",
       "localizations": {
@@ -748,6 +795,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "語言"
+          }
+        }
+      }
+    },
+    "Lets your voice reach your Parley account to be transcribed.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lets your voice reach your Parley account to be transcribed."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讓語音能傳到你的 Parley 帳號進行轉錄。"
           }
         }
       }
@@ -850,6 +913,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在載入 Parley"
+          }
+        }
+      }
+    },
+    "Map it to Parley Voice Typing to start dictation without switching keyboards.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Map it to Parley Voice Typing to start dictation without switching keyboards."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把它設成 Parley Voice Typing，不用切鍵盤就能開始語音輸入。"
           }
         }
       }
@@ -1071,23 +1150,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "手機錄的會議，用桌面版打開就能做深度分析。"
-          }
-        }
-      }
-    },
-    "Open system settings": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open system settings"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "打開系統設定"
           }
         }
       }
@@ -1449,6 +1511,38 @@
         }
       }
     },
+    "Set up in Settings": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set up in Settings"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前往設定開啟"
+          }
+        }
+      }
+    },
+    "Set-up steps": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set-up steps"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定步驟"
+          }
+        }
+      }
+    },
     "Settings": {
       "extractionState": "manual",
       "localizations": {
@@ -1462,40 +1556,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "設定"
-          }
-        }
-      }
-    },
-    "Settings › Action Button › Shortcut › Parley Voice Typing. One press starts dictation in any app, no keyboard switch.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Settings › Action Button › Shortcut › Parley Voice Typing. One press starts dictation in any app, no keyboard switch."
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "設定 › 動作按鈕 › 快捷指令 › Parley 語音輸入。在任何 App 一按就開始，不用切鍵盤。"
-          }
-        }
-      }
-    },
-    "Settings › General › Keyboard › Keyboards › Add New Keyboard, then pick Parley Voice.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Settings › General › Keyboard › Keyboards › Add New Keyboard, then pick Parley Voice."
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "設定 › 一般 › 鍵盤 › 鍵盤 › 加入新鍵盤，選「Parley 語音」。"
           }
         }
       }
@@ -1804,23 +1864,6 @@
         }
       }
     },
-    "Switch to the Parley keyboard in any text field and tap the mic — Parley opens and starts listening. Back in the text field, the words type themselves in.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Switch to the Parley keyboard in any text field and tap the mic — Parley opens and starts listening. Back in the text field, the words type themselves in."
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在任何 App 的輸入框切到 Parley 鍵盤，按麥克風就會跳到 Parley 開始聽寫；回到輸入框後，文字會即時打進去。"
-          }
-        }
-      }
-    },
     "Sync": {
       "extractionState": "manual",
       "localizations": {
@@ -1902,6 +1945,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "跟隨系統"
+          }
+        }
+      }
+    },
+    "Tap the mic on the Parley keyboard and your words land at the cursor.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap the mic on the Parley keyboard and your words land at the cursor."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 Parley 鍵盤上點麥克風，說的話就會即時打進游標處。"
           }
         }
       }
@@ -2025,19 +2084,18 @@
         }
       }
     },
-    "Turn on Allow Full Access": {
-      "extractionState": "manual",
+    "Type by voice in any app": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Turn on Allow Full Access"
+            "value": "Type by voice in any app"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "開啟「允許完整取用權限」"
+            "value": "在任何 App 用語音輸入"
           }
         }
       }
@@ -2361,23 +2419,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "登入已過期。按上面的按鈕重新登入，就能繼續錄音。"
-          }
-        }
-      }
-    },
-    "Your voice goes to your Parley account to be transcribed, and that needs this permission.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Your voice goes to your Parley account to be transcribed, and that needs this permission."
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "語音要送到你的 Parley 帳號轉錄，需要這項權限才能運作。"
           }
         }
       }
