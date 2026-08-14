@@ -31,6 +31,12 @@ function entry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
 }
 
 describe("buildSummary", () => {
+  it("mirrors the analyzed flag onto the summary card (absent stays absent)", () => {
+    expect(buildSummary(entry({ analyzed: true })).analyzed).toBe(true);
+    expect(buildSummary(entry({ analyzed: false })).analyzed).toBe(false);
+    expect(buildSummary(entry()).analyzed).toBeUndefined();
+  });
+
   it("counts distinct speakers by source+speaker, ignoring empty-text turns", () => {
     const s = buildSummary(
       entry({

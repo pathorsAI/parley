@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useStore } from "./store";
 import { isTauri } from "./tauriEvents";
-import type { EvalDef, TimelineEvent } from "./types";
+import type { ActionItem, EvalDef, TimelineEvent } from "./types";
 import type { ClaimCategory } from "./accounts/types";
 
 /**
@@ -78,6 +78,32 @@ function normalizeFinding(raw: unknown): TimelineEvent | null {
     detail,
     resolved: typeof o.resolved === "boolean" ? o.resolved : undefined,
     resolution: typeof o.resolution === "string" ? o.resolution : undefined,
+    quotes: Array.isArray(o.quotes) ? o.quotes.map(String).filter(Boolean) : undefined,
+    author: typeof o.author === "string" && o.author.trim() ? o.author.trim() : undefined,
+  };
+}
+
+/**
+ * Coerce a loosely-shaped action item (from an MCP client) into a valid
+ * {@link ActionItem}. Returns null when there is no text to act on.
+ */
+function normalizeActionItem(raw: unknown): ActionItem | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const text = typeof o.text === "string" ? o.text.trim() : "";
+  if (!text) return null;
+  const severity =
+    o.severity === "info" || o.severity === "warn" || o.severity === "critical"
+      ? o.severity
+      : undefined;
+  return {
+    id: typeof o.id === "string" && o.id ? o.id : crypto.randomUUID(),
+    text,
+    rationale: typeof o.rationale === "string" ? o.rationale : "",
+    done: o.done === true,
+    linkedEventId: typeof o.linkedEventId === "string" && o.linkedEventId ? o.linkedEventId : null,
+    atMs: Number.isFinite(o.atMs) ? Number(o.atMs) : null,
+    severity,
   };
 }
 
@@ -173,6 +199,57 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
       const s = useStore.getState();
       if (s.loadedHistoryId === id) s.renameReplay(title);
       return { id, title };
+    }
+    case "update_recording_meta": {
+      // Fix a saved recording's FRAME (scenario / context / speaker names) so
+      // later reads and analysis passes get the right picture — the repair path
+      // for a misclassified meeting or a wrong me/them speaker mapping.
+      const id = argStr(a.id);
+      if (!id) throw new Error("id is required");
+      const { updateEntryMeta } = await import("./history/history");
+      const patch: import("./history/history").EntryMetaPatch = {};
+      if (typeof a.meetingType === "string") patch.meetingType = a.meetingType;
+      if (typeof a.meetingContext === "string") patch.meetingContext = a.meetingContext;
+      if (a.speakerNames && typeof a.speakerNames === "object" && !Array.isArray(a.speakerNames)) {
+        const names: Record<string, string> = {};
+        for (const [key, name] of Object.entries(a.speakerNames)) names[key] = argStr(name);
+        patch.speakerNames = names;
+      }
+      if (!Object.keys(patch).length) {
+        throw new Error("nothing to update — pass meetingType, meetingContext and/or speakerNames");
+      }
+      const updated = await updateEntryMeta(id, patch);
+      return {
+        id,
+        meetingType: updated.meetingType ?? null,
+        meetingContext: updated.meetingContext ?? "",
+        speakerNames: updated.speakerNames ?? {},
+      };
+    }
+    case "set_recording_analysis": {
+      // External-analyst write-back: replace whole analysis fields on a saved
+      // recording. Normalization mirrors the live finding path so an MCP payload
+      // can never write an invalid shape to disk.
+      const id = argStr(a.id);
+      if (!id) throw new Error("id is required");
+      const { setEntryAnalysis } = await import("./history/history");
+      const patch: import("./history/history").EntryAnalysisPatch = {};
+      if (Array.isArray(a.findings)) {
+        patch.findings = a.findings
+          .map(normalizeFinding)
+          .filter((f): f is TimelineEvent => f !== null);
+      }
+      if (Array.isArray(a.actionItems)) {
+        patch.actionItems = a.actionItems
+          .map(normalizeActionItem)
+          .filter((i): i is ActionItem => i !== null);
+      }
+      if (typeof a.brief === "string") patch.brief = a.brief;
+      if (typeof a.analyzed === "boolean") patch.analyzed = a.analyzed;
+      if (!Object.keys(patch).length) {
+        throw new Error("nothing to write — pass findings, actionItems, brief and/or analyzed");
+      }
+      return await setEntryAnalysis(id, patch);
     }
     case "move_recording_to_folder": {
       const id = argStr(a.id);

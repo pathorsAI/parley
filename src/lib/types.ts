@@ -146,6 +146,12 @@ export interface TimelineEvent {
   resolved?: boolean;
   /** One short line on HOW ME handled it — present only when {@link resolved}. */
   resolution?: string;
+  /** Supporting verbatim quotes from the transcript. */
+  quotes?: string[];
+  /** Which analyst wrote this marker: absent = Parley's own pipeline; an MCP
+   *  client stamps its agent name (e.g. "claude") so external and built-in
+   *  findings stay distinguishable side by side. */
+  author?: string;
 }
 
 /** A meeting to-do / agenda item to make sure gets covered. */

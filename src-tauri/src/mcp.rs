@@ -594,7 +594,8 @@ fn tools() -> Vec<Value> {
                     "quotes": { "type": "array", "items": { "type": "string" } },
                     "evalIds": { "type": "array", "items": { "type": "string" } },
                     "resolved": { "type": "boolean" },
-                    "resolution": { "type": "string" }
+                    "resolution": { "type": "string" },
+                    "author": { "type": "string" }
                 },
                 "required": ["id"]
             }),
@@ -610,14 +611,19 @@ fn tools() -> Vec<Value> {
             "List saved recordings (history)",
             "List the user's locally saved recordings (the personal history library), \
              newest first, as summary cards: { id, title, source, createdAt, durationMs, \
-             speakerCount, findingsCount, actionItemsCount, hasAudio, snippet, folderId }. \
-             Optional text query filters by title + transcript snippet. Org-shared \
-             recordings live in the cloud — list those with list_org_recordings.",
+             speakerCount, findingsCount, actionItemsCount, hasAudio, analyzed?, snippet, \
+             folderId }. `analyzed` mirrors the entry's pipeline-complete flag (absent on \
+             cards saved before it existed = state unknown). Optional text query filters by \
+             title + transcript snippet; `since` keeps only recordings created at/after that \
+             epoch-ms timestamp — the cheap way for an external analyst to poll for new \
+             recordings. Org-shared recordings live in the cloud — list those with \
+             list_org_recordings.",
             json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string", "description": "Case-insensitive text filter over title + snippet." },
                     "folderId": { "type": "string", "description": "Only recordings in this personal folder (get ids from list_folders)." },
+                    "since": { "type": "number", "description": "Only recordings with createdAt >= this epoch-ms timestamp." },
                     "limit": { "type": "number", "description": "Max results (default 50)." }
                 }
             }),
@@ -646,6 +652,74 @@ fn tools() -> Vec<Value> {
                     "title": { "type": "string" }
                 },
                 "required": ["id", "title"]
+            }),
+        ),
+        tool(
+            "update_recording_meta",
+            "Update a saved recording's meeting frame",
+            "Update a saved recording's FRAME by id: `meetingType` (free-form scenario id; \
+             'sales' is the built-in default scenario), `meetingContext` (free text), and/or \
+             `speakerNames` (merged per key, e.g. {\"them-1\": \"Jamie\"}; an empty string \
+             removes that custom name). Use this to fix a misclassified meeting type or a \
+             wrong speaker mapping so later reads and analysis get the right frame. Applied \
+             by the app (which also syncs to cloud); waits for the app to confirm.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "meetingType": { "type": "string", "description": "Scenario id (free-form; built-in default is 'sales')." },
+                    "meetingContext": { "type": "string", "description": "Free-text meeting context." },
+                    "speakerNames": {
+                        "type": "object",
+                        "description": "Speaker-key → display-name patch, merged per key (empty string removes). Keys look like 'me-1' / 'them-1' / 'mix-2' — see speakerNames on get_recording.",
+                        "additionalProperties": { "type": "string" }
+                    }
+                },
+                "required": ["id"]
+            }),
+        ),
+        tool(
+            "set_recording_analysis",
+            "Write analysis results onto a saved recording",
+            "The write-back surface for an EXTERNAL analyst: write analysis results onto a \
+             saved recording by id. Each provided field REPLACES that whole field — \
+             `findings` (timeline markers; stamp `author`, e.g. 'claude', so they stay \
+             distinguishable from Parley's own pass), `actionItems`, `brief` (markdown \
+             debrief), `analyzed` (mark the recording analyzed so list_recordings filtering \
+             can skip it). Omitted fields are left untouched. Read get_recording FIRST and \
+             carry forward anything worth keeping — findings you omit from the new list are \
+             gone. If the recording is open in replay the UI updates immediately. Applied by \
+             the app (which also syncs to cloud); waits for the app to confirm.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "findings": {
+                        "type": "array",
+                        "description": "Full replacement findings list (see finding fields).",
+                        "items": finding_schema()
+                    },
+                    "actionItems": {
+                        "type": "array",
+                        "description": "Full replacement action-item list.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": { "type": "string", "description": "Stable id; omit to mint a new one." },
+                                "text": { "type": "string", "description": "The concrete next step / follow-up." },
+                                "rationale": { "type": "string", "description": "Why it matters." },
+                                "done": { "type": "boolean" },
+                                "linkedEventId": { "type": "string", "description": "The finding this derives from, if any." },
+                                "atMs": { "type": "number", "description": "Seek target on the recording, if any." },
+                                "severity": { "type": "string", "enum": ["info", "warn", "critical"] }
+                            },
+                            "required": ["text"]
+                        }
+                    },
+                    "brief": { "type": "string", "description": "Markdown debrief / meeting notes (the 重點 brief)." },
+                    "analyzed": { "type": "boolean", "description": "Mark the analysis pipeline complete for this recording." }
+                },
+                "required": ["id"]
             }),
         ),
         tool(
@@ -866,7 +940,8 @@ fn finding_schema() -> Value {
             "quotes": { "type": "array", "items": { "type": "string" }, "description": "Supporting verbatim quotes." },
             "evalIds": { "type": "array", "items": { "type": "string" }, "description": "Matching evaluation ids (for source=eval)." },
             "resolved": { "type": "boolean", "description": "True when ME later addressed/defused this moment." },
-            "resolution": { "type": "string", "description": "One line on how ME handled it (only when resolved)." }
+            "resolution": { "type": "string", "description": "One line on how ME handled it (only when resolved)." },
+            "author": { "type": "string", "description": "Which analyst wrote this marker (e.g. 'claude'); omit for Parley's own pass." }
         },
         "required": ["atMs", "side", "severity", "title", "detail"]
     })
@@ -996,6 +1071,14 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
                 }),
             )
             .await?
+        }
+        "update_recording_meta" => {
+            required_str(&args, "id")?; // frontend validates the rest of the patch
+            call_frontend(state, "update_recording_meta", args).await?
+        }
+        "set_recording_analysis" => {
+            required_str(&args, "id")?; // frontend normalizes findings/actionItems
+            call_frontend(state, "set_recording_analysis", args).await?
         }
         "list_folders" => call_frontend(state, "list_folders", json!({})).await?,
         "import_transcript" => {
@@ -1357,6 +1440,7 @@ fn list_recordings(history_dir: &std::path::Path, args: &Value) -> anyhow::Resul
         .trim()
         .to_lowercase();
     let folder = args.get("folderId").and_then(Value::as_str);
+    let since = args.get("since").and_then(Value::as_i64).unwrap_or(0);
     let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(50) as usize;
 
     let mut items: Vec<Value> = Vec::new();
@@ -1372,6 +1456,9 @@ fn list_recordings(history_dir: &std::path::Path, args: &Value) -> anyhow::Resul
                 if v.get("folderId").and_then(Value::as_str) != Some(folder) {
                     continue;
                 }
+            }
+            if since > 0 && v.get("createdAt").and_then(Value::as_i64).unwrap_or(0) < since {
+                continue;
             }
             if !query.is_empty() {
                 let title = v.get("title").and_then(Value::as_str).unwrap_or("");
@@ -1421,6 +1508,9 @@ fn get_recording(history_dir: &std::path::Path, id: &str) -> anyhow::Result<Valu
         "meetingType",
         "meetingContext",
         "folderId",
+        "companyId",
+        "threadId",
+        "analyzed",
     ] {
         if let Some(v) = meta.get(key) {
             if !v.is_null() {
