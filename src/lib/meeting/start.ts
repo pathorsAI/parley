@@ -72,7 +72,7 @@ async function openCaptureSession(settings: Settings, sttKey: string): Promise<v
       apiKey: sttKey,
       diarization: provider.diarization,
       inputDevice: settings.inputDevice,
-      relayUrl: sttRelayUrl(settings.transcriptionProvider),
+      relayUrl: sttRelayUrl(settings.transcriptionProvider, "meeting"),
       // Meeting translation (off → nulls): "me" runs through Gemini
       // live-translate; the voice goes out the translate output device.
       translateLanguage: translating ? settings.translateTargetLanguage : null,
