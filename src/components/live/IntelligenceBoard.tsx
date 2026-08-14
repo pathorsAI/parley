@@ -1,5 +1,17 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { Loader2, Pause, Play, RefreshCw } from "lucide-react";
+import {
+  ArrowDownLeft,
+  ArrowUpRight,
+  Check,
+  Flag,
+  Lightbulb,
+  Loader2,
+  Pause,
+  Play,
+  RefreshCw,
+  TriangleAlert,
+  type LucideIcon,
+} from "lucide-react";
 import { useStore } from "../../lib/store";
 import { runIntelExtraction } from "../../lib/intel/extract";
 import { useAccounts } from "../../lib/accounts/store";
@@ -182,7 +194,7 @@ export function IntelligenceBoard() {
 }
 
 /** The objection tracker (呼吸版): open items in front, answered ones folded
- *  behind a count — addressed state drives ⚠/✓. */
+ *  behind a count — addressed state drives the alert/check mark. */
 export function ObjectionsLedger({
   objections,
 }: Readonly<{ objections?: IntelObjection[] }>) {
@@ -211,16 +223,18 @@ export function ObjectionsLedger({
           </button>
         )}
       </div>
+      {/* items-start, not items-baseline: an icon has no text baseline, so the
+          mark is nudged down to sit on the first line of a wrapping item. */}
       {open.map((o) => (
-        <div key={o.text} className="flex items-baseline gap-1.5 text-xs">
-          <span className="font-bold text-amber-600 dark:text-amber-400">⚠</span>
+        <div key={o.text} className="flex items-start gap-1.5 text-xs">
+          <TriangleAlert className="mt-0.5 size-3 shrink-0 text-amber-600 dark:text-amber-400" />
           <span>{o.text}</span>
         </div>
       ))}
       {showAddressed &&
         addressed.map((o) => (
-          <div key={o.text} className="flex items-baseline gap-1.5 text-xs">
-            <span className="text-emerald-600 dark:text-emerald-400">✓</span>
+          <div key={o.text} className="flex items-start gap-1.5 text-xs">
+            <Check className="mt-0.5 size-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
             <span className="text-muted-foreground">{o.text}</span>
           </div>
         ))}
@@ -268,13 +282,13 @@ export function IntelSections() {
           <Section
             title={`${t("board.sec.concessions")} — ${t("speaker.you")} ${intel.concessionsMe?.length ?? 0}：${intel.concessionsThem?.length ?? 0} ${t("speaker.them")}`}
           >
-            <List items={intel.concessionsMe} prefix="🫱" />
-            <List items={intel.concessionsThem} prefix="🫲" />
+            <List items={intel.concessionsMe} prefix={ArrowUpRight} />
+            <List items={intel.concessionsThem} prefix={ArrowDownLeft} />
           </Section>
         )}
       {intel.agreed && intel.agreed.length > 0 && (
         <Section title={t("board.sec.agreed")}>
-          <List items={intel.agreed} prefix="✓" className="text-emerald-700 dark:text-emerald-400" />
+          <List items={intel.agreed} prefix={Check} className="text-emerald-700 dark:text-emerald-400" />
         </Section>
       )}
       {intel.open && intel.open.length > 0 && (
@@ -312,7 +326,7 @@ export function IntelSections() {
       )}
       {intel.competitors && intel.competitors.length > 0 && (
         <Section title={t("board.sec.competitors")}>
-          <List items={intel.competitors} prefix="🚩" />
+          <List items={intel.competitors} prefix={Flag} />
         </Section>
       )}
 
@@ -329,13 +343,13 @@ export function IntelSections() {
       )}
       {intel.leverage && intel.leverage.length > 0 && (
         <Section title={t("board.sec.leverage")}>
-          <List items={intel.leverage} prefix="💡" className="font-medium" />
+          <List items={intel.leverage} prefix={Lightbulb} className="font-medium" />
         </Section>
       )}
       {(intel.give?.length || intel.get?.length) && (
         <Section title={t("board.sec.giveGet")}>
-          <List items={intel.give} prefix="🫱" />
-          <List items={intel.get} prefix="🫲" />
+          <List items={intel.give} prefix={ArrowUpRight} />
+          <List items={intel.get} prefix={ArrowDownLeft} />
         </Section>
       )}
     </>
@@ -353,18 +367,36 @@ function Section({ title, children }: Readonly<{ title: string; children: React.
   );
 }
 
+/**
+ * `prefix` takes either a lucide icon or a literal marker, because the two
+ * kinds of marker here are not the same thing. Semantic markers (give/get,
+ * competitor, leverage, agreed) became icons; the typographic bullets ○ ◆ ◇
+ * stay text — they are list glyphs, not pictograms, and lucide has nothing
+ * that reads as a bullet at this size. The icon inherits `currentColor`, so
+ * each call site's semantic color still lands on the mark.
+ */
 function List({
   items,
   prefix,
   className,
-}: Readonly<{ items?: string[]; prefix: string; className?: string }>) {
+}: Readonly<{ items?: string[]; prefix: string | LucideIcon; className?: string }>) {
   if (!items?.length) return null;
+  let marker: React.ReactNode;
+  if (typeof prefix === "string") {
+    marker = <span className="shrink-0">{prefix}</span>;
+  } else {
+    const Icon = prefix;
+    marker = <Icon className="mt-0.5 size-3 shrink-0" />;
+  }
   return (
     <>
       {items.map((x, i) => (
-        <div key={i} className={`text-xs ${className ?? "text-muted-foreground"}`}>
-          <span className="mr-1">{prefix}</span>
-          {x}
+        <div
+          key={i}
+          className={`flex items-start gap-1 text-xs ${className ?? "text-muted-foreground"}`}
+        >
+          {marker}
+          <span className="min-w-0">{x}</span>
         </div>
       ))}
     </>

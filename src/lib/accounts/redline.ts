@@ -21,7 +21,9 @@ export function buildRedlineEvals(claims: Claim[], language: AppLanguage): EvalD
     .filter((c) => c.category === "redline" && c.status === "active")
     .map((c) => ({
       id: `${REDLINE_EVAL_PREFIX}${c.id}`,
-      name: `🚨 ${translate(language, "accounts.redline.evalName")}`,
+      // Plain text on purpose: this name is persisted and rendered as a raw
+      // string everywhere it surfaces, so a marker here can only be literal.
+      name: translate(language, "accounts.redline.evalName"),
       description: c.text,
       prompt:
         `RED LINE — the user (ME) must NOT reveal, confirm, or hint at the following: "${c.text}". ` +

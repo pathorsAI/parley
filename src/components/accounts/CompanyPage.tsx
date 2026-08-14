@@ -188,7 +188,7 @@ export function CompanyPage({
 
         {/* Triage: conflicting info + open questions, always on top. */}
         {(pairs.length > 0 || triage.length > 0) && (
-          <Section title={`⚠ ${t("accounts.triage")}`}>
+          <Section title={t("accounts.triage")}>
             {pairs.map((p) => (
               <ConflictPairCard key={`${p.a.id}|${p.b.id}`} a={p.a} b={p.b} />
             ))}

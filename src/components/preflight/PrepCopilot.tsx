@@ -11,6 +11,7 @@ import {
   Sparkles,
   Square,
   Target,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -520,8 +521,9 @@ export function PrepCopilot() {
             </p>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
               {head.redlines > 0 && (
-                <span className="text-red-600 dark:text-red-400">
-                  ⚠ {t("preflight.copilot.redlines", { n: head.redlines })}
+                <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
+                  <TriangleAlert className="size-3 shrink-0" />
+                  {t("preflight.copilot.redlines", { n: head.redlines })}
                 </span>
               )}
               {head.openQuestions > 0 && (

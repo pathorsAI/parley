@@ -13,6 +13,7 @@ import {
   Plus,
   Swords,
   Trash2,
+  TriangleAlert,
   UsersRound,
 } from "lucide-react";
 import { useAccounts, threadsOf, triageClaims, personsOf } from "../../lib/accounts/store";
@@ -142,8 +143,9 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
               }}
               badge={
                 nTriage > 0 ? (
-                  <span className="shrink-0 rounded-full bg-orange-500/15 px-1.5 text-[10px] font-semibold text-orange-700 dark:text-orange-300">
-                    ⚠{nTriage}
+                  <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-orange-500/15 px-1.5 text-[10px] font-semibold text-orange-700 dark:text-orange-300">
+                    <TriangleAlert className="size-3 shrink-0" />
+                    {nTriage}
                   </span>
                 ) : null
               }

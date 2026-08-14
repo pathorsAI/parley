@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, ChevronDown, Loader2, Sparkles } from "lucide-react";
+import { ArrowUp, ChevronDown, Loader2, MessageCircle, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
@@ -271,7 +271,10 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
           ))}
           {askCards.map((c) => (
             <div key={c.id} className="rounded-lg border bg-muted/30 px-3 py-2 text-sm">
-              <p className="mb-1 text-xs font-medium text-muted-foreground">💬 {c.question}</p>
+              <p className="mb-1 flex items-start gap-1.5 text-xs font-medium text-muted-foreground">
+                <MessageCircle className="mt-0.5 size-3.5 shrink-0" />
+                <span className="min-w-0">{c.question}</span>
+              </p>
               {c.answer ? (
                 <div className="prose prose-sm dark:prose-invert max-w-none">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{c.answer}</ReactMarkdown>
