@@ -116,6 +116,28 @@ function ensureCleanWorktree() {
   }
 }
 
+/**
+ * A release must sit on top of what main already has. Cutting one from a
+ * worktree is normal here (main is often checked out elsewhere), so instead of
+ * demanding a branch NAME this requires HEAD to be origin/main's commit: the
+ * version bump then lands on main, and the tag points at released code.
+ * Without it the bump commits onto whatever branch is checked out and the final
+ * push is rejected as non-fast-forward, stranding a local tag and a bump commit
+ * off main — which has happened twice.
+ */
+function ensureOnMain() {
+  run("git", ["fetch", "origin", "main", "--quiet"]);
+  const head = output("git", ["rev-parse", "HEAD"]);
+  const main = output("git", ["rev-parse", "origin/main"]);
+  if (head !== main) {
+    console.error("Release requires HEAD to be exactly origin/main (releases are cut from main).");
+    console.error(`  HEAD:        ${head}`);
+    console.error(`  origin/main: ${main}`);
+    console.error("Fix with: git fetch origin main && git reset --hard origin/main");
+    process.exit(1);
+  }
+}
+
 const { versionArg, message, notesFile } = parseArgs(process.argv.slice(2));
 
 if (!versionArg || (!message && !notesFile)) {
@@ -149,6 +171,7 @@ if (process.env.DRY_RUN === "1") {
 }
 
 ensureCleanWorktree();
+ensureOnMain();
 
 packageJson.version = nextVersion;
 writeJson("package.json", packageJson);
@@ -179,7 +202,10 @@ run("git", [
 ]);
 run("git", ["commit", "-m", `Release ${tag}`]);
 run("git", ["tag", "-a", tag, "-m", releaseNotes]);
-run("git", ["push", "origin", "HEAD"]);
+// Explicit destination: HEAD may be a worktree branch that merely POINTS at
+// main's commit (see ensureOnMain), and a bare `push origin HEAD` would then
+// target that branch instead of main.
+run("git", ["push", "origin", "HEAD:main"]);
 run("git", ["push", "origin", tag]);
 
 console.log(`Released ${tag}. GitHub Actions will build the app and attach bundles to the draft release.`);
