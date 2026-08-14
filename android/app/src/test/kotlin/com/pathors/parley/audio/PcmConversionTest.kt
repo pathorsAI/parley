@@ -172,11 +172,11 @@ class PcmConversionTest {
         assertEquals("OpusHead", String(head, 0, 8, Charsets.US_ASCII))
 
         val buffer = ByteBuffer.wrap(head).order(ByteOrder.LITTLE_ENDIAN)
-        assertEquals(1, buffer.get(8).toInt())            // version
-        assertEquals(1, buffer.get(9).toInt())            // mono
+        assertEquals(1, buffer[8].toInt())            // version
+        assertEquals(1, buffer[9].toInt())            // mono
         assertEquals(312, buffer.getShort(10).toInt())    // pre-skip
         assertEquals(16_000, buffer.getInt(12))           // original input rate
         assertEquals(0, buffer.getShort(16).toInt())      // output gain
-        assertEquals(0, buffer.get(18).toInt())           // mapping family
+        assertEquals(0, buffer[18].toInt())           // mapping family
     }
 }

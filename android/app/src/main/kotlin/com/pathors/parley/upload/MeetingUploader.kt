@@ -8,6 +8,7 @@ import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.cloud.TranscriptSegmentDto
 import com.pathors.parley.cloud.msPrimitive
+import com.pathors.parley.util.deleteQuietly
 import java.io.File
 import java.io.IOException
 import java.util.Locale
@@ -24,6 +25,28 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+
+/**
+ * One finished recording being handed to [MeetingUploader.enqueue].
+ *
+ * The recording's parameters travel as one object rather than as a long
+ * argument list: they describe a single thing, they are always passed together,
+ * and the defaults (a fresh id, "now", a live capture) are the same at every
+ * call site.
+ *
+ * [audio] is MOVED into the queue directory by [MeetingUploader.enqueue]; the
+ * caller must not touch it afterwards.
+ */
+data class EnqueueRequest(
+    val audio: File,
+    val title: String,
+    val durationMs: Double,
+    val segments: List<TranscriptSegmentDto> = emptyList(),
+    val startedAtMs: Long = System.currentTimeMillis(),
+    val source: String = RecordingSource.LIVE,
+    val id: String = MeetingUploader.newRecordingId(),
+    val folderId: String? = null,
+)
 
 /** What one [MeetingUploader.drain] pass achieved. */
 data class DrainResult(
@@ -77,8 +100,8 @@ class MeetingUploader(
     suspend fun pendingCount(): Int = withContext(Dispatchers.IO) { queue.count() }
 
     /**
-     * Hand a finished recording to the durable queue. [audio] is MOVED into the
-     * queue directory, so the caller must not use it afterwards.
+     * Hand a finished recording to the durable queue. [EnqueueRequest.audio] is
+     * MOVED into the queue directory, so the caller must not use it afterwards.
      *
      * Segments are filtered to the finals, dropping the tentative `"-tail"`
      * segment — the same filter iOS applies before persisting.
@@ -89,49 +112,32 @@ class MeetingUploader(
      *
      * @return the queued recording's id, or null when it was dropped as too short.
      */
-    suspend fun enqueue(
-        audio: File,
-        title: String,
-        durationMs: Double,
-        segments: List<TranscriptSegmentDto>,
-        startedAtMs: Long = System.currentTimeMillis(),
-        source: String = RecordingSource.LIVE,
-        id: String = newRecordingId(),
-        folderId: String? = null,
-    ): String? = withContext(Dispatchers.IO) {
-        if (source == RecordingSource.LIVE && durationMs < MIN_LIVE_DURATION_MS) {
-            audio.delete()
+    suspend fun enqueue(request: EnqueueRequest): String? = withContext(Dispatchers.IO) {
+        if (request.source == RecordingSource.LIVE &&
+            request.durationMs < MIN_LIVE_DURATION_MS
+        ) {
+            request.audio.deleteQuietly()
             return@withContext null
         }
         val pending = PendingUpload(
-            id = id,
-            title = title,
-            source = source,
-            startedAtMs = startedAtMs,
-            durationMs = durationMs,
-            segments = segments.filter { it.isFinal && !it.id.endsWith(TAIL_SUFFIX) },
-            folderId = folderId,
+            id = request.id,
+            title = request.title,
+            source = request.source,
+            startedAtMs = request.startedAtMs,
+            durationMs = request.durationMs,
+            segments = request.segments.filter { it.isFinal && !it.id.endsWith(TAIL_SUFFIX) },
+            folderId = request.folderId,
         )
-        queue.enqueue(pending, audio)
-        id
+        queue.enqueue(pending, request.audio)
+        request.id
     }
 
     /**
      * [enqueue] then immediately try to upload — what the "stop recording" path
      * calls. Returns null when the recording was dropped as too short.
      */
-    suspend fun finishAndUpload(
-        audio: File,
-        title: String,
-        durationMs: Double,
-        segments: List<TranscriptSegmentDto>,
-        startedAtMs: Long = System.currentTimeMillis(),
-        source: String = RecordingSource.LIVE,
-        id: String = newRecordingId(),
-        folderId: String? = null,
-    ): DrainResult? {
-        enqueue(audio, title, durationMs, segments, startedAtMs, source, id, folderId)
-            ?: return null
+    suspend fun finishAndUpload(request: EnqueueRequest): DrainResult? {
+        enqueue(request) ?: return null
         return drain()
     }
 

@@ -262,9 +262,73 @@ class MicCapture @JvmOverloads constructor(
         val readBytes = sourceRate * Pcm.CHUNK_MILLIS / 1000 * Pcm.BYTES_PER_SAMPLE
         val readBuf = ByteArray(readBytes)
         val floats = FloatArray(readBytes / Pcm.BYTES_PER_SAMPLE)
-        val chunk = ByteArray(chunkBytes)
-        var chunkLen = 0
+        val sender = ChunkSender(scope)
+
+        try {
+            loop@ while (!stopRequested && sender.open) {
+                val read = record.read(readBuf, 0, readBytes)
+                when {
+                    read > 0 ->
+                        if (!deliverRead(sender, resampler, readBuf, read, floats)) break@loop
+                    read == 0 -> continue@loop // no data yet; poll the stop flag again
+                    else -> throw MicCaptureException.ReadFailed(read)
+                }
+            }
+            // Tail: whatever the resampler still holds, plus a short final chunk.
+            if (sender.open) flushTail(sender, resampler)
+            scope.close()
+        } catch (e: Throwable) {
+            scope.close(e)
+        }
+    }
+
+    /**
+     * Resample one `AudioRecord.read` result when the device forced us off
+     * 16 kHz, then hand it to [sender].
+     *
+     * @return false when the collector is gone and the read loop should stop.
+     */
+    private fun deliverRead(
+        sender: ChunkSender,
+        resampler: Resampler?,
+        readBuf: ByteArray,
+        read: Int,
+        floats: FloatArray,
+    ): Boolean {
+        val payload: ByteArray
+        val payloadLen: Int
+        if (resampler == null) {
+            payload = readBuf
+            payloadLen = read
+        } else {
+            val n = Pcm.s16leToFloat(readBuf, 0, read, floats)
+            val resampled = resampler.process(floats, n)
+            payload = Pcm.floatToS16le(resampled, resampled.size)
+            payloadLen = payload.size
+        }
+        return payloadLen <= 0 || sender.deliver(payload, payloadLen)
+    }
+
+    /** Everything the resampler still holds, then the short final chunk. */
+    private fun flushTail(sender: ChunkSender, resampler: Resampler?) {
+        if (resampler != null) {
+            val tail = resampler.flush()
+            if (tail.isNotEmpty()) sender.deliver(Pcm.floatToS16le(tail, tail.size), tail.size * 2)
+        }
+        sender.flushPartial()
+    }
+
+    /**
+     * Cuts the reader thread's variable-sized reads into exactly [chunkBytes]
+     * emissions, meters each one, and hands them to the collector.
+     */
+    private inner class ChunkSender(private val scope: ProducerScope<ByteArray>) {
+        private val chunk = ByteArray(chunkBytes)
+        private var chunkLen = 0
+
+        /** False once the collector has gone away and nothing more can be sent. */
         var open = true
+            private set
 
         /** @return false when the collector is gone and we should stop. */
         fun deliver(bytes: ByteArray, length: Int): Boolean {
@@ -287,41 +351,11 @@ class MicCapture @JvmOverloads constructor(
             return true
         }
 
-        try {
-            loop@ while (!stopRequested && open) {
-                val read = record.read(readBuf, 0, readBytes)
-                when {
-                    read > 0 -> {
-                        val payload: ByteArray
-                        val payloadLen: Int
-                        if (resampler == null) {
-                            payload = readBuf
-                            payloadLen = read
-                        } else {
-                            val n = Pcm.s16leToFloat(readBuf, 0, read, floats)
-                            val resampled = resampler.process(floats, n)
-                            payload = Pcm.floatToS16le(resampled, resampled.size)
-                            payloadLen = payload.size
-                        }
-                        if (payloadLen > 0 && !deliver(payload, payloadLen)) break@loop
-                    }
-                    read == 0 -> continue@loop // no data yet; poll the stop flag again
-                    else -> throw MicCaptureException.ReadFailed(read)
-                }
+        /** Emit whatever is left of a partial chunk. */
+        fun flushPartial() {
+            if (chunkLen > 0) {
+                scope.trySendBlocking(chunk.copyOf(chunkLen))
             }
-            // Tail: whatever the resampler still holds, plus a short final chunk.
-            if (open) {
-                if (resampler != null) {
-                    val tail = resampler.flush()
-                    if (tail.isNotEmpty()) deliver(Pcm.floatToS16le(tail, tail.size), tail.size * 2)
-                }
-                if (chunkLen > 0) {
-                    scope.trySendBlocking(chunk.copyOf(chunkLen))
-                }
-            }
-            scope.close()
-        } catch (e: Throwable) {
-            scope.close(e)
         }
     }
 

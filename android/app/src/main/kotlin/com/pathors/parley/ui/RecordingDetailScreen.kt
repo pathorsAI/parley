@@ -46,9 +46,10 @@ import com.pathors.parley.cloud.RecordingMeta
  * recording — the phone never runs that pipeline itself, it only displays what
  * came back (`analyzed: false` simply means the sections are absent).
  *
- * TODO: audio playback. The blob is one `GET /recordings/{id}/audio` away
- * (`CloudClient.downloadAudio` streams it to a file), but a player, a scrubber
- * and transcript-follow are their own piece of work and are out of scope here.
+ * Audio playback is deliberately out of the MVP — see the PR #228 description.
+ * The blob is one `GET /recordings/{id}/audio` away (`CloudClient.downloadAudio`
+ * streams it to a file), but a player, a scrubber and transcript-follow are
+ * their own piece of work.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

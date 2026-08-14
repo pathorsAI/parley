@@ -4,6 +4,7 @@ import android.content.Context
 import com.pathors.parley.cloud.CloudJson
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.TranscriptSegmentDto
+import com.pathors.parley.util.deleteQuietly
 import java.io.File
 import kotlinx.serialization.Serializable
 
@@ -73,11 +74,11 @@ class PendingUploadQueue(private val directory: File) {
         directory.mkdirs()
         val destination = audioFile(pending.id)
         if (audioSource.absolutePath != destination.absolutePath) {
-            if (destination.exists()) destination.delete()
+            if (destination.exists()) destination.deleteQuietly()
             if (!audioSource.renameTo(destination)) {
                 // Different filesystem (cacheDir → filesDir on some devices): copy.
                 audioSource.copyTo(destination, overwrite = true)
-                audioSource.delete()
+                audioSource.deleteQuietly()
             }
         }
         writeManifest(pending)
@@ -89,10 +90,10 @@ class PendingUploadQueue(private val directory: File) {
         val target = manifestFile(pending.id)
         val temp = File(directory, "${pending.id}.json.tmp")
         temp.writeText(CloudJson.encodeToString(PendingUpload.serializer(), pending))
-        if (target.exists()) target.delete()
+        if (target.exists()) target.deleteQuietly()
         if (!temp.renameTo(target)) {
             temp.copyTo(target, overwrite = true)
-            temp.delete()
+            temp.deleteQuietly()
         }
     }
 
@@ -116,8 +117,8 @@ class PendingUploadQueue(private val directory: File) {
 
     /** Drop a recording from the queue — called only after a fully successful upload. */
     fun remove(id: String) {
-        audioFile(id).delete()
-        manifestFile(id).delete()
+        audioFile(id).deleteQuietly()
+        manifestFile(id).deleteQuietly()
     }
 
     /** Total bytes the queue is holding on disk, for a "waiting to upload" readout. */

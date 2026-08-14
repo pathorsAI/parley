@@ -5,6 +5,7 @@ import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.util.Log
+import com.pathors.parley.util.deleteQuietly
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -258,39 +259,14 @@ class OggOpusEncoder private constructor(
      * until the encoder reports end of stream.
      */
     private fun drainOutput(endOfStream: Boolean) {
+        val timeout = if (endOfStream) DEQUEUE_TIMEOUT_US else 0L
         var idle = 0
         while (true) {
-            val timeout = if (endOfStream) DEQUEUE_TIMEOUT_US else 0L
             val index = codec.dequeueOutputBuffer(bufferInfo, timeout)
             when {
                 index >= 0 -> {
                     idle = 0
-                    val isConfig =
-                        (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
-                    val buffer = codec.getOutputBuffer(index)
-                    if (buffer != null && bufferInfo.size > 0) {
-                        // clear() first: setting position before limit can throw
-                        // if the codec left a limit below our offset.
-                        buffer.clear()
-                        buffer.position(bufferInfo.offset)
-                        buffer.limit(bufferInfo.offset + bufferInfo.size)
-                        if (isConfig) {
-                            // Header blob, not audio: keep it in case the output
-                            // format turns out not to carry the CSD itself.
-                            if (capturedCsd.size < 3) {
-                                val copy = ByteArray(bufferInfo.size)
-                                buffer.get(copy)
-                                capturedCsd.add(copy)
-                            }
-                        } else {
-                            if (!muxerStarted) startMuxer(codec.outputFormat)
-                            muxer.writeSampleData(trackIndex, buffer, bufferInfo)
-                            packetsWritten++
-                        }
-                    }
-                    val eos = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
-                    codec.releaseOutputBuffer(index, false)
-                    if (eos) return
+                    if (consumeOutputBuffer(index)) return
                 }
 
                 index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
@@ -311,6 +287,50 @@ class OggOpusEncoder private constructor(
                 }
             }
         }
+    }
+
+    /**
+     * Route one ready output buffer — CSD blob or Opus packet — and release it.
+     *
+     * @return true when that buffer carried the end-of-stream flag, i.e. the
+     *   drain loop is done.
+     */
+    private fun consumeOutputBuffer(index: Int): Boolean {
+        val isConfig = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
+        val buffer = codec.getOutputBuffer(index)
+        if (buffer != null && bufferInfo.size > 0) {
+            // clear() first: setting position before limit can throw
+            // if the codec left a limit below our offset.
+            buffer.clear()
+            buffer.position(bufferInfo.offset)
+            buffer.limit(bufferInfo.offset + bufferInfo.size)
+            if (isConfig) {
+                captureCsd(buffer)
+            } else {
+                writePacket(buffer)
+            }
+        }
+        val eos = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+        codec.releaseOutputBuffer(index, false)
+        return eos
+    }
+
+    /**
+     * Header blob, not audio: keep it in case the output format turns out not to
+     * carry the CSD itself.
+     */
+    private fun captureCsd(buffer: ByteBuffer) {
+        if (capturedCsd.size < 3) {
+            val copy = ByteArray(bufferInfo.size)
+            buffer.get(copy)
+            capturedCsd.add(copy)
+        }
+    }
+
+    private fun writePacket(buffer: ByteBuffer) {
+        if (!muxerStarted) startMuxer(codec.outputFormat)
+        muxer.writeSampleData(trackIndex, buffer, bufferInfo)
+        packetsWritten++
     }
 
     private fun startMuxer(format: MediaFormat) {
@@ -437,7 +457,7 @@ class OggOpusEncoder private constructor(
 
             val muxer = try {
                 outputFile.parentFile?.mkdirs()
-                if (outputFile.exists()) outputFile.delete()
+                if (outputFile.exists()) outputFile.deleteQuietly()
                 MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_OGG)
             } catch (e: Exception) {
                 runCatching { codec.stop() }

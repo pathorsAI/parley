@@ -13,6 +13,7 @@ import com.pathors.parley.cloud.TranscriptSegmentDto
 import com.pathors.parley.kit.SttRelayClient
 import com.pathors.parley.kit.SttRelayEvent
 import com.pathors.parley.kit.TranscriptSegment
+import com.pathors.parley.upload.EnqueueRequest
 import com.pathors.parley.upload.MeetingUploader
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -204,11 +205,13 @@ class ImportSession(
         _state.value = ImportState.Uploading
         val id = try {
             uploader.enqueue(
-                audio = audio,
-                title = title,
-                durationMs = decodedMs.toDouble(),
-                segments = finalSegments(),
-                source = RecordingSource.UPLOAD,
+                EnqueueRequest(
+                    audio = audio,
+                    title = title,
+                    durationMs = decodedMs.toDouble(),
+                    segments = finalSegments(),
+                    source = RecordingSource.UPLOAD,
+                )
             )
         } catch (e: Throwable) {
             _state.value = ImportState.Failed(ImportFailure.UPLOAD_FAILED, e.message)

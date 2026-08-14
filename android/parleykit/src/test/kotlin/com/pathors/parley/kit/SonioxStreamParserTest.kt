@@ -13,6 +13,9 @@ import org.junit.Test
  * `SonioxStreamParserTests.swift`), driven with realistic Soniox relay frames
  * (the relay is a byte-for-byte passthrough downstream).
  */
+/** The id the parser gives its one tentative segment, for the `"mix"` prefix. */
+private const val MIX_TAIL_ID = "mix-tail"
+
 class SonioxStreamParserTest {
     private val emitted = mutableListOf<TranscriptSegment>()
     private lateinit var parser: SonioxStreamParser
@@ -40,7 +43,7 @@ class SonioxStreamParserTest {
         assertEquals("mix-0", emitted[0].id)
         assertEquals("你好，請", emitted[0].text)
         assertTrue(emitted[0].isFinal)
-        assertEquals("mix-tail", emitted[1].id)
+        assertEquals(MIX_TAIL_ID, emitted[1].id)
         assertEquals("問", emitted[1].text)
         assertFalse(emitted[1].isFinal)
         assertEquals(1, emitted[1].speaker)
@@ -110,10 +113,10 @@ class SonioxStreamParserTest {
         )
 
         // Frame 1: tail only. Frame 2: solid run + empty tail (clears the row).
-        assertEquals("mix-tail", emitted[0].id)
+        assertEquals(MIX_TAIL_ID, emitted[0].id)
         assertEquals("draft", emitted[0].text)
         val last = emitted.last()
-        assertEquals("mix-tail", last.id)
+        assertEquals(MIX_TAIL_ID, last.id)
         assertEquals("tail cleared once text finalized", "", last.text)
     }
 

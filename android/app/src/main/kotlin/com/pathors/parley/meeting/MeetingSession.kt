@@ -12,6 +12,7 @@ import com.pathors.parley.cloud.TranscriptSegmentDto
 import com.pathors.parley.kit.SttRelayClient
 import com.pathors.parley.kit.SttRelayEvent
 import com.pathors.parley.kit.TranscriptSegment
+import com.pathors.parley.upload.EnqueueRequest
 import com.pathors.parley.upload.MeetingUploader
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -246,27 +247,33 @@ class MeetingSession(
         }
         eventsJob?.cancel()
 
+        // stop() can win the race against runCapture() reaching the encoder, so
+        // there may be nothing to finish. Pin it to a local: from here on the
+        // type system carries the fact that we have an encoder.
+        val encoder = this.encoder
+        if (encoder == null) {
+            _state.value = MeetingState.Failed(MeetingFailure.ENCODER_UNAVAILABLE)
+            return
+        }
         val audio = try {
-            withContext(Dispatchers.IO) { encoder?.finish() }
+            withContext(Dispatchers.IO) { encoder.finish() }
         } catch (e: OpusEncodeException) {
             _state.value = MeetingState.Failed(MeetingFailure.ENCODER_UNAVAILABLE, e.message)
             return
         }
-        if (audio == null) {
-            _state.value = MeetingState.Failed(MeetingFailure.ENCODER_UNAVAILABLE)
-            return
-        }
-        val durationMs = (encoder?.durationMs ?: 0L).toDouble()
+        val durationMs = encoder.durationMs.toDouble()
 
         _state.value = MeetingState.Uploading
         val id = try {
             uploader.enqueue(
-                audio = audio,
-                title = title,
-                durationMs = durationMs,
-                segments = finalSegments(),
-                startedAtMs = startedAtMs,
-                source = RecordingSource.LIVE,
+                EnqueueRequest(
+                    audio = audio,
+                    title = title,
+                    durationMs = durationMs,
+                    segments = finalSegments(),
+                    startedAtMs = startedAtMs,
+                    source = RecordingSource.LIVE,
+                )
             )
         } catch (e: Throwable) {
             _state.value = MeetingState.Failed(MeetingFailure.UPLOAD_FAILED, e.message)

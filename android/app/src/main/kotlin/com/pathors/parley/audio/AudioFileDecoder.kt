@@ -341,86 +341,138 @@ object AudioFileDecoder {
         emitter: ChunkEmitter,
     ) {
         codec.start()
-        val bufferInfo = MediaCodec.BufferInfo()
-        val ready = ArrayList<ByteArray>(4)
-        var pcmEncoding = Pcm.ENCODING_PCM_16BIT
-        var sawInputEos = false
-        var sawOutputEos = false
+        val loop = CodecLoop()
         var stall = 0
 
-        while (!sawOutputEos) {
+        while (!loop.sawOutputEos) {
             currentCoroutineContext().ensureActive()
             var progressed = false
 
-            if (!sawInputEos) {
-                val inIndex = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_US)
-                if (inIndex >= 0) {
-                    progressed = true
-                    val buffer = codec.getInputBuffer(inIndex)
-                    val size = if (buffer == null) -1 else {
-                        buffer.clear()
-                        extractor.readSampleData(buffer, 0)
-                    }
-                    if (size < 0) {
-                        codec.queueInputBuffer(
-                            inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM,
-                        )
-                        sawInputEos = true
-                    } else {
-                        codec.queueInputBuffer(
-                            inIndex, 0, size, extractor.sampleTime.coerceAtLeast(0L), 0,
-                        )
-                        extractor.advance()
-                    }
-                }
-            }
-
-            val outIndex = codec.dequeueOutputBuffer(bufferInfo, DEQUEUE_TIMEOUT_US)
-            when {
-                outIndex >= 0 -> {
-                    progressed = true
-                    val isConfig =
-                        (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
-                    if (!isConfig && bufferInfo.size > 0) {
-                        val buffer = codec.getOutputBuffer(outIndex)
-                        if (buffer != null) {
-                            ready.clear()
-                            sink.feed(buffer, bufferInfo.offset, bufferInfo.size, pcmEncoding, ready)
-                        }
-                    }
-                    val eos = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
-                    codec.releaseOutputBuffer(outIndex, false)
-                    // Emit after releasing: a slow collector must not pin a codec buffer.
-                    if (ready.isNotEmpty()) {
-                        emitter.emitAll(ready)
-                        ready.clear()
-                    }
-                    if (eos) sawOutputEos = true
-                }
-
-                outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                    progressed = true
-                    val format = codec.outputFormat
-                    pcmEncoding = format.intOr(MediaFormat.KEY_PCM_ENCODING, Pcm.ENCODING_PCM_16BIT)
-                    val rate = format.intOr(MediaFormat.KEY_SAMPLE_RATE, sink.sourceRate)
-                    val channels = format.intOr(MediaFormat.KEY_CHANNEL_COUNT, sink.channels)
-                    ready.clear()
-                    sink.reconfigure(rate, channels, ready)
-                    if (ready.isNotEmpty()) {
-                        emitter.emitAll(ready)
-                        ready.clear()
-                    }
-                    Log.i(TAG, "decoder output: $rate Hz, $channels ch, encoding $pcmEncoding")
-                }
-
-                outIndex == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> progressed = true
-            }
+            if (!loop.sawInputEos) progressed = feedInput(extractor, codec, loop)
+            if (pumpOutput(codec, sink, emitter, loop)) progressed = true
 
             if (progressed) {
                 stall = 0
             } else if (++stall > MAX_STALL_ITERATIONS) {
                 throw AudioDecodeException.DecodeFailed("decoder stalled before end of stream")
             }
+        }
+    }
+
+    /** The mutable state of one [decodeWithCodec] run, so the halves can share it. */
+    private class CodecLoop {
+        val bufferInfo = MediaCodec.BufferInfo()
+        val ready = ArrayList<ByteArray>(4)
+        var pcmEncoding = Pcm.ENCODING_PCM_16BIT
+        var sawInputEos = false
+        var sawOutputEos = false
+    }
+
+    /**
+     * Hand the extractor's next sample to the codec, flagging end of stream once
+     * it runs dry.
+     *
+     * @return true when an input buffer was available this round.
+     */
+    private fun feedInput(
+        extractor: MediaExtractor,
+        codec: MediaCodec,
+        loop: CodecLoop,
+    ): Boolean {
+        val inIndex = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_US)
+        if (inIndex < 0) return false
+        val buffer = codec.getInputBuffer(inIndex)
+        val size = if (buffer == null) -1 else {
+            buffer.clear()
+            extractor.readSampleData(buffer, 0)
+        }
+        if (size < 0) {
+            codec.queueInputBuffer(
+                inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM,
+            )
+            loop.sawInputEos = true
+        } else {
+            codec.queueInputBuffer(
+                inIndex, 0, size, extractor.sampleTime.coerceAtLeast(0L), 0,
+            )
+            extractor.advance()
+        }
+        return true
+    }
+
+    /**
+     * Take one round off the codec's output side.
+     *
+     * @return true when the codec had something for us — a buffer, a format
+     *   change or a buffer-set change — i.e. the loop is not stalled.
+     */
+    private suspend fun pumpOutput(
+        codec: MediaCodec,
+        sink: Pcm16Sink,
+        emitter: ChunkEmitter,
+        loop: CodecLoop,
+    ): Boolean {
+        val outIndex = codec.dequeueOutputBuffer(loop.bufferInfo, DEQUEUE_TIMEOUT_US)
+        return when {
+            outIndex >= 0 -> {
+                consumeOutput(codec, sink, emitter, loop, outIndex)
+                true
+            }
+
+            outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                onOutputFormatChanged(codec, sink, emitter, loop)
+                true
+            }
+
+            outIndex == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> true
+
+            else -> false
+        }
+    }
+
+    private suspend fun consumeOutput(
+        codec: MediaCodec,
+        sink: Pcm16Sink,
+        emitter: ChunkEmitter,
+        loop: CodecLoop,
+        outIndex: Int,
+    ) {
+        val info = loop.bufferInfo
+        val isConfig = (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
+        if (!isConfig && info.size > 0) {
+            val buffer = codec.getOutputBuffer(outIndex)
+            if (buffer != null) {
+                loop.ready.clear()
+                sink.feed(buffer, info.offset, info.size, loop.pcmEncoding, loop.ready)
+            }
+        }
+        val eos = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+        codec.releaseOutputBuffer(outIndex, false)
+        // Emit after releasing: a slow collector must not pin a codec buffer.
+        emitReady(emitter, loop)
+        if (eos) loop.sawOutputEos = true
+    }
+
+    private suspend fun onOutputFormatChanged(
+        codec: MediaCodec,
+        sink: Pcm16Sink,
+        emitter: ChunkEmitter,
+        loop: CodecLoop,
+    ) {
+        val format = codec.outputFormat
+        loop.pcmEncoding = format.intOr(MediaFormat.KEY_PCM_ENCODING, Pcm.ENCODING_PCM_16BIT)
+        val rate = format.intOr(MediaFormat.KEY_SAMPLE_RATE, sink.sourceRate)
+        val channels = format.intOr(MediaFormat.KEY_CHANNEL_COUNT, sink.channels)
+        loop.ready.clear()
+        sink.reconfigure(rate, channels, loop.ready)
+        emitReady(emitter, loop)
+        Log.i(TAG, "decoder output: $rate Hz, $channels ch, encoding ${loop.pcmEncoding}")
+    }
+
+    private suspend fun emitReady(emitter: ChunkEmitter, loop: CodecLoop) {
+        if (loop.ready.isNotEmpty()) {
+            emitter.emitAll(loop.ready)
+            loop.ready.clear()
         }
     }
 

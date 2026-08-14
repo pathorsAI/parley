@@ -1,5 +1,6 @@
 package com.pathors.parley.cloud
 
+import com.pathors.parley.util.deleteQuietly
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -167,10 +168,10 @@ class CloudClient(
                 body.byteStream().use { input ->
                     part.outputStream().use { output -> input.copyTo(output) }
                 }
-                if (destination.exists()) destination.delete()
+                if (destination.exists()) destination.deleteQuietly()
                 if (!part.renameTo(destination)) {
                     part.copyTo(destination, overwrite = true)
-                    part.delete()
+                    part.deleteQuietly()
                 }
             }
         }

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
@@ -133,39 +134,13 @@ fun HomeScreen(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (meetingLive) {
-                item {
-                    ActiveMeetingCard(onClick = onRecord)
-                }
-            }
-            state.error?.let { error ->
-                item { ErrorBanner(error) }
-            }
-            if (state.pending.isNotEmpty()) {
-                item {
-                    PendingHeader(
-                        count = state.pending.size,
-                        uploading = state.uploading,
-                        onUpload = { viewModel.uploadNow() },
-                    )
-                }
-                items(state.pending, key = { it.id }) { pending -> PendingRow(pending) }
-            }
-            if (state.loading && state.recordings.isEmpty()) {
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 32.dp),
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        CircularProgressIndicator()
-                    }
-                }
-            }
-            if (!state.loading && state.recordings.isEmpty() && state.pending.isEmpty()) {
-                item { EmptyLibrary() }
-            }
+            libraryHeader(
+                meetingLive = meetingLive,
+                state = state,
+                onRecord = onRecord,
+                onUpload = { viewModel.uploadNow() },
+            )
+            libraryPlaceholders(state)
             items(state.recordings, key = { it.id }) { recording ->
                 RecordingRow(recording, onClick = { onOpenRecording(recording.id) })
             }
@@ -177,6 +152,58 @@ fun HomeScreen(
             viewModel = viewModel,
             onDismiss = { showAccount = false },
         )
+    }
+}
+
+/**
+ * The rows pinned above the cloud library: a meeting that is still running, the
+ * last refresh error, and whatever is still queued on the device.
+ */
+private fun LazyListScope.libraryHeader(
+    meetingLive: Boolean,
+    state: HomeViewModel.UiState,
+    onRecord: () -> Unit,
+    onUpload: () -> Unit,
+) {
+    if (meetingLive) {
+        item {
+            ActiveMeetingCard(onClick = onRecord)
+        }
+    }
+    state.error?.let { error ->
+        item { ErrorBanner(error) }
+    }
+    if (state.pending.isNotEmpty()) {
+        item {
+            PendingHeader(
+                count = state.pending.size,
+                uploading = state.uploading,
+                onUpload = onUpload,
+            )
+        }
+        items(state.pending, key = { it.id }) { pending -> PendingRow(pending) }
+    }
+}
+
+/** What stands in for the library while it is loading, or when there is none. */
+private fun LazyListScope.libraryPlaceholders(state: HomeViewModel.UiState) {
+    if (state.loading && state.recordings.isEmpty()) {
+        item { LoadingRow() }
+    }
+    if (!state.loading && state.recordings.isEmpty() && state.pending.isEmpty()) {
+        item { EmptyLibrary() }
+    }
+}
+
+@Composable
+private fun LoadingRow() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 32.dp),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        CircularProgressIndicator()
     }
 }
 
