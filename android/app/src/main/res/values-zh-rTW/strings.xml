@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Traditional Chinese — first-class, not a translation afterthought.
+  Keep in lockstep with values/strings.xml: same keys, same placeholders.
+-->
+<resources>
+    <string name="app_name">Parley</string>
+
+    <!-- Shared actions -->
+    <string name="action_close">關閉</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_retry">再試一次</string>
+    <string name="action_back">返回</string>
+    <string name="action_refresh">重新整理</string>
+    <string name="action_stop">停止</string>
+
+    <!-- Sign in -->
+    <string name="sign_in_tagline">錄下會議、讀懂逐字稿，走到哪都能用。</string>
+    <string name="sign_in_button">登入</string>
+    <string name="sign_in_waiting">等待瀏覽器回傳登入狀態…</string>
+    <string name="sign_in_no_browser">找不到可以用來登入的瀏覽器。</string>
+    <string name="sign_in_failed">登入沒有完成（%1$s）。</string>
+
+    <!-- Home -->
+    <string name="home_title">錄音</string>
+    <string name="home_account">帳號</string>
+    <string name="home_empty_title">還沒有任何錄音</string>
+    <string name="home_empty_body">錄一場會議，或匯入你手上既有的音訊檔。</string>
+    <string name="home_record">錄一場會議</string>
+    <string name="home_import">匯入錄音檔</string>
+    <string name="home_pending_header">等待上傳</string>
+    <string name="home_pending_badge">%1$d</string>
+    <string name="home_pending_retry">立即上傳</string>
+    <string name="home_error_network">目前連不上雲端。網路恢復後錄音會自動載入。</string>
+    <string name="home_error_server">雲端回傳了錯誤。</string>
+    <string name="home_error_signed_out">登入階段已過期，請重新登入。</string>
+    <string name="home_recording_in_progress">正在錄一場會議</string>
+    <string name="home_recording_in_progress_action">回到會議</string>
+    <string name="recording_untitled">未命名錄音</string>
+    <string name="recording_source_upload">匯入</string>
+    <string name="recording_source_live">錄製</string>
+
+    <!-- Account sheet -->
+    <string name="account_title">帳號</string>
+    <string name="account_plan">方案：%1$s</string>
+    <string name="account_usage_title">本期用量</string>
+    <string name="account_stt_usage">語音轉錄：%1$s／%2$s</string>
+    <string name="account_llm_usage">分析額度：%1$s／%2$s</string>
+    <string name="account_unlimited">無上限</string>
+    <string name="account_period_reset">%1$s 重置</string>
+    <string name="account_loading">載入中…</string>
+    <string name="account_load_failed">無法載入帳號資訊。</string>
+    <string name="account_sign_out">登出</string>
+
+    <!-- Meeting -->
+    <string name="meeting_title">會議</string>
+    <string name="meeting_permission_title">需要麥克風權限</string>
+    <string name="meeting_permission_body">Parley 會在這台裝置上錄音，並即時傳送以產生逐字稿。</string>
+    <string name="meeting_permission_grant">允許使用麥克風</string>
+    <string name="meeting_permission_denied">麥克風權限被拒絕。請到系統設定開啟後再錄音。</string>
+    <string name="meeting_connecting">連線中…</string>
+    <string name="meeting_recording">錄音中</string>
+    <string name="meeting_finishing">正在收尾逐字稿…</string>
+    <string name="meeting_uploading">上傳中…</string>
+    <string name="meeting_uploaded">已上傳</string>
+    <string name="meeting_queued">已存在這台裝置，網路恢復後會自動上傳。</string>
+    <string name="meeting_dropped">錄音不到兩秒，因此沒有保存。</string>
+    <string name="meeting_transcript_empty">有人開口說話後，逐字稿會顯示在這裡。</string>
+    <string name="meeting_issue_quota">轉錄已停止：託管轉錄額度已用完。錄音仍在繼續。</string>
+    <string name="meeting_issue_error">轉錄意外中斷。錄音仍在繼續。</string>
+    <string name="meeting_title_format">會議 %1$s</string>
+    <string name="speaker_label">說話者 %1$d</string>
+    <string name="speaker_unknown">說話者</string>
+
+    <!-- Failures shared by the meeting and import flows -->
+    <string name="failure_not_signed_in">你已登出，請重新登入後再試。</string>
+    <string name="failure_mic_permission">尚未取得麥克風權限。</string>
+    <string name="failure_mic_unavailable">麥克風無法使用 —— 可能正在通話，或被其他 app 佔用。</string>
+    <string name="failure_encoder_unavailable">這台裝置無法編碼 Opus 音訊，因此無法保存錄音。</string>
+    <string name="failure_upload">錄音已存在這台裝置，但還沒能上傳。</string>
+    <string name="failure_unknown">發生了未預期的錯誤。</string>
+
+    <!-- Import -->
+    <string name="import_title">匯入錄音檔</string>
+    <string name="import_no_file">尚未選擇檔案。</string>
+    <string name="import_phase_preparing">讀取檔案中…</string>
+    <string name="import_phase_transcribing">轉錄中…</string>
+    <string name="import_phase_uploading">上傳中…</string>
+    <string name="import_phase_done">完成</string>
+    <string name="import_progress">已解碼 %1$d%%・已轉錄 %2$s</string>
+    <string name="import_length">長度 %1$s</string>
+    <string name="import_length_unknown">長度不明</string>
+    <string name="import_failure_unreadable">無法開啟這個檔案。</string>
+    <string name="import_failure_no_audio">這個檔案沒有音訊軌。</string>
+    <string name="import_failure_unsupported">這台裝置無法解碼這種音訊格式。</string>
+    <string name="import_failure_decode">這個檔案無法完整解碼。</string>
+
+    <!-- Recording detail -->
+    <string name="detail_title">錄音</string>
+    <string name="detail_load_failed">無法載入這筆錄音。</string>
+    <string name="detail_transcript">逐字稿</string>
+    <string name="detail_no_transcript">這筆錄音沒有逐字稿。</string>
+    <string name="detail_findings">觀察重點</string>
+    <string name="detail_action_items">後續行動</string>
+    <string name="detail_playback_unavailable">這個版本還不支援播放。</string>
+    <string name="detail_speakers">%1$d 位說話者</string>
+    <string name="detail_length">長度 %1$s</string>
+
+    <!-- Foreground service notification -->
+    <string name="notification_channel_name">會議錄音</string>
+    <string name="notification_channel_description">Parley 正在錄製會議時顯示。</string>
+    <string name="notification_title">正在錄製會議</string>
+    <string name="notification_text">點一下回到 Parley。</string>
+</resources>
