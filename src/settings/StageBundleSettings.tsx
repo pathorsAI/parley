@@ -14,6 +14,8 @@ import { EMPTY_BUNDLE_FILE, type CustomStageDef } from "../lib/accounts/bundleFi
 import { SALES_STAGES, type SalesStage } from "../lib/accounts/types";
 import { useStore } from "../lib/store";
 import { log } from "../lib/log";
+import { DEFAULT_ICON_NAME, resolveIcon } from "../lib/icons";
+import { IconPicker } from "../components/IconPicker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -416,7 +418,10 @@ export function ScenarioSettings() {
     const stage = emptyStage(newId("st"), name);
     await persist({
       ...file,
-      customScenarios: [...file.customScenarios, { id, name, icon: "🎯", stages: [stage] }],
+      customScenarios: [
+        ...file.customScenarios,
+        { id, name, icon: DEFAULT_ICON_NAME, stages: [stage] },
+      ],
     });
     setNewScenarioName("");
     setOpenScenario(id);
@@ -472,6 +477,7 @@ export function ScenarioSettings() {
           const custom = !sc.builtin;
           const fileDef = file.customScenarios.find((x) => x.id === sc.id);
           const shape = scenarioEditorShape(sc.order);
+          const ScIcon = resolveIcon(sc.icon);
           const isModified = (stageId: string) =>
             !!file.overrides[stageId] ||
             isCustomSalesStage(stageId) ||
@@ -488,8 +494,9 @@ export function ScenarioSettings() {
                 ) : (
                   <ChevronRight className="size-3.5 text-muted-foreground" />
                 )}
-                <span className="flex-1 font-medium">
-                  {sc.icon} {sc.name}
+                <span className="flex flex-1 items-center gap-1.5 font-medium">
+                  <ScIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  {sc.name}
                 </span>
                 {custom && (
                   <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] text-sky-700 dark:text-sky-300">
@@ -523,13 +530,11 @@ export function ScenarioSettings() {
                       </label>
                       <label className="flex flex-col gap-1 text-xs">
                         <span className="text-muted-foreground">{t("settings.scenarios.icon")}</span>
-                        <Input
-                          defaultValue={fileDef.icon ?? "🎯"}
-                          onBlur={(e) => {
-                            const v = e.target.value.trim();
-                            if (v && v !== fileDef.icon) void patchScenarioMeta(sc.id, { icon: v });
+                        <IconPicker
+                          value={fileDef.icon ?? DEFAULT_ICON_NAME}
+                          onChange={(v) => {
+                            if (v !== fileDef.icon) void patchScenarioMeta(sc.id, { icon: v });
                           }}
-                          className="h-8 w-14 text-center"
                         />
                       </label>
                       <label className="flex flex-col gap-1 text-xs">

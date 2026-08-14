@@ -18,6 +18,7 @@ import { useAccounts } from "../../lib/accounts/store";
 import { useScenarioSet } from "../../lib/accounts/useStageSet";
 import { stageFor } from "../../lib/accounts/currentStage";
 import { applyScenario } from "../../lib/meeting/scenario";
+import { resolveIcon } from "../../lib/icons";
 import type { Scenario } from "../../lib/accounts/bundles";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
@@ -112,11 +113,17 @@ export function IntelligenceBoard() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="general">{t("board.type.general")}</SelectItem>
-            {scenarios.list.map((s) => (
-              <SelectItem key={s.id} value={s.id}>
-                {s.icon} {s.name}
-              </SelectItem>
-            ))}
+            {scenarios.list.map((s) => {
+              // Scenario.icon is an ICON_REGISTRY key, not an emoji — rendering
+              // it as text would print "handshake Sales".
+              const Icon = resolveIcon(s.icon);
+              return (
+                <SelectItem key={s.id} value={s.id}>
+                  <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                  {s.name}
+                </SelectItem>
+              );
+            })}
           </SelectContent>
         </Select>
         {board && board.order.length > 1 && stage && (

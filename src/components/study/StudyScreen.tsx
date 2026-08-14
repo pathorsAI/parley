@@ -23,6 +23,8 @@ import {
   type ScenarioSet,
 } from "../../lib/accounts/bundles";
 import { applyScenario } from "../../lib/meeting/scenario";
+import { DEFAULT_ICON_NAME, resolveIcon } from "../../lib/icons";
+import { IconPicker } from "../IconPicker";
 import {
   BUILTIN_SCENARIO_IDS,
   type ParsedBundleFile,
@@ -427,6 +429,7 @@ function IntelSection() {
   const boardNote = (s: Scenario) =>
     s.hasBoard ? t("study.kind.liveBoard") : t("study.kind.analysisOnly");
   const selected = scenarios.byId[meetingType] ?? null;
+  const SelectedIcon = resolveIcon(selected?.icon);
 
   return (
     <div>
@@ -440,17 +443,29 @@ function IntelSection() {
               {/* Explicit children: each row carries a trailing board note that
                   the trigger would otherwise echo into 52 units of width. */}
               <SelectValue>
-                {selected ? `${selected.icon} ${selected.name}` : t("board.type.general")}
+                {/* SelectTrigger already lays the value out as a flex row. */}
+                {selected ? (
+                  <>
+                    <SelectedIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{selected.name}</span>
+                  </>
+                ) : (
+                  t("board.type.general")
+                )}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="general">{t("board.type.general")}</SelectItem>
-              {ordered.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.icon} {s.name}
-                  <span className="text-xs text-muted-foreground/60">{boardNote(s)}</span>
-                </SelectItem>
-              ))}
+              {ordered.map((s) => {
+                const Icon = resolveIcon(s.icon);
+                return (
+                  <SelectItem key={s.id} value={s.id}>
+                    <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                    {s.name}
+                    <span className="text-xs text-muted-foreground/60">{boardNote(s)}</span>
+                  </SelectItem>
+                );
+              })}
               <SelectItem value={NEW_KIND_VALUE} className="text-muted-foreground">
                 {t("study.kind.add")}
               </SelectItem>
@@ -463,24 +478,28 @@ function IntelSection() {
         // No scenario picked yet: the empty state is the picker, not a dead end.
         <div className="flex flex-col gap-2">
           <p className="mb-1 text-sm text-muted-foreground">{t("study.intel.pick")}</p>
-          {ordered.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => pickType(s.id)}
-              className="cursor-pointer rounded-lg border bg-muted/20 px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-muted/40"
-            >
-              <div className="text-sm font-medium">
-                {s.icon} {s.name}
-                <span className="ml-1.5 text-xs font-normal text-muted-foreground/60">
-                  {boardNote(s)}
-                </span>
-              </div>
-              {descOf(s.id) && (
-                <div className="mt-0.5 text-xs text-muted-foreground">{descOf(s.id)}</div>
-              )}
-            </button>
-          ))}
+          {ordered.map((s) => {
+            const Icon = resolveIcon(s.icon);
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => pickType(s.id)}
+                className="cursor-pointer rounded-lg border bg-muted/20 px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-muted/40"
+              >
+                <div className="flex items-center gap-1.5 text-sm font-medium">
+                  <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                  {s.name}
+                  <span className="text-xs font-normal text-muted-foreground/60">
+                    {boardNote(s)}
+                  </span>
+                </div>
+                {descOf(s.id) && (
+                  <div className="mt-0.5 text-xs text-muted-foreground">{descOf(s.id)}</div>
+                )}
+              </button>
+            );
+          })}
           <button
             type="button"
             onClick={() => setCreating(true)}
@@ -542,7 +561,7 @@ function NewKindSheet({
   onCreated: (id: string) => void;
 }>) {
   const { t } = useI18n();
-  const [icon, setIcon] = useState("🎯");
+  const [icon, setIcon] = useState(DEFAULT_ICON_NAME);
   const [name, setName] = useState("");
   const [id, setId] = useState("");
   // The id follows the name until it is edited by hand. A zh-TW name slugs to
@@ -554,7 +573,7 @@ function NewKindSheet({
 
   useEffect(() => {
     if (!open) return;
-    setIcon("🎯");
+    setIcon(DEFAULT_ICON_NAME);
     setName("");
     setId("");
     setIdEdited(false);
@@ -578,7 +597,7 @@ function NewKindSheet({
       await createBoardlessKind({
         id,
         name: name.trim(),
-        icon: icon.trim() || "🎯",
+        icon: icon || DEFAULT_ICON_NAME,
         guidance: guidance.trim(),
       });
       onCreated(id);
@@ -615,11 +634,7 @@ function NewKindSheet({
           <div className="flex items-end gap-2">
             <label className="flex flex-col gap-1 text-xs">
               <span className="text-muted-foreground">{t("study.kind.icon")}</span>
-              <Input
-                value={icon}
-                onChange={(e) => setIcon(e.target.value)}
-                className="h-8 w-14 text-center"
-              />
+              <IconPicker value={icon} onChange={setIcon} />
             </label>
             <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs">
               <span className="text-muted-foreground">{t("study.kind.name")}</span>

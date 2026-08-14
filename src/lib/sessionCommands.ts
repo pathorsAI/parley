@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useStore } from "./store";
 import { isTauri } from "./tauriEvents";
+import { DEFAULT_ICON_NAME } from "./icons";
 import type { ActionItem, EvalDef, TimelineEvent } from "./types";
 import type { ClaimCategory } from "./accounts/types";
 
@@ -220,7 +221,9 @@ async function ensureMeetingType(
   await createBoardlessKind({
     id: type,
     name: desc.name.trim() || titleCaseSlug(type),
-    icon: desc.icon.trim() || "🎯",
+    // Stored as given: an MCP caller sending a legacy emoji is resolved at
+    // render time (resolveIcon), not rewritten here — the file is the user's.
+    icon: desc.icon.trim() || DEFAULT_ICON_NAME,
     guidance: desc.guidance.trim() || MCP_KIND_GUIDANCE,
   });
   return true;
