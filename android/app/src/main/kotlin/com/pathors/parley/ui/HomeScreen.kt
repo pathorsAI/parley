@@ -50,6 +50,7 @@ import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingState
+import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.upload.PendingUpload
 
 /**
@@ -80,6 +81,15 @@ fun HomeScreen(
     // Reload on every visit: a meeting or an import that finished while this
     // screen was off-stage has a new row waiting in the cloud.
     LaunchedEffect(Unit) { viewModel.refresh() }
+
+    // `parley://demo/account` lands on the library and opens the account sheet —
+    // the one screen the store listing needs that has no route of its own.
+    val demoNavigation by DemoMode.navigation.collectAsState()
+    LaunchedEffect(demoNavigation) {
+        val target = demoNavigation ?: return@LaunchedEffect
+        showAccount = target.screen == DemoMode.Screen.ACCOUNT
+        if (showAccount) viewModel.loadAccount()
+    }
 
     Scaffold(
         topBar = {

@@ -12,16 +12,19 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.pathors.parley.AppContainer
 import com.pathors.parley.R
+import com.pathors.parley.screenshot.DemoMode
 
 /** The four places the app can be. */
 private object Route {
@@ -40,16 +43,23 @@ private object Route {
  * answered — being offline must never look like being signed out (see
  * `AuthManager.isSignedIn`). A dead session comes back as a 401, which clears the
  * token from one place and swaps this back to the sign-in screen on its own.
+ *
+ * The one exception is [DemoMode], which stands the wall down without a token so
+ * the store screenshots can be captured. It is debug-only and writes nothing.
  */
 @Composable
 fun ParleyRoot() {
     val container = rememberContainer()
     val signedIn by container.auth.isSignedIn.collectAsState(initial = null)
+    val demo by DemoMode.enabled.collectAsState()
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        when (signedIn) {
-            null -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
-            false -> SignInScreen(container)
+        when {
+            demo -> ParleyNavHost(container)
+            signedIn == null ->
+                Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
+
+            signedIn == false -> SignInScreen(container)
             else -> ParleyNavHost(container)
         }
     }
@@ -59,6 +69,8 @@ fun ParleyRoot() {
 private fun ParleyNavHost(container: AppContainer) {
     val navController = rememberNavController()
     val context = LocalContext.current
+
+    DemoNavigation(navController)
 
     // The Storage Access Framework: no storage permission, any provider (Files,
     // Drive, a recorder app), and the grant lives as long as we need the Uri.
@@ -96,6 +108,28 @@ private fun ParleyNavHost(container: AppContainer) {
                 recordingId = entry.arguments?.getString("id").orEmpty(),
                 onBack = { navController.popBackStack() },
             )
+        }
+    }
+}
+
+/**
+ * Drives the navigation graph from `parley://demo/…`, so a screenshot run is a
+ * list of URLs rather than a list of taps (input automation on an emulator is
+ * unreliable; `am start` is not).
+ *
+ * The account route only has to reach the library — [HomeScreen] watches the same
+ * cue and opens its account sheet.
+ */
+@Composable
+private fun DemoNavigation(navController: NavHostController) {
+    val navigation by DemoMode.navigation.collectAsState()
+    LaunchedEffect(navigation) {
+        val target = navigation ?: return@LaunchedEffect
+        navController.popBackStack(Route.HOME, inclusive = false)
+        when (target.screen) {
+            DemoMode.Screen.LIBRARY, DemoMode.Screen.ACCOUNT -> Unit
+            DemoMode.Screen.TRANSCRIPT -> navController.navigate(Route.recording(DemoMode.FEATURED_ID))
+            DemoMode.Screen.MEETING -> navController.navigate(Route.MEETING)
         }
     }
 }

@@ -6,6 +6,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pathors.parley.AppContainer
 import com.pathors.parley.cloud.RecordingMeta
+import com.pathors.parley.screenshot.DemoMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -57,24 +58,30 @@ class RecordingDetailViewModel(
     }
 
     fun load() {
+        if (DemoMode.isActive) {
+            _state.value = fromMeta(DemoMode.meta(recordingId))
+            return
+        }
         viewModelScope.launch {
             _state.value = UiState(loading = true)
             val result = runCatching { container.cloud.recordingMeta(recordingId) }
-            _state.value = result.fold(
-                onSuccess = { meta ->
-                    UiState(
-                        loading = false,
-                        meta = meta,
-                        findings = readFindings(meta),
-                        actionItems = readActionItems(meta),
-                    )
-                },
-                onFailure = { UiState(loading = false, failed = true) },
-            )
+            _state.value = fromMeta(result.getOrNull())
         }
     }
 
     companion object {
+
+        /** The loaded state for a meta, or the failed state when there is none. */
+        internal fun fromMeta(meta: RecordingMeta?): UiState = when (meta) {
+            null -> UiState(loading = false, failed = true)
+            else -> UiState(
+                loading = false,
+                meta = meta,
+                findings = readFindings(meta),
+                actionItems = readActionItems(meta),
+            )
+        }
+
         fun factory(container: AppContainer, recordingId: String) = viewModelFactory {
             initializer { RecordingDetailViewModel(container, recordingId) }
         }

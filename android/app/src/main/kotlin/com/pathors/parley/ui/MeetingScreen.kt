@@ -48,11 +48,14 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.pathors.parley.R
 import com.pathors.parley.kit.TranscriptSegment
+import com.pathors.parley.meeting.LiveMeeting
 import com.pathors.parley.meeting.MeetingFailure
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingSession
 import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.meeting.TranscriptionIssue
+import com.pathors.parley.screenshot.DemoMode
+import com.pathors.parley.screenshot.rememberDemoMeeting
 import kotlinx.coroutines.delay
 
 /**
@@ -67,6 +70,14 @@ import kotlinx.coroutines.delay
 fun MeetingScreen(onDone: () -> Unit) {
     val context = LocalContext.current
     val session by MeetingService.activeSession.collectAsState()
+
+    // Store screenshots: scripted segments on a timer, no permission prompt, no
+    // foreground service, no microphone — an emulator has no audio input, and a
+    // capture must never depend on one.
+    if (DemoMode.isActive) {
+        MeetingContent(session = rememberDemoMeeting(), onStop = onDone, onDone = onDone)
+        return
+    }
 
     var granted by remember {
         mutableStateOf(
@@ -123,7 +134,7 @@ private fun requiredPermissions(): Array<String> =
     }
 
 @Composable
-private fun MeetingContent(session: MeetingSession, onStop: () -> Unit, onDone: () -> Unit) {
+private fun MeetingContent(session: LiveMeeting, onStop: () -> Unit, onDone: () -> Unit) {
     val state by session.state.collectAsState()
     val segments by session.segments.collectAsState()
     val issue by session.issue.collectAsState()

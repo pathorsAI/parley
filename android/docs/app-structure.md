@@ -93,7 +93,8 @@ Single activity, `androidx.navigation-compose`, four routes: `home`, `meeting`,
 `import`, `recording/{id}`. The sign-in wall sits *in front of* the graph and is
 driven by whether a token is stored (`AuthManager.isSignedIn`) — being offline
 must never look like being signed out; a dead session arrives as a 401, which
-clears the token from one place and swaps the wall back in.
+clears the token from one place and swaps the wall back in. The one thing that
+bypasses the wall is the debug-only screenshot demo mode, below.
 
 ViewModels (`lifecycle-viewmodel-compose`, built through
 `viewModelFactory { initializer { … } }`) are used where a screen has state worth
@@ -108,6 +109,44 @@ Every user-visible string is in `res/values/strings.xml` **and**
 enums (`MeetingFailure`, `ImportFailure`, `HomeError`, `TranscriptionIssue`)
 exist precisely so the session layer never holds display copy — the screen maps
 the enum to a resource.
+
+## Screenshot demo mode
+
+`screenshot/DemoMode.kt` is the Android half of iOS `ScreenshotDemo.swift`: a
+debug-only, in-memory flag that stands the sign-in wall down without a token and
+answers every cloud call from fixed fictional fixtures. It exists because the
+store listing needs populated screens, and the alternative — signing a device
+into a live account — puts real customer data one mis-tap away from a public
+listing and cannot be reproduced exactly next release.
+
+It is driven entirely by deep links, because input automation on an emulator is
+unreliable and `am start` is not:
+
+```bash
+adb shell am start -a android.intent.action.VIEW -d "'parley://demo/library'"
+#                                                    ^ the inner quotes matter
+```
+
+| URL | Screen |
+| --- | --- |
+| `parley://demo/library` | The recordings list, populated |
+| `parley://demo/transcript` | The featured recording: transcript, findings, action items |
+| `parley://demo/record` | The live meeting, mid-transcript (alias: `meeting`) |
+| `parley://demo/account` | The library with the account sheet open (alias: `settings`) |
+| `parley://demo/off` | Leave demo mode |
+
+Three invariants, all worth keeping: **no network** (every call site is guarded,
+so an offline machine captures the same frames), **no writes** (nothing reaches
+the auth DataStore or the pending-upload queue, and the live screen runs a
+scripted `DemoMeetingSession` rather than the microphone and the foreground
+service), and **no residue** (the flag is in memory, so `off` or a restart is
+the whole clean-up). `BuildConfig.DEBUG` gates activation, so a release build
+cannot be talked into serving fixtures.
+
+Fixture copy is written separately in English and Traditional Chinese and picked
+by the device locale, because the screenshot sets are captured per-locale —
+switch with `adb shell cmd locale set-app-locales com.pathors.parley --locales
+zh-TW`.
 
 ## Known gaps
 
