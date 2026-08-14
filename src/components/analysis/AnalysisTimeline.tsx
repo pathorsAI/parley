@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { RefreshCw, Sparkles } from "lucide-react";
 import { formatClock } from "../../lib/store";
 import { cn } from "@/lib/utils";
@@ -23,6 +24,114 @@ const dotClass = (e: TimelineEvent) => (e.resolved ? RESOLVED_DOT : SEVERITY_DOT
 
 /** A marker is "near" the playhead within this window (ms). */
 const NEAR_MS = 4000;
+
+/** Hover-card width and the gap it keeps from the window edge / its dot (px). */
+const CARD_W = 256;
+const EDGE_GAP = 8;
+
+/**
+ * Place the hover card next to a dot in VIEWPORT coordinates.
+ *
+ * The card is portaled to the body and positioned `fixed`, because the timeline
+ * lives inside `overflow-hidden` ancestors (StudyScreen's column) that clipped
+ * the old absolutely-positioned card — the reason it appeared cut off near the
+ * window edges. Positioning it here means we own collision handling: clamp x
+ * into the viewport, and flip to whichever side of the dot has room.
+ */
+export function cardPosition(
+  dot: { left: number; right: number; top: number; bottom: number; width: number },
+  cardH: number,
+  preferBelow: boolean,
+  viewport: { width: number; height: number } = {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  },
+) {
+  const { width: vw, height: vh } = viewport;
+  const x = Math.min(
+    Math.max(EDGE_GAP, dot.left + dot.width / 2 - CARD_W / 2),
+    vw - CARD_W - EDGE_GAP,
+  );
+  const above = dot.top - cardH - EDGE_GAP;
+  const below = dot.bottom + EDGE_GAP;
+  const fitsBelow = below + cardH <= vh - EDGE_GAP;
+  const fitsAbove = above >= EDGE_GAP;
+  const useBelow = preferBelow ? fitsBelow || !fitsAbove : !fitsAbove && fitsBelow;
+  return { left: x, top: useBelow ? below : Math.max(EDGE_GAP, above) };
+}
+
+/** The hover card itself — measures once mounted, then places itself. */
+function FindingHoverCard({
+  event,
+  anchor,
+  preferBelow,
+  timeLabel,
+  extraLabel,
+  evalNames,
+}: Readonly<{
+  event: TimelineEvent;
+  anchor: DOMRect;
+  preferBelow: boolean;
+  timeLabel: string;
+  extraLabel: string;
+  evalNames: Map<string, string>;
+}>) {
+  const { t } = useI18n();
+  const ref = useRef<HTMLDivElement>(null);
+  // Start off-screen: the first paint measures, the layout effect places it —
+  // so the card never flashes at the wrong spot.
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const h = ref.current?.offsetHeight ?? 0;
+    setPos(cardPosition(anchor, h, preferBelow));
+  }, [anchor, preferBelow, event.id]);
+
+  return createPortal(
+    <div
+      ref={ref}
+      className="pointer-events-none fixed z-50 rounded-md border bg-popover px-2 py-1.5 text-left text-[11px] leading-snug text-popover-foreground shadow-md"
+      style={{
+        width: CARD_W,
+        left: pos?.left ?? -9999,
+        top: pos?.top ?? -9999,
+        visibility: pos ? "visible" : "hidden",
+      }}
+    >
+      <div className="flex items-center gap-1.5">
+        <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+          {timeLabel} {formatClock(event.atMs)}
+        </span>
+        {event.source === "extra" && (
+          <span className="rounded bg-muted px-1 text-[9px] text-muted-foreground">
+            {extraLabel}
+          </span>
+        )}
+      </div>
+      <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+        <span className="flex items-center gap-1">
+          <span className={cn("size-1.5 rounded-full", dotClass(event))} />
+          {event.resolved ? t("timeline.resolved") : t(`timeline.sev.${event.severity}` as const)}
+        </span>
+        {event.source === "eval" && (event.evalIds?.length ?? 0) > 0 && (
+          <span className="line-clamp-1">
+            {t("timeline.evalLabel")}:{" "}
+            {(event.evalIds ?? []).map((id) => evalNames.get(id) ?? id).join(", ")}
+          </span>
+        )}
+      </div>
+      <div className="mt-0.5 line-clamp-2 font-medium text-popover-foreground">{event.title}</div>
+      {/* Clamped: the card is a glance, not the finding. The full detail and
+       *  resolution are one click away in the findings list beside it. */}
+      <div className="mt-0.5 line-clamp-3 text-muted-foreground">{event.detail}</div>
+      {event.resolved && event.resolution && (
+        <div className="mt-0.5 line-clamp-2 text-emerald-500">
+          {t("timeline.resolvedHow")}: {event.resolution}
+        </div>
+      )}
+    </div>,
+    document.body,
+  );
+}
 
 interface AnalysisTimelineProps {
   findings: TimelineEvent[];
@@ -63,7 +172,9 @@ export function AnalysisTimeline({
   stale,
 }: Readonly<AnalysisTimelineProps>) {
   const { t } = useI18n();
-  const [hovered, setHovered] = useState<string | null>(null);
+  // The hovered dot AND where it is on screen: the hover card is portaled out
+  // of the timeline (see FindingHoverCard), so it needs viewport coordinates.
+  const [hovered, setHovered] = useState<HoveredDot | null>(null);
 
   const { them, me } = useMemo(
     () => ({
@@ -196,14 +307,20 @@ export function AnalysisTimeline({
   );
 }
 
+/** Which dot the pointer is on, plus its on-screen box for the portaled card. */
+interface HoveredDot {
+  id: string;
+  rect: DOMRect;
+}
+
 interface LaneProps {
   label: string;
   events: TimelineEvent[];
   axisMaxMs: number;
   playheadMs?: number;
   selectedId?: string | null;
-  hovered: string | null;
-  setHovered: (id: string | null) => void;
+  hovered: HoveredDot | null;
+  setHovered: (dot: HoveredDot | null) => void;
   onSelect: (event: TimelineEvent) => void;
   extraLabel: string;
   tooltipTime: string;
@@ -225,10 +342,12 @@ function Lane({
   tooltipTime,
   tooltipBelow = false,
 }: Readonly<LaneProps>) {
-  const { t } = useI18n();
   const evalNames = useEvalNames();
   const playheadPct =
     playheadMs !== undefined && axisMaxMs > 0 ? Math.max(0, Math.min(1, playheadMs / axisMaxMs)) : null;
+  // Both lanes share one hovered id; only the lane that owns that dot draws the
+  // card, so hovering the other lane's dot can't render a stray second copy.
+  const hoveredEvent = hovered ? events.find((e) => e.id === hovered.id) : undefined;
   return (
     <div className="flex items-center gap-2">
       <span className="w-16 shrink-0 truncate text-right text-[10px] text-muted-foreground">{label}</span>
@@ -243,14 +362,16 @@ function Lane({
         {events.map((e) => {
           const pct = axisMaxMs > 0 ? Math.max(0, Math.min(1, e.atMs / axisMaxMs)) : 0;
           const near = playheadMs !== undefined && Math.abs(e.atMs - playheadMs) <= NEAR_MS;
-          const isHovered = hovered === e.id;
+          const isHovered = hovered?.id === e.id;
           const isSelected = selectedId === e.id;
           return (
             <button
               key={e.id}
               type="button"
               onClick={() => onSelect(e)}
-              onMouseEnter={() => setHovered(e.id)}
+              onMouseEnter={(ev) =>
+                setHovered({ id: e.id, rect: ev.currentTarget.getBoundingClientRect() })
+              }
               onMouseLeave={() => setHovered(null)}
               className={cn(
                 "absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full transition-transform hover:scale-125",
@@ -262,52 +383,19 @@ function Lane({
               )}
               style={{ left: `${pct * 100}%` }}
               aria-label={`${formatClock(e.atMs)} ${e.title}`}
-            >
-              {isHovered && (
-                <span
-                  className={cn(
-                    "pointer-events-none absolute z-30 w-56 rounded-md border bg-popover px-2 py-1.5 text-left text-[11px] leading-snug text-popover-foreground shadow-md",
-                    // Vertical: top lane opens downward so the tooltip never
-                    // escapes the panel; bottom lane keeps opening upward.
-                    tooltipBelow ? "top-full mt-1.5" : "bottom-full mb-1.5",
-                    // Horizontal: dots near either end pin the tooltip to that
-                    // edge instead of centering it off the window.
-                    pct < 0.2 ? "left-0" : pct > 0.8 ? "right-0" : "left-1/2 -translate-x-1/2"
-                  )}
-                >
-                  <span className="flex items-center gap-1.5">
-                    <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
-                      {tooltipTime} {formatClock(e.atMs)}
-                    </span>
-                    {e.source === "extra" && (
-                      <span className="rounded bg-muted px-1 text-[9px] text-muted-foreground">{extraLabel}</span>
-                    )}
-                  </span>
-                  {/* Why this dot is this colour (severity) + which eval flagged it. */}
-                  <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <span className={cn("size-1.5 rounded-full", dotClass(e))} />
-                      {e.resolved ? t("timeline.resolved") : t(`timeline.sev.${e.severity}` as const)}
-                    </span>
-                    {e.source === "eval" && (e.evalIds?.length ?? 0) > 0 && (
-                      <span>
-                        {t("timeline.evalLabel")}:{" "}
-                        {(e.evalIds ?? []).map((id) => evalNames.get(id) ?? id).join(", ")}
-                      </span>
-                    )}
-                  </span>
-                  <span className="mt-0.5 block font-medium text-popover-foreground">{e.title}</span>
-                  <span className="mt-0.5 block text-muted-foreground">{e.detail}</span>
-                  {e.resolved && e.resolution && (
-                    <span className="mt-0.5 block text-emerald-500">
-                      {t("timeline.resolvedHow")}: {e.resolution}
-                    </span>
-                  )}
-                </span>
-              )}
-            </button>
+            />
           );
         })}
+        {hoveredEvent && hovered && (
+          <FindingHoverCard
+            event={hoveredEvent}
+            anchor={hovered.rect}
+            preferBelow={tooltipBelow}
+            timeLabel={tooltipTime}
+            extraLabel={extraLabel}
+            evalNames={evalNames}
+          />
+        )}
       </div>
     </div>
   );

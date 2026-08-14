@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatClock } from "../../lib/store";
@@ -35,6 +36,14 @@ export function FindingRow({
 }>) {
   const { t } = useI18n();
   const evalNames = useEvalNames();
+  // Selection can come from the TIMELINE, where the matching row is usually
+  // scrolled out of view — bring it into view so clicking a dot lands somewhere
+  // visible. "nearest" makes this a no-op when the row is already on screen, so
+  // clicking a row in this list never yanks the list around.
+  const ref = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (selected) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selected]);
   const evalLabels =
     event.source === "eval"
       ? (event.evalIds ?? [])
@@ -42,7 +51,10 @@ export function FindingRow({
           .filter((label): label is { id: string; name: string } => !!label.name)
       : [];
   return (
-    <li className={cn("rounded-lg border", selected ? "border-primary/50 bg-muted/30" : "border-border")}>
+    <li
+      ref={ref}
+      className={cn("rounded-lg border", selected ? "border-primary/50 bg-muted/30" : "border-border")}
+    >
       <button
         type="button"
         onClick={() => onSelect(event)}
