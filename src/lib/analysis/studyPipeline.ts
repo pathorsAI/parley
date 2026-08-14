@@ -59,10 +59,18 @@ export interface StudyPipelineFacts {
   meetingType: MeetingType;
   /** Type of the intel board currently in the store, or null. */
   intelType: MeetingType | null;
+  /** May the pipeline spend on its own? `settings.autoStudyAnalysis` OR a manual
+   *  regenerate pinned to THIS recording — folded into one fact here so the
+   *  scheduler and the display derivation can't disagree, and so evaluateStages
+   *  stays a pure function of plain values. Off leaves the recording unanalyzed
+   *  for an external AI to own over MCP (see Settings.autoStudyAnalysis).
+   *  NB: unrelated to the store's live-mode `autoAnalyze` re-analysis timer. */
+  autoAnalyze: boolean;
 }
 
 export function factsOf(s: StoreState): StudyPipelineFacts {
   const trim = s.appMode === "study" ? s.replayTrim : null;
+  const replayId = s.replay?.id ?? null;
   return {
     inReplay: s.appMode === "study" && s.replay != null,
     wizardOpen: s.ingestWizardOpen,
@@ -76,6 +84,9 @@ export function factsOf(s: StoreState): StudyPipelineFacts {
     intelStatus: s.intelStatus,
     meetingType: s.meetingType,
     intelType: s.intel?.meetingType ?? null,
+    autoAnalyze:
+      s.settings.autoStudyAnalysis ||
+      (replayId != null && s.studyManualForId === replayId),
   };
 }
 
@@ -98,6 +109,9 @@ function intelWanted(f: StudyPipelineFacts): boolean {
 export function evaluateStages(f: StudyPipelineFacts): StudyArtifactKey[] {
   if (!f.inReplay || !f.hasDeepKey || !f.hasTranscript) return [];
   if (f.wizardOpen) return [];
+  // Auto-analysis off and no manual request for this recording: leave it
+  // unanalyzed so an external AI can write the analysis back over MCP.
+  if (!f.autoAnalyze) return [];
 
   const out: StudyArtifactKey[] = [];
   const analysisDone = f.analysisStatus === "done";
@@ -145,12 +159,19 @@ const STATUS_FIELD = {
  * and let the scheduler dispatch the re-run in dependency order. No-op while
  * that artifact streams (resetting mid-flight would fork a second pass; an
  * OLDER pass superseded this way is discarded by the runners' runGuard).
+ *
+ * Asking by hand also pins this recording as manually requested, so the button
+ * still works when auto-analysis is off (otherwise the reset to "idle" would
+ * just sit there — the scheduler would never dispatch it).
  */
 export function regenerateArtifact(key: StudyArtifactKey): void {
   const s = useStore.getState();
   if (s[STATUS_FIELD[key]] === "running") return;
   if (key === "findings") forceNextFindings = true;
-  useStore.setState({ [STATUS_FIELD[key]]: "idle" } as Partial<StoreState>);
+  useStore.setState({
+    [STATUS_FIELD[key]]: "idle",
+    studyManualForId: s.replay?.id ?? null,
+  } as Partial<StoreState>);
 }
 
 /**
@@ -164,6 +185,9 @@ export function regenerateArtifact(key: StudyArtifactKey): void {
 export async function reanalyzeAll(): Promise<void> {
   const startedFor = useStore.getState().replay?.id ?? null;
   if (!startedFor) return;
+  // Pin BEFORE the pass: with auto-analysis off, the downstream invalidation
+  // below would otherwise never be picked up by the scheduler.
+  useStore.setState({ studyManualForId: startedFor });
   await runAnalysis({ mode: "replay", force: true });
   const s = useStore.getState();
   if (s.analysisStatus !== "done") return;
@@ -195,6 +219,7 @@ const WATCHED = [
   "meetingType",
   "loadedHistoryId",
   "replayReadOnly",
+  "studyManualForId",
 ] as const satisfies readonly (keyof StoreState)[];
 
 function dispatchReady(state: StoreState): void {
@@ -278,9 +303,9 @@ export interface StudyPipelineState {
  *  chain. Used by deriveStudyPipeline AND the narrow per-section selectors, so
  *  they agree by construction. */
 export function chainQueued(
-  f: Pick<StudyPipelineFacts, "analysisStatus" | "hasDeepKey" | "hasTranscript">
+  f: Pick<StudyPipelineFacts, "analysisStatus" | "hasDeepKey" | "hasTranscript" | "autoAnalyze">
 ): boolean {
-  return f.analysisStatus !== "error" && f.hasDeepKey && f.hasTranscript;
+  return f.autoAnalyze && f.analysisStatus !== "error" && f.hasDeepKey && f.hasTranscript;
 }
 
 /**
@@ -291,7 +316,10 @@ export function chainQueued(
  * queued, or failed") falls out of the same facts the scheduler acts on.
  */
 export function deriveStudyPipeline(f: StudyPipelineFacts): StudyPipelineState {
-  const can = f.hasDeepKey && f.hasTranscript;
+  // "queued" is a promise that the scheduler WILL dispatch. With auto-analysis
+  // off nothing is coming, so every untouched artifact reads idle rather than
+  // queuing forever against a pipeline that will never run.
+  const can = f.autoAnalyze && f.hasDeepKey && f.hasTranscript;
 
   const findings: StudyArtifactDisplay =
     f.analysisStatus !== "idle" ? f.analysisStatus : can ? "queued" : "idle";

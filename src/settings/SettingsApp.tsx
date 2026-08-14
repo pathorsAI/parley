@@ -1065,6 +1065,23 @@ export function SettingsApp() {
               </div>
             </Field>
 
+            {/* Lives on the MCP panel because turning it OFF is what hands
+                analysis to the external AI connected here. */}
+            <Field label={t("settings.autoStudyAnalysis.title")}>
+              <div className="flex max-w-xl flex-col gap-2 rounded-lg border p-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-3.5 accent-primary"
+                    checked={settings.autoStudyAnalysis}
+                    onChange={(e) => patch({ autoStudyAnalysis: e.target.checked })}
+                  />
+                  {t("settings.autoStudyAnalysis.title")}
+                </label>
+                <p className="text-[11px] text-muted-foreground">{t("settings.autoStudyAnalysis.desc")}</p>
+              </div>
+            </Field>
+
             <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-semibold tracking-tight">{t("settings.mcp.claudeCodeInstructions")}</h3>

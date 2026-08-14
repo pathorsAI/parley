@@ -20,6 +20,7 @@ function facts(patch: Partial<StudyPipelineFacts> = {}): StudyPipelineFacts {
     intelStatus: "idle",
     meetingType: "general",
     intelType: null,
+    autoAnalyze: true,
     ...patch,
   };
 }
@@ -97,6 +98,19 @@ describe("evaluateStages (the scheduler's whole topology)", () => {
       evaluateStages(facts({ meetingType: "sales", intelExtractable: false }))
     ).not.toContain("intel");
   });
+
+  it("auto-analysis OFF stops every stage — the recording stays unanalyzed for an external AI", () => {
+    // Everything else is ready: key, transcript, wizard closed, a typed
+    // template, and every status idle. Only the switch holds it back.
+    const ready = facts({ meetingType: "sales" });
+    expect(evaluateStages(ready)).toEqual(["findings", "intel"]);
+    expect(evaluateStages({ ...ready, autoAnalyze: false })).toEqual([]);
+    // ...and it holds MID-chain too: a findings pass that already ran (restored
+    // from disk, or written back over MCP) must not fan out on its own.
+    expect(
+      evaluateStages({ ...ready, autoAnalyze: false, analysisStatus: "done" })
+    ).toEqual([]);
+  });
 });
 
 describe("deriveStudyPipeline (what the chip + sections say)", () => {
@@ -156,6 +170,18 @@ describe("deriveStudyPipeline (what the chip + sections say)", () => {
     expect(p.total).toBe(5);
     expect(p.done).toBe(5);
     expect(p.active).toBe(false);
+  });
+
+  it("auto-analysis OFF reads idle, not queued — nothing is coming to fulfil the promise", () => {
+    const f = facts({ autoAnalyze: false, meetingType: "sales" });
+    const p = deriveStudyPipeline(f);
+    expect(p.artifacts.every((a) => a.display === "idle")).toBe(true);
+    expect(p.active).toBe(false);
+    expect(chainQueued(f)).toBe(false);
+    // The capability flags still report the truth: a key and a transcript are
+    // there, so the sections offer "Regenerate" rather than a missing-key hint.
+    expect(p.hasDeepKey).toBe(true);
+    expect(p.hasTranscript).toBe(true);
   });
 
   it("intel is excluded from the totals without a typed template — or without enough transcript", () => {

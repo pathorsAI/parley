@@ -225,7 +225,15 @@ export function IngestWizard() {
   function confirmAnalyze() {
     // No LLM key → can't analyze; keep the transcript-only recording and land on
     // the (diarized) results page.
-    if (!hasProviderKey(useStore.getState().settings, "deep")) {
+    const settings = useStore.getState().settings;
+    if (!hasProviderKey(settings, "deep")) {
+      finishTranscriptOnly();
+      return;
+    }
+    // Auto-analysis off: save the import UNANALYZED so an external AI can claim
+    // it over MCP (list_recordings' `analyzed` flag). Same landing as the
+    // no-key path — the study pipeline is gated too, so nothing follows.
+    if (!settings.autoStudyAnalysis) {
       finishTranscriptOnly();
       return;
     }
@@ -243,6 +251,13 @@ export function IngestWizard() {
       startedRef.current = null;
       setStep("diarizing");
     } else if (failed === "analyzing") {
+      // Same gate as confirmAnalyze — Settings is its own window, so the switch
+      // can flip while the wizard sits on a failed pass; honor it here too and
+      // land the import unanalyzed rather than spending against it.
+      if (!useStore.getState().settings.autoStudyAnalysis) {
+        finishTranscriptOnly();
+        return;
+      }
       setStep("analyzing");
       void runAnalysis({ mode: "replay" });
     } else {
