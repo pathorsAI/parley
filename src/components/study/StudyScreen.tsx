@@ -390,9 +390,11 @@ function IntelSection() {
   // in the titlebar's analysis chip.
   //
   // applyScenario, never setMeetingType: the pick has to leave behind the
-  // boardless flag the pipeline reads (and the scenario's eval template).
+  // boardless flag the pipeline reads. Not the eval template though — this is a
+  // finished recording, and retagging it must not re-point the rubric the NEXT
+  // live meeting will be coached against.
   const pickType = (v: MeetingType, set: ScenarioSet = scenarios) => {
-    applyScenario(v, set);
+    applyScenario(v, set, { carryEvalTemplate: false });
     if (v !== "general") {
       const { settings, updateSettings } = useStore.getState();
       updateSettings({
