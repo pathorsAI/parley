@@ -121,6 +121,19 @@ class PendingUploadQueue(private val directory: File) {
         manifestFile(id).deleteQuietly()
     }
 
+    /**
+     * Drop everything the queue is holding, blobs included.
+     *
+     * Only for account deletion: once `DELETE /me` has succeeded there is no
+     * account left for these to upload to, and leaving finished meeting audio on
+     * disk would contradict what the confirmation dialog promised. Ordinary
+     * sign-out deliberately keeps the queue — the same person usually signs back
+     * in, and the recordings are still theirs.
+     */
+    fun clear() {
+        directory.listFiles()?.forEach { file -> if (file.isFile) file.deleteQuietly() }
+    }
+
     /** Total bytes the queue is holding on disk, for a "waiting to upload" readout. */
     fun bytesOnDisk(): Long =
         directory.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L

@@ -1,0 +1,188 @@
+name: Android Release
+
+# Builds the signed Play bundle and publishes it.
+#
+# Sibling of `ios-release.yml` (design doc D5): the desktop app builds on
+# `v*.*.*` tags, iOS on `ios-v*`, Android on `android-v*`. Unlike iOS — where
+# TestFlight is the only deliverable — the `.aab` is also attached to a GitHub
+# Release, because the Play Console is not a place contributors can look.
+#
+#   git tag android-v0.1.0 && git push origin android-v0.1.0
+#
+# Signing is the *upload* key, not the app signing key: Google holds the latter
+# under Play App Signing. See android/RELEASING.md → "Signing setup" for the
+# keytool invocation and the `gh secret set` commands behind every secret here.
+#
+# The final Play upload step is deliberately skippable. Pathors' Play account
+# (ID 6541030546953107772) is still going through organization identity
+# verification, and until that clears the Play Developer API cannot be enabled,
+# so no service account can exist. Until `PLAY_SERVICE_ACCOUNT_JSON` is set the
+# step is skipped and the run still produces a GitHub Release with the bundle,
+# which can be uploaded to the Play Console by hand.
+#
+# Runs on Linux (unlike the two macOS release workflows) because nothing here
+# needs Xcode. That only works because gradle/verification-metadata.xml carries
+# the `linux` classifier for com.android.tools.build:aapt2 alongside `osx` — a
+# file generated on a Mac alone would fail dependency verification here.
+
+on:
+  push:
+    tags:
+      - "android-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build, for example android-v0.1.0"
+        required: true
+        type: string
+
+# The bundle is attached to a GitHub Release.
+permissions:
+  contents: write
+
+# Play rejects a bundle whose versionCode it has already seen, so two runs of
+# the same tag racing each other end in a confusing error, not a merge conflict.
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, sign and publish the app bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    # Mapped into `env` on purpose: the `secrets` context is not available in a
+    # step-level `if:`, but `env` is. This is how the Play step below skips
+    # itself while the service account does not yet exist.
+    env:
+      PLAY_UPLOAD_KEYSTORE_BASE64: ${{ secrets.PLAY_UPLOAD_KEYSTORE_BASE64 }}
+      PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+
+      # A tag that disagrees with the build file ships the wrong thing under the
+      # right name, and it is only noticed once the bundle sits in Play. Same
+      # guard as the iOS workflow's CFBundleShortVersionString check.
+      - name: Check the tag matches versionName
+        run: |
+          set -euo pipefail
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          want="${tag#android-v}"
+          got="$(sed -nE 's/.*versionName *= *"([^"]+)".*/\1/p' android/app/build.gradle.kts | head -1)"
+          code="$(sed -nE 's/.*versionCode *= *([0-9]+).*/\1/p' android/app/build.gradle.kts | head -1)"
+          echo "tag=$tag  versionName=$got  versionCode=$code"
+          if [ "$want" != "$got" ]; then
+            echo "::error::tag $tag expects versionName $want, but app/build.gradle.kts says $got"
+            exit 1
+          fi
+
+      # parleykit is pure JVM and the app's unit tests are Robolectric-free, so
+      # both are cheap. There is no reason to ship a bundle whose segment logic
+      # is broken.
+      - name: Test
+        working-directory: android
+        run: ./gradlew :parleykit:test :app:testDebugUnitTest
+
+      # Written outside the workspace so it cannot be swept into the artifact
+      # upload or a later checkout, and removed in an always() step below.
+      - name: Write the upload keystore
+        run: |
+          set -euo pipefail
+          if [ -z "$PLAY_UPLOAD_KEYSTORE_BASE64" ]; then
+            echo "::error::PLAY_UPLOAD_KEYSTORE_BASE64 is empty — see android/RELEASING.md"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/signing"
+          chmod 700 "$RUNNER_TEMP/signing"
+          printf '%s' "$PLAY_UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/signing/parley-upload.keystore"
+          chmod 600 "$RUNNER_TEMP/signing/parley-upload.keystore"
+
+      - name: Build the signed bundle
+        working-directory: android
+        env:
+          PARLEY_UPLOAD_KEYSTORE: ${{ runner.temp }}/signing/parley-upload.keystore
+          PARLEY_UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.PLAY_UPLOAD_KEYSTORE_PASSWORD }}
+          PARLEY_UPLOAD_KEY_ALIAS: ${{ secrets.PLAY_UPLOAD_KEY_ALIAS }}
+          PARLEY_UPLOAD_KEY_PASSWORD: ${{ secrets.PLAY_UPLOAD_KEY_PASSWORD }}
+        run: ./gradlew bundleRelease
+
+      # `signingConfig` is null when the credentials are absent and the build
+      # then emits an unsigned bundle rather than failing (that fallback exists
+      # for contributors — see app/build.gradle.kts). On the release path an
+      # unsigned bundle is worthless, so catch it here instead of at Play.
+      - name: Verify the bundle is signed
+        working-directory: android
+        run: |
+          set -euo pipefail
+          aab="app/build/outputs/bundle/release/app-release.aab"
+          if unzip -l "$aab" | grep -qE 'META-INF/[^/]+\.(RSA|DSA|EC)$'; then
+            echo "Bundle is signed."
+          else
+            echo "::error::$aab is UNSIGNED — the signing secrets did not reach Gradle"
+            exit 1
+          fi
+
+      # The R8 mapping travels with the bundle: a Play crash report from this
+      # build is unreadable without the mapping produced by this exact build.
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: parley-android-${{ github.run_number }}
+          path: |
+            android/app/build/outputs/bundle/release/*.aab
+            android/app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Create the GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          name: Parley for Android ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          files: |
+            android/app/build/outputs/bundle/release/app-release.aab
+          fail_on_unmatched_files: true
+
+      # ── Play internal track ────────────────────────────────────────────────
+      # Skipped, silently and successfully, until PLAY_SERVICE_ACCOUNT_JSON
+      # exists. It cannot exist yet: the Play Developer API can only be enabled
+      # after the organization account clears identity verification. Everything
+      # above has already run by this point, so the bundle is on the GitHub
+      # release either way and can be uploaded through the Play Console UI.
+      - name: Upload to the Play internal track
+        if: ${{ env.PLAY_SERVICE_ACCOUNT_JSON != '' }}
+        uses: r0adkll/upload-google-play@935ef9c68bb393a8e6116b1575626a7f5be3a7fb # v1.1.3
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.pathors.parley
+          releaseFiles: android/app/build/outputs/bundle/release/app-release.aab
+          mappingFile: android/app/build/outputs/mapping/release/mapping.txt
+          track: internal
+          status: completed
+
+      - name: Report that the Play upload was skipped
+        if: ${{ env.PLAY_SERVICE_ACCOUNT_JSON == '' }}
+        run: |
+          echo "::notice::PLAY_SERVICE_ACCOUNT_JSON is not set, so the Play upload was skipped." \
+               "Download the .aab from this run's GitHub release and upload it in the Play Console" \
+               "(Testing → Internal testing). See android/RELEASING.md → \"Play service account\"."
+
+      - name: Remove the upload keystore
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/signing"
