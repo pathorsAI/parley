@@ -259,7 +259,7 @@ async function startSession() {
     apiKey,
     languageHints: [],
     inputDevice: settings.inputDevice ?? null,
-    relayUrl: sttRelayUrl(provider),
+    relayUrl: sttRelayUrl(provider, "voice_typing"),
     maxDurationSecs: hosted ? HOSTED_VOICE_TYPING_MAX_SECONDS : null,
   });
   const shown = showOverlay().catch((error) =>

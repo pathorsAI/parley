@@ -89,7 +89,17 @@ export function sttApiKey(settings: Settings, id: SttProviderId): string {
  * `sttApiKey`), so the vendor key never lives on the client. BYOK providers
  * connect straight to their vendor — no relay. Every streaming start command
  * (meeting AND voice typing) must pass this alongside the key.
+ *
+ * `feature` is the cloud's billing-attribution tag: the relay only records
+ * "meeting" | "voice_typing" | "realtime" (anything else is stored blank), so
+ * each start path must name itself. Rust uses the URL verbatim — the query
+ * param travels with it.
  */
-export function sttRelayUrl(id: SttProviderId): string | undefined {
-  return id === "parley" ? `${CLOUD_URL.replace(/^http/, "ws")}/stt/stream` : undefined;
+export function sttRelayUrl(
+  id: SttProviderId,
+  feature: "meeting" | "voice_typing" | "realtime",
+): string | undefined {
+  return id === "parley"
+    ? `${CLOUD_URL.replace(/^http/, "ws")}/stt/stream?feature=${feature}`
+    : undefined;
 }
