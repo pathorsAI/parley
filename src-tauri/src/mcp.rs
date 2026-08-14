@@ -675,7 +675,7 @@ fn tools() -> Vec<Value> {
                     "id": { "type": "string" },
                     "meetingType": { "type": "string", "description": "Scenario or kind id (free-form lowercase slug; built-in default is 'sales'). An unknown id creates a boardless kind." },
                     "meetingTypeName": { "type": "string", "description": "Display name for a kind being created, e.g. 'Office Hour'. Defaults to the slug in Title Case." },
-                    "meetingTypeIcon": { "type": "string", "description": "Emoji for a kind being created. Defaults to 🎯." },
+                    "meetingTypeIcon": { "type": "string", "description": "Icon NAME for a kind being created, e.g. 'rotate-ccw' or 'graduation-cap' — not an emoji. Unknown names fall back to the default icon. Defaults to 'target'." },
                     "meetingTypeGuidance": { "type": "string", "description": "English instructions telling the model how to analyze this kind of meeting — what to look for and what to ignore. Only used when the kind is created." },
                     "meetingContext": { "type": "string", "description": "Free-text meeting context." },
                     "speakerNames": {

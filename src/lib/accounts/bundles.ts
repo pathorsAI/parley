@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { log } from "../log";
+import { DEFAULT_ICON_NAME } from "../icons";
 import { SALES_STAGES, type SalesStage } from "./types";
 import {
   buildBuiltinBundles,
@@ -147,10 +148,10 @@ export function buildStageSet(t: Tr, parsed: ParsedBundleFile): StageSet {
 
 // ── Scenarios(v3)────────────────────────────────────────────────────────────
 
-/** Emoji for the builtin boardless kinds (their copy lives in i18n). */
+/** ICON_REGISTRY keys for the builtin boardless kinds (copy lives in i18n). */
 const KIND_ICONS: Record<(typeof BUILTIN_KIND_IDS)[number], string> = {
-  retro: "🔁",
-  officehour: "🎓",
+  retro: "rotate-ccw",
+  officehour: "graduation-cap",
 };
 
 /**
@@ -165,7 +166,9 @@ const KIND_ICONS: Record<(typeof BUILTIN_KIND_IDS)[number], string> = {
 export interface Scenario {
   id: string;
   name: string;
-  /** Emoji for pickers/chips. */
+  /** Icon for pickers/chips: a key of ICON_REGISTRY (`"handshake"`), NOT an
+   *  emoji. Files written by older builds still hold emoji, so read it through
+   *  `resolveIcon` — never render this string directly. */
   icon: string;
   builtin: boolean;
   /** False for a KIND: no stages, so no live board and no realtime extraction.
@@ -199,7 +202,7 @@ export function buildScenarioSet(t: Tr, parsed: ParsedBundleFile): ScenarioSet {
   const sales: Scenario = {
     id: "sales",
     name: t("scenario.sales.name"),
-    icon: "🤝",
+    icon: "handshake",
     builtin: true,
     hasBoard: true,
     guidance: SCENARIO_GUIDANCE.sales,
@@ -211,7 +214,7 @@ export function buildScenarioSet(t: Tr, parsed: ParsedBundleFile): ScenarioSet {
   const negotiation: Scenario = {
     id: "negotiation",
     name: t("scenario.negotiation.name"),
-    icon: "⚖️",
+    icon: "scale",
     builtin: true,
     hasBoard: true,
     guidance: SCENARIO_GUIDANCE.negotiation,
@@ -223,7 +226,7 @@ export function buildScenarioSet(t: Tr, parsed: ParsedBundleFile): ScenarioSet {
   const partnership: Scenario = {
     id: "partnership",
     name: t("scenario.partnership.name"),
-    icon: "🚀",
+    icon: "rocket",
     builtin: true,
     hasBoard: true,
     guidance: SCENARIO_GUIDANCE.partnership,
@@ -252,7 +255,7 @@ export function buildScenarioSet(t: Tr, parsed: ParsedBundleFile): ScenarioSet {
     return {
       id: sc.id,
       name: sc.name,
-      icon: sc.icon ?? "🎯",
+      icon: sc.icon ?? DEFAULT_ICON_NAME,
       builtin: false,
       hasBoard: sc.stages.length > 0,
       guidance: sc.guidance ?? GENERIC_GUIDANCE,

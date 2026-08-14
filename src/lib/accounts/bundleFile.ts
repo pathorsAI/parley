@@ -80,7 +80,9 @@ export interface CustomScenarioDef {
   /** Slug id; becomes the meeting-type value. Must not shadow a builtin. */
   id: string;
   name: string;
-  /** Emoji shown on the scenario picker (default 🎯). */
+  /** Icon for the scenario picker: an ICON_REGISTRY key such as "handshake"
+   *  (default "target"). Files written before the lucide switch hold an emoji
+   *  here and are never rewritten, so read it through `resolveIcon`. */
   icon?: string;
   /** Extraction guidance ahead of the shared prompt — model input, English. */
   guidance?: string;

@@ -97,10 +97,10 @@ export function SubjectPanel() {
                 {
                   options: [
                     { value: "general", label: t("board.type.general") },
-                    ...scenarios.list.map((s) => ({
-                      value: s.id,
-                      label: `${s.icon} ${s.name}`,
-                    })),
+                    // Name only: Combobox labels are plain strings it also
+                    // searches over, so there is nowhere to hang an icon
+                    // component — and the name alone reads fine here.
+                    ...scenarios.list.map((s) => ({ value: s.id, label: s.name })),
                   ],
                 },
               ]}
