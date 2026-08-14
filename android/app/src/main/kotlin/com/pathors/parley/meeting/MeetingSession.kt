@@ -81,6 +81,24 @@ enum class TranscriptionIssue {
 }
 
 /**
+ * Everything the live meeting screen reads off a recording in progress.
+ *
+ * [MeetingSession] is the only implementation that touches a microphone; the
+ * screenshot demo (`screenshot/DemoMeetingSession`) supplies the same five flows
+ * from scripted fixtures, which is what lets the live screen be captured on an
+ * emulator with no audio input and no network.
+ */
+interface LiveMeeting {
+    val state: StateFlow<MeetingState>
+    val segments: StateFlow<List<TranscriptSegment>>
+    val issue: StateFlow<TranscriptionIssue?>
+
+    /** Input level, 0..1 — drives the level meter. */
+    val level: StateFlow<Float>
+    val elapsedMs: StateFlow<Long>
+}
+
+/**
  * One live meeting: microphone → Ogg/Opus file **and** microphone → STT relay,
  * from the same chunk stream, plus the upload that follows.
  *
@@ -103,23 +121,23 @@ class MeetingSession(
     /** Display title for the finished recording; built by the UI layer. */
     private val title: String,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-) {
+) : LiveMeeting {
     private val mic = MicCapture(context)
 
     private val _state = MutableStateFlow<MeetingState>(MeetingState.Idle)
-    val state: StateFlow<MeetingState> = _state.asStateFlow()
+    override val state: StateFlow<MeetingState> = _state.asStateFlow()
 
     private val _segments = MutableStateFlow<List<TranscriptSegment>>(emptyList())
-    val segments: StateFlow<List<TranscriptSegment>> = _segments.asStateFlow()
+    override val segments: StateFlow<List<TranscriptSegment>> = _segments.asStateFlow()
 
     private val _issue = MutableStateFlow<TranscriptionIssue?>(null)
-    val issue: StateFlow<TranscriptionIssue?> = _issue.asStateFlow()
+    override val issue: StateFlow<TranscriptionIssue?> = _issue.asStateFlow()
 
     private val _elapsedMs = MutableStateFlow(0L)
-    val elapsedMs: StateFlow<Long> = _elapsedMs.asStateFlow()
+    override val elapsedMs: StateFlow<Long> = _elapsedMs.asStateFlow()
 
     /** RMS of the last microphone chunk, 0..1 — drives the level meter. */
-    val level: StateFlow<Float> get() = mic.level
+    override val level: StateFlow<Float> get() = mic.level
 
     /** Wall-clock start, carried into the recording's `createdAt`. */
     val startedAtMs: Long = System.currentTimeMillis()

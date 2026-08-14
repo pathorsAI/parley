@@ -7,6 +7,7 @@ import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.meeting.ImportSession
 import com.pathors.parley.meeting.MeetingSession
+import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.upload.MeetingUploader
 import com.pathors.parley.upload.PendingUploadQueue
 import kotlinx.coroutines.CoroutineScope
@@ -89,6 +90,9 @@ class AppContainer(private val app: Application) {
     /** Best-effort upload of everything the queue is holding. Never throws. */
     fun drainPendingUploads() {
         appScope.launch {
+            // Demo mode must not reach the network at all, and must not touch a
+            // real user's queue if one happens to exist on this device.
+            if (DemoMode.isActive) return@launch
             if (auth.currentToken() == null) return@launch
             runCatching { uploader.drain() }
         }

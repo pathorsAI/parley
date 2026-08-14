@@ -122,6 +122,9 @@ android {
 
     buildFeatures {
         compose = true
+        // BuildConfig.DEBUG gates the store-screenshot demo mode, so a release
+        // build cannot be talked into serving fixtures by a deep link.
+        buildConfig = true
     }
 }
 

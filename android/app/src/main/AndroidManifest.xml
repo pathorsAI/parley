@@ -32,6 +32,10 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="parley" android:host="auth-callback" />
+                <!-- Store-screenshot demo mode (debug builds only, see DemoMode):
+                     adb shell am start -a android.intent.action.VIEW \
+                       -d "'parley://demo/library'" -->
+                <data android:scheme="parley" android:host="demo" />
             </intent-filter>
         </activity>
 

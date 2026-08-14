@@ -9,6 +9,7 @@ import com.pathors.parley.cloud.CloudException
 import com.pathors.parley.cloud.CloudUser
 import com.pathors.parley.cloud.HostedQuota
 import com.pathors.parley.cloud.RecordingSummary
+import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.upload.PendingUpload
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -63,6 +64,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     val account: StateFlow<AccountState> = _account.asStateFlow()
 
     fun refresh() {
+        if (DemoMode.isActive) {
+            // Fixtures, not the cloud — and deliberately not the pending queue
+            // either: demo mode never reads or writes a real user's disk state.
+            _state.value = UiState(loading = false, recordings = DemoMode.recordings())
+            return
+        }
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true)
             val pending = withContext(Dispatchers.IO) { container.uploadQueue.list() }
@@ -99,6 +106,10 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun loadAccount() {
+        if (DemoMode.isActive) {
+            _account.value = AccountState(user = DemoMode.user(), quota = DemoMode.quota())
+            return
+        }
         if (_account.value.loading) return
         viewModelScope.launch {
             _account.value = AccountState(loading = true)
@@ -114,6 +125,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun signOut() {
+        // In demo mode "sign out" is how you leave demo mode: there is no session
+        // to revoke, and the real sign-out must never run against a live account.
+        if (DemoMode.isActive) {
+            DemoMode.disable()
+            return
+        }
         viewModelScope.launch { container.auth.signOut() }
     }
 
