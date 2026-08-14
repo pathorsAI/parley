@@ -27,7 +27,7 @@ import { buildOwnershipIndex, ownerBackfill, planFolderDedupe } from "../library
 import { rediarizeSegments } from "../speakers/postDiarize";
 import { translate } from "../../i18n/messages";
 import type { ReplaySession } from "../replay/types";
-import type { TranscriptSegment } from "../types";
+import type { ActionItem, TimelineEvent, TranscriptSegment } from "../types";
 import type { HistoryEntry, HistoryEntrySummary } from "./types";
 
 const HISTORY_UPDATED_EVENT = "history://updated";
@@ -67,6 +67,7 @@ export function buildSummary(entry: HistoryEntry): HistoryEntrySummary {
     findingsCount: entry.findings.length,
     actionItemsCount: entry.actionItems.length,
     hasAudio: entry.audio != null,
+    analyzed: entry.analyzed,
     snippet: snippetOf(entry),
     folderId: entry.folderId ?? null,
     companyId: entry.companyId ?? null,
@@ -686,6 +687,131 @@ export async function setEntryFolder(id: string, folderId: string | null): Promi
   });
   log.info("history: entry folder set", { id, folderId });
   pushToCloud(id); // sync the new folderId (best-effort; gated by the sync toggle)
+}
+
+// ── External-analyst writes (MCP) ────────────────────────────────────────────
+
+/** The frame fields an MCP client may retarget on a saved recording. */
+export interface EntryMetaPatch {
+  meetingType?: string;
+  meetingContext?: string;
+  /** Merged per key into the existing map; an empty-string value removes the
+   *  custom name for that key (same semantics as the store's setSpeakerName). */
+  speakerNames?: Record<string, string>;
+}
+
+/**
+ * Patch a saved recording's FRAME — scenario (meetingType), free-text context,
+ * speaker display names — without touching its analysis. This is how an MCP
+ * client fixes a misclassified meeting (e.g. an office hour analyzed as a sales
+ * call) or a wrong speaker mapping, so every later read gets the right frame.
+ * Same read-modify-write as {@link persistStudyOutputs}; the open replay's
+ * store is synced so the UI reflects the fix immediately.
+ */
+export async function updateEntryMeta(id: string, patch: EntryMetaPatch): Promise<HistoryEntry> {
+  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+  const speakerNames = patch.speakerNames
+    ? mergeSpeakerNames(meta.speakerNames ?? {}, patch.speakerNames)
+    : meta.speakerNames;
+  const updated: HistoryEntry = {
+    ...meta,
+    ...(patch.meetingType !== undefined ? { meetingType: patch.meetingType } : {}),
+    ...(patch.meetingContext !== undefined ? { meetingContext: patch.meetingContext } : {}),
+    speakerNames,
+  };
+  await invoke("save_history_entry", {
+    id,
+    summaryJson: JSON.stringify(buildSummary(updated)),
+    metaJson: JSON.stringify(updated),
+    audioSourcePath: null, // leave the recording untouched
+    compress: false,
+  });
+  const s = useStore.getState();
+  if (s.loadedHistoryId === id) {
+    if (patch.meetingType !== undefined) s.setMeetingType(patch.meetingType);
+    if (patch.meetingContext !== undefined) s.setMeetingContext(patch.meetingContext);
+    for (const [key, name] of Object.entries(patch.speakerNames ?? {})) s.setSpeakerName(key, name);
+  }
+  await emitHistoryUpdated(id);
+  pushToCloud(id); // best-effort; gated by the sync toggle
+  log.info("history: entry meta updated", {
+    id,
+    meetingType: updated.meetingType ?? null,
+    speakerKeys: Object.keys(patch.speakerNames ?? {}).length,
+  });
+  return updated;
+}
+
+/** Empty-string values remove the key; everything else overwrites it. */
+function mergeSpeakerNames(
+  current: Record<string, string>,
+  patch: Record<string, string>,
+): Record<string, string> {
+  const next = { ...current };
+  for (const [key, name] of Object.entries(patch)) {
+    if (name.trim()) next[key] = name.trim();
+    else delete next[key];
+  }
+  return next;
+}
+
+/** The analysis fields an MCP client may replace on a saved recording. */
+export interface EntryAnalysisPatch {
+  findings?: TimelineEvent[];
+  actionItems?: ActionItem[];
+  brief?: string | null;
+  analyzed?: boolean;
+}
+
+/**
+ * Write analysis results onto a saved recording — the write-back surface for an
+ * EXTERNAL analyst (an MCP client doing its own pass over the transcript).
+ * Each provided field replaces that whole field; omitted fields are untouched,
+ * so a brief write can't clobber findings and vice versa. The rebuilt
+ * summary.json keeps the library card's counts (and the `analyzed` flag other
+ * clients filter on) honest. Syncs the open replay's store so the timeline
+ * re-renders immediately.
+ */
+export async function setEntryAnalysis(
+  id: string,
+  patch: EntryAnalysisPatch,
+): Promise<{ id: string; findings: number; actionItems: number; brief: boolean; analyzed: boolean | null }> {
+  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+  const updated: HistoryEntry = {
+    ...meta,
+    ...(patch.findings ? { findings: patch.findings } : {}),
+    ...(patch.actionItems ? { actionItems: patch.actionItems } : {}),
+    ...(patch.brief !== undefined ? { brief: patch.brief } : {}),
+    ...(patch.analyzed !== undefined ? { analyzed: patch.analyzed } : {}),
+  };
+  await invoke("save_history_entry", {
+    id,
+    summaryJson: JSON.stringify(buildSummary(updated)),
+    metaJson: JSON.stringify(updated),
+    audioSourcePath: null, // leave the recording untouched
+    compress: false,
+  });
+  const s = useStore.getState();
+  if (s.loadedHistoryId === id) {
+    if (patch.findings) s.setFindings(patch.findings);
+    if (patch.actionItems) s.setActionItems(patch.actionItems);
+    if (patch.brief !== undefined) s.setBrief(patch.brief);
+  }
+  await emitHistoryUpdated(id);
+  pushToCloud(id); // best-effort; gated by the sync toggle
+  log.info("history: entry analysis written externally", {
+    id,
+    findings: updated.findings.length,
+    actionItems: updated.actionItems.length,
+    brief: !!updated.brief,
+  });
+  return {
+    id,
+    findings: updated.findings.length,
+    actionItems: updated.actionItems.length,
+    brief: !!updated.brief,
+    analyzed: updated.analyzed ?? null,
+  };
 }
 
 /**

@@ -91,6 +91,10 @@ export interface HistoryEntrySummary {
    *  field existed simply omit it (the card then hides the action-item stat). */
   actionItemsCount?: number;
   hasAudio: boolean;
+  /** Mirrors {@link HistoryEntry.analyzed} so an MCP client can find
+   *  not-yet-analyzed recordings from the cheap list alone. Optional: summaries
+   *  written before this field existed omit it (state unknown). */
+  analyzed?: boolean;
   /** First spoken line of the transcript, for a preview. */
   snippet: string;
   /** Accounts link, for the company page's meeting timeline. */
