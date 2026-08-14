@@ -148,6 +148,9 @@ const DEFAULT_SETTINGS: Settings = {
   translateTargetLanguage: "en",
   meetingTranslateEnabled: false,
   defaultMeetingType: "general",
+  // Recordings analyze themselves as they always have; turning this off hands
+  // analysis to an external AI over MCP. See Settings.autoStudyAnalysis.
+  autoStudyAnalysis: true,
   voiceTypingEnabled: true,
   voiceTypingShortcut: "alt-space",
   voiceTypingMode: "hold",
@@ -404,6 +407,13 @@ interface ParleyState {
   /** Signature of the eval set the current `findings` reflect (set by runAnalysis).
    *  When it differs from the active eval set, the findings are stale → re-analyze. */
   analyzedEvalSig: string;
+  /** Replay id the user last asked to analyze BY HAND (regenerate / re-analyze
+   *  all). It overrides `settings.autoStudyAnalysis` being off for that one
+   *  recording, so a manual re-run still fans out through the pipeline. Pinned
+   *  by id rather than cleared: loading another recording changes the id, so a
+   *  stale pin can never re-enable the pipeline for a recording nobody asked
+   *  about — no reset path has to remember it. */
+  studyManualForId: string | null;
   setFindings: (events: TimelineEvent[]) => void;
   /** Intelligence-board state (per meeting type) + its extraction lifecycle. */
   intel: IntelState | null;
@@ -675,6 +685,7 @@ export const useStore = create<ParleyState>()(
       analysisStatus: "idle",
       analysisError: null,
       analyzedEvalSig: "",
+      studyManualForId: null,
       selectedFindingId: null,
       solutionFindingId: null,
       findingSolutions: {},

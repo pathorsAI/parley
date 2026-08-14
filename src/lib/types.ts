@@ -394,6 +394,13 @@ export interface Settings {
    *  the history entry) — this is only the seed. Legacy persisted key:
    *  `meetingType`. */
   defaultMeetingType: MeetingType;
+  /** Master switch for the study/replay auto-analysis pipeline (findings →
+   *  action items → brief → delivery → intel). Off → a recording stays
+   *  UNANALYZED so an external AI can own the analysis and write it back over
+   *  MCP (see set_recording_analysis; list_recordings' `analyzed` flag is how it
+   *  finds them). Manual "regenerate" is unaffected — it still analyzes the one
+   *  recording on demand. Default on (the prior behavior). */
+  autoStudyAnalysis: boolean;
   /** Voice typing: whether push-to-talk dictation is active. Option+Space works
    *  without extra permission; fn/Globe additionally needs Input Monitoring.
    *  While enabled, releasing the key always auto-pastes (simulated ⌘V, needs
