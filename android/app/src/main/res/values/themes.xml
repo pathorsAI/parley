@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The XML theme exists only to dress the window before Compose takes over: the
+  activity is a single Compose surface, so all real styling lives in
+  ui/theme/Theme.kt (Material 3, dynamic color on API 31+).
+
+  Parent is a platform DayNight theme rather than a Material Components one:
+  the app deliberately has no `com.google.android.material` dependency.
+-->
+<resources>
+    <style name="Theme.Parley" parent="@android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">?android:attr/colorBackground</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

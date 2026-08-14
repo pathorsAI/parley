@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Every user-visible string lives here AND in values-zh-rTW/strings.xml.
+  Traditional Chinese is first-class in Parley, not a translation afterthought:
+  a string that exists in only one of the two files is a bug.
+-->
+<resources>
+    <string name="app_name">Parley</string>
+
+    <!-- Shared actions -->
+    <string name="action_close">Close</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_retry">Try again</string>
+    <string name="action_back">Back</string>
+    <string name="action_refresh">Refresh</string>
+    <string name="action_stop">Stop</string>
+
+    <!-- Sign in -->
+    <string name="sign_in_tagline">Record a meeting. Read the transcript. Everywhere you work.</string>
+    <string name="sign_in_button">Sign in</string>
+    <string name="sign_in_waiting">Waiting for the browser to hand the session back…</string>
+    <string name="sign_in_no_browser">No browser is available to sign in with.</string>
+    <string name="sign_in_failed">Sign-in did not complete (%1$s).</string>
+
+    <!-- Home -->
+    <string name="home_title">Recordings</string>
+    <string name="home_account">Account</string>
+    <string name="home_empty_title">No recordings yet</string>
+    <string name="home_empty_body">Record a meeting, or import an audio file you already have.</string>
+    <string name="home_record">Record a meeting</string>
+    <string name="home_import">Import recording</string>
+    <string name="home_pending_header">Waiting to upload</string>
+    <string name="home_pending_badge">%1$d</string>
+    <string name="home_pending_retry">Upload now</string>
+    <string name="home_error_network">Can\'t reach the cloud right now. Your recordings load automatically once the network is back.</string>
+    <string name="home_error_server">The cloud returned an error.</string>
+    <string name="home_error_signed_out">Your session expired. Sign in again.</string>
+    <string name="home_recording_in_progress">A meeting is being recorded</string>
+    <string name="home_recording_in_progress_action">Return to it</string>
+    <string name="recording_untitled">Untitled recording</string>
+    <string name="recording_source_upload">Imported</string>
+    <string name="recording_source_live">Recorded</string>
+
+    <!-- Account sheet -->
+    <string name="account_title">Account</string>
+    <string name="account_plan">Plan: %1$s</string>
+    <string name="account_usage_title">This period</string>
+    <string name="account_stt_usage">Transcription: %1$s of %2$s</string>
+    <string name="account_llm_usage">Analysis credits: %1$s of %2$s</string>
+    <string name="account_unlimited">unlimited</string>
+    <string name="account_period_reset">Resets on %1$s</string>
+    <string name="account_loading">Loading…</string>
+    <string name="account_load_failed">Couldn\'t load your account details.</string>
+    <string name="account_sign_out">Sign out</string>
+
+    <!-- Meeting -->
+    <string name="meeting_title">Meeting</string>
+    <string name="meeting_permission_title">Microphone access needed</string>
+    <string name="meeting_permission_body">Parley records the meeting on this device and streams it for live transcription.</string>
+    <string name="meeting_permission_grant">Allow microphone</string>
+    <string name="meeting_permission_denied">Microphone permission was denied. Turn it on in system settings to record.</string>
+    <string name="meeting_connecting">Connecting…</string>
+    <string name="meeting_recording">Recording</string>
+    <string name="meeting_finishing">Finishing the transcript…</string>
+    <string name="meeting_uploading">Uploading…</string>
+    <string name="meeting_uploaded">Uploaded</string>
+    <string name="meeting_queued">Saved on this device. It uploads as soon as the network is back.</string>
+    <string name="meeting_dropped">That was under two seconds, so nothing was saved.</string>
+    <string name="meeting_transcript_empty">The transcript appears here as people speak.</string>
+    <string name="meeting_issue_quota">Transcription stopped: the hosted transcription quota is used up. The audio is still being recorded.</string>
+    <string name="meeting_issue_error">Transcription stopped unexpectedly. The audio is still being recorded.</string>
+    <string name="meeting_title_format">Meeting %1$s</string>
+    <string name="speaker_label">Speaker %1$d</string>
+    <string name="speaker_unknown">Speaker</string>
+
+    <!-- Failures shared by the meeting and import flows -->
+    <string name="failure_not_signed_in">You are signed out. Sign in and try again.</string>
+    <string name="failure_mic_permission">Microphone permission is not granted.</string>
+    <string name="failure_mic_unavailable">The microphone isn\'t available — a call or another app may be using it.</string>
+    <string name="failure_encoder_unavailable">This device can\'t encode Opus audio, so the recording can\'t be saved.</string>
+    <string name="failure_upload">The recording is saved on this device but couldn\'t be uploaded yet.</string>
+    <string name="failure_unknown">Something went wrong.</string>
+
+    <!-- Import -->
+    <string name="import_title">Import recording</string>
+    <string name="import_no_file">No file selected.</string>
+    <string name="import_phase_preparing">Reading the file…</string>
+    <string name="import_phase_transcribing">Transcribing…</string>
+    <string name="import_phase_uploading">Uploading…</string>
+    <string name="import_phase_done">Done</string>
+    <string name="import_progress">%1$d%% decoded · %2$s transcribed</string>
+    <string name="import_length">Length %1$s</string>
+    <string name="import_length_unknown">Length unknown</string>
+    <string name="import_failure_unreadable">That file couldn\'t be opened.</string>
+    <string name="import_failure_no_audio">That file has no audio track.</string>
+    <string name="import_failure_unsupported">This device can\'t decode that audio format.</string>
+    <string name="import_failure_decode">The file couldn\'t be decoded all the way through.</string>
+
+    <!-- Recording detail -->
+    <string name="detail_title">Recording</string>
+    <string name="detail_load_failed">Couldn\'t load this recording.</string>
+    <string name="detail_transcript">Transcript</string>
+    <string name="detail_no_transcript">This recording has no transcript.</string>
+    <string name="detail_findings">Findings</string>
+    <string name="detail_action_items">Action items</string>
+    <string name="detail_playback_unavailable">Playback isn\'t available in this version.</string>
+    <string name="detail_speakers">%1$d speakers</string>
+    <string name="detail_length">Length %1$s</string>
+
+    <!-- Foreground service notification -->
+    <string name="notification_channel_name">Meeting recording</string>
+    <string name="notification_channel_description">Shows while Parley is recording a meeting.</string>
+    <string name="notification_title">Recording a meeting</string>
+    <string name="notification_text">Tap to return to Parley.</string>
+</resources>
