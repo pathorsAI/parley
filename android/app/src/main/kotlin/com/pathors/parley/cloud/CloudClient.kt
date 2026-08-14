@@ -84,6 +84,19 @@ class CloudException(
     val isNotFound: Boolean get() = status == 404
 
     /**
+     * [CloudClient.deleteAccount] was refused because the account still owns at
+     * least one shared organization.
+     *
+     * Its own flag rather than a generic 409, because it is the one deletion
+     * failure the user can actually act on — the backend refuses on purpose
+     * (cloud `src/index.ts`, `DELETE /me`): silently removing a shared workspace
+     * would take its other members' recordings with it. The workspace has to be
+     * transferred or deleted first, which today means the desktop app.
+     */
+    val ownsOrganizations: Boolean
+        get() = status == 409 && code == OWNED_ORGANIZATIONS
+
+    /**
      * Whether retrying the very same request could plausibly succeed: server
      * faults, rate limiting and request timeouts. A 4xx is otherwise the client's
      * fault and would fail identically forever.
@@ -92,6 +105,11 @@ class CloudException(
         get() = status == 0 || status >= 500 || status == 408 || status == 429
 
     override fun toString(): String = "CloudException(status=$status, code=$code, message=$message)"
+
+    companion object {
+        /** The worker's `{ error }` value behind [ownsOrganizations]. */
+        const val OWNED_ORGANIZATIONS = "owned_organizations"
+    }
 }
 
 /**
@@ -136,6 +154,23 @@ class CloudClient(
      */
     suspend fun signOut() {
         execute(Request.Builder().url(url("auth", "sign-out")).post(EMPTY_BODY)) { }
+    }
+
+    /**
+     * `DELETE /me` — permanently erase the account: the user row and everything
+     * that cascades from it (sessions, linked providers, usage, memberships,
+     * personal folders) plus every recording blob under this user's R2 prefixes.
+     * Irreversible; there is no undo and no tombstone to restore from.
+     *
+     * The session token is dead the moment this returns, so the caller must clear
+     * local auth (and anything still queued for upload) rather than sign out.
+     *
+     * Throws [CloudException] with [CloudException.ownsOrganizations] when the
+     * account still owns a shared organization — a refusal to explain, not a
+     * failure to retry. Same contract as iOS `CloudClient.deleteAccount()`.
+     */
+    suspend fun deleteAccount() {
+        execute(Request.Builder().url(url("me")).delete()) { }
     }
 
     // ── recordings (personal) ────────────────────────────────────────────────

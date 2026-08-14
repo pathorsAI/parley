@@ -51,6 +51,13 @@
     <string name="account_loading">載入中…</string>
     <string name="account_load_failed">無法載入帳號資訊。</string>
     <string name="account_sign_out">登出</string>
+    <string name="account_delete">刪除帳號</string>
+    <string name="account_delete_in_progress">刪除帳號中…</string>
+    <string name="account_delete_confirm_title">要永久刪除帳號嗎？</string>
+    <string name="account_delete_confirm_body">這會永久刪除你的 Parley 帳號，以及所有已同步的錄音——音訊、逐字稿、摘要、資料夾與使用紀錄。刪除後無法復原，也無法取回任何資料。這台裝置上尚未上傳的錄音同樣會一併清除。若你是共享組織的擁有者，請先移轉或刪除該組織。</string>
+    <string name="account_delete_confirm_action">刪除我的帳號與資料</string>
+    <string name="account_delete_error_owns_organizations">你仍是至少一個組織的擁有者。請先在桌面版移轉或刪除該組織，再刪除帳號。</string>
+    <string name="account_delete_error_failed">帳號未被刪除。請檢查網路連線後再試一次。</string>
 
     <!-- Meeting -->
     <string name="meeting_title">會議</string>

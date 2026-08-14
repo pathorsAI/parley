@@ -52,6 +52,13 @@
     <string name="account_loading">Loading…</string>
     <string name="account_load_failed">Couldn\'t load your account details.</string>
     <string name="account_sign_out">Sign out</string>
+    <string name="account_delete">Delete account</string>
+    <string name="account_delete_in_progress">Deleting account…</string>
+    <string name="account_delete_confirm_title">Delete your account permanently?</string>
+    <string name="account_delete_confirm_body">This permanently deletes your Parley account and every recording synced to it — audio, transcripts, summaries, folders and usage history. It cannot be undone, and nothing can be recovered afterwards. Recordings still waiting to upload on this device are discarded too. If you own a shared organization, transfer or delete it first.</string>
+    <string name="account_delete_confirm_action">Delete my account and data</string>
+    <string name="account_delete_error_owns_organizations">You still own at least one organization. Transfer or delete it in the desktop app first, then delete your account.</string>
+    <string name="account_delete_error_failed">Your account was not deleted. Check your connection and try again.</string>
 
     <!-- Meeting -->
     <string name="meeting_title">Meeting</string>
