@@ -1,0 +1,62 @@
+<svg width="1024" height="500" viewBox="0 0 1024 500" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="500" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1b1f29"/>
+      <stop offset="1" stop-color="#0a0b0e"/>
+    </linearGradient>
+    <!-- The icon's three stops, stretched across the art so the waveform
+         starts teal and the transcript lines land indigo. -->
+    <linearGradient id="mark" x1="596" y1="140" x2="968" y2="376" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5eead4"/>
+      <stop offset="0.55" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#818cf8"/>
+    </linearGradient>
+    <linearGradient id="markSmall" x1="66" y1="198" x2="146" y2="308" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5eead4"/>
+      <stop offset="0.55" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#818cf8"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="800" cy="250" r="320" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38bdf8" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1024" height="500" fill="url(#bg)"/>
+  <rect width="1024" height="500" fill="url(#glow)"/>
+
+  <!-- Monogram lockup: exact geometry from app-icon.svg at 0.146x.
+       Its bounding box (stroke included, dot included) is x 323..688,
+       y 263..761 in icon units, so the group is translated to put that
+       box's top-left at (72, 206). -->
+  <g transform="translate(24.8 167.6) scale(0.146)">
+    <g stroke="url(#markSmall)" stroke-width="74" stroke-linecap="round" fill="none">
+      <path d="M360 300 V724"/>
+      <path d="M360 300 H560 A150 150 0 0 1 560 600 H360"/>
+    </g>
+    <circle cx="648" cy="724" r="40" fill="#818cf8"/>
+  </g>
+
+  <text x="152" y="282" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="82" font-weight="700" fill="#f4f6f8" letter-spacing="-2">Parley</text>
+  <text x="155" y="336" font-family="PingFang TC, Heiti TC, Noto Sans CJK TC, sans-serif"
+        font-size="30" font-weight="400" fill="#9aa6b2">會議，即時變成逐字稿</text>
+
+  <!-- Audio becoming text -->
+  <g stroke="url(#mark)" stroke-linecap="round" fill="none">
+    <g stroke-width="10">
+      <path d="M608 250 V178"/><path d="M608 250 V322"/>
+      <path d="M638 250 V198"/><path d="M638 250 V302"/>
+      <path d="M668 250 V158"/><path d="M668 250 V342"/>
+      <path d="M698 250 V212"/><path d="M698 250 V288"/>
+      <path d="M728 250 V172"/><path d="M728 250 V328"/>
+      <path d="M758 250 V224"/><path d="M758 250 V276"/>
+    </g>
+    <g stroke-width="9" opacity="0.9">
+      <path d="M806 190 H964"/>
+      <path d="M806 230 H918"/>
+      <path d="M806 270 H972"/>
+      <path d="M806 310 H878"/>
+    </g>
+  </g>
+</svg>

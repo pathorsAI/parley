@@ -3,16 +3,27 @@
 Google Play equivalent of `../ios/RELEASING.md`. One-time setup first, then the
 per-release loop.
 
-The GitHub secrets the release workflow expects, all of which only Jack can
-create (§2 and §7 give the exact commands):
+The store-facing content — listing copy in both locales, the Data safety answer
+sheet, review notes, and the graphics checklist — lives in
+[`AppStore/`](AppStore/README.md), mirroring `../ios/AppStore/`. This file stays
+the process; that folder is what gets pasted into Play Console.
+
+The GitHub secrets the release workflow expects (§2 and §7 give the exact
+commands):
 
 | Secret                            | Needed for               | Status                          |
 | --------------------------------- | ------------------------ | ------------------------------- |
-| `PLAY_UPLOAD_KEYSTORE_BASE64`     | signing the bundle       | create with `keytool` (§2)      |
-| `PLAY_UPLOAD_KEYSTORE_PASSWORD`   | signing the bundle       | create with `keytool` (§2)      |
-| `PLAY_UPLOAD_KEY_ALIAS`           | signing the bundle       | create with `keytool` (§2)      |
-| `PLAY_UPLOAD_KEY_PASSWORD`        | signing the bundle       | create with `keytool` (§2)      |
+| `PLAY_UPLOAD_KEYSTORE_BASE64`     | signing the bundle       | **set** — keystore created (§2) |
+| `PLAY_UPLOAD_KEYSTORE_PASSWORD`   | signing the bundle       | **set**                         |
+| `PLAY_UPLOAD_KEY_ALIAS`           | signing the bundle       | **set** — `parley-upload`       |
+| `PLAY_UPLOAD_KEY_PASSWORD`        | signing the bundle       | **set**                         |
 | `PLAY_SERVICE_ACCOUNT_JSON`       | uploading to Play        | blocked on verification (§7)    |
+
+The upload keystore itself is not in this repo and never will be. It lives in
+Pathors' private secret store alongside the Apple signing keys, together with a
+note recording its alias and fingerprint. Ask Jack if you need it; the recovery
+path if it is ever lost is an upload-key reset from Play Console, not a new app
+listing (see §2).
 
 ## One-time setup
 
@@ -113,31 +124,38 @@ base64 -i ~/parley-upload.keystore | base64 --decode | cmp - ~/parley-upload.key
 
 ### 4. Store listing (Grow → Store presence)
 
-- Title (≤30 chars), short description (≤80), full description (≤4000) —
-  reuse copy from `../ios/AppStore/` metadata, adapted.
+- Title (≤30 chars), short description (≤80), full description (≤4000) — written
+  for both locales in [`AppStore/listing-en.md`](AppStore/listing-en.md) and
+  [`AppStore/listing-zh-TW.md`](AppStore/listing-zh-TW.md).
 - Graphics: app icon 512×512 PNG, feature graphic 1024×500, ≥2 phone
-  screenshots (16:9–9:16, ≥1080px). Reuse the iOS screenshot pipeline
-  (`../ios/AppStore/capture-screenshots.sh`) as inspiration; an emulator +
-  `adb exec-out screencap` gives clean frames.
+  screenshots (≥1080px). The icon is exported at
+  [`AppStore/assets/icon-512.png`](AppStore/assets/icon-512.png); the rest, with
+  the emulator + `adb exec-out screencap` commands, is in
+  [`AppStore/assets/README.md`](AppStore/assets/README.md).
 - Category: Productivity. Contact email: contact@pathors.com. Privacy policy
   URL: same one used for the iOS listing (required — mic + account data).
 
 ### 5. Policy declarations (App content page — the part that actually blocks releases)
 
-- **Data safety form** (Play's version of Apple's privacy label — mirror
-  `../ios/AppStore/privacy-label.md`): collects Audio (voice recordings) and
-  Account info (email); data encrypted in transit; account deletion available
-  (`DELETE /me`). Declare recordings are uploaded to `api.parley.tw`.
+- **Data safety form** (Play's version of Apple's privacy label): the answers
+  are filled in, with the code that proves each one, in
+  [`AppStore/data-safety.md`](AppStore/data-safety.md) — collects Audio (voice
+  recordings), account info (name, email, user id) and transcript content; all
+  encrypted in transit; nothing shared; no analytics or crash SDK.
 - **Account deletion**: Play requires a web URL for account deletion when the
-  app supports account creation. Point at the sign-in page's account settings
-  or a small hosted page that walks through in-app deletion.
+  app supports account creation. **This is not solved yet.** `DELETE /me` is
+  implemented on iOS but not in the Android app (`docs/api-cloud.md`, "Not
+  implemented"), and `website/privacy/` currently says deletion happens in the
+  iOS app's Settings — a route an Android-only user cannot reach. See
+  [`AppStore/data-safety.md`](AppStore/data-safety.md).
 - **Microphone**: RECORD_AUDIO is not a "sensitive" runtime-review permission
   like SMS/location, no special declaration needed — but the data-safety form
   must match reality or the app gets rejected/removed.
 - **Foreground service** (`microphone` type): Play asks for a video
   demonstrating the in-use feature during review of the declaration form
-  (Policy → App content → Foreground service permissions). A 30-second screen
-  recording of a live meeting transcription suffices.
+  (Policy → App content → Foreground service permissions). The justification
+  text and the shot list for that video are in
+  [`AppStore/review-notes.md`](AppStore/review-notes.md).
 - Content rating questionnaire (IARC), ads declaration (none), target audience
   (18+/general, not child-directed), News app: no, COVID app: no.
 
@@ -265,10 +283,10 @@ are easy to get wrong:
 
 ## Review gotchas specific to this app
 
-- **Sign-in wall**: like iOS review, provide a demo account
-  (see `../ios/AppStore/review-notes.md`) in "App access" so reviewers can get
-  past login. Keep it current — an expired demo account is the #1 avoidable
-  rejection.
+- **Sign-in wall**: like iOS review, provide a demo account in "App access" so
+  reviewers can get past login — which account, and the sign-in steps to paste
+  alongside it, are in [`AppStore/review-notes.md`](AppStore/review-notes.md).
+  Keep it current — an expired demo account is the #1 avoidable rejection.
 - **Recording consent**: the listing/description should not suggest covert
   recording; frame it as meeting notes with participants' knowledge (same
   framing that passed App Store review).
