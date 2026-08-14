@@ -148,7 +148,10 @@ final class DictationCoordinator: ObservableObject {
         }
 
         let client = SttRelayClient(
-            options: .init(bearerToken: token, feature: "dictation")
+            // "voice_typing" is the cloud's whitelisted tag for this flow (the
+            // relay only attributes meeting | voice_typing | realtime; anything
+            // else is billed unattributed).
+            options: .init(bearerToken: token, feature: "voice_typing")
         ) { [weak self] event in
             Task { @MainActor in self?.handle(event) }
         }
