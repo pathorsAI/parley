@@ -42,7 +42,18 @@ cd android
 ./gradlew installDebug           # onto a connected device/emulator
 ```
 
+Dependencies are checksum-pinned in `gradle/verification-metadata.xml`. Adding
+or bumping one means regenerating it — see RELEASING.md §8, which also explains
+why all three `aapt2` host classifiers have to stay listed.
+
 ## Release
+
+Push an `android-vX.Y.Z` tag and `.github/workflows/android-release.yml` tests,
+builds, signs and publishes the bundle.
+
+`./gradlew assembleRelease` and `bundleRelease` work without the upload key too
+— they just produce an unsigned artifact and warn. Contributors need nothing
+extra.
 
 See [RELEASING.md](RELEASING.md) for signing, Play Console setup, and the
 store-listing checklist.
