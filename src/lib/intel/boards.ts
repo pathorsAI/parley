@@ -102,8 +102,16 @@ export async function resolveScenarioSet(settings: Settings): Promise<ScenarioSe
   return buildScenarioSet(t, await readStageBundleFile({ fresh: true }));
 }
 
-/** Resolve the live board for a meeting type; null for "general" (todos only)
- *  and for scenario ids that no longer exist (deleted customs). */
+/**
+ * Resolve the live board for a meeting type. Null means "no board", which
+ * covers three DIFFERENT situations the callers have to tell apart — use
+ * {@link scenarioExists} for that:
+ *   - "general": todos only, never had a board;
+ *   - a boardless KIND (retro / office hour / a custom kind): it exists and is a
+ *     perfectly valid pick, it just isn't a board — that's the whole point of a
+ *     kind, so this is normal, not a fault;
+ *   - a scenario id that no longer exists (a deleted custom).
+ */
 export async function resolveBoard(
   type: MeetingType,
   settings: Settings
@@ -112,9 +120,17 @@ export async function resolveBoard(
   const t = (key: TranslationKey) => translate(settings.language, key);
   const scenario = (await resolveScenarioSet(settings)).byId[type];
   if (!scenario) return null;
+  if (!scenario.hasBoard || scenario.order.length === 0) return null;
   const stageId = resolveScenarioStageId(scenario);
   const bundle = scenario.bundles[stageId];
   return bundle ? boardFromBundle(scenario, bundle, t) : null;
+}
+
+/** Is this meeting type a scenario the app still knows? Lets a null board be
+ *  read correctly: a live kind means "nothing to extract", a vanished id means
+ *  the pick is broken and has to be degraded. */
+export async function scenarioExists(type: MeetingType, settings: Settings): Promise<boolean> {
+  return (await resolveScenarioSet(settings)).byId[type] != null;
 }
 
 /**

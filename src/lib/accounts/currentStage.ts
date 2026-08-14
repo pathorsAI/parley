@@ -25,7 +25,11 @@ export function stageFor(
     const threadStage = thread.stage;
     if (threadStage && scenario.order.includes(threadStage)) return threadStage;
   }
-  return scenario.order[0];
+  // A boardless KIND has no stages at all, so there is no first stage to fall
+  // back to. Empty string rather than a `string`-typed undefined: callers look
+  // the id up in `bundles`, which misses either way, but only one of the two
+  // keeps the signature honest.
+  return scenario.order[0] ?? "";
 }
 
 /** {@link stageFor} against the current store — for non-React callers (live

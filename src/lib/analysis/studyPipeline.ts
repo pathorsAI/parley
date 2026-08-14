@@ -57,6 +57,10 @@ export interface StudyPipelineFacts {
   deliveryStatus: AsyncTaskStatus;
   intelStatus: AsyncTaskStatus;
   meetingType: MeetingType;
+  /** Does the picked type have a live board? A boardless KIND (retro, office
+   *  hour) has no slots to fill, so there is no extraction to schedule — it
+   *  shapes the post-meeting analysis only. */
+  meetingTypeHasBoard: boolean;
   /** Type of the intel board currently in the store, or null. */
   intelType: MeetingType | null;
   /** May the pipeline spend on its own? `settings.autoStudyAnalysis` OR a manual
@@ -83,6 +87,7 @@ export function factsOf(s: StoreState): StudyPipelineFacts {
     deliveryStatus: s.deliveryStatus,
     intelStatus: s.intelStatus,
     meetingType: s.meetingType,
+    meetingTypeHasBoard: s.meetingTypeHasBoard,
     intelType: s.intel?.meetingType ?? null,
     autoAnalyze:
       s.settings.autoStudyAnalysis ||
@@ -98,7 +103,7 @@ function settled(status: AsyncTaskStatus): boolean {
  *  invalidation, or a discarded stale pass); "done" only re-runs when the board
  *  on hand is for a different template than the one picked. */
 function intelWanted(f: StudyPipelineFacts): boolean {
-  if (f.meetingType === "general" || !f.intelExtractable) return false;
+  if (f.meetingType === "general" || !f.meetingTypeHasBoard || !f.intelExtractable) return false;
   return (
     f.intelStatus === "idle" ||
     (f.intelStatus === "done" && f.intelType !== f.meetingType)
@@ -217,6 +222,7 @@ const WATCHED = [
   "intelStatus",
   "intel",
   "meetingType",
+  "meetingTypeHasBoard",
   "loadedHistoryId",
   "replayReadOnly",
   "studyManualForId",
@@ -327,7 +333,10 @@ export function deriveStudyPipeline(f: StudyPipelineFacts): StudyPipelineState {
   const chained = (status: AsyncTaskStatus): StudyArtifactDisplay =>
     status !== "idle" ? status : chainQueued(f) ? "queued" : "idle";
 
-  const intelApplicable = f.meetingType !== "general" && f.intelExtractable;
+  // Must match intelWanted's own gate, or a boardless kind would sit at
+  // "queued" forever against an extraction the scheduler will never dispatch.
+  const intelApplicable =
+    f.meetingType !== "general" && f.meetingTypeHasBoard && f.intelExtractable;
   const intel: StudyArtifactDisplay =
     f.intelStatus !== "idle" ? f.intelStatus : intelApplicable && can ? "queued" : "idle";
 

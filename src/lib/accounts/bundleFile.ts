@@ -93,6 +93,16 @@ export interface CustomScenarioDef {
 /** Builtin scenario ids — these come from code+i18n, never from the file. */
 export const BUILTIN_SCENARIO_IDS = ["sales", "negotiation", "partnership"] as const;
 
+/**
+ * Builtin boardless KINDS. A kind is a scenario with zero stages: a name, an
+ * emoji, and an analysis lens — no live board, no realtime extraction. Retros
+ * and office hours are meetings you review afterwards, not meetings you steer
+ * from a slot board, so forcing them through the board model only ever produced
+ * an empty board. Reserved like the builtin scenario ids so a custom kind can't
+ * shadow one.
+ */
+export const BUILTIN_KIND_IDS = ["retro", "officehour"] as const;
+
 /** Stage ids of the builtin single-stage scenarios (they double as the slot-id
  *  prefix, which is why they differ from the scenario ids — `negotiation` is
  *  already taken by the sales pipeline's 報價議價 stage). */
@@ -152,13 +162,14 @@ export function isValidCustomStageId(id: unknown): id is string {
   return typeof id === "string" && /^[a-z][a-z0-9-]*$/.test(id) && !RESERVED_STAGE_IDS.has(id);
 }
 
-/** Scenario ids are dot-free slugs and must not shadow a builtin scenario or
- *  the "general" (no-board) meeting type. */
+/** Scenario ids are dot-free slugs and must not shadow a builtin scenario, a
+ *  builtin kind, or the "general" (no-board) meeting type. */
 export function isValidScenarioId(id: unknown): id is string {
   return (
     typeof id === "string" &&
     /^[a-z][a-z0-9-]*$/.test(id) &&
     !(BUILTIN_SCENARIO_IDS as readonly string[]).includes(id) &&
+    !(BUILTIN_KIND_IDS as readonly string[]).includes(id) &&
     id !== "general"
   );
 }
@@ -458,6 +469,36 @@ export const SCENARIO_GUIDANCE: Record<string, string> = {
     "This is a PARTNERSHIP talk. For the leverage slot, propose concrete ways the two sides can " +
     "leverage each other based on the counterpart's stated position (their assets × our needs, " +
     "and vice versa), including proactive ways WE can help THEM first.",
+};
+
+// ── Kind guidance(model input,English)──────────────────────────────────────
+// A boardless kind contributes exactly one thing: the lens the post-meeting
+// analysis reads the transcript through. No slots, so this text is the whole
+// contract — it has to name what matters and what to ignore.
+
+export const KIND_GUIDANCE: Record<string, string> = {
+  retro:
+    "This is a RETROSPECTIVE — the team reviewing its own work, not a conversation with a " +
+    "customer. Do NOT read it as a sales or negotiation call: there is no counterpart to win " +
+    "over, and nobody is being sold to. Track (1) DECISIONS: what was actually decided, what " +
+    "it replaces, and who has to live with it; (2) ACTION ITEMS: concrete commitments with an " +
+    "owner, separated from ideas nobody picked up; (3) OPEN QUESTIONS: what was raised and " +
+    "deliberately left unresolved, and what would settle it; (4) WHAT IS STUCK: work that " +
+    "slipped again, problems named in an earlier cycle that are still here, and blockers the " +
+    "team cannot clear on its own. Prefer what the team committed to over what it merely " +
+    "complained about, and say plainly when a recurring problem got aired without an owner.",
+  officehour:
+    "This is an OFFICE HOUR — someone bringing their situation to an advisor for feedback. The " +
+    "subject of the analysis is HOW THE ADVISEE TAKES ADVICE, which decides whether the hour " +
+    "was worth anything. Watch for the failure modes: deflecting a suggestion with a " +
+    "counterexample instead of engaging with its premise; talking over the advisor or " +
+    "finishing their point for them; spending the hour on checkable facts the advisee could " +
+    "have looked up (headcount, pricing, public numbers) instead of on judgment only this " +
+    "advisor has; and ending without converging on a takeaway or committing to anything " +
+    "specific. Give equal weight to what was done WELL: opening with what happened to the LAST " +
+    "round of advice, disclosing failures and unflattering numbers honestly, and pushing on " +
+    "the REASONING behind a suggestion rather than just accepting or rejecting the conclusion. " +
+    "Close on whether the hour produced a decision the advisee will actually act on.",
 };
 
 /** Fallback guidance for custom scenarios that don't carry their own. */

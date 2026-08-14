@@ -3,7 +3,7 @@ import { useStore, isTrimmed, transcriptAsText, type ReplayTrim } from "../store
 import { hasProviderKey } from "../ai/settings";
 import { outputLanguageInstruction, profileContext } from "../ai/profile";
 import { generateObjectResilient } from "../ai/generate";
-import { resolveBoard, type MeetingBoard } from "./boards";
+import { resolveBoard, scenarioExists, type MeetingBoard } from "./boards";
 import { makeRunGuard } from "../analysis/runGuard";
 import { log } from "../log";
 import type {
@@ -216,9 +216,12 @@ function extractableTranscript(workload: LlmWorkload): string | null {
 
 /** The scenario no longer exists (a deleted custom id on an old recording or
  *  stale settings). Degrade the pick to "general" so the study pipeline stops
- *  re-dispatching this extraction forever, and never leave "running" stuck. */
+ *  re-dispatching this extraction forever, and never leave "running" stuck.
+ *  ONLY for a genuinely vanished id — a boardless kind is a live pick and must
+ *  keep its meetingType (persistStudyOutputs writes it back to disk, so
+ *  degrading one would permanently rewrite the user's choice). */
 function degradeUnknownScenario(type: MeetingType): void {
-  log.warn("intel: unknown scenario — degrading to general", { type });
+  log.warn("intel: scenario no longer exists — degrading to general", { type });
   const s = useStore.getState();
   if (s.appMode === "study" && s.meetingType === type) s.setMeetingType("general");
   s.setIntelStatus("idle");
@@ -257,6 +260,15 @@ export async function runIntelExtraction(
   try {
     const board = await resolveBoard(type, state.settings);
     if (!board) {
+      // No board has two causes and they need opposite handling. A boardless
+      // KIND is a valid pick with nothing to extract: record that fact so the
+      // pipeline stops offering intel, and leave meetingType alone. Only an id
+      // that no longer resolves at all is a broken pick worth degrading.
+      if (await scenarioExists(type, state.settings)) {
+        useStore.getState().setMeetingTypeHasBoard(false);
+        useStore.getState().setIntelStatus("idle");
+        return;
+      }
       degradeUnknownScenario(type);
       return;
     }

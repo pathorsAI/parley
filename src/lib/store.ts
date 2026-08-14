@@ -148,6 +148,7 @@ const DEFAULT_SETTINGS: Settings = {
   translateTargetLanguage: "en",
   meetingTranslateEnabled: false,
   defaultMeetingType: "general",
+  recentMeetingTypes: [],
   // Recordings analyze themselves as they always have; turning this off hands
   // analysis to an external AI over MCP. See Settings.autoStudyAnalysis.
   autoStudyAnalysis: true,
@@ -440,6 +441,16 @@ interface ParleyState {
    *  switching it never writes the global default or leaks across recordings. */
   meetingType: MeetingType;
   setMeetingType: (type: MeetingType) => void;
+  /** Does `meetingType` resolve to a live board? False for a boardless KIND —
+   *  a retro / office hour / 1:1 contributes an analysis lens only, so the
+   *  study pipeline must not schedule an intel extraction for it. Kept as store
+   *  state rather than derived because resolving it reads the bundle FILE
+   *  (async), and the scheduler is synchronous. Written wherever meetingType is
+   *  (applyScenario, history load, the MCP meta update). Defaults true: every
+   *  pre-existing type other than "general" has a board, and "general" is
+   *  excluded from intel on its own. */
+  meetingTypeHasBoard: boolean;
+  setMeetingTypeHasBoard: (v: boolean) => void;
   /** Insert one finding (MCP/external add) without replacing the list, keeping it
    *  ordered by atMs. A colliding id is reassigned so existing findings are safe. */
   addFinding: (event: TimelineEvent) => void;
@@ -958,6 +969,8 @@ export const useStore = create<ParleyState>()(
         intelStatus: s.intel?.meetingType === type ? ("done" as const) : ("idle" as const),
       };
     }),
+  meetingTypeHasBoard: true,
+  setMeetingTypeHasBoard: (v) => set({ meetingTypeHasBoard: v }),
 
   setFindings: (events) =>
     set((s) => {

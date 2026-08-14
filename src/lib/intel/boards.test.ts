@@ -58,8 +58,14 @@ describe("withSharedSlots", () => {
 describe("buildScenarioSet (builtins)", () => {
   const set = buildScenarioSet(tr, EMPTY_BUNDLE_FILE);
 
-  it("ships sales (multi-stage) + negotiation/partnership (single-stage)", () => {
-    expect(set.list.map((s) => s.id)).toEqual(["sales", "negotiation", "partnership"]);
+  it("ships sales (multi-stage) + negotiation/partnership (single-stage), then the boardless kinds", () => {
+    expect(set.list.map((s) => s.id)).toEqual([
+      "sales",
+      "negotiation",
+      "partnership",
+      "retro",
+      "officehour",
+    ]);
     expect(set.byId.sales.order.length).toBeGreaterThan(1);
     expect(set.byId.negotiation.order).toEqual(["nego"]);
     expect(set.byId.partnership.order).toEqual(["partner"]);
