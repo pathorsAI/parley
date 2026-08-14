@@ -79,14 +79,39 @@ All methods are `suspend` and throw `CloudException` on a non-2xx response.
 | `pushRecording(id, summary, meta): Double?` | `POST /recordings/{id}` `{summary, meta}` → server `updatedAt` |
 | `deleteRecording(id)` | `DELETE /recordings/{id}` |
 | `signOut()` | `POST /auth/sign-out` (prefer `AuthManager.signOut()`) |
+| `deleteAccount()` | `DELETE /me` — permanent account deletion. See below. |
 
 **Ordering rule:** audio is uploaded **before** the summary/meta push, always. A
 row claiming `hasAudio` before its blob exists 404s the download on every other
 device. `MeetingUploader` already does this; hand-rolled push paths must too.
 
 Not implemented (exists on the backend and on iOS, unused by this app so far):
-folders, organizations, `POST /recordings/{id}/share`, `DELETE /me`. They are
-additive — no caller changes when they land.
+folders, organizations, `POST /recordings/{id}/share`. They are additive — no
+caller changes when they land.
+
+### Deleting the account
+
+`deleteAccount()` erases the user row and everything cascading from it (sessions,
+linked providers, usage, memberships, personal folders) plus every recording blob
+under the account's R2 prefixes. Irreversible — no tombstone, nothing to restore.
+Google Play requires this route in-app for any app that offers account creation;
+`AccountSheet` is where it is surfaced, behind a two-step confirmation.
+
+The session is dead when it returns, so the caller **clears** local auth rather
+than signing out — there is nothing left to revoke — and empties the pending
+queue, which now has no account to upload into:
+
+```kotlin
+cloud.deleteAccount()
+uploadQueue.clear()
+auth.clearSession()          // flips `isSignedIn` → the sign-in wall returns
+```
+
+The one refusal worth handling separately is `ownsOrganizations`: the backend
+returns 409 `owned_organizations` while the account still owns a shared
+workspace, because deleting it silently would take other members' recordings
+with it. It has to be transferred or deleted first (today, from the desktop app).
+Retrying will never clear it, so say that instead of "try again".
 
 ### Errors
 
@@ -99,6 +124,7 @@ additive — no caller changes when they land.
 | 402 | `isQuotaExhausted` | Hosted quota gone. Not retryable until `HostedQuota.periodResetTs`. |
 | 403 | `isForbidden` | Resource-level. **Never** sign the user out — the session is fine. |
 | 404 | `isNotFound` | |
+| 409 `owned_organizations` | `ownsOrganizations` | `DELETE /me` only. The account still owns a shared organization; transfer or delete it first. Never retryable. |
 | 0 / 5xx / 408 / 429 | `isRetryable` | Worth another attempt. |
 
 `status == 0` means the failure never reached HTTP (unparseable body). Plain
