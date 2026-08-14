@@ -8,7 +8,7 @@ the parts that have to be produced.
 | --- | --- | --- | --- |
 | App icon | 512 × 512 px, 32-bit PNG, ≤ 1 MB, no transparency needed — Play applies its own rounded mask and shadow | Yes | **Done** — [`icon-512.png`](icon-512.png) |
 | Feature graphic | 1024 × 500 px, PNG or JPEG, ≤ 15 MB, no transparency | Yes | **Done** — per-locale, see below |
-| Phone screenshots | 2–8 per locale, PNG or JPEG, ≤ 8 MB each, each side 320–3,840 px; ship ≥ 1080 px on the short edge | Yes (≥ 2) | **Missing** — capture them, see below |
+| Phone screenshots | 2–8 per locale, PNG or JPEG, ≤ 8 MB each, each side 320–3,840 px; ship ≥ 1080 px on the short edge | Yes (≥ 2) | **Done** — 4 per locale, see below |
 | 7" / 10" tablet screenshots | same rules at tablet sizes | Only if the listing claims tablet support | Not planned for 0.1.0 |
 | Promo video | a YouTube URL | No | Not planned. (Not to be confused with the **foreground-service demo video**, which *is* required — see [`../review-notes.md`](../review-notes.md).) |
 
@@ -87,33 +87,48 @@ rsvg-convert -w 1024 -h 500 feature-graphic-zh-TW.svg -o feature-graphic-1024x50
   re-render on a machine without it, check the tagline didn't fall back to a
   font with no CJK coverage — the failure is silent tofu boxes.
 
-## Phone screenshots — to be captured
+## Phone screenshots — captured
 
-**There is no demo mode in the Android app.** iOS captures its set from
-`ScreenshotDemo.swift` with fixed fictional fixtures and no network
-(`ios/AppStore/screenshots/README.md`); Android has no equivalent, so frames
-have to come from a signed-in account with real cloud data. Two rules follow,
-and they are not negotiable:
-
-- **Never capture a real customer meeting.** Use the review account or a
-  throwaway account seeded with fictional content — the iOS set's fictional
-  renewal negotiation / discovery call / quarterly review is the model, and the
-  demo address there is `alex@example.com` in the RFC-reserved domain.
-- **Only real frames from a real build.** No mockups, no rendered device
-  frames with invented UI.
-
-`[TODO: confirm with Jack]` — porting a `ScreenshotDemo`-style debug mode to
-Android is the durable fix and would make this section a single command, the way
-it is on iOS.
-
-The set to capture (≥ 2 required; 4 tells the story):
+Committed, both locales, ready to upload:
 
 | File | Screen | What it sells |
 | --- | --- | --- |
-| `01-library.png` | Recordings list | The result is kept: titles, durations, live vs imported. |
-| `02-record.png` | Live meeting | The transcript is already there while people are still talking. |
-| `03-import.png` | Import in progress | The Android-only feature: an existing audio file becoming text. |
-| `04-transcript.png` | Recording detail | A transcript you read and quote from, speaker by speaker. |
+| `01-library.png` | Recordings list | The result is kept: titles, durations, live vs **imported**. |
+| `02-transcript.png` | Recording detail | Findings and action items up top, the transcript below — what you actually come back for. |
+| `03-meeting.png` | Live meeting | The transcript is already there while people are still talking. |
+| `04-account.png` | Account | Plan and usage, and that the account is the user's to delete. |
+
+`screenshots/en-US/` and `screenshots/zh-TW/`, 1080 × 2400 each, straight from a
+real debug build on the `parley-test` AVD — no mockups, no rendered device
+frames, no invented UI.
+
+### They come from demo mode, not a real account
+
+`com.pathors.parley.screenshot.DemoMode` is the Android counterpart of iOS's
+`ScreenshotDemo.swift`: fixed fictional fixtures, debug builds only, **no
+network at all**. That last part is the point — it means a capture run can never
+put a real customer's meeting on a public store page, and it works offline.
+
+```bash
+adb shell am start -a android.intent.action.VIEW -d "'parley://demo/library'"
+adb shell am start -a android.intent.action.VIEW -d "'parley://demo/transcript'"
+adb shell am start -a android.intent.action.VIEW -d "'parley://demo/record'"
+adb shell am start -a android.intent.action.VIEW -d "'parley://demo/account'"
+adb shell am start -a android.intent.action.VIEW -d "'parley://demo/off'"    # back to reality
+```
+
+**Keep the inner single quotes.** Without them the device shell eats everything
+from `?` onward, and the intent arrives with no path — the same trap that makes
+`parley://auth-callback?token=…` silently do nothing when tested by hand.
+
+The fixtures are deliberately fictional (北風工業 / Northwind Industrial,
+晴光實驗室 / Sunlit Labs, 子午線 / Meridian) and exist in both languages, so the
+two locale sets tell the same story rather than being a translation of one walk.
+
+To re-capture after a UI change, boot the AVD, install a **debug** build (demo
+mode is compiled out of release), fire the links above, and `adb exec-out
+screencap` each screen. `02-transcript` opens at the top showing findings and
+action items; scroll down first if you want a transcript-led frame instead.
 
 ### Emulator
 
@@ -123,7 +138,7 @@ Play's 1080 px bar.
 
 ```bash
 # 0. paths (Android Studio default on macOS)
-export ANDROID_HOME="$HOME/Library/Android/sdk"
+export ANDROID_HOME="/opt/homebrew/share/android-commandlinetools"   # Homebrew android-commandlinetools
 export PATH="$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$PATH"
 
 # 1. boot it
