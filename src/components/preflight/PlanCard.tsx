@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Plus } from "lucide-react";
+import { Check, Plus, Zap, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { useStore } from "../../lib/store";
 import { useI18n } from "../../i18n";
@@ -138,7 +138,7 @@ export function PlanCard({ plan }: Readonly<{ plan: PlanView }>) {
               key={e.trigger}
               text={e.trigger}
               hint={`→ ${e.move}`}
-              lead="⚡"
+              lead={Zap}
               taken={taken.has(`${e.trigger} → ${e.move}`)}
               onTake={() => take(`${e.trigger} → ${e.move}`)}
             />
@@ -183,17 +183,20 @@ function TakeRow({
   text: string;
   hint?: string;
   index?: number;
-  lead?: string;
+  /** Marker for rows that aren't a numbered step — occupies the same slot. */
+  lead?: LucideIcon;
   taken: boolean;
   onTake: () => void;
 }>) {
   const { t } = useI18n();
-  const marker = index ? `${index}` : lead;
+  // A numbered step wins the slot; `lead` fills it for unordered rows so both
+  // kinds of row keep the same left rail.
+  const Lead = index === undefined ? lead : undefined;
   return (
     <div className="group flex items-start gap-2 rounded-md px-1 py-0.5 hover:bg-background/70">
-      {marker && (
-        <span className="mt-px w-3 shrink-0 text-center text-[10px] tabular-nums text-muted-foreground">
-          {marker}
+      {(index !== undefined || Lead) && (
+        <span className="mt-px flex w-3 shrink-0 justify-center text-[10px] tabular-nums leading-4 text-muted-foreground">
+          {Lead ? <Lead className="size-3 shrink-0" /> : index}
         </span>
       )}
       <div className="flex min-w-0 flex-1 flex-col">

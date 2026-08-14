@@ -125,7 +125,7 @@ export function ReviewPanel() {
 
         {redlines.length > 0 && (
           <div className="flex flex-col gap-1.5">
-            <SectionTitle>⚠ {t("preflight.review.redlines")}</SectionTitle>
+            <SectionTitle>{t("preflight.review.redlines")}</SectionTitle>
             {redlines.map((c) => (
               <p
                 key={c.id}
