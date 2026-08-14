@@ -7,7 +7,7 @@ the parts that have to be produced.
 | Asset | Play's spec | Required? | Status |
 | --- | --- | --- | --- |
 | App icon | 512 × 512 px, 32-bit PNG, ≤ 1 MB, no transparency needed — Play applies its own rounded mask and shadow | Yes | **Done** — [`icon-512.png`](icon-512.png) |
-| Feature graphic | 1024 × 500 px, PNG or JPEG, ≤ 15 MB, no transparency | Yes | **Missing** — must be produced, see below |
+| Feature graphic | 1024 × 500 px, PNG or JPEG, ≤ 15 MB, no transparency | Yes | **Done** — per-locale, see below |
 | Phone screenshots | 2–8 per locale, PNG or JPEG, ≤ 8 MB each, each side 320–3,840 px; ship ≥ 1080 px on the short edge | Yes (≥ 2) | **Missing** — capture them, see below |
 | 7" / 10" tablet screenshots | same rules at tablet sizes | Only if the listing claims tablet support | Not planned for 0.1.0 |
 | Promo video | a YouTube URL | No | Not planned. (Not to be confused with the **foreground-service demo video**, which *is* required — see [`../review-notes.md`](../review-notes.md).) |
@@ -48,26 +48,44 @@ to upload:
   assets; far below Play's 512 px, and the adaptive-icon foreground is not the
   store artwork.
 
-## Feature graphic — to be produced
+## Feature graphic — done
 
 1024 × 500, shown at the top of the store page and in some Play surfaces, often
-**cropped** and often with the app title overlaid — keep the middle clear and do
-not put anything load-bearing in the outer ~15%.
+**cropped** and sometimes with a play-button overlay dropped in the middle — so
+nothing load-bearing sits dead-centre or in the outer ~15%.
 
-No source for this exists in the repo, and it is a design decision rather than
-an export. `[TODO: confirm with Jack]` whether to have it designed properly. A
-defensible stopgap, on the icon's own gradient (`#1b1f29` → `#0a0b0e`) with the
-mark on the left:
+| Locale | Upload |
+| --- | --- |
+| English (United States) | [`feature-graphic-1024x500-en.png`](feature-graphic-1024x500-en.png) |
+| Chinese (Traditional) – Taiwan | [`feature-graphic-1024x500-zh-TW.png`](feature-graphic-1024x500-zh-TW.png) |
+
+Vector sources live beside them (`feature-graphic-en.svg`,
+`feature-graphic-zh-TW.svg`); edit those, never the PNG. Re-render with:
 
 ```bash
-# placeholder only — the wordmark/tagline typography deserves a real pass
-rsvg-convert -w 360 -h 360 app-icon.svg -o /tmp/parley-mark.png
-magick -size 1024x500 gradient:'#1b1f29-#0a0b0e' \
-  /tmp/parley-mark.png -geometry +90+70 -composite \
-  -font Helvetica-Bold -pointsize 64 -fill white -annotate +500+230 'Parley' \
-  -font Helvetica -pointsize 32 -fill '#9fb3c8' -annotate +500+290 'Meeting recorder with live transcripts' \
-  android/AppStore/assets/feature-graphic-1024x500.png
+cd android/AppStore/assets
+rsvg-convert -w 1024 -h 500 feature-graphic-en.svg    -o feature-graphic-1024x500-en.png
+rsvg-convert -w 1024 -h 500 feature-graphic-zh-TW.svg -o feature-graphic-1024x500-zh-TW.png
 ```
+
+**Design notes**, so a later edit doesn't drift off-brand:
+
+- Ground and gradient stops are lifted verbatim from `app-icon.svg` — background
+  `#1b1f29` → `#0a0b0e`, mark `#5eead4` → `#38bdf8` → `#818cf8`.
+- The monogram is the icon's own path data at `0.146x`, not a redraw, so the
+  lockup and the launcher icon can never disagree. Its bounding box (strokes and
+  the dot included) is x 323–688, y 263–761 in icon units; the group translate
+  puts that box's top-left at (72, 206). Changing the scale means recomputing
+  that translate.
+- The art reads left-to-right as **audio becoming text**: waveform bars resolve
+  into transcript lines, sharing one gradient so the eye follows the transition.
+  That is the product in one image, and it survives being scaled down to a
+  thumbnail — which a screenshot of the UI would not.
+- The tagline is deliberately short (Play renders this small); the full pitch
+  belongs in the description, not here.
+- zh-TW sets the tagline in `PingFang TC` (the wordmark stays Latin). If you
+  re-render on a machine without it, check the tagline didn't fall back to a
+  font with no CJK coverage — the failure is silent tofu boxes.
 
 ## Phone screenshots — to be captured
 
