@@ -8,7 +8,13 @@ import { clearStudyCache } from "../history/studyCache";
 import { makeRunGuard } from "./runGuard";
 import { translate } from "../../i18n";
 import { isTauri } from "../tauriEvents";
-import type { EvalDef, Settings, TimelineEvent, TranscriptSegment } from "../types";
+import type {
+  EvalDef,
+  MeetingType,
+  Settings,
+  TimelineEvent,
+  TranscriptSegment,
+} from "../types";
 
 /** Bump when the analysis prompt/output shape changes, to invalidate caches. */
 const ANALYSIS_CACHE_VERSION = "7";
@@ -81,6 +87,28 @@ export async function listenForCacheClear(): Promise<() => void> {
  * A run that outlives its session or is superseded by a newer pass stops
  * writing (see runGuard) — its results are discarded, never misfiled.
  */
+/**
+ * Append the picked scenario's analysis guidance to the meeting context. Every
+ * scenario carries guidance, but for a boardless KIND it is the ONLY thing the
+ * pick means — without this a retro and a sales call would be analyzed
+ * identically. Best-effort: a resolve failure just leaves the context alone.
+ */
+async function withKindGuidance(
+  context: string,
+  type: MeetingType,
+  settings: Settings,
+): Promise<string> {
+  if (type === "general") return context;
+  try {
+    const { resolveScenarioSet } = await import("../intel/boards");
+    const scenario = (await resolveScenarioSet(settings)).byId[type];
+    if (!scenario?.guidance.trim()) return context;
+    return `${context}\n\nMeeting kind: ${scenario.name} — ${scenario.guidance}`;
+  } catch {
+    return context;
+  }
+}
+
 const analysisGuard = makeRunGuard();
 export async function runAnalysis(opts?: {
   mode?: "live" | "replay";
@@ -88,9 +116,6 @@ export async function runAnalysis(opts?: {
 }): Promise<void> {
   const state = useStore.getState();
   const { settings, speakerNames } = state;
-  // The brief folds the per-deal BATNA / target / bottom line into the context, so
-  // it both feeds the prompt AND keys the cache (editing setup → re-analysis).
-  const meetingContext = meetingBriefText(state);
   const mode = opts?.mode ?? (state.appMode === "study" ? "replay" : "live");
   // REPLAY: honor the trim keep-window — trimmed segments are excluded from analysis.
   const segments =
@@ -103,6 +128,18 @@ export async function runAnalysis(opts?: {
   if (state.analysisStatus === "running") return;
   if (!hasProviderKey(settings, workload)) return;
   if (!hasSpokenSegment(segments)) return;
+
+  // The brief folds the per-deal BATNA / target / bottom line into the context, so
+  // it both feeds the prompt AND keys the cache (editing setup → re-analysis).
+  // The meeting KIND's guidance rides the same string on purpose: it's the whole
+  // contribution of a boardless kind, and folding it in here is what makes
+  // switching kinds invalidate the cached findings instead of returning the
+  // previous lens's analysis.
+  const meetingContext = await withKindGuidance(meetingBriefText(state), state.meetingType, settings);
+  // Resolving that guidance reads the bundle file, which puts an await between
+  // the guard above and the status lock below — so re-take the guard here, or
+  // two back-to-back calls could both slip into the same window.
+  if (useStore.getState().analysisStatus === "running") return;
 
   // REPLAY: reuse a cached analysis for the exact same recording + template +
   // speaker names + model — re-analyzing the same upload is then instant + free.

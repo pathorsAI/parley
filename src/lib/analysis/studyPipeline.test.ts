@@ -19,6 +19,7 @@ function facts(patch: Partial<StudyPipelineFacts> = {}): StudyPipelineFacts {
     deliveryStatus: "idle",
     intelStatus: "idle",
     meetingType: "general",
+    meetingTypeHasBoard: true,
     intelType: null,
     autoAnalyze: true,
     ...patch,
@@ -97,6 +98,31 @@ describe("evaluateStages (the scheduler's whole topology)", () => {
     expect(
       evaluateStages(facts({ meetingType: "sales", intelExtractable: false }))
     ).not.toContain("intel");
+  });
+
+  it("a BOARDLESS KIND skips intel and only intel — there are no slots to fill", () => {
+    // A retro / office hour is a name plus an analysis lens; scheduling an
+    // extraction for it would spend a deep call on a board that doesn't exist.
+    const kind = facts({ meetingType: "retro", meetingTypeHasBoard: false });
+    expect(evaluateStages(kind)).toEqual(["findings"]);
+    // The rest of the DAG is untouched — a kind still gets the full report.
+    expect(
+      evaluateStages({ ...kind, analysisStatus: "done", actionItemsStatus: "done" })
+    ).toEqual(["delivery", "brief"]);
+    // Same facts WITH a board is the control: intel comes back.
+    expect(evaluateStages({ ...kind, meetingTypeHasBoard: true })).toEqual([
+      "findings",
+      "intel",
+    ]);
+  });
+
+  it("a boardless kind drops intel from the chip's totals instead of queueing it forever", () => {
+    const kind = deriveStudyPipeline(
+      facts({ meetingType: "retro", meetingTypeHasBoard: false })
+    );
+    expect(kind.artifacts.find((a) => a.key === "intel")?.applicable).toBe(false);
+    expect(displayOf(kind, "intel")).toBe("idle");
+    expect(kind.total).toBe(4);
   });
 
   it("auto-analysis OFF stops every stage — the recording stays unanalyzed for an external AI", () => {

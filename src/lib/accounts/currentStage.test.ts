@@ -11,6 +11,7 @@ function scenario(id: string, order: string[]): Scenario {
     name: id,
     icon: "",
     builtin: true,
+    hasBoard: order.length > 0,
     guidance: "",
     order,
     names: {},

@@ -56,6 +56,11 @@ export function IntelligenceBoard() {
   const scenarios = useScenarioSet();
   // A deleted custom scenario in settings degrades to "general", never crashes.
   const scenario: Scenario | null = scenarios.byId[meetingType] ?? null;
+  // A boardless KIND is a legitimate pick with nothing to render live: no
+  // stages means no bundle to resolve, so everything board-shaped below (the
+  // extraction loop, the stage chip, the re-extract button, the board itself)
+  // reads this instead of `scenario`.
+  const board: Scenario | null = scenario?.hasBoard ? scenario : null;
 
   // Slow auto-extraction while a typed meeting is recording; immediate first
   // run on scenario switch so the board isn't empty for 30s.
@@ -66,21 +71,21 @@ export function IntelligenceBoard() {
   // user has explicitly stopped must not fire once more on the next scenario
   // switch. The header's re-extract button stays the manual trigger.
   useEffect(() => {
-    if (!recording || !scenario || !autoIntel) return;
+    if (!recording || !board || !autoIntel) return;
     const run = () =>
-      runIntelExtraction(scenario.id, "realtime").catch((e) =>
+      runIntelExtraction(board.id, "realtime").catch((e) =>
         log.warn("intel: run failed", { error: String(e) })
       );
     run();
     const id = setInterval(run, AUTO_EXTRACT_MS);
     return () => clearInterval(id);
-  }, [recording, scenario, autoIntel]);
+  }, [recording, board, autoIntel]);
 
 
   // Resolve exactly like the board below (and the extraction pass): the picker
   // ignored the linked thread's stage, so a sales call inherited from a thread
   // showed one stage in the header while the board ran another.
-  const stage = scenario ? stageFor(scenario, meetingStage, thread) : undefined;
+  const stage = board ? stageFor(board, meetingStage, thread) : undefined;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -102,15 +107,15 @@ export function IntelligenceBoard() {
             ))}
           </SelectContent>
         </Select>
-        {scenario && scenario.order.length > 1 && stage && (
+        {board && board.order.length > 1 && stage && (
           <Select value={stage} onValueChange={(v) => setMeetingStage(v)}>
             <SelectTrigger size="sm" className="h-6 w-auto min-w-0 gap-1 rounded-full border px-2.5 text-[11px] text-muted-foreground shadow-none">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {scenario.order.map((s) => (
+              {board.order.map((s) => (
                 <SelectItem key={s} value={s}>
-                  {scenario.names[s] ?? s}
+                  {board.names[s] ?? s}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -132,21 +137,24 @@ export function IntelligenceBoard() {
         >
           {autoIntel ? <Pause className="size-3" /> : <Play className="size-3 text-muted-foreground" />}
         </Button>
-        {scenario && (
+        {board && (
           <Button
             size="icon"
             variant="ghost"
             className="h-6 w-6"
             disabled={running}
             title={t("board.refresh")}
-            onClick={() => void runIntelExtraction(scenario.id, "realtime")}
+            onClick={() => void runIntelExtraction(board.id, "realtime")}
           >
             {running ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
           </Button>
         )}
       </div>
 
-      {!scenario ? (
+      {!board ? (
+        // No board to run: "general", or a KIND, which contributes its lens to
+        // the post-meeting analysis and nothing to the live rail. The checklist
+        // is what's left worth showing during the call.
         <div className="min-h-0 flex-1 border-t">
           <Suspense fallback={null}>
             <TodosPanel />
@@ -155,10 +163,10 @@ export function IntelligenceBoard() {
       ) : (
         <ScrollArea className="min-h-0 flex-1 border-t">
           <div className="flex flex-col gap-3 px-3 py-2.5">
-            <ScenarioBoard scenario={scenario} />
+            <ScenarioBoard scenario={board} />
             {/* The objection ledger is the ONE home of objection facts; the
                 board's counter banner carries only the reply (A3). */}
-            {intel?.meetingType === scenario.id && (
+            {intel?.meetingType === board.id && (
               <ObjectionsLedger objections={intel.objections} />
             )}
             {/* The checklist rides the same rail (C): action items only, checked by the

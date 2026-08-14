@@ -661,13 +661,22 @@ fn tools() -> Vec<Value> {
              'sales' is the built-in default scenario), `meetingContext` (free text), and/or \
              `speakerNames` (merged per key, e.g. {\"them-1\": \"Jamie\"}; an empty string \
              removes that custom name). Use this to fix a misclassified meeting type or a \
-             wrong speaker mapping so later reads and analysis get the right frame. Applied \
-             by the app (which also syncs to cloud); waits for the app to confirm.",
+             wrong speaker mapping so later reads and analysis get the right frame. \
+             When `meetingType` names an id that doesn't exist yet, the app CREATES a \
+             boardless meeting KIND for it — a name and an analysis lens only, with no live \
+             intelligence board — and `meetingTypeName` / `meetingTypeIcon` / \
+             `meetingTypeGuidance` describe it (the guidance is what steers the analysis, so \
+             write it as real instructions to the model). The id must be a lowercase slug \
+             (a-z, 0-9, -). The response reports `createdKind`. Applied by the app (which \
+             also syncs to cloud); waits for the app to confirm.",
             json!({
                 "type": "object",
                 "properties": {
                     "id": { "type": "string" },
-                    "meetingType": { "type": "string", "description": "Scenario id (free-form; built-in default is 'sales')." },
+                    "meetingType": { "type": "string", "description": "Scenario or kind id (free-form lowercase slug; built-in default is 'sales'). An unknown id creates a boardless kind." },
+                    "meetingTypeName": { "type": "string", "description": "Display name for a kind being created, e.g. 'Office Hour'. Defaults to the slug in Title Case." },
+                    "meetingTypeIcon": { "type": "string", "description": "Emoji for a kind being created. Defaults to 🎯." },
+                    "meetingTypeGuidance": { "type": "string", "description": "English instructions telling the model how to analyze this kind of meeting — what to look for and what to ignore. Only used when the kind is created." },
                     "meetingContext": { "type": "string", "description": "Free-text meeting context." },
                     "speakerNames": {
                         "type": "object",

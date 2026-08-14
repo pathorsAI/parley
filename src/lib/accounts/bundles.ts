@@ -4,13 +4,18 @@ import { SALES_STAGES, type SalesStage } from "./types";
 import {
   buildBuiltinBundles,
   buildTypedBuiltinBundles,
+  BUILTIN_KIND_IDS,
+  BUILTIN_SCENARIO_IDS,
   EMPTY_BUNDLE_FILE,
   GENERIC_GUIDANCE,
+  isValidScenarioId,
+  KIND_GUIDANCE,
   parseBundleFile,
   SCENARIO_GUIDANCE,
   serializeBundleFile,
   stageOrder,
   TYPED_STAGE_IDS,
+  type CustomScenarioDef,
   type ParsedBundleFile,
   type StageBundle,
   type Tr,
@@ -33,9 +38,12 @@ export type {
   StageBundleFile,
 } from "./bundleFile";
 export {
+  BUILTIN_KIND_IDS,
   BUILTIN_SCENARIO_IDS,
   buildBuiltinBundles,
   isBundleLike,
+  isValidScenarioId,
+  KIND_GUIDANCE,
   parseBundleFile,
   stageOrder,
   TYPED_STAGE_IDS,
@@ -139,10 +147,20 @@ export function buildStageSet(t: Tr, parsed: ParsedBundleFile): StageSet {
 
 // ── Scenarios(v3)────────────────────────────────────────────────────────────
 
+/** Emoji for the builtin boardless kinds (their copy lives in i18n). */
+const KIND_ICONS: Record<(typeof BUILTIN_KIND_IDS)[number], string> = {
+  retro: "🔁",
+  officehour: "🎓",
+};
+
 /**
  * One meeting scenario — the unit the board/extraction/pickers run on. Builtin
  * or custom, a scenario is exactly: an ordered list of stages, each with a
  * bundle. Sales has five stages; the other builtins have one; customs choose.
+ *
+ * Zero stages is legal and meaningful: that's a KIND (retro, office hour, 1:1)
+ * — a name plus an analysis lens, with no live board. A scenario with stages is
+ * the strictly larger thing: a kind that ALSO drives realtime extraction.
  */
 export interface Scenario {
   id: string;
@@ -150,11 +168,16 @@ export interface Scenario {
   /** Emoji for pickers/chips. */
   icon: string;
   builtin: boolean;
-  /** Extraction guidance ahead of the shared prompt (model input, English). */
+  /** False for a KIND: no stages, so no live board and no realtime extraction.
+   *  Always `order.length > 0` — carried as a field so callers holding only a
+   *  Scenario don't have to know that's what the emptiness means. */
+  hasBoard: boolean;
+  /** Extraction guidance ahead of the shared prompt (model input, English).
+   *  For a boardless kind this is the ONLY thing it contributes. */
   guidance: string;
   /** Eval template auto-applied when this scenario is picked (if it exists). */
   evalTemplateId?: string;
-  /** Stage ids in pipeline order (length 1 = no stage row in the UI). */
+  /** Stage ids in pipeline order (length 1 = no stage row in the UI, 0 = kind). */
   order: string[];
   names: Record<string, string>;
   bundles: Record<string, StageBundle>;
@@ -178,6 +201,7 @@ export function buildScenarioSet(t: Tr, parsed: ParsedBundleFile): ScenarioSet {
     name: t("scenario.sales.name"),
     icon: "🤝",
     builtin: true,
+    hasBoard: true,
     guidance: SCENARIO_GUIDANCE.sales,
     evalTemplateId: "tpl-sales",
     order: stageSet.order,
@@ -189,6 +213,7 @@ export function buildScenarioSet(t: Tr, parsed: ParsedBundleFile): ScenarioSet {
     name: t("scenario.negotiation.name"),
     icon: "⚖️",
     builtin: true,
+    hasBoard: true,
     guidance: SCENARIO_GUIDANCE.negotiation,
     evalTemplateId: "tpl-negotiation",
     order: [negoStage],
@@ -200,11 +225,23 @@ export function buildScenarioSet(t: Tr, parsed: ParsedBundleFile): ScenarioSet {
     name: t("scenario.partnership.name"),
     icon: "🚀",
     builtin: true,
+    hasBoard: true,
     guidance: SCENARIO_GUIDANCE.partnership,
     order: [partnerStage],
     names: { [partnerStage]: t("scenario.partnership.name") },
     bundles: { [partnerStage]: parsed.overrides[partnerStage] ?? typed.partner },
   };
+  const kinds: Scenario[] = BUILTIN_KIND_IDS.map((id) => ({
+    id,
+    name: t(`kind.${id}.name`),
+    icon: KIND_ICONS[id],
+    builtin: true,
+    hasBoard: false,
+    guidance: KIND_GUIDANCE[id],
+    order: [],
+    names: {},
+    bundles: {},
+  }));
   const customs: Scenario[] = parsed.customScenarios.map((sc) => {
     const names: Record<string, string> = {};
     const bundles: Record<string, StageBundle> = {};
@@ -217,6 +254,7 @@ export function buildScenarioSet(t: Tr, parsed: ParsedBundleFile): ScenarioSet {
       name: sc.name,
       icon: sc.icon ?? "🎯",
       builtin: false,
+      hasBoard: sc.stages.length > 0,
       guidance: sc.guidance ?? GENERIC_GUIDANCE,
       ...(sc.evalTemplateId ? { evalTemplateId: sc.evalTemplateId } : {}),
       order: sc.stages.map((st) => st.id),
@@ -224,8 +262,48 @@ export function buildScenarioSet(t: Tr, parsed: ParsedBundleFile): ScenarioSet {
       bundles,
     };
   });
-  const list = [sales, negotiation, partnership, ...customs].filter((s) => s.order.length > 0);
+  // No stage filter: a zero-stage entry is a KIND, not a broken scenario, and
+  // dropping it here is exactly what used to make custom kinds unrepresentable.
+  const list = [sales, negotiation, partnership, ...kinds, ...customs];
   return { list, byId: Object.fromEntries(list.map((s) => [s.id, s])) };
+}
+
+/**
+ * Create a boardless KIND and persist it to the bundle file. The write path for
+ * "an id nobody has defined yet" — MCP sets a meeting type the app has never
+ * seen, and instead of silently losing the pick (the old degrade-to-general
+ * behavior) we materialize the kind so it survives on disk.
+ *
+ * Idempotent: an id that already exists (as a kind OR a full scenario) is left
+ * exactly as it is, so repeat calls never clobber a user's authored board.
+ */
+export async function createBoardlessKind(input: {
+  id: string;
+  name: string;
+  icon?: string;
+  guidance?: string;
+}): Promise<void> {
+  const { id, name, icon, guidance } = input;
+  if (!isValidScenarioId(id)) {
+    throw new Error(
+      `invalid scenario id "${id}" — use a lowercase slug (a-z, 0-9, -) that isn't a builtin ` +
+        `(${[...BUILTIN_SCENARIO_IDS, ...BUILTIN_KIND_IDS].join(", ")}) or "general"`
+    );
+  }
+  const parsed = await readStageBundleFile({ fresh: true });
+  if (parsed.customScenarios.some((sc) => sc.id === id)) return;
+  const kind: CustomScenarioDef = {
+    id,
+    name,
+    ...(icon?.trim() ? { icon } : {}),
+    ...(guidance?.trim() ? { guidance } : {}),
+    stages: [],
+  };
+  await writeStageBundleFile({
+    ...parsed,
+    customScenarios: [...parsed.customScenarios, kind],
+  });
+  log.info("scenarios: boardless kind created", { id });
 }
 
 /**

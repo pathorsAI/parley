@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Clock, Loader2, MessageCircleQuestion, X } from "lucide-react";
+import { toast } from "sonner";
 import { useStore } from "../../lib/store";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { useBriefQueued } from "../../lib/analysis/studyPipeline";
@@ -13,12 +14,29 @@ import { DeliveryPanel } from "../delivery/DeliveryPanel";
 import { IntelSections } from "../live/IntelligenceBoard";
 import { slotCatalog } from "../../lib/intel/boards";
 import { useScenarioSet } from "../../lib/accounts/useStageSet";
-import { BUILTIN_SCENARIO_IDS, type SlotDef } from "../../lib/accounts/bundleFile";
+import {
+  buildScenarioSet,
+  createBoardlessKind,
+  isValidScenarioId,
+  readStageBundleFile,
+  type Scenario,
+  type ScenarioSet,
+} from "../../lib/accounts/bundles";
+import { applyScenario } from "../../lib/meeting/scenario";
+import {
+  BUILTIN_SCENARIO_IDS,
+  type ParsedBundleFile,
+  type SlotDef,
+} from "../../lib/accounts/bundleFile";
 import { ActionItemsPanel } from "../replay/ActionItemsPanel";
 import { AskPanel } from "../sidebar/AskPanel";
 import { StudyLinkBar } from "./StudyLinkBar";
+import { pushRecentMeetingType, slugifyKindId, sortByRecent } from "./kindPicker";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -319,30 +337,83 @@ function BoardReadout({ intel }: Readonly<{ intel: IntelState }>) {
   );
 }
 
+/** Sentinel row value for "create a kind". The Select is controlled by
+ *  `meetingType`, so picking it opens the sheet and never sticks as a value. */
+const NEW_KIND_VALUE = "__new-kind__";
+
+/**
+ * The scenario universe plus a way to re-read it. `useScenarioSet` reads the
+ * bundle file once on mount and the file has no change event, so creating a
+ * kind (which writes that file) has to trigger the same fresh read the settings
+ * editor does — otherwise the kind you just made isn't in the list you made it
+ * from.
+ */
+function useRefreshableScenarioSet(): {
+  scenarios: ScenarioSet;
+  refresh: () => Promise<ScenarioSet>;
+} {
+  const { t } = useI18n();
+  const base = useScenarioSet();
+  const [file, setFile] = useState<ParsedBundleFile | null>(null);
+  const scenarios = useMemo(
+    () => (file ? buildScenarioSet((k) => t(k as TranslationKey), file) : base),
+    [file, base, t]
+  );
+  const refresh = useCallback(async () => {
+    const parsed = await readStageBundleFile({ fresh: true });
+    setFile(parsed);
+    return buildScenarioSet((k) => t(k as TranslationKey), parsed);
+  }, [t]);
+  return { scenarios, refresh };
+}
+
 /** 情報: the intelligence board run over the full recording. The meeting type is
  *  PER-RECORDING (store.meetingType, persisted on the entry) — switching it
  *  here never touches the global live default or other recordings. */
 function IntelSection() {
   const { t } = useI18n();
   const meetingType = useStore((s) => s.meetingType);
-  const setMeetingType = useStore((s) => s.setMeetingType);
+  const recent = useStore((s) => s.settings.recentMeetingTypes);
   const intel = useStore((s) => s.intel);
   const intelStatus = useStore((s) => s.intelStatus);
   const running = intelStatus === "running";
+  const [creating, setCreating] = useState(false);
+
+  const { scenarios, refresh } = useRefreshableScenarioSet();
+  // Recently picked first: the list is no longer a fixed handful once kinds can
+  // be created from here, and the ones you use are the ones you use again.
+  const ordered = useMemo(() => sortByRecent(scenarios.list, recent), [scenarios, recent]);
 
   // Extraction is owned by the study pipeline (studyPipeline.ts), which runs
   // whenever the picked type has no matching board — this section only picks
   // the type (switching it re-extracts automatically); the manual re-run lives
   // in the titlebar's analysis chip.
-  const pickType = (v: MeetingType) => {
-    setMeetingType(v);
+  //
+  // applyScenario, never setMeetingType: the pick has to leave behind the
+  // boardless flag the pipeline reads. Not the eval template though — this is a
+  // finished recording, and retagging it must not re-point the rubric the NEXT
+  // live meeting will be coached against.
+  const pickType = (v: MeetingType, set: ScenarioSet = scenarios) => {
+    applyScenario(v, set, { carryEvalTemplate: false });
+    if (v !== "general") {
+      const { settings, updateSettings } = useStore.getState();
+      updateSettings({
+        recentMeetingTypes: pushRecentMeetingType(settings.recentMeetingTypes, v),
+      });
+    }
     // Remember the choice on the entry right away (extraction saves again later).
     void persistStudyOutputs().catch((e) =>
       log.warn("study: meeting-type persist failed", { error: String(e) })
     );
   };
 
-  const scenarios = useScenarioSet();
+  /** A freshly created kind is applied to THIS recording straight away — the
+   *  reason to author one from the picker is to use it here. */
+  async function onKindCreated(id: string) {
+    pickType(id, await refresh());
+    setCreating(false);
+  }
+
   const current = intel && intel.meetingType === meetingType ? intel : null;
   const hasBoard = (current?.slotFills?.length ?? 0) > 0;
   const hasLegacy = current ? legacyHasContent(current) : false;
@@ -352,22 +423,37 @@ function IntelSection() {
     (BUILTIN_SCENARIO_IDS as readonly string[]).includes(id)
       ? t(`study.intel.type.${id}.desc` as TranslationKey)
       : "";
+  /** Board or no board, said quietly — a trailing muted phrase, not a badge. */
+  const boardNote = (s: Scenario) =>
+    s.hasBoard ? t("study.kind.liveBoard") : t("study.kind.analysisOnly");
+  const selected = scenarios.byId[meetingType] ?? null;
 
   return (
     <div>
       {meetingType !== "general" && (
         <div className="mb-3 flex items-center gap-2">
-          <Select value={meetingType} onValueChange={(v) => pickType(v)}>
+          <Select
+            value={meetingType}
+            onValueChange={(v) => (v === NEW_KIND_VALUE ? setCreating(true) : pickType(v))}
+          >
             <SelectTrigger className="h-7 w-52 text-xs">
-              <SelectValue />
+              {/* Explicit children: each row carries a trailing board note that
+                  the trigger would otherwise echo into 52 units of width. */}
+              <SelectValue>
+                {selected ? `${selected.icon} ${selected.name}` : t("board.type.general")}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="general">{t("board.type.general")}</SelectItem>
-              {scenarios.list.map((s) => (
+              {ordered.map((s) => (
                 <SelectItem key={s.id} value={s.id}>
                   {s.icon} {s.name}
+                  <span className="text-xs text-muted-foreground/60">{boardNote(s)}</span>
                 </SelectItem>
               ))}
+              <SelectItem value={NEW_KIND_VALUE} className="text-muted-foreground">
+                {t("study.kind.add")}
+              </SelectItem>
             </SelectContent>
           </Select>
           {running && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
@@ -377,21 +463,31 @@ function IntelSection() {
         // No scenario picked yet: the empty state is the picker, not a dead end.
         <div className="flex flex-col gap-2">
           <p className="mb-1 text-sm text-muted-foreground">{t("study.intel.pick")}</p>
-          {scenarios.list.map((s) => (
+          {ordered.map((s) => (
             <button
               key={s.id}
               type="button"
               onClick={() => pickType(s.id)}
-              className="rounded-lg border bg-muted/20 px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-muted/40"
+              className="cursor-pointer rounded-lg border bg-muted/20 px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-muted/40"
             >
               <div className="text-sm font-medium">
                 {s.icon} {s.name}
+                <span className="ml-1.5 text-xs font-normal text-muted-foreground/60">
+                  {boardNote(s)}
+                </span>
               </div>
               {descOf(s.id) && (
                 <div className="mt-0.5 text-xs text-muted-foreground">{descOf(s.id)}</div>
               )}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="cursor-pointer rounded-lg border border-dashed px-4 py-2.5 text-left text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+          >
+            {t("study.kind.add")}
+          </button>
         </div>
       ) : (
         <div className="flex flex-col gap-4">
@@ -416,7 +512,161 @@ function IntelSection() {
           )}
         </div>
       )}
+
+      <NewKindSheet
+        open={creating}
+        onOpenChange={setCreating}
+        taken={scenarios.byId}
+        onCreated={(id) => void onKindCreated(id)}
+      />
     </div>
+  );
+}
+
+/**
+ * Author a boardless KIND from the picker: an emoji, a name, and the analysis
+ * lens. Editing flow → Sheet (repo rule), and validation is inline and live:
+ * the id is what MCP and every saved recording refer to the kind by, so an
+ * invalid or taken one has to be visible before Save, not after.
+ */
+function NewKindSheet({
+  open,
+  onOpenChange,
+  taken,
+  onCreated,
+}: Readonly<{
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  /** Every id already in use — the collision check the bundle file would make. */
+  taken: Record<string, Scenario>;
+  onCreated: (id: string) => void;
+}>) {
+  const { t } = useI18n();
+  const [icon, setIcon] = useState("🎯");
+  const [name, setName] = useState("");
+  const [id, setId] = useState("");
+  // The id follows the name until it is edited by hand. A zh-TW name slugs to
+  // nothing, which is exactly why the field is visible and editable rather than
+  // derived silently.
+  const [idEdited, setIdEdited] = useState(false);
+  const [guidance, setGuidance] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setIcon("🎯");
+    setName("");
+    setId("");
+    setIdEdited(false);
+    setGuidance("");
+    setSaving(false);
+  }, [open]);
+
+  const nameError = name.trim() ? null : t("study.kind.err.name");
+  let idError: string | null = null;
+  if (!isValidScenarioId(id)) idError = t("study.kind.err.id");
+  else if (taken[id]) idError = t("study.kind.err.idTaken");
+  // Errors appear as soon as anything is typed, but a blank form isn't scolded
+  // for being blank — Save is simply disabled until it holds up.
+  const touched = name !== "" || id !== "" || idEdited;
+  const canSave = !nameError && !idError && !saving;
+
+  async function save() {
+    if (!canSave) return;
+    setSaving(true);
+    try {
+      await createBoardlessKind({
+        id,
+        name: name.trim(),
+        icon: icon.trim() || "🎯",
+        guidance: guidance.trim(),
+      });
+      onCreated(id);
+    } catch (e) {
+      log.warn("study: create kind failed", { error: String(e) });
+      toast.error(t("study.kind.saveFailed"));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        title={t("study.kind.new")}
+        description={t("study.kind.desc")}
+        closeLabel={t("common.close")}
+        footer={
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8"
+              onClick={() => onOpenChange(false)}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button size="sm" className="h-8" disabled={!canSave} onClick={() => void save()}>
+              {t("study.kind.save")}
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3 px-4 py-3">
+          <div className="flex items-end gap-2">
+            <label className="flex flex-col gap-1 text-xs">
+              <span className="text-muted-foreground">{t("study.kind.icon")}</span>
+              <Input
+                value={icon}
+                onChange={(e) => setIcon(e.target.value)}
+                className="h-8 w-14 text-center"
+              />
+            </label>
+            <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs">
+              <span className="text-muted-foreground">{t("study.kind.name")}</span>
+              <Input
+                value={name}
+                placeholder={t("study.kind.namePh")}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  if (!idEdited) setId(slugifyKindId(e.target.value));
+                }}
+                className="h-8"
+              />
+            </label>
+          </div>
+          {touched && nameError && <p className="text-xs text-destructive">{nameError}</p>}
+
+          <label className="flex flex-col gap-1 text-xs">
+            <span className="text-muted-foreground">{t("study.kind.id")}</span>
+            <Input
+              value={id}
+              onChange={(e) => {
+                setIdEdited(true);
+                setId(e.target.value);
+              }}
+              className="h-8 font-mono"
+            />
+            <span className="text-[11px] leading-snug text-muted-foreground/70">
+              {t("study.kind.idHint")}
+            </span>
+          </label>
+          {touched && idError && <p className="text-xs text-destructive">{idError}</p>}
+
+          <label className="flex flex-col gap-1 text-xs">
+            <span className="text-muted-foreground">{t("study.kind.guidance")}</span>
+            <Textarea
+              value={guidance}
+              rows={5}
+              placeholder={t("study.kind.guidancePh")}
+              onChange={(e) => setGuidance(e.target.value)}
+            />
+            <span className="text-[11px] leading-snug text-muted-foreground/70">
+              {t("study.kind.guidanceHint")}
+            </span>
+          </label>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 

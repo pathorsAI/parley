@@ -416,7 +416,7 @@ export function ScenarioSettings() {
 
   async function patchScenarioMeta(
     id: string,
-    patch: Partial<{ name: string; icon: string; evalTemplateId: string }>
+    patch: Partial<{ name: string; icon: string; evalTemplateId: string; guidance: string }>
   ) {
     await persist({
       ...file,
@@ -424,6 +424,9 @@ export function ScenarioSettings() {
         if (sc.id !== id) return sc;
         const next = { ...sc, ...patch };
         if (patch.evalTemplateId === "") delete next.evalTemplateId;
+        // An emptied lens falls back to the generic guidance — better than
+        // handing the model an empty string it has to make sense of.
+        if (patch.guidance === "") delete next.guidance;
         return next;
       }),
     });
@@ -465,6 +468,13 @@ export function ScenarioSettings() {
 
               {scOpened && (
                 <div className="flex flex-col gap-2 border-t px-3 py-3">
+                  {/* A KIND has no stages, so there is nothing board-shaped to
+                      edit below — say so instead of opening onto an empty box. */}
+                  {!sc.hasBoard && (
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {t("settings.scenarios.kindNote")}
+                    </p>
+                  )}
                   {/* Custom scenario meta: name / icon / eval template / delete. */}
                   {custom && fileDef && (
                     <div className="flex flex-wrap items-end gap-2 pb-1">
@@ -520,6 +530,27 @@ export function ScenarioSettings() {
                           : t("settings.scenarios.delete")}
                       </Button>
                     </div>
+                  )}
+
+                  {/* The analysis lens. For a boardless KIND this is the ONLY
+                      thing it contributes, so it has to be editable here. */}
+                  {custom && fileDef && (
+                    <label className="flex flex-col gap-1 pb-1 text-xs">
+                      <span className="text-muted-foreground">
+                        {t("settings.scenarios.guidance")}
+                      </span>
+                      <Textarea
+                        defaultValue={fileDef.guidance ?? ""}
+                        rows={4}
+                        placeholder={t("settings.scenarios.guidancePh")}
+                        onBlur={(e) => {
+                          const v = e.target.value.trim();
+                          if (v !== (fileDef.guidance ?? "")) {
+                            void patchScenarioMeta(sc.id, { guidance: v });
+                          }
+                        }}
+                      />
+                    </label>
                   )}
 
                   {/* Stage list (single-stage scenarios simply show one row). */}
@@ -609,7 +640,9 @@ export function ScenarioSettings() {
                       </Button>
                     </div>
                   )}
-                  {custom && (
+                  {/* No add-stage on a KIND: growing one a board would quietly
+                      turn it into a different thing than the one you picked. */}
+                  {custom && sc.hasBoard && (
                     <Button
                       size="sm"
                       variant="outline"

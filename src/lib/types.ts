@@ -394,6 +394,10 @@ export interface Settings {
    *  the history entry) — this is only the seed. Legacy persisted key:
    *  `meetingType`. */
   defaultMeetingType: MeetingType;
+  /** Scenario/kind ids picked recently, most recent first. Once kinds can be
+   *  created on the fly the picker's flat list stops being browsable — this is
+   *  what keeps the handful you actually use in reach. */
+  recentMeetingTypes: string[];
   /** Master switch for the study/replay auto-analysis pipeline (findings →
    *  action items → brief → delivery → intel). Off → a recording stays
    *  UNANALYZED so an external AI can own the analysis and write it back over

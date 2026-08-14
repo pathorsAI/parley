@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // parseOverrides logs a warning on its defensive paths, and `log`'s Tauri-less
 // branch touches `window` (absent in the node test env). We don't test logging
@@ -7,14 +7,30 @@ vi.mock("../log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// Non-Tauri branch: the bundle file is read/written through localStorage, which
+// the node test env doesn't have. A tiny in-memory stand-in gives
+// createBoardlessKind a real read→write→read round trip to be tested against.
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: () => false }));
+const storage = new Map<string, string>();
+vi.stubGlobal("localStorage", {
+  getItem: (k: string) => storage.get(k) ?? null,
+  setItem: (k: string, v: string) => void storage.set(k, v),
+  removeItem: (k: string) => void storage.delete(k),
+});
+
 import { translate, type TranslationKey } from "../../i18n/messages";
 import {
   buildBuiltinBundles,
+  buildScenarioSet,
+  BUILTIN_KIND_IDS,
+  createBoardlessKind,
   mergeBundles,
   parseOverrides,
+  readStageBundleFile,
   stageBundles,
   type StageBundle,
 } from "./bundles";
+import { EMPTY_BUNDLE_FILE, type CustomScenarioDef } from "./bundleFile";
 import { SALES_STAGES, type SalesStage } from "./types";
 
 /** Real translator (zh-TW) so builtins resolve against the shipped copy — a
@@ -165,5 +181,130 @@ describe("stage bundles — merge", () => {
     const merged = stageBundles(t, { closing: custom });
     expect(merged.closing).toBe(custom);
     expect(merged.demo.stage).toBe("demo");
+  });
+});
+
+// ── Boardless kinds ─────────────────────────────────────────────────────────
+
+/** A zero-stage scenario: a name and an analysis lens, no board. */
+function fakeKind(id: string, name: string): CustomScenarioDef {
+  return { id, name, icon: "📋", guidance: "Look at what was decided.", stages: [] };
+}
+
+describe("scenario set — boardless kinds", () => {
+  it("keeps a zero-stage scenario instead of filtering it away", () => {
+    // The dropped-if-empty rule is exactly what made kinds unrepresentable:
+    // a retro has nothing to put on a board, so it had no way to exist.
+    const set = buildScenarioSet(t, {
+      ...EMPTY_BUNDLE_FILE,
+      customScenarios: [fakeKind("weekly", "Weekly sync")],
+    });
+    const weekly = set.byId.weekly;
+    expect(weekly).toBeDefined();
+    expect(weekly.hasBoard).toBe(false);
+    expect(weekly.order).toEqual([]);
+    expect(weekly.guidance).toBe("Look at what was decided.");
+    expect(set.list.map((s) => s.id)).toContain("weekly");
+  });
+
+  it("ships retro + office hour as builtin kinds, and the board scenarios still have boards", () => {
+    const set = buildScenarioSet(t, EMPTY_BUNDLE_FILE);
+    for (const id of BUILTIN_KIND_IDS) {
+      expect(set.byId[id].hasBoard).toBe(false);
+      expect(set.byId[id].builtin).toBe(true);
+      // Guidance is the kind's entire contribution — an empty one is a bug.
+      expect(set.byId[id].guidance.length).toBeGreaterThan(100);
+    }
+    for (const id of ["sales", "negotiation", "partnership"]) {
+      expect(set.byId[id].hasBoard).toBe(true);
+      expect(set.byId[id].order.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("a scenario WITH stages still reports hasBoard", () => {
+    const set = buildScenarioSet(t, {
+      ...EMPTY_BUNDLE_FILE,
+      customScenarios: [
+        {
+          id: "intake",
+          name: "Intake",
+          stages: [
+            {
+              id: "intake",
+              name: "Intake",
+              bundle: fakeBundle("intake" as SalesStage, "Intake board"),
+            },
+          ],
+        },
+      ],
+    });
+    expect(set.byId.intake.hasBoard).toBe(true);
+  });
+});
+
+describe("createBoardlessKind", () => {
+  beforeEach(() => storage.clear());
+
+  it("appends a kind that survives a read back", async () => {
+    await createBoardlessKind({
+      id: "retro-eng",
+      name: "Eng Retro",
+      icon: "🔁",
+      guidance: "Decisions, actions, blockers.",
+    });
+    const parsed = await readStageBundleFile({ fresh: true });
+    expect(parsed.customScenarios).toHaveLength(1);
+    expect(parsed.customScenarios[0]).toMatchObject({
+      id: "retro-eng",
+      name: "Eng Retro",
+      icon: "🔁",
+      stages: [],
+    });
+    expect(buildScenarioSet(t, parsed).byId["retro-eng"].hasBoard).toBe(false);
+  });
+
+  it("is idempotent — a second call never duplicates or clobbers", async () => {
+    await createBoardlessKind({ id: "onboarding", name: "Onboarding" });
+    await createBoardlessKind({ id: "onboarding", name: "SOMETHING ELSE" });
+    const parsed = await readStageBundleFile({ fresh: true });
+    expect(parsed.customScenarios).toHaveLength(1);
+    expect(parsed.customScenarios[0].name).toBe("Onboarding");
+  });
+
+  it("refuses an id that isn't a valid scenario slug, and writes nothing", async () => {
+    for (const bad of ["Retro", "my kind", "sales", "retro", "general", "1on1"]) {
+      await expect(createBoardlessKind({ id: bad, name: "X" })).rejects.toThrow(
+        /invalid scenario id/
+      );
+    }
+    expect((await readStageBundleFile({ fresh: true })).customScenarios).toHaveLength(0);
+  });
+
+  it("leaves an existing scenario's BOARD alone when the id collides", async () => {
+    // Not just "doesn't duplicate": a user's authored board must survive an
+    // MCP client blindly re-declaring the same id as a kind.
+    const withBoard = {
+      ...EMPTY_BUNDLE_FILE,
+      customScenarios: [
+        {
+          id: "intake",
+          name: "Intake",
+          stages: [
+            {
+              id: "intake",
+              name: "Intake",
+              bundle: fakeBundle("intake" as SalesStage, "Intake board"),
+            },
+          ],
+        },
+      ],
+    };
+    const { writeStageBundleFile } = await import("./bundles");
+    await writeStageBundleFile(withBoard);
+    await createBoardlessKind({ id: "intake", name: "Intake" });
+    const parsed = await readStageBundleFile({ fresh: true });
+    expect(parsed.customScenarios).toHaveLength(1);
+    expect(parsed.customScenarios[0].stages).toHaveLength(1);
+    expect(buildScenarioSet(t, parsed).byId.intake.hasBoard).toBe(true);
   });
 });

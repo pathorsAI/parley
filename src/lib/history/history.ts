@@ -967,6 +967,26 @@ interface HistoryReadResult {
 }
 
 /**
+ * Re-derive `meetingTypeHasBoard` for the type the store just restored. Loading
+ * an entry sets meetingType straight from disk, bypassing applyScenario — so
+ * without this a recording saved as a boardless KIND would open with the flag
+ * left over from the previous recording and the pipeline would schedule an
+ * extraction against a board that doesn't exist. A type the scenario set no
+ * longer knows gets `true`, preserving the degrade-to-general repair path.
+ */
+async function syncMeetingTypeHasBoard(): Promise<void> {
+  const s = useStore.getState();
+  try {
+    const { resolveScenarioSet } = await import("../intel/boards");
+    const scenarios = await resolveScenarioSet(s.settings);
+    s.setMeetingTypeHasBoard(scenarios.byId[s.meetingType]?.hasBoard ?? true);
+  } catch (e) {
+    log.warn("history: scenario resolve failed — assuming a board", { error: String(e) });
+    s.setMeetingTypeHasBoard(true);
+  }
+}
+
+/**
  * Read a saved entry and load it into the replay UI (restoring its analysis), then
  * focus the main window. Called by the main-window listener on `history://open`.
  */
@@ -986,6 +1006,7 @@ export async function loadHistoryEntry(id: string): Promise<void> {
     speechRateHz: meta.speechRateHz ?? null,
   };
   useStore.getState().loadHistory(meta, session);
+  await syncMeetingTypeHasBoard();
   log.info("history: entry loaded", { id, hasAudio: !!audioPath });
   if (isTauri()) {
     try {
@@ -1050,6 +1071,7 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
     speechRateHz: meta.speechRateHz ?? null,
   };
   useStore.getState().loadHistory(meta, session, { readOnly: true });
+  await syncMeetingTypeHasBoard();
   log.info("history: org entry loaded", { orgId, id, hasAudio: !!audioPath });
   if (isTauri()) {
     try {
