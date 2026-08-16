@@ -629,6 +629,32 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
+            "search_meetings",
+            "Search across saved recordings",
+            "Full-text search over the saved recordings: what was SAID (every \
+             transcript line, each hit carrying an `atMs` seek target) plus what \
+             the analysis CONCLUDED (brief, findings, action items, meeting \
+             context). This is the tool for questions that span meetings — \
+             'when did we discuss pricing', 'which calls mention 東森', 'what did \
+             I promise this customer' — and the only way to reach words spoken \
+             mid-meeting: list_recordings' `query` sees only the title and the \
+             transcript's first line. Scope it with `folderId` to search one \
+             customer's folder (get ids from list_folders). Returns recordings \
+             ranked by hit count, each with its matching snippets. Read the full \
+             recording with get_recording once you know which one you want.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Text to find (case-insensitive substring)." },
+                    "folderId": { "type": "string", "description": "Only search recordings in this personal folder — e.g. one customer's folder." },
+                    "since": { "type": "number", "description": "Only recordings created at/after this epoch-ms timestamp." },
+                    "limit": { "type": "number", "description": "Max recordings returned (default 20)." },
+                    "hitsPerRecording": { "type": "number", "description": "Max snippets per recording (default 5)." }
+                },
+                "required": ["query"]
+            }),
+        ),
+        tool(
             "get_recording",
             "Read one saved recording",
             "Read a locally saved recording in full: title, dates, speaker names, the \
@@ -1069,6 +1095,7 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             json!({ "id": required_str(&args, "id")? }),
         )?,
         "list_recordings" => list_recordings(&state.history_dir, &args)?,
+        "search_meetings" => search_meetings(&state.history_dir, &args)?,
         "get_recording" => get_recording(&state.history_dir, required_str(&args, "id")?)?,
         "rename_recording" => {
             call_frontend(
@@ -1489,6 +1516,178 @@ fn list_recordings(history_dir: &std::path::Path, args: &Value) -> anyhow::Resul
     Ok(json!({ "recordings": items, "total": total, "returned": items.len() }))
 }
 
+/// Where a search hit landed. Ordered by how much a reader trusts it: a line
+/// somebody actually said outranks a conclusion drawn from it.
+const SEARCH_FIELDS: [&str; 5] = ["transcript", "brief", "finding", "actionItem", "context"];
+
+/// Characters of surrounding text returned with each hit.
+const SNIPPET_PAD: usize = 60;
+
+/// One match, with enough context to read it without opening the recording.
+fn hit(field: &str, text: &str, at: usize, query_len: usize, at_ms: Option<i64>) -> Value {
+    // Slice on char boundaries — transcripts are mostly CJK here, so byte math
+    // would panic mid-character.
+    let chars: Vec<char> = text.chars().collect();
+    let start = at.saturating_sub(SNIPPET_PAD);
+    let end = (at + query_len + SNIPPET_PAD).min(chars.len());
+    let mut snippet = chars[start..end].iter().collect::<String>();
+    if start > 0 {
+        snippet.insert(0, '…');
+    }
+    if end < chars.len() {
+        snippet.push('…');
+    }
+    let mut out = json!({ "field": field, "snippet": snippet.trim() });
+    if let Some(ms) = at_ms {
+        out["atMs"] = json!(ms);
+    }
+    out
+}
+
+/// Case-insensitive char-index search (`str::find` returns a BYTE offset, which
+/// the char-based snippet window can't use).
+fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
+    let h: Vec<char> = haystack.to_lowercase().chars().collect();
+    let n: Vec<char> = needle.chars().collect();
+    if n.is_empty() || n.len() > h.len() {
+        return None;
+    }
+    (0..=h.len() - n.len()).find(|&i| h[i..i + n.len()] == n[..])
+}
+
+/// Full-text search across saved recordings — the thing `list_recordings`'s
+/// `query` can't do, since that only ever saw the title and the transcript's
+/// FIRST line. Scans what was said (segments) plus what the analysis concluded
+/// (brief, findings, action items, meeting context).
+///
+/// Reads every entry's `meta.json` per call rather than maintaining an index:
+/// a personal library is hundreds of recordings at most, and a stale index that
+/// silently misses a meeting is worse than a scan that takes a moment.
+fn search_meetings(history_dir: &std::path::Path, args: &Value) -> anyhow::Result<Value> {
+    let query = args
+        .get("query")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|q| !q.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("query is required"))?
+        .to_lowercase();
+    let folder = args.get("folderId").and_then(Value::as_str);
+    let since = args.get("since").and_then(Value::as_i64).unwrap_or(0);
+    let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(20) as usize;
+    let per_recording = args
+        .get("hitsPerRecording")
+        .and_then(Value::as_u64)
+        .unwrap_or(5) as usize;
+    let qlen = query.chars().count();
+
+    let mut results: Vec<Value> = Vec::new();
+    let mut scanned = 0usize;
+    if let Ok(entries) = std::fs::read_dir(history_dir) {
+        for entry in entries.flatten() {
+            let Ok(raw) = std::fs::read_to_string(entry.path().join("meta.json")) else {
+                continue;
+            };
+            let Ok(meta) = serde_json::from_str::<Value>(&raw) else {
+                continue;
+            };
+            if let Some(folder) = folder {
+                if meta.get("folderId").and_then(Value::as_str) != Some(folder) {
+                    continue;
+                }
+            }
+            if since > 0 && meta.get("createdAt").and_then(Value::as_i64).unwrap_or(0) < since {
+                continue;
+            }
+            scanned += 1;
+            let mut hits: Vec<Value> = Vec::new();
+
+            // What was said. Segment-level so each hit carries a seek target.
+            if let Some(segs) = meta.get("segments").and_then(Value::as_array) {
+                for s in segs {
+                    let text = s.get("text").and_then(Value::as_str).unwrap_or("");
+                    if let Some(at) = find_ci(text, &query) {
+                        hits.push(hit(
+                            "transcript",
+                            text,
+                            at,
+                            qlen,
+                            s.get("startMs").and_then(Value::as_i64),
+                        ));
+                    }
+                }
+            }
+            // What the analysis concluded.
+            for (field, text) in [
+                ("brief", meta.get("brief").and_then(Value::as_str)),
+                ("context", meta.get("meetingContext").and_then(Value::as_str)),
+            ] {
+                if let Some(text) = text {
+                    if let Some(at) = find_ci(text, &query) {
+                        hits.push(hit(field, text, at, qlen, None));
+                    }
+                }
+            }
+            for (field, key, parts) in [
+                ("finding", "findings", ["title", "detail"]),
+                ("actionItem", "actionItems", ["text", "rationale"]),
+            ] {
+                for item in meta.get(key).and_then(Value::as_array).into_iter().flatten() {
+                    let text = parts
+                        .iter()
+                        .filter_map(|p| item.get(*p).and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join(" — ");
+                    if let Some(at) = find_ci(&text, &query) {
+                        hits.push(hit(
+                            field,
+                            &text,
+                            at,
+                            qlen,
+                            item.get("atMs").and_then(Value::as_i64),
+                        ));
+                    }
+                }
+            }
+            if hits.is_empty() {
+                continue;
+            }
+            let total = hits.len();
+            // Most-trusted field first, then chronological within a field.
+            hits.sort_by_key(|h| {
+                let f = h.get("field").and_then(Value::as_str).unwrap_or("");
+                let rank = SEARCH_FIELDS.iter().position(|x| *x == f).unwrap_or(9);
+                (rank, h.get("atMs").and_then(Value::as_i64).unwrap_or(0))
+            });
+            hits.truncate(per_recording);
+            results.push(json!({
+                "id": meta.get("id").cloned().unwrap_or(Value::Null),
+                "title": meta.get("title").cloned().unwrap_or(Value::Null),
+                "createdAt": meta.get("createdAt").cloned().unwrap_or(Value::Null),
+                "folderId": meta.get("folderId").cloned().unwrap_or(Value::Null),
+                "meetingType": meta.get("meetingType").cloned().unwrap_or(Value::Null),
+                "hitCount": total,
+                "hits": hits,
+            }));
+        }
+    }
+    // Recordings with the most to say about the query first; ties break newest.
+    results.sort_by_key(|r| {
+        (
+            std::cmp::Reverse(r.get("hitCount").and_then(Value::as_i64).unwrap_or(0)),
+            std::cmp::Reverse(r.get("createdAt").and_then(Value::as_i64).unwrap_or(0)),
+        )
+    });
+    let matched = results.len();
+    results.truncate(limit);
+    Ok(json!({
+        "query": query,
+        "scanned": scanned,
+        "matched": matched,
+        "returned": results.len(),
+        "recordings": results,
+    }))
+}
+
 /// Read one recording in full: curated meta fields + the transcript rebuilt as
 /// timestamped, speaker-labelled text (the segments themselves stay on disk).
 /// Includes every analysis artifact saved with the entry, labelled as context
@@ -1809,4 +2008,48 @@ fn delete_todo_template(path: &PathBuf, id: &str) -> anyhow::Result<Value> {
 
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_ci_is_case_insensitive_and_char_indexed() {
+        assert_eq!(find_ci("Hello World", "world"), Some(6));
+        // CJK: the index must be in CHARS, not bytes — the snippet window
+        // slices on it, and byte math would land mid-character and panic.
+        assert_eq!(find_ci("我們聊到東森的席數", "東森"), Some(4));
+        assert_eq!(find_ci("nothing here", "absent"), None);
+        assert_eq!(find_ci("short", "a much longer needle"), None);
+        assert_eq!(find_ci("anything", ""), None);
+    }
+
+    #[test]
+    fn hit_windows_around_the_match_without_splitting_characters() {
+        let text = "前".repeat(100) + "東森" + &"後".repeat(100);
+        let at = find_ci(&text, "東森").unwrap();
+        let h = hit("transcript", &text, at, 2, Some(1500));
+        let snippet = h["snippet"].as_str().unwrap();
+        assert!(snippet.contains("東森"));
+        assert!(snippet.starts_with('…') && snippet.ends_with('…'));
+        assert_eq!(h["atMs"], json!(1500));
+        assert_eq!(h["field"], json!("transcript"));
+    }
+
+    #[test]
+    fn hit_omits_ellipsis_at_the_text_edges_and_atms_when_absent() {
+        let h = hit("brief", "東森 outbound", 0, 2, None);
+        let snippet = h["snippet"].as_str().unwrap();
+        assert!(!snippet.starts_with('…'), "no leading … at the start of the text");
+        assert!(!snippet.ends_with('…'), "no trailing … at the end of the text");
+        assert!(h.get("atMs").is_none());
+    }
+
+    #[test]
+    fn search_requires_a_non_empty_query() {
+        let dir = std::path::Path::new("/nonexistent");
+        assert!(search_meetings(dir, &json!({})).is_err());
+        assert!(search_meetings(dir, &json!({ "query": "   " })).is_err());
+    }
 }
