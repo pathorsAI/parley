@@ -221,8 +221,6 @@ export const zhTW = {
   "preflight.prep.draft": "幫我起草",
   "preflight.prep.redraft": "重新起草",
   "preflight.prep.drafting": "讀情報中…",
-  "preflight.prep.draftHint": "讀這家的情報卡與缺口板，草擬目標、議程、可能的反對。都只是建議，點了才算數。",
-  "preflight.prep.draftNeedsCompany": "先在左欄連結公司，才有情報可以讀。",
   "preflight.prep.draftFailed": "起草失敗，稍後再試一次",
   "preflight.prep.draftNoKey": "深度分析還沒設定模型或金鑰",
   "preflight.prep.goal": "目標",
@@ -1433,9 +1431,6 @@ export const en = {
   "preflight.prep.draft": "Draft it for me",
   "preflight.prep.redraft": "Draft again",
   "preflight.prep.drafting": "Reading the intel…",
-  "preflight.prep.draftHint":
-    "Reads this company's intel cards and gap board, then proposes a goal, an agenda and the pushbacks to expect. Suggestions only — nothing lands until you click it.",
-  "preflight.prep.draftNeedsCompany": "Link a company on the left first — that's where the intel comes from.",
   "preflight.prep.draftFailed": "Couldn't draft — try again in a moment",
   "preflight.prep.draftNoKey": "No model or key set up for deep analysis",
   "preflight.prep.goal": "Goal",
