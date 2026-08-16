@@ -21,9 +21,6 @@ export interface TranscriptSegment {
   /** Diarized speaker number within the source (0 = unknown / single speaker). */
   speaker: number;
   text: string;
-  /** Translated-meeting mode: what the counterpart actually heard (the Gemini
-   *  live-translate output for this turn). Absent for untranslated segments. */
-  translation?: string;
   isFinal: boolean;
   /** Milliseconds since the meeting started. */
   startMs: number;
@@ -378,17 +375,6 @@ export interface Settings {
   assemblyaiApiKey: string;
   /** Microphone input device name; empty = system default. */
   inputDevice: string;
-  /** Live translation: source microphone; empty = system default. */
-  translateInputDevice: string;
-  /** Live translation: output device the translated audio plays to (Phase 2:
-   *  the virtual mic); empty = system default output. */
-  translateOutputDevice: string;
-  /** Live translation: BCP-47 target language code (e.g. "en", "ja"). */
-  translateTargetLanguage: string;
-  /** Meeting translation: when on, starting a meeting routes "me" through
-   *  Gemini live-translate (bilingual transcript + translated voice to the
-   *  translate output device) instead of the STT provider. */
-  meetingTranslateEnabled: boolean;
   /** The DEFAULT scenario for a new meeting. The scenario a given meeting
    *  actually runs under is per-meeting state (store.meetingType, persisted on
    *  the history entry) — this is only the seed. Legacy persisted key:
