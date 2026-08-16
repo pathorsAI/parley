@@ -145,13 +145,31 @@ public struct RecordingMeta: @unchecked Sendable {
 
     /// The desktop's speaker label rules (`defaultSpeakerLabel`, store.ts):
     /// user names override; `mix` falls back to "Speaker N".
+    ///
+    /// The fallbacks are display text, so they come out of this package's own
+    /// catalog (`Resources/Localizable.xcstrings`) rather than as literals —
+    /// a Chinese phone was reading "Speaker 1" over Chinese transcript lines.
+    /// The numbered forms are `%lld` format strings filled in afterwards, not
+    /// interpolated into the lookup key: `"Speaker \(n)"` as a key would be a
+    /// different, untranslatable key for every speaker index.
     public func speakerLabel(for seg: TranscriptSegment) -> String {
         let key = "\(seg.source)-\(seg.speaker)"
         if let name = speakerNames[key], !name.isEmpty { return name }
         switch seg.source {
-        case "me": return seg.speaker <= 1 ? "You" : "You \(seg.speaker)"
-        case "them": return seg.speaker <= 1 ? "Them" : "Remote \(seg.speaker)"
-        default: return "Speaker \(seg.speaker)"
+        case "me":
+            return seg.speaker <= 1
+                ? String(localized: "You", bundle: .module)
+                : numbered("You %lld", seg.speaker)
+        case "them":
+            return seg.speaker <= 1
+                ? String(localized: "Them", bundle: .module)
+                : numbered("Remote %lld", seg.speaker)
+        default:
+            return numbered("Speaker %lld", seg.speaker)
         }
+    }
+
+    private func numbered(_ key: String.LocalizationValue, _ n: Int) -> String {
+        String(format: String(localized: key, bundle: .module), n)
     }
 }

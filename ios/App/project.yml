@@ -34,8 +34,8 @@ targets:
       path: Parley/Info.plist
       properties:
         CFBundleDisplayName: Parley
-        CFBundleShortVersionString: "1.2"
-        CFBundleVersion: "8"
+        CFBundleShortVersionString: "1.3"
+        CFBundleVersion: "9"
         UILaunchScreen: {}
         # Localized in Parley/InfoPlist.xcstrings; this is the fallback value.
         NSMicrophoneUsageDescription: Parley records the meeting in the room so it can transcribe it live. Audio goes only to the transcription provider tied to your account.
@@ -44,6 +44,17 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: com.pathors.parley.ios.auth
             CFBundleURLSchemes: [parley]
+        # The Pathors faces (see Parley/ParleyTypography.swift). UIAppFonts is
+        # all an app target needs — no runtime CTFontManager registration.
+        # Deliberately absent from ParleyKeyboard: the keyboard extension runs
+        # under a hard memory cap and draws its own minimal UI.
+        UIAppFonts:
+          - DMSans-Regular.ttf
+          - DMSans-Medium.ttf
+          - DMSans-SemiBold.ttf
+          - DMSans-Bold.ttf
+          - Alexandria-SemiBold.ttf
+          - Alexandria-Bold.ttf
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pathors.parley.ios
@@ -70,8 +81,8 @@ targets:
       properties:
         # Localized in ../Keyboard/InfoPlist.xcstrings; this is the fallback.
         CFBundleDisplayName: Parley Voice
-        CFBundleShortVersionString: "1.2"
-        CFBundleVersion: "8"
+        CFBundleShortVersionString: "1.3"
+        CFBundleVersion: "9"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.keyboard-service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController

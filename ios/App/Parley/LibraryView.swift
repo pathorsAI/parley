@@ -92,7 +92,7 @@ struct LibraryView: View {
                     Image(systemName: scope == nil ? "folder" : "person.2")
                     Text(verbatim: scopeName)
                 }
-                .font(.subheadline)
+                .font(.parley.subheadlineEmphasized)
                 .foregroundStyle(scope == nil ? Theme.foreground : Theme.org)
             }
         }
@@ -111,7 +111,11 @@ struct LibraryView: View {
                 folderChips
             }
             if let error {
-                Text(error).font(.caption).foregroundStyle(Theme.destructive)
+                Text(error)
+                    .font(.parley.caption)
+                    .foregroundStyle(Theme.destructive)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
             }
             ForEach(filtered) { rec in
                 NavigationLink {
@@ -119,6 +123,7 @@ struct LibraryView: View {
                 } label: {
                     RecordingCard(summary: rec, folders: folders)
                 }
+                .modifier(RecordingRow())
                 .swipeActions(edge: .trailing) {
                     Button("Delete", systemImage: "trash", role: .destructive) {
                         Task { await remove(rec) }
@@ -129,15 +134,35 @@ struct LibraryView: View {
                 .opacity(busyId == rec.id ? 0.5 : 1)
             }
             if !loading && filtered.isEmpty && error == nil {
-                Text(search.isEmpty ? "No recordings here yet." : "No matches.")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.mutedForeground)
-                    .frame(maxWidth: .infinity)
+                emptyState
+                    .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             }
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
         .overlay { if loading && recordings.isEmpty { ProgressView() } }
+    }
+
+    /// Same shape as the live screen's empty state: a tinted disc, the glyph in
+    /// brand blue, and enough room around it that "nothing here" reads as a
+    /// deliberate state rather than a failed load.
+    private var emptyState: some View {
+        VStack(spacing: 18) {
+            Image(systemName: search.isEmpty ? "rectangle.stack" : "magnifyingglass")
+                .font(.parley.title)
+                .foregroundStyle(Theme.brand)
+                .frame(width: 88, height: 88)
+                .background(Theme.tintedSurface, in: Circle())
+                .accessibilityHidden(true)
+            Text(search.isEmpty ? "No recordings here yet." : "No matches.")
+                .font(.parley.subheadline)
+                .foregroundStyle(Theme.mutedForeground)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 56)
+        .padding(.bottom, 24)
     }
 
     private var folderChips: some View {
@@ -151,22 +176,33 @@ struct LibraryView: View {
                     chip(f.name, selected: folderFilter == f.id) { folderFilter = f.id }
                 }
             }
-            .padding(.vertical, 2)
+            .padding(.vertical, 4)
+            .padding(.horizontal, 2)
         }
+        .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 4, trailing: 20))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
     }
 
     /// `label` is either an already-localized chip name or a user-created folder
     /// name, so it renders verbatim either way.
+    ///
+    /// The selected chip is the one place in the list that carries the brand
+    /// gradient — it is the closest thing here to the landing site's pill CTA,
+    /// and giving it to only one chip at a time keeps the row legible.
     private func chip(_ label: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(verbatim: label)
-                .font(.caption.weight(selected ? .semibold : .regular))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(selected ? Theme.primary : Theme.muted, in: Capsule())
-                .foregroundStyle(selected ? Theme.primaryForeground : Theme.foreground)
+                .font(.parley.caption.weight(selected ? .semibold : .regular))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    selected
+                        ? AnyShapeStyle(Theme.brandGradient)
+                        : AnyShapeStyle(Theme.tintedSurface),
+                    in: Capsule()
+                )
+                .foregroundStyle(selected ? Theme.onBrand : Theme.foreground)
         }
         .buttonStyle(.plain)
     }
@@ -313,6 +349,45 @@ struct LibraryView: View {
     }
 }
 
+/// A recording reads as a card on the landing site's terms — its own
+/// soft-cornered pale-blue surface floating on a white page — rather than a
+/// slab between two hairlines. The row *background* carries the shape, so the
+/// disclosure chevron sits inside the card with everything else; the row insets
+/// are the card's inner gutter, and the background's own padding is the gap
+/// between cards.
+///
+/// `tintedSurface` and not `Theme.card`: #FAFAFA on a #FFFFFF page is a 2% step,
+/// which cannot carry a card boundary now that the separators are gone.
+private struct RecordingRow: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .listRowInsets(EdgeInsets(top: 12, leading: 22, bottom: 12, trailing: 22))
+            .listRowSeparator(.hidden)
+            .listRowBackground(
+                RoundedRectangle(cornerRadius: Theme.radius)
+                    .fill(Theme.tintedSurface)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+            )
+    }
+}
+
+/// Glyph and value as one unit, with a gap narrow enough that the eye groups
+/// them and wide enough that they don't touch. `Label`'s own spacing follows
+/// the text style, so at caption2 it still leaves roughly a body-text gap; the
+/// meta row carries four labels, and that adds up to more width than the one
+/// value on the row that actually needs it. Always rendering both halves also
+/// keeps `Label`'s icon-only fallback from kicking in under pressure, which is
+/// what `.titleAndIcon` used to be here for.
+private struct MetaLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.icon
+            configuration.title
+        }
+    }
+}
+
 /// Desktop HistoryCard, phone-sized: type badge, title, date, snippet,
 /// duration/speakers/findings meta row.
 private struct RecordingCard: View {
@@ -320,18 +395,18 @@ private struct RecordingCard: View {
     let folders: [CloudFolder]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 8) {
                 badge
                 Text(
                     verbatim: summary.title.isEmpty
                         ? String(localized: "Untitled recording") : summary.title)
-                    .font(.subheadline.weight(.medium))
+                    .font(.parley.subheadlineEmphasized)
                     .lineLimit(2)
             }
             if let snippet = summary.snippet, !snippet.isEmpty {
                 Text(verbatim: snippet)
-                    .font(.caption)
+                    .font(.parley.caption)
                     .foregroundStyle(Theme.mutedForeground)
                     .lineLimit(2)
             }
@@ -340,6 +415,14 @@ private struct RecordingCard: View {
             // truncate. Without this the row wraps mid-value — "18:4 / 2" for a
             // duration, "New busi- / ness" for a folder — which it did in both
             // languages, worst in Chinese where the labels are widest.
+            //
+            // Pinning the rest is not enough on its own, though: the folder
+            // Label and the Spacer are then the only two children with any give,
+            // and an HStack hands each flexible child an equal share of what is
+            // left. Half the slack went to the gap in front of the date and the
+            // folder came out as "R…" / "新…" with visible room beside it. The
+            // layout priority below serves the folder first, so the Spacer gets
+            // only what the folder does not want — see `.layoutPriority(1)`.
             HStack(spacing: 10) {
                 Label(
                     RecordingDetailView.duration(summary.durationMs), systemImage: "clock"
@@ -354,6 +437,10 @@ private struct RecordingCard: View {
                 if let fid = summary.folderId, let f = folders.first(where: { $0.id == fid }) {
                     Label(f.name, systemImage: "folder")
                         .truncationMode(.tail)
+                        // First claim on whatever the pinned values leave over.
+                        // A long name still degrades — it just does so after
+                        // the row is actually full, not at one character.
+                        .layoutPriority(1)
                 }
                 Spacer(minLength: 4)
                 Text(verbatim: Self.dateLabel(summary.createdAt)).fixedSize()
@@ -361,26 +448,30 @@ private struct RecordingCard: View {
                     Image(systemName: "speaker.wave.2")
                 }
             }
-            .font(.caption2)
+            // Durations, counts and a clock time: tabular figures so the row
+            // doesn't reflow a digit at a time as a meeting ticks over.
+            .font(.parley.caption2.monospacedDigit())
             .lineLimit(1)
             // Under pressure `Label` quietly falls back to icon-only, which
             // leaves a row of glyphs with no values at all — worse than the
-            // wrapping it replaced. Pin the style so the numbers always show.
-            .labelStyle(.titleAndIcon)
+            // wrapping it replaced. Pin the style so the numbers always show —
+            // and, while we are here, pin the gap between glyph and value too:
+            // the built-in one is sized for body text, and four of them at
+            // caption2 ate more of the row than the folder name did.
+            .labelStyle(MetaLabelStyle())
             .foregroundStyle(Theme.mutedForeground)
         }
-        .padding(.vertical, 3)
     }
 
     private var badge: some View {
         let live = summary.source == "live"
         return Text(live ? "LIVE" : "UPLOAD")
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
+            .font(.parley.caption2.weight(.semibold))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
             .background(
-                (live ? Theme.recording : Theme.org).opacity(0.15),
-                in: RoundedRectangle(cornerRadius: 5))
+                (live ? Theme.recording : Theme.org).opacity(0.14),
+                in: RoundedRectangle(cornerRadius: 6))
             .foregroundStyle(live ? Theme.recording : Theme.org)
     }
 
@@ -391,3 +482,49 @@ private struct RecordingCard: View {
             .formatted(.dateTime.month(.abbreviated).day().hour().minute())
     }
 }
+
+#if DEBUG
+    /// The list the fixtures would produce. `LibraryView` itself only answers
+    /// from `ScreenshotDemo` when the app is launched with `-ParleyDemo`, which
+    /// a preview can't do, so the cards are rendered here through the same
+    /// `RecordingRow` treatment the real list uses.
+    #Preview("Library — cards") {
+        NavigationStack {
+            List {
+                ForEach(ScreenshotDemo.recordings) { rec in
+                    NavigationLink {
+                        EmptyView()
+                    } label: {
+                        RecordingCard(summary: rec, folders: ScreenshotDemo.folders)
+                    }
+                    .modifier(RecordingRow())
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Theme.background)
+            .navigationTitle("Library")
+        }
+    }
+
+    #Preview("Library — cards, dark") {
+        NavigationStack {
+            List {
+                ForEach(ScreenshotDemo.recordings) { rec in
+                    RecordingCard(summary: rec, folders: ScreenshotDemo.folders)
+                        .modifier(RecordingRow())
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Theme.background)
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    /// Signed out, which is where a bare `AppState()` lands: the unavailable
+    /// state and the toolbar, live.
+    #Preview("Library — signed out") {
+        LibraryView().environmentObject(AppState())
+    }
+#endif

@@ -1,6 +1,7 @@
 # App Review information
 
-Current target: **1.1 (build 5)** — adds the Parley Voice keyboard extension.
+Current target: **1.3 (build 9)** — the Parley Voice keyboard gains a full
+English typing layout, and the app is restyled.
 
 ## Contact
 
@@ -50,9 +51,18 @@ Google or Apple identity.
 > Add New Keyboard › Parley Voice, then tap it and enable "Allow Full Access".
 > In any app with a text field (Notes works), switch to the Parley keyboard with
 > the globe key and tap the microphone button. Parley opens, records, and the
-> transcript types into the field you started from. Without Full Access the
-> keyboard still functions: it shows the reason and keeps a working key row
-> (globe, space, return, delete).
+> transcript types into the field you started from.
+>
+> The keyboard has two panes, chosen with the toggle at the top right or by
+> swiping left and right across it: voice dictation, and a full English QWERTY
+> layout with number and symbol planes. **Without Full Access the keyboard opens
+> on the English pane and types normally** — dictation is the only thing that
+> needs Full Access, and the keyboard says so in place of the microphone.
+>
+> The globe key is present on every device and in both panes. Tap it to move to
+> the next keyboard, hold it for the system keyboard picker. Parley ships no
+> Chinese input layout of its own, so this is how a Chinese-language reviewer
+> reaches the system's 注音 keyboard.
 >
 > **Settings** verifies System/Light/Dark appearance, sync status, hosted usage,
 > the app’s Language setting, privacy/support links, and account deletion.
@@ -75,11 +85,17 @@ Expect this to be asked; answer it in the notes rather than waiting.
   back through the App Group. Both halves of that handoff are gated on Full
   Access.
 - **What happens when it is denied.** The keyboard degrades instead of breaking:
-  it explains what Full Access buys, and keeps a functional key row (globe,
-  space, return, delete). It is never a dead rectangle.
+  it opens on its English typing pane, which is fully functional — letters,
+  numbers, symbols, shift, delete, space, return, globe — and it explains what
+  Full Access would buy in place of the microphone. It is never a dead
+  rectangle.
 - **Keystroke handling.** The keyboard inserts text and deletes backwards. It
-  does not read the document context, does not build a typing history, and has
-  no analytics.
+  builds no typing history, transmits nothing, and has no analytics. It reads
+  the document context in exactly one place — a single
+  `documentContextBeforeInput` call on the space bar, of which it inspects only
+  the last two characters, to decide whether a second tap should become ". ",
+  the same shortcut the system keyboard has. Nothing from that read is stored,
+  and it never leaves the process.
 
 ## Responses to previous review feedback
 

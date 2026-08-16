@@ -82,6 +82,29 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.3
+
+The keyboard is a keyboard now. Next to voice it has a full English layout —
+letters, numbers, symbols, hold-to-repeat delete — and the keys you reach for
+in the middle of dictating without leaving the mic: return, @, and delete.
+Swipe left or right across the keyboard to move between the two.
+
+The globe key is on every device now, so the system Chinese keyboard is one tap
+away and holding it opens the picker. Parley does not ship its own Bopomofo
+layout; the way out of this keyboard is no longer hidden on some phones.
+
+The keyboard also lines up with the screen. It used to paint its own background
+over the system's, which left a seam along the bottom edge and a top corner that
+did not match — it now sits in the system's own input view, at the system's own
+key metrics.
+
+Transcript text can be selected and copied, while it is still being transcribed
+and not only after. Copy one line from its context menu, or the whole transcript
+from the toolbar.
+
+And the app looks like Pathors: brand blue, a lighter page, and the type the rest
+of Pathors is set in.
+
 ## What's New — 1.1
 
 Voice typing comes to the phone. Add the Parley keyboard and dictate into any

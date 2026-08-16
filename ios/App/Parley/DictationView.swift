@@ -60,12 +60,12 @@ struct DictationView: View {
             .accessibilityHidden(true)
 
             Text(statusTitle)
-                .font(.title3.weight(.semibold))
+                .font(.parley.title3)
                 .foregroundStyle(Theme.foreground)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
             Text(statusSubtitle)
-                .font(.subheadline)
+                .font(.parley.subheadline)
                 .foregroundStyle(Theme.mutedForeground)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -141,17 +141,20 @@ private struct SwipeBackGuide: View {
     @State private var go = false
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
             Text("Swipe right on the bar below")
-                .font(.subheadline.weight(.medium))
+                .font(.parley.subheadlineEmphasized)
                 .foregroundStyle(Theme.foreground)
             ZStack(alignment: .leading) {
+                // `border`, not `muted`: the card underneath is now
+                // `tintedSurface`, and in light mode the two are the same pale
+                // blue — the stand-in home indicator would vanish into it.
                 Capsule()
-                    .fill(Theme.muted)
+                    .fill(Theme.border)
                     .frame(height: 5)
                     .frame(maxWidth: .infinity)
                 Image(systemName: "arrow.right")
-                    .font(.footnote.weight(.bold))
+                    .font(.parley.footnote.weight(.bold))
                     .foregroundStyle(Theme.primary)
                     .offset(x: go ? 150 : 0)
                     .opacity(go ? 0 : 1)
@@ -164,12 +167,12 @@ private struct SwipeBackGuide: View {
             .frame(height: 20)
             .frame(maxWidth: 220)
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .padding(.horizontal, 18)
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: Theme.radius)
-                .fill(Theme.card))
+                .fill(Theme.tintedSurface))
         .onAppear { if animated { go = true } }
     }
 }

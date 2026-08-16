@@ -1,9 +1,11 @@
 import SwiftUI
 import UIKit
 
-/// Parley's semantic SwiftUI surface. The actual primitive values are generated
-/// from `design/tokens.json` into `ParleyDesignTokens.swift`; this adapter is
-/// intentionally the only place product views turn them into adaptive colors.
+/// Parley's semantic SwiftUI surface. The primitive values live in
+/// `ParleyDesignTokens.swift`, mirrored from the Pathors landing site's
+/// `--v2-*` properties; this adapter is intentionally the only place product
+/// views turn them into adaptive colors. Typography is `Font.parley`
+/// (`ParleyTypography.swift`).
 enum Theme {
     static let background = adaptive(ParleyDesignTokens.Light.background, ParleyDesignTokens.Dark.background)
     static let foreground = adaptive(ParleyDesignTokens.Light.foreground, ParleyDesignTokens.Dark.foreground)
@@ -20,6 +22,32 @@ enum Theme {
     static let warning = adaptive(ParleyDesignTokens.Light.warning, ParleyDesignTokens.Dark.warning)
     static let success = adaptive(ParleyDesignTokens.Light.success, ParleyDesignTokens.Dark.success)
     static let radius = ParleyDesignTokens.radius
+
+    /// The pale blue section fill the landing site uses behind grouped
+    /// content. Reach for this instead of `muted` when the intent is "this is a
+    /// section", not "this text is secondary".
+    static let tintedSurface = adaptive(
+        ParleyDesignTokens.Light.tintedSurface, ParleyDesignTokens.Dark.tintedSurface)
+
+    // The mark's colours. Fixed rather than appearance-adaptive: these are the
+    // logo's blues and they are the same blues in dark mode.
+    static let brand = Color(UIColor(hex: ParleyDesignTokens.brand))
+    static let sky = Color(UIColor(hex: ParleyDesignTokens.sky))
+
+    /// brand → sky, the gradient the landing site puts on headlines, stat
+    /// numbers and primary CTAs.
+    static let brandGradient = LinearGradient(
+        colors: [brand, sky], startPoint: .topLeading, endPoint: .bottomTrailing)
+
+    /// What to draw *on* `brandGradient`. Fixed, like the gradient.
+    static let onBrand = Color(UIColor(hex: ParleyDesignTokens.onBrand))
+
+    /// Per-speaker colours for a diarized transcript, in hand-out order. Index
+    /// with `(speaker - 1) % count`; speaker 0 means the provider hasn't
+    /// decided yet and belongs in `mutedForeground`, not here.
+    static let speakers: [Color] = zip(
+        ParleyDesignTokens.Speaker.light, ParleyDesignTokens.Speaker.dark
+    ).map { adaptive($0, $1) }
 
     private static func adaptive(_ light: UInt32, _ dark: UInt32, darkAlpha: CGFloat = 1) -> Color {
         Color(

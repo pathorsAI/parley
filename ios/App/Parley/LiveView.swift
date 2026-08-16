@@ -16,10 +16,14 @@ struct LiveView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 transcript
-                Divider()
+                Divider().overlay(Theme.border)
                 controls
             }
             .background(Theme.background)
+            // The principal item below draws the title, but `navigationTitle`
+            // stays: it is what a pushed screen's back button says, and it is
+            // the name the system uses when the app has no custom title view to
+            // show (VoiceOver's rotor, Stage Manager, screen-time reports).
             .navigationTitle("Parley")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -28,8 +32,27 @@ struct LiveView: View {
                         .fill(store.isRecording ? Theme.recording : Theme.mutedForeground.opacity(0.4))
                         .frame(width: 9, height: 9)
                 }
+                // The product name is a wordmark, not a heading: Alexandria in
+                // the brand gradient, the same mark the landing site sets.
+                ToolbarItem(placement: .principal) {
+                    Text(verbatim: "Parley")
+                        .font(.parley.wordmark)
+                        .foregroundStyle(Theme.brandGradient)
+                        .accessibilityAddTraits(.isHeader)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     LevelMeter(level: store.micLevel)
+                }
+                // Copying works mid-meeting on purpose: the reason to grab a
+                // line is usually that it was just said.
+                ToolbarItem(placement: .topBarTrailing) {
+                    CopyTranscriptButton(
+                        text: {
+                            TranscriptClipboard.plainText(store.segments) {
+                                TranscriptClipboard.liveLabel(for: $0)
+                            }
+                        },
+                        isEmpty: store.segments.isEmpty)
                 }
             }
             .alert("Before you start recording", isPresented: $showRecordingConsent) {
@@ -49,7 +72,7 @@ struct LiveView: View {
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 16) {
                     if store.segments.isEmpty {
                         emptyState
                     }
@@ -57,7 +80,7 @@ struct LiveView: View {
                         SegmentRow(segment: seg).id(seg.id)
                     }
                 }
-                .padding(16)
+                .padding(20)
             }
             .onChange(of: store.segments.count) {
                 if let last = store.segments.last {
@@ -67,48 +90,70 @@ struct LiveView: View {
         }
     }
 
+    /// An empty transcript is most of the first launch, so it gets the room the
+    /// landing site gives a section rather than the two grey lines it had: a
+    /// tinted disc carrying the glyph in brand blue, and the sentence below it.
     private var emptyState: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 18) {
             Image(systemName: "waveform")
-                .font(.title2)
-                .foregroundStyle(Theme.mutedForeground)
+                .font(.parley.title)
+                .foregroundStyle(Theme.brand)
+                .frame(width: 88, height: 88)
+                .background(Theme.tintedSurface, in: Circle())
+                .accessibilityHidden(true)
             Text(app.hasAccount
                 ? "Hit record and put the phone on the table to catch the whole room."
                 : "Sign in again to pick up where you left off.")
-                .font(.subheadline)
+                .font(.parley.subheadline)
                 .foregroundStyle(Theme.mutedForeground)
                 .multilineTextAlignment(.center)
+                .frame(maxWidth: 320)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 60)
+        .padding(.top, 72)
+        .padding(.bottom, 24)
     }
 
     private var controls: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
             if store.status != "idle" {
                 Text(store.status)
-                    .font(.caption)
+                    .font(.parley.caption)
                     .foregroundStyle(Theme.mutedForeground)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
             }
             Button(action: toggle) {
                 Label(buttonTitle, systemImage: buttonIcon)
-                    .font(.body.weight(.medium))
+                    .font(.parley.bodyEmphasized)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .foregroundStyle(store.isRecording ? Color.white : Theme.primaryForeground)
+                    .padding(.vertical, 14)
+                    // White in both appearances, on purpose: the fill under it
+                    // is either the fixed brand gradient or recording red, and
+                    // neither follows the system appearance, so its label
+                    // must not either. `Theme.primaryForeground` inverts in
+                    // dark mode and would land near-black on brand blue.
+                    .foregroundStyle(Theme.onBrand)
+                    .background(buttonFill, in: RoundedRectangle(cornerRadius: Theme.radius))
             }
-            .buttonStyle(.borderedProminent)
-            .tint(store.isRecording ? Theme.recording : Theme.primary)
+            .buttonStyle(.plain)
             if !store.isRecording && !app.hasAccount {
                 Text("Your session expired. Sign in with the button above and recording works again.")
-                    .font(.caption)
+                    .font(.parley.caption)
                     .foregroundStyle(Theme.mutedForeground)
                     .multilineTextAlignment(.center)
             }
         }
-        .padding(16)
+        .padding(20)
+    }
+
+    /// Idle is *the* primary action on this screen, so it wears the Pathors
+    /// gradient. Recording is a state rather than an action — flat red, so a
+    /// glance never mistakes "in progress" for "press me".
+    private var buttonFill: AnyShapeStyle {
+        store.isRecording
+            ? AnyShapeStyle(Theme.recording)
+            : AnyShapeStyle(Theme.brandGradient)
     }
 
     /// The button says what pressing it will actually do, so the signed-out case
@@ -258,22 +303,34 @@ struct LiveView: View {
 struct SegmentRow: View {
     let segment: TranscriptSegment
 
-    private static let palette: [Color] = [.blue, .orange, .purple, .teal, .pink, .indigo]
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(segment.speaker == 0 ? "…" : "Speaker \(segment.speaker)")
-                .font(.caption2.weight(.semibold))
+        VStack(alignment: .leading, spacing: 4) {
+            Text(verbatim: TranscriptClipboard.liveLabel(for: segment))
+                .font(.parley.caption2.weight(.semibold))
                 .foregroundStyle(
                     segment.speaker == 0
                         ? Theme.mutedForeground
-                        : Self.palette[(segment.speaker - 1) % Self.palette.count])
-            Text(segment.text)
-                .font(.body)
+                        : Theme.speakers[(segment.speaker - 1) % Theme.speakers.count])
+            // Selection is enabled on the tentative tail too. A phrase is worth
+            // grabbing the second it appears, and waiting for the provider to
+            // finalise the utterance is not a distinction the person holding
+            // the phone can see.
+            Text(verbatim: segment.text)
+                .font(.parley.body)
                 .foregroundStyle(segment.isFinal ? Theme.foreground : Theme.mutedForeground)
                 .italic(!segment.isFinal)
+                .textSelection(.enabled)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Bare text, no speaker or timestamp: this screen shows neither a clock
+        // nor a name, and a copy that carries more than what is on screen is a
+        // surprise.
+        .contextMenu {
+            Button("Copy", systemImage: "doc.on.doc") {
+                TranscriptClipboard.write(segment.text)
+            }
+            .disabled(segment.text.isEmpty)
+        }
     }
 }
 
@@ -285,7 +342,7 @@ struct LevelMeter: View {
             ZStack(alignment: .leading) {
                 Capsule().fill(Theme.muted)
                 Capsule()
-                    .fill(Color.green)
+                    .fill(Theme.brandGradient)
                     .frame(width: geo.size.width * CGFloat(min(1, level * 6)))
                     .animation(.linear(duration: 0.08), value: level)
             }
@@ -293,3 +350,37 @@ struct LevelMeter: View {
         .frame(width: 70, height: 5)
     }
 }
+
+#if DEBUG
+    // A bare `AppState()` reads the keychain and nothing else, so the previews
+    // land on the signed-out empty state — which is the one worth eyeballing
+    // here. `SegmentRow` and `LevelMeter` get their own preview below because
+    // seeding a live transcript needs the demo fixtures the app only serves
+    // under the `-ParleyDemo` launch argument.
+    #Preview("Live — light") {
+        LiveView().environmentObject(AppState())
+    }
+
+    #Preview("Live — dark") {
+        LiveView()
+            .environmentObject(AppState())
+            .preferredColorScheme(.dark)
+    }
+
+    #Preview("Segments") {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(0..<7) { speaker in
+                    SegmentRow(
+                        segment: TranscriptSegment(
+                            id: "s\(speaker)", source: "mix", speaker: speaker,
+                            text: "Speaker \(speaker) says something worth reading back.",
+                            isFinal: speaker != 6, startMs: 0, endMs: 1_000))
+                }
+                LevelMeter(level: 0.12)
+            }
+            .padding(20)
+        }
+        .background(Theme.background)
+    }
+#endif

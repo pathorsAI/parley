@@ -375,6 +375,57 @@
         }
       }
     },
+    "Copied": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copied"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已複製"
+          }
+        }
+      }
+    },
+    "Copy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "複製"
+          }
+        }
+      }
+    },
+    "Copy transcript": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy transcript"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "複製逐字稿"
+          }
+        }
+      }
+    },
     "Couldn't load": {
       "extractionState": "manual",
       "localizations": {
@@ -777,7 +828,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "LIVE"
+            "value": "現場"
           }
         }
       }
@@ -1764,6 +1815,23 @@
         }
       }
     },
+    "Speaker %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Speaker %lld"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "說話者 %lld"
+          }
+        }
+      }
+    },
     "Start Parley voice typing right where you are, without switching apps.": {
       "extractionState": "manual",
       "localizations": {
@@ -2451,7 +2519,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "credits"
+            "value": "點"
           }
         }
       }

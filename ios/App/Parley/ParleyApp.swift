@@ -6,6 +6,13 @@ struct ParleyApp: App {
     @StateObject private var app = AppState()
     @StateObject private var dictation = DictationCoordinator.shared
 
+    /// The navigation and tab bars are drawn by UIKit and never see a SwiftUI
+    /// `.font()`, so their appearance proxies are configured once here, before
+    /// the first scene is built. See `ParleyAppearance.swift`.
+    init() {
+        ParleyAppearance.apply()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
