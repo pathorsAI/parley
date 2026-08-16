@@ -63,7 +63,6 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
 import type { AppLanguage, AppTheme, EvalDef, LlmProvider,
   LlmWorkload, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 import { VoiceTypingSettings } from "./VoiceTypingSettings";
-import { TranslateSettings } from "./TranslateSettings";
 import { ScenarioSettings } from "./StageBundleSettings";
 import { OrgSharePicker } from "../components/OrgSharePicker";
 import { PermissionsPanel } from "./PermissionsPanel";
@@ -81,8 +80,8 @@ interface McpServerInfo {
 // `cloudOnly` entries (the account/orgs page) are compiled out of the OSS edition,
 // which has no sign-in at all — so they never appear in that build's nav.
 //
-// `keywordsKey` is what the nav's search box matches BESIDES the label: twelve
-// panels deep enough to hold API keys, rubrics and an MCP endpoint can't be
+// `keywordsKey` is what the nav's search box matches BESIDES the label: panels
+// deep enough to hold API keys, rubrics and an MCP endpoint can't be
 // found by their one-word titles alone ("金鑰" lives under 供應商, "麥克風"
 // under 轉錄). The keyword strings are translated, so search works per-language.
 const NAV: {
@@ -95,7 +94,6 @@ const NAV: {
   { id: "account", labelKey: "settings.nav.account", keywordsKey: "settings.kw.account", cloudOnly: true },
   { id: "provider", labelKey: "settings.nav.provider", keywordsKey: "settings.kw.provider" },
   { id: "transcription", labelKey: "settings.nav.transcription", keywordsKey: "settings.kw.transcription" },
-  { id: "translate", labelKey: "settings.nav.translate", keywordsKey: "settings.kw.translate" },
   { id: "voiceTyping", labelKey: "settings.nav.voiceTyping", keywordsKey: "settings.kw.voiceTyping" },
   { id: "permissions", labelKey: "settings.nav.permissions", keywordsKey: "settings.kw.permissions" },
   { id: "evaluations", labelKey: "settings.nav.evaluations", keywordsKey: "settings.kw.evaluations" },
@@ -794,12 +792,6 @@ export function SettingsApp() {
                 </label>
               ))}
             </div>
-          </Section>
-        )}
-
-        {cat === "translate" && (
-          <Section title={t("settings.translate.title")}>
-            <TranslateSettings />
           </Section>
         )}
 

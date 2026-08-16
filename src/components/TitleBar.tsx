@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Building2, Check, ChevronDown, Circle, ClipboardList, Eraser, FileAudio, History, Languages, Loader2, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
+import { Building2, Check, ChevronDown, Circle, ClipboardList, Eraser, FileAudio, History, Loader2, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
 import { useStore, meetingElapsedMs, type AppMode } from "../lib/store";
 import type { Settings as AppSettings } from "../lib/types";
 import { log } from "../lib/log";
@@ -23,7 +23,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LevelMeter } from "./LevelMeter";
 import { McpStatusChip } from "./McpStatusChip";
-import { TranslateMenu } from "./TranslateMenu";
 import { ReplayOwnerChip } from "./ReplayOwnerChip";
 import { PostMeetingReviewButton } from "./accounts/PostMeetingReviewButton";
 import { StudyGenerationChip } from "./study/StudyGenerationChip";
@@ -541,8 +540,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const pauseMeeting = useStore((s) => s.pauseMeeting);
   const resumeMeeting = useStore((s) => s.resumeMeeting);
   const cancelMeeting = useStore((s) => s.cancelMeeting);
-  const translateEnabled = useStore((s) => s.settings.meetingTranslateEnabled);
-  const translateLanguage = useStore((s) => s.settings.translateTargetLanguage);
   const layout = useStore((s) => s.settings.layout);
   const updateSettings = useStore((s) => s.updateSettings);
   const meetingStartedAt = useStore((s) => s.meetingStartedAt);
@@ -772,12 +769,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             ) : (
               <LevelMeter source="me" className="h-1.5 w-14" />
             )}
-            {translateEnabled && (
-              <span className="flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                <Languages className="size-3.5" />
-                {translateLanguage.toUpperCase()}
-              </span>
-            )}
           </>
         )}
       </div>
@@ -854,9 +845,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           </Suspense>
         )}
         <McpStatusChip />
-        {/* ONE 🌐 entry (R4): the popover fronts the meeting-translate switch,
-            language, HUD pop-out, the standalone window and the settings link. */}
-        <TranslateMenu />
 
         {/* History is a ROUTE in this window (#195). While a meeting runs the
             screen belongs to the call, so it is HONESTLY disabled (R2) —

@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TitleBar } from "./components/TitleBar";
-import { TranslateStrip } from "./components/TranslateStrip";
 import { AppShell } from "./components/shell/AppShell";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
@@ -26,7 +25,6 @@ import {
 } from "./lib/tauriEvents";
 import { listenForSettings } from "./lib/settingsSync";
 import { listenForViewLogsMenu } from "./lib/diagnostics";
-import { listenForLiveTranslateMenu } from "./lib/liveTranslate";
 import { listenForSttUsage } from "./lib/usage/log";
 import { initTemplatesSync } from "./lib/templatesSync";
 import { initSessionSync } from "./lib/sessionSync";
@@ -129,7 +127,6 @@ const App = () => {
     track(listenForCacheClear());
     track(listenForSpeakerCacheClear());
     track(listenForViewLogsMenu());
-    track(listenForLiveTranslateMenu());
     track(listenForRecordingSaved());
     // The history://open + history://import listeners are gone with the standalone
     // History window (#195): the library is a route in THIS window now, so it
@@ -311,8 +308,6 @@ const App = () => {
       <TitleBar fullscreen={fullscreen} />
       <DeliveryNudgeHost />
       <AppShell />
-      {/* Interpreter strip: only during a translated live meeting. */}
-      <TranslateStrip />
     </div>
   );
 };

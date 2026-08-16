@@ -29,8 +29,6 @@ const ROUTES = [
   "finding-solution",
   "diagnostics",
   "voice-typing",
-  "live-translate",
-  "interpreter",
 ] as const;
 const window_ = ROUTES.find((r) => route.startsWith(r)) ?? "main";
 log.info("ui: boot", { window: window_ });
@@ -52,12 +50,6 @@ const DiagnosticsApp = lazy(() =>
 const VoiceTypingApp = lazy(() =>
   import("./voice-typing/VoiceTypingApp").then((module) => ({ default: module.VoiceTypingApp }))
 );
-const LiveTranslateApp = lazy(() =>
-  import("./live-translate/LiveTranslateApp").then((module) => ({ default: module.LiveTranslateApp }))
-);
-const InterpreterApp = lazy(() =>
-  import("./interpreter/InterpreterApp").then((module) => ({ default: module.InterpreterApp }))
-);
 
 function Root() {
   switch (window_) {
@@ -69,10 +61,6 @@ function Root() {
       return <DiagnosticsApp />;
     case "voice-typing":
       return <VoiceTypingApp />;
-    case "live-translate":
-      return <LiveTranslateApp />;
-    case "interpreter":
-      return <InterpreterApp />;
     default:
       return <App />;
   }

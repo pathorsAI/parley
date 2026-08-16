@@ -143,10 +143,6 @@ const DEFAULT_SETTINGS: Settings = {
   deepgramApiKey: "",
   assemblyaiApiKey: "",
   inputDevice: "",
-  translateInputDevice: "",
-  translateOutputDevice: "",
-  translateTargetLanguage: "en",
-  meetingTranslateEnabled: false,
   defaultMeetingType: "general",
   recentMeetingTypes: [],
   // Recordings analyze themselves as they always have; turning this off hands
@@ -198,7 +194,6 @@ export type SettingsCategory =
   | "account"
   | "provider"
   | "transcription"
-  | "translate"
   | "voiceTyping"
   | "permissions"
   | "evaluations"

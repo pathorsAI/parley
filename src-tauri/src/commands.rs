@@ -118,13 +118,6 @@ pub struct MeetingState {
     error_mute: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
     /// Buffers the recorded audio of the in-progress live meeting (see RecorderBuf).
     recorder: RecorderBuf,
-    /// Output stream of the meeting-translate session (translated voice → the
-    /// virtual mic / chosen device). Held so `stop_meeting` releases the device;
-    /// `None` for meetings without translation.
-    translate_playback: Mutex<Option<crate::audio::playback::PlaybackHandle>>,
-    /// Interpreter-strip pause: while true the translate session drops mic
-    /// uploads (silence to the counterpart, no billing). Reset on every start.
-    translate_paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Meeting pause (the titlebar ⏸): while true, captured PCM is dropped
     /// before the STT upload, the recording tee and the usage counter — nothing
     /// is transcribed, recorded or billed, but the capture + sockets stay open
@@ -196,19 +189,6 @@ pub fn meeting_active(coord: State<MicCoordinator>) -> bool {
     coord.owner() == Some(MicUser::Meeting)
 }
 
-/// Pause / resume the meeting-translate upload (the interpreter strip's ⏸).
-/// While paused the counterpart hears silence and no audio tokens are billed.
-/// Broadcasts `translate://paused` so every surface (in-window strip + floating
-/// interpreter window) stays in sync regardless of which one toggled it.
-#[tauri::command]
-pub fn set_translate_paused(app: AppHandle, state: State<MeetingState>, paused: bool) {
-    state
-        .translate_paused
-        .store(paused, std::sync::atomic::Ordering::SeqCst);
-    let _ = app.emit("translate://paused", paused);
-    log::info!("meeting-translate: paused={paused}");
-}
-
 /// Pause / resume the live meeting (the titlebar ⏸/▶). While paused every
 /// captured chunk is dropped before the recorder tee, the STT upload and the
 /// usage counter (see `run_metered_session`), so nothing is transcribed,
@@ -242,15 +222,6 @@ pub fn start_meeting(
     // `api_key` is the cloud Bearer token (not a vendor key) and the adapter
     // relays through this URL. Absent for BYOK providers.
     relay_url: Option<String>,
-    // Meeting translation: when `translate_language` is set, the "me" side runs
-    // through Gemini live-translate instead of the STT provider — bilingual
-    // segments feed the transcript, and the translated voice plays out
-    // `translate_output_device` (ideally the Parley virtual mic). The "them"
-    // side keeps the configured STT provider. Requires `translate_api_key`
-    // (a Gemini key — distinct from the STT provider's key).
-    translate_language: Option<String>,
-    translate_output_device: Option<String>,
-    translate_api_key: Option<String>,
 ) -> Result<(), String> {
     let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
     if api_key.trim().is_empty() {
@@ -263,13 +234,6 @@ pub fn start_meeting(
     // relayUrl is a frontend bug).
     if provider == SttProvider::Parley && relay_endpoint.is_none() {
         return Err("hosted transcription requires the cloud relay URL".into());
-    }
-    // Meeting translation: validate up front (before the mic is claimed) so a
-    // misconfigured start fails cleanly instead of half-starting.
-    let translate_language = translate_language.filter(|l| !l.trim().is_empty());
-    let translate_api_key = translate_api_key.filter(|k| !k.trim().is_empty());
-    if translate_language.is_some() && translate_api_key.is_none() {
-        return Err("meeting translation requires a Gemini API key".into());
     }
     // Claim the mic. A meeting outranks the Settings mic test and voice typing,
     // so the coordinator stops either one first (device released before our
@@ -325,65 +289,7 @@ pub fn start_meeting(
         // tap reads it to reject the counterpart's voice bleeding through the
         // speakers into the mic (pace/intonation must score "me" only).
         let far = std::sync::Arc::new(crate::audio::prosody::FarEndState::new());
-        if let Some(lang) = translate_language {
-            // ── Translated meeting ─────────────────────────────────────────
-            // "me" runs through Gemini live-translate (bilingual segments +
-            // translated voice → the chosen output / virtual mic) instead of
-            // the STT provider; "them" keeps the provider — two sessions, so
-            // recording follows the non-diarized convention (mic only).
-            let gemini_key = translate_api_key.expect("validated above");
-            let rx_me = spawn_capture(&coord, MicUser::Meeting, mic, gate.clone(), "me")
-                .ok()
-                .map(|rx| {
-                    let rx = spawn_mic_prosody_tap(&app, rx, Some(far.clone()));
-                    spawn_recorder_tee(rx, recorder.clone(), meeting_paused.clone())
-                });
-            let Some(rx_me) = rx_me else {
-                // Translation without the mic is meaningless — fail the start
-                // (the frontend rolls its meeting state back on the error).
-                coord.stop(MicUser::Meeting);
-                log::error!("meeting: translate mode requested but the mic could not start");
-                return Err("microphone could not be started".into());
-            };
-            state
-                .translate_paused
-                .store(false, std::sync::atomic::Ordering::SeqCst);
-            match crate::translate::spawn_meeting_translate(
-                &app,
-                gemini_key,
-                lang,
-                translate_output_device,
-                rx_me,
-                error_mute.clone(),
-                state.translate_paused.clone(),
-                meeting_paused.clone(),
-            ) {
-                Ok((task, playback)) => {
-                    state.tasks.lock().unwrap().push(task);
-                    *state.translate_playback.lock().unwrap() = Some(playback);
-                }
-                Err(e) => {
-                    coord.stop(MicUser::Meeting);
-                    return Err(e);
-                }
-            }
-            if let Ok(rx) = spawn_capture(&coord, MicUser::Meeting, sys, gate.clone(), "them") {
-                let rx = spawn_farend_tap(rx, far);
-                state.tasks.lock().unwrap().push(run_metered_session(
-                    &app,
-                    provider,
-                    make_config(),
-                    "them",
-                    rx,
-                    None,
-                    "meeting://error",
-                    Some(error_mute.clone()),
-                    // No release cutoff — meetings end via stop, not key-up.
-                    None,
-                    Some(meeting_paused.clone()),
-                ));
-            }
-        } else if diarization {
+        if diarization {
             // Tap the PRE-MIX mic for delivery coaching (issue #22): the prosody
             // analyzer must see raw mic, never the mixed/diarized stream.
             let rx_me = spawn_capture(&coord, MicUser::Meeting, mic, gate.clone(), "me")
@@ -507,10 +413,6 @@ pub fn start_meeting(
 
     #[cfg(not(target_os = "macos"))]
     {
-        // Meeting translation is wired in the macOS path only for now (the
-        // product ships macOS-first); reference the params so non-mac dev
-        // builds stay warning-free.
-        let _ = (&translate_language, &translate_output_device, &translate_api_key);
         let mic = Microphone {
             device_name: input_device,
         };
@@ -538,8 +440,8 @@ pub fn start_meeting(
 }
 
 /// Shared meeting teardown: mute this session's error surface, release the
-/// transcription tasks (with the flush/abort grace), stop the capture and free
-/// the translate output. Returns the recorded PCM buffer for the caller to
+/// transcription tasks (with the flush/abort grace) and stop the capture.
+/// Returns the recorded PCM buffer for the caller to
 /// either encode (stop) or discard (cancel).
 fn teardown_meeting(
     app: &AppHandle,
@@ -580,10 +482,6 @@ fn teardown_meeting(
     // each releases its device — dropping its PCM sender, which ends the STT
     // session via channel close. See MicCoordinator for the gate/detach story.
     coord.stop(MicUser::Meeting);
-    // Release the meeting-translate output stream (no-op for untranslated
-    // meetings). The sink held by the (draining) session task keeps writing
-    // into a bounded buffer harmlessly until the task ends.
-    let _ = state.translate_playback.lock().unwrap().take();
     let _ = app.emit("meeting://status", "stopped");
     state.recorder.lock().unwrap().take()
 }
@@ -856,34 +754,6 @@ fn spawn_mic_prosody_tap(
             }
         }
         tap.source_ended();
-    });
-    out_rx
-}
-
-/// Tee PCM into the meeting's recording buffer, forwarding every chunk
-/// untouched downstream. The translate path needs this standalone tee because
-/// its session doesn't go through [`run_metered_session`] (which does the
-/// recorder tee for STT sessions). While `paused` is set nothing is recorded,
-/// but chunks still flow downstream so the translate session keeps metering
-/// the mic (its own pause checks drop the upload) — mirroring the strip's ⏸.
-#[cfg(target_os = "macos")]
-fn spawn_recorder_tee(
-    mut rx: UnboundedReceiver<Vec<i16>>,
-    recorder: RecorderBuf,
-    paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) -> UnboundedReceiver<Vec<i16>> {
-    let (tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-    tauri::async_runtime::spawn(async move {
-        while let Some(chunk) = rx.recv().await {
-            if !paused.load(std::sync::atomic::Ordering::SeqCst) {
-                if let Some(buf) = recorder.lock().unwrap().as_mut() {
-                    buf.extend_from_slice(&chunk);
-                }
-            }
-            if tx.send(chunk).is_err() {
-                break;
-            }
-        }
     });
     out_rx
 }

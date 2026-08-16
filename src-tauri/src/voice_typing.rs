@@ -62,7 +62,7 @@ struct VtInner {
 /// While a MEETING owns the mic, the session taps the meeting's raw mic stream
 /// instead of opening its own capture (a second input stream could kill the
 /// meeting's capture — see [`MicCoordinator`] / [`MicTap`]), so dictation works
-/// mid-meeting; only the standalone translate pipeline still refuses.
+/// mid-meeting.
 ///
 /// Streams mic -> provider, emitting `transcript://segment` + `audio://level`
 /// with source "voice-typing"; the overlay window listens for both. The shared

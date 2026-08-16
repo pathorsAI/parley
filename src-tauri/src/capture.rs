@@ -43,9 +43,6 @@ pub enum MicUser {
     VoiceTyping,
     /// A live meeting. Preempts the mic test and dictation.
     Meeting,
-    /// Live voice translation (mic → Gemini translate → output device). Its own
-    /// exclusive full-mic use; preempts everything else.
-    Translate,
 }
 
 /// One running capture: the per-session gate plus the capture threads

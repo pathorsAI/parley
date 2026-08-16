@@ -13,8 +13,8 @@ import { log } from "../log";
  *
  * Extracted from the titlebar so the pre-flight footer and the titlebar's
  * "record now" escape hatch run the SAME sequence — two copies of the
- * provider/translation preflight checks would drift, and the checks are the
- * only thing standing between a missing key and a silently untranslated call.
+ * provider preflight checks would drift, and the checks are the only thing
+ * standing between a missing key and a recorder that isn't recording.
  *
  * Callers own their own re-entrancy guard (a double-click here would race two
  * transcription sessions open).
@@ -25,13 +25,6 @@ export async function beginMeeting(): Promise<void> {
   const sttKey = sttApiKey(settings, settings.transcriptionProvider);
   const t = (key: TranslationKey) => translate(settings.language, key);
   const useRealPipeline = isTauri() && !!sttKey.trim();
-
-  // Meeting translation needs its own (Gemini) key on top of the STT key;
-  // refuse loudly rather than silently starting an untranslated meeting.
-  if (useRealPipeline && settings.meetingTranslateEnabled && !settings.geminiApiKey.trim()) {
-    toast.error(t("meeting.translate.noKey"));
-    return;
-  }
 
   s.startMeeting();
 
@@ -49,18 +42,16 @@ export async function beginMeeting(): Promise<void> {
   }
 }
 
-/** The real capture path: hand the configured provider (and, when translation
- *  is on, the Gemini leg) to Rust. Any failure backs the UI out of "recording"
- *  rather than leaving a recorder that isn't recording. */
+/** The real capture path: hand the configured provider to Rust. Any failure
+ *  backs the UI out of "recording" rather than leaving a recorder that isn't
+ *  recording. */
 async function openCaptureSession(settings: Settings, sttKey: string): Promise<void> {
   const provider = STT_BY_ID[settings.transcriptionProvider];
-  const translating = settings.meetingTranslateEnabled;
   log.info("meeting: start requested", {
     provider: settings.transcriptionProvider,
     model: provider.label,
     diarization: provider.diarization,
     inputDevice: settings.inputDevice,
-    translate: translating ? settings.translateTargetLanguage : "off",
     pipeline: "real",
   });
   try {
@@ -73,11 +64,6 @@ async function openCaptureSession(settings: Settings, sttKey: string): Promise<v
       diarization: provider.diarization,
       inputDevice: settings.inputDevice,
       relayUrl: sttRelayUrl(settings.transcriptionProvider, "meeting"),
-      // Meeting translation (off → nulls): "me" runs through Gemini
-      // live-translate; the voice goes out the translate output device.
-      translateLanguage: translating ? settings.translateTargetLanguage : null,
-      translateOutputDevice: translating ? settings.translateOutputDevice || null : null,
-      translateApiKey: translating ? settings.geminiApiKey : null,
     });
   } catch (e) {
     log.error("meeting: start failed", {
