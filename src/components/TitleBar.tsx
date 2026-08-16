@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Check, ChevronDown, Circle, ClipboardList, Eraser, FileAudio, History, Loader2, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
+import { Check, ChevronDown, Circle, Eraser, FileAudio, History, Loader2, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
 import { useStore, meetingElapsedMs, type AppMode } from "../lib/store";
 import type { Settings as AppSettings } from "../lib/types";
 import { log } from "../lib/log";
@@ -18,7 +18,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LevelMeter } from "./LevelMeter";
@@ -393,12 +392,10 @@ function PrimaryAction({
   busy,
   hasPrepDraft,
   onExitReplay,
-  onExitPreflight,
   onTogglePause,
   onEnd,
   onRequestCancel,
   onStart,
-  onStartDirect,
   onResetPrep,
   t,
 }: Readonly<{
@@ -409,12 +406,10 @@ function PrimaryAction({
   busy: boolean;
   hasPrepDraft: boolean;
   onExitReplay: () => void;
-  onExitPreflight: () => void;
   onTogglePause: () => void;
   onEnd: () => void;
   onRequestCancel: () => void;
   onStart: () => void;
-  onStartDirect: () => void;
   onResetPrep: () => void;
   t: TFn;
 }>) {
@@ -428,16 +423,6 @@ function PrimaryAction({
   }
   // "library" has no exit button: the tree beside it is
   // always on screen, so leaving is picking somewhere else (#195).
-  if (mode === "preflight") {
-    // Starting happens in the pre-flight footer, next to what it commits to;
-    // up here there is only the way back out.
-    return (
-      <Button size="sm" variant="outline" onClick={onExitPreflight} className="h-8">
-        <X className="size-3.5" />
-        {t("preflight.exit")}
-      </Button>
-    );
-  }
   if (meetingActive) {
     return (
       <RecorderCluster
@@ -461,9 +446,17 @@ function PrimaryAction({
       </Button>
     );
   }
-  // R3: two speeds out of one button. The main face opens pre-flight (the
-  // prepared path, never destructive now); the chevron offers "start right
-  // now" and — only when a draft exists — the ONE explicit way to clear it.
+  // One button: start. The chevron appears only when a prep draft from an
+  // earlier call is still around, because clearing it is then the one other
+  // thing you might want to do before recording.
+  if (!hasPrepDraft) {
+    return (
+      <Button size="sm" variant="default" onClick={onStart} disabled={busy} className="h-8">
+        <Mic className="size-3.5" />
+        {t("titlebar.startMeeting")}
+      </Button>
+    );
+  }
   return (
     <div className="flex items-center">
       <Button
@@ -489,28 +482,10 @@ function PrimaryAction({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuItem onSelect={onStartDirect}>
-            <Play className="size-3.5" />
-            <span className="flex flex-col">
-              <span>{t("titlebar.startDirect")}</span>
-              <span className="text-[11px] text-muted-foreground">
-                {t("titlebar.startDirectHint")}
-              </span>
-            </span>
+          <DropdownMenuItem onSelect={onResetPrep} className="text-muted-foreground">
+            <Eraser className="size-3.5" />
+            {t("titlebar.resetPrep")}
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={onStart}>
-            <ClipboardList className="size-3.5" />
-            {t("titlebar.startPrepared")}
-          </DropdownMenuItem>
-          {hasPrepDraft && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={onResetPrep} className="text-muted-foreground">
-                <Eraser className="size-3.5" />
-                {t("titlebar.resetPrep")}
-              </DropdownMenuItem>
-            </>
-          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
@@ -547,10 +522,8 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const openLibrary = useStore((s) => s.openLibrary);
   const showReplay = useStore((s) => s.showReplay);
   const replayName = useStore((s) => s.replay?.name ?? null);
-  const enterPreflight = useStore((s) => s.enterPreflight);
-  const exitPreflight = useStore((s) => s.exitPreflight);
   const resetPrep = useStore((s) => s.resetPrep);
-  // R3: a non-empty prep draft unlocks the explicit "clear prep" menu item.
+  // A non-empty prep draft unlocks the explicit "clear prep" menu item.
   const hasPrepDraft = useStore(
     (s) =>
       !!s.meetingFolderId ||
@@ -571,7 +544,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   // Recording OR paused: the meeting owns the session (recorder controls show).
   const meetingActive = recording || paused;
   const studyMode = appMode === "study";
-  const preflightMode = appMode === "preflight";
 
   // Vitals timer (top-left): elapsed RECORDED time (wall time minus pauses —
   // matching the pause-compacted recording), ticking 1 Hz. While paused the
@@ -605,16 +577,8 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
     }
   }
 
-  /** Start (prepared path) = open PRE-FLIGHT. Non-destructive since R3: an
-   *  existing prep draft is picked up where it was left, never wiped. */
+  /** Start = record right now, riding whatever prep draft is already set. */
   function start() {
-    enterPreflight();
-  }
-
-  /** Start (fast path, R3) = skip pre-flight and record right now, riding
-   *  whatever prep draft / scenario is already set. Same gate-checked sequence
-   *  as the pre-flight footer (lib/meeting/start), same re-entrancy guard. */
-  function startDirect() {
     void guarded(() => beginMeeting());
   }
 
@@ -705,10 +669,9 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
       {!fullscreen && <TrafficLights focused={focused} onAction={controlWindow} t={t} />}
 
       {/* Top-left: information, not brand (macOS's menu bar already says
-          Parley). Pre-flight → which screen you're on; recording → the session
-          vitals (rec + elapsed + mic level + translation). Where the meeting
-          saves is decided in pre-flight now — a second folder chip here was a
-          silently-losing source of truth for that. */}
+          Parley) — while recording, the session vitals (rec + elapsed + mic
+          level). Where the meeting saves is decided by the folder picker, so a
+          second folder chip here would be a silently-losing source of truth. */}
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
         {/* Tense badge (R6): the ONE fixed "which tense am I in" signal —
             green while a live meeting runs, purple while a recording is open.
@@ -738,11 +701,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             <FileAudio className="size-3.5 shrink-0" />
             <span className="max-w-40 truncate">{replayName}</span>
           </button>
-        )}
-        {preflightMode && (
-          <span className="text-xs font-medium text-muted-foreground">
-            {t("preflight.title")}
-          </span>
         )}
         {meetingActive && (
           <>
@@ -795,12 +753,10 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             exitReplay();
             setStudyTab("report");
           }}
-          onExitPreflight={exitPreflight}
           onTogglePause={togglePause}
           onEnd={() => void end()}
           onRequestCancel={() => setConfirmCancel(true)}
           onStart={start}
-          onStartDirect={startDirect}
           onResetPrep={resetPrep}
           t={t}
         />

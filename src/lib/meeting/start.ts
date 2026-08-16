@@ -8,18 +8,28 @@ import { translate, type TranslationKey } from "../../i18n/messages";
 import type { Settings } from "../types";
 import { log } from "../log";
 
+/** In-flight latch: a double-click (or two start buttons hit in quick
+ *  succession) would otherwise race two transcription sessions open. */
+let starting = false;
+
 /**
- * Open the capture session for the meeting the user just set up in pre-flight.
+ * Open the capture session and start recording.
  *
- * Extracted from the titlebar so the pre-flight footer and the titlebar's
- * "record now" escape hatch run the SAME sequence — two copies of the
- * provider preflight checks would drift, and the checks are the only thing
- * standing between a missing key and a recorder that isn't recording.
- *
- * Callers own their own re-entrancy guard (a double-click here would race two
- * transcription sessions open).
+ * THE one start path — the titlebar, Home and the sidebar all call it, because
+ * two copies of the provider checks would drift, and those checks are the only
+ * thing standing between a missing key and a recorder that isn't recording.
  */
 export async function beginMeeting(): Promise<void> {
+  if (starting) return;
+  starting = true;
+  try {
+    await start();
+  } finally {
+    starting = false;
+  }
+}
+
+async function start(): Promise<void> {
   const s = useStore.getState();
   const { settings } = s;
   const sttKey = sttApiKey(settings, settings.transcriptionProvider);

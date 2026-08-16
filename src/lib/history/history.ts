@@ -94,11 +94,8 @@ function snapshotAnalysis() {
     // Upload/loaded entries carry the measured pace on the replay session; a live
     // meeting has none here — saveLiveToHistory measures the recording + sets it.
     speechRateHz: s.replay?.speechRateHz ?? null,
-    // Study outputs ride along so a plain save/overwrite never drops them. A live
-    // save records the type the live board ran with; replay uses the per-entry one.
+    // Study outputs ride along so a plain save/overwrite never drops them.
     brief: s.brief,
-    intel: s.intel,
-    meetingType: s.meetingType,
   };
 }
 
@@ -183,8 +180,6 @@ export type MeetingShare = { orgId: string; folderId: string | null } | "off" | 
  * (this call's pick, else the settings default), and whether an org gets a
  * shared copy (this call's pick, else the settings default). A shared copy is a
  * second destination, never a move — the local entry always lands.
- *
- * Exported so pre-flight displays exactly what the save will do.
  */
 export function resolveMeetingSave(): MeetingSaveTarget {
   const s = useStore.getState();
@@ -463,11 +458,11 @@ export async function updateHistoryEntry(id: string, snapshot?: AnalysisSnapshot
 }
 
 /**
- * Persist the loaded entry's STUDY OUTPUTS (brief, intel, meeting type, and a
- * legacy entry's recomputed delivery assessment) without touching the rest of
- * its analysis. Called right after each output finishes generating, so a
- * recording pays for each generation exactly once. Store-null outputs keep the
- * on-disk value (a brief finishing must not clobber a saved intel, and vice
+ * Persist the loaded entry's STUDY OUTPUTS (brief and a legacy entry's
+ * recomputed delivery assessment) without touching the rest of its analysis.
+ * Called right after each output finishes generating, so a recording pays for
+ * each generation exactly once. Store-null outputs keep the on-disk value (a
+ * brief finishing must not clobber a saved delivery assessment, and vice
  * versa). A READ-ONLY org recording can't be written back — its outputs go into
  * the local study cache instead, so anything that ran is still stored and
  * reopening never re-spends it. No-op when nothing is loaded (live meeting /
@@ -482,9 +477,7 @@ export async function persistStudyOutputs(): Promise<void> {
       actionItems: s.actionItems,
       analyzed: s.analysisStatus === "done" && s.actionItemsStatus === "done",
       brief: s.brief,
-      intel: s.intel,
       deliveryAssessment: s.deliveryAssessment,
-      meetingType: s.meetingType,
     });
     log.info("history: study outputs cached (read-only entry)", { id: s.replay.id });
     return;
@@ -496,8 +489,6 @@ export async function persistStudyOutputs(): Promise<void> {
   const updated: HistoryEntry = {
     ...meta,
     brief: s.brief ?? meta.brief ?? null,
-    intel: s.intel ?? meta.intel ?? null,
-    meetingType: s.meetingType,
     deliveryAssessment: s.deliveryAssessment ?? meta.deliveryAssessment ?? null,
   };
   await invoke("save_history_entry", {
@@ -508,12 +499,7 @@ export async function persistStudyOutputs(): Promise<void> {
     compress: false,
   });
   pushToCloud(id);
-  log.info("history: study outputs saved", {
-    id,
-    brief: !!updated.brief,
-    intel: !!updated.intel,
-    meetingType: updated.meetingType,
-  });
+  log.info("history: study outputs saved", { id, brief: !!updated.brief });
 }
 
 // ── List / read / delete ─────────────────────────────────────────────────────
@@ -582,7 +568,6 @@ export async function setEntryFolder(id: string, folderId: string | null): Promi
 
 /** The frame fields an MCP client may retarget on a saved recording. */
 export interface EntryMetaPatch {
-  meetingType?: string;
   meetingContext?: string;
   /** Merged per key into the existing map; an empty-string value removes the
    *  custom name for that key (same semantics as the store's setSpeakerName). */
@@ -590,11 +575,10 @@ export interface EntryMetaPatch {
 }
 
 /**
- * Patch a saved recording's FRAME — scenario (meetingType), free-text context,
- * speaker display names — without touching its analysis. This is how an MCP
- * client fixes a misclassified meeting (e.g. an office hour analyzed as a sales
- * call) or a wrong speaker mapping, so every later read gets the right frame.
- * Same read-modify-write as {@link persistStudyOutputs}; the open replay's
+ * Patch a saved recording's FRAME — free-text context, speaker display names —
+ * without touching its analysis. This is how an MCP client describes what kind
+ * of meeting a recording was, or fixes a wrong speaker mapping, so every later
+ * read and analysis pass gets the right frame. Same read-modify-write as {@link persistStudyOutputs}; the open replay's
  * store is synced so the UI reflects the fix immediately.
  */
 export async function updateEntryMeta(id: string, patch: EntryMetaPatch): Promise<HistoryEntry> {
@@ -604,7 +588,6 @@ export async function updateEntryMeta(id: string, patch: EntryMetaPatch): Promis
     : meta.speakerNames;
   const updated: HistoryEntry = {
     ...meta,
-    ...(patch.meetingType !== undefined ? { meetingType: patch.meetingType } : {}),
     ...(patch.meetingContext !== undefined ? { meetingContext: patch.meetingContext } : {}),
     speakerNames,
   };
@@ -617,7 +600,6 @@ export async function updateEntryMeta(id: string, patch: EntryMetaPatch): Promis
   });
   const s = useStore.getState();
   if (s.loadedHistoryId === id) {
-    if (patch.meetingType !== undefined) s.setMeetingType(patch.meetingType);
     if (patch.meetingContext !== undefined) s.setMeetingContext(patch.meetingContext);
     for (const [key, name] of Object.entries(patch.speakerNames ?? {})) s.setSpeakerName(key, name);
   }
@@ -625,7 +607,6 @@ export async function updateEntryMeta(id: string, patch: EntryMetaPatch): Promis
   pushToCloud(id); // best-effort; gated by the sync toggle
   log.info("history: entry meta updated", {
     id,
-    meetingType: updated.meetingType ?? null,
     speakerKeys: Object.keys(patch.speakerNames ?? {}).length,
   });
   return updated;
@@ -785,26 +766,6 @@ interface HistoryReadResult {
 }
 
 /**
- * Re-derive `meetingTypeHasBoard` for the type the store just restored. Loading
- * an entry sets meetingType straight from disk, bypassing applyScenario — so
- * without this a recording saved as a boardless KIND would open with the flag
- * left over from the previous recording and the pipeline would schedule an
- * extraction against a board that doesn't exist. A type the scenario set no
- * longer knows gets `true`, preserving the degrade-to-general repair path.
- */
-async function syncMeetingTypeHasBoard(): Promise<void> {
-  const s = useStore.getState();
-  try {
-    const { resolveScenarioSet } = await import("../intel/boards");
-    const scenarios = await resolveScenarioSet(s.settings);
-    s.setMeetingTypeHasBoard(scenarios.byId[s.meetingType]?.hasBoard ?? true);
-  } catch (e) {
-    log.warn("history: scenario resolve failed — assuming a board", { error: String(e) });
-    s.setMeetingTypeHasBoard(true);
-  }
-}
-
-/**
  * Read a saved entry and load it into the replay UI (restoring its analysis), then
  * focus the main window. Called by the main-window listener on `history://open`.
  */
@@ -824,7 +785,6 @@ export async function loadHistoryEntry(id: string): Promise<void> {
     speechRateHz: meta.speechRateHz ?? null,
   };
   useStore.getState().loadHistory(meta, session);
-  await syncMeetingTypeHasBoard();
   log.info("history: entry loaded", { id, hasAudio: !!audioPath });
   if (isTauri()) {
     try {
@@ -852,8 +812,7 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
   // persist there instead of back to the org) so restored outputs load as
   // "done" and the pipeline doesn't re-spend a generation. The shared entry's
   // own saved GENERATED outputs win — the cache only fills what the org copy
-  // lacks. The meeting TYPE is the opposite: it's the viewer's own study
-  // choice, so their cached pick beats the owner's.
+  // lacks.
   const cached = readStudyCache(id);
   if (cached) {
     if (!meta.findings.length && cached.findings?.length) meta.findings = cached.findings;
@@ -862,9 +821,7 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
     // result must restore as done here too, or every open re-spends it.
     if (cached.analyzed) meta.analyzed = true;
     meta.brief = meta.brief ?? cached.brief ?? null;
-    meta.intel = meta.intel ?? cached.intel ?? null;
     meta.deliveryAssessment = meta.deliveryAssessment ?? cached.deliveryAssessment ?? null;
-    meta.meetingType = cached.meetingType ?? meta.meetingType;
   }
   let audioPath = "";
   const t = cloudToken();
@@ -889,7 +846,6 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
     speechRateHz: meta.speechRateHz ?? null,
   };
   useStore.getState().loadHistory(meta, session, { readOnly: true });
-  await syncMeetingTypeHasBoard();
   log.info("history: org entry loaded", { orgId, id, hasAudio: !!audioPath });
   if (isTauri()) {
     try {

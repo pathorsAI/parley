@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useStore } from "./store";
 import { isTauri } from "./tauriEvents";
-import { DEFAULT_ICON_NAME } from "./icons";
 import type { ActionItem, EvalDef, TimelineEvent } from "./types";
 
 /**
@@ -181,62 +180,6 @@ function applyCommand(cmd: SessionCommand): void {
   }
 }
 
-/** "office-hour" → "Office Hour". Only used when the caller didn't bother to
- *  send a display name; a slug reads badly in a picker. */
-function titleCaseSlug(slug: string): string {
-  return slug
-    .split("-")
-    .filter(Boolean)
-    .map((w) => w[0].toUpperCase() + w.slice(1))
-    .join(" ");
-}
-
-const MCP_KIND_GUIDANCE =
-  "Analyze this conversation on its own terms: what was decided, what was committed to and by " +
-  "whom, what was left open, and what is blocked. Do not read it as a sales conversation.";
-
-/**
- * Make `type` a scenario the app knows, creating a boardless KIND when it isn't
- * one yet. This is the fix for MCP picks silently evaporating: an unknown id
- * used to be written to disk, fail to resolve at extraction time, and get
- * degraded back to "general" — so setting a meeting type over MCP simply did
- * not stick. Returns whether a new kind was created.
- */
-async function ensureMeetingType(
-  type: string,
-  desc: { name: string; icon: string; guidance: string },
-): Promise<boolean> {
-  const { createBoardlessKind, isValidScenarioId } = await import("./scenarios/bundles");
-  const { resolveScenarioSet } = await import("./intel/boards");
-  const settings = useStore.getState().settings;
-  if ((await resolveScenarioSet(settings)).byId[type]) return false;
-  if (!isValidScenarioId(type)) {
-    throw new Error(
-      `unknown meetingType "${type}" and it can't be created: ids must be a lowercase slug ` +
-        `(a-z, 0-9, -) that isn't a builtin or "general". Pass an existing id, or a valid slug ` +
-        `plus meetingTypeName to create a new kind.`,
-    );
-  }
-  await createBoardlessKind({
-    id: type,
-    name: desc.name.trim() || titleCaseSlug(type),
-    // Stored as given: an MCP caller sending a legacy emoji is resolved at
-    // render time (resolveIcon), not rewritten here — the file is the user's.
-    icon: desc.icon.trim() || DEFAULT_ICON_NAME,
-    guidance: desc.guidance.trim() || MCP_KIND_GUIDANCE,
-  });
-  return true;
-}
-
-/** Keep the loaded recording's board flag in step with a meta write. */
-async function syncLoadedMeetingTypeBoard(entryId: string, type: string): Promise<void> {
-  const s = useStore.getState();
-  if (s.loadedHistoryId !== entryId) return;
-  const { resolveScenarioSet } = await import("./intel/boards");
-  const scenarios = await resolveScenarioSet(s.settings);
-  s.setMeetingTypeHasBoard(scenarios.byId[type]?.hasBoard ?? true);
-}
-
 /**
  * Execute an RPC command (one that carries an id) and return its result data.
  * These reach the pieces the Rust MCP server can't touch directly: cloud/org
@@ -257,22 +200,13 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
       return { id, title };
     }
     case "update_recording_meta": {
-      // Fix a saved recording's FRAME (scenario / context / speaker names) so
-      // later reads and analysis passes get the right picture — the repair path
-      // for a misclassified meeting or a wrong me/them speaker mapping.
+      // Fix a saved recording's FRAME (context / speaker names) so later reads
+      // and analysis passes get the right picture — the repair path for a
+      // missing description or a wrong me/them speaker mapping.
       const id = argStr(a.id);
       if (!id) throw new Error("id is required");
       const { updateEntryMeta } = await import("./history/history");
       const patch: import("./history/history").EntryMetaPatch = {};
-      let createdKind = false;
-      if (typeof a.meetingType === "string") {
-        createdKind = await ensureMeetingType(a.meetingType, {
-          name: typeof a.meetingTypeName === "string" ? a.meetingTypeName : "",
-          icon: typeof a.meetingTypeIcon === "string" ? a.meetingTypeIcon : "",
-          guidance: typeof a.meetingTypeGuidance === "string" ? a.meetingTypeGuidance : "",
-        });
-        patch.meetingType = a.meetingType;
-      }
       if (typeof a.meetingContext === "string") patch.meetingContext = a.meetingContext;
       if (a.speakerNames && typeof a.speakerNames === "object" && !Array.isArray(a.speakerNames)) {
         const names: Record<string, string> = {};
@@ -280,19 +214,13 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
         patch.speakerNames = names;
       }
       if (!Object.keys(patch).length) {
-        throw new Error("nothing to update — pass meetingType, meetingContext and/or speakerNames");
+        throw new Error("nothing to update — pass meetingContext and/or speakerNames");
       }
       const updated = await updateEntryMeta(id, patch);
-      // updateEntryMeta writes meetingType into the store when this entry is the
-      // loaded one, but it can't know whether that type has a board — the flag
-      // has to be re-derived here or the pipeline runs on last recording's answer.
-      if (patch.meetingType !== undefined) await syncLoadedMeetingTypeBoard(id, patch.meetingType);
       return {
         id,
-        meetingType: updated.meetingType ?? null,
         meetingContext: updated.meetingContext ?? "",
         speakerNames: updated.speakerNames ?? {},
-        createdKind,
       };
     }
     case "set_recording_analysis": {

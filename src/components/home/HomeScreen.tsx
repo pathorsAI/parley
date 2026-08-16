@@ -1,4 +1,4 @@
-import { ClipboardList, FileAudio, Import, Mic, Play } from "lucide-react";
+import { ClipboardList, FileAudio, Import, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { useStore } from "../../lib/store";
 import { loadHistoryEntry } from "../../lib/history/history";
@@ -18,7 +18,6 @@ import type { LibraryTree } from "../shell/useLibraryTree";
  */
 export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const { t, language } = useI18n();
-  const enterPreflight = useStore((s) => s.enterPreflight);
   const userName = useStore((s) => s.settings.userName);
 
   const folderName = (id: string | null | undefined) =>
@@ -40,23 +39,18 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
             {userName ? t("home.greetingNamed", { name: userName }) : t("home.greeting")}
           </h1>
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="lg" className="h-10" onClick={enterPreflight}>
-              <Mic className="size-4" />
-              {t("titlebar.startMeeting")}
-            </Button>
             <Button
               size="lg"
-              variant="outline"
               className="h-10"
               onClick={() =>
                 beginMeeting().catch((e) => {
-                  log.error("home: direct start failed", { error: String(e) });
+                  log.error("home: start failed", { error: String(e) });
                   toast.error(String(e instanceof Error ? e.message : e));
                 })
               }
             >
-              <Play className="size-4" />
-              {t("titlebar.startDirect")}
+              <Mic className="size-4" />
+              {t("titlebar.startMeeting")}
             </Button>
             <Button
               size="lg"

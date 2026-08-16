@@ -7,10 +7,8 @@ import type {
   DeliveryNudge,
   Evaluation,
   FindingSolutionEntry,
-  IntelState,
   LlmProvider,
   MeetingStatus,
-  MeetingType,
   ProsodyMetrics,
   ProviderModels,
   ReasoningEffort,
@@ -36,7 +34,6 @@ import { buildPresetTodoTemplates } from "./todoTemplates";
 import { translate, type TranslationKey } from "../i18n/messages";
 import { DEFAULT_MODELS } from "./ai/providers";
 import { countFillerSounds } from "./analysis/fillerWords";
-import type { SalesStage } from "./scenarios/stages";
 import { log } from "./log";
 
 /** A translate function bound to a language, for resolving built-in templates. */
@@ -141,8 +138,6 @@ const DEFAULT_SETTINGS: Settings = {
   deepgramApiKey: "",
   assemblyaiApiKey: "",
   inputDevice: "",
-  defaultMeetingType: "general",
-  recentMeetingTypes: [],
   // Recordings analyze themselves as they always have; turning this off hands
   // analysis to an external AI over MCP. See Settings.autoStudyAnalysis.
   autoStudyAnalysis: true,
@@ -155,10 +150,6 @@ const DEFAULT_SETTINGS: Settings = {
   // Pace + pauses are free (timing/DSP) so default on; pitch + tone (LLM cost)
   // are opt-in. See DeliveryToggles.
   delivery: { pace: true, pitch: false, pauses: true, tone: false },
-  // The board refreshes itself while recording, as it always has — but the
-  // header switch can stop it when a long meeting makes the per-pass cost of
-  // re-reading the full transcript add up. See Settings.autoIntel.
-  autoIntel: true,
   // Signed-in users sync by default (prior behavior); the toggle lets a user
   // keep this device local-only. Finished meetings save to the personal root.
   syncEnabled: true,
@@ -175,7 +166,7 @@ const DEFAULT_SETTINGS: Settings = {
  * a route: it is its own OS window (lib/nav.ts → openSettingsWindow), so
  * tweaking a knob never navigates the shell away from what it was showing.
  */
-export type AppMode = "home" | "preflight" | "live" | "study" | "library";
+export type AppMode = "home" | "live" | "study" | "library";
 
 /** Left-nav panels of the Settings window (see settings/SettingsApp.tsx). */
 export type SettingsCategory =
@@ -187,7 +178,6 @@ export type SettingsCategory =
   | "permissions"
   | "evaluations"
   | "todos"
-  | "stages"
   | "mcp"
   | "usage";
 
@@ -198,18 +188,16 @@ export type LibrarySelection =
   | { kind: "voice" };
 
 /**
- * Everything the user sets up FOR one meeting, reset as one unit when they
- * start preparing the next one. Keeping the list in one place is why "the
+ * Everything the user sets up FOR one meeting, reset as one unit by
+ * {@link ParleyState.resetPrep}. Keeping the list in one place is why "the
  * previous call's setup silently followed you into the next meeting" can't come
- * back: pre-flight resets this slice wholesale, so a new meeting always begins
- * blank.
+ * back: one explicit reset clears the slice wholesale.
  *
  * Deliberately NOT reset on stop: the save pipeline reads `meetingFolderId` off
  * the store asynchronously (see history.saveLiveToHistory).
  */
 const CLEARED_PREP_SLICE = {
   meetingFolderId: null,
-  meetingStage: null,
   meetingOrgShare: null,
   meetingContext: "",
   meetingBatna: "",
@@ -244,8 +232,6 @@ const CLEARED_STUDY_SLICE: Pick<
   | "deliveryStatus"
   | "brief"
   | "briefStatus"
-  | "intel"
-  | "intelStatus"
 > = {
   findings: [],
   analysisStatus: "idle",
@@ -261,8 +247,6 @@ const CLEARED_STUDY_SLICE: Pick<
   deliveryStatus: "idle",
   brief: null,
   briefStatus: "idle",
-  intel: null,
-  intelStatus: "idle",
 };
 
 /**
@@ -386,11 +370,6 @@ interface ParleyState {
    *  about — no reset path has to remember it. */
   studyManualForId: string | null;
   setFindings: (events: TimelineEvent[]) => void;
-  /** Intelligence-board state (per meeting type) + its extraction lifecycle. */
-  intel: IntelState | null;
-  intelStatus: AsyncTaskStatus;
-  setIntel: (intel: IntelState | null) => void;
-  setIntelStatus: (status: AsyncTaskStatus) => void;
   /** Which study-tense page is open while a recording is loaded: the merged
    *  meeting report (read the outcome) or the replay workbench (check the
    *  evidence). */
@@ -405,22 +384,6 @@ interface ParleyState {
   /** Append a streamed chunk to the brief (streaming render). */
   appendBrief: (chunk: string) => void;
   setBriefStatus: (status: AsyncTaskStatus) => void;
-  /** THE scenario of the meeting at hand (R5: one per-meeting source of truth).
-   *  Seeded from settings.defaultMeetingType, set in pre-flight or on the live
-   *  rail, frozen onto the entry on save, restored from the entry on load —
-   *  switching it never writes the global default or leaks across recordings. */
-  meetingType: MeetingType;
-  setMeetingType: (type: MeetingType) => void;
-  /** Does `meetingType` resolve to a live board? False for a boardless KIND —
-   *  a retro / office hour / 1:1 contributes an analysis lens only, so the
-   *  study pipeline must not schedule an intel extraction for it. Kept as store
-   *  state rather than derived because resolving it reads the bundle FILE
-   *  (async), and the scheduler is synchronous. Written wherever meetingType is
-   *  (applyScenario, history load, the MCP meta update). Defaults true: every
-   *  pre-existing type other than "general" has a board, and "general" is
-   *  excluded from intel on its own. */
-  meetingTypeHasBoard: boolean;
-  setMeetingTypeHasBoard: (v: boolean) => void;
   /** Insert one finding (MCP/external add) without replacing the list, keeping it
    *  ordered by atMs. A colliding id is reassigned so existing findings are safe. */
   addFinding: (event: TimelineEvent) => void;
@@ -535,14 +498,11 @@ interface ParleyState {
   meetingFloor: string;
   setNegotiationField: (field: "meetingBatna" | "meetingTarget" | "meetingFloor", value: string) => void;
 
-  // ── Filing + stage for the current/upcoming meeting ─────────────────────────
+  // ── Filing for the current/upcoming meeting ─────────────────────────────────
   /** Folder this meeting will be saved into (null = the personal root, or the
    *  settings default when one is configured). */
   meetingFolderId: string | null;
   setMeetingFolder: (folderId: string | null) => void;
-  /** THIS call's stage within its scenario — user-changeable per call. */
-  meetingStage: SalesStage | null;
-  setMeetingStage: (stage: SalesStage | null) => void;
   /**
    * This meeting's org-share choice. null = follow the settings default;
    * "off" = suppress a default share for this one meeting. Independent of the
@@ -551,14 +511,9 @@ interface ParleyState {
    */
   meetingOrgShare: MeetingShare;
   setMeetingOrgShare: (share: MeetingShare) => void;
-  /** Open the pre-flight screen. NON-destructive (R3): the previous prep is a
-   *  draft that survives — clearing it is {@link resetPrep}, an explicit act. */
-  enterPreflight: () => void;
   /** Throw the current prep draft away (folder, context, agenda, negotiation
-   *  fields) and fall back to the default scenario. The ONLY prep-clearing path. */
+   *  fields). The ONLY prep-clearing path. */
   resetPrep: () => void;
-  /** Leave pre-flight without starting (back to study if a recording is loaded). */
-  exitPreflight: () => void;
   /** Show the Home overview (idle landing — blocked while recording). */
   openHome: () => void;
   /** Show the recordings library at `selection` (blocked while recording). */
@@ -672,7 +627,6 @@ export const useStore = create<ParleyState>()(
       todos: [],
       meetingContext: "",
       meetingFolderId: null,
-      meetingStage: null,
       meetingOrgShare: null,
       meetingBatna: "",
       meetingTarget: "",
@@ -681,26 +635,14 @@ export const useStore = create<ParleyState>()(
       cloudAuth: null,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
-  setMeetingStage: (stage) => set({ meetingStage: stage }),
   setMeetingOrgShare: (meetingOrgShare) => set({ meetingOrgShare }),
   setMeetingFolder: (meetingFolderId) => set({ meetingFolderId }),
-  enterPreflight: () =>
-    set((s) => {
-      if (isMeetingActive(s.meetingStatus)) return {};
-      log.info("store: pre-flight opened");
-      // R3: opening pre-flight is no longer destructive — the previous prep is
-      // a DRAFT that survives navigation. Throwing it away is an explicit
-      // action (resetPrep), never a side effect of walking through a door.
-      return { appMode: "preflight" };
-    }),
   resetPrep: () =>
     set((s) => {
       if (isMeetingActive(s.meetingStatus)) return {};
       log.info("store: prep reset");
-      return { ...CLEARED_PREP_SLICE, meetingType: s.settings.defaultMeetingType };
+      return { ...CLEARED_PREP_SLICE };
     }),
-  exitPreflight: () =>
-    set((s) => (s.appMode === "preflight" ? { appMode: s.replay ? "study" : "home" } : {})),
   openHome: () =>
     set((s) => (isMeetingActive(s.meetingStatus) ? {} : { appMode: "home" })),
   openLibrary: (librarySelection) =>
@@ -732,7 +674,7 @@ export const useStore = create<ParleyState>()(
       segments: session.segments.length,
       durationMs: session.durationMs,
     });
-    set((state) => ({
+    set({
       appMode: "study",
       replay: session,
       // A fresh upload isn't a saved entry yet — cleared until its auto-save.
@@ -747,11 +689,10 @@ export const useStore = create<ParleyState>()(
       speakerNames: session.speakerNames,
       meetingStatus: "stopped",
       highlightMs: null,
-      // A fresh session gets fresh study outputs — a previous recording's brief
-      // or intel must never render over this one.
+      // A fresh session gets fresh study outputs — a previous recording's
+      // brief must never render over this one.
       ...CLEARED_STUDY_SLICE,
-      meetingType: state.settings.defaultMeetingType,
-    }));
+    });
   },
 
   loadHistory: (entry, session, opts) => {
@@ -802,13 +743,9 @@ export const useStore = create<ParleyState>()(
       deliveryStatus: entry.deliveryAssessment ? "done" : "idle",
       brief: entry.brief ?? null,
       briefStatus: entry.brief ? "done" : "idle",
-      intel: entry.intel ?? null,
-      intelStatus: entry.intel ? "done" : "idle",
-      meetingType: entry.meetingType ?? entry.intel?.meetingType ?? state.settings.defaultMeetingType,
       // Restore the per-meeting context + negotiation setup.
       meetingContext: entry.meetingContext,
       meetingFolderId: entry.folderId ?? null,
-      meetingStage: null,
       meetingBatna: entry.meetingBatna,
       meetingTarget: entry.meetingTarget,
       meetingFloor: entry.meetingFloor,
@@ -817,9 +754,8 @@ export const useStore = create<ParleyState>()(
 
   exitReplay: () => {
     log.info("store: exit replay");
-    set((s) => ({
+    set(() => ({
       appMode: "home",
-      meetingType: s.settings.defaultMeetingType,
       replay: null,
       loadedHistoryId: null,
       replayReadOnly: false,
@@ -860,15 +796,6 @@ export const useStore = create<ParleyState>()(
   closeTranscriptImport: () =>
     set({ transcriptImportPaths: null, transcriptImportFolderId: null }),
 
-  // Replace the findings list, keeping the selection + cached solutions of any
-  // finding that STILL EXISTS in the new list. During streaming, partials commit
-  // a growing list with stable ids, so a finding the user opened mid-stream (and
-  // its in-flight "how to reply" solution) survives the next partial. A fresh
-  // analysis pass mints new ids, so nothing matches → selection + solutions clear.
-  intel: null,
-  intelStatus: "idle",
-  setIntel: (intel) => set({ intel }),
-  setIntelStatus: (status) => set({ intelStatus: status }),
   studyTab: "report",
   setStudyTab: (tab) => set({ studyTab: tab }),
   brief: null,
@@ -876,25 +803,11 @@ export const useStore = create<ParleyState>()(
   setBrief: (brief) => set({ brief }),
   appendBrief: (chunk) => set((s) => ({ brief: (s.brief ?? "") + chunk })),
   setBriefStatus: (status) => set({ briefStatus: status }),
-  meetingType: "general",
-  // Switching the scenario re-aims the intel STATUS at the new type: a board
-  // that already matches it is simply "done" again (switching away and back is
-  // free), anything else resets to "idle" so the pipeline extracts — including
-  // after a failed run, where "error" would otherwise block the new type
-  // forever. An in-flight run keeps "running"; the runner discards a stale
-  // result itself (see runIntelExtraction's alive/type checks).
-  setMeetingType: (type) =>
-    set((s) => {
-      if (type === s.meetingType) return {};
-      if (s.intelStatus === "running") return { meetingType: type };
-      return {
-        meetingType: type,
-        intelStatus: s.intel?.meetingType === type ? ("done" as const) : ("idle" as const),
-      };
-    }),
-  meetingTypeHasBoard: true,
-  setMeetingTypeHasBoard: (v) => set({ meetingTypeHasBoard: v }),
-
+  // Replace the findings list, keeping the selection + cached solutions of any
+  // finding that STILL EXISTS in the new list. During streaming, partials commit
+  // a growing list with stable ids, so a finding the user opened mid-stream (and
+  // its in-flight "how to reply" solution) survives the next partial. A fresh
+  // analysis pass mints new ids, so nothing matches → selection + solutions clear.
   setFindings: (events) =>
     set((s) => {
       const ids = new Set(events.map((e) => e.id));
@@ -1027,7 +940,7 @@ export const useStore = create<ParleyState>()(
   startMeeting: () => {
     log.info("store: meeting started");
     set({
-      // Started FROM pre-flight (the only path in), so land on the live screen.
+      // Recording owns the window: land on the live cockpit.
       appMode: "live",
       meetingStatus: "recording",
       meetingStartedAt: Date.now(),
@@ -1069,10 +982,10 @@ export const useStore = create<ParleyState>()(
   cancelMeeting: () => {
     log.info("store: meeting cancelled");
     set({
-      // Back to pre-flight with the prep INTACT: cancelling is "wrong mic /
-      // wrong moment, let me fix it and start again", not "throw my setup away"
-      // (the reset happens when the user next opens pre-flight themselves).
-      appMode: "preflight",
+      // Back home with the prep INTACT: cancelling is "wrong mic / wrong
+      // moment, let me fix it and start again", not "throw my setup away"
+      // (clearing is resetPrep, an explicit act).
+      appMode: "home",
       meetingStatus: "idle",
       meetingStartedAt: null,
       meetingPausedAt: null,
@@ -1210,20 +1123,11 @@ export const useStore = create<ParleyState>()(
         const layout: Settings["layout"] =
           rawLayout === "transcript" ? "transcript" : DEFAULT_SETTINGS.layout;
 
-        // R5: the scenario became per-meeting state; the setting is only the
-        // default for a new meeting. Old states stored it as `meetingType`.
-        const defaultMeetingType: MeetingType =
-          p.defaultMeetingType ??
-          (p as { meetingType?: MeetingType }).meetingType ??
-          DEFAULT_SETTINGS.defaultMeetingType;
-
         return {
           ...current,
-          meetingType: defaultMeetingType,
           settings: {
             ...DEFAULT_SETTINGS,
             ...p,
-            defaultMeetingType,
             layout,
             llmProviders,
             // Per-provider models, legacy {ask,eval} roles already remapped;

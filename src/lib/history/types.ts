@@ -8,8 +8,6 @@
 import type {
   ActionItem,
   DeliveryAssessment,
-  IntelState,
-  MeetingType,
   TimelineEvent,
   TranscriptSegment,
 } from "../types";
@@ -58,14 +56,6 @@ export interface HistoryEntry {
    *  this field existed omit it → the brief page generates once on open and saves
    *  the result back, so a given recording only ever pays for it once. */
   brief?: string | null;
-  /** THIS recording's scenario, frozen at save (which intel template applies).
-   *  Per-entry on purpose — settings.defaultMeetingType only seeds a NEW
-   *  meeting, and switching scenario while reviewing one recording must never
-   *  leak into the default or into other recordings. */
-  meetingType?: MeetingType;
-  /** Last intel extraction over this recording (its meetingType tells which
-   *  template produced it). Saved so reopening doesn't re-spend the eval model. */
-  intel?: IntelState | null;
   /** Which personal folder this entry lives in; null/absent = the personal root
    *  (個人). A folderId not in the live personal folder list renders at the root. */
   folderId?: string | null;

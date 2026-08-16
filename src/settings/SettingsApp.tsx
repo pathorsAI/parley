@@ -63,7 +63,6 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
 import type { AppLanguage, AppTheme, EvalDef, LlmProvider,
   LlmWorkload, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 import { VoiceTypingSettings } from "./VoiceTypingSettings";
-import { ScenarioSettings } from "./StageBundleSettings";
 import { OrgSharePicker } from "../components/OrgSharePicker";
 import { PermissionsPanel } from "./PermissionsPanel";
 
@@ -98,7 +97,6 @@ const NAV: {
   { id: "permissions", labelKey: "settings.nav.permissions", keywordsKey: "settings.kw.permissions" },
   { id: "evaluations", labelKey: "settings.nav.evaluations", keywordsKey: "settings.kw.evaluations" },
   { id: "todos", labelKey: "settings.nav.todos", keywordsKey: "settings.kw.todos" },
-  { id: "stages", labelKey: "settings.nav.stages", keywordsKey: "settings.kw.stages" },
   { id: "mcp", labelKey: "settings.nav.mcp", keywordsKey: "settings.kw.mcp" },
   { id: "usage", labelKey: "settings.nav.usage", keywordsKey: "settings.kw.usage" },
 ];
@@ -936,12 +934,6 @@ export function SettingsApp() {
             >
               <Plus className="size-3.5" /> {t("settings.todos.addTemplate")}
             </Button>
-          </Section>
-        )}
-
-        {cat === "stages" && (
-          <Section title={t("settings.scenarios.title")}>
-            <ScenarioSettings />
           </Section>
         )}
 

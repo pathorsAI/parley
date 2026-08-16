@@ -13,8 +13,8 @@ import { Combobox } from "@/components/ui/combobox";
  * THE control for "which folder does this recording live in".
  *
  * One folder is one customer, so this is also the only "whose call was this"
- * affordance — pre-flight, the import dialogs and the replay chip all mount the
- * same picker rather than each growing their own, which is how the app used to
+ * affordance — the import dialogs and the replay chip both mount the same
+ * picker rather than each growing their own, which is how the app used to
  * end up with two disagreeing answers. Typing a name nothing matches creates
  * that folder, so a first-time customer costs one keystroke.
  */
@@ -59,8 +59,8 @@ export function FolderPicker({
       }}
       createLabel={(name) => t("owner.create", { name })}
       placeholder={t("library.unassigned")}
-      searchPlaceholder={t("preflight.search")}
-      emptyText={t("preflight.noMatch")}
+      searchPlaceholder={t("folder.search")}
+      emptyText={t("folder.noMatch")}
     />
   );
 }

@@ -12,7 +12,7 @@ import { FolderPicker } from "./FolderPicker";
 /**
  * The loaded recording's FOLDER, right in the replay titlebar — the
  * "臨時開會、事後歸位" affordance. One folder is one customer, so this is also
- * the "whose call was this" control, and it is the same picker pre-flight uses.
+ * the "whose call was this" control.
  *
  * Personal recordings only: an unsaved upload or a read-only org recording has
  * no loadedHistoryId (or can't be written back) and renders nothing.

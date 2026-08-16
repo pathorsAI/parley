@@ -122,8 +122,7 @@ function FeedPlaceholder() {
  * The LIVE center pane: one chronological coach stream — evaluation findings
  * (each drills into "how to reply") and inline Ask answers — with a single ask
  * input bar at the bottom. Replaces the tabbed Ask/TODO WorkPanel: the coach
- * has one mouth, and the center of the screen belongs to it. (Total-design §03:
- * the feed carries EVENTS; accumulated STATE lives in the IntelligenceBoard.)
+ * has one mouth, and the center of the screen belongs to it.
  */
 export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
   const { t } = useI18n();

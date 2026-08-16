@@ -249,37 +249,6 @@ describe("ingest wizard", () => {
   });
 });
 
-describe("setMeetingType re-aims the intel status", () => {
-  it("switching to a type whose board exists restores 'done'; otherwise invalidates to 'idle'", () => {
-    useStore.setState({
-      meetingType: "sales",
-      intelStatus: "done",
-      intel: { meetingType: "sales", budget: "", timeline: "", decisionMaker: "", objections: [], commitments: [], competitors: [] },
-    });
-
-    // Away from the board's type → idle, so the pipeline extracts the new type.
-    useStore.getState().setMeetingType("negotiation");
-    expect(useStore.getState().intelStatus).toBe("idle");
-
-    // Back to the type the existing board matches → done again, no re-spend.
-    useStore.getState().setMeetingType("sales");
-    expect(useStore.getState().intelStatus).toBe("done");
-  });
-
-  it("a failed extraction unblocks when the user switches type", () => {
-    useStore.setState({ meetingType: "sales", intelStatus: "error", intel: null });
-    useStore.getState().setMeetingType("negotiation");
-    expect(useStore.getState().intelStatus).toBe("idle");
-  });
-
-  it("an in-flight run keeps 'running' — the runner itself discards a stale-type result", () => {
-    useStore.setState({ meetingType: "sales", intelStatus: "running", intel: null });
-    useStore.getState().setMeetingType("negotiation");
-    expect(useStore.getState().intelStatus).toBe("running");
-    expect(useStore.getState().meetingType).toBe("negotiation");
-  });
-});
-
 describe("replay playhead + trim", () => {
   it("setReplayPlayhead clamps negatives to 0", () => {
     useStore.getState().setReplayPlayhead(2500);
@@ -451,12 +420,11 @@ describe("speaker names", () => {
   });
 });
 
-describe("pre-flight", () => {
+describe("prep slice", () => {
   /** The whole prep slice, set as if the previous meeting had just ended. */
   function seedPreviousMeeting() {
     useStore.setState({
       meetingFolderId: "fld-1",
-      meetingStage: "negotiation",
       meetingOrgShare: { orgId: "org-1", folderId: null },
       meetingContext: "last call's background",
       meetingBatna: "walk away",
@@ -466,18 +434,6 @@ describe("pre-flight", () => {
     });
   }
 
-  it("enterPreflight KEEPS the prep draft (R3 — clearing is explicit, never a side effect)", () => {
-    seedPreviousMeeting();
-
-    useStore.getState().enterPreflight();
-
-    const s = useStore.getState();
-    expect(s.appMode).toBe("preflight");
-    expect(s.meetingFolderId).toBe("fld-1");
-    expect(s.meetingContext).toBe("last call's background");
-    expect(s.todos).toHaveLength(1);
-  });
-
   it("resetPrep is the one path that wipes the draft", () => {
     seedPreviousMeeting();
 
@@ -485,14 +441,12 @@ describe("pre-flight", () => {
 
     const s = useStore.getState();
     expect(s.meetingFolderId).toBeNull();
-    expect(s.meetingStage).toBeNull();
     expect(s.meetingOrgShare).toBeNull();
     expect(s.meetingContext).toBe("");
     expect(s.meetingBatna).toBe("");
     expect(s.meetingTarget).toBe("");
     expect(s.meetingFloor).toBe("");
     expect(s.todos).toEqual([]);
-    expect(s.meetingType).toBe(useStore.getState().settings.defaultMeetingType);
   });
 
   it("resetPrep refuses mid-meeting", () => {
@@ -504,18 +458,7 @@ describe("pre-flight", () => {
     expect(useStore.getState().meetingFolderId).toBe("fld-1");
   });
 
-  it("refuses to open mid-meeting, leaving the live prep alone", () => {
-    seedPreviousMeeting();
-    useStore.setState({ meetingStatus: "recording" });
-
-    useStore.getState().enterPreflight();
-
-    const s = useStore.getState();
-    expect(s.appMode).not.toBe("preflight");
-    expect(s.meetingFolderId).toBe("fld-1");
-  });
-
-  it("keeps the prep intact when the meeting is CANCELLED, back on pre-flight", () => {
+  it("keeps the prep intact when the meeting is CANCELLED, back home", () => {
     seedPreviousMeeting();
     useStore.getState().startMeeting();
 
@@ -523,7 +466,7 @@ describe("pre-flight", () => {
 
     const s = useStore.getState();
     expect(s.meetingStatus).toBe("idle");
-    expect(s.appMode).toBe("preflight");
+    expect(s.appMode).toBe("home");
     // Cancelling is "let me fix this and start again" — the setup survives.
     expect(s.meetingFolderId).toBe("fld-1");
     expect(s.meetingContext).toBe("last call's background");

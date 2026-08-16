@@ -13,6 +13,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { buildOwnershipIndex, countByNode, nodeKey, type LibraryNode } from "../../lib/library/scope";
+import { beginMeeting } from "../../lib/meeting/start";
 import { useStore, type LibrarySelection } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import type { LibraryTree } from "./useLibraryTree";
@@ -36,7 +37,6 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   const selection = useStore((s) => s.librarySelection);
   const openLibrary = useStore((s) => s.openLibrary);
   const openHome = useStore((s) => s.openHome);
-  const enterPreflight = useStore((s) => s.enterPreflight);
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [newFolderScope, setNewFolderScope] = useState<string | null>(null);
@@ -63,7 +63,7 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
     <nav className="flex h-full min-h-0 w-full flex-col overflow-y-auto border-r bg-background/60 px-2 py-2">
       <button
         type="button"
-        onClick={enterPreflight}
+        onClick={() => void beginMeeting()}
         className="mb-1 flex shrink-0 items-center gap-2 rounded-md border border-dashed px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:border-solid hover:bg-muted hover:text-foreground"
       >
         <Mic className="size-3.5 shrink-0" />

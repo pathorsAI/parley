@@ -4,7 +4,7 @@
 // The topology lives here and only here:
 //
 //   findings ──done──▶ action items ──settled──▶ brief
-//        └────done──▶ delivery                intel (per meeting type)
+//        └────done──▶ delivery
 //
 // Scheduling is a plain store subscription (initStudyPipeline, mounted once in
 // App — the same pattern as initHistoryPersistSync), not a React hook: the
@@ -28,14 +28,12 @@ import { runAnalysis } from "./engine";
 import { runActionItems } from "./actionItems";
 import { runBriefGeneration } from "./briefRun";
 import { runDeliveryAnalysis } from "./deliveryRun";
-import { runIntelExtraction, intelTranscriptReady } from "../intel/extract";
 import { persistStudyOutputs, saveUploadToHistory } from "../history/history";
 import { log } from "../log";
-import type { MeetingType } from "../types";
 
 type StoreState = ReturnType<typeof useStore.getState>;
 
-export type StudyArtifactKey = "findings" | "actions" | "brief" | "delivery" | "intel";
+export type StudyArtifactKey = "findings" | "actions" | "brief" | "delivery";
 
 export type StudyArtifactDisplay = "idle" | "queued" | "running" | "done" | "error";
 
@@ -49,20 +47,10 @@ export interface StudyPipelineFacts {
   hasDeepKey: boolean;
   /** Spoken content inside the keep-window — same predicate the runners guard on. */
   hasTranscript: boolean;
-  /** Enough text for an intel extraction — same predicate its runner guards on. */
-  intelExtractable: boolean;
   analysisStatus: AsyncTaskStatus;
   actionItemsStatus: AsyncTaskStatus;
   briefStatus: AsyncTaskStatus;
   deliveryStatus: AsyncTaskStatus;
-  intelStatus: AsyncTaskStatus;
-  meetingType: MeetingType;
-  /** Does the picked type have a live board? A boardless KIND (retro, office
-   *  hour) has no slots to fill, so there is no extraction to schedule — it
-   *  shapes the post-meeting analysis only. */
-  meetingTypeHasBoard: boolean;
-  /** Type of the intel board currently in the store, or null. */
-  intelType: MeetingType | null;
   /** May the pipeline spend on its own? `settings.autoStudyAnalysis` OR a manual
    *  regenerate pinned to THIS recording — folded into one fact here so the
    *  scheduler and the display derivation can't disagree, and so evaluateStages
@@ -80,15 +68,10 @@ export function factsOf(s: StoreState): StudyPipelineFacts {
     wizardOpen: s.ingestWizardOpen,
     hasDeepKey: hasProviderKey(s.settings, "deep"),
     hasTranscript: hasSpokenSegment(s.segments, trim),
-    intelExtractable: intelTranscriptReady(s.segments, trim),
     analysisStatus: s.analysisStatus,
     actionItemsStatus: s.actionItemsStatus,
     briefStatus: s.briefStatus,
     deliveryStatus: s.deliveryStatus,
-    intelStatus: s.intelStatus,
-    meetingType: s.meetingType,
-    meetingTypeHasBoard: s.meetingTypeHasBoard,
-    intelType: s.intel?.meetingType ?? null,
     autoAnalyze:
       s.settings.autoStudyAnalysis ||
       (replayId != null && s.studyManualForId === replayId),
@@ -97,17 +80,6 @@ export function factsOf(s: StoreState): StudyPipelineFacts {
 
 function settled(status: AsyncTaskStatus): boolean {
   return status === "done" || status === "error";
-}
-
-/** Should the intel stage extract? "idle" always wants a run (a fresh pick, an
- *  invalidation, or a discarded stale pass); "done" only re-runs when the board
- *  on hand is for a different template than the one picked. */
-function intelWanted(f: StudyPipelineFacts): boolean {
-  if (f.meetingType === "general" || !f.meetingTypeHasBoard || !f.intelExtractable) return false;
-  return (
-    f.intelStatus === "idle" ||
-    (f.intelStatus === "done" && f.intelType !== f.meetingType)
-  );
 }
 
 /** Which stages should START now — the whole topology, in one place. */
@@ -126,10 +98,6 @@ export function evaluateStages(f: StudyPipelineFacts): StudyArtifactKey[] {
   // The brief folds the action items in, so it waits for them to SETTLE —
   // done or error — rather than only done (an empty checklist is still a brief).
   if (analysisDone && settled(f.actionItemsStatus) && f.briefStatus === "idle") out.push("brief");
-  // Intel is independent of the findings pass (it only reads the transcript).
-  // A FAILED extraction blocks auto-retry until the user switches type (which
-  // resets the status) or retries manually from the chip.
-  if (intelWanted(f)) out.push("intel");
   return out;
 }
 
@@ -148,7 +116,6 @@ const RUNNERS: Record<StudyArtifactKey, () => Promise<unknown> | void> = {
   actions: () => runActionItems(),
   brief: () => runBriefGeneration(),
   delivery: () => runDeliveryAnalysis(),
-  intel: () => runIntelExtraction(useStore.getState().meetingType, "deep"),
 };
 
 const STATUS_FIELD = {
@@ -156,7 +123,6 @@ const STATUS_FIELD = {
   actions: "actionItemsStatus",
   brief: "briefStatus",
   delivery: "deliveryStatus",
-  intel: "intelStatus",
 } as const satisfies Record<StudyArtifactKey, keyof StoreState>;
 
 /**
@@ -202,7 +168,6 @@ export async function reanalyzeAll(): Promise<void> {
     brief: null,
     briefStatus: "idle",
     deliveryStatus: "idle",
-    intelStatus: "idle",
   });
 }
 
@@ -219,10 +184,6 @@ const WATCHED = [
   "actionItemsStatus",
   "briefStatus",
   "deliveryStatus",
-  "intelStatus",
-  "intel",
-  "meetingType",
-  "meetingTypeHasBoard",
   "loadedHistoryId",
   "replayReadOnly",
   "studyManualForId",
@@ -259,7 +220,7 @@ export function initStudyPipeline(): () => void {
     //    initHistoryPersistSync on the then-loaded entry)
     //  - read-only org entry  → fold into the local study cache; findings
     //    have no runner-side persist hook, so their settle is caught here too
-    //    (brief/intel/delivery persist from their runners).
+    //    (brief/delivery persist from their runners).
     const actionsSettled =
       prev.actionItemsStatus === "running" && settled(state.actionItemsStatus);
     const analysisDone =
@@ -284,16 +245,13 @@ export function initStudyPipeline(): () => void {
 export interface StudyArtifactState {
   key: StudyArtifactKey;
   display: StudyArtifactDisplay;
-  /** Counts toward the chip's n/total. Only intel opts out (no template picked
-   *  or nothing to extract). */
-  applicable: boolean;
 }
 
 export interface StudyPipelineState {
   artifacts: StudyArtifactState[];
-  /** Applicable artifact count (4, or 5 with a typed intel template). */
+  /** Artifact count. */
   total: number;
-  /** Applicable artifacts already "done". */
+  /** Artifacts already "done". */
   done: number;
   /** Failed artifacts. */
   errors: number;
@@ -333,28 +291,19 @@ export function deriveStudyPipeline(f: StudyPipelineFacts): StudyPipelineState {
   const chained = (status: AsyncTaskStatus): StudyArtifactDisplay =>
     status !== "idle" ? status : chainQueued(f) ? "queued" : "idle";
 
-  // Must match intelWanted's own gate, or a boardless kind would sit at
-  // "queued" forever against an extraction the scheduler will never dispatch.
-  const intelApplicable =
-    f.meetingType !== "general" && f.meetingTypeHasBoard && f.intelExtractable;
-  const intel: StudyArtifactDisplay =
-    f.intelStatus !== "idle" ? f.intelStatus : intelApplicable && can ? "queued" : "idle";
-
   const artifacts: StudyArtifactState[] = [
-    { key: "findings", display: findings, applicable: true },
-    { key: "actions", display: chained(f.actionItemsStatus), applicable: true },
-    { key: "brief", display: chained(f.briefStatus), applicable: true },
-    { key: "delivery", display: chained(f.deliveryStatus), applicable: true },
-    { key: "intel", display: intel, applicable: intelApplicable },
+    { key: "findings", display: findings },
+    { key: "actions", display: chained(f.actionItemsStatus) },
+    { key: "brief", display: chained(f.briefStatus) },
+    { key: "delivery", display: chained(f.deliveryStatus) },
   ];
 
-  const applicable = artifacts.filter((a) => a.applicable);
   return {
     artifacts,
-    total: applicable.length,
-    done: applicable.filter((a) => a.display === "done").length,
-    errors: applicable.filter((a) => a.display === "error").length,
-    active: applicable.some((a) => a.display === "queued" || a.display === "running"),
+    total: artifacts.length,
+    done: artifacts.filter((a) => a.display === "done").length,
+    errors: artifacts.filter((a) => a.display === "error").length,
+    active: artifacts.some((a) => a.display === "queued" || a.display === "running"),
     hasDeepKey: f.hasDeepKey,
     hasTranscript: f.hasTranscript,
   };

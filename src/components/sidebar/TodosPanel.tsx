@@ -9,12 +9,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import type { TodoItem } from "../../lib/types";
 
 /**
- * Meeting checklist. Two faces of the same list (S17: todos keep only ACTION
- * items — info-gathering lives on the board slots):
- * - TodosPanel: the whole intelligence rail for GENERAL meetings, with the
- *   manual AI check (general has no extraction pass to ride).
- * - TodosSection: a flat section inside the typed board — auto-checked by the
- *   unified 30s extraction, so no AI button.
+ * The live meeting checklist: the agenda rail beside the coach feed. Items are
+ * ACTION items ("get the budget signed off"), added by hand or from a TODO
+ * template; the background engine auto-checks them off as they get covered, and
+ * the AI button runs that same check on demand.
  */
 
 function TodoRow({ todo }: Readonly<{ todo: TodoItem }>) {
@@ -45,7 +43,7 @@ function TodoRow({ todo }: Readonly<{ todo: TodoItem }>) {
   );
 }
 
-function AddForm({ compact = false }: Readonly<{ compact?: boolean }>) {
+function AddForm() {
   const { t } = useI18n();
   const addTodo = useStore((s) => s.addTodo);
   const [input, setInput] = useState("");
@@ -57,18 +55,18 @@ function AddForm({ compact = false }: Readonly<{ compact?: boolean }>) {
   return (
     <form
       onSubmit={add}
-      className={compact ? "flex items-center gap-2 pt-1" : "flex items-center gap-2 border-t p-2.5"}
+      className="flex items-center gap-2 border-t p-2.5"
     >
       <Input
         value={input}
         onChange={(e) => setInput(e.target.value)}
         placeholder={t("todos.addPlaceholder")}
-        className={compact ? "h-7 text-xs" : "h-8 text-sm"}
+        className="h-8 text-sm"
       />
       <Button
         type="submit"
         size="icon"
-        className={compact ? "size-7 shrink-0" : "size-8 shrink-0"}
+        className="size-8 shrink-0"
         disabled={!input.trim()}
       >
         <Plus className="size-4" />
@@ -77,44 +75,6 @@ function AddForm({ compact = false }: Readonly<{ compact?: boolean }>) {
   );
 }
 
-/** The board-rail section (scenario meetings, 呼吸版): folded to one line —
- *  count + chevron — until opened; action items only, auto-checked by the
- *  unified extraction pass. */
-export function TodosSection() {
-  const { t } = useI18n();
-  const todos = useStore((s) => s.todos);
-  const [open, setOpen] = useState(false);
-  const done = todos.filter((x) => x.done).length;
-  return (
-    <div className="flex flex-col gap-1 border-t pt-2">
-      <button
-        type="button"
-        onClick={() => setOpen((x) => !x)}
-        className="flex items-baseline gap-2 text-left"
-      >
-        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-          {t("board.todos.title")}
-        </span>
-        <span className="text-[10px] text-muted-foreground/70">
-          {todos.length > 0 ? t("todos.doneCount", { done, total: todos.length }) : t("todos.noItems")}
-        </span>
-        <span className="ml-auto text-[10px] text-muted-foreground/70">
-          ＋ {open ? "▴" : "▾"}
-        </span>
-      </button>
-      {open && (
-        <>
-          {todos.map((x) => (
-            <TodoRow key={x.id} todo={x} />
-          ))}
-          <AddForm compact />
-        </>
-      )}
-    </div>
-  );
-}
-
-/** The whole-rail panel (GENERAL meetings). */
 export function TodosPanel() {
   const { t } = useI18n();
   const todos = useStore((s) => s.todos);

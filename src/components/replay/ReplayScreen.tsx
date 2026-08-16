@@ -25,7 +25,7 @@ import { useReplayPlayheadMs, useReplaySession, useReplayTrim } from "./spine";
  * load (see lib/analysis/studyPipeline.ts); dragging the playhead is navigation/viewing only
  * — it never re-runs anything. Clicking a finding seeks the audio and opens its
  * "how it should have been done" drilldown. The RESULTS (brief, action items,
- * intel, delivery) live on the study report page; Ask is the study-wide drawer.
+ * delivery) live on the study report page; Ask is the study-wide drawer.
  */
 export function ReplayScreen() {
   const { t } = useI18n();

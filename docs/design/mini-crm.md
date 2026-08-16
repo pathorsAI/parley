@@ -240,7 +240,7 @@ interface CompanyAttachment {
 
 - 階段的家 = `Thread.stage`（sales 型）；會議模板依它預設。
 - stage bundle（板 schema＋checklist＋eval 集）依 `SalesStage` 切換；資料驅動、Settings 可編輯（沿用 todo/eval template 機制）。
-- 細節（SPIN slot 定義、缺口視覺化、建議問法生成）見 **[stage-bundles.md](./stage-bundles.md)**（#137）。
+- 細節（SPIN slot 定義、缺口視覺化、建議問法生成）原本記在 stage-bundles 設計文件（#137）；該系統與即時情報板已從 app 移除，文件也一併刪掉，需要時從 tag `archive/intel-board-before-removal` 取回。
 
 ## 9. 儲存、同步、個資
 

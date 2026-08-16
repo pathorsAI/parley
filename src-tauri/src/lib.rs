@@ -111,8 +111,6 @@ pub fn run() {
             commands::get_templates_path,
             commands::read_folders,
             commands::write_folders,
-            commands::read_stage_bundles,
-            commands::write_stage_bundles,
             commands::read_log_tail,
             commands::write_session,
             commands::read_session_commands,

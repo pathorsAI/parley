@@ -55,9 +55,7 @@ function snapshot() {
     // whichever is on screen). Mirrored so MCP clients always get the full
     // analyzed picture alongside the raw transcript, clearly labelled as
     // Parley's prior analysis (context, not ground truth) on the MCP side.
-    meetingType: s.meetingType,
     brief: s.brief,
-    intel: s.intel,
     actionItems: s.actionItems,
     deliveryAssessment: s.deliveryAssessment,
   };

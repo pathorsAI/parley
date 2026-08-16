@@ -8,8 +8,8 @@ import type { LlmWorkload, Settings } from "../types";
  *
  * The AI SDK's own message is written for the developer: Anthropic answers a
  * key with a stray space on the end with the bare string `invalid x-api-key`,
- * which surfaced in the pre-flight coach as "出錯了：AI_APICallError: invalid
- * x-api-key" — a dead end with no way to reach the setting that fixes it. This
+ * which surfaced in the UI as "出錯了：AI_APICallError: invalid x-api-key" —
+ * a dead end with no way to reach the setting that fixes it. This
  * classifier turns the raw failure into a kind the UI can pair with a hint and
  * an "open Settings" button.
  *

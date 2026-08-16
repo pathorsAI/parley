@@ -12,15 +12,10 @@ function facts(patch: Partial<StudyPipelineFacts> = {}): StudyPipelineFacts {
     wizardOpen: false,
     hasDeepKey: true,
     hasTranscript: true,
-    intelExtractable: true,
     analysisStatus: "idle",
     actionItemsStatus: "idle",
     briefStatus: "idle",
     deliveryStatus: "idle",
-    intelStatus: "idle",
-    meetingType: "general",
-    meetingTypeHasBoard: true,
-    intelType: null,
     autoAnalyze: true,
     ...patch,
   };
@@ -36,15 +31,9 @@ describe("evaluateStages (the scheduler's whole topology)", () => {
   });
 
   it("an OPEN ingest wizard defers the WHOLE DAG — no pass may spend on an unconfirmed transcript", () => {
-    // Not just findings: intel is independent of the findings pass and used to
-    // leak a deep extraction over the pre-trim, un-diarized transcript.
-    expect(
-      evaluateStages(facts({ wizardOpen: true, meetingType: "sales" }))
-    ).toEqual([]);
+    expect(evaluateStages(facts({ wizardOpen: true }))).toEqual([]);
     // ...and simply closing it un-defers. No gate to release, nothing to leak.
-    expect(
-      evaluateStages(facts({ wizardOpen: false, meetingType: "sales" }))
-    ).toEqual(["findings", "intel"]);
+    expect(evaluateStages(facts({ wizardOpen: false }))).toEqual(["findings"]);
   });
 
   it("finished findings fan out to action items + delivery (brief still waits)", () => {
@@ -74,62 +63,11 @@ describe("evaluateStages (the scheduler's whole topology)", () => {
     expect(evaluateStages(facts({ hasTranscript: false }))).toEqual([]);
   });
 
-  it("intel: 'idle' always wants a run (fresh pick OR invalidation); 'done' only re-runs on a type mismatch", () => {
-    const base = facts({ analysisStatus: "running", meetingType: "sales" });
-    // No board yet → extract.
-    expect(evaluateStages(base)).toContain("intel");
-    // Invalidated over a MATCHING board (manual regenerate) → extract again.
-    expect(
-      evaluateStages({ ...base, intelType: "sales", intelStatus: "idle" })
-    ).toContain("intel");
-    // Board matches and is done → nothing to do.
-    expect(
-      evaluateStages({ ...base, intelType: "sales", intelStatus: "done" })
-    ).not.toContain("intel");
-    // Restored board of ANOTHER type (status "done") → re-extract for the picked one.
-    expect(
-      evaluateStages({ ...base, intelType: "negotiation", intelStatus: "done" })
-    ).toContain("intel");
-    // A failed run blocks auto-retry until the type changes (which resets to idle).
-    expect(evaluateStages({ ...base, intelStatus: "error" })).not.toContain("intel");
-  });
-
-  it("intel never dispatches on a transcript too short to extract — the chip must not queue forever", () => {
-    expect(
-      evaluateStages(facts({ meetingType: "sales", intelExtractable: false }))
-    ).not.toContain("intel");
-  });
-
-  it("a BOARDLESS KIND skips intel and only intel — there are no slots to fill", () => {
-    // A retro / office hour is a name plus an analysis lens; scheduling an
-    // extraction for it would spend a deep call on a board that doesn't exist.
-    const kind = facts({ meetingType: "retro", meetingTypeHasBoard: false });
-    expect(evaluateStages(kind)).toEqual(["findings"]);
-    // The rest of the DAG is untouched — a kind still gets the full report.
-    expect(
-      evaluateStages({ ...kind, analysisStatus: "done", actionItemsStatus: "done" })
-    ).toEqual(["delivery", "brief"]);
-    // Same facts WITH a board is the control: intel comes back.
-    expect(evaluateStages({ ...kind, meetingTypeHasBoard: true })).toEqual([
-      "findings",
-      "intel",
-    ]);
-  });
-
-  it("a boardless kind drops intel from the chip's totals instead of queueing it forever", () => {
-    const kind = deriveStudyPipeline(
-      facts({ meetingType: "retro", meetingTypeHasBoard: false })
-    );
-    expect(kind.artifacts.find((a) => a.key === "intel")?.applicable).toBe(false);
-    expect(displayOf(kind, "intel")).toBe("idle");
-    expect(kind.total).toBe(4);
-  });
-
   it("auto-analysis OFF stops every stage — the recording stays unanalyzed for an external AI", () => {
-    // Everything else is ready: key, transcript, wizard closed, a typed
-    // template, and every status idle. Only the switch holds it back.
-    const ready = facts({ meetingType: "sales" });
-    expect(evaluateStages(ready)).toEqual(["findings", "intel"]);
+    // Everything else is ready: key, transcript, wizard closed, and every
+    // status idle. Only the switch holds it back.
+    const ready = facts();
+    expect(evaluateStages(ready)).toEqual(["findings"]);
     expect(evaluateStages({ ...ready, autoAnalyze: false })).toEqual([]);
     // ...and it holds MID-chain too: a findings pass that already ran (restored
     // from disk, or written back over MCP) must not fan out on its own.
@@ -188,18 +126,15 @@ describe("deriveStudyPipeline (what the chip + sections say)", () => {
         actionItemsStatus: "done",
         briefStatus: "done",
         deliveryStatus: "done",
-        intelStatus: "done",
-        meetingType: "sales",
-        intelType: "sales",
       })
     );
-    expect(p.total).toBe(5);
-    expect(p.done).toBe(5);
+    expect(p.total).toBe(4);
+    expect(p.done).toBe(4);
     expect(p.active).toBe(false);
   });
 
   it("auto-analysis OFF reads idle, not queued — nothing is coming to fulfil the promise", () => {
-    const f = facts({ autoAnalyze: false, meetingType: "sales" });
+    const f = facts({ autoAnalyze: false });
     const p = deriveStudyPipeline(f);
     expect(p.artifacts.every((a) => a.display === "idle")).toBe(true);
     expect(p.active).toBe(false);
@@ -210,19 +145,4 @@ describe("deriveStudyPipeline (what the chip + sections say)", () => {
     expect(p.hasTranscript).toBe(true);
   });
 
-  it("intel is excluded from the totals without a typed template — or without enough transcript", () => {
-    const general = deriveStudyPipeline(facts());
-    expect(general.total).toBe(4);
-    expect(general.artifacts.find((a) => a.key === "intel")?.applicable).toBe(false);
-
-    const typed = deriveStudyPipeline(facts({ meetingType: "negotiation" }));
-    expect(typed.total).toBe(5);
-    expect(displayOf(typed, "intel")).toBe("queued");
-
-    const short = deriveStudyPipeline(
-      facts({ meetingType: "negotiation", intelExtractable: false })
-    );
-    expect(short.total).toBe(4);
-    expect(displayOf(short, "intel")).toBe("idle");
-  });
 });

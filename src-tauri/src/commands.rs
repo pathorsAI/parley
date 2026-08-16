@@ -72,22 +72,6 @@ pub fn write_folders(app: AppHandle, json: String) -> Result<(), String> {
     write_config_file(&app, "folders.json", &json)
 }
 
-/// Read the stage-bundle overrides JSON (empty string if the file doesn't
-/// exist). Builtin bundles live in the frontend; this file only carries user
-/// overrides (whole-stage replace, see docs/design/stage-bundles.md S9).
-#[tauri::command]
-pub fn read_stage_bundles(app: AppHandle) -> Result<String, String> {
-    read_config_file(&app, "stage-bundles.json")
-}
-
-/// Write the stage-bundle file (v2: custom stages + overrides), creating the
-/// config dir if needed. The Settings stage editor is the in-app writer; the
-/// MCP server (mcp/stage-bundles-server.ts) writes the same file externally.
-#[tauri::command]
-pub fn write_stage_bundles(app: AppHandle, json: String) -> Result<(), String> {
-    write_config_file(&app, "stage-bundles.json", &json)
-}
-
 /// Meeting-specific state held in Tauri's managed state. Who owns the mic (and
 /// the capture threads/gate of the live session) lives in [`MicCoordinator`];
 /// only what a meeting needs beyond its capture stays here.
