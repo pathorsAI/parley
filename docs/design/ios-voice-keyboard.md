@@ -110,11 +110,119 @@ no swipe. Whatever Parley keyboard is frontmost inserts the text through the sam
 App Group path. This is the lowest-friction trigger and sidesteps the whole
 auto-return problem; the keyboard button remains the discoverable default.
 
+## The keyboard's face
+
+The extension is a `UIInputViewController` hosting one SwiftUI tree
+(`KeyboardRootView`). It is two panes under one strip.
+
+### Not painting a background
+
+The keyboard draws **no canvas of its own**. `view.backgroundColor` is clear,
+the SwiftUI root is clear, and the system's own `UIInputView` shows through.
+This is not a style choice: the input view is already the exact colour iOS uses,
+already rounds its corners the way the host expects, and already covers exactly
+the area the system keyboard would. A canvas painted over it is a slightly wrong
+grey that seams against whatever sits below the keyboard and a top-left corner
+that doesn't line up — which is precisely how the bug reported as 跑版 looked.
+
+Two more pieces of the same recipe:
+
+- `inputView?.allowsSelfSizing = true`, with the height constraint at
+  `UILayoutPriority(999)`. Without self-sizing the system treats a height
+  constraint as advisory, so the keyboard renders at a height nobody asked for.
+  999 rather than required still lets a compact-height (landscape) layout shrink
+  the keyboard instead of breaking the constraint.
+- The SwiftUI host is pinned to `view.safeAreaLayoutGuide` **vertically** and to
+  the full width horizontally: key rows are supposed to reach the screen edges
+  the way system keys do, but the bottom row must not slide under the home
+  indicator. The height constraint therefore measures the pane height *plus*
+  `view.safeAreaInsets.bottom`, and is recomputed in
+  `viewSafeAreaInsetsDidChange`.
+
+Every measurement lives in `KBMetrics` (`KeyboardTheme.swift`) so the view and
+the height constraint can't disagree — a disagreement is a seam. The key
+geometry is the system portrait keyboard's: 42pt caps, 11pt between rows, 6pt
+between keys, 3pt at the screen edge. That puts the QWERTY pane's key area at
+213pt (≈ the system's 216pt) and the voice pane's at 180pt; each mode names its
+own height and the change is animated when the user crosses between them.
+
+### Mode strip
+
+Across the top, in the shape Typeless uses: the **Parley wordmark** on the left,
+and a two-segment control on the right — a waveform (voice) and `EN`. The
+selected segment gets a filled pill. **A left/right swipe across the pane body
+switches modes too**, on a `DragGesture` with a 24pt minimum distance and a 56pt
+threshold so a mistyped key is never read as a swipe.
+
+The strip defaults to `EN` when there is no Full Access, because that is the
+pane that still works in that state.
+
+### EN mode
+
+A real QWERTY plane — `qwertyuiop` / `asdfghjkl` (inset half a key, as iOS does)
+/ shift + `zxcvbnm` + delete / `123` + globe + `@` + space + return — plus the
+two symbol planes everyone expects: `1234567890` / `-/:;()$&@"` and
+`[]{}#%^*+=` / `_\|~<>$£¥•`, sharing a punctuation row and a bottom row.
+
+Layout is arithmetic rather than a table: one letter key is the unit, every wide
+key is expressed in units, so the rows line up on a 320pt SE and a 440pt Pro Max
+alike.
+
+The behaviours that make it feel like a keyboard rather than a grid of buttons:
+
+- **Shift** is three-state. Tap arms it for one letter; a second tap within
+  0.3 s locks it (`capslock.fill`); a slow tap turns it off. An armed shift
+  borrows the light letter-key cap, the way iOS signals it.
+- **Delete repeats while held** — ~0.4 s before it starts, then ~0.1 s a tick,
+  matching the system key. It can't be a `Button` (a button only reports on
+  touch-up), so it is a zero-distance drag gesture driving a `KeyRepeater`.
+- **Double-tapping space** types `". "` instead of a second space, but only when
+  the character before it is a letter or a digit — after punctuation or at the
+  start of a line, two taps are two spaces, which is what iOS does.
+- **Return always inserts `"\n"`.** The host's `returnKeyType` changes what the
+  key *says* (Go / Send / Search / Done / Next) and whether it is tinted, and
+  nothing else: a keyboard extension has no public way to fire the host's return
+  action, and a key labelled Send that quietly did nothing would be worse than
+  one that visibly types.
+
+### Voice mode
+
+The status caption, then the mic pill with `⌫` and `@` flanking it, then the
+globe and a wide return key. Those three quick keys are there because the edits
+a dictating user actually reaches for — take that back, type an address, break
+the line — should not cost a trip through the EN pane.
+
+The mic pill is one of exactly two places the keyboard is allowed to look like
+Parley rather than iOS: idle it carries Pathors' brand gradient (`#1469D4` →
+`#2DB6F3`, top-leading to bottom-trailing); listening it goes flat recording red,
+so "armed" is never something you have to read out of a gradient. The other is
+the wordmark (`#1469D4` light, `#2DB6F3` dark). Everything else — caps, press
+feedback, corner radius — stays system-coloured, because a keyboard that doesn't
+look like a keyboard reads as broken.
+
+### No Bopomofo engine — 注音 is the system's job
+
+**Parley deliberately ships no Chinese input engine.** A keyboard extension
+cannot reach the system's Chinese input engine, and bundling a Bopomofo engine
+(a phonetic table, a candidate bar, a user dictionary) is a product of its own,
+not a round of polish on a dictation keyboard. Chinese input in Parley is
+dictation; Chinese *typing* belongs to the system 注音 keyboard.
+
+That makes the globe load-bearing, so it is present **on every device**, not
+only where `needsInputModeSwitchKey` is true — a 注音 user must always be one
+obvious tap from leaving. It is a real `UIButton` behind a SwiftUI cap, wired
+whole-touch-sequence to `handleInputModeList(from:with:)`: that selector demands
+the live `UIEvent` from a control action, which a SwiftUI gesture has no way to
+supply, and it is UIKit's own globe behaviour — a tap advances to the next
+keyboard, a hold presents the system keyboard picker, from which 注音 is one
+more tap.
+
 ## App Review notes
 
-- **4.4.1** (keyboards must work without Full Access): the keyboard always shows
-  a minimal key row (globe, space, return, delete). Dictation itself requires
-  Full Access (network + App Group) and says so with a jump to Settings.
+- **4.4.1** (keyboards must work without Full Access): with Full Access off the
+  keyboard opens in `EN` mode and the whole QWERTY plane, the quick keys and the
+  globe work normally — none of them need the network or the App Group. Only
+  dictation is unavailable, and the voice pane says so with a jump to Settings.
 - **2.5.1** (private APIs): the auto-return path is private and version-gated to
   where it works; the rest of the flow (openURL, App Group, insertText, App
   Intents) is entirely public.

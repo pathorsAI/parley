@@ -24,18 +24,38 @@ final class KeyboardViewController: UIInputViewController {
     private var session = ""
     private var insertedCount = 0
     private var host: UIHostingController<KeyboardRootView>?
+    private var heightConstraint: NSLayoutConstraint?
 
-    /// A keyboard has no intrinsic height — without this it collapses to the
-    /// system minimum and the layout looks broken. The taller variant makes
-    /// room for the globe row that only exists on devices where the system
-    /// doesn't draw its own input switcher next to the home indicator.
+    /// A keyboard has no intrinsic height — without one it collapses to the
+    /// system minimum and the layout looks broken. The two panes are genuinely
+    /// different shapes, so each names its own height in `KBMetrics` and the
+    /// constraint follows the mode.
     private var preferredHeight: CGFloat {
-        needsInputModeSwitchKey ? 252 : 216
+        switch bridge.mode {
+        case .voice: return KBMetrics.voiceHeight
+        case .letters: return KBMetrics.lettersHeight
+        }
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         bridge.controller = self
+        bridge.hasFullAccess = hasFullAccess
+        // Without Full Access there is nothing to dictate with, so open on the
+        // pane that still works. App Review 4.4.1 judges the keyboard in
+        // exactly this state.
+        bridge.setMode(hasFullAccess ? .voice : .letters, notify: false)
+
+        // Let the system's own input view supply the background. It is already
+        // the right colour, already rounds its corners the way the host expects
+        // and already covers exactly the area the system keyboard would; a
+        // canvas of our own painted over it was what left a seam against the
+        // row below and a top-left corner that didn't line up.
+        view.backgroundColor = .clear
+        // Self-sizing is what makes the system honour a height constraint at
+        // all. Without it the constraint below is advisory at best, which is
+        // the other half of the same misalignment.
+        inputView?.allowsSelfSizing = true
 
         let root = UIHostingController(rootView: makeRoot())
         root.view.backgroundColor = .clear
@@ -43,20 +63,26 @@ final class KeyboardViewController: UIInputViewController {
         view.addSubview(root.view)
         root.view.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
+            // Full width: key rows are supposed to reach the screen edges the
+            // way system keys do.
             root.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             root.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            root.view.topAnchor.constraint(equalTo: view.topAnchor),
-            root.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            // Vertically the safe area, so the bottom row never slides under
+            // the home indicator.
+            root.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            root.view.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
         ])
         root.didMove(toParent: self)
         self.host = root
 
-        // Priority just below required: the system still gets to shrink the
-        // keyboard in a compact-height (landscape) layout rather than fighting
-        // an unsatisfiable constraint.
-        let height = view.heightAnchor.constraint(equalToConstant: preferredHeight)
-        height.priority = .defaultHigh
+        // 999 rather than `.defaultHigh`: high enough that the system stops
+        // second-guessing the height, still short of required so a
+        // compact-height (landscape) layout can shrink us instead of hitting an
+        // unsatisfiable constraint.
+        let height = view.heightAnchor.constraint(equalToConstant: totalHeight)
+        height.priority = UILayoutPriority(999)
         height.isActive = true
+        heightConstraint = height
 
         // The app fires this when the transcript grows; we also drain on every
         // appearance in case the keyboard was suspended through the notification.
@@ -70,11 +96,8 @@ final class KeyboardViewController: UIInputViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         bridge.hasFullAccess = hasFullAccess
-        // Only devices where the system doesn't draw its own switcher beside
-        // the home indicator need a globe inside the keyboard (4.4.1 — the
-        // user must always have a way out of this keyboard).
-        bridge.needsGlobe = needsInputModeSwitchKey
         refreshAppearance()
+        refreshReturnKey()
         drainDownlink()
     }
 
@@ -85,6 +108,31 @@ final class KeyboardViewController: UIInputViewController {
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
         refreshAppearance()
+        refreshReturnKey()
+    }
+
+    /// The constraint measures the whole input view, but the content is pinned
+    /// to the safe area — so the home indicator's strip has to be added on top
+    /// of the pane height or the pane gets squeezed by exactly that much.
+    private var totalHeight: CGFloat {
+        preferredHeight + view.safeAreaInsets.bottom
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        applyHeight(animated: false)
+    }
+
+    /// Called by the bridge when the user moves between panes.
+    func modeDidChange() {
+        applyHeight(animated: true)
+    }
+
+    private func applyHeight(animated: Bool) {
+        guard let heightConstraint, heightConstraint.constant != totalHeight else { return }
+        heightConstraint.constant = totalHeight
+        guard animated else { return }
+        UIView.animate(withDuration: 0.18) { self.view.superview?.layoutIfNeeded() }
     }
 
     private func refreshAppearance() {
@@ -92,6 +140,14 @@ final class KeyboardViewController: UIInputViewController {
         if host?.rootView.dark != dark {
             host?.rootView = makeRoot(dark: dark)
         }
+    }
+
+    /// The host field decides what the return key is *called* — Go, Send,
+    /// Search — and whether it is tinted. It never decides what the key does:
+    /// see `KeyboardBridge.newline()`.
+    private func refreshReturnKey() {
+        let type: UIReturnKeyType? = textDocumentProxy.returnKeyType
+        bridge.returnKeyType = type ?? .default
     }
 
     private func makeRoot(dark: Bool? = nil) -> KeyboardRootView {
@@ -241,10 +297,51 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
-    // MARK: minimal keys (called from SwiftUI)
+    // MARK: keys (called from SwiftUI)
 
     func deleteBackward() { textDocumentProxy.deleteBackward() }
-    func switchKeyboard() { advanceToNextInputMode() }
+    func insert(_ text: String) { textDocumentProxy.insertText(text) }
+
+    /// Return always types a line break. A keyboard extension cannot submit a
+    /// form — there is no public way to fire the host's return action — so a
+    /// key labelled "Send" that quietly did nothing would be worse than one
+    /// that visibly types.
+    func insertReturn() { textDocumentProxy.insertText("\n") }
+
+    /// How close two taps on the space bar have to be to count as the period
+    /// shortcut rather than two spaces.
+    private static let doubleSpaceWindow: TimeInterval = 0.35
+    private var lastSpaceAt = Date.distantPast
+
+    /// Space, with iOS's double-tap-for-a-period shortcut. The second tap only
+    /// becomes ". " when it is actually ending a word — after punctuation or at
+    /// the start of a line, two taps are just two spaces, which is what the
+    /// system does too.
+    func insertSpace() {
+        let now = Date()
+        let context = textDocumentProxy.documentContextBeforeInput ?? ""
+        if now.timeIntervalSince(lastSpaceAt) < Self.doubleSpaceWindow,
+            context.hasSuffix(" "),
+            let previous = context.dropLast().last,
+            previous.isLetter || previous.isNumber
+        {
+            textDocumentProxy.deleteBackward()
+            textDocumentProxy.insertText(". ")
+            // Reset rather than re-arm, so a third tap can't chain into "..".
+            lastSpaceAt = .distantPast
+            return
+        }
+        textDocumentProxy.insertText(" ")
+        lastSpaceAt = now
+    }
+}
+
+/// Which pane the keyboard is showing. Dictation and typing are different
+/// enough — different keys, different heights — to be modes rather than one
+/// crowded layout.
+enum KeyboardMode {
+    case voice
+    case letters
 }
 
 /// Bridges the UIKit input controller to the SwiftUI view: published state the
@@ -259,9 +356,41 @@ final class KeyboardBridge: ObservableObject {
     /// The app's failure for the last session (sign-in, mic permission,
     /// connection), shown in the caption slot until the next start.
     @Published var errorText: String?
-    /// Whether this device needs a globe inside the keyboard (no system
-    /// switcher next to the home indicator).
-    @Published var needsGlobe = false
+
+    /// Which pane is showing. Changing it also has to change the keyboard's
+    /// height, which only the controller can do — hence `setMode` rather than a
+    /// plain assignment.
+    @Published private(set) var mode: KeyboardMode = .voice
+
+    /// What the host field wants the return key to say. It never changes what
+    /// the key does.
+    @Published var returnKeyType: UIReturnKeyType = .default
+
+    func setMode(_ mode: KeyboardMode, notify: Bool = true) {
+        guard self.mode != mode else { return }
+        self.mode = mode
+        if notify { controller?.modeDidChange() }
+    }
+
+    var returnKeyLabel: LocalizedStringKey {
+        switch returnKeyType {
+        case .go: return "Go"
+        case .send: return "Send"
+        case .search: return "Search"
+        case .done: return "Done"
+        case .next: return "Next"
+        default: return "return"
+        }
+    }
+
+    /// iOS tints the return key when the host has asked for an action rather
+    /// than a line break, so the key reads as the way forward.
+    var returnKeyIsAccented: Bool {
+        switch returnKeyType {
+        case .go, .send, .search, .done: return true
+        default: return false
+        }
+    }
 
     /// Start a session. `completion` fires only when the app has to be opened
     /// (the no-jump Darwin start wasn't acknowledged) with the URL for the
@@ -273,7 +402,9 @@ final class KeyboardBridge: ObservableObject {
     func fallbackOpen(_ url: URL) { controller?.openContainerApp(url) }
     func stop() { controller?.stopDictation() }
     func backspace() { controller?.deleteBackward() }
-    func nextKeyboard() { controller?.switchKeyboard() }
+    func type(_ text: String) { controller?.insert(text) }
+    func space() { controller?.insertSpace() }
+    func newline() { controller?.insertReturn() }
 }
 
 /// Best-effort resolution of the app the keyboard is typing into, for the app's

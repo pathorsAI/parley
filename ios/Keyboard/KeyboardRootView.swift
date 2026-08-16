@@ -1,10 +1,18 @@
 import SwiftUI
 
-/// The Parley keyboard's face, in the shape dictation keyboards have settled
-/// on (Typeless, Wispr Flow): a brand mark and a delete key on top, one large
-/// mic pill in the middle under a short status caption, and a minimal
-/// space/return/globe row at the bottom so the keyboard still types without
-/// Full Access (App Review 4.4.1).
+/// The Parley keyboard's face.
+///
+/// Two panes under one strip, in the shape dictation keyboards have settled on
+/// (Typeless, Wispr Flow): the wordmark and a two-way mode picker on top, then
+/// either the dictation pane — a status line, the mic pill with `⌫` and `@`
+/// flanking it, and a wide return key — or a full QWERTY plane. A horizontal
+/// swipe across the body moves between them, so the picker is a signpost rather
+/// than the only way across.
+///
+/// The view paints no background of its own. The system's `UIInputView` is
+/// already the right colour, already has the right corners and already covers
+/// exactly the right area; painting over it was what made the keyboard seam
+/// against the row below and sit a shade off from the system's.
 ///
 /// Everything here is presentation only — no audio, no transcript history — so
 /// the extension stays well under the jetsam limit keyboard processes run
@@ -19,44 +27,137 @@ struct KeyboardRootView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            topBar
-            Spacer(minLength: 6)
+            modeStrip
+            pane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // The swipe lives on the pane, not on a key, and demands real
+                // travel before it engages — otherwise a fat-fingered tap on
+                // `g` would throw the user into the other mode.
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 24)
+                        .onEnded { value in
+                            let dx = value.translation.width
+                            guard abs(dx) > KBMetrics.swipeThreshold,
+                                abs(dx) > abs(value.translation.height) * 1.5
+                            else { return }
+                            select(dx < 0 ? .letters : .voice)
+                        }
+                )
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var pane: some View {
+        switch bridge.mode {
+        case .voice: voicePane
+        case .letters: LetterPane(bridge: bridge, dark: dark)
+        }
+    }
+
+    private func select(_ mode: KeyboardMode) {
+        guard bridge.mode != mode else { return }
+        withAnimation(.easeInOut(duration: 0.18)) { bridge.setMode(mode) }
+    }
+
+    // MARK: mode strip — wordmark + picker
+
+    private var modeStrip: some View {
+        HStack(spacing: 0) {
+            Text(verbatim: "Parley")
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(KBTheme.wordmark(dark))
+            Spacer(minLength: 8)
+            HStack(spacing: 2) {
+                segment(.voice, label: Image(systemName: "waveform"))
+                    .accessibilityLabel(Text("Voice dictation"))
+                segment(.letters, label: Text(verbatim: "EN"))
+                    .accessibilityLabel(Text("English keyboard"))
+            }
+            .padding(2)
+            .background(Capsule().fill(KBTheme.segmentTrack(dark)))
+        }
+        .frame(height: KBMetrics.strip)
+        .padding(.horizontal, 12)
+    }
+
+    private func segment<Label: View>(_ mode: KeyboardMode, label: Label) -> some View {
+        let selected = bridge.mode == mode
+        return PressableButton(action: { select(mode) }) { pressed in
+            label
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(selected ? KBTheme.ink(dark) : KBTheme.inkSoft(dark))
+                .frame(width: 42, height: 26)
+                .background(
+                    Capsule()
+                        .fill(selected ? KBTheme.key(dark) : .clear)
+                        .opacity(pressed ? 0.6 : 1))
+        }
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
+    // MARK: the voice pane
+
+    private var voicePane: some View {
+        VStack(spacing: KBMetrics.voiceRowSpacing) {
             caption
-            Spacer(minLength: 12)
-            micPill
-            Spacer(minLength: 12)
-            // Only devices without the system's own input switcher (next to
-            // the home indicator) get a globe here — everyone else already has
-            // one right below the keyboard, and a second would be noise.
-            if bridge.needsGlobe {
-                HStack {
-                    circleKey(system: "globe") { bridge.nextKeyboard() }
-                    Spacer()
+            // The mic keeps the middle; delete and `@` flank it so the two
+            // edits a dictating user actually reaches for — take that back,
+            // type an address — never cost a trip through the EN pane.
+            HStack(spacing: 10) {
+                RepeatingKey(action: { bridge.backspace() }) { pressed in
+                    quickCap(pressed: pressed) {
+                        Image(systemName: "delete.left")
+                            .font(.system(size: 18, weight: .regular))
+                    }
                 }
+                .frame(width: KBMetrics.quickKeyWidth, height: KBMetrics.micHeight)
+                .accessibilityLabel(Text("Delete"))
+
+                micPill
+
+                PressableButton(action: { bridge.type("@") }) { pressed in
+                    quickCap(pressed: pressed) {
+                        Text(verbatim: "@").font(.system(size: 20))
+                    }
+                }
+                .frame(width: KBMetrics.quickKeyWidth, height: KBMetrics.micHeight)
+                .accessibilityLabel(Text("At sign"))
+            }
+            HStack(spacing: 10) {
+                // Always here, on every device: Parley ships no Bopomofo
+                // engine, so this key is a 注音 user's only way out.
+                GlobeKey(controller: bridge.controller, dark: dark)
+                    .frame(width: KBMetrics.quickKeyWidth, height: KBMetrics.quickRowHeight)
+                PressableButton(action: { bridge.newline() }) { pressed in
+                    ZStack {
+                        KeyCap(
+                            dark: dark, tint: bridge.returnKeyIsAccented ? .accent : .alt,
+                            pressed: pressed)
+                        Text(bridge.returnKeyLabel)
+                            .font(.system(size: 15))
+                            .foregroundStyle(
+                                bridge.returnKeyIsAccented ? .white : KBTheme.ink(dark))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: KBMetrics.quickRowHeight)
+                }
+                .accessibilityLabel(Text(bridge.returnKeyLabel))
             }
         }
         .padding(.horizontal, 10)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(KBTheme.canvas(dark))
+        .padding(.top, KBMetrics.paneTop)
+        .padding(.bottom, KBMetrics.paneBottom)
     }
 
-    // MARK: top bar — brand + delete
-
-    private var topBar: some View {
-        HStack {
-            HStack(spacing: 5) {
-                Image(systemName: "waveform")
-                    .font(.footnote.weight(.semibold))
-                Text(verbatim: "Parley")
-                    .font(.footnote.weight(.semibold))
-            }
-            .foregroundStyle(KBTheme.inkSoft(dark))
-            Spacer()
-            circleKey(system: "delete.left") { bridge.backspace() }
+    private func quickCap<Content: View>(
+        pressed: Bool, @ViewBuilder glyph: () -> Content
+    ) -> some View {
+        ZStack {
+            KeyCap(dark: dark, tint: .alt, pressed: pressed)
+            glyph().foregroundStyle(KBTheme.ink(dark))
         }
-        .frame(height: 38)
     }
 
     // MARK: caption — the state line above the mic
@@ -104,7 +205,7 @@ struct KeyboardRootView: View {
                     .foregroundStyle(KBTheme.inkSoft(dark))
             }
         }
-        .frame(height: 48)
+        .frame(height: KBMetrics.captionHeight)
         .frame(maxWidth: .infinity)
         .animation(.easeInOut(duration: 0.15), value: bridge.listening)
         .animation(.easeOut(duration: 0.15), value: bridge.partial)
@@ -117,7 +218,7 @@ struct KeyboardRootView: View {
             Image(systemName: bridge.listening ? "stop.fill" : "mic.fill")
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(micInk)
-                .frame(width: 150, height: 52)
+                .frame(width: KBMetrics.micWidth, height: KBMetrics.micHeight)
                 .background(
                     Capsule().fill(micFill).brightness(pressed ? -0.08 : 0))
         }
@@ -127,19 +228,19 @@ struct KeyboardRootView: View {
                 ? Text("Stop dictation") : Text("Start dictation"))
     }
 
-    /// Idle: the Typeless-style ink pill — near-black on a light canvas, white
-    /// on a dark one. Recording: the shared recording red. Disabled (no Full
-    /// Access): a key-colored pill so it reads inert.
-    private var micFill: Color {
-        if !bridge.hasFullAccess { return KBTheme.key(dark) }
-        if bridge.listening { return KBTheme.recording }
-        return dark ? .white : Color(white: 0.10)
+    /// Idle: Pathors' brand gradient, the one place on the keyboard where
+    /// Parley is allowed to look like Parley. Recording: the flat recording red,
+    /// so "armed" is never something you have to read out of a gradient.
+    /// Disabled (no Full Access): a key-coloured pill so it reads inert.
+    private var micFill: AnyShapeStyle {
+        if !bridge.hasFullAccess { return AnyShapeStyle(KBTheme.key(dark)) }
+        if bridge.listening { return AnyShapeStyle(KBTheme.recording) }
+        return AnyShapeStyle(KBTheme.micGradient)
     }
 
     private var micInk: Color {
         if !bridge.hasFullAccess { return KBTheme.inkSoft(dark) }
-        if bridge.listening { return .white }
-        return dark ? Color(white: 0.10) : .white
+        return .white
     }
 
     private func toggle() {
@@ -156,44 +257,6 @@ struct KeyboardRootView: View {
                     if !accepted { bridge.fallbackOpen(url) }
                 }
             }
-        }
-    }
-
-    // MARK: key shapes
-
-    private func circleKey(system: String, action: @escaping () -> Void) -> some View {
-        PressableButton(action: action) { pressed in
-            Image(systemName: system)
-                .font(.system(size: 16, weight: .regular))
-                .foregroundStyle(KBTheme.ink(dark))
-                .frame(width: 44, height: 38)
-                .background(
-                    Capsule()
-                        .fill(pressed ? KBTheme.keyPressed(dark) : KBTheme.key(dark))
-                        .shadow(
-                            color: .black.opacity(dark ? 0 : 0.28),
-                            radius: 0, x: 0, y: 1))
-        }
-    }
-}
-
-/// A button that reports its own pressed state, so keys and the mic control can
-/// darken under the finger the way system keys do. `.buttonStyle(.plain)` alone
-/// gives no feedback at all, which is what made the keys feel dead.
-private struct PressableButton<Content: View>: View {
-    let action: () -> Void
-    @ViewBuilder var content: (Bool) -> Content
-
-    var body: some View {
-        Button(action: action) { EmptyView() }
-            .buttonStyle(PressStyle(content: content))
-    }
-
-    private struct PressStyle<C: View>: ButtonStyle {
-        @ViewBuilder var content: (Bool) -> C
-        func makeBody(configuration: Configuration) -> some View {
-            content(configuration.isPressed)
-                .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
         }
     }
 }
