@@ -25,7 +25,7 @@ Note-takers tell you what happened in a call after it's over — when it's too l
 - 🎙️ **Coached, live** — a real-time feed of alerts and suggested replies, plus an intelligence board that extracts the state of the deal as you talk.
 - 🌐 **In any language** — speak your language; the meeting hears the other one, through Parley's own virtual microphone.
 - 📼 **Debriefed, after** — commitments, missed moments, and a delivery scorecard for the next round.
-- 🗂️ **Remembered, between** — an account workspace that turns every call into durable intelligence: people, deal threads, and what you've learned about each side.
+- 🗂️ **Filed, between** — one folder per customer, so every call with them sits together and the next pre-flight opens with their history in front of you.
 
 **Local-first, bring your own keys.** Audio and transcripts go directly to the STT and LLM providers *you* configure (Claude, OpenAI, Gemini, Soniox, Deepgram, …). No Pathors proxy, no telemetry, everything stored on your machine.
 
@@ -95,16 +95,9 @@ Everything generates once and saves with the recording — reopen it a month lat
 
 ## 🗂️ Between calls
 
-<p align="center">
-  <img src="website/assets/showcase-accounts.png" alt="The account workspace: company switcher, deal threads and intel cards, stakeholder rail" width="820" />
-</p>
+One customer, one folder. Every recording is filed in a folder — picked before the call in pre-flight, or moved afterwards from the library or the replay titlebar — so the calls with one customer sit together instead of scattering across a flat list. Pre-flight then opens with the earlier calls in that folder, one click from being reopened.
 
-Deals span many calls; Parley remembers what each one taught you. The **account workspace** keeps a living dossier per company:
-
-- **Intel cards** — atomic facts across nine categories (stances, leverage, goals, risks, red lines, competitors, next moves, open questions, relationships), each with its source quote, confidence level, and freshness. Conflicting intel surfaces in a triage queue instead of silently overwriting.
-- **Deal threads** — each negotiation or opportunity tracked on a pipeline (discovery → demo → proposal → negotiation → closing) with stage guides for what to collect next.
-- **Stakeholder map** — who's the economic buyer, who's your champion, who blocks, and who influences whom.
-- **The loop closes both ways** — after a call, one review pass files what the meeting revealed into the dossier; before the next one, a single click assembles a briefing and loads the stage's open questions into your agenda. Red-line cards automatically arm as live alerts when a meeting with that company starts.
+An MCP client can search across them: `list_folders`, `list_recordings`, `get_transcript` and `move_recording_to_folder` give any AI assistant the whole history to reason over.
 
 ---
 

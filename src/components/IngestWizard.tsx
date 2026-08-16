@@ -8,7 +8,7 @@ import { runAnalysis } from "../lib/analysis/engine";
 import { saveUploadToHistory } from "../lib/history/history";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
-import { CompanyPicker } from "./accounts/CompanyPicker";
+import { FolderPicker } from "./FolderPicker";
 import { Input } from "@/components/ui/input";
 import { MeetingContextField } from "./MeetingContextField";
 import { ReplayTranscript } from "./replay/ReplayTranscript";
@@ -54,8 +54,8 @@ export function IngestWizard() {
   const { t } = useI18n();
   const open = useStore((s) => s.ingestWizardOpen);
   const step = useStore((s) => s.ingestWizardStep);
-  const ownerCompanyId = useStore((s) => s.meetingCompanyId);
-  const setMeetingLink = useStore((s) => s.setMeetingLink);
+  const meetingFolderId = useStore((s) => s.meetingFolderId);
+  const setMeetingFolder = useStore((s) => s.setMeetingFolder);
   const wizardError = useStore((s) => s.ingestWizardError);
   const setStep = useStore((s) => s.setIngestWizardStep);
   const close = useStore((s) => s.closeIngestWizard);
@@ -301,17 +301,12 @@ export function IngestWizard() {
               <p className="text-[12px] leading-relaxed text-muted-foreground">{t("ingest.countIntro")}</p>
               {/* Whose call is this? Asked on the way IN, because the import
                   doors that skipped the question are precisely the ones that
-                  produced recordings needing after-the-fact linking. The save
-                  reads meetingCompanyId (resolveMeetingSave), so setting the
-                  link here is all the filing this needs. */}
+                  produced recordings needing after-the-fact filing. The save
+                  reads meetingFolderId (resolveMeetingSave), so picking the
+                  folder here is all the filing this needs. */}
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] text-muted-foreground">{t("owner.label")}</span>
-                <CompanyPicker
-                  value={ownerCompanyId}
-                  onChange={(id) =>
-                    setMeetingLink({ companyId: id, threadId: null, attendeeIds: [] })
-                  }
-                />
+                <FolderPicker value={meetingFolderId} onChange={setMeetingFolder} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] text-muted-foreground">{t("speakers.voiceCount")}</span>

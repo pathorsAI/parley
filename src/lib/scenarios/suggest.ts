@@ -4,7 +4,7 @@ import { JSON_MODE_INSTRUCTION } from "../ai/provider";
 import { profileContext } from "../ai/profile";
 import { recordLlmUsage } from "../usage/log";
 import type { Settings } from "../types";
-import type { SalesStage } from "./types";
+import type { SalesStage } from "./stages";
 import type { SlotDef } from "./bundles";
 
 /**
@@ -69,6 +69,6 @@ export async function suggestSlotQuestions(opts: {
     system: SYSTEM,
     prompt,
   });
-  void recordLlmUsage(settings, "realtime", "accounts-slot-suggest", usage);
+  void recordLlmUsage(settings, "realtime", "board-slot-suggest", usage);
   return object.questions.filter((q) => q.reply.trim()).slice(0, 3);
 }

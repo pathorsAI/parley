@@ -1,7 +1,5 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  ArchiveRestore,
-  Building2,
   Check,
   ChevronRight,
   Folder,
@@ -11,76 +9,47 @@ import {
   Mic,
   Pencil,
   Plus,
-  Swords,
   Trash2,
-  TriangleAlert,
   UsersRound,
 } from "lucide-react";
-import { useAccounts, threadsOf, triageClaims, personsOf } from "../../lib/accounts/store";
-import { ensureCompanyFolder } from "../../lib/accounts/folders";
 import { buildOwnershipIndex, countByNode, nodeKey, type LibraryNode } from "../../lib/library/scope";
 import { useStore, type LibrarySelection } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import type { LibraryTree } from "./useLibraryTree";
 
 /**
- * The one tree (issue #195, finished in #211).
+ * The one tree (issue #195).
  *
- * #195 put the company and its recordings in one tree. #211 made them one
- * THING: a recording's node is decided by its customer (lib/library/scope), not
- * by which folder it happens to sit in, so there is no longer a second kind of
- * container to file things into — and no way for the count here to disagree
- * with the company page.
+ * A recording's node is the FOLDER it is filed in — one customer, one folder,
+ * and the number beside a row is a count of exactly what clicking it opens.
  *
- *   公司
- *     和運租車  ⚠2
- *       戰情 · 2 條戰線
- *       錄音 · 8 場       ← every recording linked to this customer
- *       人 · 4 位
- *   還沒歸戶 · 7           ← no customer yet, one click from having one
+ *   資料夾
+ *     和運租車 · 8
+ *     台數科 · 3
+ *   還沒歸檔 · 7           ← filed nowhere yet
  *   語音輸入
- *   其他資料夾（舊資料）    ← pre-#211 folders that belong to no company
  *   組織共享              ← never mixed into the personal tree
  */
 export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   const { t } = useI18n();
-  const acc = useAccounts();
   const appMode = useStore((s) => s.appMode);
-  const accountsCompanyId = useStore((s) => s.accountsCompanyId);
-  const accountsFocus = useStore((s) => s.accountsFocus);
   const selection = useStore((s) => s.librarySelection);
-  const openAccounts = useStore((s) => s.openAccounts);
   const openLibrary = useStore((s) => s.openLibrary);
   const openHome = useStore((s) => s.openHome);
   const enterPreflight = useStore((s) => s.enterPreflight);
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [newFolderScope, setNewFolderScope] = useState<string | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
   // R8a: creation lives behind the section header's ＋ — the tree is
   // navigation, not a permanently-open data-entry form.
-  const [newCompanyOpen, setNewCompanyOpen] = useState(false);
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
 
-  const companies = acc.companies.filter((c) => !c.archived);
-  const archived = acc.companies.filter((c) => c.archived);
-
-  // Ownership facts + every node's count in one pass. The grid filters with the
-  // SAME index and the SAME rule (lib/library/scope), so "錄音 · 8 場" is a count
-  // of exactly the eight cards clicking it opens.
-  const index = useMemo(
-    () => buildOwnershipIndex(acc.companies, tree.personalFolders),
-    [acc.companies, tree.personalFolders]
-  );
-  const counts = useMemo(
-    () => countByNode(tree.summaries, index),
-    [tree.summaries, index]
-  );
+  // Folder facts + every node's count in one pass. The grid filters with the
+  // SAME index and the SAME rule (lib/library/scope), so "和運租車 · 8" is a
+  // count of exactly the eight cards clicking it opens.
+  const index = buildOwnershipIndex(tree.personalFolders);
+  const counts = countByNode(tree.summaries, index);
   const countAt = (node: LibraryNode) => counts.get(nodeKey(node)) ?? 0;
-
-  // Folders that belong to no company: pre-#211 filing. They still hold
-  // recordings, so they stay reachable — retiring folders as a concept must
-  // never make an old recording disappear.
-  const looseFolders = tree.personalFolders.filter((f) => index.looseFolders.has(f.id));
 
   const libraryActive = appMode === "library";
   const personalSel = selection.kind === "personal" ? selection : null;
@@ -110,139 +79,46 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
 
       <GroupLabel
         action={
-          <HeaderAdd
-            label={t("accounts.newCompany")}
-            onClick={() => setNewCompanyOpen(true)}
-          />
+          <HeaderAdd label={t("history.folder.new")} onClick={() => setNewFolderOpen(true)} />
         }
       >
-        {t("accounts.title")}
+        {t("shell.folders")}
       </GroupLabel>
 
-      {companies.map((c) => {
-        const open = expanded[c.id] ?? c.id === accountsCompanyId;
-        const nTriage = triageClaims(acc, c.id).length;
-        const nThreads = threadsOf(acc, c.id).filter((x) => x.status === "active").length;
-        const nPeople = personsOf(acc, c.id).length;
-        const node: LibraryNode = { kind: "company", companyId: c.id };
-        const nRecordings = countAt(node);
-        const companyActive = appMode === "accounts" && accountsCompanyId === c.id;
-        const recordingsActive = nodeActive(node);
+      {tree.personalFolders.map((f) => {
+        const node: LibraryNode = { kind: "folder", folderId: f.id };
         return (
-          <Fragment key={c.id}>
-            <Row
-              icon={<Building2 className="size-3.5" />}
-              label={c.name}
-              active={companyActive || recordingsActive}
-              expandable
-              expanded={open}
-              onToggle={() => setExpanded((p) => ({ ...p, [c.id]: !open }))}
-              onSelect={() => {
-                setExpanded((p) => ({ ...p, [c.id]: true }));
-                openAccounts(c.id);
-              }}
-              badge={
-                nTriage > 0 ? (
-                  <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-orange-500/15 px-1.5 text-[10px] font-semibold text-orange-700 dark:text-orange-300">
-                    <TriangleAlert className="size-3 shrink-0" />
-                    {nTriage}
-                  </span>
-                ) : null
+          <Row
+            key={f.id}
+            icon={<Folder className="size-3.5" />}
+            label={f.name}
+            count={countAt(node)}
+            active={nodeActive(node)}
+            onSelect={() => selectLibrary({ kind: "personal", node })}
+            onRename={(name) => tree.renamePersonalFolder(f.id, name)}
+            onDelete={() => {
+              tree.deletePersonalFolder(f);
+              if (nodeActive(node)) {
+                selectLibrary({ kind: "personal", node: { kind: "unassigned" } });
               }
-            />
-            {open && (
-              <>
-                <Row
-                  depth={1}
-                  icon={<Swords className="size-3.5" />}
-                  label={t("shell.facet.intel", { n: nThreads })}
-                  active={companyActive && accountsFocus === "intel"}
-                  onSelect={() => openAccounts(c.id, "intel")}
-                />
-                <Row
-                  depth={1}
-                  icon={<Folder className="size-3.5" />}
-                  label={t("shell.facet.recordings", { n: nRecordings })}
-                  active={recordingsActive}
-                  // No folder needed to LOOK at a customer's recordings — the
-                  // node is the customer. A folder is created when something is
-                  // actually filed there (assignEntryCompany / the save path).
-                  onSelect={() => selectLibrary({ kind: "personal", node })}
-                />
-                <Row
-                  depth={1}
-                  icon={<UsersRound className="size-3.5" />}
-                  label={t("shell.facet.people", { n: nPeople })}
-                  active={companyActive && accountsFocus === "people"}
-                  onSelect={() => openAccounts(c.id, "people")}
-                />
-              </>
-            )}
-          </Fragment>
+            }}
+          />
         );
       })}
 
-      {newCompanyOpen && (
+      {newFolderOpen && (
         <NewNameInput
-          placeholder={t("accounts.companyName")}
+          placeholder={t("history.folder.namePlaceholder")}
           onCommit={(name) => {
-            const company = useAccounts.getState().addCompany({ name });
-            ensureCompanyFolder(company);
-            setNewCompanyOpen(false);
-            setExpanded((p) => ({ ...p, [company.id]: true }));
-            openAccounts(company.id);
-            tree.reloadFolders().catch(() => {});
+            const id = tree.createPersonalFolder(name);
+            setNewFolderOpen(false);
+            if (id) selectLibrary({ kind: "personal", node: { kind: "folder", folderId: id } });
           }}
-          onCancel={() => setNewCompanyOpen(false)}
+          onCancel={() => setNewFolderOpen(false)}
         />
       )}
 
-      {/* Archived companies stay reachable: view on click, restore in one. */}
-      {archived.length > 0 && (
-        <div className="pt-1">
-          <button
-            type="button"
-            onClick={() => setShowArchived((v) => !v)}
-            className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-muted-foreground hover:bg-muted/40"
-          >
-            <ChevronRight
-              className={`size-3 transition-transform ${showArchived ? "rotate-90" : ""}`}
-            />
-            <span className="text-xs">{t("accounts.archived")}</span>
-            <span className="text-[10px] tabular-nums">{archived.length}</span>
-          </button>
-          {showArchived &&
-            archived.map((c) => (
-              <div
-                key={c.id}
-                className="group/row flex items-center gap-1 rounded-md pl-4 pr-1 hover:bg-muted/50"
-              >
-                <button
-                  type="button"
-                  onClick={() => openAccounts(c.id)}
-                  className="min-w-0 flex-1 truncate py-1.5 text-left text-sm text-muted-foreground"
-                >
-                  {c.name}
-                </button>
-                <button
-                  type="button"
-                  title={t("accounts.restore")}
-                  onClick={() => {
-                    acc.unarchiveCompany(c.id);
-                    openAccounts(c.id);
-                  }}
-                  className="shrink-0 rounded p-0.5 text-muted-foreground/0 hover:!text-foreground group-hover/row:text-muted-foreground"
-                >
-                  <ArchiveRestore className="size-3.5" />
-                </button>
-              </div>
-            ))}
-        </div>
-      )}
-
-      {/* Everything without a customer, in one place — and the reason there is
-          no "new folder" button anywhere near it: the way out of here is to
-          give a recording an owner, not to invent a second filing system. */}
+      {/* Everything filed nowhere yet, in one place — one click from a folder. */}
       <Row
         icon={<FolderClosed className="size-3.5" />}
         label={t("library.unassigned")}
@@ -256,36 +132,6 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         active={libraryActive && selection.kind === "voice"}
         onSelect={() => selectLibrary({ kind: "voice" })}
       />
-
-      {/* Folders that belong to no company: filing done before customers owned
-          recordings. Reachable and renameable, but no longer creatable — the
-          section exists to carry old data forward, not to keep the old model
-          alive alongside the new one. */}
-      {looseFolders.length > 0 && (
-        <>
-          <GroupLabel>{t("shell.legacyFolders")}</GroupLabel>
-          {looseFolders.map((f) => {
-            const node: LibraryNode = { kind: "folder", folderId: f.id };
-            return (
-              <Row
-                key={f.id}
-                icon={<Folder className="size-3.5" />}
-                label={f.name}
-                count={countAt(node)}
-                active={nodeActive(node)}
-                onSelect={() => selectLibrary({ kind: "personal", node })}
-                onRename={(name) => tree.renamePersonalFolder(f.id, name)}
-                onDelete={() => {
-                  tree.deletePersonalFolder(f);
-                  if (nodeActive(node)) {
-                    selectLibrary({ kind: "personal", node: { kind: "unassigned" } });
-                  }
-                }}
-              />
-            );
-          })}
-        </>
-      )}
 
       {/* Org-shared recordings are their own tree on purpose: a shared copy is
           someone else's file, and folding it into the personal tree would make
@@ -544,8 +390,7 @@ function Row({
   );
 }
 
-/** Inline name composer, opened on demand from a section header's ＋ (company
- *  or folder — the placeholder is the only difference). */
+/** Inline name composer, opened on demand from a section header's ＋. */
 function NewNameInput({
   depth = 0,
   placeholder,

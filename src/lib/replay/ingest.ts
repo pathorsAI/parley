@@ -118,19 +118,18 @@ export function arbitrateImportPaths(paths: string[]): ImportPick | null {
 
 /**
  * THE import entry point (R7): every "import a recording" affordance — Home,
- * the library header, a company page, the coach-feed empty state — runs this
- * one flow, so the accepted formats and the audio-vs-transcript arbitration
- * can never drift between doors. Doors differ only in prefill: a company page
- * passes its `companyId` so the resulting entry is pre-linked to the company
- * (and lands in its paired folder). Throws the STT-gate errors from
- * {@link pickImportFiles} — callers toast them.
+ * the library header, a folder, the coach-feed empty state — runs this one
+ * flow, so the accepted formats and the audio-vs-transcript arbitration can
+ * never drift between doors. Doors differ only in prefill: a folder passes its
+ * `folderId` so the resulting entry is filed there. Throws the STT-gate errors
+ * from {@link pickImportFiles} — callers toast them.
  */
 export async function startImportFlow(
-  opts: { companyId?: string | null } = {},
+  opts: { folderId?: string | null } = {},
 ): Promise<void> {
   const pick = await pickImportFiles(useStore.getState().settings);
   if (!pick) return;
-  routeImportPick(pick, opts.companyId ?? null);
+  routeImportPick(pick, opts.folderId ?? null);
 }
 
 /**
@@ -144,20 +143,19 @@ export function importDroppedPaths(paths: string[]): void {
   routeImportPick(pick, null);
 }
 
-/** Open the right dialog for an arbitrated pick. `companyId` pre-links first:
- *  audio via the meeting link (the wizard's save snapshots `meetingCompanyId`
- *  and resolveMeetingSave files it under the company folder), transcripts by
- *  riding on the import dialog. A null companyId leaves any existing meeting
- *  link alone rather than clearing it — and since #211 both dialogs SHOW the
- *  customer they are about to file under, so an inherited link is on screen and
- *  one click from being changed instead of being applied silently. */
-function routeImportPick(pick: ImportPick, companyId: string | null): void {
-  const { openIngestWizard, openTranscriptImport, setMeetingLink } = useStore.getState();
+/** Open the right dialog for an arbitrated pick. `folderId` pre-picks the
+ *  destination: audio through the meeting folder (the wizard's save snapshots
+ *  it via resolveMeetingSave), transcripts by riding on the import dialog. A
+ *  null folderId leaves the current pick alone rather than clearing it — both
+ *  dialogs SHOW the folder they are about to file into, so an inherited pick is
+ *  on screen and one click from being changed. */
+function routeImportPick(pick: ImportPick, folderId: string | null): void {
+  const { openIngestWizard, openTranscriptImport, setMeetingFolder } = useStore.getState();
   if (pick.kind === "audio") {
-    if (companyId) setMeetingLink({ companyId, threadId: null, attendeeIds: [] });
+    if (folderId) setMeetingFolder(folderId);
     openIngestWizard(pick.path);
   } else {
-    openTranscriptImport(pick.paths, companyId);
+    openTranscriptImport(pick.paths, folderId);
   }
 }
 

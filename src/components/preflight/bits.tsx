@@ -52,7 +52,7 @@ export function SectionTitle({ children }: Readonly<{ children: ReactNode }>) {
 /**
  * "＋" that swaps into a one-line input, for creating a company, a thread, or a
  * person without leaving pre-flight — the alternative is bouncing to the
- * accounts workspace mid-setup, which is exactly the trip this screen exists to
+ * library mid-setup, which is exactly the trip this screen exists to
  * remove.
  *
  * Controlled, because the open input needs the row to ITSELF: the field it sits

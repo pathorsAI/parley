@@ -1,5 +1,5 @@
 import { useStore } from "../store";
-import type { ScenarioSet } from "../accounts/bundles";
+import type { ScenarioSet } from "../scenarios/bundles";
 import type { MeetingType } from "../types";
 
 /**

@@ -21,20 +21,20 @@ import { PrepCopilot } from "./PrepCopilot";
  *
  * Three columns on ONE scroll each, not a next/next wizard: an experienced user
  * can land here and hit 開始 immediately, while everything that used to be
- * scattered across a titlebar chip, a two-level dialog and the accounts
- * workspace is now in front of them at the moment it matters. "Record now"
+ * scattered across a titlebar chip and a two-level dialog is now in front of
+ * them at the moment it matters. "Record now"
  * stays permanently available for the calls that start without warning.
  */
 export function PreflightScreen() {
   const { t } = useI18n();
   const provider = useStore((s) => s.settings.transcriptionProvider);
   const inputDevice = useStore((s) => s.settings.inputDevice);
-  const companyId = useStore((s) => s.meetingCompanyId);
+  const folderId = useStore((s) => s.meetingFolderId);
   const hasContext = useStore((s) => !!s.meetingContext.trim());
   const hasAgenda = useStore((s) => s.todos.length > 0);
   // The escape hatch only means something while the screen is still blank —
   // once there IS a setup, "skip" would just be a second Start button.
-  const untouched = !companyId && !hasContext && !hasAgenda;
+  const untouched = !folderId && !hasContext && !hasAgenda;
 
   // Same re-entrancy shape as the titlebar's recorder cluster: the ref blocks
   // synchronously (before any re-render) so a double-click can't race two
@@ -105,7 +105,7 @@ export function PreflightScreen() {
         )}
         <Button size="sm" className="h-8" disabled={busy} onClick={() => void start()}>
           {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Mic className="size-3.5" />}
-          {companyId ? t("preflight.startLinked") : t("titlebar.startMeeting")}
+          {folderId ? t("preflight.startLinked") : t("titlebar.startMeeting")}
         </Button>
       </div>
     </div>

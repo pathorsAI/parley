@@ -12,9 +12,6 @@ import { AppSidebar } from "./AppSidebar";
 import { useLibraryTree } from "./useLibraryTree";
 import { useStore, isMeetingActive, type AppMode } from "../../lib/store";
 
-const AccountsScreen = lazy(() =>
-  import("../accounts/AccountsScreen").then((m) => ({ default: m.AccountsScreen }))
-);
 const PreflightScreen = lazy(() =>
   import("../preflight/PreflightScreen").then((m) => ({ default: m.PreflightScreen }))
 );
@@ -26,12 +23,11 @@ const LibraryScreen = lazy(() =>
  *
  * The tree is hidden in exactly two states, and for the same reason both times —
  * the screen belongs to something else:
- *   - a RUNNING meeting (the live coach owns the window; the account dossier is
- *     still reachable mid-call through the titlebar sheet), and
+ *   - a RUNNING meeting (the live coach owns the window), and
  *   - pre-flight, which is a focused three-column commitment to one call.
- * Everything else — live idle, a loaded recording, a company, the library —
- * keeps the tree on screen, so nothing is a mode you have to exit. (Settings is
- * not a route here: it opens as its own OS window, see lib/nav.ts.)
+ * Everything else — live idle, a loaded recording, the library — keeps the tree
+ * on screen, so nothing is a mode you have to exit. (Settings is not a route
+ * here: it opens as its own OS window, see lib/nav.ts.)
  */
 export function AppShell() {
   const appMode = useStore((s) => s.appMode);
@@ -81,13 +77,6 @@ function RouteContent({
   tree,
 }: Readonly<{ mode: AppMode; tree: ReturnType<typeof useLibraryTree> }>) {
   if (mode === "study") return <StudyScreen />;
-  if (mode === "accounts") {
-    return (
-      <Suspense fallback={null}>
-        <AccountsScreen />
-      </Suspense>
-    );
-  }
   if (mode === "preflight") {
     return (
       <Suspense fallback={null}>

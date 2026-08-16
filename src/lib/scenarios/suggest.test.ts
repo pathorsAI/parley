@@ -23,7 +23,6 @@ const slot: SlotDef = {
   id: "discovery.implication",
   label: "I（Implication）",
   hint: "痛不解決的量化代價",
-  query: { categories: ["risk"] },
 };
 
 describe("suggestSlotQuestions (#148)", () => {

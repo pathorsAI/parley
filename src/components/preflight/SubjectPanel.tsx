@@ -1,56 +1,42 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useStore } from "../../lib/store";
-import { useAccounts, personsOf, threadsOf } from "../../lib/accounts/store";
-import { ensureCompanyFolder } from "../../lib/accounts/folders";
-import { stageFor } from "../../lib/accounts/currentStage";
-import { useScenarioSet } from "../../lib/accounts/useStageSet";
+import { useScenarioSet } from "../../lib/scenarios/useStageSet";
+import { stageFor } from "../../lib/scenarios/currentStage";
 import { applyScenario } from "../../lib/meeting/scenario";
 import { resolveMeetingSave } from "../../lib/history/history";
 import { CLOUD_ENABLED } from "../../lib/flags";
 import { useI18n } from "../../i18n";
 import type { MeetingType } from "../../lib/types";
 import { Combobox, type ComboGroup } from "@/components/ui/combobox";
+import { FolderPicker } from "../FolderPicker";
 import { OrgSharePicker } from "../OrgSharePicker";
-import { Column, Field, InlineCreate, SectionTitle } from "./bits";
+import { Column, Field, SectionTitle } from "./bits";
 
 /**
- * Pre-flight column ①: WHO this call is with.
+ * Pre-flight column ①: WHAT this call is and WHERE it will be filed.
  *
- * That question is also the whole filing story (#211): the customer decides
- * where the recording lives, so no folder control appears here — the only
- * save decision left is whether an org gets a shared copy, and that choice is
- * independent of the customer link. Before this, a folder picker sat beside
- * the customer picker and the two could disagree about whose recording this
- * was going to be.
+ * One customer, one folder: picking the folder here is picking the customer,
+ * and it is the same folder the left tree lists the call under afterwards. The
+ * only other save decision is whether an org gets a shared copy, which is
+ * independent of the folder.
  */
 export function SubjectPanel() {
   const { t } = useI18n();
-  const acc = useAccounts();
   const scenarios = useScenarioSet();
 
   const meetingType = useStore((s) => s.meetingType);
-  const companyId = useStore((s) => s.meetingCompanyId);
-  const threadId = useStore((s) => s.meetingThreadId);
-  const attendeeIds = useStore((s) => s.meetingAttendeeIds);
+  const folderId = useStore((s) => s.meetingFolderId);
+  const setMeetingFolder = useStore((s) => s.setMeetingFolder);
   const meetingStage = useStore((s) => s.meetingStage);
   const setMeetingStage = useStore((s) => s.setMeetingStage);
-  const setMeetingLink = useStore((s) => s.setMeetingLink);
   const orgShare = useStore((s) => s.meetingOrgShare);
   const setOrgShare = useStore((s) => s.setMeetingOrgShare);
   const signedIn = useStore((s) => !!s.cloudAuth);
   const syncEnabled = useStore((s) => s.settings.syncEnabled);
   const defaultSave = useStore((s) => s.settings.defaultSaveLocation);
 
-  // The attendee ＋ still swaps into an inline input: it sits in a chip row,
-  // not a picker, so there is no query box to grow a create row out of.
-  const [creating, setCreating] = useState<"person" | null>(null);
-
-  // Only "general" has no board and no customer side (design D12).
+  // Only "general" has no board and no stage row (design D12).
   const scenario = scenarios.byId[meetingType] ?? null;
-  const companies = acc.companies.filter((c) => !c.archived);
-  const company = companies.find((c) => c.id === companyId) ?? null;
-  const threads = company ? threadsOf(acc, company.id).filter((x) => x.status === "active") : [];
-  const persons = company ? personsOf(acc, company.id) : [];
 
   const stageOptions: ComboGroup[] = useMemo(
     () =>
@@ -59,31 +45,12 @@ export function SubjectPanel() {
         : [],
     [scenario]
   );
-  const thread = threads.find((x) => x.id === threadId) ?? null;
   // The picker must show the stage the board will actually run — same resolver.
-  const stage = scenario ? stageFor(scenario, meetingStage, thread) : "";
+  const stage = scenario ? stageFor(scenario, meetingStage) : "";
 
   // What the save will actually do, recomputed from the same function the save
-  // path calls. Reading `useAccounts()`/store above keeps this reactive.
+  // path calls. Reading the store above keeps this reactive.
   const save = resolveMeetingSave();
-
-  function createCompany(name: string) {
-    const created = acc.addCompany({ name });
-    ensureCompanyFolder(created);
-    setMeetingLink({ companyId: created.id, threadId: null, attendeeIds: [] });
-  }
-
-  function createThread(name: string) {
-    if (!company) return;
-    const created = acc.addThread({ companyId: company.id, kind: "sales", name });
-    setMeetingLink({ companyId: company.id, threadId: created.id, attendeeIds });
-  }
-
-  function createPerson(name: string) {
-    if (!company) return;
-    const created = acc.addPerson({ companyId: company.id, name });
-    setMeetingLink({ companyId: company.id, threadId, attendeeIds: [...attendeeIds, created.id] });
-  }
 
   return (
     <Column step="①" title={t("preflight.subject.title")}>
@@ -111,127 +78,30 @@ export function SubjectPanel() {
             />
           </Field>
 
-          {scenario && (
-            <>
-              {/* Typing a customer that doesn't exist yet CREATES it, right
-                  here (Combobox's create row). The old ＋ beside the picker
-                  did the same thing, but you had to know the unlabelled icon
-                  was there — and typing the name first got you a dead-end
-                  "找不到符合項目". */}
-              <Field label={t("accounts.link.company")}>
-                <Combobox
-                  size="sm"
-                  value={companyId ?? ""}
-                  groups={[
-                    {
-                      options: [
-                        { value: "", label: t("accounts.link.none") },
-                        ...companies.map((c) => ({ value: c.id, label: c.name })),
-                      ],
-                    },
-                  ]}
-                  onChange={(v) =>
-                    setMeetingLink({ companyId: v || null, threadId: null, attendeeIds: [] })
-                  }
-                  onCreate={createCompany}
-                  createLabel={(name) => t("owner.create", { name })}
-                  placeholder={t("accounts.link.none")}
-                  searchPlaceholder={t("preflight.search")}
-                  emptyText={t("preflight.noMatch")}
-                />
-              </Field>
-
-              {company && (
-                <Field label={t("accounts.link.thread")}>
-                  <Combobox
-                    size="sm"
-                    value={threadId ?? ""}
-                    groups={[
-                      {
-                        options: [
-                          { value: "", label: t("accounts.link.none") },
-                          ...threads.map((x) => ({
-                            value: x.id,
-                            label: x.name,
-                            hint: x.stage ? (scenario.names[x.stage] ?? x.stage) : undefined,
-                          })),
-                        ],
-                      },
-                    ]}
-                    onChange={(v) =>
-                      setMeetingLink({ companyId: company.id, threadId: v || null, attendeeIds })
-                    }
-                    onCreate={createThread}
-                    createLabel={(name) => t("owner.create", { name })}
-                    placeholder={t("accounts.link.none")}
-                    searchPlaceholder={t("preflight.search")}
-                    emptyText={t("preflight.noMatch")}
-                  />
-                </Field>
-              )}
-
-              {scenario.order.length > 1 && (
-                <Field label={t("preflight.field.stage")}>
-                  <Combobox
-                    size="sm"
-                    value={stage}
-                    groups={stageOptions}
-                    onChange={(v) => setMeetingStage(v)}
-                    placeholder={t("preflight.field.stage")}
-                    searchPlaceholder={t("preflight.search")}
-                    emptyText={t("preflight.noMatch")}
-                  />
-                </Field>
-              )}
-            </>
+          {scenario && scenario.order.length > 1 && (
+            <Field label={t("preflight.field.stage")}>
+              <Combobox
+                size="sm"
+                value={stage}
+                groups={stageOptions}
+                onChange={(v) => setMeetingStage(v)}
+                placeholder={t("preflight.field.stage")}
+                searchPlaceholder={t("preflight.search")}
+                emptyText={t("preflight.noMatch")}
+              />
+            </Field>
           )}
+
+          {/* Typing a folder that doesn't exist yet CREATES it, right here
+              (Combobox's create row) — a customer you are meeting for the first
+              time is one keystroke from having somewhere to live. */}
+          <Field label={t("preflight.field.folder")}>
+            <FolderPicker value={folderId} onChange={setMeetingFolder} />
+          </Field>
         </div>
 
-        {company && (
-          <div className="flex flex-col gap-1.5">
-            <SectionTitle>{t("accounts.link.attendees")}</SectionTitle>
-            <div className="flex min-w-0 flex-wrap items-center gap-1">
-              {persons.map((p) => {
-                const on = attendeeIds.includes(p.id);
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() =>
-                      setMeetingLink({
-                        companyId: company.id,
-                        threadId,
-                        attendeeIds: on
-                          ? attendeeIds.filter((x) => x !== p.id)
-                          : [...attendeeIds, p.id],
-                      })
-                    }
-                    className={`cursor-pointer rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
-                      on
-                        ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {p.name}
-                  </button>
-                );
-              })}
-              <InlineCreate
-                label={t("preflight.newPerson")}
-                placeholder={t("preflight.newPersonPlaceholder")}
-                confirmLabel={t("preflight.createConfirm")}
-                cancelLabel={t("accounts.cancel")}
-                open={creating === "person"}
-                onOpenChange={(o) => setCreating(o ? "person" : null)}
-                onCreate={createPerson}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* The only save decision left: an org copy. Filing is the customer
-            picked above — there is nothing to choose about it, so nothing is
-            shown. (Signed-out / OSS: this whole block is absent.) */}
+        {/* The other save decision: an org copy — a second destination, never
+            a move. (Signed-out / OSS: this whole block is absent.) */}
         {CLOUD_ENABLED && signedIn && syncEnabled && (
           <div className="flex flex-col gap-1.5 border-t pt-3">
             <SectionTitle>{t("share.toOrg")}</SectionTitle>

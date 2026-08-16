@@ -256,7 +256,7 @@ export interface IntelCommitment {
  *  STATE (vs. the coach feed's events). Extracted by LLM passes over the live
  *  transcript; sections are populated per meeting type. */
 /** One live-captured intel item proposed for a gap-board slot (§4.3): UI
- *  transient only — the claim base is written at post-meeting review (D8). */
+ *  transient only — nothing outlives the call. */
 export interface IntelSlotFill {
   slotId: string;
   /** The captured intel, one sentence, in the transcript's language. */
@@ -288,8 +288,8 @@ export interface IntelState {
   /* CURRENT model: the slot board + ledgers. */
   /** Sales objection tracker (addressed state drives ⚠/✓ and the counter focus). */
   objections?: IntelObjection[];
-  /** Board slot fills for every typed meeting (§4.3, UI transient — the
-   *  post-meeting review turns them into claim candidates). */
+  /** Board slot fills for every typed meeting (§4.3, UI transient — they live
+   *  only for this call). */
   slotFills?: IntelSlotFill[];
   /** Auto-focus (S22): the ONE thing to say next, judged each refresh.
    *  kind "objection" = counter the counterpart's fresh unaddressed challenge

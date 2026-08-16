@@ -9,9 +9,9 @@ import {
   type ParsedBundleFile,
   type Scenario,
   type StageBundle,
-} from "../lib/accounts/bundles";
-import { EMPTY_BUNDLE_FILE, type CustomStageDef } from "../lib/accounts/bundleFile";
-import { SALES_STAGES, type SalesStage } from "../lib/accounts/types";
+} from "../lib/scenarios/bundles";
+import { EMPTY_BUNDLE_FILE, type CustomStageDef } from "../lib/scenarios/bundleFile";
+import { SALES_STAGES, type SalesStage } from "../lib/scenarios/stages";
 import { useStore } from "../lib/store";
 import { log } from "../lib/log";
 import { DEFAULT_ICON_NAME, resolveIcon } from "../lib/icons";
@@ -285,7 +285,7 @@ export function ScenarioSettings() {
       .map((r) => {
         const prev = r.id ? effectiveById.get(r.id) : undefined;
         return {
-          // Keep the id (claims stay attached, S3) and any advanced fields
+          // Keep the id (fills stay attached) and any advanced fields
           // (query/solidAt) the form doesn't surface.
           ...(prev ?? { query: { categories: [] } }),
           id: r.id ?? newSlotId(openStage),

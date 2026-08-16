@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { Building2, MoreHorizontal } from "lucide-react";
+import { Folder, MoreHorizontal } from "lucide-react";
 import { useStore } from "../../lib/store";
-import { useAccounts, threadsOf } from "../../lib/accounts/store";
+import { setEntryFolder } from "../../lib/history/history";
+import { listLocalFolders } from "../../lib/history/folders";
 import { useI18n } from "../../i18n";
+import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import {
@@ -11,42 +13,40 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { MeetingLinkPicker } from "../accounts/MeetingLinkPicker";
+import { FolderPicker } from "../FolderPicker";
 import { MeetingContextSheet } from "../MeetingContextButton";
 
 /**
- * The report page's link bar: a recording saved without a company link could
- * never reach the post-meeting review (its titlebar button only shows when
- * linked), with nothing explaining why — this row is the after-the-fact link
- * point, plus the study-side door into the meeting-context editor. Read-only
- * org recordings can't be written back, so they get no link affordances.
+ * The report page's filing bar: a recording saved in a hurry lands in no folder
+ * at all, and this is where it gets one after the fact — plus the study-side
+ * door into the meeting-context editor. Read-only org recordings can't be
+ * written back, so they get no filing affordances.
  */
 export function StudyLinkBar() {
   const { t } = useI18n();
   const readOnly = useStore((s) => s.replayReadOnly);
-  const companyId = useStore((s) => s.meetingCompanyId);
-  const threadId = useStore((s) => s.meetingThreadId);
-  const acc = useAccounts();
-  const company = acc.companies.find((c) => c.id === companyId) ?? null;
-  // All statuses, not just active: the chip must still name a since-closed thread.
-  const thread = company ? threadsOf(acc, company.id).find((x) => x.id === threadId) ?? null : null;
+  const loadedHistoryId = useStore((s) => s.loadedHistoryId);
+  const folderId = useStore((s) => s.replayFolderId);
+  const folder = folderId ? (listLocalFolders().find((f) => f.id === folderId) ?? null) : null;
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
 
+  function move(id: string | null) {
+    if (!loadedHistoryId) return;
+    setEntryFolder(loadedHistoryId, id).catch((e) =>
+      log.warn("study: refile failed", { error: String(e) })
+    );
+  }
+
   return (
     <div className="mb-6 flex items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2">
-      <Building2 className="size-4 shrink-0 text-muted-foreground" />
-      {company ? (
+      <Folder className="size-4 shrink-0 text-muted-foreground" />
+      {folder ? (
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
           <span className="max-w-full truncate rounded-full border bg-background px-2 py-0.5 text-xs font-medium">
-            {company.name}
+            {folder.name}
           </span>
-          {thread && (
-            <span className="max-w-full truncate rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-              {thread.name}
-            </span>
-          )}
           {!readOnly && (
             <button
               type="button"
@@ -89,8 +89,8 @@ export function StudyLinkBar() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* Edit flow → Sheet (repo rule). The picker self-persists onto the
-          loaded entry, so "done" is just closing. */}
+      {/* Edit flow → Sheet (repo rule). The move persists as it is picked, so
+          "done" is just closing. */}
       <Sheet open={pickerOpen} onOpenChange={setPickerOpen}>
         <SheetContent
           title={t("study.link.attach")}
@@ -102,7 +102,7 @@ export function StudyLinkBar() {
           }
         >
           <div className="px-4 py-3">
-            <MeetingLinkPicker />
+            <FolderPicker value={folderId} onChange={move} />
           </div>
         </SheetContent>
       </Sheet>

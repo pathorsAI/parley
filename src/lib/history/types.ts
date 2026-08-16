@@ -42,11 +42,6 @@ export interface HistoryEntry {
   analyzed?: boolean;
   /** Per-meeting free-text context + principled-negotiation setup. */
   meetingContext: string;
-  /** Accounts link (mini-CRM, design §3.2): which company/thread this meeting
-   *  belongs to and which persons attended. Absent on entries predating it. */
-  companyId?: string | null;
-  threadId?: string | null;
-  attendeePersonIds?: string[];
   meetingBatna: string;
   meetingTarget: string;
   meetingFloor: string;
@@ -97,8 +92,6 @@ export interface HistoryEntrySummary {
   analyzed?: boolean;
   /** First spoken line of the transcript, for a preview. */
   snippet: string;
-  /** Accounts link, for the company page's meeting timeline. */
-  companyId?: string | null;
   /** Personal folder this entry lives in; null/absent = the personal root. */
   folderId?: string | null;
 }

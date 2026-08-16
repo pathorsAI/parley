@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 
 // Boundaries only: resolveBoard reads the live stage file, and the logger's
 // non-Tauri path touches `window`. The helpers under test are pure.
-vi.mock("../accounts/currentStage", () => ({ resolveScenarioStageId: vi.fn() }));
+vi.mock("../scenarios/currentStage", () => ({ resolveScenarioStageId: vi.fn() }));
 vi.mock("../log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   attachConsoleOnce: vi.fn(),

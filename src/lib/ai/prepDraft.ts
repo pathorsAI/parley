@@ -5,7 +5,7 @@ import { outputLanguageInstruction, profileContext } from "./profile";
 import { recordLlmUsage } from "../usage/log";
 import { log } from "../log";
 import type { Settings } from "../types";
-import type { Claim, Company, Person, Thread } from "../accounts/types";
+import type { SlotDef } from "../scenarios/bundleFile";
 
 /**
  * Pre-meeting DRAFT (#189): one LLM pass that proposes what the user was
@@ -15,10 +15,9 @@ import type { Claim, Company, Person, Thread } from "../accounts/types";
  * Why this exists at all: 目標 / BATNA / 底線 are CONCLUSIONS, not raw material.
  * Asking for them in empty inputs asks the user to have already finished
  * thinking, so in practice the whole column got skipped. Everything needed to
- * draft them is already in the claim base and the stage's gap board — the
- * system remembers more than the user does at 9:55am. So the machine writes
- * the first version and the user corrects it; nothing here is applied until
- * the user clicks a suggestion.
+ * draft them is the stage's board, its exit criteria and whatever background
+ * the user pasted in. So the machine writes the first version and the user
+ * corrects it; nothing here is applied until the user clicks a suggestion.
  */
 
 const schema = z.object({
@@ -55,27 +54,19 @@ export interface PrepDraft {
   floor: string;
 }
 
-/** One gap-board slot as the draft sees it. */
-export interface PrepGap {
-  label: string;
-  hint: string;
-  state: "empty" | "thin" | "solid";
-}
-
 export interface PrepDraftInput {
-  company: Company;
-  thread: Thread | null;
-  attendees: Person[];
-  /** Active claims for this company, already narrowed to the linked thread. */
-  claims: Claim[];
+  /** The folder this call files into — one folder, one customer. */
+  folder: string | null;
   /** Display name of the stage this meeting opens on. */
   stageName: string;
   /** The stage's one-line goal, when its bundle carries one. */
   stageGoal: string;
   /** What "done" looks like for the stage. */
   exitCriteria: string[];
-  /** Every slot on the stage's board with its current state. */
-  gaps: PrepGap[];
+  /** Every slot on the stage's board, in question order. */
+  slots: SlotDef[];
+  /** Past calls with this customer, newest first. */
+  meetings: { title: string; createdAt: number }[];
   /** Whatever the user already typed as background — steers the draft. */
   context: string;
 }
@@ -91,27 +82,13 @@ const SYSTEM =
   "agenda: what I DO, in order — ask this, propose that, confirm the other. It is NOT a list of " +
   "information to collect; the gap board already tracks that, and duplicating it there has " +
   "burned us before. Skip anything already solid on the board.\n\n" +
-  "objections: only pushbacks the intel actually supports — a stated budget worry, a named " +
+  "objections: only pushbacks the background actually supports — a stated budget worry, a named " +
   "competitor, a stalled approval. Each line is `what they say → how I answer`.\n\n" +
-  "batna / floor: infer from the leverage and risk claims. If the intel gives no honest basis, " +
-  "return an empty string. A fabricated walk-away number is worse than none.\n\n" +
-  "Rules: ground everything in the provided claims — no invented facts, figures, or names; mark " +
-  "anything you inferred rather than read with （推測）; treat `redline` claims as things I must " +
-  "NOT reveal, so never propose an action that leaks one; stale claims (old lastSupported dates) " +
-  "are weak evidence, so prefer verifying them over building on them." +
+  "batna / floor: infer from the background. If it gives no honest basis, return an empty " +
+  "string. A fabricated walk-away number is worse than none.\n\n" +
+  "Rules: ground everything in what you were given — no invented facts, figures, or names; mark " +
+  "anything you inferred rather than read with （推測）." +
   JSON_MODE_INSTRUCTION;
-
-function claimLines(claims: Claim[], persons: Person[]): string {
-  const nameOf = (id: string) => persons.find((p) => p.id === id)?.name ?? id.slice(0, 6);
-  return claims
-    .map((c) => {
-      const subj = c.subjects.length ? ` @${c.subjects.map(nameOf).join(",")}` : "";
-      const side = c.side ? ` side=${c.side}` : "";
-      const fresh = new Date(c.lastSupportedAt).toISOString().slice(0, 10);
-      return `- [${c.category}${side}] (${c.confidence}, lastSupported ${fresh})${subj} ${c.text}`;
-    })
-    .join("\n");
-}
 
 /** `- a\n- b` — the only list shape this prompt uses. */
 function bullets(lines: string[]): string {
@@ -119,53 +96,35 @@ function bullets(lines: string[]): string {
 }
 
 /**
- * Assemble the user prompt. Pure and exported so a test can assert the board
- * gaps and red lines actually reach the model — the two inputs that make this
- * draft worth more than a generic checklist.
+ * Assemble the user prompt. Pure and exported so a test can assert the stage's
+ * board actually reaches the model — the input that makes this draft worth more
+ * than a generic checklist.
  */
 export function buildPrepPrompt(settings: Settings, input: PrepDraftInput): string {
-  const { company, thread, attendees, claims, stageName, stageGoal, exitCriteria, gaps, context } =
-    input;
+  const { folder, stageName, stageGoal, exitCriteria, slots, meetings, context } = input;
   const parts: string[] = [profileContext(settings)];
 
-  const note = company.note ? ` — ${company.note}` : "";
-  parts.push(`Meeting with: ${company.name}${note}`);
-  if (thread) {
-    parts.push(`Thread (戰線): ${thread.name} · kind=${thread.kind} · status=${thread.status}`);
-  }
+  if (folder) parts.push(`Meeting with: ${folder}`);
   const goalSuffix = stageGoal ? ` — ${stageGoal}` : "";
   parts.push(`Stage: ${stageName}${goalSuffix}`);
   if (exitCriteria.length) parts.push(`Stage is finished when:\n${bullets(exitCriteria)}`);
 
-  if (attendees.length) {
-    const lines = attendees.map((p) => {
-      const bits = [p.title, p.committeeRole, p.stance?.value].filter(Boolean);
-      const detail = bits.length ? ` (${bits.join(", ")})` : "";
-      return `${p.name}${detail}`;
-    });
-    parts.push(`Attending from their side:\n${bullets(lines)}`);
+  // The board is the sharpest signal we have about what this meeting is FOR,
+  // so it goes in whole.
+  if (slots.length) {
+    const lines = slots.map((s) =>
+      s.hint && s.hint !== s.label ? `${s.label}：${s.hint}` : s.label
+    );
+    parts.push(`What this stage's board wants covered:\n${bullets(lines)}`);
   }
 
-  // The gap board is the sharpest signal we have about what this meeting is
-  // FOR, so it goes in whole — solid slots included, to stop the draft
-  // proposing work that is already done.
-  const open = gaps.filter((g) => g.state !== "solid");
-  const solid = gaps.filter((g) => g.state === "solid");
-  if (open.length) {
-    const lines = open.map((g) => {
-      const hint = g.hint && g.hint !== g.label ? `：${g.hint}` : "";
-      return `[${g.state}] ${g.label}${hint}`;
-    });
-    parts.push(`Board gaps to close (empty = nothing known, thin = weak or stale):\n${bullets(lines)}`);
-  }
-  if (solid.length) {
-    const lines = solid.map((g) => g.label);
-    parts.push(`Already solid — do NOT spend meeting time here:\n${bullets(lines)}`);
+  if (meetings.length) {
+    const lines = meetings
+      .slice(0, 5)
+      .map((m) => `${new Date(m.createdAt).toISOString().slice(0, 10)} ${m.title}`);
+    parts.push(`Past calls with them (newest first):\n${bullets(lines)}`);
   }
 
-  parts.push(
-    claims.length ? `Intel claims:\n${claimLines(claims, attendees)}` : "Intel claims: (none yet)"
-  );
   if (context.trim()) parts.push(`My own notes for this meeting:\n${context.trim()}`);
 
   return parts.filter(Boolean).join("\n\n");
@@ -192,9 +151,9 @@ export async function draftPrep(opts: {
 }): Promise<PrepDraft> {
   const { settings, input } = opts;
   log.info("prep: draft start", {
-    company: input.company.name,
-    claims: input.claims.length,
-    gaps: input.gaps.filter((g) => g.state !== "solid").length,
+    folder: input.folder,
+    slots: input.slots.length,
+    meetings: input.meetings.length,
   });
 
   const { object, usage } = await generateObjectResilient({

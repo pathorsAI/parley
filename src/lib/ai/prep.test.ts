@@ -35,19 +35,12 @@ const settings = {
 } as unknown as Settings;
 
 const facts: PrepFacts = {
-  company: { name: "和運租車", note: "" },
-  thread: null,
+  folder: "和運租車",
+  scenarioName: "銷售",
   stageLabel: "議價",
-  attendees: [],
+  exitCriteria: [],
+  board: [],
   meetings: [],
-  redlines: [],
-  openQuestions: [],
-  gaps: [],
-  leverageOurs: [],
-  leverageTheirs: [],
-  risks: [],
-  competitors: [],
-  nextMoves: [],
   prep: { target: "", batna: "", floor: "", context: "", agenda: [] },
 };
 
@@ -99,7 +92,7 @@ describe("draftPlan", () => {
     expect(plan.edgeCases).toEqual([{ trigger: "說要再研究", move: "直接約下次" }]);
   });
 
-  it("feeds the conversation to the model alongside the account facts", async () => {
+  it("feeds the conversation to the model alongside the call facts", async () => {
     resolveWith({ agenda: [], idealPath: [], edgeCases: [], target: "", batna: "", floor: "" });
     const { draftPlan } = await import("./prep");
     await draftPlan({

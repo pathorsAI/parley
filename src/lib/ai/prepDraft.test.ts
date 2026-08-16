@@ -14,7 +14,6 @@ vi.mock("./generate", () => ({
 
 import { buildPrepPrompt, draftPrep, type PrepDraftInput } from "./prepDraft";
 import type { Settings } from "../types";
-import type { Claim, Company } from "../accounts/types";
 
 const settings = {
   language: "zh-TW",
@@ -24,77 +23,48 @@ const settings = {
   userBackground: "",
 } as unknown as Settings;
 
-const company: Company = {
-  id: "co",
-  name: "和運租車",
-  aliases: [],
-  note: "",
-  createdAt: 0,
-  archived: false,
-};
-
-function claim(over: Partial<Claim>): Claim {
-  return {
-    id: "c1",
-    companyId: "co",
-    subjects: [],
-    category: "risk",
-    text: "",
-    provenance: [],
-    confidence: "confirmed",
-    status: "active",
-    createdAt: 0,
-    lastSupportedAt: 0,
-    ...over,
-  };
-}
-
 function input(over: Partial<PrepDraftInput> = {}): PrepDraftInput {
   return {
-    company,
-    thread: null,
-    attendees: [],
-    claims: [],
+    folder: "和運租車",
     stageName: "議價",
     stageGoal: "",
     exitCriteria: [],
-    gaps: [],
+    slots: [],
+    meetings: [],
     context: "",
     ...over,
   };
 }
 
 describe("buildPrepPrompt", () => {
-  it("sends open board slots with their state and fences off the solid ones", () => {
+  it("sends the stage's board slots with their hints", () => {
     const prompt = buildPrepPrompt(
       settings,
       input({
-        gaps: [
-          { label: "預算", hint: "誰出錢、多少", state: "empty" },
-          { label: "決策鏈", hint: "誰拍板", state: "thin" },
-          { label: "痛點", hint: "卡在哪", state: "solid" },
+        slots: [
+          { id: "a", label: "預算", hint: "誰出錢、多少" },
+          { id: "b", label: "決策鏈", hint: "誰拍板" },
         ],
       })
     );
-    expect(prompt).toContain("[empty] 預算：誰出錢、多少");
-    expect(prompt).toContain("[thin] 決策鏈：誰拍板");
-    // Solid slots appear ONLY under the do-not-spend-time-here heading, so the
-    // draft can't propose chasing something already confirmed.
-    expect(prompt).toContain("Already solid");
-    expect(prompt).not.toContain("[solid] 痛點");
+    expect(prompt).toContain("What this stage's board wants covered");
+    expect(prompt).toContain("預算：誰出錢、多少");
+    expect(prompt).toContain("決策鏈：誰拍板");
   });
 
-  it("passes red lines through as claims so the draft can avoid leaking them", () => {
+  it("names the customer and the stage's exit criteria", () => {
+    const prompt = buildPrepPrompt(settings, input({ exitCriteria: ["報價已送出"] }));
+    expect(prompt).toContain("Meeting with: 和運租車");
+    expect(prompt).toContain("Stage is finished when");
+    expect(prompt).toContain("報價已送出");
+  });
+
+  it("lists past calls newest first, capped", () => {
     const prompt = buildPrepPrompt(
       settings,
-      input({ claims: [claim({ category: "redline", text: "不可透露現有報價結構" })] })
+      input({ meetings: [{ title: "報價討論", createdAt: 86_400_000 }] })
     );
-    expect(prompt).toContain("[redline]");
-    expect(prompt).toContain("不可透露現有報價結構");
-  });
-
-  it("says so plainly when there is no intel yet", () => {
-    expect(buildPrepPrompt(settings, input())).toContain("Intel claims: (none yet)");
+    expect(prompt).toContain("1970-01-02 報價討論");
   });
 
   it("omits the notes block when the user typed no background", () => {

@@ -1,13 +1,12 @@
 import { translate, type TranslationKey } from "../../i18n/messages";
-import { resolveScenarioStageId } from "../accounts/currentStage";
+import { resolveScenarioStageId } from "../scenarios/currentStage";
 import {
   buildScenarioSet,
   readStageBundleFile,
   type Scenario,
   type ScenarioSet,
-} from "../accounts/bundles";
-import type { SlotDef, StageBundle } from "../accounts/bundleFile";
-import type { ExtractedNewClaim } from "../accounts/store";
+} from "../scenarios/bundles";
+import type { SlotDef, StageBundle } from "../scenarios/bundleFile";
 import type { IntelSlotFill, IntelState, MeetingType, Settings } from "../types";
 
 /**
@@ -17,6 +16,18 @@ import type { IntelSlotFill, IntelState, MeetingType, Settings } from "../types"
  * state deterministically. Sales is not special here — it's just the builtin
  * scenario that happens to have five stages.
  */
+
+/** How covered a slot is: nothing said, something said, enough said. */
+export type SlotState = "empty" | "thin" | "solid";
+
+/** Fills needed before a slot reads as covered, unless the slot overrides it. */
+export const SLOT_SOLID_AT = 2;
+
+/** A slot's state from THIS call's fills — the board's only evidence. */
+export function slotStateOf(slot: SlotDef, fillCount: number): SlotState {
+  if (fillCount <= 0) return "empty";
+  return fillCount >= (slot.solidAt ?? SLOT_SOLID_AT) ? "solid" : "thin";
+}
 export interface MeetingBoard {
   scenarioId: string;
   stageId: string;
@@ -31,24 +42,18 @@ export interface MeetingBoard {
   nextSlotId: string | null;
 }
 
-function sharedSlot(
-  t: (k: TranslationKey) => string,
-  id: string,
-  key: string,
-  query: SlotDef["query"]
-): SlotDef {
+function sharedSlot(t: (k: TranslationKey) => string, id: string, key: string): SlotDef {
   return {
     id,
     label: t(`board.slot.${key}.label` as TranslationKey),
     hint: t(`board.slot.${key}.hint` as TranslationKey),
-    query,
   };
 }
 
 /**
  * Cross-stage shared slots: every board keeps a next-step slot (the gate's
  * target); sales boards also track competitor mentions. A bundle that already
- * owns a `.next` slot keeps its own. Exported for tests.
+ * owns a `.next` / `.competitors` slot keeps its own. Exported for tests.
  */
 export function withSharedSlots(
   slots: SlotDef[],
@@ -57,12 +62,10 @@ export function withSharedSlots(
 ): SlotDef[] {
   const out = [...slots];
   if (!slots.some((s) => s.id.endsWith(".next"))) {
-    out.push(sharedSlot(t, "sales.next", "sales.next", { categories: ["nextmove"] }));
+    out.push(sharedSlot(t, "sales.next", "sales.next"));
   }
-  if (opts.competitors && !slots.some((s) => s.query.categories.includes("competitor"))) {
-    out.push(
-      sharedSlot(t, "sales.competitors", "sales.competitors", { categories: ["competitor"] })
-    );
+  if (opts.competitors && !slots.some((s) => s.id.endsWith(".competitors"))) {
+    out.push(sharedSlot(t, "sales.competitors", "sales.competitors"));
   }
   return out;
 }
@@ -179,35 +182,4 @@ export function applyNextStepGate(opts: {
   if (elapsedMs < gateAtMs) return focus;
   if (fills.some((f) => f.slotId === board.nextSlotId)) return focus;
   return { kind: "gap", slotId: board.nextSlotId, question, reason };
-}
-
-/**
- * Turn the meeting's accumulated slot fills into claim candidates for the
- * post-meeting review (B6): the live extraction is the only transcript→slot
- * pass; review starts from its output instead of re-tagging. Claim category
- * rides the slot's query; text dedupes case-insensitively. Pure; tested.
- */
-export function fillsToClaimCandidates(
-  fills: IntelSlotFill[],
-  slots: SlotDef[]
-): ExtractedNewClaim[] {
-  const byId = new Map(slots.map((s) => [s.id, s]));
-  const seen = new Set<string>();
-  const out: ExtractedNewClaim[] = [];
-  for (const f of fills) {
-    const slot = byId.get(f.slotId);
-    const key = f.text.trim().toLowerCase();
-    if (!slot || !key || seen.has(key)) continue;
-    seen.add(key);
-    out.push({
-      category: slot.query.categories[0] ?? "stance",
-      text: f.text.trim(),
-      subjects: [],
-      side: slot.query.side ?? "",
-      layer: slot.query.layer ?? "",
-      quote: f.quote,
-      slotIds: [f.slotId],
-    });
-  }
-  return out;
 }

@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { Building2, ChevronRight, Folder, Loader2, Plus, RefreshCw, Search, UsersRound, X } from "lucide-react";
+import { ChevronRight, Folder, Loader2, Plus, RefreshCw, Search, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "../../i18n";
 import { useStore } from "../../lib/store";
-import { useAccounts } from "../../lib/accounts/store";
 import {
-  assignEntryCompany,
   deleteHistoryEntry,
   loadHistoryEntry,
   loadOrgEntry,
   listenForHistoryUpdated,
   renameHistoryEntry,
+  setEntryFolder,
+  emitHistoryUpdated,
 } from "../../lib/history/history";
 import { setOrgRecordingFolder } from "../../lib/cloud/folders";
 import {
@@ -55,12 +55,12 @@ function orgCard(c: CloudRecordingSummary): HistoryCardItem {
 
 /** "+ Import": the shared import flow (R7) — audio → ingest wizard, .txt →
  *  transcript import. Lazy-loaded so the ingest module stays out of the
- *  initial bundle. Importing while a customer's node is open pre-links that
- *  customer: the answer is already on screen, so asking again is noise. */
-async function importRecording(companyId: string | null): Promise<void> {
+ *  initial bundle. Importing while a folder is open pre-picks that folder: the
+ *  answer is already on screen, so asking again is noise. */
+async function importRecording(folderId: string | null): Promise<void> {
   try {
     const { startImportFlow } = await import("../../lib/replay/ingest");
-    await startImportFlow({ companyId });
+    await startImportFlow({ folderId });
   } catch (e) {
     log.error("library: import failed", { error: String(e) });
     toast.error(e instanceof Error ? e.message : String(e));
@@ -69,15 +69,14 @@ async function importRecording(companyId: string | null): Promise<void> {
 
 /**
  * The recordings library — what used to be the standalone History window's
- * right-hand pane (issue #195). The tree that selects into it now lives in the
- * app shell next to the companies, so "這家公司的錄音" and "這個資料夾" are one
- * node instead of two trees in two windows.
+ * right-hand pane (issue #195). The tree that selects into it lives in the app
+ * shell, so "這家公司的錄音" and "這個資料夾" are one node instead of two trees
+ * in two windows.
  */
 export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const { t, language } = useI18n();
   const locale = language === "en" ? "en-US" : "zh-TW";
   const selection = useStore((s) => s.librarySelection);
-  const companies = useAccounts((s) => s.companies);
 
   const [entries, setEntries] = useState<HistoryCardItem[] | null>(null);
   const [query, setQuery] = useState("");
@@ -157,7 +156,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const scopeFolders =
     selection.kind === "org" ? tree.orgFolders[selection.id] ?? [] : tree.personalFolders;
   const liveFolderIds = new Set(scopeFolders.map((f) => f.id));
-  const index = buildOwnershipIndex(companies, tree.personalFolders);
+  const index = buildOwnershipIndex(tree.personalFolders);
   const searchQuery = query.trim().toLowerCase();
   const visible = (entries ?? []).filter((e) => {
     // A search spans the whole scope regardless of the selected node.
@@ -168,8 +167,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       );
     }
     // Same rule the tree counts with (lib/library/scope) — the number on a node
-    // and what the node opens can't drift apart. Orgs have no companies, so
-    // they keep the plain folder rule.
+    // and what the node opens can't drift apart.
     if (selection.kind === "org") return inFolderNode(e, selection.folderId, liveFolderIds);
     return !!node && inNode(e, node, index);
   });
@@ -237,31 +235,32 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     [t]
   );
 
-  /** Hand a card to a customer (or take it back to 還沒歸戶). A cloud-only card
-   *  has no local meta to retag, and a "stale" one would re-push its OLDER local
-   *  meta over a newer cloud re-analysis — in both cases the fix is to open it
-   *  first (which pulls the latest). */
-  const assign = useCallback(
-    async (item: HistoryCardItem, companyId: string | null) => {
-      if ((item.companyId ?? null) === companyId) return;
+  /** File a card into another folder (or take it back to 還沒歸檔). A cloud-only
+   *  card has no local meta to retag, and a "stale" one would re-push its OLDER
+   *  local meta over a newer cloud re-analysis — in both cases the fix is to
+   *  open it first (which pulls the latest). */
+  const move = useCallback(
+    async (item: HistoryCardItem, folderId: string | null) => {
+      if ((item.folderId ?? null) === folderId) return;
       try {
         if (item.sync === "cloud" || item.sync === "stale") {
           toast.message(t("history.move.needsDownload"));
           return;
         }
-        await assignEntryCompany(item.id, companyId);
+        await setEntryFolder(item.id, folderId);
+        await emitHistoryUpdated(item.id);
         // Drop it from the grid immediately: it now belongs to another node.
         setEntries((prev) => prev?.filter((e) => e.id !== item.id) ?? null);
         tree.reloadSummaries();
       } catch (e) {
-        log.error("library: assign failed", { id: item.id, error: String(e) });
+        log.error("library: move failed", { id: item.id, error: String(e) });
         toast.error(t("history.move.failed", { error: errText(e) }));
       }
     },
     [t, tree]
   );
 
-  /** The org grid still files by folder — an org has no companies. */
+  /** The org grid files into org folders, which are a different registry. */
   const moveInOrg = useCallback(
     async (item: HistoryCardItem, target: string | null) => {
       if (selection.kind !== "org" || (item.folderId ?? null) === target) return;
@@ -321,8 +320,6 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   }
 
   // ── Header identity: name the node the way the tree names it ──────────────
-  const company =
-    node?.kind === "company" ? companies.find((c) => c.id === node.companyId) ?? null : null;
   let folderName: string | null = null;
   if (isOrg && selection.kind === "org" && selection.folderId) {
     folderName = scopeFolders.find((f) => f.id === selection.folderId)?.name ?? null;
@@ -333,14 +330,12 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const searching = searchQuery.length > 0;
   let emptyTitle: string;
   if (searching) emptyTitle = t("history.searchEmpty");
-  else if (company) emptyTitle = t("history.folder.empty");
   else if (folderName) emptyTitle = t("history.folder.empty");
   else if (isOrg) emptyTitle = t("history.org.empty");
   else emptyTitle = t("library.unassigned.empty");
 
   let emptyHint: string;
   if (searching) emptyHint = t("history.searchEmptyHint");
-  else if (company) emptyHint = t("library.company.emptyHint", { name: company.name });
   else if (folderName) emptyHint = t("history.folder.emptyHint");
   else if (isOrg) emptyHint = t("history.org.emptyHint");
   else emptyHint = t("library.unassigned.emptyHint");
@@ -375,7 +370,6 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
             downloading={downloadingId === entry.id}
             sharing={sharingId === entry.id}
             folders={scopeFolders}
-            companies={companies.filter((c) => !c.archived)}
             onOpen={() => {
               openItem(entry).catch((error) =>
                 log.error("library: open failed", { id: entry.id, error: String(error) })
@@ -388,11 +382,9 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
               rename(entry.id, title).catch(() => {});
             }}
             onShare={(org) => setMovePrompt({ item: entry, org })}
-            onAssign={(companyId) => {
-              assign(entry, companyId).catch(() => {});
-            }}
-            onMoveInOrg={(target) => {
-              moveInOrg(entry, target).catch(() => {});
+            onMove={(folderId) => {
+              const run = isOrg ? moveInOrg(entry, folderId) : move(entry, folderId);
+              run.catch(() => {});
             }}
           />
         ))}
@@ -406,7 +398,6 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         <ScopeTitle
           isOrg={isOrg}
           orgName={selection.kind === "org" ? selection.name : null}
-          companyName={company?.name ?? null}
           folderName={folderName}
           rootLabel={t("library.unassigned")}
         />
@@ -438,7 +429,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         </div>
         <button
           type="button"
-          onClick={() => void importRecording(company?.id ?? null)}
+          onClick={() => void importRecording(node?.kind === "folder" ? node.folderId : null)}
           className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <Plus className="size-3.5" />
@@ -454,19 +445,6 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         </button>
       </header>
 
-      {/* A company's recordings ARE its folder — say so once, here, so the two
-          never read as separate filing systems again. */}
-      {company && (
-        <button
-          type="button"
-          onClick={() => useStore.getState().openAccounts(company.id)}
-          className="flex shrink-0 items-center gap-1.5 border-b bg-muted/30 px-4 py-1.5 text-left text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <Building2 className="size-3 shrink-0" />
-          {t("library.company.note", { name: company.name })}
-          <ChevronRight className="size-3 shrink-0" />
-        </button>
-      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">{body}</div>
 
@@ -486,13 +464,11 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
 function ScopeTitle({
   isOrg,
   orgName,
-  companyName,
   folderName,
   rootLabel,
 }: Readonly<{
   isOrg: boolean;
   orgName: string | null;
-  companyName: string | null;
   folderName: string | null;
   rootLabel: string;
 }>) {
@@ -511,14 +487,6 @@ function ScopeTitle({
           </>
         )}
       </span>
-    );
-  }
-  if (companyName) {
-    return (
-      <h1 className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
-        <Building2 className="size-4 text-muted-foreground" />
-        {companyName}
-      </h1>
     );
   }
   return (

@@ -13,7 +13,7 @@ import { ReportContent } from "../sidebar/ReportContent";
 import { DeliveryPanel } from "../delivery/DeliveryPanel";
 import { IntelSections } from "../live/IntelligenceBoard";
 import { slotCatalog } from "../../lib/intel/boards";
-import { useScenarioSet } from "../../lib/accounts/useStageSet";
+import { useScenarioSet } from "../../lib/scenarios/useStageSet";
 import {
   buildScenarioSet,
   createBoardlessKind,
@@ -21,7 +21,7 @@ import {
   readStageBundleFile,
   type Scenario,
   type ScenarioSet,
-} from "../../lib/accounts/bundles";
+} from "../../lib/scenarios/bundles";
 import { applyScenario } from "../../lib/meeting/scenario";
 import { DEFAULT_ICON_NAME, resolveIcon } from "../../lib/icons";
 import { IconPicker } from "../IconPicker";
@@ -29,7 +29,7 @@ import {
   BUILTIN_SCENARIO_IDS,
   type ParsedBundleFile,
   type SlotDef,
-} from "../../lib/accounts/bundleFile";
+} from "../../lib/scenarios/bundleFile";
 import { ActionItemsPanel } from "../replay/ActionItemsPanel";
 import { AskPanel } from "../sidebar/AskPanel";
 import { StudyLinkBar } from "./StudyLinkBar";

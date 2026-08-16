@@ -1,8 +1,8 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Building2, Check, ChevronDown, Circle, ClipboardList, Eraser, FileAudio, History, Loader2, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
+import { Check, ChevronDown, Circle, ClipboardList, Eraser, FileAudio, History, Loader2, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
 import { useStore, meetingElapsedMs, type AppMode } from "../lib/store";
 import type { Settings as AppSettings } from "../lib/types";
 import { log } from "../lib/log";
@@ -24,12 +24,8 @@ import {
 import { LevelMeter } from "./LevelMeter";
 import { McpStatusChip } from "./McpStatusChip";
 import { ReplayOwnerChip } from "./ReplayOwnerChip";
-import { PostMeetingReviewButton } from "./accounts/PostMeetingReviewButton";
 import { StudyGenerationChip } from "./study/StudyGenerationChip";
 
-const AccountsSheet = lazy(() =>
-  import("./accounts/AccountsSheet").then((m) => ({ default: m.AccountsSheet }))
-);
 
 type TFn = ReturnType<typeof useI18n>["t"];
 type WindowAction = "close" | "minimize" | "fullscreen";
@@ -430,7 +426,7 @@ function PrimaryAction({
       </Button>
     );
   }
-  // "accounts" and "library" have no exit button: the tree beside them is
+  // "library" has no exit button: the tree beside it is
   // always on screen, so leaving is picking somewhere else (#195).
   if (mode === "preflight") {
     // Starting happens in the pre-flight footer, next to what it commits to;
@@ -548,18 +544,16 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const [elapsed, setElapsed] = useState("00:00");
   const appMode = useStore((s) => s.appMode);
   const exitReplay = useStore((s) => s.exitReplay);
-  const openAccounts = useStore((s) => s.openAccounts);
   const openLibrary = useStore((s) => s.openLibrary);
   const showReplay = useStore((s) => s.showReplay);
   const replayName = useStore((s) => s.replay?.name ?? null);
   const enterPreflight = useStore((s) => s.enterPreflight);
   const exitPreflight = useStore((s) => s.exitPreflight);
-  const [accountsSheet, setAccountsSheet] = useState(false);
   const resetPrep = useStore((s) => s.resetPrep);
   // R3: a non-empty prep draft unlocks the explicit "clear prep" menu item.
   const hasPrepDraft = useStore(
     (s) =>
-      !!s.meetingCompanyId ||
+      !!s.meetingFolderId ||
       !!s.meetingContext.trim() ||
       !!s.meetingTarget.trim() ||
       s.todos.length > 0
@@ -577,7 +571,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   // Recording OR paused: the meeting owns the session (recorder controls show).
   const meetingActive = recording || paused;
   const studyMode = appMode === "study";
-  const accountsMode = appMode === "accounts";
   const preflightMode = appMode === "preflight";
 
   // Vitals timer (top-left): elapsed RECORDED time (wall time minus pauses —
@@ -714,9 +707,8 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
       {/* Top-left: information, not brand (macOS's menu bar already says
           Parley). Pre-flight → which screen you're on; recording → the session
           vitals (rec + elapsed + mic level + translation). Where the meeting
-          saves is decided in pre-flight now, next to the company that decides
-          it — a titlebar folder chip here was the second, silently-losing
-          source of truth for that. */}
+          saves is decided in pre-flight now — a second folder chip here was a
+          silently-losing source of truth for that. */}
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
         {/* Tense badge (R6): the ONE fixed "which tense am I in" signal —
             green while a live meeting runs, purple while a recording is open.
@@ -792,7 +784,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
       </div>
 
       <div className="flex items-center gap-2">
-        {studyMode && <PostMeetingReviewButton />}
         <PrimaryAction
           mode={appMode}
           meetingActive={meetingActive}
@@ -821,29 +812,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           />
         )}
 
-        {/* Customer intel, reachable in EVERY state (R5: no more scenario
-            gating — an entry that vanishes because of a picker three screens
-            away is a bug, not a feature; the accounts screen carries its own
-            empty-state guidance). Mid-call it opens as a SHEET over the live
-            screen — the full workspace is a mode switch and refuses to run
-            while the call owns the screen. */}
-        {!accountsMode && !preflightMode && (
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-8 w-8"
-            aria-label={t("accounts.title")}
-            title={t("accounts.title")}
-            onClick={() => (meetingActive ? setAccountsSheet(true) : openAccounts())}
-          >
-            <Building2 className="size-4" />
-          </Button>
-        )}
-        {accountsSheet && (
-          <Suspense fallback={null}>
-            <AccountsSheet open onOpenChange={setAccountsSheet} />
-          </Suspense>
-        )}
         <McpStatusChip />
 
         {/* History is a ROUTE in this window (#195). While a meeting runs the
