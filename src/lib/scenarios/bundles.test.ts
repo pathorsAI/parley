@@ -31,7 +31,7 @@ import {
   type StageBundle,
 } from "./bundles";
 import { EMPTY_BUNDLE_FILE, type CustomScenarioDef } from "./bundleFile";
-import { SALES_STAGES, type SalesStage } from "./types";
+import { SALES_STAGES, type SalesStage } from "./stages";
 
 /** Real translator (zh-TW) so builtins resolve against the shipped copy — a
  *  missing i18n key falls back to the raw key, which the tests catch. */
@@ -42,7 +42,7 @@ function fakeBundle(stage: SalesStage, title: string): StageBundle {
   return {
     stage,
     boardTitle: title,
-    slots: [{ id: `${stage}.x`, label: "X", hint: "h", query: { categories: [] } }],
+    slots: [{ id: `${stage}.x`, label: "X", hint: "h" }],
     exitCriteria: ["done"],
     coachRules: [],
   };
@@ -65,12 +65,12 @@ describe("stage bundles — builtins", () => {
   it("resolves all i18n copy (no raw keys leak into titles / labels / hints)", () => {
     for (const stage of SALES_STAGES) {
       const b = builtins[stage];
-      expect(b.boardTitle).not.toMatch(/^accounts\./);
+      expect(b.boardTitle).not.toMatch(/^(bundle|stage|stageGuide)\./);
       for (const slot of b.slots) {
-        expect(slot.label).not.toMatch(/^accounts\./);
-        expect(slot.hint).not.toMatch(/^accounts\./);
+        expect(slot.label).not.toMatch(/^(bundle|stage|stageGuide)\./);
+        expect(slot.hint).not.toMatch(/^(bundle|stage|stageGuide)\./);
       }
-      for (const ex of b.exitCriteria) expect(ex).not.toMatch(/^accounts\./);
+      for (const ex of b.exitCriteria) expect(ex).not.toMatch(/^(bundle|stage|stageGuide)\./);
     }
   });
 
@@ -110,7 +110,7 @@ describe("stage bundles — builtins", () => {
 
   it("coarse-converts the remaining stages: one slot per collect line, label = hint = line", () => {
     for (const stage of ["demo", "negotiation", "closing"] as const) {
-      const lines = t(`accounts.stageGuide.${stage}.collect`)
+      const lines = t(`stageGuide.${stage}.collect`)
         .split("\n")
         .map((l) => l.trim())
         .filter(Boolean);

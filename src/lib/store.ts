@@ -36,9 +36,7 @@ import { buildPresetTodoTemplates } from "./todoTemplates";
 import { translate, type TranslationKey } from "../i18n/messages";
 import { DEFAULT_MODELS } from "./ai/providers";
 import { countFillerSounds } from "./analysis/fillerWords";
-import { useAccounts } from "./accounts/store";
-import { buildRedlineEvals, isRedlineEvalId } from "./accounts/redline";
-import type { SalesStage } from "./accounts/types";
+import type { SalesStage } from "./scenarios/stages";
 import { log } from "./log";
 
 /** A translate function bound to a language, for resolving built-in templates. */
@@ -161,7 +159,7 @@ const DEFAULT_SETTINGS: Settings = {
   // header switch can stop it when a long meeting makes the per-pass cost of
   // re-reading the full transcript add up. See Settings.autoIntel.
   autoIntel: true,
-  // Signed-in accounts sync by default (prior behavior); the toggle lets a user
+  // Signed-in users sync by default (prior behavior); the toggle lets a user
   // keep this device local-only. Finished meetings save to the personal root.
   syncEnabled: true,
   defaultSaveLocation: { scope: "personal", folderId: null },
@@ -170,23 +168,14 @@ const DEFAULT_SETTINGS: Settings = {
 /**
  * Which top-level screen is active. Since #195 these are ROUTES under a
  * persistent shell, not modes you enter and exit: the left tree is always on
- * screen (except while a meeting owns it), so "accounts" and "library" are two
- * views of the same tree rather than two windows.
+ * screen (except while a meeting owns it).
  *
- * "library" (the recordings grid) used to be its own OS window. Two windows
- * meant two sidebars — a company tree here, a folder tree there — which is why
- * the company a meeting was linked to and the folder it saved into read as
- * unrelated things even though the data layer pairs them 1:1. Settings is NOT
+ * "library" (the recordings grid) used to be its own OS window, which meant two
+ * sidebars and two answers to "where does this recording live". Settings is NOT
  * a route: it is its own OS window (lib/nav.ts → openSettingsWindow), so
  * tweaking a knob never navigates the shell away from what it was showing.
  */
-export type AppMode =
-  | "home"
-  | "preflight"
-  | "live"
-  | "study"
-  | "accounts"
-  | "library";
+export type AppMode = "home" | "preflight" | "live" | "study" | "library";
 
 /** Left-nav panels of the Settings window (see settings/SettingsApp.tsx). */
 export type SettingsCategory =
@@ -202,38 +191,24 @@ export type SettingsCategory =
   | "mcp"
   | "usage";
 
-/**
- * Which node of the one tree the library route is showing.
- *
- * `personal` carries a {@link LibraryNode}: the customer IS the node. Folders
- * used to be the personal tree's unit, which meant the library and the company
- * page could disagree about whose recording something was — see the module
- * comment in lib/library/scope. Orgs still select by folder; they have no
- * companies.
- */
+/** Which node of the one tree the library route is showing. */
 export type LibrarySelection =
   | { kind: "personal"; node: LibraryNode }
   | { kind: "org"; id: string; name: string; folderId: string | null }
   | { kind: "voice" };
 
-/** Which part of a company's war room the sidebar asked for. */
-export type AccountsFocus = "intel" | "people";
-
 /**
  * Everything the user sets up FOR one meeting, reset as one unit when they
  * start preparing the next one. Keeping the list in one place is why "the
- * previous call's company link silently followed you into the next meeting"
- * can't come back: pre-flight resets this slice wholesale, so a new meeting
- * always begins blank.
+ * previous call's setup silently followed you into the next meeting" can't come
+ * back: pre-flight resets this slice wholesale, so a new meeting always begins
+ * blank.
  *
- * Deliberately NOT reset on stop: the save pipeline reads `meetingCompanyId`
- * off the store asynchronously (see history.saveLiveToHistory), and the
- * post-meeting review files its intel under the same link.
+ * Deliberately NOT reset on stop: the save pipeline reads `meetingFolderId` off
+ * the store asynchronously (see history.saveLiveToHistory).
  */
 const CLEARED_PREP_SLICE = {
-  meetingCompanyId: null,
-  meetingThreadId: null,
-  meetingAttendeeIds: [] as string[],
+  meetingFolderId: null,
   meetingStage: null,
   meetingOrgShare: null,
   meetingContext: "",
@@ -385,10 +360,10 @@ interface ParleyState {
   // ── Transcript import (issue #130 text-ingest: .txt → history entry) ────────
   /** Absolute paths queued in the transcript-import dialog; null = closed. */
   transcriptImportPaths: string[] | null;
-  /** Company pre-link carried by a company-page import door (R7): the dialog
-   *  stamps it (plus the company's paired folder) onto every saved entry. */
-  transcriptImportCompanyId: string | null;
-  openTranscriptImport: (paths: string[], companyId?: string | null) => void;
+  /** Folder pre-pick carried by an import door opened from a folder (R7): the
+   *  dialog stamps it onto every saved entry. */
+  transcriptImportFolderId: string | null;
+  openTranscriptImport: (paths: string[], folderId?: string | null) => void;
   closeTranscriptImport: () => void;
 
   // ── Unified analysis (shared by LIVE + REPLAY) ──────────────────────────────
@@ -560,52 +535,32 @@ interface ParleyState {
   meetingFloor: string;
   setNegotiationField: (field: "meetingBatna" | "meetingTarget" | "meetingFloor", value: string) => void;
 
-  // ── Accounts (mini-CRM) link for the current/upcoming meeting ───────────────
-  /** Company this meeting is with (null = unlinked). Feeds the auto-composed
-   *  brief, red-line guardrails, and the post-meeting review (design §5). */
-  meetingCompanyId: string | null;
-  meetingThreadId: string | null;
-  meetingAttendeeIds: string[];
-  /** THIS call's pipeline stage (S19): defaults to the linked thread's stage,
-   *  user-changeable per call, never writes back to the thread. */
+  // ── Filing + stage for the current/upcoming meeting ─────────────────────────
+  /** Folder this meeting will be saved into (null = the personal root, or the
+   *  settings default when one is configured). */
+  meetingFolderId: string | null;
+  setMeetingFolder: (folderId: string | null) => void;
+  /** THIS call's stage within its scenario — user-changeable per call. */
   meetingStage: SalesStage | null;
   setMeetingStage: (stage: SalesStage | null) => void;
   /**
    * This meeting's org-share choice. null = follow the settings default;
-   * "off" = suppress a default share for this one meeting. Filing is NOT here
-   * (#211): the customer link decides that — see resolveMeetingSave. Per
+   * "off" = suppress a default share for this one meeting. Independent of the
+   * folder above — a shared copy is a second destination, not a move. Per
    * meeting: cleared with the rest of the prep slice.
    */
   meetingOrgShare: MeetingShare;
   setMeetingOrgShare: (share: MeetingShare) => void;
-  setMeetingLink: (link: {
-    companyId: string | null;
-    threadId: string | null;
-    attendeeIds: string[];
-  }) => void;
   /** Open the pre-flight screen. NON-destructive (R3): the previous prep is a
    *  draft that survives — clearing it is {@link resetPrep}, an explicit act. */
   enterPreflight: () => void;
-  /** Throw the current prep draft away (link, context, agenda, negotiation
+  /** Throw the current prep draft away (folder, context, agenda, negotiation
    *  fields) and fall back to the default scenario. The ONLY prep-clearing path. */
   resetPrep: () => void;
   /** Leave pre-flight without starting (back to study if a recording is loaded). */
   exitPreflight: () => void;
   /** Show the Home overview (idle landing — blocked while recording). */
   openHome: () => void;
-  /** Show a company's war room (blocked while recording — the live call owns the
-   *  screen; use the accounts SHEET instead, which works mid-call). Omit
-   *  `companyId` to keep whichever company was last open. */
-  openAccounts: (companyId?: string | null, focus?: AccountsFocus) => void;
-  /** Leave the accounts screen, back to replay if a recording is loaded. */
-  exitAccounts: () => void;
-  /** Which company the accounts route is showing (null = none selected yet).
-   *  Lives here, not inside AccountsScreen, because the left tree drives it. */
-  accountsCompanyId: string | null;
-  /** Which facet of that company the tree selected. Persistent (not a one-shot
-   *  request) so the tree can keep the row it highlighted highlighted. */
-  accountsFocus: AccountsFocus;
-  setAccountsCompany: (id: string | null) => void;
   /** Show the recordings library at `selection` (blocked while recording). */
   openLibrary: (selection: LibrarySelection) => void;
   librarySelection: LibrarySelection;
@@ -671,8 +626,6 @@ export const useStore = create<ParleyState>()(
   persist(
     (set) => ({
       appMode: "home",
-      accountsCompanyId: null,
-      accountsFocus: "intel",
       librarySelection: { kind: "personal", node: { kind: "unassigned" } },
       replay: null,
       loadedHistoryId: null,
@@ -686,7 +639,7 @@ export const useStore = create<ParleyState>()(
       ingestWizardError: null,
       ingestAudioPath: null,
       transcriptImportPaths: null,
-      transcriptImportCompanyId: null,
+      transcriptImportFolderId: null,
       findings: [],
       analysisStatus: "idle",
       analysisError: null,
@@ -718,9 +671,7 @@ export const useStore = create<ParleyState>()(
       speakerNames: {},
       todos: [],
       meetingContext: "",
-      meetingCompanyId: null,
-      meetingThreadId: null,
-      meetingAttendeeIds: [],
+      meetingFolderId: null,
       meetingStage: null,
       meetingOrgShare: null,
       meetingBatna: "",
@@ -732,14 +683,7 @@ export const useStore = create<ParleyState>()(
   setMeetingContext: (text) => set({ meetingContext: text }),
   setMeetingStage: (stage) => set({ meetingStage: stage }),
   setMeetingOrgShare: (meetingOrgShare) => set({ meetingOrgShare }),
-  setMeetingLink: ({ companyId, threadId, attendeeIds }) =>
-    set({
-      meetingCompanyId: companyId,
-      meetingThreadId: threadId,
-      meetingAttendeeIds: attendeeIds,
-      // Re-linking re-derives this call's stage from the (new) thread (S19).
-      meetingStage: null,
-    }),
+  setMeetingFolder: (meetingFolderId) => set({ meetingFolderId }),
   enterPreflight: () =>
     set((s) => {
       if (isMeetingActive(s.meetingStatus)) return {};
@@ -757,22 +701,8 @@ export const useStore = create<ParleyState>()(
     }),
   exitPreflight: () =>
     set((s) => (s.appMode === "preflight" ? { appMode: s.replay ? "study" : "home" } : {})),
-  openAccounts: (companyId, focus = "intel") =>
-    set((s) => {
-      if (isMeetingActive(s.meetingStatus)) return {};
-      return {
-        appMode: "accounts",
-        accountsCompanyId: companyId === undefined ? s.accountsCompanyId : companyId,
-        accountsFocus: focus,
-      };
-    }),
-  exitAccounts: () =>
-    set((s) => ({
-      appMode: s.replay ? "study" : isMeetingActive(s.meetingStatus) ? "live" : "home",
-    })),
   openHome: () =>
     set((s) => (isMeetingActive(s.meetingStatus) ? {} : { appMode: "home" })),
-  setAccountsCompany: (accountsCompanyId) => set({ accountsCompanyId }),
   openLibrary: (librarySelection) =>
     set((s) =>
       isMeetingActive(s.meetingStatus) ? {} : { appMode: "library", librarySelection }
@@ -877,9 +807,7 @@ export const useStore = create<ParleyState>()(
       meetingType: entry.meetingType ?? entry.intel?.meetingType ?? state.settings.defaultMeetingType,
       // Restore the per-meeting context + negotiation setup.
       meetingContext: entry.meetingContext,
-      meetingCompanyId: entry.companyId ?? null,
-      meetingThreadId: entry.threadId ?? null,
-      meetingAttendeeIds: entry.attendeePersonIds ?? [],
+      meetingFolderId: entry.folderId ?? null,
       meetingStage: null,
       meetingBatna: entry.meetingBatna,
       meetingTarget: entry.meetingTarget,
@@ -927,10 +855,10 @@ export const useStore = create<ParleyState>()(
     set({ ingestWizardStep: step, ingestWizardError: error }),
   closeIngestWizard: () => set({ ingestWizardOpen: false, ingestAudioPath: null }),
 
-  openTranscriptImport: (paths, companyId = null) =>
-    set({ transcriptImportPaths: paths, transcriptImportCompanyId: companyId }),
+  openTranscriptImport: (paths, folderId = null) =>
+    set({ transcriptImportPaths: paths, transcriptImportFolderId: folderId }),
   closeTranscriptImport: () =>
-    set({ transcriptImportPaths: null, transcriptImportCompanyId: null }),
+    set({ transcriptImportPaths: null, transcriptImportFolderId: null }),
 
   // Replace the findings list, keeping the selection + cached solutions of any
   // finding that STILL EXISTS in the new list. During streaming, partials commit
@@ -1098,28 +1026,7 @@ export const useStore = create<ParleyState>()(
 
   startMeeting: () => {
     log.info("store: meeting started");
-    set((state) => {
-      // Red-line guardrails (design §7.3): a linked meeting turns the company's
-      // active red-line claims into per-meeting critical evals. Company-level
-      // claims always apply; thread-scoped ones only for the linked thread —
-      // except with NO thread linked, where every red line applies (safer to
-      // over-guard than to leak). Stripped again on stop.
-      let evaluations = state.evaluations.filter((e) => !isRedlineEvalId(e.id));
-      if (state.meetingCompanyId) {
-        const acc = useAccounts.getState();
-        const claims = acc.claims.filter(
-          (c) =>
-            c.companyId === state.meetingCompanyId &&
-            (!state.meetingThreadId || !c.threadId || c.threadId === state.meetingThreadId)
-        );
-        const defs = buildRedlineEvals(claims, state.settings.language);
-        if (defs.length) {
-          log.info("store: red-line guardrails armed", { count: defs.length });
-          evaluations = [...evaluations, ...evalsFromDefs(defs)];
-        }
-      }
-      return {
-      evaluations,
+    set({
       // Started FROM pre-flight (the only path in), so land on the live screen.
       appMode: "live",
       meetingStatus: "recording",
@@ -1137,7 +1044,6 @@ export const useStore = create<ParleyState>()(
       filledPauseCounted: {},
       deliveryNudge: null,
       systemAudioWarning: false,
-      };
     });
   },
 
@@ -1162,7 +1068,7 @@ export const useStore = create<ParleyState>()(
 
   cancelMeeting: () => {
     log.info("store: meeting cancelled");
-    set((s) => ({
+    set({
       // Back to pre-flight with the prep INTACT: cancelling is "wrong mic /
       // wrong moment, let me fix it and start again", not "throw my setup away"
       // (the reset happens when the user next opens pre-flight themselves).
@@ -1179,10 +1085,7 @@ export const useStore = create<ParleyState>()(
       filledPauseCount: 0,
       filledPauseCounted: {},
       deliveryNudge: null,
-      // Red-line guardrails are armed per meeting (startMeeting) — strip them
-      // like stopMeeting does; they re-arm from the same link on restart.
-      evaluations: s.evaluations.filter((e) => !isRedlineEvalId(e.id)),
-    }));
+    });
   },
 
   setSpeakerName: (key, name) =>
@@ -1204,15 +1107,12 @@ export const useStore = create<ParleyState>()(
 
   stopMeeting: () => {
     log.info("store: meeting stopped");
-    set((s) => ({
+    set({
       meetingStatus: "stopped",
       meetingPausedAt: null,
       prosody: null,
       deliveryNudge: null,
-      // Red-line guardrails are a live concern; drop them so post-meeting
-      // passes (report, replay re-analysis) don't re-run them as evals.
-      evaluations: s.evaluations.filter((e) => !isRedlineEvalId(e.id)),
-    }));
+    });
   },
 
   upsertSegment: (segment) =>
@@ -1354,7 +1254,7 @@ export const useStore = create<ParleyState>()(
 /**
  * Is a live meeting in progress (recording or paused)? Paused meetings still
  * own the mic and the STT sessions, so every "don't do X while recording"
- * guard (accounts screen, ingest, close-window stop) must treat them as active.
+ * guard (navigation, ingest, close-window stop) must treat them as active.
  */
 export function isMeetingActive(status: MeetingStatus): boolean {
   return status === "recording" || status === "paused";

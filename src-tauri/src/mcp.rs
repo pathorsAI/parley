@@ -442,7 +442,7 @@ fn tools() -> Vec<Value> {
             "get_app_context",
             "Get what the user is looking at",
             "ALWAYS CALL THIS FIRST to know what the user is focused on. Returns focus \
-             (live / replay / accounts), meetingStatus, and — when the user is reviewing a \
+             (live / replay / library), meetingStatus, and — when the user is reviewing a \
              recording — which one. IMPORTANT: meetingStatus 'stopped' means the last live \
              meeting ENDED; if focus is 'replay' the user is reviewing a SAVED recording, \
              not sitting in a meeting. Never assume a meeting is happening unless \
@@ -806,89 +806,6 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
-            "create_company_from_folder",
-            "Sync a history folder into an Accounts company",
-            "Create (or reuse a same-name) company card in the Accounts mini-CRM from a \
-             history folder: links the existing same-name folder, backfills the folder's \
-             recordings onto the company so they show in its meeting timeline, and — when \
-             `profileText` is given — attaches that text as a 'doc' source on the company. \
-             Idempotent: re-running with the same name reuses the company and only fills \
-             what's missing. Get folder ids/names from list_folders. This is the \
-             folder→客戶 sync; run once per customer folder.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string", "description": "Company name (usually the folder name)." },
-                    "folderId": { "type": "string", "description": "The history folder to link + backfill (from list_folders)." },
-                    "aliases": { "type": "array", "items": { "type": "string" }, "description": "Alternate spellings/nicknames for transcript matching." },
-                    "note": { "type": "string", "description": "One-line positioning for the company." },
-                    "profileText": { "type": "string", "description": "Customer-profile text to attach as a doc source (e.g. the _客戶輪廓.md contents)." },
-                    "profileName": { "type": "string", "description": "Attachment display name (default 客戶輪廓)." }
-                },
-                "required": ["name"]
-            }),
-        ),
-        tool(
-            "apply_company_intel",
-            "Populate a company's people + intel cards",
-            "Write structured intel into an Accounts company's war room: Person cards \
-             and Claim cards (the nine categories: stance / relation / leverage / goal / \
-             risk / redline / competitor / nextmove / openq). Reuses the app's own \
-             apply pipeline — claim `subjects` are person NAMES resolved to ids, a \
-             stance claim auto-updates the person's stance chip, and everything lands \
-             as 'inferred' (imported analysis is never auto-confirmed). Identify the \
-             company by companyName (or companyId). Optionally create a thread (戰線) \
-             so its pipeline stage shows. Feed this the structured cards distilled from \
-             a customer profile so the company page shows the real people roster + \
-             battle intel, not just a doc attachment.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "companyName": { "type": "string", "description": "Company name (as shown in Accounts)." },
-                    "companyId": { "type": "string", "description": "Company id (alternative to companyName)." },
-                    "newPersons": {
-                        "type": "array",
-                        "description": "People at this company.",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": { "type": "string" },
-                                "title": { "type": "string", "description": "Title / department." },
-                                "committeeRole": { "type": "string", "enum": ["economic", "champion", "influencer", "user", "gatekeeper", "blocker", ""], "description": "MEDDICC buying-committee role, or empty." },
-                                "reason": { "type": "string", "description": "One line: why this person matters." }
-                            },
-                            "required": ["name"]
-                        }
-                    },
-                    "newClaims": {
-                        "type": "array",
-                        "description": "Intel claims — one assertion each.",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "category": { "type": "string", "enum": ["stance", "relation", "leverage", "goal", "risk", "redline", "competitor", "nextmove", "openq"] },
-                                "text": { "type": "string", "description": "One sentence, one assertion (zh-TW)." },
-                                "subjects": { "type": "array", "items": { "type": "string" }, "description": "Person/company NAMES this is about." },
-                                "side": { "type": "string", "enum": ["ours", "theirs", ""], "description": "For leverage/goal." },
-                                "layer": { "type": "string", "enum": ["surface", "deep", ""], "description": "For goal claims." },
-                                "quote": { "type": "string", "description": "Supporting verbatim quote, if any." }
-                            },
-                            "required": ["category", "text"]
-                        }
-                    },
-                    "thread": {
-                        "type": "object",
-                        "description": "Optional 戰線 to create (shows the pipeline stage).",
-                        "properties": {
-                            "kind": { "type": "string", "enum": ["sales", "channel", "investment", "other"] },
-                            "name": { "type": "string" },
-                            "stage": { "type": "string", "description": "For sales: prospecting|discovery|demo|negotiation|closing." }
-                        }
-                    }
-                }
-            }),
-        ),
-        tool(
             "list_orgs",
             "List organizations",
             "List the organizations the signed-in user belongs to, as { id, name, role }. \
@@ -1144,35 +1061,6 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             )
             .await?
         }
-        "create_company_from_folder" => {
-            call_frontend(
-                state,
-                "create_company_from_folder",
-                json!({
-                    "name": required_str(&args, "name")?,
-                    "folderId": args.get("folderId").cloned().unwrap_or(Value::Null),
-                    "aliases": args.get("aliases").cloned().unwrap_or(Value::Null),
-                    "note": args.get("note").cloned().unwrap_or(Value::Null),
-                    "profileText": args.get("profileText").cloned().unwrap_or(Value::Null),
-                    "profileName": args.get("profileName").cloned().unwrap_or(Value::Null)
-                }),
-            )
-            .await?
-        }
-        "apply_company_intel" => {
-            call_frontend(
-                state,
-                "apply_company_intel",
-                json!({
-                    "companyName": args.get("companyName").cloned().unwrap_or(Value::Null),
-                    "companyId": args.get("companyId").cloned().unwrap_or(Value::Null),
-                    "newPersons": args.get("newPersons").cloned().unwrap_or(Value::Null),
-                    "newClaims": args.get("newClaims").cloned().unwrap_or(Value::Null),
-                    "thread": args.get("thread").cloned().unwrap_or(Value::Null)
-                }),
-            )
-            .await?
-        }
         "list_orgs" => call_frontend(state, "list_orgs", json!({})).await?,
         "list_org_recordings" => {
             call_frontend(
@@ -1292,7 +1180,6 @@ fn focus_context(s: &Value) -> Value {
 
     let focus = match app_mode {
         "replay" => "replay",
-        "accounts" => "accounts",
         // Since the app shell landed (#195) the recordings library and settings
         // are routes in the main window rather than separate windows, so they
         // show up here. Neither has content loaded — say so rather than letting
@@ -1325,9 +1212,6 @@ fn focus_context(s: &Value) -> Value {
                 }
             )
         }
-        "accounts" => "The user is on the accounts (mini-CRM) screen — no meeting is active \
-                       and no recording is loaded."
-            .to_string(),
         "library" => "The user is browsing the saved-recordings library — no meeting is \
                       active and no recording is loaded."
             .to_string(),
@@ -1716,8 +1600,6 @@ fn get_recording(history_dir: &std::path::Path, id: &str) -> anyhow::Result<Valu
         "meetingType",
         "meetingContext",
         "folderId",
-        "companyId",
-        "threadId",
         "analyzed",
     ] {
         if let Some(v) = meta.get(key) {

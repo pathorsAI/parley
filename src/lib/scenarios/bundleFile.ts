@@ -1,4 +1,4 @@
-import { SALES_STAGES, type ClaimCategory, type SalesStage } from "./types";
+import { SALES_STAGES, type SalesStage } from "./stages";
 
 /**
  * Stage-bundle schema, builtin content, and file parsing — PURE module: no
@@ -21,15 +21,9 @@ export interface SlotDef {
   id: string;
   /** Cell header (SPIN letters per S13, or a short phrase). */
   label: string;
-  /** What belongs here — doubles as ghost-row copy and extraction hint (S3). */
+  /** What belongs here — doubles as expansion copy and extraction hint (S3). */
   hint: string;
-  /** Coarse fallback query: existing claims matching it pre-attach (S3). */
-  query: {
-    categories: ClaimCategory[];
-    side?: "ours" | "theirs";
-    layer?: "surface" | "deep";
-  };
-  /** "Solid" threshold: fresh cards needed (confirmed counts alone). Default 2. */
+  /** "Solid" threshold: fills needed before the row reads as covered. Default 2. */
   solidAt?: number;
 }
 
@@ -50,7 +44,7 @@ export interface StageBundle {
   /** Display name — REQUIRED for custom stages (builtins resolve via i18n). */
   name?: string;
   /** Stage goal for the guide view — custom stages carry it here (builtins
-   *  resolve via i18n `accounts.stageGuide.*`). */
+   *  resolve via i18n `stageGuide.*`). */
   goal?: string;
   slots: SlotDef[];
   /** Exit criteria (upgraded from the static stage guide; checkable in #147). */
@@ -319,24 +313,23 @@ export type Tr = (key: string) => string;
 /**
  * Coarse conversion for stages whose bespoke boards aren't authored yet
  * (§8 P1): each line of the existing stage-guide "collect" copy becomes one
- * slot (line = label = hint, no auto-attach query). Final copy lands at the
+ * slot (line = label = hint). Final copy lands at the
  * P1 content review (doc open question 3).
  */
 function coarseBundle(stage: SalesStage, t: Tr, durationMin: number): StageBundle {
-  const lines = t(`accounts.stageGuide.${stage}.collect`)
+  const lines = t(`stageGuide.${stage}.collect`)
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
   return {
     stage,
-    boardTitle: t(`accounts.stage.${stage}`),
+    boardTitle: t(`stage.${stage}`),
     slots: lines.map((line, i) => ({
       id: `${stage}.c${i}`,
       label: line,
       hint: line,
-      query: { categories: [] },
     })),
-    exitCriteria: [t(`accounts.stageGuide.${stage}.exit`)],
+    exitCriteria: [t(`stageGuide.${stage}.exit`)],
     coachRules: [{ kind: "nextstep-gate", triggerAtRemainingPct: 20, cooldownSec: 300 }],
     defaultDurationMin: durationMin,
   };
@@ -344,16 +337,16 @@ function coarseBundle(stage: SalesStage, t: Tr, durationMin: number): StageBundl
 
 /** The six builtin bundles, copy resolved through i18n (rebuild on language change). */
 export function buildBuiltinBundles(t: Tr): Record<SalesStage, StageBundle> {
-  const b = (key: string) => t(`accounts.bundle.${key}`);
+  const b = (key: string) => t(`bundle.${key}`);
   const prospecting: StageBundle = {
     stage: "prospecting",
     boardTitle: b("prospecting.title"),
     slots: [
-      { id: "prospecting.identity", label: b("prospecting.identity.label"), hint: b("prospecting.identity.hint"), query: { categories: ["relation"] } },
-      { id: "prospecting.trigger", label: b("prospecting.trigger.label"), hint: b("prospecting.trigger.hint"), query: { categories: ["goal", "openq"], side: "theirs" } },
-      { id: "prospecting.pain", label: b("prospecting.pain.label"), hint: b("prospecting.pain.hint"), query: { categories: ["risk"], side: "theirs" } },
-      { id: "prospecting.impact", label: b("prospecting.impact.label"), hint: b("prospecting.impact.hint"), query: { categories: ["risk", "goal"], side: "theirs" } },
-      { id: "prospecting.next", label: b("prospecting.next.label"), hint: b("prospecting.next.hint"), query: { categories: ["nextmove"] }, solidAt: 1 },
+      { id: "prospecting.identity", label: b("prospecting.identity.label"), hint: b("prospecting.identity.hint") },
+      { id: "prospecting.trigger", label: b("prospecting.trigger.label"), hint: b("prospecting.trigger.hint") },
+      { id: "prospecting.pain", label: b("prospecting.pain.label"), hint: b("prospecting.pain.hint") },
+      { id: "prospecting.impact", label: b("prospecting.impact.label"), hint: b("prospecting.impact.hint") },
+      { id: "prospecting.next", label: b("prospecting.next.label"), hint: b("prospecting.next.hint"), solidAt: 1 },
     ],
     exitCriteria: [b("prospecting.exit1"), b("prospecting.exit2"), b("prospecting.exit3")],
     coachRules: [
@@ -368,13 +361,13 @@ export function buildBuiltinBundles(t: Tr): Record<SalesStage, StageBundle> {
     stage: "discovery",
     boardTitle: b("discovery.title"),
     slots: [
-      { id: "discovery.situation", label: b("discovery.situation.label"), hint: b("discovery.situation.hint"), query: { categories: ["goal", "relation"], side: "theirs", layer: "surface" } },
-      { id: "discovery.problem", label: b("discovery.problem.label"), hint: b("discovery.problem.hint"), query: { categories: ["risk", "stance"], side: "theirs" } },
-      { id: "discovery.implication", label: b("discovery.implication.label"), hint: b("discovery.implication.hint"), query: { categories: ["risk", "goal"], layer: "deep" } },
-      { id: "discovery.needpayoff", label: b("discovery.needpayoff.label"), hint: b("discovery.needpayoff.hint"), query: { categories: ["goal", "nextmove"], side: "theirs", layer: "deep" } },
-      { id: "discovery.committee", label: b("discovery.committee.label"), hint: b("discovery.committee.hint"), query: { categories: ["stance", "relation"] } },
+      { id: "discovery.situation", label: b("discovery.situation.label"), hint: b("discovery.situation.hint") },
+      { id: "discovery.problem", label: b("discovery.problem.label"), hint: b("discovery.problem.hint") },
+      { id: "discovery.implication", label: b("discovery.implication.label"), hint: b("discovery.implication.hint") },
+      { id: "discovery.needpayoff", label: b("discovery.needpayoff.label"), hint: b("discovery.needpayoff.hint") },
+      { id: "discovery.committee", label: b("discovery.committee.label"), hint: b("discovery.committee.hint") },
     ],
-    exitCriteria: [t("accounts.stageGuide.discovery.exit"), b("discovery.exitOwned")],
+    exitCriteria: [t("stageGuide.discovery.exit"), b("discovery.exitOwned")],
     coachRules: [
       { kind: "talk-ratio", meMaxPct: 40, monologueSec: 60 },
       { kind: "nextstep-gate", triggerAtRemainingPct: 20, cooldownSec: 300 },
@@ -406,8 +399,7 @@ export function buildBuiltinBundles(t: Tr): Record<SalesStage, StageBundle> {
     discovery,
     demo,
     // S24: the old separate "proposal" stage merged in — its collect lines are
-    // this bundle's c0..c3 and the original negotiation lines shifted to
-    // c4..c7 (the accounts-load migration remaps legacy slot ids to match).
+    // this bundle's c0..c3 and the original negotiation lines shifted to c4..c7.
     negotiation: coarseBundle("negotiation", t, 45),
     closing: coarseBundle("closing", t, 30),
   };
@@ -415,13 +407,12 @@ export function buildBuiltinBundles(t: Tr): Record<SalesStage, StageBundle> {
 
 /** The builtin single-stage boards of the typed scenarios (scenario system):
  *  negotiation's ledgers and partnership's leverage map, as ordinary bundles —
- *  same override/gate/claims machinery as every sales stage. */
+ *  same override/gate machinery as every sales stage. */
 export function buildTypedBuiltinBundles(t: Tr): { nego: StageBundle; partner: StageBundle } {
-  const s = (id: string, key: string, query?: SlotDef["query"]): SlotDef => ({
+  const s = (id: string, key: string): SlotDef => ({
     id,
     label: t(`board.slot.${key}.label`),
     hint: t(`board.slot.${key}.hint`),
-    query: query ?? { categories: [] },
   });
   const nego: StageBundle = {
     stage: TYPED_STAGE_IDS.negotiation,
@@ -432,7 +423,7 @@ export function buildTypedBuiltinBundles(t: Tr): { nego: StageBundle; partner: S
       s("nego.get", "nego.get"),
       s("nego.agreed", "nego.agreed"),
       s("nego.open", "nego.open"),
-      s("nego.next", "nego.next", { categories: ["nextmove"] }),
+      s("nego.next", "nego.next"),
     ],
     exitCriteria: [],
     coachRules: [{ kind: "nextstep-gate", triggerAtRemainingPct: 20, cooldownSec: 300 }],
@@ -444,10 +435,10 @@ export function buildTypedBuiltinBundles(t: Tr): { nego: StageBundle; partner: S
     slots: [
       s("partner.have", "partner.have"),
       s("partner.need", "partner.need"),
-      s("partner.leverage", "partner.leverage", { categories: ["leverage"] }),
+      s("partner.leverage", "partner.leverage"),
       s("partner.give", "partner.give"),
       s("partner.get", "partner.get"),
-      s("partner.next", "partner.next", { categories: ["nextmove"] }),
+      s("partner.next", "partner.next"),
     ],
     exitCriteria: [],
     coachRules: [{ kind: "nextstep-gate", triggerAtRemainingPct: 20, cooldownSec: 300 }],

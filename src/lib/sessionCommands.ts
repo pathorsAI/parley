@@ -4,7 +4,6 @@ import { useStore } from "./store";
 import { isTauri } from "./tauriEvents";
 import { DEFAULT_ICON_NAME } from "./icons";
 import type { ActionItem, EvalDef, TimelineEvent } from "./types";
-import type { ClaimCategory } from "./accounts/types";
 
 /**
  * Apply mutation commands the MCP server enqueues (add/check/remove todo,
@@ -207,7 +206,7 @@ async function ensureMeetingType(
   type: string,
   desc: { name: string; icon: string; guidance: string },
 ): Promise<boolean> {
-  const { createBoardlessKind, isValidScenarioId } = await import("./accounts/bundles");
+  const { createBoardlessKind, isValidScenarioId } = await import("./scenarios/bundles");
   const { resolveScenarioSet } = await import("./intel/boards");
   const settings = useStore.getState().settings;
   if ((await resolveScenarioSet(settings)).byId[type]) return false;
@@ -325,20 +324,9 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
       const id = argStr(a.id);
       if (!id) throw new Error("id is required");
       const folderId = a.folderId ? argStr(a.folderId) : null;
-      // Moving into a COMPANY's folder is a change of customer, not a filing
-      // tweak — route it through the one write that keeps companyId and
-      // folderId together, or the tree and the company page disagree again.
-      const { useAccounts: accStore } = await import("./accounts/store");
-      const owner = accStore.getState().companies.find((c) => c.folderId === folderId);
-      const { assignEntryCompany, setEntryFolder, emitHistoryUpdated } = await import(
-        "./history/history"
-      );
-      if (owner) {
-        await assignEntryCompany(id, owner.id);
-      } else {
-        await setEntryFolder(id, folderId);
-        await emitHistoryUpdated(id);
-      }
+      const { setEntryFolder, emitHistoryUpdated } = await import("./history/history");
+      await setEntryFolder(id, folderId);
+      await emitHistoryUpdated(id);
       return { id, folderId };
     }
     case "list_folders": {
@@ -388,26 +376,12 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
         "./history/folders"
       );
       let folderId: string | null = null;
-      let companyId: string | null = null;
       if (folderName) {
-        // A folder name that names a CUSTOMER is a customer, not a filing hint:
-        // resolve it to that company (creating its folder if needed) so an
-        // MCP-imported transcript is owned the same way every other import door
-        // owns it. Only a name no company answers to falls back to a plain
-        // folder — fresh read (cross-instance registry), adopt, else create.
-        const { useAccounts: accStore } = await import("./accounts/store");
-        const company = accStore
-          .getState()
-          .companies.find((c) => !c.archived && c.name === folderName);
-        if (company) {
-          const { ensureCompanyFolder } = await import("./accounts/folders");
-          companyId = company.id;
-          folderId = ensureCompanyFolder(company);
-        } else {
-          const existing = (await listFoldersFresh()).find((f) => f.name === folderName);
-          folderId = existing?.id ?? createLocalFolder(folderName).id;
-          if (!existing) await emitFoldersUpdated().catch(() => {});
-        }
+        // Adopt a same-name folder if there is one, else create it. Fresh read
+        // first: another instance may have added it since this window loaded.
+        const existing = (await listFoldersFresh()).find((f) => f.name === folderName);
+        folderId = existing?.id ?? createLocalFolder(folderName).id;
+        if (!existing) await emitFoldersUpdated().catch(() => {});
       }
       const { prepareTranscriptFile } = await import("./replay/importFiles");
       const { saveTranscriptToHistory } = await import("./history/history");
@@ -426,7 +400,6 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
           durationMs: file.parsed.durationMs,
           createdAt: file.createdAt,
           folderId,
-          companyId,
         });
         if (id) imported.push({
           id,
@@ -435,165 +408,7 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
           format: file.parsed.format,
         });
       }
-      return { imported, failed, folderId, companyId, folder: folderName || null };
-    }
-    case "create_company_from_folder": {
-      // Folder → Accounts sync: turn an imported history folder into a mini-CRM
-      // company card, link the existing same-name folder, backfill companyId onto
-      // that folder's recordings (the company page's meeting timeline filters by
-      // companyId, not folder), and attach the profile text as a "doc" source.
-      // Idempotent: an existing same-name active company is reused, not duplicated.
-      const name = argStr(a.name).trim();
-      if (!name) throw new Error("name is required");
-      const aliases = Array.isArray(a.aliases) ? a.aliases.map(argStr).filter(Boolean) : [];
-      const note = a.note ? argStr(a.note) : "";
-      const folderId = a.folderId ? argStr(a.folderId) : null;
-      const profileText = a.profileText ? argStr(a.profileText) : "";
-      const profileName = a.profileName ? argStr(a.profileName) : "客戶輪廓";
-
-      const { useAccounts } = await import("./accounts/store");
-      const acc = useAccounts.getState();
-      const existing = acc.companies.find((c) => !c.archived && c.name === name);
-      const reused = !!existing;
-      let company = existing;
-      if (company) {
-        // Reuse: refresh aliases/note without clobbering a manual edit with empties.
-        const patch: Record<string, unknown> = {};
-        if (aliases.length) patch.aliases = aliases;
-        if (note) patch.note = note;
-        if (folderId) patch.folderId = folderId;
-        if (Object.keys(patch).length) acc.updateCompany(company.id, patch);
-      } else {
-        company = acc.addCompany({ name, note, aliases });
-        if (folderId) acc.updateCompany(company.id, { folderId });
-      }
-      const companyId = company.id;
-
-      // Backfill companyId onto the folder's recordings so they surface in the
-      // company's meeting timeline.
-      let meetingsLinked = 0;
-      if (folderId) {
-        const { listHistory, assignEntryCompany } = await import("./history/history");
-        const summaries = await listHistory();
-        for (const s of summaries) {
-          if (s.folderId === folderId && s.companyId !== companyId) {
-            await assignEntryCompany(s.id, companyId);
-            meetingsLinked++;
-          }
-        }
-      }
-
-      // Attach the profile as a doc source (skip if one with this name exists).
-      let attached = false;
-      if (profileText.trim()) {
-        const dup = useAccounts
-          .getState()
-          .attachments.some((at) => at.companyId === companyId && at.name === profileName);
-        if (!dup) {
-          useAccounts.getState().addAttachment({
-            companyId,
-            name: profileName,
-            kind: "doc",
-            text: profileText,
-          });
-          attached = true;
-        }
-      }
-      return { companyId, name, folderId, meetingsLinked, attached, reused };
-    }
-    case "apply_company_intel": {
-      // Populate a company's structured intel (design §4/§5): create Person cards
-      // + Claim cards (stance/leverage/risk/nextmove/…) from pre-structured ops.
-      // Reuses the app's own applyExtractedOps so subject-name→id resolution,
-      // stance-cache sync and conflict handling all match the reviewed flow —
-      // we just supply the ops instead of the LLM. Claims land as "inferred"
-      // (design §5.1: imported analysis is never auto-confirmed). Idempotent-ish:
-      // pass replace=true to archive the company's prior inferred claims/persons
-      // first so re-runs don't pile up duplicates.
-      const CLAIM_CATEGORIES = [
-        "stance", "relation", "leverage", "goal", "risk",
-        "redline", "competitor", "nextmove", "openq",
-      ];
-      const COMMITTEE = ["economic", "champion", "influencer", "user", "gatekeeper", "blocker"];
-      const name = argStr(a.companyName).trim();
-      const companyIdArg = a.companyId ? argStr(a.companyId) : "";
-      const { useAccounts } = await import("./accounts/store");
-      const acc = useAccounts.getState();
-      const company = companyIdArg
-        ? acc.companies.find((c) => c.id === companyIdArg)
-        : acc.companies.find((c) => !c.archived && c.name === name);
-      if (!company) throw new Error(`company not found: ${name || companyIdArg}`);
-      const companyId = company.id;
-
-      // Optional thread (戰線) so the pipeline stage shows on the company page.
-      let threadId: string | undefined;
-      const th = a.thread as { kind?: string; name?: string; stage?: string } | undefined;
-      if (th && th.name) {
-        const kind = (["sales", "channel", "investment", "other"] as const).includes(
-          th.kind as never,
-        )
-          ? (th.kind as "sales" | "channel" | "investment" | "other")
-          : "sales";
-        const thread = useAccounts
-          .getState()
-          .addThread({ companyId, kind, name: String(th.name), stage: th.stage });
-        threadId = thread.id;
-      }
-
-      const rawPersons = Array.isArray(a.newPersons) ? a.newPersons : [];
-      const newPersons = rawPersons
-        .map((p) => p as Record<string, unknown>)
-        .filter((p) => typeof p.name === "string" && (p.name as string).trim())
-        .map((p) => ({
-          name: argStr(p.name),
-          title: p.title ? argStr(p.title) : "",
-          committeeRole: COMMITTEE.includes(argStr(p.committeeRole)) ? argStr(p.committeeRole) : "",
-          reason: p.reason ? argStr(p.reason) : "",
-        }));
-
-      const rawClaims = Array.isArray(a.newClaims) ? a.newClaims : [];
-      const newClaims = rawClaims
-        .map((c) => c as Record<string, unknown>)
-        .filter((c) => CLAIM_CATEGORIES.includes(argStr(c.category)) && argStr(c.text).trim())
-        .map((c) => {
-          const side: "ours" | "theirs" | "" =
-            c.side === "ours" ? "ours" : c.side === "theirs" ? "theirs" : "";
-          const layer: "surface" | "deep" | "" =
-            c.layer === "surface" ? "surface" : c.layer === "deep" ? "deep" : "";
-          return {
-            category: argStr(c.category) as ClaimCategory,
-            text: argStr(c.text),
-            subjects: Array.isArray(c.subjects) ? c.subjects.map(argStr).filter(Boolean) : [],
-            side,
-            layer,
-            quote: c.quote ? argStr(c.quote) : "",
-            slotIds: Array.isArray(c.slotIds) ? c.slotIds.map(argStr).filter(Boolean) : [],
-          };
-        });
-
-      // Provenance: tie claims to the company's profile doc when one exists.
-      const att = useAccounts
-        .getState()
-        .attachments.find((x) => x.companyId === companyId && x.kind === "doc");
-      const provenance: { kind: "import"; attachmentId: string } | { kind: "user" } = att
-        ? { kind: "import", attachmentId: att.id }
-        : { kind: "user" };
-
-      useAccounts.getState().applyExtractedOps({
-        companyId,
-        threadId,
-        ops: { newPersons, newClaims, claimUpdates: [] },
-        provenance,
-      });
-      const s = useAccounts.getState();
-      return {
-        companyId,
-        personsCreated: newPersons.length,
-        claimsCreated: newClaims.length,
-        threadId: threadId ?? null,
-        totalPersons: s.persons.filter((p) => p.companyId === companyId && !p.archived).length,
-        totalClaims: s.claims.filter((c) => c.companyId === companyId && c.status === "active").length,
-      };
+      return { imported, failed, folderId, folder: folderName || null };
     }
     case "copy_org_recording_to_personal": {
       const id = argStr(a.id);

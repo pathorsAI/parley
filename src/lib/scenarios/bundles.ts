@@ -1,7 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { log } from "../log";
 import { DEFAULT_ICON_NAME } from "../icons";
-import { SALES_STAGES, type SalesStage } from "./types";
+import { SALES_STAGES, type SalesStage } from "./stages";
 import {
   buildBuiltinBundles,
   buildTypedBuiltinBundles,
@@ -132,7 +132,7 @@ export function buildStageSet(t: Tr, parsed: ParsedBundleFile): StageSet {
   const bundles: Record<SalesStage, StageBundle> = { ...buildBuiltinBundles(t) };
   const names: Record<SalesStage, string> = {};
   const customized = new Set<SalesStage>();
-  for (const s of SALES_STAGES) names[s] = t(`accounts.stage.${s}`);
+  for (const s of SALES_STAGES) names[s] = t(`stage.${s}`);
   for (const c of parsed.customStages) {
     bundles[c.id] = c.bundle;
     names[c.id] = c.name;
@@ -309,31 +309,3 @@ export async function createBoardlessKind(input: {
   log.info("scenarios: boardless kind created", { id });
 }
 
-/**
- * Static-guide view (ThreadPage / seedTodos): untouched builtins keep their
- * i18n copy verbatim; custom or overridden stages derive from the bundle
- * (goal field, slot label：hint lines, exitCriteria).
- */
-export function stageGuideView(
-  t: Tr,
-  set: StageSet,
-  stage: SalesStage
-): { goal: string; collect: string[]; exit: string[] } {
-  const bundle = set.bundles[stage];
-  if (!bundle) return { goal: "", collect: [], exit: [] };
-  if ((SALES_STAGES as string[]).includes(stage) && !set.customized.has(stage)) {
-    return {
-      goal: t(`accounts.stageGuide.${stage}.goal`),
-      collect: t(`accounts.stageGuide.${stage}.collect`)
-        .split("\n")
-        .map((l) => l.trim())
-        .filter(Boolean),
-      exit: [t(`accounts.stageGuide.${stage}.exit`)],
-    };
-  }
-  return {
-    goal: bundle.goal ?? "",
-    collect: bundle.slots.map((s) => (s.label === s.hint ? s.label : `${s.label}：${s.hint}`)),
-    exit: bundle.exitCriteria,
-  };
-}

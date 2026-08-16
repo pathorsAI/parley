@@ -7,13 +7,13 @@ import {
   type CustomStageDef,
   type StageBundle,
 } from "./bundleFile";
-import { SALES_STAGES } from "./types";
+import { SALES_STAGES } from "./stages";
 
 function bundle(stage: string, over: Partial<StageBundle> = {}): StageBundle {
   return {
     stage,
     boardTitle: "板",
-    slots: [{ id: `${stage}.x`, label: "X", hint: "h", query: { categories: [] } }],
+    slots: [{ id: `${stage}.x`, label: "X", hint: "h" }],
     exitCriteria: ["done"],
     coachRules: [],
     ...over,
@@ -55,7 +55,7 @@ describe("parseBundleFile — v2", () => {
 
   it("drops custom stages whose slot ids don't carry the stage prefix", () => {
     const bad = custom("coldcall");
-    bad.bundle.slots = [{ id: "other.x", label: "X", hint: "h", query: { categories: [] } }];
+    bad.bundle.slots = [{ id: "other.x", label: "X", hint: "h" }];
     const raw = JSON.stringify({ version: 2, stages: [bad] });
     expect(parseBundleFile(raw).customStages).toEqual([]);
   });

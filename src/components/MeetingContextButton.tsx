@@ -5,7 +5,6 @@ import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { MeetingContextField } from "./MeetingContextField";
-import { MeetingLinkSection } from "./accounts/MeetingLinkSection";
 
 /**
  * Amend the PER-MEETING context mid-call — background specific to this
@@ -44,12 +43,6 @@ export function MeetingContextSheet({
   onOpenChange,
 }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void }>) {
   const { t } = useI18n();
-  const meetingType = useStore((s) => s.meetingType);
-  const readOnly = useStore((s) => s.replayReadOnly);
-  // Scenario system: every scenario (builtin or custom) can link the mini-CRM;
-  // only "general" (no board) stays personal. A read-only org recording is
-  // someone else's — the link can't be written back, so don't offer it.
-  const businessType = meetingType !== "general" && !readOnly;
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -62,7 +55,6 @@ export function MeetingContextSheet({
         }
       >
         <div className="px-4 py-3">
-          {businessType && <MeetingLinkSection />}
           <MeetingContextField rows={5} />
         </div>
       </SheetContent>

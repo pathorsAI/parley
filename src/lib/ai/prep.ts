@@ -24,17 +24,16 @@ import type { Settings } from "../types";
 
 const COACH = `You are ME's pre-meeting coach, twenty minutes before a real call that matters.
 
-You have been handed everything the system knows about this account: the claim base, the gap board for this stage, past meetings, and the red lines. ME cannot hold all of that in their head — you can. Your job is to turn it into something ME can walk in with.
+You have been handed everything the system knows about this call: which customer it is with, what kind of call it is, the board this stage wants covered, the earlier calls, and whatever ME has already written down. Your job is to turn it into something ME can walk in with.
 
 How to behave:
 - Say what you SEE first, then ask exactly ONE question. Never a list of questions.
 - Ground every statement in the facts you were given. When something is unknown, say so plainly and treat it as a question to chase in the room — never invent a budget, a headcount, a competitor's price, or a person.
 - Be concrete. "Ask about budget" is useless; "their fleet is going to 5,000 units — ride that to ask who signs off on this batch" is useful. Name the actual sentence or question.
-- The red lines are absolute. If what ME is planning would cross one, lead with that.
 - Never ask ME for something the facts already contain.
 - Be short. ME is skimming, already standing up.`;
 
-/** Shared preamble: who I am + everything known about this account. */
+/** Shared preamble: who I am + everything known about this call. */
 function grounding(settings: Settings, facts: PrepFacts): string {
   return `${profileFacts(settings)}${factsDigest(facts)}`;
 }
@@ -57,12 +56,12 @@ export async function streamPrepChat(opts: {
   const system =
     COACH +
     outputLanguageInstruction(settings) +
-    `\n\n--- WHAT IS KNOWN ABOUT THIS ACCOUNT ---\n${grounding(settings, facts)}`;
+    `\n\n--- WHAT IS KNOWN ABOUT THIS CALL ---\n${grounding(settings, facts)}`;
 
   log.info("ai.prep: chat start", {
-    company: facts.company.name,
+    folder: facts.folder,
     turns: history.length,
-    claims: facts.gaps.length,
+    slots: facts.board.length,
   });
 
   let full = "";
@@ -125,7 +124,7 @@ const planSchema = z.object({
 export interface PrepPlan extends z.infer<typeof planSchema> {}
 
 const PLAN_SYSTEM =
-  "You are writing ME's plan for ONE upcoming call, from the account facts and the conversation " +
+  "You are writing ME's plan for ONE upcoming call, from the facts and the conversation " +
   "you just had with ME. Produce a sequenced play, not a flat list: `idealPath` is how the call " +
   "goes when it goes WELL, in order, each move with one line of why. `edgeCases` are the specific " +
   "moments it goes sideways — the trigger stated as something the other side actually does or says, " +
@@ -134,11 +133,10 @@ const PLAN_SYSTEM =
   "CRITICAL — `batna` and `floor`: fill these ONLY when the facts or the conversation genuinely " +
   "support them. If ME has never established a real walk-away alternative or a real bottom line, " +
   "return an empty string. A plausible-sounding invented BATNA is worse than a blank one: it feeds " +
-  "the live negotiation analysis and would score the whole call against a fiction.\n\n" +
-  "Respect the red lines absolutely — never plan a move that reveals one." +
+  "the live negotiation analysis and would score the whole call against a fiction." +
   JSON_MODE_INSTRUCTION;
 
-/** Turn the account facts + the conversation into the plan the user reviews. */
+/** Turn the facts + the conversation into the plan the user reviews. */
 export async function draftPlan(opts: {
   settings: Settings;
   facts: PrepFacts;
@@ -170,7 +168,7 @@ export async function draftPlan(opts: {
     floor: object.floor.trim(),
   };
   log.info("ai.prep: plan", {
-    company: facts.company.name,
+    folder: facts.folder,
     agenda: plan.agenda.length,
     path: plan.idealPath.length,
     edges: plan.edgeCases.length,

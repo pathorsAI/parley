@@ -14,8 +14,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { toast } from "sonner";
 import { useStore, speakerKey, hasSpokenSegment, isMeetingActive } from "../store";
 import { readStudyCache, writeStudyCache } from "./studyCache";
-import { companyFolderId, ensureCompanyFolder } from "../accounts/folders";
-import { useAccounts } from "../accounts/store";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
 import { CLOUD_ENABLED } from "../flags";
@@ -23,7 +21,7 @@ import { markDirty } from "../cloud/syncState";
 import { CLOUD_URL, cloudFetch, cloudToken, syncEnabled } from "../cloud/client";
 import { deleteLocalFolder, emitFoldersUpdated, listLocalFolders } from "./folders";
 import { deleteCloudFolder } from "../cloud/folders";
-import { buildOwnershipIndex, ownerBackfill, planFolderDedupe } from "../library/scope";
+import { planFolderDedupe } from "../library/scope";
 import { rediarizeSegments } from "../speakers/postDiarize";
 import { translate } from "../../i18n/messages";
 import type { ReplaySession } from "../replay/types";
@@ -70,7 +68,6 @@ export function buildSummary(entry: HistoryEntry): HistoryEntrySummary {
     analyzed: entry.analyzed,
     snippet: snippetOf(entry),
     folderId: entry.folderId ?? null,
-    companyId: entry.companyId ?? null,
   };
 }
 
@@ -90,9 +87,6 @@ function snapshotAnalysis() {
     // after both statuses settle "done").
     analyzed: s.analysisStatus === "done" && s.actionItemsStatus === "done",
     meetingContext: s.meetingContext,
-    companyId: s.meetingCompanyId,
-    threadId: s.meetingThreadId,
-    attendeePersonIds: s.meetingAttendeeIds,
     meetingBatna: s.meetingBatna,
     meetingTarget: s.meetingTarget,
     meetingFloor: s.meetingFloor,
@@ -173,8 +167,9 @@ export interface MeetingSaveTarget {
   folderId: string | null;
   autoShare: { orgId: string; folderId: string | null } | null;
   fallback: "syncOff" | null;
-  /** "company" = filed under the linked customer; "default" = no customer. */
-  origin: "company" | "default";
+  /** "meeting" = the folder picked for this call; "default" = the settings
+   *  default (or the personal root). */
+  origin: "meeting" | "default";
 }
 
 /** The per-meeting org-share choice. `null` follows the settings default;
@@ -184,24 +179,23 @@ export type MeetingShare = { orgId: string; folderId: string | null } | "off" | 
 /**
  * THE one place that answers "what does saving this meeting do?".
  *
- * Filing is not a choice anymore (#211): the linked customer's folder, or the
- * personal root when there is no customer. The only real decision left is
- * whether an org gets a shared copy — per-meeting choice first, else the
- * settings default — and that decision is INDEPENDENT of the customer link.
- * The old model let a "save somewhere else" override beat the company link,
- * which silently unfiled the customer's own recording; there is no override
- * to express that mistake with now.
+ * Two independent decisions: which personal folder the local entry files into
+ * (this call's pick, else the settings default), and whether an org gets a
+ * shared copy (this call's pick, else the settings default). A shared copy is a
+ * second destination, never a move — the local entry always lands.
  *
  * Exported so pre-flight displays exactly what the save will do.
  */
 export function resolveMeetingSave(): MeetingSaveTarget {
   const s = useStore.getState();
-  const companyFolder = companyFolderId(s.meetingCompanyId);
+  const def = s.settings.defaultSaveLocation;
+  const defaultFolder = def.scope === "personal" ? (def.folderId ?? null) : null;
+  const picked = s.meetingFolderId;
   const base: MeetingSaveTarget = {
-    folderId: companyFolder,
+    folderId: picked ?? defaultFolder,
     autoShare: null,
     fallback: null,
-    origin: companyFolder ? "company" : "default",
+    origin: picked ? "meeting" : "default",
   };
 
   let wanted: { orgId: string; folderId: string | null } | null = null;
@@ -210,7 +204,6 @@ export function resolveMeetingSave(): MeetingSaveTarget {
   } else if (s.meetingOrgShare) {
     wanted = s.meetingOrgShare;
   } else {
-    const def = s.settings.defaultSaveLocation;
     if (def.scope === "org" && def.orgId) {
       wanted = { orgId: def.orgId, folderId: def.folderId ?? null };
     }
@@ -404,17 +397,15 @@ export interface TranscriptImportSave {
   durationMs: number;
   createdAt: number;
   folderId: string | null;
-  /** Explicit company pre-link from a company import door (R7); null = none. */
-  companyId: string | null;
 }
 
 /**
  * Save an imported PLAIN-TEXT transcript as a normal history entry (design doc
  * D11: source "upload", audio null — replay's audio-less degradation already
  * handles it). Unlike {@link saveUploadToHistory} this never snapshots the live
- * store: a bulk import must not inherit whatever meeting context/company the
- * store happens to hold — a company link arrives only as the EXPLICIT
- * `save.companyId` a company import door passed. Saved with `analyzed: false`
+ * store: a bulk import must not inherit whatever meeting context the store
+ * happens to hold — the destination arrives only as the EXPLICIT
+ * `save.folderId` an import door passed. Saved with `analyzed: false`
  * and no findings, so the study pipeline analyzes it on FIRST OPEN — importing
  * a folder's worth of transcripts spends zero model calls up front. Returns
  * the new entry id.
@@ -438,7 +429,6 @@ export async function saveTranscriptToHistory(save: TranscriptImportSave): Promi
     meetingFloor: "",
     audio: null,
     folderId: save.folderId,
-    companyId: save.companyId,
   };
   await persist(entry, null, /* compress */ false);
   // The import usually starts FROM the History window — tell its grid to re-list.
@@ -526,110 +516,6 @@ export async function persistStudyOutputs(): Promise<void> {
   });
 }
 
-/**
- * Persist the loaded entry's ACCOUNTS LINK (company/thread/attendees) — the
- * study report's after-the-fact "掛上公司/戰線". Same read-modify-write as
- * {@link persistStudyOutputs}: only the link fields are patched, so a
- * concurrently generating brief/intel can't be clobbered by a stale snapshot.
- * The rewritten summary.json carries the new companyId, which is what the
- * company page's meeting timeline and the library tree filter on. No-op for
- * read-only org recordings (someone else's entry) and when nothing is loaded.
- */
-export async function persistEntryLink(): Promise<void> {
-  const s = useStore.getState();
-  const id = s.loadedHistoryId;
-  if (!isTauri() || !id || s.replayReadOnly) return;
-  // An upload's initial save may still be compressing — wait so the entry exists.
-  await Promise.resolve(uploadSaveInFlight).catch(() => {});
-  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
-  const updated: HistoryEntry = {
-    ...meta,
-    companyId: s.meetingCompanyId,
-    threadId: s.meetingThreadId,
-    attendeePersonIds: s.meetingAttendeeIds,
-    // The link decides the filing location too. Writing companyId alone is what
-    // used to strand a recording: the company page listed it while the tree —
-    // which counted folders — left it in 未歸戶 forever.
-    folderId: folderForCompany(s.meetingCompanyId, meta.folderId ?? null),
-  };
-  await invoke("save_history_entry", {
-    id,
-    summaryJson: JSON.stringify(buildSummary(updated)),
-    metaJson: JSON.stringify(updated),
-    audioSourcePath: null, // leave the recording untouched
-    compress: false,
-  });
-  useStore.getState().setReplayFolderId(updated.folderId ?? null);
-  await emitHistoryUpdated(id); // library / company timeline re-list on the new companyId
-  pushToCloud(id); // sync the new link (best-effort; gated by the sync toggle)
-  log.info("history: entry link saved", {
-    id,
-    companyId: updated.companyId ?? null,
-    folderId: updated.folderId ?? null,
-  });
-}
-
-/**
- * Where a recording owned by `companyId` lives on disk: the company's paired
- * folder, created on demand. Unlinking drops it to the personal root — UNLESS
- * the current folder belongs to no company, in which case that folder is the
- * user's own filing and survives the unlink.
- */
-function folderForCompany(companyId: string | null, currentFolderId: string | null): string | null {
-  if (companyId) {
-    const company = useAccounts.getState().companies.find((c) => c.id === companyId);
-    return company ? ensureCompanyFolder(company) : currentFolderId;
-  }
-  const ownedByAnyCompany = useAccounts
-    .getState()
-    .companies.some((c) => c.folderId && c.folderId === currentFolderId);
-  return ownedByAnyCompany ? null : currentFolderId;
-}
-
-/**
- * THE way a saved recording changes hands — used by every "歸給哪個客戶"
- * affordance (the library card menu, the study titlebar chip, the MCP move).
- *
- * companyId and folderId move together, always. Before #211 they were two
- * independent writes: linking wrote only the company, refiling wrote only the
- * folder, and whichever one the user reached for decided which HALF of the app
- * would know about it. There is no way to write one without the other now.
- */
-export async function assignEntryCompany(id: string, companyId: string | null): Promise<void> {
-  if (!isTauri()) return;
-  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
-  if ((meta.companyId ?? null) === companyId) return;
-  const updated: HistoryEntry = {
-    ...meta,
-    companyId,
-    // A thread and its attendees belong to the OLD customer — carrying them
-    // across would file this call under a deal it was never part of.
-    threadId: null,
-    attendeePersonIds: [],
-    folderId: folderForCompany(companyId, meta.folderId ?? null),
-  };
-  await invoke("save_history_entry", {
-    id,
-    summaryJson: JSON.stringify(buildSummary(updated)),
-    metaJson: JSON.stringify(updated),
-    audioSourcePath: null, // leave the recording untouched
-    compress: false,
-  });
-  // The loaded recording is looking at this entry — keep its chips honest.
-  const s = useStore.getState();
-  if (s.loadedHistoryId === id) {
-    s.setReplayFolderId(updated.folderId ?? null);
-    s.setMeetingLink({ companyId, threadId: null, attendeeIds: [] });
-  }
-  await emitHistoryUpdated(id);
-  pushToCloud(id); // best-effort; gated by the sync toggle
-  log.info("history: entry company assigned", {
-    id,
-    companyId,
-    folderId: updated.folderId ?? null,
-  });
-}
-
 // ── List / read / delete ─────────────────────────────────────────────────────
 
 /** All saved summaries, newest first. */
@@ -663,20 +549,21 @@ export async function renameHistoryEntry(id: string, title: string): Promise<voi
 }
 
 /**
- * Move a personal entry into a folder (or to the personal root with folderId null).
- * Read-modify-writes the entry's meta + summary on disk so its folderId persists,
- * then best-effort syncs the new folderId to the cloud (gated by the sync toggle).
- * Only valid for entries that exist on local disk (a cloud-only card has no meta
- * here — the caller skips those).
+ * THE way a saved recording is filed: move it into a personal folder (or to the
+ * personal root with folderId null). Read-modify-writes the entry's meta +
+ * summary on disk so its folderId persists, then best-effort syncs the new
+ * folderId to the cloud (gated by the sync toggle). Only valid for entries that
+ * exist on local disk (a cloud-only card has no meta here — the caller skips
+ * those).
  *
- * This is the DISK LOCATION only. If the destination is a company's folder, the
- * customer is changing — call {@link assignEntryCompany} instead, which writes
- * both halves. Legitimate callers: legacy (company-less) folders and the org
- * sync path.
+ * Every "put this recording somewhere else" affordance goes through here — the
+ * library card menu, the replay titlebar chip, the MCP move, the org sync path.
+ * Keeps the loaded recording's own chip honest when it is the one moving.
  */
 export async function setEntryFolder(id: string, folderId: string | null): Promise<void> {
   if (!isTauri()) return;
   const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+  if ((meta.folderId ?? null) === folderId) return;
   const updated: HistoryEntry = { ...meta, folderId };
   await invoke("save_history_entry", {
     id,
@@ -685,6 +572,8 @@ export async function setEntryFolder(id: string, folderId: string | null): Promi
     audioSourcePath: null, // leave the recording untouched
     compress: false,
   });
+  const s = useStore.getState();
+  if (s.loadedHistoryId === id) s.setReplayFolderId(folderId);
   log.info("history: entry folder set", { id, folderId });
   pushToCloud(id); // sync the new folderId (best-effort; gated by the sync toggle)
 }
@@ -815,7 +704,7 @@ export async function setEntryAnalysis(
 }
 
 /**
- * Upgrade dedupe (#211 follow-up): merge same-name personal folder twins.
+ * Merge same-name personal folder twins.
  *
  * The plan comes from {@link planFolderDedupe} (see its comment for how the
  * twins came to exist). This applies it: repoint every recording filed in a
@@ -825,14 +714,11 @@ export async function setEntryAnalysis(
  * back from the mirror after sign-in — which is fine, because this runs every
  * startup and converges the next time around.
  *
- * Runs after the company↔folder pairing (the survivor prefers the paired
- * folder) and before the owner backfill (which should see the merged mapping).
- * Like the backfill: idempotent, no flag, no cloud push of entries (a push
- * re-uploads audio).
+ * Idempotent, no flag, no cloud push of entries (a push re-uploads audio).
  */
 export async function migrateDuplicateFolders(): Promise<number> {
   if (!isTauri()) return 0;
-  const merges = planFolderDedupe(listLocalFolders(), useAccounts.getState().companies);
+  const merges = planFolderDedupe(listLocalFolders());
   if (!merges.length) return 0;
   const survivorOf = new Map<string, string>();
   for (const m of merges) for (const twin of m.twinIds) survivorOf.set(twin, m.canonicalId);
@@ -883,74 +769,6 @@ export async function migrateDuplicateFolders(): Promise<number> {
     movedRecordings: moved,
   });
   return moved;
-}
-
-/**
- * Upgrade backfill (#211): write `companyId` onto recordings that only the
- * folder fallback can place.
- *
- * Who this is for: everything saved before a recording could be linked to a
- * customer at all. Those entries sit in a folder that a company has since
- * adopted (accounts/folders.ensureCompanyFolder adopts a same-named folder), so
- * the tree already shows them under that customer — but the field is still
- * empty, and anything reading the record directly (the cloud summary row, an
- * MCP client, the post-meeting review) goes on seeing an unowned recording.
- *
- * Runs at startup, right after the company↔folder pairing. Deliberately NOT
- * flag-guarded: it is idempotent and self-limiting — once there are no
- * candidates it costs one `list_history` call, and a flag in localStorage would
- * be per-webview-origin anyway (see history/folders.ts on that exact trap).
- * Emits ONE history-updated at the end rather than one per entry.
- */
-export async function migrateEntryOwners(): Promise<number> {
-  if (!isTauri()) return 0;
-  const { companies } = useAccounts.getState();
-  if (!companies.length) return 0;
-  const idx = buildOwnershipIndex(companies, listLocalFolders());
-  let migrated = 0;
-  try {
-    for (const summary of await listHistory()) {
-      const companyId = ownerBackfill(summary, idx);
-      if (!companyId) continue;
-      try {
-        const { meta } = await invoke<HistoryReadResult>("read_history_entry", {
-          id: summary.id,
-        });
-        // Re-check against the META: the summary can lag a link written by an
-        // older build that didn't rewrite summary.json.
-        if (meta.companyId) continue;
-        const updated: HistoryEntry = { ...meta, companyId };
-        await invoke("save_history_entry", {
-          id: summary.id,
-          summaryJson: JSON.stringify(buildSummary(updated)),
-          metaJson: JSON.stringify(updated),
-          audioSourcePath: null, // leave the recording untouched
-          compress: false,
-        });
-        // Deliberately NOT pushed. A push re-uploads the entry's audio blob
-        // (cloud/sync.pushLocalEntryNow), so a library with hundreds of old
-        // recordings would re-upload all of them at launch — and the field
-        // buys the cloud nothing today, because companies live in the local
-        // accounts.json and never sync. The next real edit to the entry
-        // carries it up.
-        migrated++;
-      } catch (e) {
-        // One unreadable entry must not stop the sweep.
-        log.warn("history: owner backfill failed for entry", {
-          id: summary.id,
-          error: String(e),
-        });
-      }
-    }
-  } catch (e) {
-    log.warn("history: owner backfill sweep failed", { error: String(e) });
-    return migrated;
-  }
-  if (migrated) {
-    await emitHistoryUpdated();
-    log.info("history: owner backfill complete", { migrated });
-  }
-  return migrated;
 }
 
 /** Delete one entry's folder. */

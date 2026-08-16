@@ -24,8 +24,8 @@ import type {
  * context grows — no incremental-merge bugs.
  */
 
-/** Live gap-board fills (§4.3): UI transient — never written to the claim base
- *  directly; the post-meeting review turns them into claim candidates (B6). */
+/** Live gap-board fills (§4.3): UI transient — they belong to this call and
+ *  nothing outlives it. */
 const slotFillsSchema = z
   .array(
     z.object({

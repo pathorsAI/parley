@@ -1,13 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { transcriptAsText, useStore, meetingElapsedMs } from "../../lib/store";
-import { activeClaims, useAccounts } from "../../lib/accounts/store";
-import { suggestSlotQuestions, type SlotQuestion } from "../../lib/accounts/suggest";
-import { boardStates } from "../../lib/accounts/slotState";
-import { backfillSlotIds } from "../../lib/accounts/backfill";
-import { stageFor } from "../../lib/accounts/currentStage";
+import { suggestSlotQuestions, type SlotQuestion } from "../../lib/scenarios/suggest";
+import { stageFor } from "../../lib/scenarios/currentStage";
 import { hasProviderKey } from "../../lib/ai/settings";
-import type { Scenario } from "../../lib/accounts/bundles";
-import { boardFromBundle, applyNextStepGate } from "../../lib/intel/boards";
+import type { Scenario } from "../../lib/scenarios/bundles";
+import { boardFromBundle, applyNextStepGate, slotStateOf } from "../../lib/intel/boards";
 import { useI18n, type TranslationKey } from "../../i18n";
 import { log } from "../../lib/log";
 import { FocusBanner, SlotRow } from "./SlotBoard";
@@ -23,16 +20,12 @@ import { FocusBanner, SlotRow } from "./SlotBoard";
  */
 export function ScenarioBoard({ scenario }: Readonly<{ scenario: Scenario }>) {
   const { t } = useI18n();
-  const acc = useAccounts();
   const settings = useStore((s) => s.settings);
-  const companyId = useStore((s) => s.meetingCompanyId);
-  const threadId = useStore((s) => s.meetingThreadId);
   const meetingStage = useStore((s) => s.meetingStage);
   const intel = useStore((s) => s.intel);
   const recording = useStore((s) => s.meetingStatus === "recording");
 
-  const thread = acc.threads.find((x) => x.id === threadId) ?? null;
-  const stage = stageFor(scenario, meetingStage, thread);
+  const stage = stageFor(scenario, meetingStage);
   const bundle = scenario.bundles[stage];
 
   const board = useMemo(
@@ -41,24 +34,8 @@ export function ScenarioBoard({ scenario }: Readonly<{ scenario: Scenario }>) {
     [scenario, bundle]
   );
 
-  // This meeting's view of the claim base (any scenario — slots with claim
-  // queries attach cards whenever a company is linked).
-  const claims = useMemo(
-    () =>
-      companyId
-        ? activeClaims(acc, companyId).filter(
-            (c) => !threadId || !c.threadId || c.threadId === threadId
-          )
-        : [],
-    [acc, companyId, threadId]
-  );
-  const rows = useMemo(
-    () => boardStates(claims, { ...bundle, slots: board.slots }, Date.now()),
-    [claims, bundle, board]
-  );
-
-  // Live fills + auto-focus for THIS call (§4.3/S22): UI transient, from the
-  // 30s realtime pass — the claim base is written at post-meeting review (D8).
+  // Live fills + auto-focus for THIS call (§4.3/S22): everything the board
+  // knows comes from the 30s realtime pass over this conversation.
   const live = intel?.meetingType === scenario.id ? intel : null;
   const fillsBySlot = useMemo(() => {
     const out = new Map<string, { text: string; speaker: "me" | "them" }[]>();
@@ -108,15 +85,11 @@ export function ScenarioBoard({ scenario }: Readonly<{ scenario: Scenario }>) {
     }
     setManual({ slotId, status: "running", questions: [] });
     const state = useStore.getState();
-    const attached = rows.find((b) => b.slot.id === slotId)?.claims ?? [];
     suggestSlotQuestions({
       settings: state.settings,
       stage,
       slot,
-      knownTexts: [
-        ...attached.map((c) => c.text),
-        ...(fillsBySlot.get(slotId) ?? []).map((f) => f.text),
-      ],
+      knownTexts: (fillsBySlot.get(slotId) ?? []).map((f) => f.text),
       transcriptTail: transcriptAsText(state.segments, state.speakerNames).slice(-2_000),
     })
       .then((questions) =>
@@ -128,25 +101,6 @@ export function ScenarioBoard({ scenario }: Readonly<{ scenario: Scenario }>) {
       });
   }
 
-  // Board-open backfill (#146, sales war-room only): classify query-hit-but-
-  // untagged cards once per stage. Fallback for recordings with no live fills.
-  useEffect(() => {
-    if (scenario.id !== "sales" || !companyId || !hasProviderKey(settings, "deep")) return;
-    const cur = useStore.getState().intel;
-    if (cur?.meetingType === "sales" && (cur.slotFills?.length ?? 0) > 0) return;
-    const snapshot = useAccounts.getState();
-    const all = activeClaims(snapshot, companyId).filter(
-      (c) => !threadId || !c.threadId || c.threadId === threadId
-    );
-    if (!all.length) return;
-    backfillSlotIds({ settings, bundle, claims: all })
-      .then((res) => {
-        for (const r of res) useAccounts.getState().updateClaim(r.claimId, { slotIds: r.slotIds });
-      })
-      .catch((e) => log.warn("board: backfill failed", { error: String(e) }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scenario.id, companyId, threadId, bundle.stage]);
-
   return (
     <div className="flex flex-col gap-2">
       {/* Counter-the-challenge focus: outranks gap-chasing, one at a time. */}
@@ -156,22 +110,20 @@ export function ScenarioBoard({ scenario }: Readonly<{ scenario: Scenario }>) {
 
       {/* One quiet line per slot; only the focused/tapped cell expands. */}
       <div className="flex flex-col">
-        {rows.map(({ slot, claims: cards, state }) => {
+        {board.slots.map((slot) => {
           const fills = fillsBySlot.get(slot.id) ?? [];
           const focused = focus?.kind === "gap" && focus.slotId === slot.id;
           const tapped = manual?.slotId === slot.id;
-          const newestCard = [...cards].sort((a, b) => b.lastSupportedAt - a.lastSupportedAt)[0];
           // 呼吸版: an empty slot shows NO ghost copy — the hint moved into
           // the expansion, so the resting board is labels, not a wall of grey.
-          const content = fills[fills.length - 1]?.text ?? newestCard?.text ?? "";
-          const n = cards.length + fills.length;
+          const content = fills[fills.length - 1]?.text ?? "";
           return (
             <SlotRow
               key={slot.id}
-              state={state === "empty" && fills.length > 0 ? "thin" : state}
+              state={slotStateOf(slot, fills.length)}
               label={slot.label}
               content={content}
-              count={n}
+              count={fills.length}
               focused={focused}
               activated={tapped}
               clickable
@@ -222,10 +174,6 @@ export function ScenarioBoard({ scenario }: Readonly<{ scenario: Scenario }>) {
           );
         })}
       </div>
-
-      {scenario.id === "sales" && !companyId && (
-        <p className="text-[10px] text-muted-foreground/70">{t("board.stage.unlinked")}</p>
-      )}
     </div>
   );
 }

@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * Side sheet — the app's editing surface. Editing flows (meeting context, the
- * accounts drill-in during a live call) keep the main screen visible beside
+ * meeting-context editor during a live call) keep the main screen visible beside
  * them, which a centered modal cannot do.
  *
  * The main window's titlebar has `backdrop-blur`, which makes it the containing

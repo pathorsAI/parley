@@ -7,13 +7,11 @@ import {
   type PreparedTranscriptFile,
 } from "../lib/replay/importFiles";
 import { loadHistoryEntry, saveTranscriptToHistory } from "../lib/history/history";
-import { ensureCompanyFolder } from "../lib/accounts/folders";
-import { useAccounts } from "../lib/accounts/store";
 import { log } from "../lib/log";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CompanyPicker } from "./accounts/CompanyPicker";
+import { FolderPicker } from "./FolderPicker";
 
 /**
  * Import picked/dropped .txt transcripts as audio-less history entries (issue
@@ -26,14 +24,13 @@ import { CompanyPicker } from "./accounts/CompanyPicker";
 export function TranscriptImportDialog() {
   const { t } = useI18n();
   const paths = useStore((s) => s.transcriptImportPaths);
-  const companyId = useStore((s) => s.transcriptImportCompanyId);
+  const prefillFolderId = useStore((s) => s.transcriptImportFolderId);
   const close = useStore((s) => s.closeTranscriptImport);
 
   const [files, setFiles] = useState<PreparedTranscriptFile[] | null>(null);
-  // Who these transcripts belong to. Asked HERE because a transcript imported
-  // with no customer is exactly the recording that later needs after-the-fact
-  // linking — the flow that used to strand it.
-  const [owner, setOwner] = useState<string | null>(null);
+  // Where these transcripts go. Asked HERE because a transcript imported into
+  // no folder is exactly the recording that later needs after-the-fact filing.
+  const [folderId, setFolderId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
 
   // (Re)prepare whenever the dialog opens with a new set of paths.
@@ -44,16 +41,16 @@ export function TranscriptImportDialog() {
     }
     let alive = true;
     setFiles(null);
-    // A company door pre-links its company (R7); every other door starts blank
+    // A folder door pre-picks its folder (R7); every other door starts blank
     // and asks.
-    setOwner(companyId ?? null);
+    setFolderId(prefillFolderId ?? null);
     Promise.all(paths.map(prepareTranscriptFile)).then((prepared) => {
       if (alive) setFiles(prepared);
     });
     return () => {
       alive = false;
     };
-  }, [paths, companyId]);
+  }, [paths, prefillFolderId]);
 
   if (!paths) return null;
 
@@ -67,11 +64,6 @@ export function TranscriptImportDialog() {
   async function confirm() {
     if (!valid.length || importing) return;
     setImporting(true);
-    // The customer decides the folder — one answer, not two questions.
-    const company = owner
-      ? useAccounts.getState().companies.find((c) => c.id === owner)
-      : undefined;
-    const target = company ? ensureCompanyFolder(company) : null;
     const imported: string[] = [];
     try {
       for (const f of valid) {
@@ -83,8 +75,7 @@ export function TranscriptImportDialog() {
           speakerNames: parsed.speakerNames,
           durationMs: parsed.durationMs,
           createdAt: f.createdAt,
-          folderId: target,
-          companyId: owner,
+          folderId,
         });
         if (id) imported.push(id);
       }
@@ -163,7 +154,7 @@ export function TranscriptImportDialog() {
           {ready && (
             <div className="flex flex-col gap-1.5 border-t pt-3">
               <span className="text-[11px] text-muted-foreground">{t("owner.label")}</span>
-              <CompanyPicker value={owner} onChange={setOwner} />
+              <FolderPicker value={folderId} onChange={setFolderId} />
             </div>
           )}
         </div>

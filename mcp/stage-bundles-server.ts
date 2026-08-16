@@ -20,8 +20,8 @@ import {
   type CustomStageDef,
   type ParsedBundleFile,
   type StageBundle,
-} from "../src/lib/accounts/bundleFile";
-import { SALES_STAGES } from "../src/lib/accounts/types";
+} from "../src/lib/scenarios/bundleFile";
+import { SALES_STAGES } from "../src/lib/scenarios/stages";
 import { translate, type TranslationKey } from "../src/i18n/messages";
 import type { AppLanguage } from "../src/lib/types";
 
@@ -108,7 +108,7 @@ function knownStageIds(parsed: ParsedBundleFile): Set<string> {
 /** Validate a caller-supplied bundle for a stage; returns an error string or null. */
 function bundleError(stage: string, bundle: unknown): string | null {
   if (!isBundleLike(bundle))
-    return "bundle shape invalid: needs boardTitle, slots[{id,label,hint,query}], exitCriteria[], coachRules[]";
+    return "bundle shape invalid: needs boardTitle, slots[{id,label,hint}], exitCriteria[], coachRules[]";
   if (!slotsMatchStage(bundle, stage))
     return `every slot id must start with "${stage}." (it namespaces slot tags and the backfill sentinel)`;
   return null;
@@ -127,7 +127,7 @@ server.tool(
       id,
       name: customIds.has(id)
         ? parsed.customStages.find((c) => c.id === id)!.name
-        : t(`accounts.stage.${id}`),
+        : t(`stage.${id}`),
       source: customIds.has(id) ? "custom" : "builtin",
       overridden: !!parsed.overrides[id],
       slotCount: effectiveBundle(parsed, id)?.slots.length ?? 0,

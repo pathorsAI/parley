@@ -1,8 +1,6 @@
-import { useMemo } from "react";
-import { AlertTriangle, ClipboardList, FileAudio, Import, Mic, Play } from "lucide-react";
+import { ClipboardList, FileAudio, Import, Mic, Play } from "lucide-react";
 import { toast } from "sonner";
 import { useStore } from "../../lib/store";
-import { useAccounts, triageClaims } from "../../lib/accounts/store";
 import { loadHistoryEntry } from "../../lib/history/history";
 import { startImportFlow } from "../../lib/replay/ingest";
 import { beginMeeting } from "../../lib/meeting/start";
@@ -16,28 +14,20 @@ import type { LibraryTree } from "../shell/useLibraryTree";
  * empty columns — a screen for a meeting that wasn't happening — while all
  * browsing weight fell on the 240px tree. Home flips that: the cockpit exists
  * only while a meeting runs; idle surfaces what the user actually acts on next
- * (start / triage backlog / recent recordings / import).
+ * (start / recent recordings / import).
  */
 export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const { t, language } = useI18n();
-  const acc = useAccounts();
   const enterPreflight = useStore((s) => s.enterPreflight);
-  const openAccounts = useStore((s) => s.openAccounts);
   const userName = useStore((s) => s.settings.userName);
 
-  const triage = useMemo(
-    () =>
-      acc.companies
-        .filter((c) => !c.archived)
-        .map((c) => ({ company: c, count: triageClaims(acc, c.id).length }))
-        .filter((x) => x.count > 0),
-    [acc]
-  );
+  const folderName = (id: string | null | undefined) =>
+    id ? tree.personalFolders.find((f) => f.id === id)?.name : undefined;
   const recent = tree.summaries.slice(0, 6);
   const locale = language === "en" ? "en-US" : "zh-TW";
 
-  // Staged entrance: sections land in reading order (start → triage → recent),
-  // then the recent rows cascade. Delays are inline so the sequence stays put
+  // Staged entrance: sections land in reading order (start → recent), then the
+  // recent rows cascade. Delays are inline so the sequence stays put
   // when a section is conditionally absent.
   const delay = (ms: number) => ({ animationDelay: `${ms}ms` });
 
@@ -86,29 +76,6 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           <p className="text-xs text-muted-foreground">{t("home.dropHint")}</p>
         </section>
 
-        {/* ── Triage backlog: conflicts queue, they must stay visible ────── */}
-        {triage.length > 0 && (
-          <section className="animate-fade-up flex flex-col gap-1.5" style={delay(90)}>
-            <h2 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-              {t("home.triage")}
-            </h2>
-            {triage.map(({ company, count }) => (
-              <button
-                key={company.id}
-                type="button"
-                onClick={() => openAccounts(company.id)}
-                className="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50"
-              >
-                <AlertTriangle className="size-4 shrink-0 text-orange-500" />
-                <span className="min-w-0 flex-1 truncate font-medium">{company.name}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {t("home.triageRow", { n: count })}
-                </span>
-              </button>
-            ))}
-          </section>
-        )}
-
         {/* ── Recent recordings ───────────────────────────────────────────── */}
         <section className="flex flex-col gap-1.5">
           <h2
@@ -126,9 +93,7 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
             </p>
           )}
           {recent.map((e, i) => {
-            const company = e.companyId
-              ? acc.companies.find((c) => c.id === e.companyId)
-              : undefined;
+            const folder = folderName(e.folderId);
             return (
               <button
                 key={e.id}
@@ -150,7 +115,7 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
                       month: "short",
                       day: "numeric",
                     })}
-                    {company ? ` · ${company.name}` : ""}
+                    {folder ? ` · ${folder}` : ""}
                     {e.snippet ? ` · ${e.snippet}` : ""}
                   </span>
                 </span>

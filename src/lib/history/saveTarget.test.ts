@@ -20,74 +20,58 @@ vi.mock("../flags", () => ({ CLOUD_ENABLED: true }));
 
 import { resolveMeetingSave } from "./history";
 import { useStore } from "../store";
-import { useAccounts } from "../accounts/store";
 
 const INITIAL = useStore.getState();
-const INITIAL_ACCOUNTS = useAccounts.getState();
-
-/** A company paired with fld-company, the way ensureCompanyFolder leaves it. */
-function seedCompany() {
-  useAccounts.setState({
-    ...INITIAL_ACCOUNTS,
-    companies: [
-      {
-        id: "co-1",
-        name: "Pathors AI",
-        aliases: [],
-        note: "",
-        folderId: "fld-company",
-        createdAt: 0,
-        archived: false,
-      },
-    ],
-  });
-}
 
 beforeEach(() => {
   useStore.setState(INITIAL, true);
-  useAccounts.setState(INITIAL_ACCOUNTS, true);
   syncOn.value = false;
 });
 
-describe("resolveMeetingSave — filing follows the customer (#211)", () => {
-  it("files under the linked company's folder", () => {
-    seedCompany();
-    useStore.setState({ meetingCompanyId: "co-1" });
-    expect(resolveMeetingSave()).toMatchObject({ folderId: "fld-company", origin: "company" });
-  });
-
-  it("files at the root when there is no customer — there is nothing to choose", () => {
-    expect(resolveMeetingSave()).toMatchObject({ folderId: null, origin: "default" });
-  });
-
-  it("files at the root when the paired folder is gone, not into a dead id", () => {
-    useAccounts.setState({
-      ...INITIAL_ACCOUNTS,
-      companies: [
-        {
-          id: "co-1",
-          name: "Ghost Co",
-          aliases: [],
-          note: "",
-          folderId: "fld-deleted",
-          createdAt: 0,
-          archived: false,
-        },
-      ],
+describe("resolveMeetingSave — filing is the folder picked for this call", () => {
+  it("files into the folder pre-flight picked", () => {
+    useStore.setState({ meetingFolderId: "fld-company" });
+    expect(resolveMeetingSave()).toMatchObject({
+      folderId: "fld-company",
+      origin: "meeting",
     });
-    useStore.setState({ meetingCompanyId: "co-1" });
+  });
+
+  it("falls back to the settings default personal folder", () => {
+    useStore.setState({
+      settings: {
+        ...INITIAL.settings,
+        defaultSaveLocation: { scope: "personal", folderId: "fld-company" },
+      },
+    });
+    expect(resolveMeetingSave()).toMatchObject({
+      folderId: "fld-company",
+      origin: "default",
+    });
+  });
+
+  it("files at the root when neither is set", () => {
     expect(resolveMeetingSave()).toMatchObject({ folderId: null, origin: "default" });
+  });
+
+  it("does not inherit a personal folder from an ORG default", () => {
+    useStore.setState({
+      settings: {
+        ...INITIAL.settings,
+        defaultSaveLocation: { scope: "org", orgId: "org-1", folderId: "of-1" },
+      },
+    });
+    expect(resolveMeetingSave().folderId).toBeNull();
   });
 });
 
-describe("resolveMeetingSave — the org share is independent of the customer", () => {
-  it("shares to the per-meeting org WITHOUT unfiling the customer", () => {
+describe("resolveMeetingSave — the org share is independent of the folder", () => {
+  it("shares to the per-meeting org WITHOUT unfiling the local copy", () => {
     // The old model's bug: an org "save destination" dropped the local copy at
     // the root, losing the customer's own filing.
     syncOn.value = true;
-    seedCompany();
     useStore.setState({
-      meetingCompanyId: "co-1",
+      meetingFolderId: "fld-company",
       meetingOrgShare: { orgId: "org-1", folderId: null },
     });
     expect(resolveMeetingSave()).toMatchObject({

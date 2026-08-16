@@ -2,26 +2,26 @@ import { describe, expect, it, vi } from "vitest";
 
 // resolveBoard reads the live store/stage file — not under test here (the pure
 // helpers are); stub the chain so importing boards.ts is clean.
-vi.mock("../accounts/currentStage", () => ({ resolveScenarioStageId: vi.fn() }));
+vi.mock("../scenarios/currentStage", () => ({ resolveScenarioStageId: vi.fn() }));
 
 import { translate, type TranslationKey } from "../../i18n/messages";
 import {
   applyNextStepGate,
   boardFromBundle,
-  fillsToClaimCandidates,
   nextSlotIdOf,
+  slotStateOf,
   withSharedSlots,
   type MeetingBoard,
 } from "./boards";
-import { buildScenarioSet } from "../accounts/bundles";
-import { EMPTY_BUNDLE_FILE, type SlotDef } from "../accounts/bundleFile";
+import { buildScenarioSet } from "../scenarios/bundles";
+import { EMPTY_BUNDLE_FILE, type SlotDef } from "../scenarios/bundleFile";
 import type { IntelSlotFill } from "../types";
 
 const t = (key: TranslationKey) => translate("zh-TW", key);
 const tr = (k: string) => t(k as TranslationKey);
 
-function slot(id: string, query: SlotDef["query"] = { categories: [] }): SlotDef {
-  return { id, label: id, hint: "h", query };
+function slot(id: string, solidAt?: number): SlotDef {
+  return { id, label: id, hint: "h", ...(solidAt ? { solidAt } : {}) };
 }
 
 function fill(slotId: string, text: string, speaker: "me" | "them" = "them"): IntelSlotFill {
@@ -36,7 +36,6 @@ describe("withSharedSlots", () => {
       "sales.next",
       "sales.competitors",
     ]);
-    expect(out[1].query.categories).toEqual(["nextmove"]);
     // Non-sales boards get the next slot only.
     expect(withSharedSlots([slot("iv.depth")], t).map((s) => s.id)).toEqual([
       "iv.depth",
@@ -44,14 +43,24 @@ describe("withSharedSlots", () => {
     ]);
   });
 
-  it("keeps the bundle's own .next slot (prospecting) and competitor query", () => {
-    const own = [
-      slot("prospecting.next", { categories: ["nextmove"] }),
-      slot("prospecting.rivals", { categories: ["competitor"] }),
-    ];
+  it("keeps the bundle's own next-step and competitor slots", () => {
+    const own = [slot("prospecting.next"), slot("prospecting.competitors")];
     const out = withSharedSlots(own, t, { competitors: true });
     expect(out).toHaveLength(2);
     expect(nextSlotIdOf(out)).toBe("prospecting.next");
+  });
+});
+
+describe("slotStateOf", () => {
+  it("reads a slot's coverage off this call's fills", () => {
+    expect(slotStateOf(slot("a"), 0)).toBe("empty");
+    expect(slotStateOf(slot("a"), 1)).toBe("thin");
+    expect(slotStateOf(slot("a"), 2)).toBe("solid");
+  });
+
+  it("honours a slot's own threshold", () => {
+    expect(slotStateOf(slot("a", 1), 1)).toBe("solid");
+    expect(slotStateOf(slot("a", 3), 2)).toBe("thin");
   });
 });
 
@@ -140,32 +149,5 @@ describe("applyNextStepGate", () => {
         ...gate,
       })
     ).toBeUndefined();
-  });
-});
-
-describe("fillsToClaimCandidates", () => {
-  const slots = [
-    slot("discovery.problem", { categories: ["risk", "stance"], side: "theirs" }),
-    slot("sales.next", { categories: ["nextmove"] }),
-  ];
-
-  it("maps fills to claims riding the slot's query, deduped, unknown slots dropped", () => {
-    const out = fillsToClaimCandidates(
-      [
-        fill("discovery.problem", "旺季每天五六次改單"),
-        fill("discovery.problem", "旺季每天五六次改單"), // dupe
-        fill("sales.next", "下週提供欄位清單"),
-        fill("ghost.slot", "orphan"),
-      ],
-      slots
-    );
-    expect(out).toHaveLength(2);
-    expect(out[0]).toMatchObject({
-      category: "risk",
-      side: "theirs",
-      slotIds: ["discovery.problem"],
-      text: "旺季每天五六次改單",
-    });
-    expect(out[1]).toMatchObject({ category: "nextmove", slotIds: ["sales.next"] });
   });
 });

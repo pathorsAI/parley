@@ -32,7 +32,6 @@ import { initSessionCommands } from "./lib/sessionCommands";
 import { useThemePreference } from "./lib/theme";
 import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 import { initStudyPipeline } from "./lib/analysis/studyPipeline";
-import { initAccounts } from "./lib/accounts/store";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import { initHistoryPersistSync, listenForRecordingSaved } from "./lib/history/history";
 import { checkForUpdate } from "./lib/update";
@@ -267,9 +266,11 @@ const App = () => {
     };
   }, []);
 
-  // Accounts (mini-CRM): hydrate from accounts.json once, then persist changes.
+  // One-shot folder hygiene: merge same-name folder twins left by older builds.
   useEffect(() => {
-    initAccounts();
+    import("./lib/history/history")
+      .then(({ migrateDuplicateFolders }) => migrateDuplicateFolders())
+      .catch((error) => log.warn("folders: dedupe failed", { error: String(error) }));
   }, []);
 
   // LIVE background engine: optional auto-analyze interval + checklist auto-check.

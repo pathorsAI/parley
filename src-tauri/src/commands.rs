@@ -72,19 +72,6 @@ pub fn write_folders(app: AppHandle, json: String) -> Result<(), String> {
     write_config_file(&app, "folders.json", &json)
 }
 
-/// Read the accounts (mini-CRM: companies/persons/threads/claims) JSON
-/// (empty string if the file doesn't exist yet).
-#[tauri::command]
-pub fn read_accounts(app: AppHandle) -> Result<String, String> {
-    read_config_file(&app, "accounts.json")
-}
-
-/// Write the accounts JSON, creating the config dir if needed.
-#[tauri::command]
-pub fn write_accounts(app: AppHandle, json: String) -> Result<(), String> {
-    write_config_file(&app, "accounts.json", &json)
-}
-
 /// Read the stage-bundle overrides JSON (empty string if the file doesn't
 /// exist). Builtin bundles live in the frontend; this file only carries user
 /// overrides (whole-stage replace, see docs/design/stage-bundles.md S9).

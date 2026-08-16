@@ -7,31 +7,24 @@ import {
   ClipboardPaste,
   Loader2,
   Plus,
-  ShieldAlert,
   Sparkles,
   Square,
   Target,
-  TriangleAlert,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { toast } from "sonner";
 import { useStore } from "../../lib/store";
-import { useAccounts, activeClaims, personsOf, threadsOf } from "../../lib/accounts/store";
-import type { ExtractedOps } from "../../lib/accounts/store";
 import { useMeetingSetup } from "./useMeetingSetup";
 import { collectPrepFacts, prepHeadline, type PrepFacts } from "../../lib/preflight/facts";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { AI_FAILURE_HINT_KEY, classifyAiFailure } from "../../lib/ai/failure";
 import { toastAiFailure } from "../../lib/ai/failureToast";
-import { useI18n, type TranslationKey } from "../../i18n";
+import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { MeetingContextField } from "../MeetingContextField";
-import { ReviewOpsPanel } from "../accounts/ReviewOpsPanel";
 import { splitObjection } from "../../lib/preflight/objections";
 import { PlanCard, type PlanView } from "./PlanCard";
 import { Column, EmptyState, SectionTitle } from "./bits";
@@ -50,8 +43,7 @@ type Msg =
  * are what you have AFTER thinking, not before. The three things the user
  * actually arrives with are who the call is with, what kind of call it is, and
  * a lump of background from wherever they just were. So this column opens by
- * telling them what the claim base already knows, and everything else is
- * drafted and then corrected.
+ * saying what it already knows, and everything else is drafted and corrected.
  *
  * The negotiation fields did NOT go away — they feed every analysis prompt and
  * the BATNA evaluation. They moved from a blank form to a drafted one.
@@ -59,7 +51,6 @@ type Msg =
 export function PrepCopilot() {
   const { t } = useI18n();
   const setup = useMeetingSetup();
-  const acc = useAccounts();
 
   const settings = useStore((s) => s.settings);
   const target = useStore((s) => s.meetingTarget);
@@ -71,58 +62,40 @@ export function PrepCopilot() {
 
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState<null | "chat" | "draft" | "plan" | "extract">(null);
+  const [busy, setBusy] = useState<null | "chat" | "draft" | "plan">(null);
   const [pasted, setPasted] = useState<string | null>(null);
-  /** Proposed ops kept WITH the text they came from — the attachment written on
-   *  approval cites it, and the paste bar it came from may already be gone. */
-  const [review, setReview] = useState<{ ops: ExtractedOps; source: string } | null>(null);
   const [fieldsOpen, setFieldsOpen] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
-  const company = setup.company;
   const chatReady = hasProviderKey(settings, "realtime");
   const deepReady = hasProviderKey(settings, "deep");
 
-  // A different account is a different conversation — carrying the last one
-  // over would have the coach confidently discussing the wrong customer.
+  // A different customer is a different conversation — carrying the last one
+  // over would have the coach confidently discussing the wrong one.
   useEffect(() => {
     setMessages([]);
     setPasted(null);
-  }, [setup.company?.id, setup.thread?.id]);
+  }, [setup.folder?.id]);
 
   // Destructured so the memo keys off the pieces, not the fresh object the hook
   // returns every render (which would make the memo a no-op).
-  const { thread, attendees, claims, rows, stageLabel, meetings } = setup;
-  const facts: PrepFacts | null = useMemo(() => {
-    if (!company) return null;
-    return collectPrepFacts({
-      company,
-      thread,
-      attendees,
-      claims,
-      boardRows: rows,
-      stageLabel,
-      meetings: meetings.map((m) => ({ title: m.title, createdAt: m.createdAt })),
-      prep: { target, batna, floor, context, agenda: todos.map((x) => x.text) },
-      roleLabel: (role) => t(`accounts.role.${role}` as TranslationKey),
-    });
-  }, [
-    company,
-    thread,
-    attendees,
-    claims,
-    rows,
-    stageLabel,
-    meetings,
-    target,
-    batna,
-    floor,
-    context,
-    todos,
-    t,
-  ]);
+  const { folder, scenario, stageId, slots, stageLabel, meetings } = setup;
+  const bundle = stageId ? scenario?.bundles[stageId] : undefined;
+  const facts: PrepFacts = useMemo(
+    () =>
+      collectPrepFacts({
+        folder: folder?.name ?? null,
+        scenarioName: scenario?.name ?? null,
+        stageLabel,
+        exitCriteria: bundle?.exitCriteria ?? [],
+        slots,
+        meetings: meetings.map((m) => ({ title: m.title, createdAt: m.createdAt })),
+        prep: { target, batna, floor, context, agenda: todos.map((x) => x.text) },
+      }),
+    [folder, scenario, stageLabel, bundle, slots, meetings, target, batna, floor, context, todos]
+  );
 
-  const head = facts ? prepHeadline(facts) : null;
+  const head = prepHeadline(facts);
 
   /** Text turns only — the goal chips and the plan card aren't dialogue. */
   const history = messages
@@ -139,7 +112,7 @@ export function PrepCopilot() {
 
   async function send(raw: string) {
     const q = raw.trim();
-    if (!q || busy || !facts) return;
+    if (!q || busy) return;
     setInput("");
     setPasted(null);
     const answerId = crypto.randomUUID();
@@ -195,29 +168,25 @@ export function PrepCopilot() {
   }
 
   /**
-   * The five-minute path (#189): one pass over the claim base and the stage
-   * bundle, no conversation required, pressable the moment you land. The
-   * thirty-minute path is `plan()` below, which reads what you and the coach
-   * actually worked out.
+   * The five-minute path (#189): one pass over the stage bundle, no
+   * conversation required, pressable the moment you land. The thirty-minute
+   * path is `plan()` below, which reads what you and the coach actually worked
+   * out.
    */
   async function draft() {
-    const { company: co, scenario, stageId } = setup;
-    if (busy || !co || !scenario || !stageId) return;
+    if (busy || !scenario || !stageId) return;
     setBusy("draft");
     try {
-      const bundle = scenario.bundles[stageId];
       const { draftPrep } = await import("../../lib/ai/prepDraft");
       const result = await draftPrep({
         settings,
         input: {
-          company: co,
-          thread,
-          attendees,
-          claims,
+          folder: folder?.name ?? null,
           stageName: scenario.names[stageId] ?? stageId,
           stageGoal: bundle?.goal ?? "",
           exitCriteria: bundle?.exitCriteria ?? [],
-          gaps: rows.map((r) => ({ label: r.slot.label, hint: r.slot.hint, state: r.state })),
+          slots,
+          meetings: meetings.map((m) => ({ title: m.title, createdAt: m.createdAt })),
           context,
         },
       });
@@ -243,7 +212,7 @@ export function PrepCopilot() {
   }
 
   async function plan() {
-    if (busy || !facts) return;
+    if (busy) return;
     setBusy("plan");
     try {
       const { draftPlan } = await import("../../lib/ai/prep");
@@ -255,73 +224,6 @@ export function PrepCopilot() {
     } finally {
       setBusy(null);
     }
-  }
-
-  /** Pasted material → proposed claims, reviewed one by one before anything lands. */
-  async function extract(text: string) {
-    if (busy || !company) return;
-    setBusy("extract");
-    try {
-      const { extractClaimOps } = await import("../../lib/accounts/extract");
-      const proposed = await extractClaimOps({
-        settings,
-        company,
-        persons: personsOf(acc, company.id),
-        threads: threadsOf(acc, company.id),
-        existingClaims: activeClaims(acc, company.id),
-        sourceText: text,
-        sourceLabel: "pre-meeting notes pasted by the user",
-      });
-      setReview({ ops: proposed, source: text });
-    } catch (e) {
-      toastAiFailure("preflight: copilot extract", e, "deep");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  function applyOps(approved: ExtractedOps) {
-    if (!company || !review) return;
-    const store = useAccounts.getState();
-    const attachment = store.addAttachment({
-      companyId: company.id,
-      name: t("preflight.copilot.pasteName"),
-      kind: "note",
-      text: review.source,
-    });
-    store.applyExtractedOps({
-      companyId: company.id,
-      threadId: setup.thread?.id,
-      ops: approved,
-      provenance: { kind: "import", attachmentId: attachment.id },
-    });
-    const n = approved.newPersons.length + approved.newClaims.length + approved.claimUpdates.length;
-    toast.success(t("accounts.review.applied", { n }));
-    setReview(null);
-    setPasted(null);
-    setInput("");
-  }
-
-  /**
-   * Lock a line the coach just surfaced (or one you typed) as a red line, so
-   * the live guardrail fires on it. Goes straight in as a user-authored claim —
-   * the review gate exists for what the MODEL proposes, and this is the user's
-   * own sentence; the same path CompanyPage's claim list uses.
-   */
-  function asRedline(text: string) {
-    if (!company) return;
-    useAccounts.getState().addClaim({
-      companyId: company.id,
-      threadId: setup.thread?.id,
-      subjects: [company.id],
-      category: "redline",
-      text: text.trim(),
-      provenance: [{ kind: "user" }],
-      confidence: "confirmed",
-    });
-    setInput("");
-    setPasted(null);
-    toast.success(t("preflight.copilot.redlineAdded"));
   }
 
   function asBackground(text: string) {
@@ -354,21 +256,6 @@ export function PrepCopilot() {
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Button
                     size="sm"
-                    className="h-6 text-[11px]"
-                    disabled={!company || !deepReady || !!busy}
-                    title={!company ? t("preflight.copilot.needCompany") : undefined}
-                    onClick={() => void extract(pasted)}
-                  >
-                    {busy === "extract" ? (
-                      <Loader2 className="size-3 animate-spin" />
-                    ) : (
-                      <Sparkles className="size-3" />
-                    )}
-                    {t("preflight.copilot.pasteExtract")}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
                     className="h-6 text-[11px]"
                     onClick={() => asBackground(pasted)}
                   >
@@ -450,7 +337,7 @@ export function PrepCopilot() {
                 size="sm"
                 variant="outline"
                 className="h-7 text-[11px]"
-                disabled={!facts || !deepReady || !!busy}
+                disabled={!deepReady || !!busy}
                 onClick={() => void plan()}
               >
                 {busy === "plan" ? (
@@ -460,24 +347,12 @@ export function PrepCopilot() {
                 )}
                 {t("preflight.copilot.draftPlan")}
               </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="h-7 text-[11px] text-muted-foreground"
-                disabled={!input.trim() || !company}
-                title={t("preflight.copilot.redlineHint")}
-                onClick={() => asRedline(input)}
-              >
-                <ShieldAlert className="size-3" />
-                {t("preflight.copilot.redline")}
-              </Button>
               <span className="flex-1" />
               <Button
                 type="submit"
                 size="icon"
                 className="size-7 shrink-0"
-                disabled={!input.trim() || !!busy || !facts || !chatReady}
+                disabled={!input.trim() || !!busy || !chatReady}
               >
                 {busy === "chat" ? (
                   <Loader2 className="size-3.5 animate-spin" />
@@ -490,16 +365,12 @@ export function PrepCopilot() {
         </div>
       }
     >
-      {!company || !head || !facts ? (
+      {!folder && !setup.hasScenario ? (
         <div className="h-full px-4 py-3">
           <EmptyState
             glyph="notes"
             title={t("preflight.copilot.emptyTitle")}
-            hint={
-              setup.hasScenario
-                ? t("preflight.copilot.emptyHint")
-                : t("preflight.review.emptyHintGeneral")
-            }
+            hint={t("preflight.copilot.emptyHint")}
           />
         </div>
       ) : (
@@ -508,7 +379,9 @@ export function PrepCopilot() {
               Deterministic — no key, no spinner, no network. */}
           <div className="sticky top-0 z-10 flex flex-col gap-1 border-b bg-background px-4 py-2">
             <p className="text-xs leading-snug">
-              {t("preflight.copilot.nth", { company: company.name, n: head.nth })}
+              {folder
+                ? t("preflight.copilot.nth", { company: folder.name, n: head.nth })
+                : t("preflight.copilot.unfiled")}
               {head.lastMeeting && (
                 <span className="text-muted-foreground">
                   {" · "}
@@ -519,27 +392,13 @@ export function PrepCopilot() {
                 </span>
               )}
             </p>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
-              {head.redlines > 0 && (
-                <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
-                  <TriangleAlert className="size-3 shrink-0" />
-                  {t("preflight.copilot.redlines", { n: head.redlines })}
-                </span>
-              )}
-              {head.openQuestions > 0 && (
-                <span>{t("preflight.copilot.openq", { n: head.openQuestions })}</span>
-              )}
-              {head.emptyGaps.length > 0 && (
+            {stageLabel && head.boardSlots > 0 && (
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
                 <span>
-                  {t("preflight.copilot.gaps", { n: head.emptyGaps.length })}
-                  {" "}
-                  <span className="text-foreground/70">{head.emptyGaps.join("、")}</span>
+                  {t("preflight.copilot.board", { stage: stageLabel, n: head.boardSlots })}
                 </span>
-              )}
-              {head.redlines === 0 && head.openQuestions === 0 && head.emptyGaps.length === 0 && (
-                <span>{t("preflight.copilot.allClear")}</span>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col gap-3 px-4 py-3">
@@ -591,24 +450,6 @@ export function PrepCopilot() {
         </>
       )}
 
-      {review && company && (
-        <Sheet open onOpenChange={(o) => !o && setReview(null)}>
-          <SheetContent
-            className="max-w-xl"
-            closeLabel={t("common.close")}
-            title={t("accounts.review.title")}
-          >
-            <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
-              <ReviewOpsPanel
-                ops={review.ops}
-                existingClaims={activeClaims(acc, company.id)}
-                onApply={applyOps}
-                onCancel={() => setReview(null)}
-              />
-            </div>
-          </SheetContent>
-        </Sheet>
-      )}
     </Column>
   );
 }

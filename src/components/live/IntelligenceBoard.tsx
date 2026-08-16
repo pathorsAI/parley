@@ -14,12 +14,11 @@ import {
 } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { runIntelExtraction } from "../../lib/intel/extract";
-import { useAccounts } from "../../lib/accounts/store";
-import { useScenarioSet } from "../../lib/accounts/useStageSet";
-import { stageFor } from "../../lib/accounts/currentStage";
+import { useScenarioSet } from "../../lib/scenarios/useStageSet";
+import { stageFor } from "../../lib/scenarios/currentStage";
 import { applyScenario } from "../../lib/meeting/scenario";
 import { resolveIcon } from "../../lib/icons";
-import type { Scenario } from "../../lib/accounts/bundles";
+import type { Scenario } from "../../lib/scenarios/bundles";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import type { IntelObjection, MeetingType } from "../../lib/types";
@@ -55,8 +54,6 @@ const AUTO_EXTRACT_MS = 30_000;
 export function IntelligenceBoard() {
   const { t } = useI18n();
   const meetingType = useStore((s) => s.meetingType);
-  const threadId = useStore((s) => s.meetingThreadId);
-  const thread = useAccounts((s) => s.threads.find((x) => x.id === threadId));
   const meetingStage = useStore((s) => s.meetingStage);
   const setMeetingStage = useStore((s) => s.setMeetingStage);
   const intel = useStore((s) => s.intel);
@@ -95,10 +92,9 @@ export function IntelligenceBoard() {
   }, [recording, board, autoIntel]);
 
 
-  // Resolve exactly like the board below (and the extraction pass): the picker
-  // ignored the linked thread's stage, so a sales call inherited from a thread
-  // showed one stage in the header while the board ran another.
-  const stage = board ? stageFor(board, meetingStage, thread) : undefined;
+  // Resolve exactly like the board below (and the extraction pass) — a picker
+  // showing one stage while the board runs another is a silent mismatch.
+  const stage = board ? stageFor(board, meetingStage) : undefined;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
