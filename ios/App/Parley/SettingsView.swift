@@ -41,6 +41,22 @@ struct SettingsView: View {
                         debugSection
                     #endif
                 }
+                // One surface rule across the app: white page, pale-blue
+                // grouped surfaces on it — the landing site's white body with
+                // `--v2-bg` blocks. Not `Theme.card`, which is #FAFAFA against
+                // a #FFFFFF page: a 2% step can't carry a card boundary once
+                // the hairline separators are gone.
+                //
+                // The face has to be set on the whole Form: a settings page is
+                // mostly rows nobody styles individually (pickers, links,
+                // `LabeledContent`), and each one would otherwise quietly draw
+                // in the system font next to a heading that doesn't.
+                .font(.parley.body)
+                .scrollContentBackground(.hidden)
+                .background(Theme.background)
+                // Settings is a page of short rows; the default height packs
+                // them tighter than anything else in the app.
+                .environment(\.defaultMinListRowHeight, 48)
                 #if DEBUG
                     .onReceive(ScreenshotDemo.shared.$focusKeyboardSection) { focus in
                         // .center, not .top: scrollTo ignores the navigation
@@ -67,19 +83,42 @@ struct SettingsView: View {
 
     private static let keyboardSectionID = "voice-keyboard"
 
+    /// Section headers as the landing site's eyebrow — brand blue and in the
+    /// sentence case they were written in, rather than the system's grey
+    /// all-caps. It is the one place a `Form` lets a brand speak.
+    ///
+    /// `primary` rather than `brand`, because this is small text: brand blue is
+    /// exactly what the dark palette swaps for sky, on the grounds that it
+    /// cannot be read on a navy-black page.
+    private func sectionHeader(_ title: LocalizedStringKey) -> some View {
+        Text(title)
+            .font(.parley.footnote.weight(.semibold))
+            .foregroundStyle(Theme.primary)
+            .textCase(nil)
+    }
+
+    /// Footers are the quiet half of a settings page: same DM Sans, one step
+    /// down, muted.
+    private func sectionFooter(_ text: LocalizedStringKey) -> some View {
+        Text(text)
+            .font(.parley.footnote)
+            .foregroundStyle(Theme.mutedForeground)
+    }
+
     // MARK: account
 
     private var accountSection: some View {
-        Section("Account") {
+        Section {
             if let user = app.user {
                 HStack(spacing: 12) {
                     avatar(user)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(verbatim: user.name ?? user.email).font(.body.weight(.medium))
-                        Text(verbatim: user.email).font(.caption)
+                        Text(verbatim: user.name ?? user.email).font(.parley.bodyEmphasized)
+                        Text(verbatim: user.email).font(.parley.caption)
                             .foregroundStyle(Theme.mutedForeground)
                     }
                 }
+                .padding(.vertical, 4)
                 if !app.orgs.isEmpty {
                     ForEach(app.orgs) { org in
                         HStack {
@@ -87,7 +126,7 @@ struct SettingsView: View {
                                 .foregroundStyle(Theme.org)
                             Spacer()
                             Text(verbatim: roleLabel(org.role))
-                                .font(.caption)
+                                .font(.parley.caption)
                                 .foregroundStyle(Theme.mutedForeground)
                         }
                     }
@@ -101,7 +140,7 @@ struct SettingsView: View {
                 .disabled(deletingAccount)
                 if let deleteAccountError {
                     Text(verbatim: deleteAccountError)
-                        .font(.caption)
+                        .font(.parley.caption)
                         .foregroundStyle(Theme.destructive)
                 }
             } else if app.hasAccount {
@@ -113,7 +152,10 @@ struct SettingsView: View {
             } else {
                 signInForm
             }
+        } header: {
+            sectionHeader("Account")
         }
+        .listRowBackground(Theme.tintedSurface)
     }
 
     private var syncSection: some View {
@@ -132,10 +174,11 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.success)
             }
         } header: {
-            Text("Sync")
+            sectionHeader("Sync")
         } footer: {
-            Text("When the network drops, the server goes quiet, or you run out of quota, the phone holds on to finished recordings until they sync.")
+            sectionFooter("When the network drops, the server goes quiet, or you run out of quota, the phone holds on to finished recordings until they sync.")
         }
+        .listRowBackground(Theme.tintedSurface)
     }
 
     @ViewBuilder
@@ -144,7 +187,7 @@ struct SettingsView: View {
             "Can't reach the server right now. Account details refresh automatically.",
             systemImage: "wifi.exclamationmark"
         )
-        .font(.subheadline)
+        .font(.parley.subheadline)
         .foregroundStyle(Theme.warning)
         Button("Refresh") {
             Task { await app.refreshSession() }
@@ -162,29 +205,36 @@ struct SettingsView: View {
             app.signIn()
         } label: {
             HStack {
-                if app.signingIn { ProgressView().padding(.trailing, 6) }
+                if app.signingIn { ProgressView().tint(Theme.onBrand).padding(.trailing, 6) }
                 Text("Sign in or create an account")
-                    .font(.body.weight(.medium))
+                    .font(.parley.bodyEmphasized)
                     .frame(maxWidth: .infinity)
             }
+            .padding(.vertical, 12)
+            .foregroundStyle(Theme.onBrand)
+            .background(Theme.brandGradient, in: RoundedRectangle(cornerRadius: Theme.radius))
         }
+        .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
         .disabled(app.signingIn)
         if let err = app.signInError {
-            Text(verbatim: err).font(.caption).foregroundStyle(Theme.destructive)
+            Text(verbatim: err).font(.parley.caption).foregroundStyle(Theme.destructive)
         }
         Text("Opens Parley's sign-in page — email and password, Google, and Apple. Once you're in you get live transcription with no API key, plus recording and transcript sync.")
-            .font(.caption)
+            .font(.parley.caption)
             .foregroundStyle(Theme.mutedForeground)
     }
 
+    /// The disc reverses the page rule: the row it sits on is already the pale
+    /// blue, so the avatar is the page colour punched back out of it.
     private func avatar(_ user: CloudUser) -> some View {
         Circle()
-            .fill(Theme.muted)
-            .frame(width: 36, height: 36)
+            .fill(Theme.background)
+            .frame(width: 40, height: 40)
             .overlay(
                 Text(String((user.name ?? user.email).prefix(1)).uppercased())
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(Theme.mutedForeground))
+                    .font(.parley.callout.weight(.semibold))
+                    .foregroundStyle(Theme.primary))
     }
 
     private func roleLabel(_ role: String?) -> String {
@@ -212,8 +262,9 @@ struct SettingsView: View {
                 }
             }
         } footer: {
-            Text("Picking an organization still saves the recording to your personal space and shares a copy there — same as the desktop app.")
+            sectionFooter("Picking an organization still saves the recording to your personal space and shares a copy there — same as the desktop app.")
         }
+        .listRowBackground(Theme.tintedSurface)
     }
 
     /// Same serialization the desktop picker uses internally:
@@ -246,7 +297,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var usageSection: some View {
         if let quota = app.quota {
-            Section("Usage (this period)") {
+            Section {
                 quotaBar(
                     label: String(localized: "Transcription hours"),
                     used: (quota.sttSecondsUsed ?? 0) / 3600,
@@ -257,37 +308,43 @@ struct SettingsView: View {
                     used: quota.llmCreditsUsed ?? 0,
                     limit: quota.llmCreditsLimit ?? 0,
                     unit: String(localized: "credits"))
+            } header: {
+                sectionHeader("Usage (this period)")
             }
+            .listRowBackground(Theme.tintedSurface)
         }
     }
 
     private func quotaBar(label: String, used: Double, limit: Double, unit: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(verbatim: label).font(.subheadline)
+                Text(verbatim: label).font(.parley.subheadlineEmphasized)
                 Spacer()
                 Text(verbatim: String(format: "%.1f / %.0f %@", used, limit, unit))
-                    .font(.caption.monospacedDigit())
+                    .font(.parley.caption.monospacedDigit())
                     .foregroundStyle(Theme.mutedForeground)
             }
             let over = limit > 0 && used >= limit
             ProgressView(value: limit > 0 ? min(used / limit, 1) : 0)
-                .tint(over ? Theme.destructive : Theme.foreground)
+                .tint(over ? Theme.destructive : Theme.primary)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 6)
     }
 
     // MARK: appearance / about
 
     private var appearanceSection: some View {
-        Section("Appearance") {
+        Section {
             Picker("Theme", selection: $app.themeRaw) {
                 ForEach(AppTheme.allCases) { t in
                     Text(verbatim: t.label).tag(t.rawValue)
                 }
             }
             .pickerStyle(.segmented)
+        } header: {
+            sectionHeader("Appearance")
         }
+        .listRowBackground(Theme.tintedSurface)
     }
 
     // MARK: language
@@ -312,8 +369,9 @@ struct SettingsView: View {
                 }
             }
         } footer: {
-            Text("Parley speaks English and Traditional Chinese, and follows your iPhone's language by default. Change it for Parley alone in Settings › Parley › Language.")
+            sectionFooter("Parley speaks English and Traditional Chinese, and follows your iPhone's language by default. Change it for Parley alone in Settings › Parley › Language.")
         }
+        .listRowBackground(Theme.tintedSurface)
     }
 
     /// The active localization, named in itself — 繁體中文 rather than
@@ -334,20 +392,20 @@ struct SettingsView: View {
     /// user, so a jump plus on-demand steps is as far as it goes.
     private var dictationSection: some View {
         Section {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 14) {
                     Image(systemName: "mic.fill")
-                        .font(.headline)
+                        .font(.parley.headline)
                         .foregroundStyle(Theme.primary)
-                        .frame(width: 40, height: 40)
+                        .frame(width: 44, height: 44)
                         .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Theme.primary.opacity(0.12)))
-                    VStack(alignment: .leading, spacing: 2) {
+                            RoundedRectangle(cornerRadius: Theme.radius)
+                                .fill(Theme.background))
+                    VStack(alignment: .leading, spacing: 3) {
                         Text("Type by voice in any app")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.parley.headline)
                         Text("Tap the mic on the Parley keyboard and your words land at the cursor.")
-                            .font(.caption)
+                            .font(.parley.caption)
                             .foregroundStyle(Theme.mutedForeground)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -357,12 +415,18 @@ struct SettingsView: View {
                         UIApplication.shared.open(url)
                     }
                 } label: {
-                    Text("Set up in Settings").frame(maxWidth: .infinity)
+                    Text("Set up in Settings")
+                        .font(.parley.bodyEmphasized)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .foregroundStyle(Theme.onBrand)
+                        .background(
+                            Theme.brandGradient,
+                            in: RoundedRectangle(cornerRadius: Theme.radius))
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+                .buttonStyle(.plain)
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, 8)
 
             DisclosureGroup {
                 dictationStep(
@@ -375,11 +439,12 @@ struct SettingsView: View {
                     number: 3, title: "Action Button (optional)",
                     detail: "Map it to Parley Voice Typing to start dictation without switching keyboards.")
             } label: {
-                Text("Set-up steps").font(.subheadline)
+                Text("Set-up steps").font(.parley.subheadlineEmphasized)
             }
         } header: {
-            Text("Voice keyboard")
+            sectionHeader("Voice keyboard")
         }
+        .listRowBackground(Theme.tintedSurface)
     }
 
     private func dictationStep(number: Int, title: LocalizedStringKey, detail: LocalizedStringKey)
@@ -387,17 +452,17 @@ struct SettingsView: View {
     {
         HStack(alignment: .top, spacing: 12) {
             Text(number, format: .number)
-                .font(.caption.weight(.bold).monospacedDigit())
-                .foregroundStyle(Theme.primaryForeground)
-                .frame(width: 22, height: 22)
-                .background(Circle().fill(Theme.primary))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.subheadline.weight(.medium))
-                Text(detail).font(.caption).foregroundStyle(Theme.mutedForeground)
+                .font(.parley.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(Theme.onBrand)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Theme.brandGradient))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.parley.subheadlineEmphasized)
+                Text(detail).font(.parley.caption).foregroundStyle(Theme.mutedForeground)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 5)
     }
 
     private var aboutSection: some View {
@@ -407,13 +472,14 @@ struct SettingsView: View {
             Link("Privacy Policy", destination: URL(string: "https://parley.tw/privacy/")!)
             Link("Support & feedback", destination: URL(string: "https://parley.tw/support/")!)
         } footer: {
-            Text("Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings.")
+            sectionFooter("Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings.")
         }
+        .listRowBackground(Theme.tintedSurface)
     }
 
     #if DEBUG
         private var debugSection: some View {
-            Section("Developer") {
+            Section {
                 TextField("Paste a desktop session token", text: $devToken)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -424,7 +490,10 @@ struct SettingsView: View {
                     }
                 }
                 .disabled(devToken.isEmpty)
+            } header: {
+                sectionHeader("Developer")
             }
+            .listRowBackground(Theme.tintedSurface)
         }
     #endif
 

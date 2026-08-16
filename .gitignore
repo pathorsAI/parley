@@ -40,4 +40,6 @@ src-tauri/tauri.dev.conf.json
 # iOS (ios/)
 ios/App/Parley.xcodeproj
 ios/App/build/
+# Derived data for the App Store screenshot run (ios/AppStore/capture-screenshots.sh)
+ios/App/.build-screenshots/
 ios/ParleyKit/.build/

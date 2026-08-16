@@ -19,8 +19,20 @@
     /// en-US and zh-Hant screenshot sets each read natively — a translated-looking
     /// screenshot sells the product short in whichever store it lands in.
     ///
-    ///     xcrun simctl launch <device> com.pathors.parley.ios -ParleyDemo signedIn
+    /// Two ways in, one code path (`route(_:)`):
+    ///
+    ///     # scripted: the route travels with the launch, nothing else is involved
+    ///     xcrun simctl launch <device> com.pathors.parley.ios \
+    ///         -ParleyDemo signedIn -ParleyDemoRoute library
+    ///
+    ///     # by hand: re-route a running app without relaunching it
     ///     xcrun simctl openurl <device> parley://demo/library
+    ///
+    /// The capture script uses the launch argument because as of the iOS 26.5
+    /// simulator runtime `openurl` raises a SpringBoard confirmation alert
+    /// — `Open in "Parley"?` — that no `simctl` command can dismiss, so every
+    /// routed frame came out as the launch tab behind a modal. A launch
+    /// argument never leaves the process.
     ///
     /// Routes: `record`, `library`, `transcript`, `keyboard`, `settings`,
     /// `dictation`.
@@ -43,18 +55,35 @@
         static var isActive: Bool { mode != nil }
         static var startsSignedIn: Bool { mode == "signedIn" }
 
+        /// `-ParleyDemoRoute <route>` routes the launch itself, with the same
+        /// vocabulary as `parley://demo/<route>`. Absent, the app opens on the
+        /// tab it normally opens on.
+        private static let launchRoute = UserDefaults.standard.string(forKey: "ParleyDemoRoute")
+
         /// True when the app should answer from the fixtures below instead of the
         /// cloud. Guards every injection point so a normal DEBUG run is untouched.
         static var servesFixtures: Bool { isActive && startsSignedIn }
 
-        private init() {}
+        private init() {
+            // Applying the launch route here — not from a view — is what lets the
+            // script skip `openurl`. Nothing observes these properties yet, so the
+            // first value `MainTabs`/`LibraryView`/`SettingsView` see on subscribing
+            // is already the routed one.
+            if Self.isActive, let route = Self.launchRoute { self.route(route) }
+        }
 
         /// Handles `parley://demo/…`. Returns false for everything else so the
         /// real `parley://` handlers (auth callback, dictation) still see it.
         @discardableResult
         func handle(_ url: URL) -> Bool {
             guard Self.isActive, url.scheme == "parley", url.host == "demo" else { return false }
-            let route = url.pathComponents.last ?? ""
+            return route(url.pathComponents.last ?? "")
+        }
+
+        /// The routing table both entry points share. Returns false for an
+        /// unknown route so `handle(_:)` can pass the URL on.
+        @discardableResult
+        func route(_ route: String) -> Bool {
             showTranscript = false
             focusKeyboardSection = false
             switch route {
@@ -69,12 +98,17 @@
             case "settings": tab = .settings
             case "dictation":
                 // The keyboard hand-off screen in its stranded-listening state
-                // (manual swipe-back, the iOS 26.4+ regime).
-                DictationCoordinator.shared.seedDemoListening(
-                    committed: Self.t(
-                        "Hi Anna, just wanted to let you know that my new number is ",
-                        "安納你好，跟你說一聲我的新電話號碼是"),
-                    partial: Self.t("four zero eight", "零九一二"))
+                // (manual swipe-back, the iOS 26.4+ regime). Deferred a turn
+                // because this route can run from `init`, which SwiftUI triggers
+                // lazily while evaluating a body — and the coordinator is
+                // observed by the app scene, which must not be mutated mid-update.
+                Task { @MainActor in
+                    DictationCoordinator.shared.seedDemoListening(
+                        committed: Self.t(
+                            "Hi Anna, just wanted to let you know that my new number is ",
+                            "安納你好，跟你說一聲我的新電話號碼是"),
+                        partial: Self.t("four zero eight", "零九一二"))
+                }
             default: return false
             }
             return true
