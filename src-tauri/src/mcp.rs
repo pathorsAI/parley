@@ -24,10 +24,10 @@ const SESSION_COMMANDS_EVENT: &str = "session://commands";
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// Attached to every response that carries Parley's own analysis output
-/// (findings, brief, intel, action items, delivery assessment), so an MCP
-/// client treats those as context to reason over — not as authority.
+/// (findings, brief, action items, delivery assessment), so an MCP client
+/// treats those as context to reason over — not as authority.
 const ANALYSIS_NOTE: &str =
-    "The findings, evaluations, brief, intel, action items, and delivery assessment in this \
+    "The findings, evaluations, brief, action items, and delivery assessment in this \
      response are Parley's OWN prior analysis, included as CONTEXT — not ground truth. When \
      analyzing or advising, reason from the transcript first; you are free and encouraged to \
      think critically, disagree with these results, or surface angles they missed.";
@@ -454,8 +454,8 @@ fn tools() -> Vec<Value> {
             "Get the content the user is viewing",
             "Get the data behind whatever screen the user is on right now, plus the focus \
              context: the transcript and EVERYTHING Parley's own analysis produced for it \
-             (findings, study brief, intel board, action items, delivery assessment; live \
-             mode adds todos and evaluations). Those analysis artifacts are CONTEXT from \
+             (findings, study brief, action items, delivery assessment; live mode adds \
+             todos and evaluations). Those analysis artifacts are CONTEXT from \
              Parley's earlier passes, not ground truth — when giving advice, reason from \
              the transcript yourself and feel free to challenge or go beyond them. Use \
              this to give advice about what the user is currently seeing.",
@@ -659,7 +659,7 @@ fn tools() -> Vec<Value> {
             "Read one saved recording",
             "Read a locally saved recording in full: title, dates, speaker names, the \
              complete timestamped transcript, plus everything Parley's analysis saved with \
-             it (findings, action items, study brief, intel board, delivery assessment). \
+             it (findings, action items, study brief, delivery assessment). \
              The saved analysis is CONTEXT — you're encouraged to form your own view from \
              the transcript and disagree where warranted. Use this (over several ids) as \
              the basis for cross-meeting advice or comparisons. Get ids from \
@@ -683,27 +683,20 @@ fn tools() -> Vec<Value> {
         tool(
             "update_recording_meta",
             "Update a saved recording's meeting frame",
-            "Update a saved recording's FRAME by id: `meetingType` (free-form scenario id; \
-             'sales' is the built-in default scenario), `meetingContext` (free text), and/or \
+            "Update a saved recording's FRAME by id: `meetingContext` (free text) and/or \
              `speakerNames` (merged per key, e.g. {\"them-1\": \"Jamie\"}; an empty string \
-             removes that custom name). Use this to fix a misclassified meeting type or a \
-             wrong speaker mapping so later reads and analysis get the right frame. \
-             When `meetingType` names an id that doesn't exist yet, the app CREATES a \
-             boardless meeting KIND for it — a name and an analysis lens only, with no live \
-             intelligence board — and `meetingTypeName` / `meetingTypeIcon` / \
-             `meetingTypeGuidance` describe it (the guidance is what steers the analysis, so \
-             write it as real instructions to the model). The id must be a lowercase slug \
-             (a-z, 0-9, -). The response reports `createdKind`. Applied by the app (which \
-             also syncs to cloud); waits for the app to confirm.",
+             removes that custom name). `meetingContext` is where you say WHAT KIND OF \
+             MEETING this was and WHAT MATTERS in it — who was in the room, what was at \
+             stake, and what the analysis should look for. It is fed verbatim into every \
+             analysis prompt for this recording, so writing it (and then regenerating) is \
+             how you re-aim the analysis. Use `speakerNames` to fix a wrong me/them \
+             mapping. Applied by the app (which also syncs to cloud); waits for the app to \
+             confirm.",
             json!({
                 "type": "object",
                 "properties": {
                     "id": { "type": "string" },
-                    "meetingType": { "type": "string", "description": "Scenario or kind id (free-form lowercase slug; built-in default is 'sales'). An unknown id creates a boardless kind." },
-                    "meetingTypeName": { "type": "string", "description": "Display name for a kind being created, e.g. 'Office Hour'. Defaults to the slug in Title Case." },
-                    "meetingTypeIcon": { "type": "string", "description": "Icon NAME for a kind being created, e.g. 'rotate-ccw' or 'graduation-cap' — not an emoji. Unknown names fall back to the default icon. Defaults to 'target'." },
-                    "meetingTypeGuidance": { "type": "string", "description": "English instructions telling the model how to analyze this kind of meeting — what to look for and what to ignore. Only used when the kind is created." },
-                    "meetingContext": { "type": "string", "description": "Free-text meeting context." },
+                    "meetingContext": { "type": "string", "description": "Free-text description of what this meeting was and what the analysis should look for. Goes verbatim into every analysis prompt for this recording." },
                     "speakerNames": {
                         "type": "object",
                         "description": "Speaker-key → display-name patch, merged per key (empty string removes). Keys look like 'me-1' / 'them-1' / 'mix-2' — see speakerNames on get_recording.",
@@ -1251,7 +1244,7 @@ fn focus_context(s: &Value) -> Value {
 /// What the user is looking at, with its content AND everything Parley's own
 /// analysis has produced for it. The snapshot fields already track the loaded
 /// content (in replay mode the store — and therefore the snapshot — holds the
-/// replayed recording's transcript, findings, brief, intel, action items, and
+/// replayed recording's transcript, findings, brief, action items, and
 /// delivery assessment), so one read covers live, post-meeting, and replay. For
 /// a saved replay, `meta.json` backfills anything the snapshot doesn't carry.
 fn focused_content(state: &HttpState) -> Value {
@@ -1272,13 +1265,7 @@ fn focused_content(state: &HttpState) -> Value {
         s.get("findings").cloned().unwrap_or_else(|| json!([])),
     );
     // Every analysis artifact the app has for the loaded content.
-    for key in [
-        "brief",
-        "intel",
-        "actionItems",
-        "deliveryAssessment",
-        "meetingType",
-    ] {
+    for key in ["brief", "actionItems", "deliveryAssessment"] {
         if let Some(v) = s.get(key) {
             if !v.is_null() {
                 out.insert(key.into(), v.clone());
@@ -1303,14 +1290,7 @@ fn focused_content(state: &HttpState) -> Value {
             // Backfill from disk anything the snapshot didn't carry (e.g. a
             // snapshot written by an older app version).
             if let Ok(meta) = read_meta(&state.history_dir, id) {
-                for key in [
-                    "title",
-                    "brief",
-                    "intel",
-                    "actionItems",
-                    "deliveryAssessment",
-                    "meetingType",
-                ] {
+                for key in ["title", "brief", "actionItems", "deliveryAssessment"] {
                     if out.contains_key(key) {
                         continue;
                     }
@@ -1548,7 +1528,6 @@ fn search_meetings(history_dir: &std::path::Path, args: &Value) -> anyhow::Resul
                 "title": meta.get("title").cloned().unwrap_or(Value::Null),
                 "createdAt": meta.get("createdAt").cloned().unwrap_or(Value::Null),
                 "folderId": meta.get("folderId").cloned().unwrap_or(Value::Null),
-                "meetingType": meta.get("meetingType").cloned().unwrap_or(Value::Null),
                 "hitCount": total,
                 "hits": hits,
             }));
@@ -1595,9 +1574,7 @@ fn get_recording(history_dir: &std::path::Path, id: &str) -> anyhow::Result<Valu
         "findings",
         "actionItems",
         "brief",
-        "intel",
         "deliveryAssessment",
-        "meetingType",
         "meetingContext",
         "folderId",
         "analyzed",

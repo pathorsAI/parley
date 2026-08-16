@@ -2,7 +2,7 @@ import { useStore } from "../store";
 
 /**
  * Write-guard for the study runners (analysis / action items / brief /
- * delivery / intel): each runner streams for tens of seconds into the shared
+ * delivery): each runner streams for tens of seconds into the shared
  * store, and two things can invalidate its writes mid-flight —
  *
  *   1. the user loads a DIFFERENT recording (session pin: results must never

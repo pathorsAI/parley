@@ -8,13 +8,7 @@ import { clearStudyCache } from "../history/studyCache";
 import { makeRunGuard } from "./runGuard";
 import { translate } from "../../i18n";
 import { isTauri } from "../tauriEvents";
-import type {
-  EvalDef,
-  MeetingType,
-  Settings,
-  TimelineEvent,
-  TranscriptSegment,
-} from "../types";
+import type { EvalDef, Settings, TimelineEvent, TranscriptSegment } from "../types";
 
 /** Bump when the analysis prompt/output shape changes, to invalidate caches. */
 const ANALYSIS_CACHE_VERSION = "7";
@@ -87,28 +81,6 @@ export async function listenForCacheClear(): Promise<() => void> {
  * A run that outlives its session or is superseded by a newer pass stops
  * writing (see runGuard) — its results are discarded, never misfiled.
  */
-/**
- * Append the picked scenario's analysis guidance to the meeting context. Every
- * scenario carries guidance, but for a boardless KIND it is the ONLY thing the
- * pick means — without this a retro and a sales call would be analyzed
- * identically. Best-effort: a resolve failure just leaves the context alone.
- */
-async function withKindGuidance(
-  context: string,
-  type: MeetingType,
-  settings: Settings,
-): Promise<string> {
-  if (type === "general") return context;
-  try {
-    const { resolveScenarioSet } = await import("../intel/boards");
-    const scenario = (await resolveScenarioSet(settings)).byId[type];
-    if (!scenario?.guidance.trim()) return context;
-    return `${context}\n\nMeeting kind: ${scenario.name} — ${scenario.guidance}`;
-  } catch {
-    return context;
-  }
-}
-
 const analysisGuard = makeRunGuard();
 export async function runAnalysis(opts?: {
   mode?: "live" | "replay";
@@ -129,17 +101,9 @@ export async function runAnalysis(opts?: {
   if (!hasProviderKey(settings, workload)) return;
   if (!hasSpokenSegment(segments)) return;
 
-  // The brief folds the per-deal BATNA / target / bottom line into the context, so
-  // it both feeds the prompt AND keys the cache (editing setup → re-analysis).
-  // The meeting KIND's guidance rides the same string on purpose: it's the whole
-  // contribution of a boardless kind, and folding it in here is what makes
-  // switching kinds invalidate the cached findings instead of returning the
-  // previous lens's analysis.
-  const meetingContext = await withKindGuidance(meetingBriefText(state), state.meetingType, settings);
-  // Resolving that guidance reads the bundle file, which puts an await between
-  // the guard above and the status lock below — so re-take the guard here, or
-  // two back-to-back calls could both slip into the same window.
-  if (useStore.getState().analysisStatus === "running") return;
+  // The brief folds the per-deal BATNA / target / bottom line into the context,
+  // so it both feeds the prompt AND keys the cache (editing setup → re-analysis).
+  const meetingContext = meetingBriefText(state);
 
   // REPLAY: reuse a cached analysis for the exact same recording + template +
   // speaker names + model — re-analyzing the same upload is then instant + free.
@@ -241,7 +205,6 @@ export function useAnalysisEngine() {
         autoAnalyzeSec,
         todos,
         settings,
-        meetingType,
         segments,
         speakerNames,
         markTodosDone,
@@ -253,15 +216,9 @@ export function useAnalysisEngine() {
         void runAnalysis({ mode: "live" });
       }
 
-      // Auto-check the TODO checklist every ~45s while recording — GENERAL
-      // meetings only: typed meetings ride the intel board's 30s pass, which
-      // returns todoChecks in the same call (one LLM loop per meeting). Same
-      // `autoIntel` switch as that pass, since this IS that pass for general
-      // meetings — one switch on the board header stops the background
-      // extraction whichever meeting type is running.
+      // Auto-check the TODO agenda every ~45s while recording. The manual "AI"
+      // button on the checklist runs the same pass on demand.
       if (
-        meetingType === "general" &&
-        settings.autoIntel &&
         now >= lastRun.current.todos + 45_000 &&
         !todoBusy.current &&
         hasProviderKey(settings, "realtime") &&

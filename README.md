@@ -17,15 +17,15 @@
 </p>
 
 <p align="center">
-  <img src="website/assets/showcase-hero.png" alt="Parley — live transcript, coach feed, and the intelligence board during a call" width="900" />
+  <img src="website/assets/showcase-hero.png" alt="Parley — live transcript, coach feed, and the agenda checklist during a call" width="900" />
 </p>
 
-Note-takers tell you what happened in a call after it's over — when it's too late to change the outcome. Parley coaches you **while you can still act**: it listens to the meeting, flags what just happened, suggests what to say next, and tracks where the deal stands, live.
+Note-takers tell you what happened in a call after it's over — when it's too late to change the outcome. Parley coaches you **while you can still act**: it listens to the meeting, flags what just happened, and suggests what to say next, live.
 
-- 🎙️ **Coached, live** — a real-time feed of alerts and suggested replies, plus an intelligence board that extracts the state of the deal as you talk.
+- 🎙️ **Coached, live** — a real-time feed of alerts and suggested replies, beside an agenda checklist that ticks itself off as you cover it.
 - 🌐 **In any language** — speak your language; the meeting hears the other one, through Parley's own virtual microphone.
 - 📼 **Debriefed, after** — commitments, missed moments, and a delivery scorecard for the next round.
-- 🗂️ **Filed, between** — one folder per customer, so every call with them sits together and the next pre-flight opens with their history in front of you.
+- 🗂️ **Filed, between** — one folder per customer, so every call with them sits together.
 
 **Local-first, bring your own keys.** Audio and transcripts go directly to the STT and LLM providers *you* configure (Claude, OpenAI, Gemini, Soniox, Deepgram, …). No Pathors proxy, no telemetry, everything stored on your machine.
 
@@ -56,15 +56,9 @@ On top of the transcript, the **coach feed** raises evaluation alerts (negotiati
   <img src="website/assets/showcase-eval.png" alt="Evaluation playbooks and extracted findings" width="820" />
 </p>
 
-While the feed tells you *what just happened*, the **intelligence board** tells you *where the deal stands*. Tell Parley what kind of meeting this is and it extracts the structured state as you talk:
+Beside the feed sits the **agenda checklist** — the things you meant to cover, ticked off automatically as the conversation covers them, from a reusable template or typed in on the spot. Plus live delivery nudges (pace, pitch, pauses) measured on your mic only.
 
-| Meeting type | What the board tracks |
-|---|---|
-| ⚖️ **Negotiation** | Every number said and by whom, the concession ratio between sides, agreed vs. open terms |
-| 🤝 **Sales** | Budget / timeline / decision-maker signals, objections answered vs. still open, commitments, competitor mentions |
-| 🚀 **Partnership** | A live *they-have × they-need* map, concrete mutual-leverage proposals, give/get balance |
-
-Plus an auto-checked agenda and live delivery nudges (pace, pitch, pauses) measured on your mic only.
+Describe the meeting in its **context field** — who is in the room, what is at stake, what you want the analysis to watch for — and that description goes verbatim into every analysis prompt for the call.
 
 ---
 
@@ -81,12 +75,12 @@ A slim **interpreter strip** shows the live original → translation line, a run
 ## 📼 After the call
 
 <p align="center">
-  <img src="website/assets/showcase-study.png" alt="The report: debrief, commitments, action items, and intel on one scroll" width="820" />
+  <img src="website/assets/showcase-study.png" alt="The report: debrief, commitments, and action items on one scroll" width="820" />
 </p>
 
 Stopping a meeting lands on its debrief. Any recording — just finished, from history, or dragged in as an audio file — opens in two views:
 
-- **Report** — one scroll: the debrief with clickable timestamps, both sides' commitments, action items, the intelligence board's final state, and your delivery scorecard (measured pace, talk share, filler sounds).
+- **Report** — one scroll: the debrief with clickable timestamps, both sides' commitments, action items, and your delivery scorecard (measured pace, talk share, filler sounds).
 - **Replay** — the full player: scrub to any moment and re-run the analysis *as of that point*, review the other side's moves and your missed moments side-by-side with the transcript, and ask anything about the call from a drawer that follows you across tabs.
 
 Everything generates once and saves with the recording — reopen it a month later and the whole report loads instantly, no extra LLM calls. Plus **LLM speaker re-attribution** fixes diarization drift by conversational context.
@@ -95,7 +89,7 @@ Everything generates once and saves with the recording — reopen it a month lat
 
 ## 🗂️ Between calls
 
-One customer, one folder. Every recording is filed in a folder — picked before the call in pre-flight, or moved afterwards from the library or the replay titlebar — so the calls with one customer sit together instead of scattering across a flat list. Pre-flight then opens with the earlier calls in that folder, one click from being reopened.
+One customer, one folder. Every recording is filed in a folder — moved from the library or straight from the replay titlebar — so the calls with one customer sit together instead of scattering across a flat list.
 
 An MCP client can search across them: `list_folders`, `list_recordings`, `get_transcript` and `move_recording_to_folder` give any AI assistant the whole history to reason over.
 

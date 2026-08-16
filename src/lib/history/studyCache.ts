@@ -10,14 +10,14 @@
 // "Clear Cache → Analysis" menu action.
 
 import { readJsonCache, writeJsonCache, clearCacheByPrefix } from "../cache";
-import type { ActionItem, DeliveryAssessment, IntelState, MeetingType, TimelineEvent } from "../types";
+import type { ActionItem, DeliveryAssessment, TimelineEvent } from "../types";
 
 const PREFIX = "parley:study-cache:";
 const key = (entryId: string) => `${PREFIX}${entryId}`;
 
 /** Everything the pipeline generates for a recording. All fields optional — the
  *  cache accretes as each output finishes (a brief finishing must not clobber a
- *  cached intel, mirroring persistStudyOutputs' merge semantics). */
+ *  cached delivery assessment, mirroring persistStudyOutputs' merge semantics). */
 export interface StudyCacheEntry {
   findings?: TimelineEvent[];
   actionItems?: ActionItem[];
@@ -26,9 +26,7 @@ export interface StudyCacheEntry {
    *  HistoryEntry.analyzed). Accretive: once true it never un-sets. */
   analyzed?: boolean;
   brief?: string | null;
-  intel?: IntelState | null;
   deliveryAssessment?: DeliveryAssessment | null;
-  meetingType?: MeetingType;
   savedAt?: number;
 }
 
@@ -56,9 +54,7 @@ export function writeStudyCache(entryId: string, patch: StudyCacheEntry): void {
     // keeps an earlier true and a plain false is dropped from the JSON.
     analyzed: patch.analyzed || prev.analyzed || undefined,
     brief: patch.brief ?? prev.brief ?? null,
-    intel: patch.intel ?? prev.intel ?? null,
     deliveryAssessment: patch.deliveryAssessment ?? prev.deliveryAssessment ?? null,
-    meetingType: patch.meetingType ?? prev.meetingType,
     savedAt: Date.now(),
   };
   memoId = entryId;

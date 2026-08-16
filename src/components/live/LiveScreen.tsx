@@ -10,7 +10,7 @@ import { useStore } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import { MeetingView } from "../MeetingView";
 import { CoachFeed } from "./CoachFeed";
-import { IntelligenceBoard } from "./IntelligenceBoard";
+import { TodosPanel } from "../sidebar/TodosPanel";
 import { FindingsPanel } from "../analysis/FindingsPanel";
 
 /**
@@ -42,7 +42,7 @@ function SystemAudioBanner() {
 
 /**
  * The LIVE screen, in one of two postures (titlebar-center switcher):
- * - coach (default): transcript rail | coach feed | intelligence board —
+ * - coach (default): transcript rail | coach feed | agenda checklist —
  *   the center belongs to the coach's one voice, not a chat pane.
  * - transcript: full-width transcript + the findings/analysis column.
  */
@@ -54,7 +54,7 @@ export function LiveScreen() {
   // group so saved sizes re-apply on a posture switch.
   const panelIds = useMemo(
     () =>
-      layout === "coach" ? ["transcript", "feed", "board"] : ["transcript", "findings"],
+      layout === "coach" ? ["transcript", "feed", "todos"] : ["transcript", "findings"],
     [layout]
   );
   const saved = useDefaultLayout({ id: "parley:live", panelIds, storage: window.localStorage });
@@ -81,8 +81,8 @@ export function LiveScreen() {
             <CoachFeed onSeek={setHighlightMs} />
           </ResizablePanel>
           <ResizableHandle withHandle />
-          <ResizablePanel id="board" defaultSize={26} minSize="260px">
-            <IntelligenceBoard />
+          <ResizablePanel id="todos" defaultSize={26} minSize="260px">
+            <TodosPanel />
           </ResizablePanel>
         </>
       ) : (

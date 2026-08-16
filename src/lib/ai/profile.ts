@@ -1,12 +1,7 @@
 import type { Settings } from "../types";
 
-/**
- * Just the "who am I" block, with no transcript-attribution instruction. Used
- * on its own before a meeting exists (pre-flight coaching), where there are no
- * speakers to disambiguate yet and the longer preamble would invent a
- * transcript the model was never given.
- */
-export function profileFacts(settings: Settings): string {
+/** Just the "who am I" facts, with no transcript-attribution instruction. */
+function profileFacts(settings: Settings): string {
   const facts: string[] = [];
   if (settings.userName.trim()) facts.push(`- Name: ${settings.userName.trim()}`);
   if (settings.userRole.trim()) facts.push(`- Role: ${settings.userRole.trim()}`);

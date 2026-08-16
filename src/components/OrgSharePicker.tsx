@@ -34,8 +34,7 @@ const parse = (v: string): OrgShareTarget | null => {
  * This replaces the save-destination picker. That picker listed personal
  * folders, which after #211 meant offering a second answer to a question the
  * customer field already answers; its sole surviving purpose was the org copy,
- * so now it says exactly that and nothing else. Shared by Settings (the
- * standing default) and pre-flight (this meeting's choice).
+ * so now it says exactly that and nothing else.
  */
 export function OrgSharePicker({
   value,

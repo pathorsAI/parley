@@ -209,9 +209,9 @@ export type ReasoningEffort = "low" | "medium" | "high";
 
 /**
  * LLM workload lanes (#131). Realtime = everything a human is waiting on
- * mid-meeting (live evals, intel board, coach feed, ask bar, reply
- * suggestions) — latency first. Deep = pre/post-meeting analysis (report,
- * briefing, extraction, replay passes) — quality first.
+ * mid-meeting (live evals, coach feed, ask bar, reply suggestions) — latency
+ * first. Deep = pre/post-meeting analysis (report, briefing, replay passes) —
+ * quality first.
  */
 export type LlmWorkload = "realtime" | "deep";
 
@@ -227,79 +227,8 @@ export type AppLanguage = "zh-TW" | "en";
 /** UI color theme preference. */
 export type AppTheme = "light" | "dark" | "system";
 
-/** Which meeting SCENARIO the board runs — "general" (goals only) or a
- *  scenario id: builtin ("sales" | "negotiation" | "partnership") or a
- *  user-defined scenario from stage-bundles.json v3. Open string on purpose
- *  (like SalesStage): the scenario set is data, not a type. */
-export type MeetingType = string; // NOSONAR — deliberate semantic alias (scenario id), same convention as SalesStage
-
-/** A number someone said, captured with attribution (negotiation ledger). */
-export interface IntelNumber {
-  value: string;
-  speaker: "me" | "them";
-  context: string;
-}
-
-/** An objection the counterpart raised, and whether it was answered. */
-export interface IntelObjection {
-  text: string;
-  addressed: boolean;
-}
-
-/** A commitment made during the meeting, with its side. */
-export interface IntelCommitment {
-  who: "me" | "them";
-  what: string;
-}
-
-/** Accumulated structured intelligence for the current meeting — the board's
- *  STATE (vs. the coach feed's events). Extracted by LLM passes over the live
- *  transcript; sections are populated per meeting type. */
-/** One live-captured intel item proposed for a gap-board slot (§4.3): UI
- *  transient only — nothing outlives the call. */
-export interface IntelSlotFill {
-  slotId: string;
-  /** The captured intel, one sentence, in the transcript's language. */
-  text: string;
-  /** Short verbatim quote backing it. */
-  quote: string;
-  speaker: "me" | "them";
-}
-
-export interface IntelState {
-  meetingType: MeetingType;
-  /* LEGACY sections (pre-C-integration recordings only — the unified board
-     extraction no longer writes them; the study page still renders them). */
-  numbers?: IntelNumber[];
-  concessionsMe?: string[];
-  concessionsThem?: string[];
-  agreed?: string[];
-  open?: string[];
-  budget?: string;
-  timeline?: string;
-  decisionMaker?: string;
-  commitments?: IntelCommitment[];
-  competitors?: string[];
-  theyHave?: string[];
-  theyNeed?: string[];
-  leverage?: string[];
-  give?: string[];
-  get?: string[];
-  /* CURRENT model: the slot board + ledgers. */
-  /** Sales objection tracker (addressed state drives ⚠/✓ and the counter focus). */
-  objections?: IntelObjection[];
-  /** Board slot fills for every typed meeting (§4.3, UI transient — they live
-   *  only for this call). */
-  slotFills?: IntelSlotFill[];
-  /** Auto-focus (S22): the ONE thing to say next, judged each refresh.
-   *  kind "objection" = counter the counterpart's fresh unaddressed challenge
-   *  (slotId empty); kind "gap" = chase a board slot (stage order first,
-   *  unfilled first, riding the current topic). */
-  focusSlot?: { kind: "gap" | "objection"; slotId: string; question: string; reason: string };
-}
-
 /** Live-screen posture, switched from the titlebar-center segmented control:
- *  coach = transcript rail | coach feed | intelligence board (default);
+ *  coach = transcript rail | coach feed | agenda checklist (default);
  *  transcript = full-width transcript + findings.
  *  (Pre-redesign values, and the removed "glance", migrate to "coach".) */
 export type AppLayout = "coach" | "transcript";
@@ -375,17 +304,8 @@ export interface Settings {
   assemblyaiApiKey: string;
   /** Microphone input device name; empty = system default. */
   inputDevice: string;
-  /** The DEFAULT scenario for a new meeting. The scenario a given meeting
-   *  actually runs under is per-meeting state (store.meetingType, persisted on
-   *  the history entry) — this is only the seed. Legacy persisted key:
-   *  `meetingType`. */
-  defaultMeetingType: MeetingType;
-  /** Scenario/kind ids picked recently, most recent first. Once kinds can be
-   *  created on the fly the picker's flat list stops being browsable — this is
-   *  what keeps the handful you actually use in reach. */
-  recentMeetingTypes: string[];
   /** Master switch for the study/replay auto-analysis pipeline (findings →
-   *  action items → brief → delivery → intel). Off → a recording stays
+   *  action items → brief → delivery). Off → a recording stays
    *  UNANALYZED so an external AI can own the analysis and write it back over
    *  MCP (see set_recording_analysis; list_recordings' `analyzed` flag is how it
    *  finds them). Manual "regenerate" is unaffected — it still analyzes the one
@@ -409,12 +329,6 @@ export interface Settings {
   todoTemplates: TodoTemplate[];
   /** Per-metric opt-in for live delivery coaching (see DeliveryToggles). */
   delivery: DeliveryToggles;
-  /** Whether the live intelligence board re-extracts on its own timer while
-   *  recording (and, with it, the agenda checklist auto-check). Each pass reads
-   *  the WHOLE transcript, so on a long meeting the cost compounds — turning
-   *  this off leaves the board's manual re-extract button as the only trigger.
-   *  Default on (the prior behavior); the switch lives on the board header. */
-  autoIntel: boolean;
   /** Whether to sync personal recordings + folders to Parley Cloud while signed in.
    *  Off → this device keeps everything local (no automatic push/pull); explicit
    *  org sharing still works. Default on (preserves the prior signed-in behavior). */

@@ -32,12 +32,11 @@ const ARTIFACT_LABEL: Record<StudyArtifactKey, TranslationKey> = {
   actions: "actionItems.title",
   brief: "study.brief",
   delivery: "study.delivery",
-  intel: "study.intel",
 };
 
 /** One visual treatment per artifact state — data, so the row renders once. */
 const STATUS_UI: Record<
-  StudyArtifactDisplay | "off",
+  StudyArtifactDisplay,
   { icon?: LucideIcon; spin?: boolean; className: string; label: TranslationKey }
 > = {
   queued: { icon: Clock, className: "text-amber-600 dark:text-amber-400", label: "studyGen.status.queued" },
@@ -45,8 +44,6 @@ const STATUS_UI: Record<
   done: { icon: Check, className: "text-muted-foreground", label: "common.done" },
   error: { icon: AlertTriangle, className: "text-red-600 dark:text-red-400", label: "studyGen.status.error" },
   idle: { className: "text-muted-foreground", label: "studyGen.status.idle" },
-  // Not applicable (intel without a typed template / nothing to extract).
-  off: { className: "text-muted-foreground", label: "studyGen.status.noTemplate" },
 };
 
 /**
@@ -114,7 +111,7 @@ export function StudyGenerationChip() {
                 t={t}
                 // One pass at a time: regenerating anything while another output
                 // streams would race the chained pipeline (and double-spend).
-                disabled={!pipeline.hasDeepKey || anyRunning || !a.applicable}
+                disabled={!pipeline.hasDeepKey || anyRunning}
                 onRegen={() => regenerateArtifact(a.key)}
               />
             ))}
@@ -247,7 +244,7 @@ function ArtifactRow({
   disabled: boolean;
   onRegen: () => void;
 }>) {
-  const ui = STATUS_UI[artifact.applicable ? artifact.display : "off"];
+  const ui = STATUS_UI[artifact.display];
   const Icon = ui.icon;
   const busy = artifact.display === "running" || artifact.display === "queued";
   return (
