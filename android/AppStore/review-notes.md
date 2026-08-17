@@ -107,26 +107,28 @@ declaration is rejected and the release cannot roll out.
 > lifetime, and stops itself when the user ends the meeting. No audio is
 > captured at any other time.
 
-**What the video has to show** — one continuous screen recording, roughly
-30–60 seconds, no cuts, uploaded somewhere publicly reachable (an unlisted
-YouTube link is what Play expects; the URL goes in the declaration form):
+**The video has been captured**: [`assets/fgs-demo-video.mp4`](assets/fgs-demo-video.mp4),
+30.4 s, one continuous take, showing the library → the user starting a
+recording → the live transcript with the elapsed timer and level meter → the
+shade pulled down over the running recording to show the ongoing "Recording a
+meeting" notification, its chronometer and its Stop action → the shade dismissed
+→ Stop pressed.
 
-1. The app open on the library, signed in.
-2. Tapping "Record a meeting" and **granting the microphone permission** in the
-   system dialog — the reviewer wants to see the user initiating it.
-3. The live transcript filling in while someone speaks, so the feature is
-   visibly the thing the microphone is for.
-4. **Leaving the app** (Home) and pulling down the notification shade to show
-   the ongoing "Recording a meeting" notification with its timer still
-   counting — this is the shot that justifies the foreground service, and the
-   one most often missing.
-5. Returning to the app and tapping Stop, then the recording appearing in the
-   library.
+**It still has to be hosted.** Play's form takes a *URL*, not an upload, so the
+file must go up as an unlisted YouTube video and the link pasted into the
+declaration. Do not invent one.
 
-Record it with the same emulator used for the screenshots
-(`assets/README.md`): `adb shell screenrecord /sdcard/fgs-demo.mp4`, then
-`adb pull /sdcard/fgs-demo.mp4`. Keep the audio track — a silent video of a
-transcript appearing is less convincing.
+The full field-by-field answer sheet — which service type, why a foreground
+service rather than a background job, what is real in the video and what is
+fixture — is [`fgs-declaration.md`](fgs-declaration.md). The capture procedure
+is in [`assets/README.md`](assets/README.md#the-foreground-service-demo-video).
+
+Two honest caveats to carry into any conversation with a reviewer, both spelled
+out in `fgs-declaration.md`: the notification and the foreground service in the
+video are genuine, but the **transcript content is demo-mode fixture** rather
+than live speech (an emulator has no audio input, and a real capture would put
+a real account on screen), and the video is **silent**, because
+`adb shell screenrecord` captures no audio track at all.
 
 ## What else this app will be asked
 

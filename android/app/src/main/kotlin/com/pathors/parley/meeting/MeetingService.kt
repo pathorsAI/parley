@@ -12,9 +12,11 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import com.pathors.parley.BuildConfig
 import com.pathors.parley.MainActivity
 import com.pathors.parley.R
 import com.pathors.parley.parleyContainer
+import com.pathors.parley.screenshot.DemoMode
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,6 +44,21 @@ class MeetingService : Service() {
         when (intent?.action) {
             ACTION_STOP -> {
                 stopRecording()
+                return START_NOT_STICKY
+            }
+
+            ACTION_DEMO_NOTIFICATION -> {
+                // The notification and nothing else — see [startDemoNotification].
+                if (!BuildConfig.DEBUG || !DemoMode.isActive) {
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                createChannel()
+                // Back-date the chronometer so it agrees with the elapsed time the
+                // demo session is already showing on screen. A video in which the
+                // notification says 00:28 while the app says 2:02 reads as a bug.
+                val elapsed = intent.getLongExtra(EXTRA_DEMO_ELAPSED_MS, 0L)
+                startForegroundNotification(System.currentTimeMillis() - elapsed)
                 return START_NOT_STICKY
             }
         }
@@ -144,6 +161,8 @@ class MeetingService : Service() {
 
     companion object {
         private const val ACTION_STOP = "com.pathors.parley.action.STOP_MEETING"
+        private const val ACTION_DEMO_NOTIFICATION = "com.pathors.parley.action.DEMO_NOTIFICATION"
+        private const val EXTRA_DEMO_ELAPSED_MS = "com.pathors.parley.extra.DEMO_ELAPSED_MS"
         private const val CHANNEL_ID = "meeting-recording"
         private const val NOTIFICATION_ID = 1001
 
@@ -161,6 +180,37 @@ class MeetingService : Service() {
             ContextCompat.startForegroundService(
                 context,
                 Intent(context, MeetingService::class.java),
+            )
+        }
+
+        /**
+         * Show the real ongoing notification without recording anything — debug
+         * builds in demo mode only.
+         *
+         * Google Play's foreground-service declaration requires a video of the
+         * ongoing notification, and demo mode otherwise never starts this service
+         * at all (`MeetingScreen` swaps in `DemoMeetingSession`), so the shot Play
+         * cares about most would be the one shot impossible to capture. This runs
+         * the genuine article — same channel, same chronometer, same stop action,
+         * same `FOREGROUND_SERVICE_TYPE_MICROPHONE` — with no [MeetingSession]
+         * behind it, so demo mode's "no microphone, no network, no residue"
+         * promise still holds. Only the transcript on screen is fixture.
+         *
+         * [elapsedMs] is the time the demo session already claims to have been
+         * recording, so the notification's chronometer starts from the same place
+         * as the timer on screen instead of from zero.
+         *
+         * Caller must hold RECORD_AUDIO: from Android 14 the platform refuses a
+         * `microphone`-typed foreground service without it. See
+         * `android/AppStore/assets/README.md` for the capture procedure.
+         */
+        fun startDemoNotification(context: Context, elapsedMs: Long = 0L) {
+            if (!BuildConfig.DEBUG || !DemoMode.isActive) return
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, MeetingService::class.java)
+                    .setAction(ACTION_DEMO_NOTIFICATION)
+                    .putExtra(EXTRA_DEMO_ELAPSED_MS, elapsedMs),
             )
         }
 

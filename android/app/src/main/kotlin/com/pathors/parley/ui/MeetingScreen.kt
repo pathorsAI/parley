@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -72,10 +73,27 @@ fun MeetingScreen(onDone: () -> Unit) {
     val session by MeetingService.activeSession.collectAsState()
 
     // Store screenshots: scripted segments on a timer, no permission prompt, no
-    // foreground service, no microphone — an emulator has no audio input, and a
-    // capture must never depend on one.
+    // microphone — an emulator has no audio input, and a capture must never
+    // depend on one.
     if (DemoMode.isActive) {
-        MeetingContent(session = rememberDemoMeeting(), onStop = onDone, onDone = onDone)
+        // One exception, for the Play foreground-service declaration video: if
+        // RECORD_AUDIO happens to be granted already, run the real service in
+        // notification-only mode so the ongoing notification can be filmed. A
+        // plain screenshot run never grants it, so it stays notification-free;
+        // the video run grants it deliberately via `adb shell pm grant`. See
+        // `MeetingService.startDemoNotification`.
+        val demo = rememberDemoMeeting()
+        val canShowNotification = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (canShowNotification) {
+            DisposableEffect(Unit) {
+                MeetingService.startDemoNotification(context, demo.elapsedMs.value)
+                onDispose { MeetingService.requestStop(context) }
+            }
+        }
+        MeetingContent(session = demo, onStop = onDone, onDone = onDone)
         return
     }
 
