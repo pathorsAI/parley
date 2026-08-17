@@ -2,7 +2,7 @@
 
 Native SwiftUI companion app — real-time AI coaching for **in-person** meetings. The Mac app (repo root) owns online calls (it can tap system audio); the phone owns the room.
 
-Lives in the main repo as `ios/` alongside the desktop app, `website/`, `virtual-mic/`, and `mcp/`. The cloud backend stays in the private parley-internal repo; this app talks to it only through the public sync contract.
+Lives in the main repo as `ios/` alongside the desktop app, `android/`, and `website/`. The cloud backend stays in the private parley-internal repo; this app talks to it only through the public sync contract.
 
 **Status: 1.1 on the App Store; 1.2 in preparation.** The app records in-person meetings, transcribes them live through the hosted relay, syncs them to the account, and ships a voice-typing keyboard extension. `ParleyKit` holds the transcript core, ported line-for-line from the desktop's Rust with matching unit tests:
 
