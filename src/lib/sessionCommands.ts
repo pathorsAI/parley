@@ -461,6 +461,14 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
       await emitHistoryUpdated(id);
       return { id };
     }
+    case "delete_org_recording": {
+      const orgId = argStr(a.orgId);
+      const id = argStr(a.id);
+      if (!orgId || !id) throw new Error("orgId and id are required");
+      const { deleteOrgRecording } = await import("./cloud/sync");
+      await deleteOrgRecording(orgId, id);
+      return { orgId, id, deleted: true };
+    }
     case "delete_recording": {
       const id = argStr(a.id);
       if (!id) throw new Error("id is required");
