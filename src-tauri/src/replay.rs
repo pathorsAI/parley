@@ -1375,6 +1375,13 @@ fn parley_batch_error(status: reqwest::StatusCode, body: &str) -> String {
             "Your monthly hosted transcription quota is used up — upgrade your plan or wait for it to reset."
                 .to_string()
         }
+        // The cloud caps how many transcriptions one account can have in flight,
+        // counting live meetings too — so this usually means "you're recording
+        // right now", which is a wait, not a failure.
+        429 => {
+            "Too many transcriptions running at once — wait for a meeting or an earlier upload to finish, then try again."
+                .to_string()
+        }
         413 => {
             "This recording is too large for hosted transcription — split it into shorter files and upload them separately."
                 .to_string()
