@@ -406,6 +406,8 @@ img { max-width: 100%; display: block; }
 .feature-row__copy h3 { font-size: clamp(24px, 3vw, 32px); letter-spacing: -0.02em; margin: 12px 0 14px; line-height: 1.15; }
 .feature-row__copy > p { color: var(--muted); font-size: 16px; margin: 0 0 20px; }
 .feature-row__copy em { color: var(--teal); font-style: normal; }
+/* A CTA that belongs to one feature-row's copy, not to a centred section. */
+.row-cta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 26px; }
 .checklist { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
 .checklist li { position: relative; padding-left: 28px; color: var(--text); font-size: 15px; }
 .checklist li::before {
@@ -492,6 +494,37 @@ img { max-width: 100%; display: block; }
 .cta__actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 30px; }
 .cta__note { color: var(--muted-2); font-size: 13px; margin-top: 22px; }
 
+/* ---------- MCP tool groups ---------- */
+/* Auto-fit rather than a fixed count: the five groups reflow to 3/2/1 columns
+   on their own, so this needs no breakpoint of its own. */
+.toolgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 18px;
+  margin-top: 64px;
+}
+.toolgroup {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: var(--radius);
+  padding: 24px 22px;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.toolgroup:hover { border-color: var(--line-2); background: var(--panel-2); }
+.toolgroup h4 { margin: 0 0 10px; font-size: 16px; letter-spacing: -0.01em; font-weight: 600; }
+.toolgroup > p { margin: 0 0 18px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.toolgroup > p strong { color: var(--text); font-weight: 600; }
+.toolgroup ul { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 7px; }
+.toolgroup li {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
 /* ---------- Footer ---------- */
 .footer {
   border-top: 1px solid var(--line);
@@ -500,11 +533,18 @@ img { max-width: 100%; display: block; }
 }
 .footer__top {
   max-width: var(--maxw); margin: 0 auto;
-  display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 40px; flex-wrap: wrap;
 }
-.footer__links { display: flex; gap: 24px; flex-wrap: wrap; }
-.footer__links a { color: var(--muted); font-size: 14px; transition: color 0.15s ease; }
-.footer__links a:hover { color: var(--text); }
+.footer__cols { display: flex; gap: clamp(32px, 6vw, 72px); flex-wrap: wrap; }
+.footer__col { display: flex; flex-direction: column; gap: 10px; }
+.footer__col h4 {
+  margin: 0 0 2px;
+  font-size: 12px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--muted-2);
+}
+.footer__col a { color: var(--muted); font-size: 14px; transition: color 0.15s ease; }
+.footer__col a:hover { color: var(--text); }
 .footer__bottom {
   max-width: var(--maxw); margin: 24px auto 0;
   padding-top: 22px; border-top: 1px solid var(--line);
