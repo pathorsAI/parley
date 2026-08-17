@@ -28,13 +28,16 @@ The page has marked media slots (the hero window and the three "Showcase"
 rows). **You don't need to edit any HTML** — just drop a file into `assets/`
 with the matching name and it appears automatically:
 
-| Slot                        | Drop a file named                                     |
-| --------------------------- | ----------------------------------------------------- |
-| Hero window                 | `assets/showcase-hero.{gif,png,jpg,webp,mp4}`         |
-| "Every word, attributed"    | `assets/showcase-transcript.{gif,png,jpg,webp,mp4}`   |
-| "Ask mid-conversation"      | `assets/showcase-qa.{gif,png,jpg,webp,mp4}`           |
-| "Insight that keeps up"     | `assets/showcase-eval.{gif,png,jpg,webp,mp4}`         |
-| "Voice typing"              | `assets/showcase-voicetyping.{gif,png,jpg,webp,mp4}`  |
+| Slot                                    | Drop a file named                                        |
+| --------------------------------------- | -------------------------------------------------------- |
+| Hero window                             | `assets/showcase-hero.{gif,png,jpg,webp,mp4}`            |
+| "A clean record, while it is happening" | `assets/showcase-transcript.{gif,png,jpg,webp,mp4}`      |
+| "Walk out having learned something"     | `assets/showcase-study.{gif,png,jpg,webp,mp4}`           |
+| "Ask the meeting, not your memory"      | `assets/showcase-qa.{gif,png,jpg,webp,mp4}`              |
+| "Your checks, your filing"              | `assets/showcase-eval.{gif,png,jpg,webp,mp4}`            |
+| "Hold a key. Talk. It types."           | `assets/showcase-voicetyping.{gif,png,jpg,webp,mp4}`     |
+| "Record the room, read it live"         | `assets/showcase-iphone.{gif,png,jpg,webp,mp4}`          |
+| "Caught on the phone, worked on the desktop" | `assets/showcase-iphone-sync.{gif,png,jpg,webp,mp4}` |
 
 Notes:
 - `.mp4` is detected too and mounts as a muted, looping, autoplaying clip — often

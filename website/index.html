@@ -3,22 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Parley — Real-time AI coaching for sales & negotiation calls</title>
+    <title>Parley — Record every meeting, and open it to your own AI</title>
     <meta
       name="description"
-      content="Parley is an open-source macOS app that coaches you during the call, not after: live suggestions while you talk, a deep debrief when it ends, and system-wide voice typing in any app. Local-first, bring your own AI providers."
+      content="Parley is an open-source meeting recorder for macOS and iPhone: record the call, transcribe both sides live, search everything you have ever said. Then a built-in MCP server hands the whole library to Claude — or any MCP client — so the AI you already pay for does the thinking. Local-first, bring your own providers."
     />
-    <meta name="keywords" content="sales coaching, negotiation coaching, real-time AI coach, meeting copilot, realtime transcription, sales call analysis, meeting search, voice typing, push to talk dictation, open source, macOS, Pathors AI" />
-    <meta name="author" content="Pathors AI" />
+    <meta name="keywords" content="meeting recorder, MCP server, Model Context Protocol, meeting transcription, transcript search, meeting notes, Claude MCP, sales call analysis, negotiation, voice typing, push to talk dictation, open source, macOS, iPhone" />
     <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://parley.tw/" />
 
     <!-- Open Graph -->
-    <meta property="og:site_name" content="Parley by Pathors AI" />
-    <meta property="og:title" content="Parley — Real-time AI coaching for sales & negotiation calls" />
+    <meta property="og:site_name" content="Parley" />
+    <meta property="og:title" content="Parley — Record every meeting, and open it to your own AI" />
     <meta
       property="og:description"
-      content="Note-takers tell you what happened after it's over. Parley coaches you while you can still act — live suggestions, deep debrief after, and voice typing anywhere on your Mac. Open source, native macOS."
+      content="Record, transcribe, analyze, search — and 48 MCP tools that let your AI client read, search, file and re-analyze the entire library. Open source, local-first, native macOS."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://parley.tw/" />
@@ -26,39 +25,25 @@
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Parley — Real-time AI coaching for sales & negotiation calls" />
-    <meta name="twitter:description" content="Live suggestions while you talk, deep debrief after, voice typing anywhere. Local-first macOS app, bring your own keys. Open source by Pathors AI." />
+    <meta name="twitter:title" content="Parley — Record every meeting, and open it to your own AI" />
+    <meta name="twitter:description" content="An open-source meeting recorder with a built-in MCP server: 48 tools that give Claude, Cursor, or any MCP client your whole meeting history. Bring your own providers." />
     <meta name="twitter:image" content="https://parley.tw/assets/og.png" />
 
     <link rel="icon" type="image/svg+xml" href="assets/logo.svg" />
 
-    <!-- Structured data: ties Parley to Pathors AI and links back to pathors.com -->
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
-        "@graph": [
-          {
-            "@type": "Organization",
-            "@id": "https://pathors.com/#org",
-            "name": "Pathors AI",
-            "url": "https://pathors.com",
-            "logo": "https://parley.tw/assets/og.png",
-            "sameAs": ["https://github.com/pathorsAI"]
-          },
-          {
-            "@type": "SoftwareApplication",
-            "name": "Parley",
-            "applicationCategory": "BusinessApplication",
-            "operatingSystem": "macOS",
-            "url": "https://parley.tw/",
-            "description": "Real-time AI coaching for sales and negotiation calls: live suggestions while you talk, a deep debrief after, searchable meeting history, and system-wide voice typing. Open source, local-first, with your own AI and transcription providers.",
-            "license": "https://www.apache.org/licenses/LICENSE-2.0",
-            "isAccessibleForFree": true,
-            "publisher": { "@id": "https://pathors.com/#org" },
-            "author": { "@id": "https://pathors.com/#org" },
-            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
-          }
-        ]
+        "@type": "SoftwareApplication",
+        "name": "Parley",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "macOS, iOS",
+        "url": "https://parley.tw/",
+        "description": "An open-source meeting recorder: record the call, transcribe both sides live, analyze it afterwards, and search across everything. A built-in Model Context Protocol server exposes the whole library to any MCP client, so an external AI can read, search, organize and re-analyze it. Local-first, with your own transcription and model providers.",
+        "license": "https://www.apache.org/licenses/LICENSE-2.0",
+        "isAccessibleForFree": true,
+        "author": { "@type": "Organization", "name": "Pathors AI", "url": "https://pathors.com" },
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
       }
     </script>
 
@@ -89,11 +74,10 @@
         <a href="#features">Why Parley</a>
         <a href="#how">Workflow</a>
         <a href="#showcase">Showcase</a>
-        <a href="#voice-typing">Voice typing</a>
-        <a href="#iphone">iPhone</a>
         <a href="#mcp">MCP</a>
+        <a href="#voice-typing">Voice typing</a>
+        <a href="#phone">Phone</a>
         <a href="#stack">Open source</a>
-        <a href="https://pathors.com" target="_blank" rel="noopener">Pathors AI ↗</a>
       </nav>
       <div class="nav__actions">
         <a class="btn btn--ghost" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">
@@ -114,16 +98,16 @@
       <!-- Hero -->
       <section class="hero">
         <div class="hero__inner reveal">
-          <a class="pill" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">
+          <a class="pill" href="#mcp">
             <span class="pill__dot"></span>
-            Open source · Bring your own providers
+            Open source · 48 MCP tools · Bring your own providers
             <span class="pill__arrow">→</span>
           </a>
           <h1 class="hero__title">
-            Real-time AI coaching for <span class="grad">high-stakes calls</span>.
+            Record the meeting. Then hand it to <span class="grad">the AI you already use</span>.
           </h1>
           <p class="hero__sub">
-            Note-takers tell you what happened after it's over. Parley listens live, flags what just happened, and suggests what to say next — while you can still act.
+            Parley does four things: record, transcribe, analyze, search. Everything it captures — every transcript line, finding, action item and folder — is exposed over a local MCP server, so Claude or any MCP client can work your entire meeting history without a copy-paste in sight.
           </p>
           <div class="hero__cta">
             <a class="btn btn--primary btn--lg" href="https://api.parley.tw/download" target="_blank" rel="noopener">
@@ -133,9 +117,9 @@
             <a class="btn btn--ghost btn--lg" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">Star on GitHub</a>
           </div>
           <ul class="hero__meta">
-            <li><span class="dot dot--me"></span> Built for sales, negotiation, and partnership calls</li>
-            <li><span class="dot dot--live"></span> Live coach feed, searchable meeting history, voice typing</li>
-            <li><span class="dot dot--ai"></span> Local-first, with your own STT and LLM providers</li>
+            <li><span class="dot dot--me"></span> Both sides of the call, transcribed live and speaker-labelled</li>
+            <li><span class="dot dot--live"></span> Full-text search across every meeting you have ever recorded</li>
+            <li><span class="dot dot--ai"></span> Local-first, with your own transcription and model providers</li>
           </ul>
         </div>
 
@@ -160,10 +144,10 @@
       <section class="strip reveal">
         <p>Built for conversations where generic notes are not enough</p>
         <ul>
-          <li>Job interviews</li>
-          <li>Salary negotiations</li>
           <li>Sales calls</li>
-          <li>Deal-making</li>
+          <li>Negotiations</li>
+          <li>Job interviews</li>
+          <li>Partnership talks</li>
           <li>Diligence calls</li>
         </ul>
       </section>
@@ -206,8 +190,8 @@
       <section class="section" id="features">
         <div class="section__head reveal">
           <span class="eyebrow">Why Parley</span>
-          <h2>A meeting note platform you can shape around the job</h2>
-          <p>Most meeting tools ship a fixed note format and a fixed model. Parley is built for teams that need their own prompts, their own providers, and their own definition of what matters.</p>
+          <h2>Four things, done properly — and then it gets out of the way</h2>
+          <p>Parley used to ship live dashboards, deal pipelines and scenario editors. They are gone. What is left is the part that earns its keep: a faithful record of the conversation, and an open door to whatever intelligence you want to point at it.</p>
         </div>
 
         <div class="grid">
@@ -216,31 +200,31 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v18M5 8v8M19 8v8M9 5v14M15 5v14" stroke-linecap="round"/></svg>
             </div>
             <h3>Own the transcript</h3>
-            <p>Capture both sides of the call, keep speaker labels editable, and turn the conversation into a record you can inspect.</p>
+            <p>Both sides of the call — your mic and the meeting's system audio — captured and transcribed live, split by speaker, with names you can fix and timestamps you can click.</p>
           </article>
 
           <article class="card reveal">
             <div class="card__icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 12h8M8 8h8M8 16h5" stroke-linecap="round"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5" stroke-linecap="round"/></svg>
             </div>
-            <h3>Customize the playbook</h3>
-            <p>Build evaluation templates for negotiation risk, sales qualification, missed objections, follow-ups, or anything your workflow requires.</p>
+            <h3>Search what was said</h3>
+            <p>Full-text search across every recording: every line spoken, every brief, finding and action item. Scope it to one customer's folder, and every hit comes back with a seek target.</p>
           </article>
 
           <article class="card reveal">
             <div class="card__icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V8a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8Z" stroke-linejoin="round"/><path d="M11 9h.01M11 12v3" stroke-linecap="round"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7h16M4 12h10M4 17h13" stroke-linecap="round"/><circle cx="19" cy="17" r="2.2"/></svg>
             </div>
-            <h3>Ask against the evidence</h3>
-            <p>Ask what happened, what was missed, what to push on next, or what changed. Answers stay grounded in the transcript.</p>
+            <h3>Analyze on your terms</h3>
+            <p>A debrief with clickable timestamps, commitments, action items and a delivery scorecard — generated once and saved with the recording. Or switch it off and let an external AI own the analysis instead.</p>
           </article>
 
           <article class="card reveal">
             <div class="card__icon">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3a9 9 0 1 0 9 9M21 3l-9 9" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.5"/></svg>
             </div>
-            <h3>Bring your own providers</h3>
-            <p>Use the transcription vendor and model provider that fit your cost, privacy, language, and latency needs.</p>
+            <h3>Open by protocol</h3>
+            <p>A built-in MCP server with <em>48 tools</em>. Anything the app can do to your library — read, search, file, share, re-analyze — your own AI client can do too.</p>
           </article>
         </div>
       </section>
@@ -249,24 +233,24 @@
       <section class="section section--alt" id="how">
         <div class="section__head reveal">
           <span class="eyebrow">Workflow</span>
-          <h2>From call to decision support</h2>
-          <p>Three steps from a live conversation to insight you can act on — without changing how you run the meeting.</p>
+          <h2>From call to something you can work with</h2>
+          <p>Three steps, none of which change how you run the meeting.</p>
         </div>
         <ol class="steps">
           <li class="step reveal">
             <span class="step__n">01</span>
             <h3>Choose your stack</h3>
-            <p>Pick the STT provider and model provider you want. Parley stays the meeting layer, not another closed AI bundle.</p>
+            <p>Pick the transcription vendor and the model provider that fit your cost, privacy, language and latency needs — or sign in and use the hosted ones with no key to manage.</p>
           </li>
           <li class="step reveal">
             <span class="step__n">02</span>
-            <h3>Load a playbook</h3>
-            <p>Use templates for sales, negotiation, hiring, or diligence, then edit the prompts until they match your process.</p>
+            <h3>Hit record</h3>
+            <p>Starting a meeting is one button. Say what the conversation is and what matters in it in the context field — that text goes verbatim into every analysis prompt for the recording.</p>
           </li>
           <li class="step reveal">
             <span class="step__n">03</span>
-            <h3>Run the meeting</h3>
-            <p>Watch transcript, questions, flags, and follow-ups update while you stay focused on the person in front of you.</p>
+            <h3>Work it afterwards</h3>
+            <p>Read the report, replay any moment, search across everything — or point your MCP client at the library and let it do the reading.</p>
           </li>
         </ol>
       </section>
@@ -275,64 +259,26 @@
       <section class="section" id="showcase">
         <div class="section__head reveal">
           <span class="eyebrow">Showcase</span>
-          <h2>Not generic notes. A configurable meeting cockpit.</h2>
-          <p>The same transcript can power different playbooks: sales qualification, negotiation risk, hiring signal, diligence follow-up, or your own internal rubric.</p>
+          <h2>A record you can actually cite</h2>
+          <p>Everything downstream — the debrief, the search hits, the answer your AI gives you — points back at a specific moment in a specific conversation.</p>
         </div>
 
         <div class="feature-rows">
           <div class="feature-row reveal">
             <div class="feature-row__copy">
               <span class="eyebrow eyebrow--sm">Live transcript</span>
-              <h3>A clean record before analysis</h3>
-              <p>Parley separates speakers, keeps names editable, and gives every downstream insight something concrete to cite.</p>
+              <h3>A clean record, while it is still happening</h3>
+              <p>Parley taps your microphone and the meeting's system audio separately, so the other side never goes missing. Speakers are split apart, names are editable, and drift in the diarization can be fixed by conversational context after the fact.</p>
               <ul class="checklist">
-                <li>Speaker-aware transcript</li>
-                <li>Editable names and context</li>
-                <li>Useful during or after the call</li>
+                <li>Speaker-aware, timestamped transcript</li>
+                <li>Editable names, LLM speaker re-attribution</li>
+                <li>Drag in an audio file or a .txt transcript instead</li>
               </ul>
             </div>
             <figure class="media-slot media-slot--wide" data-media="showcase-transcript">
               <div class="media-slot__hint">
                 <p><strong>showcase-transcript</strong></p>
-                <code>website/assets/showcase-transcript.gif</code>
-              </div>
-            </figure>
-          </div>
-
-          <div class="feature-row feature-row--rev reveal">
-            <div class="feature-row__copy">
-              <span class="eyebrow eyebrow--sm">Q&amp;A sidebar</span>
-              <h3>Ask the meeting, not your memory</h3>
-              <p>Use Ask to summarize commitments, surface unanswered questions, or decide what to press on next.</p>
-              <ul class="checklist">
-                <li>Grounded in live transcript</li>
-                <li>Streamed responses</li>
-                <li>Your preferred AI provider</li>
-              </ul>
-            </div>
-            <figure class="media-slot media-slot--wide" data-media="showcase-qa">
-              <div class="media-slot__hint">
-                <p><strong>showcase-qa</strong></p>
-                <code>website/assets/showcase-qa.gif</code>
-              </div>
-            </figure>
-          </div>
-
-          <div class="feature-row reveal">
-            <div class="feature-row__copy">
-              <span class="eyebrow eyebrow--sm">Playbooks</span>
-              <h3>Turn strategy into reusable checks</h3>
-              <p>Evaluations and to-dos become reusable templates: MEDDICC, negotiation terms, interview rubrics, diligence questions, or anything else.</p>
-              <ul class="checklist">
-                <li>Custom prompts and templates</li>
-                <li>Evidence-backed flags</li>
-                <li>Auto-check action items</li>
-              </ul>
-            </div>
-            <figure class="media-slot media-slot--wide" data-media="showcase-eval">
-              <div class="media-slot__hint">
-                <p><strong>showcase-eval</strong></p>
-                <code>website/assets/showcase-eval.gif</code>
+                <code>website/assets/showcase-transcript.png</code>
               </div>
             </figure>
           </div>
@@ -341,11 +287,11 @@
             <div class="feature-row__copy">
               <span class="eyebrow eyebrow--sm">The debrief</span>
               <h3>Walk out having learned something</h3>
-              <p>Stopping a meeting lands on its report: the brief with clickable timestamps, action items, and your delivery scorecard — on one scroll, saved with the recording. Everything you have ever recorded stays searchable.</p>
+              <p>Stopping a meeting lands on its report: the brief with clickable timestamps, both sides' commitments, action items, and a scorecard on how you delivered — one scroll, saved with the recording.</p>
               <ul class="checklist">
                 <li>Generated once, reloads instantly forever</li>
                 <li>Replay any moment and re-run the analysis as of that point</li>
-                <li>Ask anything about the call, grounded in the transcript</li>
+                <li>Findings land on a timeline you can click through</li>
               </ul>
             </div>
             <figure class="media-slot media-slot--wide" data-media="showcase-study">
@@ -356,15 +302,154 @@
             </figure>
           </div>
 
+          <div class="feature-row reveal">
+            <div class="feature-row__copy">
+              <span class="eyebrow eyebrow--sm">Ask</span>
+              <h3>Ask the meeting, not your memory</h3>
+              <p>Summarize what was committed to, surface the questions nobody answered, or decide what to press on next — with answers grounded in the transcript rather than in a summary of a summary.</p>
+              <ul class="checklist">
+                <li>Grounded in the loaded transcript</li>
+                <li>Streamed responses, in a drawer that follows you</li>
+                <li>Routed to whichever model you picked</li>
+              </ul>
+            </div>
+            <figure class="media-slot media-slot--wide" data-media="showcase-qa">
+              <div class="media-slot__hint">
+                <p><strong>showcase-qa</strong></p>
+                <code>website/assets/showcase-qa.png</code>
+              </div>
+            </figure>
+          </div>
+
+          <div class="feature-row feature-row--rev reveal">
+            <div class="feature-row__copy">
+              <span class="eyebrow eyebrow--sm">Playbooks &amp; folders</span>
+              <h3>Your checks, your filing</h3>
+              <p>Evaluations and checklists are reusable templates — MEDDICC, negotiation terms, interview rubrics, diligence questions, or your own rubric. And one customer means one folder, so every call with them sits together instead of scattering across a flat list.</p>
+              <ul class="checklist">
+                <li>Custom evaluation and checklist templates</li>
+                <li>Evidence-backed findings, with quotes</li>
+                <li>Folders on both the personal and the shared org side</li>
+              </ul>
+            </div>
+            <figure class="media-slot media-slot--wide" data-media="showcase-eval">
+              <div class="media-slot__hint">
+                <p><strong>showcase-eval</strong></p>
+                <code>website/assets/showcase-eval.png</code>
+              </div>
+            </figure>
+          </div>
         </div>
+      </section>
+
+      <!-- MCP: the headline capability -->
+      <section class="section section--alt" id="mcp">
+        <div class="section__head reveal">
+          <span class="eyebrow">Built-in MCP server</span>
+          <h2>48 tools. Your AI gets the whole library.</h2>
+          <p>Parley runs a local Model Context Protocol server. Point Claude, Claude Code, Cursor — anything that speaks MCP — at it, and the meeting you are in, the one you recorded last March, and the folder you keep one customer in are all just things your assistant can read and act on.</p>
+        </div>
+
+        <div class="feature-rows">
+          <div class="feature-row reveal">
+            <div class="feature-row__copy">
+              <span class="eyebrow eyebrow--sm">One command</span>
+              <h3>No second AI subscription</h3>
+              <p>There is no extra key to add inside Parley for this. Connect the assistant you already pay for and ask it <em>"what did we promise this customer"</em> or <em>"which calls mentioned pricing"</em> — it goes and reads the transcripts itself.</p>
+              <ul class="checklist">
+                <li>Local HTTP endpoint — nothing leaves your machine to reach it</li>
+                <li>Live meeting, saved recording, or the whole history</li>
+                <li>Read and write: it can file, rename and re-analyze too</li>
+              </ul>
+            </div>
+            <div class="codeblock reveal">
+              <button class="copy" data-copy="claude mcp add --transport http parley http://127.0.0.1:3011/mcp">Copy</button>
+              <pre><code><span class="c-cmt"># Connect your MCP client — keep Parley open</span>
+claude mcp add --transport http parley \
+  http://127.0.0.1:3011/mcp</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="toolgrid">
+          <article class="toolgroup reveal">
+            <h4>The meeting happening now</h4>
+            <p>What is on screen, what has been said so far, and the checklist beside it — readable and writable mid-call.</p>
+            <ul>
+              <li>get_app_context</li>
+              <li>get_focused_content</li>
+              <li>get_transcript</li>
+              <li>list_todos</li>
+              <li>add_todo</li>
+              <li>check_todo</li>
+              <li>list_evaluations</li>
+            </ul>
+          </article>
+
+          <article class="toolgroup reveal">
+            <h4>Everything you have recorded</h4>
+            <p>Full-text search across every transcript line and every conclusion the analysis drew — the way to reach words spoken in the middle of a meeting a year ago.</p>
+            <ul>
+              <li>search_meetings</li>
+              <li>list_recordings</li>
+              <li>get_recording</li>
+              <li>rename_recording</li>
+            </ul>
+          </article>
+
+          <article class="toolgroup reveal">
+            <h4>The library, organized</h4>
+            <p>Folders are the filing system, and an agent can run the whole of it — including importing a pile of old .txt transcripts into the right folder.</p>
+            <ul>
+              <li>list_folders</li>
+              <li>create_folder</li>
+              <li>rename_folder</li>
+              <li>delete_folder</li>
+              <li>move_recording_to_folder</li>
+              <li>import_transcript</li>
+              <li>delete_recording</li>
+            </ul>
+          </article>
+
+          <article class="toolgroup reveal">
+            <h4>Your team's shared space</h4>
+            <p>The org side is no longer app-only: share a call in, file it, pull a copy back down, or remove it — with the same permissions the app enforces.</p>
+            <ul>
+              <li>list_orgs</li>
+              <li>list_org_recordings</li>
+              <li>list_org_folders</li>
+              <li>create_org_folder</li>
+              <li>share_recording_to_org</li>
+              <li>move_org_recording_to_folder</li>
+              <li>copy_org_recording_to_personal</li>
+              <li>delete_org_recording</li>
+            </ul>
+          </article>
+
+          <article class="toolgroup reveal">
+            <h4>Hand over the analysis</h4>
+            <p>Turn off <strong>Auto-analyze recordings</strong> in Settings and a finished meeting stays unanalyzed on purpose. Your agent polls for it, reads the transcript, and writes its own findings, action items and debrief back into the app.</p>
+            <ul>
+              <li>set_recording_analysis</li>
+              <li>update_recording_meta</li>
+              <li>list_findings</li>
+              <li>set_findings</li>
+              <li>update_finding</li>
+              <li>upsert_eval_template</li>
+              <li>upsert_todo_template</li>
+            </ul>
+          </article>
+        </div>
+
+        <p class="mcp-note">The exact endpoint, a ready-to-paste command, and a live view of what your client is doing are in <strong>Settings → MCP Server</strong>.</p>
       </section>
 
       <!-- Voice typing: beyond the meeting -->
       <section class="section" id="voice-typing">
         <div class="section__head reveal">
           <span class="eyebrow">Beyond the meeting</span>
-          <h2>Voice typing, anywhere on your Mac</h2>
-          <p>Parley isn't only for calls. Hold your push-to-talk key in any app, speak, and release — your words are transcribed with your own provider and dropped right where your cursor is.</p>
+          <h2>Voice typing, anywhere you have a cursor</h2>
+          <p>Parley isn't only for calls. Hold your push-to-talk key in any app, speak, and release — your words are transcribed with your own provider and dropped right where the cursor is.</p>
         </div>
 
         <div class="feature-rows">
@@ -372,7 +457,7 @@
             <div class="feature-row__copy">
               <span class="eyebrow eyebrow--sm">Push to talk</span>
               <h3>Hold a key. Talk. It types.</h3>
-              <p>The same fast, private transcription that powers your meetings, available system-wide — fire off a message, a note, or a prompt without touching the keyboard.</p>
+              <p>The same fast transcription that powers your meetings, available system-wide — fire off a message, a note, or a prompt without touching the keyboard. On iPhone the same thing is a keyboard you can switch to in any app.</p>
               <ul class="checklist">
                 <li>Works in any app, not just Parley</li>
                 <li>Record any shortcut — or hold a single key</li>
@@ -383,7 +468,7 @@
             <figure class="media-slot media-slot--wide" data-media="showcase-voicetyping">
               <div class="media-slot__hint">
                 <p><strong>showcase-voicetyping</strong></p>
-                <code>website/assets/showcase-voicetyping.gif</code>
+                <code>website/assets/showcase-voicetyping.png</code>
               </div>
             </figure>
           </div>
@@ -391,15 +476,14 @@
       </section>
 
       <!--
-        iPhone: the other half of the meeting surface. The Mac owns online calls
-        because it can tap system audio; iOS cannot, and this section says so
-        rather than implying parity the platform will never allow.
+        Phone: the other half of the capture surface. The Mac owns online calls
+        because it can tap system audio; iOS and Android cannot, and this section
+        says so rather than implying a parity the platforms will never allow.
 
-        On App Store approval: replace the .cta__note placeholder below with the
-        real listing link —
-        <a class="btn btn--primary btn--lg" href="https://apps.apple.com/app/idXXXXXXXXXX" target="_blank" rel="noopener"><span>Download on the App Store</span></a>
+        When the Android app reaches Google Play, replace the .cta__note at the
+        bottom with the real listing link.
       -->
-      <section class="section section--alt" id="iphone">
+      <section class="section section--alt" id="phone">
         <div class="section__head reveal">
           <span class="eyebrow">On your phone</span>
           <h2>The meetings you have in person</h2>
@@ -418,6 +502,12 @@
                 <li>Voice typing into any app, from the Parley keyboard or the Action Button</li>
                 <li>English and Traditional Chinese, following your phone's language</li>
               </ul>
+              <div class="row-cta">
+                <a class="btn btn--primary" href="https://apps.apple.com/app/id6795031201" target="_blank" rel="noopener">
+                  <svg class="apple" viewBox="0 0 384 512" width="13" height="16" aria-hidden="true" fill="currentColor"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+                  <span>Download on the App Store</span>
+                </a>
+              </div>
             </div>
             <figure class="media-slot media-slot--wide" data-media="showcase-iphone">
               <div class="media-slot__hint">
@@ -427,15 +517,15 @@
             </figure>
           </div>
 
-          <div class="feature-row reveal">
+          <div class="feature-row feature-row--rev reveal">
             <div class="feature-row__copy">
-              <span class="eyebrow eyebrow--sm">One account, two devices</span>
-              <h3>Caught on the phone, worked on the Mac</h3>
-              <p>Recordings and transcripts sync to the same Parley account, so a meeting you captured at a table opens on the desktop with the full report behind it — timestamps, action items, delivery scorecard.</p>
+              <span class="eyebrow eyebrow--sm">One account, every device</span>
+              <h3>Caught on the phone, worked on the desktop</h3>
+              <p>Recordings and transcripts sync to the same Parley account, so a meeting you captured at a table opens on the desktop with the full report behind it — timestamps, action items, delivery scorecard, and everything the MCP server can reach.</p>
               <ul class="checklist">
                 <li>Hosted transcription on sign-in — no API key on the phone</li>
                 <li>Personal and organization libraries, shared or moved between them</li>
-                <li>No phone calls, no FaceTime, no other apps' audio — iOS offers no such API and Parley does not pretend otherwise</li>
+                <li>No phone calls, no FaceTime, no other apps' audio — neither iOS nor Android offers such an API, and Parley does not pretend otherwise</li>
               </ul>
             </div>
             <figure class="media-slot media-slot--wide" data-media="showcase-iphone-sync">
@@ -447,54 +537,23 @@
           </div>
         </div>
 
-        <p class="cta__note">Parley for iPhone is in App Store review. This page gets the listing link the day it is approved.</p>
+        <p class="cta__note">An Android app is built and syncs to the same account — it records the room and also transcribes audio files you already have. It is not on Google Play yet; this page gets the link the day it is.</p>
       </section>
 
-      <!-- MCP: connect your own AI client to the live meeting -->
-      <section class="section" id="mcp">
+      <!-- Open source / why it matters -->
+      <section class="section" id="stack">
         <div class="section__head reveal">
-          <span class="eyebrow">Built-in MCP server</span>
-          <h2>Ask the meeting from your own AI</h2>
-          <p>Parley runs a local Model Context Protocol server. Point Claude — or any MCP client — at it and query the live call as it happens, with the AI app you already use.</p>
-        </div>
-
-        <div class="feature-rows">
-          <div class="feature-row reveal">
-            <div class="feature-row__copy">
-              <span class="eyebrow eyebrow--sm">Model Context Protocol</span>
-              <h3>Your AI, wired into the live call</h3>
-              <p>No extra key inside Parley — connect the assistant you already pay for and let it read the running transcript, then ask <em>"what did they commit to?"</em> or <em>"what haven't I asked yet?"</em> grounded in the meeting.</p>
-              <ul class="checklist">
-                <li>Reads the live, speaker-labelled transcript</li>
-                <li>Can drive the agenda, evaluations, and timeline</li>
-                <li>Works with Claude, Cursor, and any MCP client</li>
-              </ul>
-            </div>
-            <div class="codeblock reveal">
-              <button class="copy" data-copy="claude mcp add --transport http parley http://127.0.0.1:3011/mcp">Copy</button>
-              <pre><code><span class="c-cmt"># Connect your MCP client — keep Parley open</span>
-claude mcp add --transport http parley \
-  http://127.0.0.1:3011/mcp</code></pre>
-            </div>
-          </div>
-        </div>
-        <p class="mcp-note">The exact endpoint (and a ready-to-paste command) lives in <strong>Settings → MCP Server</strong>.</p>
-      </section>
-
-      <!-- Impact / provider support -->
-      <section class="section section--alt" id="stack">
-        <div class="section__head reveal">
-          <span class="eyebrow">Why it matters</span>
-          <h2>Open source meeting intelligence, without provider lock-in</h2>
-          <p>Use Parley as the interface layer for meeting notes and analysis. Swap providers as models improve, costs change, or privacy requirements shift.</p>
+          <span class="eyebrow">Open source</span>
+          <h2>An internal tool, opened up</h2>
+          <p>Parley was built to run our own sales and negotiation calls, and it is released under Apache 2.0 because a tool that holds your conversations should be one you can read, fork and host yourself.</p>
         </div>
         <div class="stack-grid">
-          <div class="stack-card reveal"><span class="stack-card__k">Open source</span><span class="stack-card__v">Self-hostable, inspectable, and free to extend instead of another paid black box.</span></div>
-          <div class="stack-card reveal"><span class="stack-card__k">AI providers</span><span class="stack-card__v">Plug in any major model provider with your own keys — no single vendor baked in.</span></div>
-          <div class="stack-card reveal"><span class="stack-card__k">Native &amp; fast</span><span class="stack-card__v">Built in Rust for a small, quick app that feels genuinely native on macOS.</span></div>
-          <div class="stack-card reveal"><span class="stack-card__k">Customization</span><span class="stack-card__v">Bring your own evaluation templates, meeting context, checklists, and model choices.</span></div>
+          <div class="stack-card reveal"><span class="stack-card__k">Open source</span><span class="stack-card__v">Apache 2.0, inspectable and free to extend instead of another paid black box.</span></div>
+          <div class="stack-card reveal"><span class="stack-card__k">Local-first</span><span class="stack-card__v">Recordings, transcripts and templates live in your own app directory. No telemetry.</span></div>
+          <div class="stack-card reveal"><span class="stack-card__k">Any provider</span><span class="stack-card__v">Plug in any major transcription or model provider with your own keys — none baked in.</span></div>
+          <div class="stack-card reveal"><span class="stack-card__k">Native &amp; fast</span><span class="stack-card__v">Built in Rust and Tauri: a small, quick app that feels genuinely native on macOS.</span></div>
           <div class="stack-card reveal"><span class="stack-card__k">Cost control</span><span class="stack-card__v">Route fast questions to cheaper models and deeper analysis to stronger ones.</span></div>
-          <div class="stack-card reveal"><span class="stack-card__k">License</span><span class="stack-card__v">Apache 2.0 · © Pathors AI</span></div>
+          <div class="stack-card reveal"><span class="stack-card__k">Extensible</span><span class="stack-card__v">48 MCP tools mean the app does not have to ship the feature for you to build it.</span></div>
         </div>
       </section>
 
@@ -503,16 +562,16 @@ claude mcp add --transport http parley \
         <div class="cta reveal">
           <div class="cta__glow" aria-hidden="true"></div>
           <span class="eyebrow">Get started</span>
-          <h2>Build your own meeting note stack</h2>
-          <p>Download Parley for macOS, add the providers you want in Settings, and start shaping it around your meetings. Free and open source.</p>
+          <h2>Start recording, then plug in your AI</h2>
+          <p>Download Parley for macOS, add the providers you want in Settings, and connect your MCP client. Free and open source.</p>
           <div class="cta__actions">
             <a class="btn btn--primary btn--lg" href="https://api.parley.tw/download" target="_blank" rel="noopener">
               <svg class="apple" viewBox="0 0 384 512" width="15" height="18" aria-hidden="true" fill="currentColor"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
               <span>Download for macOS</span>
             </a>
-            <a class="btn btn--ghost btn--lg" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">View on GitHub</a>
+            <a class="btn btn--ghost btn--lg" href="https://apps.apple.com/app/id6795031201" target="_blank" rel="noopener">Get it for iPhone</a>
           </div>
-          <p class="cta__note">Bring your preferred transcription and AI provider keys. Local model routes are supported where available.</p>
+          <p class="cta__note">Bring your preferred transcription and AI provider keys, or sign in for hosted ones. Local model routes are supported where available.</p>
         </div>
       </section>
     </main>
@@ -523,21 +582,34 @@ claude mcp add --transport http parley \
           <img src="assets/logo.svg" alt="" width="26" height="26" />
           <span>Parley</span>
         </a>
-        <nav class="footer__links" aria-label="Footer">
-          <a href="#features">Why Parley</a>
-          <a href="#how">Workflow</a>
-          <a href="#stack">Open source</a>
-          <a href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">GitHub</a>
-          <a href="https://github.com/pathorsAI/parley/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
-          <a href="privacy/">Privacy</a>
-          <a href="support/">Support</a>
-          <a href="account-deletion/">Delete account</a>
-          <a href="https://pathors.com" target="_blank" rel="noopener">Pathors AI</a>
-        </nav>
+        <div class="footer__cols">
+          <nav class="footer__col" aria-label="Product">
+            <h4>Product</h4>
+            <a href="#features">Why Parley</a>
+            <a href="#mcp">MCP server</a>
+            <a href="#voice-typing">Voice typing</a>
+            <a href="#phone">iPhone</a>
+            <a href="https://api.parley.tw/download" target="_blank" rel="noopener">Download</a>
+          </nav>
+          <nav class="footer__col" aria-label="Project">
+            <h4>Project</h4>
+            <a href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">GitHub</a>
+            <a href="https://github.com/pathorsAI/parley/releases" target="_blank" rel="noopener">Releases</a>
+            <a href="https://github.com/pathorsAI/parley/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">Contributing</a>
+            <a href="https://github.com/pathorsAI/parley/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+          </nav>
+          <nav class="footer__col" aria-label="Legal and support">
+            <h4>Legal &amp; support</h4>
+            <a href="support/">Support</a>
+            <a href="privacy/">Privacy policy</a>
+            <a href="account-deletion/">Account deletion</a>
+            <a href="mailto:contact@pathors.com">Contact</a>
+          </nav>
+        </div>
       </div>
       <div class="footer__bottom">
-        <p>© 2026 Pathors AI · Apache 2.0</p>
-        <p>A <a href="https://pathors.com" target="_blank" rel="noopener">Pathors AI</a> open source project</p>
+        <p>© 2026 <a href="https://pathors.com" target="_blank" rel="noopener">Pathors AI</a> · Apache 2.0</p>
+        <p>parley.tw</p>
       </div>
     </footer>
 
