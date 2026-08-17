@@ -970,7 +970,24 @@ fn tools() -> Vec<Value> {
             "Copy an org recording to personal",
             "Save a copy of an org-shared recording into the personal library (local \
              disk), so it appears in list_recordings and can be opened in replay. The \
-             org copy stays put (removing it needs uploader/admin rights in the app).",
+             org copy stays put (remove it with delete_org_recording).",
+            json!({
+                "type": "object",
+                "properties": {
+                    "orgId": { "type": "string" },
+                    "id": { "type": "string", "description": "Org recording id (from list_org_recordings)." }
+                },
+                "required": ["orgId", "id"]
+            }),
+        ),
+        tool(
+            "delete_org_recording",
+            "Remove a recording from an org (DESTRUCTIVE)",
+            "Remove a shared recording from an organization (uploader or org \
+             admin/owner only, server-enforced). Only the org copy is deleted — a \
+             personal original, if one still exists, is untouched. This cannot be \
+             undone; re-share from the personal copy to restore it. Get ids from \
+             list_org_recordings.",
             json!({
                 "type": "object",
                 "properties": {
@@ -1278,10 +1295,10 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             )
             .await?
         }
-        "copy_org_recording_to_personal" => {
+        "copy_org_recording_to_personal" | "delete_org_recording" => {
             call_frontend(
                 state,
-                "copy_org_recording_to_personal",
+                name,
                 json!({
                     "orgId": required_str(&args, "orgId")?,
                     "id": required_str(&args, "id")?
