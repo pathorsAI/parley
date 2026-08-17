@@ -10,7 +10,8 @@ the parts that have to be produced.
 | Feature graphic | 1024 × 500 px, PNG or JPEG, ≤ 15 MB, no transparency | Yes | **Done** — per-locale, see below |
 | Phone screenshots | 2–8 per locale, PNG or JPEG, ≤ 8 MB each, each side 320–3,840 px; ship ≥ 1080 px on the short edge | Yes (≥ 2) | **Done** — 4 per locale, see below |
 | 7" / 10" tablet screenshots | same rules at tablet sizes | Only if the listing claims tablet support | Not planned for 0.1.0 |
-| Promo video | a YouTube URL | No | Not planned. (Not to be confused with the **foreground-service demo video**, which *is* required — see [`../review-notes.md`](../review-notes.md).) |
+| Promo video | a YouTube URL | No | Not planned. (Not to be confused with the **foreground-service demo video**, which *is* required — see below.) |
+| Foreground-service demo video | a URL to a video of the feature in use; not part of the listing, it belongs to App content → Foreground service permissions | Yes, or the release is blocked | **Captured** — [`fgs-demo-video.mp4`](fgs-demo-video.mp4), still needs hosting. See [`../fgs-declaration.md`](../fgs-declaration.md) |
 
 Assets are per-locale in Play: upload one set to **English (United States)** and
 one to **Chinese (Traditional) – Taiwan**. The icon and feature graphic are
@@ -213,6 +214,104 @@ uploader refuses it, pad to an exact 9:16 rather than squashing:
 magick input.png -resize 1080x1920 -background '#0a0b0e' -gravity center \
   -extent 1080x1920 output.png
 ```
+
+## The foreground-service demo video
+
+[`fgs-demo-video.mp4`](fgs-demo-video.mp4) — 30.4 s, 1080 × 2400, H.264, ~640 KB,
+silent. It is **not** a store-listing asset: it belongs to Play Console → App
+content → Foreground service permissions, which takes a **URL**, so the file has
+to be uploaded as an unlisted YouTube video before the declaration can be
+completed. The field-by-field answers, and what the video is allowed to claim,
+are in [`../fgs-declaration.md`](../fgs-declaration.md).
+
+It is captured the same way as the screenshots — `parley-test` AVD, debug build,
+demo mode — with two differences, both of which matter.
+
+**One: the status bar keeps its notifications.** The screenshot recipe above
+ends with `demo -e command notifications -e visible false`; here it must not,
+because the ongoing notification *is* the subject. Run every other line of the
+sysui demo block, and skip that one.
+
+**Two: `RECORD_AUDIO` has to be granted.** Demo mode normally starts no service
+and posts no notification. `MeetingService.startDemoNotification` runs the real
+service in notification-only mode — real channel, real chronometer, real stop
+action, real `FOREGROUND_SERVICE_TYPE_MICROPHONE`, no `MeetingSession` and no
+microphone behind it — but only when demo mode is on **and** `RECORD_AUDIO` is
+already granted, because from Android 14 the platform refuses a
+`microphone`-typed foreground service without it. A plain screenshot run never
+grants it, so screenshot captures stay notification-free exactly as before.
+
+```bash
+adb shell pm grant com.pathors.parley android.permission.RECORD_AUDIO
+adb shell pm grant com.pathors.parley android.permission.POST_NOTIFICATIONS
+
+# The emulator posts its own ongoing "Serial console enabled" notification,
+# which must not appear in a video going to Google. It has FLAG_ONGOING_EVENT,
+# so "Clear all" will not shift it — snooze it by key instead.
+adb shell cmd notification list          # find the key: -1|android|<id>|null|1000
+adb shell cmd notification snooze --for 3600000 "'-1|android|55|null|1000'"
+```
+
+Then reset to a **fresh** library (the demo transcript only grows for the first
+16 s of each visit to the recording screen, so a stale session films a frozen
+one), and drive the take:
+
+```bash
+adb shell am start -a android.intent.action.VIEW -d "'parley://demo/library'"
+# … re-apply the sysui demo block, minus the notifications line …
+
+adb shell screenrecord --bit-rate 6000000 --time-limit 33 /sdcard/fgs-demo.mp4 &
+sleep 5;  adb shell input tap 539 2147            # "Record a meeting"
+sleep 10                                          # transcript grows on screen
+sleep 0;  adb shell cmd statusbar expand-notifications
+sleep 6;  adb shell cmd statusbar collapse
+sleep 6;  adb shell input tap 539 2285            # "Stop" — note the lower Y
+sleep 6
+wait
+adb pull /sdcard/fgs-demo.mp4 && adb shell rm /sdcard/fgs-demo.mp4
+```
+
+`cmd statusbar expand-notifications` rather than a swipe: an edge swipe on a
+loaded emulator misfires into the back gesture, and a swipe starting within 4 px
+of the top edge is interpreted as the shade gesture only intermittently. The two
+tap targets are **different Y values** — 2147 is "Record a meeting" on the
+library, 2285 is "Stop" on the recording screen. Reusing the first for the second
+silently no-ops and you get a take that never stops recording.
+
+Finally, normalise the timing. `screenrecord` emits frames only when the screen
+changes, so the raw file is variable-rate (~7 fps here) and ends the instant the
+last frame is drawn — which lops off the closing shot:
+
+```bash
+ffmpeg -i fgs-demo.mp4 \
+  -vf "tpad=stop_mode=clone:stop_duration=3,fps=30,format=yuv420p" \
+  -c:v libx264 -preset slow -crf 26 -movflags +faststart -an \
+  fgs-demo-video.mp4
+```
+
+Verify before committing — a black or truncated capture is the failure mode, and
+it is not obvious from the file size:
+
+```bash
+ffprobe -v error -show_entries format=duration,size -show_entries \
+  stream=width,height,codec_name -of default=nw=1 fgs-demo-video.mp4
+# mean luma per frame; a black capture sits near 0, this one runs 175–217
+ffmpeg -v error -i fgs-demo-video.mp4 \
+  -vf "signalstats,metadata=print:key=lavfi.signalstats.YAVG" -f null -
+```
+
+### If `screenrecord` comes back black or zero-length
+
+It does on some emulator GPU configurations. Fall back to a frame sequence and
+assemble it:
+
+```bash
+for i in $(seq 1 300); do adb exec-out screencap -p > frame-$(printf %04d $i).png; done
+ffmpeg -framerate 10 -i frame-%04d.png -c:v libx264 -pix_fmt yuv420p out.mp4
+```
+
+The committed file did **not** need this route — `screenrecord` worked on
+`parley-test` with `-gpu swiftshader_indirect`.
 
 ## When you change the UI
 
