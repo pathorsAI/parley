@@ -9,6 +9,7 @@ import com.pathors.parley.auth.AuthCallback
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.ui.ParleyRoot
 import com.pathors.parley.ui.theme.ParleyTheme
+import com.pathors.parley.voicetyping.VoiceTypingSetup
 import kotlinx.coroutines.launch
 
 /**
@@ -45,6 +46,11 @@ class MainActivity : ComponentActivity() {
         // Screenshot demo first: it claims only `parley://demo/…` in debug builds
         // and hands everything else straight on to the sign-in handler.
         if (DemoMode.handle(uri)) return
+        // The voice keyboard's hand-off. It cannot request RECORD_AUDIO itself, so
+        // it sends the user here; the navigation graph picks the request up (see
+        // VoiceTypingSetup.SetupRequest) once it is mounted, which may be after
+        // the sign-in wall comes down.
+        if (VoiceTypingSetup.SetupRequest.handle(uri)) return
         val container = parleyContainer
         lifecycleScope.launch {
             when (val result = container.auth.handleAuthCallback(uri)) {
