@@ -2,6 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useStore } from "./store";
 import { isTauri } from "./tauriEvents";
+import { CLOUD_ENABLED } from "./flags";
+import { syncEnabled } from "./cloud/client";
+import { log } from "./log";
 import type { ActionItem, EvalDef, TimelineEvent } from "./types";
 
 /**
@@ -181,6 +184,34 @@ function applyCommand(cmd: SessionCommand): void {
 }
 
 /**
+ * Mirror a personal-folder mutation to the cloud registry. Non-fatal by design
+ * (same as the History-window UI): the local registry is the source of truth
+ * and `pushUnsyncedFolders` re-mirrors creates on the next sync sweep, so a
+ * transient cloud failure must not fail the MCP call that already succeeded
+ * locally.
+ */
+async function mirrorFolderToCloud(
+  op: "create" | "rename" | "delete",
+  id: string,
+  name: string,
+  createdAt?: number,
+): Promise<void> {
+  if (!CLOUD_ENABLED || !syncEnabled()) return;
+  try {
+    const cloud = await import("./cloud/folders");
+    if (op === "create") {
+      await cloud.createCloudFolder({ id, name, createdAt: createdAt ?? Date.now() });
+    } else if (op === "rename") {
+      await cloud.renameCloudFolder(id, name);
+    } else {
+      await cloud.deleteCloudFolder(id);
+    }
+  } catch (e) {
+    log.warn("session: folder cloud mirror failed", { op, id, error: String(e) });
+  }
+}
+
+/**
  * Execute an RPC command (one that carries an id) and return its result data.
  * These reach the pieces the Rust MCP server can't touch directly: cloud/org
  * HTTP calls (the bearer token lives in this process) and the localStorage
@@ -264,6 +295,52 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
       const { listFoldersFresh } = await import("./history/folders");
       return (await listFoldersFresh()).map((f) => ({ id: f.id, name: f.name }));
     }
+    case "create_folder": {
+      const name = argStr(a.name).trim();
+      if (!name) throw new Error("name is required");
+      const { listFoldersFresh, createLocalFolder, emitFoldersUpdated } = await import(
+        "./history/folders"
+      );
+      // Adopt a same-name folder when one exists (the import_transcript rule),
+      // so repeated calls stay idempotent. Fresh read first: another instance
+      // may have created it since this window loaded.
+      const existing = (await listFoldersFresh()).find((f) => f.name === name);
+      if (existing) return { id: existing.id, name: existing.name, existed: true };
+      const folder = createLocalFolder(name);
+      await mirrorFolderToCloud("create", folder.id, folder.name, folder.createdAt);
+      await emitFoldersUpdated().catch(() => {});
+      return { id: folder.id, name: folder.name, existed: false };
+    }
+    case "rename_folder": {
+      const id = argStr(a.id);
+      const name = argStr(a.name).trim();
+      if (!id || !name) throw new Error("id and name are required");
+      const { listFoldersFresh, renameLocalFolder, emitFoldersUpdated } = await import(
+        "./history/folders"
+      );
+      if (!(await listFoldersFresh()).some((f) => f.id === id)) {
+        throw new Error(`no personal folder with id ${id} — get ids from list_folders`);
+      }
+      renameLocalFolder(id, name);
+      await mirrorFolderToCloud("rename", id, name);
+      await emitFoldersUpdated().catch(() => {});
+      return { id, name };
+    }
+    case "delete_folder": {
+      const id = argStr(a.id);
+      if (!id) throw new Error("id is required");
+      const { listFoldersFresh, deleteLocalFolder, emitFoldersUpdated } = await import(
+        "./history/folders"
+      );
+      const existing = (await listFoldersFresh()).find((f) => f.id === id);
+      if (!existing) {
+        throw new Error(`no personal folder with id ${id} — get ids from list_folders`);
+      }
+      deleteLocalFolder(id);
+      await mirrorFolderToCloud("delete", id, existing.name);
+      await emitFoldersUpdated().catch(() => {});
+      return { id, name: existing.name };
+    }
     case "list_orgs": {
       const { listMyOrgs } = await import("./cloud/orgs");
       return await listMyOrgs();
@@ -276,6 +353,44 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
       const { listOrgFolders } = await import("./cloud/folders");
       const folders = await listOrgFolders(argStr(a.orgId));
       return folders.map((f) => ({ id: f.id, name: f.name }));
+    }
+    case "create_org_folder": {
+      const orgId = argStr(a.orgId);
+      const name = argStr(a.name).trim();
+      if (!orgId || !name) throw new Error("orgId and name are required");
+      const { listOrgFolders, createOrgFolder } = await import("./cloud/folders");
+      // Same idempotence rule as create_folder: adopt an existing same-name
+      // folder rather than minting a server-side twin.
+      const existing = (await listOrgFolders(orgId)).find((f) => f.name === name);
+      if (existing) return { id: existing.id, name: existing.name, existed: true };
+      const folder = await createOrgFolder(orgId, name);
+      return { id: folder.id, name: folder.name, existed: false };
+    }
+    case "rename_org_folder": {
+      const orgId = argStr(a.orgId);
+      const id = argStr(a.id);
+      const name = argStr(a.name).trim();
+      if (!orgId || !id || !name) throw new Error("orgId, id and name are required");
+      const { renameOrgFolder } = await import("./cloud/folders");
+      await renameOrgFolder(orgId, id, name);
+      return { orgId, id, name };
+    }
+    case "delete_org_folder": {
+      const orgId = argStr(a.orgId);
+      const id = argStr(a.id);
+      if (!orgId || !id) throw new Error("orgId and id are required");
+      const { deleteOrgFolder } = await import("./cloud/folders");
+      await deleteOrgFolder(orgId, id);
+      return { orgId, id };
+    }
+    case "move_org_recording_to_folder": {
+      const orgId = argStr(a.orgId);
+      const id = argStr(a.id);
+      if (!orgId || !id) throw new Error("orgId and id are required");
+      const folderId = a.folderId ? argStr(a.folderId) : null;
+      const { setOrgRecordingFolder } = await import("./cloud/folders");
+      await setOrgRecordingFolder(orgId, id, folderId);
+      return { orgId, id, folderId };
     }
     case "share_recording_to_org": {
       const { shareRecordingToOrg } = await import("./cloud/sync");
@@ -345,6 +460,25 @@ async function applyRpcCommand(action: string, a: Record<string, unknown>): Prom
       const { emitHistoryUpdated } = await import("./history/history");
       await emitHistoryUpdated(id);
       return { id };
+    }
+    case "delete_recording": {
+      const id = argStr(a.id);
+      if (!id) throw new Error("id is required");
+      const { listHistory, deleteHistoryEntry, emitHistoryUpdated } = await import(
+        "./history/history"
+      );
+      if (!(await listHistory()).some((e) => e.id === id)) {
+        throw new Error(`no local recording with id ${id} — get ids from list_recordings`);
+      }
+      // Same order as the library UI delete: cloud first (tombstone, so the
+      // sweep can't resurrect the copy), then the local files.
+      if (CLOUD_ENABLED && syncEnabled()) {
+        const { deleteCloudRecording } = await import("./cloud/sync");
+        await deleteCloudRecording(id);
+      }
+      await deleteHistoryEntry(id);
+      await emitHistoryUpdated(id);
+      return { id, deleted: true };
     }
     default:
       throw new Error(`unknown command: ${action}`);

@@ -349,9 +349,9 @@ fn now_ms() -> u64 {
 
 /// Coarse read/write classification for the activity feed, by tool-name verb.
 fn tool_kind(name: &str) -> &'static str {
-    const WRITE_VERBS: [&str; 11] = [
+    const WRITE_VERBS: [&str; 13] = [
         "upsert_", "delete_", "add_", "remove_", "check_", "set_", "update_", "rename_", "move_",
-        "share_", "copy_",
+        "share_", "copy_", "create_", "import_",
     ];
     if WRITE_VERBS.iter().any(|v| name.starts_with(v)) {
         "write"
@@ -758,6 +758,42 @@ fn tools() -> Vec<Value> {
             json!({ "type": "object", "properties": {} }),
         ),
         tool(
+            "create_folder",
+            "Create a personal folder",
+            "Create a personal history folder and return { id, name, existed }. \
+             Idempotent by name: when a folder with that name already exists it is \
+             returned (existed: true) instead of duplicated. When cloud sync is on \
+             the folder is mirrored to the cloud registry.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Folder display name." }
+                },
+                "required": ["name"]
+            }),
+        ),
+        tool(
+            "rename_folder",
+            "Rename a personal folder",
+            "Rename a personal history folder by id. Get ids from list_folders.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "name": { "type": "string", "description": "New display name." }
+                },
+                "required": ["id", "name"]
+            }),
+        ),
+        tool(
+            "delete_folder",
+            "Delete a personal folder",
+            "Delete a personal history folder by id. The recordings it held are NOT \
+             deleted — they fall back to the personal root (the orphan→root rule). \
+             Get ids from list_folders.",
+            json!({ "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }),
+        ),
+        tool(
             "import_transcript",
             "Import .txt transcripts as recordings",
             "Import plain-text transcript files as audio-less personal recordings \
@@ -799,6 +835,22 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
+            "delete_recording",
+            "Delete a saved recording (DESTRUCTIVE)",
+            "Permanently delete a personal recording: its local files AND its personal \
+             cloud copy. The cloud id is tombstoned — it can never be re-uploaded, so \
+             this CANNOT be undone. Copies previously shared into an org are NOT \
+             affected. Prefer move_recording_to_folder for archiving; only delete when \
+             the user explicitly wants the recording gone.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Personal recording id (from list_recordings)." }
+                },
+                "required": ["id"]
+            }),
+        ),
+        tool(
             "list_orgs",
             "List organizations",
             "List the organizations the signed-in user belongs to, as { id, name, role }. \
@@ -817,6 +869,68 @@ fn tools() -> Vec<Value> {
             "List an org's folders",
             "List an organization's folders as { id, name }. Get org ids from list_orgs.",
             json!({ "type": "object", "properties": { "orgId": { "type": "string" } }, "required": ["orgId"] }),
+        ),
+        tool(
+            "create_org_folder",
+            "Create an org folder",
+            "Create a shared folder in an organization and return { id, name, existed }. \
+             Idempotent by name: an existing same-name folder is returned (existed: true) \
+             instead of duplicated. Any org member can create; requires the user to be \
+             signed in to Parley cloud. Get org ids from list_orgs.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "orgId": { "type": "string" },
+                    "name": { "type": "string", "description": "Folder display name." }
+                },
+                "required": ["orgId", "name"]
+            }),
+        ),
+        tool(
+            "rename_org_folder",
+            "Rename an org folder",
+            "Rename an organization's shared folder by id (creator or org admin/owner \
+             only). Get folder ids from list_org_folders.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "orgId": { "type": "string" },
+                    "id": { "type": "string" },
+                    "name": { "type": "string", "description": "New display name." }
+                },
+                "required": ["orgId", "id", "name"]
+            }),
+        ),
+        tool(
+            "delete_org_folder",
+            "Delete an org folder",
+            "Delete an organization's shared folder by id (creator or org admin/owner \
+             only). The recordings it held are NOT deleted — they fall back to the org \
+             root. Get folder ids from list_org_folders.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "orgId": { "type": "string" },
+                    "id": { "type": "string" }
+                },
+                "required": ["orgId", "id"]
+            }),
+        ),
+        tool(
+            "move_org_recording_to_folder",
+            "Move an org recording between org folders",
+            "Move an org-shared recording into one of that org's folders, or back to \
+             the org root by omitting folderId. Get recording ids from \
+             list_org_recordings and folder ids from list_org_folders.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "orgId": { "type": "string" },
+                    "id": { "type": "string", "description": "Org recording id (from list_org_recordings)." },
+                    "folderId": { "type": "string", "description": "Target org folder id; omit for the org root." }
+                },
+                "required": ["orgId", "id"]
+            }),
         ),
         tool(
             "share_recording_to_org",
@@ -1027,6 +1141,41 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             call_frontend(state, "set_recording_analysis", args).await?
         }
         "list_folders" => call_frontend(state, "list_folders", json!({})).await?,
+        "create_folder" => {
+            call_frontend(
+                state,
+                "create_folder",
+                json!({ "name": required_str(&args, "name")? }),
+            )
+            .await?
+        }
+        "rename_folder" => {
+            call_frontend(
+                state,
+                "rename_folder",
+                json!({
+                    "id": required_str(&args, "id")?,
+                    "name": required_str(&args, "name")?
+                }),
+            )
+            .await?
+        }
+        "delete_folder" => {
+            call_frontend(
+                state,
+                "delete_folder",
+                json!({ "id": required_str(&args, "id")? }),
+            )
+            .await?
+        }
+        "delete_recording" => {
+            call_frontend(
+                state,
+                "delete_recording",
+                json!({ "id": required_str(&args, "id")? }),
+            )
+            .await?
+        }
         "import_transcript" => {
             let paths = args
                 .get("paths")
@@ -1068,6 +1217,52 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
                 state,
                 "list_org_folders",
                 json!({ "orgId": required_str(&args, "orgId")? }),
+            )
+            .await?
+        }
+        "create_org_folder" => {
+            call_frontend(
+                state,
+                "create_org_folder",
+                json!({
+                    "orgId": required_str(&args, "orgId")?,
+                    "name": required_str(&args, "name")?
+                }),
+            )
+            .await?
+        }
+        "rename_org_folder" => {
+            call_frontend(
+                state,
+                "rename_org_folder",
+                json!({
+                    "orgId": required_str(&args, "orgId")?,
+                    "id": required_str(&args, "id")?,
+                    "name": required_str(&args, "name")?
+                }),
+            )
+            .await?
+        }
+        "delete_org_folder" => {
+            call_frontend(
+                state,
+                "delete_org_folder",
+                json!({
+                    "orgId": required_str(&args, "orgId")?,
+                    "id": required_str(&args, "id")?
+                }),
+            )
+            .await?
+        }
+        "move_org_recording_to_folder" => {
+            call_frontend(
+                state,
+                "move_org_recording_to_folder",
+                json!({
+                    "orgId": required_str(&args, "orgId")?,
+                    "id": required_str(&args, "id")?,
+                    "folderId": args.get("folderId").cloned().unwrap_or(Value::Null)
+                }),
             )
             .await?
         }
