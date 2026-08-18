@@ -42,22 +42,51 @@ overwritten on the next generate — and commit the regenerated plist with it.
 Both targets carry the number and both must move together. To re-upload without
 a commit, run the workflow manually with the `build_number` input.
 
+**When CI cannot sign.** The permissions error above is not hypothetical: the
+`ios-v1.3` run failed exactly this way, archiving fine and then dying in export
+with `Cloud signing permission error` / `No profiles for 'com.pathors.parley.ios'
+were found`. The API key can build but cannot mint a distribution profile.
+
+A Mac with the team's Apple ID signed into Xcode **can** — the account does the
+cloud signing the key is not allowed to — so the release does not have to wait
+for a new key. Build it by hand, then fix the key.
+
 <details>
 <summary>Building and uploading by hand</summary>
+
+Archive and export an `.ipa`, signing through the Xcode account rather than an
+API key:
 
 ```bash
 cd ios/App
 xcodegen generate
-xcodebuild -project Parley.xcodeproj -scheme Parley \
+xcodebuild -project Parley.xcodeproj -scheme Parley -configuration Release \
   -destination 'generic/platform=iOS' \
-  -archivePath build/Parley.xcarchive archive
+  -archivePath build/Parley.xcarchive -allowProvisioningUpdates archive
 xcodebuild -exportArchive -archivePath build/Parley.xcarchive \
   -exportOptionsPlist ExportOptions.plist -exportPath build/export \
   -allowProvisioningUpdates
 ```
 
-With an Xcode account signed in, the export uploads directly to App Store
-Connect.
+`ExportOptions.plist` declares no `destination`, so that second command only
+writes `build/export/Parley.ipa` — it does **not** upload, whatever the export
+log's talk of App Store Connect suggests. Uploading needs a copy of the plist
+with `destination` set to `upload`:
+
+```bash
+sed 's|<key>uploadSymbols</key>|<key>destination</key><string>upload</string><key>uploadSymbols</key>|' \
+  ExportOptions.plist > /tmp/UploadOptions.plist
+xcodebuild -exportArchive -archivePath build/Parley.xcarchive \
+  -exportOptionsPlist /tmp/UploadOptions.plist -exportPath build/upload \
+  -allowProvisioningUpdates
+```
+
+That re-signs and uploads in one step, ending in `Upload succeeded`. The build
+then processes in App Store Connect for a few minutes to a few hours before it
+can be attached to a version.
+
+Keep `build/Parley.xcarchive` until the release is out. It holds the dSYMs, and
+a hand-built upload has no CI run holding them for you.
 </details>
 
 ## Store metadata
