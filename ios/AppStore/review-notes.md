@@ -15,6 +15,14 @@ Create a non-expiring email/password review account in the hosted Parley auth
 service. Enter its email and password directly in App Store Connect; store the
 credentials only in the approved secret manager.
 
+Its password lives in Pathors' private secret store at
+`_secret/parley-app-review-account/` (synced to Jack's Drive, never in git),
+alongside a note on why it cannot be recovered any other way: Parley Cloud has
+no mail provider, so password reset is off (`apps/cloud/src/auth.ts`), and this
+account has only a `credential` provider row — no linked Google account — so the
+"sign in with Google on the same address" fallback that comment suggests does
+not apply. The same account is what Google Play's App access declaration uses.
+
 The account **`appreview@pathors.com`** already exists in production and holds
 two clearly-labelled sample meetings so Library and the transcript view can be
 reviewed without recording anything. Its password lives in the team secret
