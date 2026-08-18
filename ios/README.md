@@ -4,7 +4,7 @@ Native SwiftUI companion app — real-time AI coaching for **in-person** meeting
 
 Lives in the main repo as `ios/` alongside the desktop app, `android/`, and `website/`. The cloud backend stays in the private parley-internal repo; this app talks to it only through the public sync contract.
 
-**Status: 1.1 on the App Store; 1.2 in preparation.** The app records in-person meetings, transcribes them live through the hosted relay, syncs them to the account, and ships a voice-typing keyboard extension. `ParleyKit` holds the transcript core, ported line-for-line from the desktop's Rust with matching unit tests:
+**Status: 1.2 on the App Store (released 2026-08-15); 1.3 in preparation.** The app records in-person meetings, transcribes them live through the hosted relay, syncs them to the account, and ships a voice-typing keyboard extension. `ParleyKit` holds the transcript core, ported line-for-line from the desktop's Rust with matching unit tests:
 
 - `SegmentBuilder` — speaker-run accumulation, stable segment ids, partial/final tail semantics (port of `src-tauri/src/transcription/common.rs`)
 - `SonioxProtocol` + `SonioxStreamParser` — the Soniox realtime wire protocol as spoken through Parley's hosted STT relay (`wss://api.parley.tw/stt/stream`): config frame without vendor key, `keepalive`/`finalize` control frames, `<end>`/`<fin>` endpoint markers, error frames

@@ -62,9 +62,10 @@ ONE ACCOUNT, TWO DEVICES
 
 Recordings and transcripts sync to your Parley account, so a meeting you caught
 on the phone opens on the Mac app — where the deeper work happens: the report
-with clickable timestamps, what each side committed to, action items, deal
-intelligence, and a scorecard on how you delivered. Parley is a meeting copilot
-built for sales, negotiation, and interviews; the phone is its capture end.
+with clickable timestamps, what each side committed to, action items, a
+scorecard on how you delivered, and full-text search across every meeting you
+have ever recorded. The phone is the capture end; the desktop is where the
+reading happens.
 
 WHAT IT DOES NOT DO
 
@@ -126,13 +127,14 @@ and account management.
 ## Notes on the choices here
 
 - **The name carries two search terms.** "Parley" alone tells the App Store
-  nothing about what the app is; "Parley: Meeting Recorder" keeps the brand
-  first and buys the two words people actually search. If the team would rather
-  ship the bare wordmark, use `Parley` and move "meeting recorder" to the front
-  of the keyword list.
-- **The subtitle does not mention voice typing.** Thirty characters only buys
-  one idea, and the recorder is the one the screenshots open on. Voice typing
-  leads the promotional text and the What's New instead, where it has room.
+  nothing about what the app is; "Parley: Dictation & Meetings" keeps the brand
+  first and buys the words people actually search. (An earlier draft used
+  "Parley: Meeting Recorder"; the keyboard shipped in 1.1 and dictation earned
+  the top billing.)
+- **The subtitle leads with voice typing** — "Voice typing + meeting notes".
+  Thirty characters buys about one and a half ideas, and dictation is the one
+  someone can act on in the thirty seconds after install; the recorder is what
+  the screenshots open on, so the two do not compete for the same glance.
 - **"What it does not do" is deliberate.** Saying plainly that the app cannot
   record calls costs nothing with buyers who want a meeting recorder, and heads
   off the one-star reviews from people who install it expecting a call recorder.

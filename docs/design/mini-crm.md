@@ -1,6 +1,14 @@
 # 客戶戰情層（mini-CRM）— Design Doc
 
-- **狀態**：Draft v1（待 review 後拆 issues）
+> [!WARNING]
+> **已實作、已移除（2026-08-16，#245）。** 這份文件描述的 mini-CRM——公司卡、
+> 人物卡、情報 claim、deal thread、pipeline 階段、briefing——曾經全部上線，
+> 後來整層拿掉了：實際需要的是「一個客戶一個資料夾」加上跨會議搜尋，而這兩件
+> 事本來就有。取而代之的是 folders 與 MCP 的 `search_meetings`。
+> 程式碼完整保存在 tag `archive/accounts-before-removal`。
+> 本文件保留為決策記錄，**不代表現況**。
+
+- **狀態**：Draft v1（待 review 後拆 issues）→ 已實作 → 已移除（見上方）
 - **日期**：2026-07-11
 - **來源**：Brandon × Claude 三輪產品討論（pipeline 需求 → mini-CRM 需求 → 情報承載模型）
 - **一句話**：讓 Parley 從「單場會議的教練」長出「跨會議的客戶戰情系統」——一個**從通話裡自己長出來的 CRM**，而且戰情會反過來餵回 live 教練（紅線守衛）。

@@ -44,9 +44,8 @@ Parley 把你面對面開的會錄下來，而且會議還在進行，逐字稿�
 一個帳號，每一台裝置
 
 錄音與逐字稿會同步到你的 Parley 帳號，手機上收下來的會議，在桌面版打開就能繼續
-深入：可點擊時間軸的報告、雙方各自答應了什麼、待辦事項、成交情報，以及一份你這場
-表現如何的評分。Parley 是為銷售、談判與面談打造的會議 copilot，手機負責的是把
-現場收下來。
+深入：可點擊時間軸的報告、雙方各自答應了什麼、待辦事項、一份你這場表現如何的
+評分，以及跨所有錄音的全文檢索。手機負責把現場收下來，桌面版負責讀。
 
 網路不好，不會賠掉一場會議
 
@@ -80,7 +79,7 @@ Parley Android 版對盒子裡有什麼講得很直白。它用手機自己的�
 按下錄音才會開始錄，而且它是為了在場的人都知道的會議而做的——Parley 是會議記錄
 工具，不是偷錄工具。音訊與逐字稿會透過加密連線送到你的 Parley 帳號，用來轉錄與
 同步；我們不販售這些資料，也不會拿去做廣告。完整說明請見隱私權政策，帳號刪除請至
-https://parley.tw/privacy/。
+https://parley.tw/account-deletion/。
 
 Parley 採用 Apache-2.0 授權。原始碼：github.com/pathorsAI/parley
 
@@ -101,6 +100,6 @@ Parley Android 版首次推出。錄一場面對面的會議，逐字稿會邊�
   which is the promise that lands in Chinese. Same facts, native rhythm.
 - **The same three omissions as the English file**: no consent-prompt claim (the
   Android app has none), no playback, no folders/organization sharing.
-- **`[TODO: confirm with Jack]`** the account-deletion URL, exactly as in
-  [`listing-en.md`](listing-en.md) — `https://parley.tw/privacy/` currently
-  describes deletion from the iOS app's Settings only.
+- **帳號刪除網址已定案**，與 [`listing-en.md`](listing-en.md) 一致：
+  `https://parley.tw/account-deletion/` 同時寫了兩個平台的 app 內刪除路徑，
+  以及打不開 app 時的來信管道。

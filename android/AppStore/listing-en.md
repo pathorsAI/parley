@@ -50,10 +50,10 @@ ONE ACCOUNT, EVERY DEVICE
 
 Recordings and transcripts sync to your Parley account, so a meeting you caught
 on the phone opens on the desktop app — where the deeper work happens: the
-report with clickable timestamps, what each side committed to, action items,
-deal intelligence, and a scorecard on how you delivered. Parley is a meeting
-copilot built for sales, negotiation, and interviews; the phone is its capture
-end.
+report with clickable timestamps, what each side committed to, action items, a
+scorecard on how you delivered, and full-text search across every meeting you
+have ever recorded. The phone is the capture end; the desktop is where the
+reading happens.
 
 A BAD NETWORK DOES NOT COST YOU THE MEETING
 
@@ -96,7 +96,7 @@ the room know about — Parley is a note-taker, not a covert recorder. Audio and
 transcripts go to your Parley account over an encrypted connection so they can
 be transcribed and synced; they are not sold and not used for advertising. The
 privacy policy has the full detail, and account deletion is at
-https://parley.tw/privacy/.
+https://parley.tw/account-deletion/.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
@@ -130,10 +130,8 @@ and upload themselves once you are back.
   missing player, folders, and call recording up front costs nothing with the
   buyer who wants a meeting recorder and heads off the one-star review from
   someone who expected a call recorder.
-- **The account-deletion URL is a placeholder.**
-  `[TODO: confirm with Jack]` — Play requires a working account-deletion route
-  when an app supports account creation, and today `https://parley.tw/privacy/`
-  only says deletion happens in the iOS app's Settings
-  (`website/privacy/index.html`). Either that page gains an actual deletion
-  path or the sentence has to name one that exists. Same open item as in
-  [`data-safety.md`](data-safety.md).
+- **The account-deletion URL is settled.** Play requires a working
+  account-deletion route when an app supports account creation, and
+  `https://parley.tw/account-deletion/` is now that route: it documents the
+  in-app path on both platforms and an email path for someone who cannot open
+  the app. The full description points there rather than at the privacy policy.

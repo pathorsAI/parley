@@ -17,7 +17,7 @@ This holds even when the conversation that produced the change happened in anoth
 
 ## The app itself is bilingual
 
-Repository English does *not* mean an English-only product. Every user-facing string lives in `src/i18n/messages.ts` and **must** have both a `zh-TW` and an `en` entry — the Traditional Chinese entry is first-class, not a translation afterthought. Never hard-code display text in a component, including in the secondary windows (settings, interpreter, voice-typing, diagnostics).
+Repository English does *not* mean an English-only product. Every user-facing string lives in `src/i18n/messages.ts` and **must** have both a `zh-TW` and an `en` entry — the Traditional Chinese entry is first-class, not a translation afterthought. Never hard-code display text in a component, including in the secondary windows (settings, voice-typing, finding-solution, diagnostics).
 
 The app defaults to `zh-TW`. Page titles and the language switcher itself are translated too.
 

@@ -79,45 +79,32 @@ Preferences DataStore and pending uploads are files under `filesDir`, both
 app-private, and `android:allowBackup="false"` keeps them out of cloud backup
 (`AndroidManifest.xml`, `android/docs/api-cloud.md`).
 
-## Deletion — the open item
+## Deletion — settled
 
-**`[TODO: confirm with Jack]` — this must be resolved before the form is
-submitted.** The facts:
+Both routes Play cares about now exist (#235), so this is no longer an open
+item. The facts:
 
-- The Android app has **no in-app account deletion**. `DELETE /me` is listed
-  under "Not implemented" in `android/docs/api-cloud.md` and appears nowhere in
-  `android/app/src/main/kotlin/`.
-- The Android app also has **no in-app deletion of a single recording**.
-  `CloudClient.deleteRecording` exists but has no caller outside the client
-  itself — the library screen offers no delete action.
-- The iOS app *does* ship account deletion (`ios/App/Parley/SettingsView.swift`
-  → `AppState.deleteAccount()` → `DELETE /me`), and `ios/AppStore/review-notes.md`
-  tells Apple it is at Settings → Account → Delete Account.
-- `website/privacy/index.html` says, verbatim, that an account can be deleted
-  "from Settings in the iOS app", and points privacy requests at
-  `contact@pathors.com`.
+- The Android app ships **in-app account deletion**: the Account sheet →
+  Delete account → `HomeViewModel.deleteAccount()` → `CloudClient.deleteAccount()`
+  → `DELETE /me`, with a confirmation dialog and a 409 `owned_organizations`
+  refusal when the account still owns a shared org.
+- **`https://parley.tw/account-deletion/`** is the required web URL. It
+  documents the in-app path on both platforms, the shared-organization
+  exception, and an email path from the registered address for anyone who
+  cannot open the app.
+- The iOS app ships the same thing at Settings → Account → Delete Account
+  (`ios/App/Parley/SettingsView.swift` → `AppState.deleteAccount()`).
 
-Play requires an account-deletion route — a **web URL** — for any app that
-supports account creation, and it must let the user request deletion of the
-account *and* of the associated data. An Android-only user who never installs
-the iPhone app currently has no self-serve route at all. Three ways out, in
-increasing order of effort:
+One gap remains, and it is not a Play blocker: the Android app still has **no
+in-app deletion of a single recording**. `CloudClient.deleteRecording` exists
+but has no caller outside the client itself, so the library screen offers no
+delete action. Play's form asks about account and account-data deletion, both
+of which are covered; per-item deletion is a product gap, not a compliance one.
 
-1. **A deletion page on parley.tw** that authenticates and calls `DELETE /me`,
-   or that at minimum documents the request path and an SLA. Cheapest thing
-   that satisfies Play; the listing copy already points at
-   `https://parley.tw/privacy/`, so the page it lands on has to grow that
-   section.
-2. **Wire `DELETE /me` into the Android account sheet**, matching iOS. One
-   endpoint, one confirm dialog; also the answer that stops this being asked
-   again at every release.
-3. Email-only (`contact@pathors.com`). Accepted by Play as the *request*
-   mechanism only if a URL describing it exists — an address in a privacy
-   policy paragraph has been rejected before.
-
-Until one of these lands, answer "Users can request that their data is deleted:
-**Yes**" only if option 1 or 3 is genuinely live at the URL entered — do not
-answer Yes against the iOS Settings screen, which an Android user cannot reach.
+Answer **"Users can request that their data is deleted: Yes"** and
+**"Users can delete their data from the app: Yes"**, entering
+`https://parley.tw/account-deletion/` as the deletion URL. Both answers are
+true of the shipped Android app, not borrowed from iOS.
 
 ## Cross-check against the iOS privacy label
 
@@ -139,5 +126,5 @@ different things. Row 5 is a gap in the product.
 ## URLs
 
 - Privacy policy: `https://parley.tw/privacy/`
-- Account deletion: `[TODO: confirm with Jack]` — see [Deletion](#deletion-the-open-item).
+- Account deletion: `https://parley.tw/account-deletion/` — see [Deletion](#deletion--settled).
 - Contact: `contact@pathors.com`
