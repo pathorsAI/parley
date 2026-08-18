@@ -4,10 +4,13 @@
 //! pre-recorded/batch API and returns ready-to-render, diarized-where-supported
 //! segments. `transcribe_file` dispatches by provider: Soniox (upload → job →
 //! poll → diarized tokens) is the reference; Deepgram / AssemblyAI / OpenAI /
-//! Gemini adapters live alongside it but are GATED OFF in the STT registry
-//! (`supportsFileUpload: false`) until each is smoke-tested against its live API.
-//! The wrapper (compression, acoustic speech-rate, per-provider caching) is
-//! provider-independent.
+//! Gemini adapters live alongside it, and Gemini is still GATED OFF in the STT
+//! registry (`supportsFileUpload: false`) until it's smoke-tested against its
+//! live API. Hosted "parley" is the odd one out: it posts to Parley Cloud, which
+//! proxies Soniox with the master key server-side, so no vendor name, model or
+//! key ever crosses this boundary — it authenticates with the cloud session
+//! token exactly like the realtime relay does. The wrapper (compression,
+//! acoustic speech-rate, per-provider caching) is provider-independent.
 
 use std::time::Duration;
 
@@ -128,12 +131,16 @@ struct TranscriptResponse {
     tokens: Vec<Token>,
 }
 
-/// Transcribe an audio file via Soniox's async API and return diarized segments.
+/// Transcribe an audio file via the selected provider's batch API and return
+/// diarized segments.
 ///
-/// `language_hints` may be empty (Soniox auto-detects). `diarization` toggles
-/// speaker separation. The `api_key` is supplied by the frontend from settings
-/// and never leaves the Rust side beyond the Soniox request.
+/// `language_hints` may be empty (providers auto-detect). `diarization` toggles
+/// speaker separation. The `api_key` is supplied by the frontend and never leaves
+/// the Rust side beyond the provider request — for hosted "parley" it is the
+/// cloud session token, and `batch_url` is the cloud endpoint that stands in for
+/// a vendor (see the match below).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn transcribe_file(
     app: AppHandle,
     path: String,
@@ -142,6 +149,10 @@ pub async fn transcribe_file(
     model: Option<String>,
     language_hints: Vec<String>,
     diarization: bool,
+    // Hosted "parley" mode: the cloud batch endpoint's `https://` base URL. When
+    // set, `api_key` is the cloud Bearer token (not a vendor key). Absent for
+    // BYOK providers, which address their vendor from the adapter itself.
+    batch_url: Option<String>,
 ) -> Result<TranscriptionResult, String> {
     ensure_crypto_provider();
 
@@ -155,7 +166,12 @@ pub async fn transcribe_file(
 
     if api_key.trim().is_empty() {
         log::warn!("replay: missing api key provider={}", provider);
-        return Err("Missing transcription API key".to_string());
+        // Hosted mode's credential is the signed-in cloud session, not a pasted
+        // key, so this one message has to point at both doors.
+        return Err(
+            "Missing transcription credential — add the provider's API key in Settings, or sign in to Parley Cloud."
+                .to_string(),
+        );
     }
 
     // Cache: an identical re-upload (same file name + byte size, same provider)
@@ -223,7 +239,10 @@ pub async fn transcribe_file(
     // Run the rest of the flow, ensuring the temp file is cleaned up afterward.
     // Dispatch on the provider — each `*_batch` returns the same
     // `TranscriptionResult` shape (segments + duration); the acoustic speech-rate
-    // is grafted on afterward since it's provider-independent.
+    // is grafted on afterward since it's provider-independent. The BYOK arms talk
+    // to their vendor with the user's own key; the hosted "parley" arm talks only
+    // to Parley Cloud, which holds the vendor key — hence no model is forwarded
+    // there and the endpoint has to be handed in from the frontend.
     let result = match provider.as_str() {
         "soniox" => run_upload_and_transcribe(
             &client,
@@ -246,8 +265,29 @@ pub async fn transcribe_file(
         "gemini" => {
             gemini_batch(&client, &api_key, &upload_path, model.as_deref(), &language_hints).await
         }
+        "parley" => match batch_url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+            Some(base) => {
+                parley_batch(
+                    &client,
+                    &api_key,
+                    base,
+                    &upload_path,
+                    &language_hints,
+                    diarization,
+                )
+                .await
+            }
+            // Hosted mode's api_key is the cloud session token, which only the
+            // cloud accepts — sending it to a vendor would die with an opaque
+            // auth error. Refuse loudly instead (a call site that forgot
+            // batchUrl is a frontend bug), mirroring start_meeting's relay_url
+            // guard for the streaming path.
+            None => Err("hosted transcription requires the cloud batch URL".to_string()),
+        },
+        // Only an unknown/misspelled provider id reaches here now — naming a
+        // specific replacement would go stale the way "switch to Soniox" did.
         other => Err(format!(
-            "File transcription for '{other}' is not supported yet — switch to Soniox in Settings."
+            "File transcription for '{other}' is not supported yet — switch to another transcription provider in Settings."
         )),
     }
     .map(|mut r| {
@@ -1174,6 +1214,185 @@ async fn gemini_batch(
         cached: false,
         speech_rate_hz: 0.0,
     })
+}
+
+// --- Parley Cloud (hosted batch) ----------------------------------------------
+
+/// Job status from the cloud. camelCase on the wire (the cloud is TypeScript);
+/// `durationMs` is null until the job completes, `errorMessage` only ever set on
+/// the "error" status.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CloudJobStatus {
+    status: String,
+    #[serde(default)]
+    error_message: Option<String>,
+    #[serde(default)]
+    duration_ms: Option<u64>,
+}
+
+/// Hosted batch transcription through Parley Cloud.
+///
+/// Shorter than the Soniox adapter on purpose: the cloud owns the vendor account,
+/// so uploading the file and creating the job collapse into a single POST, and
+/// no model name is ever sent (picking it is the cloud's business, not ours).
+/// `token` is the cloud session bearer; `base` is `${CLOUD_URL}/stt/batch`.
+/// The transcript comes back in the same token shape the Soniox arm parses —
+/// deliberately, so `Token` / `TranscriptResponse` / `group_tokens` are reused
+/// verbatim and diarized output can't drift between hosted and BYOK modes.
+async fn parley_batch(
+    client: &reqwest::Client,
+    token: &str,
+    base: &str,
+    upload_path: &str,
+    language_hints: &[String],
+    diarization: bool,
+) -> Result<TranscriptionResult, String> {
+    let bytes = tokio::fs::read(upload_path)
+        .await
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+
+    // 1. Upload the raw (already compressed) bytes; the response is the job id.
+    // The hints param is omitted entirely when empty so the cloud auto-detects,
+    // rather than being handed an empty list to interpret.
+    let mut url = format!("{base}?diarization={}", if diarization { "1" } else { "0" });
+    if !language_hints.is_empty() {
+        url.push_str(&format!("&language_hints={}", language_hints.join(",")));
+    }
+    log::info!(
+        "replay: uploading to parley cloud bytes={} diarization={}",
+        bytes.len(),
+        diarization
+    );
+    let create_resp = client
+        .post(url)
+        .bearer_auth(token)
+        .header("Content-Type", "application/octet-stream")
+        .body(bytes)
+        .send()
+        .await
+        .map_err(|e| format!("Upload to Parley Cloud failed: {e}"))?;
+    let status = create_resp.status();
+    if !status.is_success() {
+        let body = create_resp.text().await.unwrap_or_default();
+        log::error!("replay: parley batch create failed status={}", status);
+        return Err(parley_batch_error(status, &body));
+    }
+    let created: IdResponse = read_json(create_resp, "parley batch create").await?;
+    let job_id = created.id;
+    log::info!("replay: parley cloud job created jobId={}", job_id);
+
+    // 2. Poll until the job settles. Same cadence and cap as the BYOK adapters —
+    // the cloud normalizes upstream states into the four below, so a status we
+    // don't recognize is treated as "still working" rather than a hard failure.
+    let mut reported_duration_ms: Option<u64> = None;
+    for poll in 1..=MAX_POLLS {
+        tokio::time::sleep(POLL_INTERVAL).await;
+        let status_resp = client
+            .get(format!("{base}/{job_id}"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| format!("Poll request failed: {e}"))?;
+        let job: CloudJobStatus = read_json(status_resp, "parley batch status").await?;
+        match job.status.as_str() {
+            "completed" => {
+                let duration_ms = job.duration_ms.unwrap_or(0);
+                log::info!(
+                    "replay: parley cloud job completed durationMs={} polls={}",
+                    duration_ms,
+                    poll
+                );
+                reported_duration_ms = Some(duration_ms);
+                break;
+            }
+            "error" => {
+                let msg = job.error_message.unwrap_or_else(|| "unknown error".into());
+                log::error!("replay: parley cloud job error errorMessage={}", msg);
+                return Err(format!("Transcription failed: {msg}"));
+            }
+            // "queued" | "processing" | anything else → keep polling.
+            _ => continue,
+        }
+    }
+    let Some(audio_duration_ms) = reported_duration_ms else {
+        log::error!("replay: parley cloud job timed out maxPolls={}", MAX_POLLS);
+        return Err("Transcription timed out".to_string());
+    };
+
+    // 3. Fetch the diarized tokens.
+    let transcript_resp = client
+        .get(format!("{base}/{job_id}/transcript"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| format!("Fetch transcript failed: {e}"))?;
+    let transcript: TranscriptResponse =
+        read_json(transcript_resp, "parley batch transcript").await?;
+
+    // 4. Best-effort cleanup so the cloud isn't left holding the audio. Fire and
+    // forget, like the Soniox arm's deletes — we already have the transcript, so
+    // a failure here must not fail the transcription.
+    let _ = client
+        .delete(format!("{base}/{job_id}"))
+        .bearer_auth(token)
+        .send()
+        .await;
+
+    let segments = group_tokens(&transcript.tokens);
+    let duration_ms = segments
+        .iter()
+        .map(|s| s.end_ms)
+        .max()
+        .unwrap_or(audio_duration_ms)
+        .max(audio_duration_ms);
+
+    Ok(TranscriptionResult {
+        segments,
+        duration_ms,
+        cached: false,
+        speech_rate_hz: 0.0,
+    })
+}
+
+/// Turn a failed batch-create response into something the user can act on. These
+/// strings land in a toast, so each one names the next step: the status is what
+/// distinguishes "your session died" from "you're out of quota" from "this file
+/// is simply too big", and those need different actions. Unrecognized statuses
+/// keep the cloud's own `{"error": …}` code so a bug report still carries detail.
+fn parley_batch_error(status: reqwest::StatusCode, body: &str) -> String {
+    let code = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.get("error")
+                .and_then(|e| e.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_default();
+    match status.as_u16() {
+        401 => "Sign in to Parley Cloud to transcribe recordings.".to_string(),
+        402 => {
+            "Your monthly hosted transcription quota is used up — upgrade your plan or wait for it to reset."
+                .to_string()
+        }
+        // The cloud caps how many transcriptions one account can have in flight,
+        // counting live meetings too — so this usually means "you're recording
+        // right now", which is a wait, not a failure.
+        429 => {
+            "Too many transcriptions running at once — wait for a meeting or an earlier upload to finish, then try again."
+                .to_string()
+        }
+        413 => {
+            "This recording is too large for hosted transcription — split it into shorter files and upload them separately."
+                .to_string()
+        }
+        502 => {
+            "Parley Cloud couldn't reach the transcription service — try again in a few minutes."
+                .to_string()
+        }
+        _ if code.is_empty() => format!("Hosted transcription failed (HTTP {status})"),
+        _ => format!("Hosted transcription failed (HTTP {status}): {code}"),
+    }
 }
 
 /// Turn a reqwest Response into a deserialized body, surfacing the HTTP status +

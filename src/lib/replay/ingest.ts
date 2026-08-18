@@ -5,7 +5,9 @@
 // word/segment timestamps), and returns a `ReplaySession` the replay UI can play
 // and scrub. Which providers are eligible is gated by `supportsFileUpload` in the
 // STT registry — the backend dispatch (`replay.rs::transcribe_file`) must
-// implement each one before its flag flips on. Today that's Soniox only.
+// implement each one before its flag flips on. Today every provider but Gemini
+// qualifies, including hosted Parley Cloud, which batch-transcribes through its
+// own endpoint (`sttBatchUrl`) on the signed-in session rather than an API key.
 
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -13,7 +15,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { Settings, TranscriptSegment } from "../types";
 import { useStore } from "../store";
 import type { ReplaySession } from "./types";
-import { STT_BY_ID, sttApiKey } from "../transcription/providers";
+import type { SttProviderInfo } from "../transcription/providers";
+import { STT_BY_ID, sttApiKey, sttBatchUrl } from "../transcription/providers";
 import { toTraditional } from "../zhConvert";
 import { log } from "../log";
 import { recordUsage } from "../usage/log";
@@ -78,21 +81,37 @@ interface RustTranscriptionResult {
   speechRateHz: number;
 }
 
+/**
+ * How to obtain the credential this provider is missing. Hosted Parley has no
+ * key field at all — it rides the signed-in cloud session — so the BYOK wording
+ * would send the user hunting in Settings for a box that doesn't exist. Shared
+ * by the upload gate and {@link transcribeRecording}, which check the same thing
+ * at two different moments (before the picker, and again at invoke time).
+ */
+function missingCredentialMessage(info: SttProviderInfo): string {
+  return info.id === "parley"
+    ? "Sign in to Parley Cloud in Settings to transcribe recordings."
+    : `Add your ${info.label} API key in Settings to transcribe recordings.`;
+}
+
 /** Throw (with the actionable message) unless the configured STT provider can
  *  batch-transcribe an uploaded file. Only audio needs this — text transcripts
- *  import without any provider. */
-function assertUploadTranscribable(settings: Settings): void {
+ *  import without any provider. Exported for the unit test that pins both
+ *  refusal messages. */
+export function assertUploadTranscribable(settings: Settings): void {
   const provider = settings.transcriptionProvider;
   const info = STT_BY_ID[provider];
   if (!info.supportsFileUpload) {
     log.warn("ingest: rejected, provider has no file-upload support", { provider });
+    // Naming a specific replacement would go stale the moment the registry
+    // changes (it already did once); every other provider handles uploads today.
     throw new Error(
-      `Uploading a recording isn't supported for ${info.label} yet — switch the transcription provider to Soniox in Settings.`,
+      `Uploading a recording isn't supported for ${info.label} yet — switch to another transcription provider in Settings.`,
     );
   }
   if (!sttApiKey(settings, provider).trim()) {
-    log.warn("ingest: missing stt key", { provider });
-    throw new Error(`Add your ${info.label} API key in Settings to transcribe recordings.`);
+    log.warn("ingest: missing stt credential", { provider });
+    throw new Error(missingCredentialMessage(info));
   }
 }
 
@@ -185,8 +204,9 @@ export async function pickImportFiles(settings: Settings): Promise<ImportPick | 
 }
 
 /**
- * Transcribe an already-picked recording into a `ReplaySession` (diarized batch
- * transcription via Soniox). Reports decoding/uploading/transcribing stages.
+ * Transcribe an already-picked recording into a `ReplaySession` (batch
+ * transcription via the configured provider, diarized where it supports it).
+ * Reports decoding/uploading/transcribing stages.
  */
 export async function transcribeRecording(
   settings: Settings,
@@ -197,7 +217,7 @@ export async function transcribeRecording(
   const info = STT_BY_ID[provider];
   const apiKey = sttApiKey(settings, provider).trim();
   if (!apiKey) {
-    throw new Error(`Add your ${info.label} API key in Settings to transcribe recordings.`);
+    throw new Error(missingCredentialMessage(info));
   }
 
   const name = fileNameOf(audioPath);
@@ -212,6 +232,8 @@ export async function transcribeRecording(
 
   // The Rust command uploads the file, creates the async job, polls to
   // completion, then fetches the diarized tokens. It owns the network + secrets.
+  // `batchUrl` is set only for hosted Parley, where `apiKey` is the cloud session
+  // token and the cloud — not this client — knows the vendor.
   reportStage(opts, { stage: "transcribing" });
   log.info("ingest: transcribe invoke", { provider, languageHints, diarization: info.diarization });
   const result = await invoke<RustTranscriptionResult>("transcribe_file", {
@@ -221,6 +243,7 @@ export async function transcribeRecording(
     model: null,
     languageHints,
     diarization: info.diarization,
+    batchUrl: sttBatchUrl(provider) ?? null,
   });
   log.info("ingest: transcription ok", {
     segments: result.segments.length,

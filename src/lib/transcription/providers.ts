@@ -19,9 +19,10 @@ export interface SttProviderInfo {
    * wizard, and must stay in sync with which providers the `transcribe_file`
    * dispatch actually implements. `true` = an implemented batch adapter whose
    * request/response shape is verified against the vendor's API docs (Soniox,
-   * Deepgram, AssemblyAI, OpenAI). Gemini stays `false` — its inline Ogg-Opus
+   * Deepgram, AssemblyAI, OpenAI) or, for hosted Parley, against the cloud's own
+   * `/stt/batch` contract. Gemini is the only `false` left — its inline Ogg-Opus
    * support + model naming are unconfirmed and it returns no timestamps or
-   * diarization; hosted Parley stays `false` until a cloud batch endpoint exists.
+   * diarization.
    */
   supportsFileUpload: boolean;
   /** Settings field holding this provider's API key. */
@@ -47,17 +48,17 @@ export const STT_PROVIDERS: SttProviderInfo[] = [
   { id: "assemblyai", label: "AssemblyAI", diarization: false, supportsFileUpload: true, apiKeyField: "assemblyaiApiKey", keyPlaceholder: "…", icon: "/providers/assemblyai.png" },
   { ...fromLlm("openai"), diarization: false, supportsFileUpload: true },
   { ...fromLlm("gemini"), diarization: false, supportsFileUpload: false },
-  // Hosted account mode: audio is relayed through Parley Cloud to Soniox (which
+  // Hosted account mode: audio goes through Parley Cloud to Soniox (which
   // diarizes), so no vendor is exposed and no key field is used — auth is the
   // signed-in cloud session (see sttApiKey). Borrows the Parley brand from the
   // LLM registry. The picker only offers it in the cloud build when signed in.
-  // File upload needs a cloud batch endpoint (relaying to Soniox async) that
-  // isn't wired yet — off until that exists and is verified.
+  // Both tenses are hosted: live audio over the `/stt/stream` relay, uploaded
+  // recordings over the `/stt/batch` endpoint (see sttRelayUrl / sttBatchUrl).
   {
     id: "parley",
     label: PROVIDER_BY_ID["parley"].label,
     diarization: true,
-    supportsFileUpload: false,
+    supportsFileUpload: true,
     apiKeyField: "parleyApiKey",
     keyPlaceholder: "",
     icon: PROVIDER_BY_ID["parley"].icon,
@@ -102,4 +103,16 @@ export function sttRelayUrl(
   return id === "parley"
     ? `${CLOUD_URL.replace(/^http/, "ws")}/stt/stream?feature=${feature}`
     : undefined;
+}
+
+/**
+ * The BATCH (uploaded recording) endpoint for a provider — the replay path's
+ * counterpart to {@link sttRelayUrl}. Hosted "parley" POSTs the audio to Parley
+ * Cloud, which drives Soniox's async API with the master key server-side, so the
+ * vendor key never lives on the client. BYOK providers address their vendor from
+ * the Rust adapter itself and have no batch URL. `transcribe_file` must be passed
+ * this alongside the credential from `sttApiKey`, or the hosted arm refuses.
+ */
+export function sttBatchUrl(id: SttProviderId): string | undefined {
+  return id === "parley" ? `${CLOUD_URL}/stt/batch` : undefined;
 }
