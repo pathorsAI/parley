@@ -17,7 +17,7 @@ paragraph.
 | Field | Limit | Value |
 | --- | --- | --- |
 | App name (title) | 30 | `Parley: Meeting Recorder` |
-| Short description | 80 | `Record meetings as a live transcript, or import audio you already have.` |
+| Short description | 80 | `Live meeting transcripts as people speak. Or import audio you already have.` |
 | Full description | 4,000 | below |
 | Category | — | Productivity |
 | Contact email | — | contact@pathors.com |
@@ -27,76 +27,68 @@ paragraph.
 
 ## Full description
 
-Parley records the meetings you have in person and turns them into a transcript
-you can read — while people are still talking.
+The meeting is still going and you can already read it.
 
-RECORD THE ROOM
+Put your phone on the table and hit record. What people say becomes text as they
+say it, labelled by speaker — so what you walk out with is a record you can
+quote, not a thirty-minute audio file and a blank memory.
 
-Put the phone on the table and tap record. A live transcript arrives as people
-speak, with different speakers kept apart, so what you end up with is something
-you can read and quote from instead of a wall of undifferentiated text.
-Recording continues while you are in another app, with an ongoing notification
-and a running clock so it is never a surprise that the microphone is on.
+Sign in and you get 20 hours of transcription free. No API keys to bring.
 
-IMPORT A RECORDING YOU ALREADY HAVE
+Record the room
 
-Already have the audio? Pick any audio file on the phone and Parley transcribes
-it — faster than real time — into the same library as the meetings you recorded
-live. An interview a colleague captured, a voice memo, a file someone sent you.
-This is the Android app's own feature: the iPhone app records, this one records
-and imports.
+A phone on the table is the whole setup. The transcript grows as the
+conversation does, speakers kept apart, and it keeps recording when you switch
+apps — with a timer in your notification shade the entire time, so a live
+microphone is never a surprise.
 
-ONE ACCOUNT, EVERY DEVICE
+Import audio you already have
 
-Recordings and transcripts sync to your Parley account, so a meeting you caught
-on the phone opens on the desktop app — where the deeper work happens: the
-report with clickable timestamps, what each side committed to, action items, a
-scorecard on how you delivered, and full-text search across every meeting you
-have ever recorded. The phone is the capture end; the desktop is where the
-reading happens.
+Already holding the file? Pick an audio file from your phone and Parley turns it
+into text in the background — you don't have to sit through it at playback
+speed — filed next to the meetings you recorded live. An interview a colleague
+captured, a voice memo, something a client sent you. This one is Android's own:
+the iPhone app records; this one records and imports.
 
-A BAD NETWORK DOES NOT COST YOU THE MEETING
+A bad connection doesn't cost you the meeting
 
-A finished recording is written to the phone before anything is sent anywhere.
-If the upload cannot go through, it waits in a queue you can see, and goes up
-by itself once you are back on a network. If transcription drops out mid-meeting
-the microphone keeps running: you get the audio, and the app says plainly what
-happened rather than pretending.
+The recording is written to your phone before it goes anywhere. If it can't
+upload, it waits in a queue you can see and goes up when you're back online. If
+transcription drops mid-meeting, the microphone doesn't stop with it: the audio
+stays whole, and the app tells you what happened instead of pretending nothing
+did.
 
-ALSO IN THE APP
+Your phone catches the room, the desktop goes deep
 
-• English and Traditional Chinese throughout, following your phone's language
-• Light and dark, and your wallpaper's colors on Android 12 and later
-• Your plan's transcription and analysis usage for the current period
-• A transcript that shows who spoke, in order, with the meeting's length
+Once it syncs to your Parley account, the desktop app takes over: a report with
+a clickable timeline, what each side actually committed to, action items, deal
+intel, and a read on how you handled it. Parley is a meeting copilot built for
+sales, negotiation and interviews.
 
-BRING YOUR OWN STACK
+Also in the app
 
-Parley is open source, and the point is that the meeting layer stays yours. On
-the desktop you pick the transcription vendor and the model provider that fit
-your cost, privacy, language, and latency requirements — Parley is the
-interface, not another closed AI bundle. On Android, signing in gets you hosted
-transcription with no API key to manage and a free tier that covers everyday
-use.
+• Full English and Traditional Chinese, following your system language
+• Light and dark, and your wallpaper's colours on Android 12+
+• Transcription and analysis usage for the current period, always visible
+• Apache-2.0 open source; on desktop you choose the transcription vendor and
+  model provider yourself
 
-WHAT IT DOES NOT DO
+What it records, and what it doesn't
 
-Parley for Android is honest about what is in the box. It records the room
-through the phone's own microphone: it does not record phone calls and it does
-not capture the audio of other apps. Playback is not in this version — a saved
-recording opens as a transcript, not a player. Folders and organization sharing
-live in the desktop and iPhone apps for now. Online meetings belong on the
-desktop app, which can capture system audio properly. The phone owns the room
-you are sitting in.
+It records the room you are in, through your phone's own microphone — not phone
+calls, and not audio from other apps. For online meetings use the desktop app,
+which captures system audio properly. There is no player in this version yet:
+opening a recording shows you the transcript. Folders and organisation sharing
+live on desktop and iPhone for now.
 
-YOUR DATA
+Your data
 
-Recording starts only when you tap record, and it is for meetings the people in
-the room know about — Parley is a note-taker, not a covert recorder. Audio and
-transcripts go to your Parley account over an encrypted connection so they can
-be transcribed and synced; they are not sold and not used for advertising. The
-privacy policy has the full detail, and account deletion is at
-https://parley.tw/account-deletion/.
+Nothing is recorded until you press record, and Parley is built for meetings
+everyone in the room knows about — it is a note-taker, not a bug. Audio and
+transcripts travel over an encrypted connection to your account and are used to
+transcribe and sync; they are not sold and not advertised against. You can
+delete your account and everything in it yourself:
+https://parley.tw/account-deletion/
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 

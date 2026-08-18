@@ -75,12 +75,20 @@ use here.
 - The video is committed at
   [`assets/fgs-demo-video.mp4`](assets/fgs-demo-video.mp4) — 30.4 s,
   1080 × 2400, H.264, ~640 KB, silent.
-- **Nobody has uploaded it yet, so there is no URL to paste.** This document
-  deliberately does not contain one; invent nothing here. Upload the file as
-  unlisted, then record the resulting link below and in the Play form.
+- The file was uploaded unlisted to the Pathors YouTube channel on 2026-08-19
+  and the link below is what the Play form now holds.
 
-> **Video URL:** `[TODO: upload assets/fgs-demo-video.mp4 as an unlisted YouTube
-> video and paste the watch URL here]`
+> **Video URL:** https://youtu.be/jIm6IXJG6iA (unlisted)
+
+**Declaration as submitted** (Play Console → App content → Foreground service
+permissions, which only appears once a bundle declaring the permission has been
+uploaded — it did not exist before 0.1.0 reached the internal track):
+
+| Field | Value |
+| --- | --- |
+| Permission | `FOREGROUND_SERVICE_MICROPHONE` |
+| Task | Background audio input |
+| Video | https://youtu.be/jIm6IXJG6iA |
 
 ### What the video shows
 
