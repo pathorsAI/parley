@@ -235,11 +235,18 @@ def mint() -> None:
         # A profile carries exactly the capabilities enabled on its bundle id,
         # so print them: a profile missing one fails export with a message about
         # entitlements that never mentions the portal.
-        caps = api("GET", f"/v1/bundleIds/{bundle_id}/bundleIdCapabilities?limit=50")
-        enabled = sorted(
-            c["attributes"].get("capabilityType", "?") for c in caps.get("data", [])
-        )
-        print(f"  {bundle} capabilities: {', '.join(enabled) or '(none)'}")
+        #
+        # No `limit` — relationship endpoints reject it — and never fatal. This
+        # is a diagnostic, and a diagnostic that can fail the build is worse than
+        # no diagnostic at all, which is what happened the first time.
+        try:
+            caps = api("GET", f"/v1/bundleIds/{bundle_id}/bundleIdCapabilities")
+            enabled = sorted(
+                c["attributes"].get("capabilityType", "?") for c in caps.get("data", [])
+            )
+            print(f"  {bundle} capabilities: {', '.join(enabled) or '(none)'}")
+        except SystemExit as e:
+            print(f"  {bundle} capabilities: could not read ({e})")
         name = f"{TAG} {bundle}"
         profile = api(
             "POST",
