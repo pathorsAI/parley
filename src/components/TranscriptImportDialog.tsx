@@ -11,7 +11,13 @@ import { log } from "../lib/log";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { FolderPicker } from "./FolderPicker";
+import { DestinationPicker } from "./DestinationPicker";
+import {
+  personalDestination,
+  PERSONAL_ROOT,
+  type LibraryDestination,
+  type OrgHandoffMode,
+} from "../lib/library/destination";
 
 /**
  * Import picked/dropped .txt transcripts as audio-less history entries (issue
@@ -30,7 +36,11 @@ export function TranscriptImportDialog() {
   const [files, setFiles] = useState<PreparedTranscriptFile[] | null>(null);
   // Where these transcripts go. Asked HERE because a transcript imported into
   // no folder is exactly the recording that later needs after-the-fact filing.
-  const [folderId, setFolderId] = useState<string | null>(null);
+  // An org destination hands each saved entry over afterwards — this path never
+  // ran through resolveMeetingSave, so before this it could not reach an org at
+  // all, not even via the settings-wide auto-share default.
+  const [destination, setDestination] = useState<LibraryDestination>(PERSONAL_ROOT);
+  const [handoff, setHandoff] = useState<OrgHandoffMode | null>(null);
   const [importing, setImporting] = useState(false);
 
   // (Re)prepare whenever the dialog opens with a new set of paths.
@@ -43,7 +53,8 @@ export function TranscriptImportDialog() {
     setFiles(null);
     // A folder door pre-picks its folder (R7); every other door starts blank
     // and asks.
-    setFolderId(prefillFolderId ?? null);
+    setDestination(personalDestination(prefillFolderId ?? null));
+    setHandoff(null);
     Promise.all(paths.map(prepareTranscriptFile)).then((prepared) => {
       if (alive) setFiles(prepared);
     });
@@ -75,9 +86,22 @@ export function TranscriptImportDialog() {
           speakerNames: parsed.speakerNames,
           durationMs: parsed.durationMs,
           createdAt: f.createdAt,
-          folderId,
+          // An org destination still writes locally first: the share endpoint
+          // copies from the user's own cloud keyspace, so the entry has to
+          // exist before it can be handed over.
+          folderId: destination.scope === "personal" ? destination.folderId : null,
         });
         if (id) imported.push(id);
+      }
+      if (destination.scope === "org") {
+        const { moveRecordingToOrg, shareRecordingToOrg } = await import("../lib/cloud/sync");
+        for (const id of imported) {
+          if (handoff === "move") {
+            await moveRecordingToOrg(id, destination.orgId, destination.folderId);
+          } else {
+            await shareRecordingToOrg(id, destination.orgId, destination.folderId);
+          }
+        }
       }
     } catch (e) {
       log.error("import: transcript save failed", { error: String(e) });
@@ -89,8 +113,10 @@ export function TranscriptImportDialog() {
     close();
     toast.success(t("import.done", { count: imported.length }));
     // One transcript → jump straight into it (its first analysis runs on open).
-    // A batch stays in the grid; each entry analyzes when first opened.
-    if (imported.length === 1) {
+    // A batch stays in the grid; each entry analyzes when first opened. A move
+    // left no local entry to open — that copy lives in the org now.
+    const movedOut = destination.scope === "org" && handoff === "move";
+    if (imported.length === 1 && !movedOut) {
       loadHistoryEntry(imported[0]).catch((e) =>
         log.error("import: open after import failed", { id: imported[0], error: String(e) }),
       );
@@ -154,7 +180,14 @@ export function TranscriptImportDialog() {
           {ready && (
             <div className="flex flex-col gap-1.5 border-t pt-3">
               <span className="text-[11px] text-muted-foreground">{t("owner.label")}</span>
-              <FolderPicker value={folderId} onChange={setFolderId} />
+              <DestinationPicker
+                value={destination}
+                mode={handoff}
+                onChange={(next, mode) => {
+                  setDestination(next);
+                  setHandoff(mode);
+                }}
+              />
             </div>
           )}
         </div>

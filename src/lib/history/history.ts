@@ -22,6 +22,7 @@ import { CLOUD_URL, cloudFetch, cloudToken, syncEnabled } from "../cloud/client"
 import { deleteLocalFolder, emitFoldersUpdated, listLocalFolders } from "./folders";
 import { deleteCloudFolder } from "../cloud/folders";
 import { planFolderDedupe } from "../library/scope";
+import type { OrgHandoffMode } from "../library/destination";
 import { rediarizeSegments } from "../speakers/postDiarize";
 import { translate } from "../../i18n/messages";
 import type { ReplaySession } from "../replay/types";
@@ -162,16 +163,24 @@ async function pushToCloud(id: string): Promise<void> {
  *  an org gets an auto-shared copy. */
 export interface MeetingSaveTarget {
   folderId: string | null;
-  autoShare: { orgId: string; folderId: string | null } | null;
+  autoShare: OrgShareChoice | null;
   fallback: "syncOff" | null;
   /** "meeting" = the folder picked for this call; "default" = the settings
    *  default (or the personal root). */
   origin: "meeting" | "default";
 }
 
+/** An org destination plus what it does to the personal original. The settings
+ *  default is always a copy; only an explicit per-meeting pick can be a move. */
+export interface OrgShareChoice {
+  orgId: string;
+  folderId: string | null;
+  mode: OrgHandoffMode;
+}
+
 /** The per-meeting org-share choice. `null` follows the settings default;
  *  `"off"` suppresses a default share for this one meeting. */
-export type MeetingShare = { orgId: string; folderId: string | null } | "off" | null;
+export type MeetingShare = OrgShareChoice | "off" | null;
 
 /**
  * THE one place that answers "what does saving this meeting do?".
@@ -193,14 +202,14 @@ export function resolveMeetingSave(): MeetingSaveTarget {
     origin: picked ? "meeting" : "default",
   };
 
-  let wanted: { orgId: string; folderId: string | null } | null = null;
+  let wanted: OrgShareChoice | null = null;
   if (s.meetingOrgShare === "off") {
     wanted = null;
   } else if (s.meetingOrgShare) {
     wanted = s.meetingOrgShare;
   } else {
     if (def.scope === "org" && def.orgId) {
-      wanted = { orgId: def.orgId, folderId: def.folderId ?? null };
+      wanted = { orgId: def.orgId, folderId: def.folderId ?? null, mode: "copy" };
     }
   }
   if (!wanted) return base;
@@ -209,7 +218,10 @@ export function resolveMeetingSave(): MeetingSaveTarget {
   return { ...base, autoShare: wanted };
 }
 
-/** After a save, auto-share into the default org folder — or toast why it fell back. */
+/** After a save, hand the entry over to the chosen org folder — or toast why it
+ *  fell back. A "move" drops the personal original once the copy is in, which
+ *  also retires this window's loaded-entry pointer: nothing local is left for a
+ *  later re-analysis to overwrite. */
 async function applyDefaultOrgShare(id: string, res: MeetingSaveTarget): Promise<void> {
   const lang = useStore.getState().settings.language;
   if (res.fallback === "syncOff") {
@@ -217,9 +229,19 @@ async function applyDefaultOrgShare(id: string, res: MeetingSaveTarget): Promise
     return;
   }
   if (!res.autoShare || !CLOUD_ENABLED) return;
+  const { orgId, folderId, mode } = res.autoShare;
   try {
     const m = await import("../cloud/sync");
-    await m.shareRecordingToOrg(id, res.autoShare.orgId, res.autoShare.folderId);
+    if (mode === "move") {
+      await m.moveRecordingToOrg(id, orgId, folderId);
+      const st = useStore.getState();
+      if (st.loadedHistoryId === id) st.setLoadedHistoryId(null);
+      // Say so: the recording just vanished from the personal library, and a
+      // silent disappearance reads as a lost save.
+      toast.success(translate(lang, "history.move.movedToFolder"));
+    } else {
+      await m.shareRecordingToOrg(id, orgId, folderId);
+    }
   } catch (e) {
     log.error("history: org auto-share failed", { id, error: String(e) });
     toast.error(translate(lang, "history.defaultSave.orgShareFailed"));

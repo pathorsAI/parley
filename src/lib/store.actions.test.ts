@@ -425,7 +425,7 @@ describe("prep slice", () => {
   function seedPreviousMeeting() {
     useStore.setState({
       meetingFolderId: "fld-1",
-      meetingOrgShare: { orgId: "org-1", folderId: null },
+      meetingOrgShare: { orgId: "org-1", folderId: null, mode: "copy" },
       meetingContext: "last call's background",
       meetingBatna: "walk away",
       meetingTarget: "1.2M",

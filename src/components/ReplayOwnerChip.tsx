@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { Folder, FolderClosed } from "lucide-react";
 import { useStore } from "../lib/store";
-import { setEntryFolder } from "../lib/history/history";
 import { listLocalFolders } from "../lib/history/folders";
 import { useI18n } from "../i18n";
-import { log } from "../lib/log";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { FolderPicker } from "./FolderPicker";
+import { DestinationPicker } from "./DestinationPicker";
+import { useRefile } from "./useRefile";
+import { personalDestination } from "../lib/library/destination";
 
 /**
  * The loaded recording's FOLDER, right in the replay titlebar — the
@@ -23,17 +23,11 @@ export function ReplayOwnerChip() {
   const readOnly = useStore((s) => s.replayReadOnly);
   const folderId = useStore((s) => s.replayFolderId);
   const [open, setOpen] = useState(false);
+  const refile = useRefile();
 
   if (!loadedHistoryId || readOnly) return null;
 
   const folder = folderId ? (listLocalFolders().find((f) => f.id === folderId) ?? null) : null;
-
-  function move(id: string | null) {
-    if (!loadedHistoryId) return;
-    setEntryFolder(loadedHistoryId, id).catch((e) =>
-      log.warn("replay: refile failed", { error: String(e) })
-    );
-  }
 
   return (
     <>
@@ -68,7 +62,7 @@ export function ReplayOwnerChip() {
           }
         >
           <div className="px-4 py-3">
-            <FolderPicker value={folderId} onChange={move} />
+            <DestinationPicker value={personalDestination(folderId)} onChange={refile} />
           </div>
         </SheetContent>
       </Sheet>

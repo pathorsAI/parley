@@ -72,11 +72,11 @@ describe("resolveMeetingSave — the org share is independent of the folder", ()
     syncOn.value = true;
     useStore.setState({
       meetingFolderId: "fld-company",
-      meetingOrgShare: { orgId: "org-1", folderId: null },
+      meetingOrgShare: { orgId: "org-1", folderId: null, mode: "copy" },
     });
     expect(resolveMeetingSave()).toMatchObject({
       folderId: "fld-company",
-      autoShare: { orgId: "org-1", folderId: null },
+      autoShare: { orgId: "org-1", folderId: null, mode: "copy" },
     });
   });
 
@@ -88,7 +88,7 @@ describe("resolveMeetingSave — the org share is independent of the folder", ()
         defaultSaveLocation: { scope: "org", orgId: "org-1", folderId: "of-1" },
       },
     });
-    expect(resolveMeetingSave().autoShare).toEqual({ orgId: "org-1", folderId: "of-1" });
+    expect(resolveMeetingSave().autoShare).toEqual({ orgId: "org-1", folderId: "of-1", mode: "copy" });
   });
 
   it('lets "off" suppress the default share for one meeting', () => {
@@ -103,8 +103,36 @@ describe("resolveMeetingSave — the org share is independent of the folder", ()
     expect(resolveMeetingSave().autoShare).toBeNull();
   });
 
+  it("carries the per-meeting handoff mode through to the save target", () => {
+    // "move" is only ever an explicit per-meeting pick; the save path reads it
+    // to decide whether the personal original survives the share.
+    syncOn.value = true;
+    useStore.setState({
+      meetingFolderId: "fld-company",
+      meetingOrgShare: { orgId: "org-1", folderId: "of-1", mode: "move" },
+    });
+    expect(resolveMeetingSave().autoShare).toEqual({
+      orgId: "org-1",
+      folderId: "of-1",
+      mode: "move",
+    });
+  });
+
+  it("keeps the settings default a COPY", () => {
+    // The default shares every meeting; it must never be able to delete the
+    // user's own copy behind their back.
+    syncOn.value = true;
+    useStore.setState({
+      settings: {
+        ...INITIAL.settings,
+        defaultSaveLocation: { scope: "org", orgId: "org-1", folderId: null },
+      },
+    });
+    expect(resolveMeetingSave().autoShare?.mode).toBe("copy");
+  });
+
   it("reports the sync-off fallback instead of silently not sharing", () => {
-    useStore.setState({ meetingOrgShare: { orgId: "org-1", folderId: null } });
+    useStore.setState({ meetingOrgShare: { orgId: "org-1", folderId: null, mode: "copy" } });
     expect(resolveMeetingSave()).toMatchObject({ autoShare: null, fallback: "syncOff" });
   });
 });
