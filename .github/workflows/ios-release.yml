@@ -118,6 +118,27 @@ jobs:
           printf '%s' "$KEY_CONTENT" > "$RUNNER_TEMP/asc/AuthKey.p8"
           chmod 600 "$RUNNER_TEMP/asc/AuthKey.p8"
 
+      # A runner's keychain is empty, so there is nothing here to sign a
+      # distribution build with. Xcode's cloud signing is meant to fill that gap
+      # and does not: it reports `Cloud signing permission error` and leaves only
+      # a *development* identity, which the App Store export cannot use. So the
+      # identity is minted explicitly instead, and revoked again below — its
+      # private key dies with the runner, and a certificate without one would
+      # only burn a slot against Apple's per-team cap.
+      - name: Mint an ephemeral App Store signing identity
+        id: signing
+        env:
+          ASC_KEY_ID: ${{ secrets.APPLE_API_KEY }}
+          ASC_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER }}
+          ASC_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: |
+          # A venv rather than `pip install`: a system python3 on the runner may
+          # be marked externally managed, and that failure looks nothing like
+          # what it is.
+          python3 -m venv "$RUNNER_TEMP/ascvenv"
+          "$RUNNER_TEMP/ascvenv/bin/pip" install --quiet pyjwt cryptography requests
+          "$RUNNER_TEMP/ascvenv/bin/python" .github/scripts/asc_signing.py mint
+
       - name: Archive
         run: |
           cd ios/App
@@ -131,17 +152,50 @@ jobs:
             -authenticationKeyIssuerID "${{ secrets.APPLE_API_ISSUER }}" \
             archive
 
-      - name: Export and upload to App Store Connect
+      # The checked-in ExportOptions.plist asks for automatic signing, which is
+      # the path that fails here; the generated one names the profiles minted
+      # above. The file on disk stays as it is because it is what a developer
+      # exporting by hand from their own Mac wants.
+      - name: Export
         run: |
           cd ios/App
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/Parley.xcarchive" \
-            -exportOptionsPlist ExportOptions.plist \
+            -exportOptionsPlist "${{ steps.signing.outputs.export_options }}" \
             -exportPath "$RUNNER_TEMP/export" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey.p8" \
             -authenticationKeyID "${{ secrets.APPLE_API_KEY }}" \
             -authenticationKeyIssuerID "${{ secrets.APPLE_API_ISSUER }}"
+          ls -la "$RUNNER_TEMP/export"
+
+      # Uploading as its own step rather than letting the export do it: when the
+      # two are one command, an upload rejection reads like an export failure.
+      - name: Upload to App Store Connect
+        env:
+          KEY_ID: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          cp "$RUNNER_TEMP/asc/AuthKey.p8" ~/.appstoreconnect/private_keys/"AuthKey_$KEY_ID.p8"
+          ipa="$(find "$RUNNER_TEMP/export" -name '*.ipa' -maxdepth 1 | head -1)"
+          echo "uploading $ipa"
+          xcrun altool --upload-app -f "$ipa" -t ios \
+            --apiKey "$KEY_ID" \
+            --apiIssuer "${{ secrets.APPLE_API_ISSUER }}"
+          rm -f ~/.appstoreconnect/private_keys/"AuthKey_$KEY_ID.p8"
+
+      # Always, including after a failed archive: a half-finished run must not
+      # leave a certificate behind that nobody holds the private key for.
+      - name: Revoke the ephemeral signing identity
+        if: always()
+        env:
+          ASC_KEY_ID: ${{ secrets.APPLE_API_KEY }}
+          ASC_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER }}
+          ASC_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: |
+          if [ -x "$RUNNER_TEMP/ascvenv/bin/python" ]; then
+            "$RUNNER_TEMP/ascvenv/bin/python" .github/scripts/asc_signing.py cleanup
+          fi
 
       # Keep the symbols: a crash report from TestFlight is unreadable without
       # the dSYMs from the exact archive that produced the build.
