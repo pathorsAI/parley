@@ -71,14 +71,11 @@ overwritten on the next generate — and commit the regenerated plist with it.
 Both targets carry the number and both must move together. To re-upload without
 a commit, run the workflow manually with the `build_number` input.
 
-**When CI cannot sign.** The permissions error above is not hypothetical: the
-`ios-v1.3` run failed exactly this way, archiving fine and then dying in export
-with `Cloud signing permission error` / `No profiles for 'com.pathors.parley.ios'
-were found`. The API key can build but cannot mint a distribution profile.
-
-A Mac with the team's Apple ID signed into Xcode **can** — the account does the
-cloud signing the key is not allowed to — so the release does not have to wait
-for a new key. Build it by hand, then fix the key.
+**Building by hand is still a first-class path**, and it is how 1.0 through 1.3
+actually shipped. A Mac with the team's Apple ID signed into Xcode already holds
+the distribution identity in its keychain, so none of the certificate machinery
+above applies: archive, export, upload. Reach for this whenever CI is in the way
+rather than waiting on it.
 
 <details>
 <summary>Building and uploading by hand</summary>
