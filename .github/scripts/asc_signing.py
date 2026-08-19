@@ -100,12 +100,22 @@ def api(method: str, path: str, payload: dict | None = None) -> dict:
 
 
 def run(*args: str, quiet: bool = False) -> None:
-    subprocess.run(
-        args,
-        check=True,
-        stdout=subprocess.DEVNULL if quiet else None,
-        stderr=subprocess.DEVNULL if quiet else None,
-    )
+    """Run a command, and on failure say what it said.
+
+    `quiet` suppresses output on success only — several of the `security`
+    invocations below print the whole certificate on success, which is noise,
+    but swallowing their diagnostics on failure turns a one-line explanation
+    into an unexplained exit code.
+    """
+    proc = subprocess.run(args, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise SystemExit(
+            f"$ {' '.join(args)}\n"
+            f"exit {proc.returncode}\n"
+            f"{proc.stdout}{proc.stderr}"
+        )
+    if not quiet and proc.stdout:
+        print(proc.stdout, end="")
 
 
 # --------------------------------------------------------------------------
@@ -153,14 +163,20 @@ def mint() -> None:
     print(f"  {identity}  (id {created['id']})")
 
     print("▸ Installing it into a throwaway keychain")
+    # Deliberately *not* `BestAvailableEncryption`. Modern cryptography writes
+    # PKCS#12 with AES-256 and PBKDF2, and macOS `security import` cannot read
+    # that container at all — it fails with a bare exit 1. Security's importer
+    # still wants the PKCS#12 v1 encryption from the 1990s, so ask for it by
+    # name. The password guards a file that exists for seconds on a throwaway
+    # runner, so the weak cipher costs nothing.
+    legacy = (
+        serialization.PrivateFormat.PKCS12.encryption_builder()
+        .key_cert_algorithm(pkcs12.PBES.PBESv1SHA1And3KeyTripleDESCBC)
+        .hmac_hash(hashes.SHA1())
+        .build(KEYCHAIN_PASSWORD.encode())
+    )
     p12 = pkcs12.serialize_key_and_certificates(
-        name=TAG.encode(),
-        key=key,
-        cert=cert,
-        cas=None,
-        encryption_algorithm=serialization.BestAvailableEncryption(
-            KEYCHAIN_PASSWORD.encode()
-        ),
+        name=TAG.encode(), key=key, cert=cert, cas=None, encryption_algorithm=legacy
     )
     p12_path = RUNNER_TEMP / "signing.p12"
     p12_path.write_bytes(p12)
