@@ -31,13 +31,12 @@ on:
         required: false
         type: string
 
-permissions:
-  contents: write
-
 jobs:
   prepare:
     name: Prepare release metadata
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       body: ${{ steps.release.outputs.body }}
@@ -89,6 +88,9 @@ jobs:
     name: Build macOS app
     needs: prepare
     runs-on: macos-latest
+    # write: tauri-action creates the GitHub release and uploads assets.
+    permissions:
+      contents: write
     env:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -287,6 +289,9 @@ jobs:
     # platform into the release's latest.json.
     needs: [prepare, build-macos]
     runs-on: windows-latest
+    # write: tauri-action uploads this platform's assets to the release.
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -376,7 +381,12 @@ jobs:
     name: Publish cloud updater feed
     needs: [prepare, build-macos, build-windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
       - name: Download updater signatures
         uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
         with:
@@ -411,4 +421,4 @@ jobs:
             }, null, 2));
           '
           cat latest.json
-          npx wrangler@4.115.0 r2 object put "parley-recordings/downloads/latest.json" --file latest.json --remote
+          bunx wrangler@4.115.0 r2 object put "parley-recordings/downloads/latest.json" --file latest.json --remote
