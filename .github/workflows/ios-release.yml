@@ -120,24 +120,24 @@ jobs:
 
       # A runner's keychain is empty, so there is nothing here to sign a
       # distribution build with. Xcode's cloud signing is meant to fill that gap
-      # and does not: it reports `Cloud signing permission error` and leaves only
-      # a *development* identity, which the App Store export cannot use. So the
-      # identity is minted explicitly instead, and revoked again below — its
-      # private key dies with the runner, and a certificate without one would
-      # only burn a slot against Apple's per-team cap.
-      - name: Mint an ephemeral App Store signing identity
+      # and does not: it produces only a *development* identity and then reports
+      # the shortfall as `Cloud signing permission error` during export. So the
+      # team's distribution certificate is imported from a secret instead.
+      - name: Install the App Store signing identity
         id: signing
         env:
           ASC_KEY_ID: ${{ secrets.APPLE_API_KEY }}
           ASC_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER }}
           ASC_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+          IOS_DIST_P12: ${{ secrets.APPLE_IOS_DIST_P12 }}
+          IOS_DIST_P12_PASSWORD: ${{ secrets.APPLE_IOS_DIST_P12_PASSWORD }}
         run: |
           # A venv rather than `pip install`: a system python3 on the runner may
           # be marked externally managed, and that failure looks nothing like
           # what it is.
           python3 -m venv "$RUNNER_TEMP/ascvenv"
           "$RUNNER_TEMP/ascvenv/bin/pip" install --quiet pyjwt cryptography requests
-          "$RUNNER_TEMP/ascvenv/bin/python" .github/scripts/asc_signing.py mint
+          "$RUNNER_TEMP/ascvenv/bin/python" .github/scripts/asc_signing.py install
 
       - name: Archive
         run: |
@@ -185,8 +185,10 @@ jobs:
           rm -f ~/.appstoreconnect/private_keys/"AuthKey_$KEY_ID.p8"
 
       # Always, including after a failed archive: a half-finished run must not
-      # leave a certificate behind that nobody holds the private key for.
-      - name: Revoke the ephemeral signing identity
+      # leave a profile behind, because Apple rejects a duplicate profile name
+      # and the next run would fail for a reason with nothing to do with itself.
+      # The certificate is never touched — it is the team's and it outlives runs.
+      - name: Remove this run's provisioning profiles
         if: always()
         env:
           ASC_KEY_ID: ${{ secrets.APPLE_API_KEY }}
