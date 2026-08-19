@@ -1,5 +1,21 @@
 name: Release
 
+# One tag releases every desktop platform:
+#   prepare       — resolve the tag + release notes once, shared by both builds
+#   build-macos   — signed/notarized .dmg + updater .app.tar.gz (OSS → GitHub,
+#                   cloud edition → R2)
+#   build-windows — NSIS -setup.exe + .msi (OSS → same GitHub release, cloud
+#                   edition → R2); unsigned for now, see the signing note below
+#   compose-updater — writes the cloud channel's latest.json with BOTH
+#                   platforms and uploads it to R2 last, so the feed never
+#                   references an artifact that failed to upload
+#
+# Both builds sign updater artifacts with the SAME minisign key
+# (TAURI_SIGNING_PRIVATE_KEY) — the app pins one pubkey in tauri.conf.json.
+# For the GitHub channel, tauri-action merges each platform into the release's
+# latest.json (the Windows job runs after the macOS one and merges into the
+# asset it finds).
+
 on:
   push:
     tags:
@@ -19,8 +35,59 @@ permissions:
   contents: write
 
 jobs:
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      body: ${{ steps.release.outputs.body }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Resolve tag and release notes
+        id: release
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_INPUT: ${{ inputs.tag }}
+          RELEASE_NOTES_INPUT: ${{ inputs.release_notes }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${TAG_INPUT}"
+            fallback_notes="${RELEASE_NOTES_INPUT}"
+          else
+            tag="${GITHUB_REF_NAME}"
+            fallback_notes=""
+          fi
+
+          notes_file=".github/release-notes/${tag}.md"
+          body_file="${RUNNER_TEMP}/release-body.md"
+
+          if [[ -f "${notes_file}" ]]; then
+            cp "${notes_file}" "${body_file}"
+          elif [[ -n "${fallback_notes}" ]]; then
+            printf '%s\n' "${fallback_notes}" > "${body_file}"
+          else
+            printf 'Release %s\n' "${tag}" > "${body_file}"
+          fi
+
+          {
+            echo "tag=${tag}"
+            echo "version=${tag#v}"
+            echo "body<<EOF"
+            cat "${body_file}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
   build-macos:
     name: Build macOS app
+    needs: prepare
     runs-on: macos-latest
     env:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -67,42 +134,6 @@ jobs:
         # scripts (postinstall). Native binaries we need are shipped as prebuilt
         # artifacts that Bun resolves without running install scripts.
         run: bun install --frozen-lockfile --ignore-scripts
-
-      - name: Prepare release metadata
-        id: release
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          TAG_INPUT: ${{ inputs.tag }}
-          RELEASE_NOTES_INPUT: ${{ inputs.release_notes }}
-        run: |
-          set -euo pipefail
-
-          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
-            tag="${TAG_INPUT}"
-            fallback_notes="${RELEASE_NOTES_INPUT}"
-          else
-            tag="${GITHUB_REF_NAME}"
-            fallback_notes=""
-          fi
-
-          notes_file=".github/release-notes/${tag}.md"
-          body_file="${RUNNER_TEMP}/release-body.md"
-
-          if [[ -f "${notes_file}" ]]; then
-            cp "${notes_file}" "${body_file}"
-          elif [[ -n "${fallback_notes}" ]]; then
-            printf '%s\n' "${fallback_notes}" > "${body_file}"
-          else
-            printf 'Release %s\n' "${tag}" > "${body_file}"
-          fi
-
-          {
-            echo "tag=${tag}"
-            echo "body<<EOF"
-            cat "${body_file}"
-            echo "EOF"
-          } >> "${GITHUB_OUTPUT}"
 
       - name: Fetch ONNX Runtime (universal2) for speaker diarization
         # Downloads libonnxruntime.dylib into src-tauri/onnxruntime/ so tauri.conf
@@ -202,9 +233,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ steps.release.outputs.tag }}
-          releaseName: "Parley ${{ steps.release.outputs.tag }}"
-          releaseBody: ${{ steps.release.outputs.body }}
+          tagName: ${{ needs.prepare.outputs.tag }}
+          releaseName: "Parley ${{ needs.prepare.outputs.tag }}"
+          releaseBody: ${{ needs.prepare.outputs.body }}
           releaseDraft: false
           prerelease: false
           tauriScript: bun run tauri
@@ -217,7 +248,8 @@ jobs:
       # and push it to R2 under `downloads/`, where the parley-cloud Worker's
       # /download route serves it to the marketing site + the cloud app's updater.
       # These steps run AFTER the GitHub release, so a cloud-upload failure never
-      # blocks the OSS release.
+      # blocks the OSS release. The updater feed itself (latest.json) is written by
+      # the compose-updater job once BOTH platforms have uploaded.
       - name: Build cloud edition
         env:
           VITE_PARLEY_CLOUD: "true"
@@ -225,7 +257,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bun run tauri build --config src-tauri/tauri.conf.cloud.json --target aarch64-apple-darwin
 
-      - name: Upload cloud edition to R2 (website download + updater feed)
+      - name: Upload cloud edition to R2 (website download)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -235,10 +267,148 @@ jobs:
           BUNDLE="src-tauri/target/aarch64-apple-darwin/release/bundle"
           TARGZ="${BUNDLE}/macos/Parley.app.tar.gz"
           DMG="$(ls "${BUNDLE}"/dmg/Parley_*_aarch64.dmg | head -1)"
-          VERSION="${{ steps.release.outputs.tag }}"; VERSION="${VERSION#v}"
-          # Build the updater feed (latest.json) — signature is the .sig file, url
-          # points at the Worker download route (which streams the .app.tar.gz from R2).
-          SIG_FILE="${TARGZ}.sig" VERSION="${VERSION}" node -e 'const fs=require("fs");const sig=fs.readFileSync(process.env.SIG_FILE,"utf8").trim();fs.writeFileSync("latest.json",JSON.stringify({version:process.env.VERSION,pub_date:new Date().toISOString(),platforms:{"darwin-aarch64":{signature:sig,url:"https://api.parley.tw/download/Parley.app.tar.gz"}}},null,2));'
           bunx wrangler@4.115.0 r2 object put "parley-recordings/downloads/Parley.app.tar.gz" --file "${TARGZ}" --remote
           bunx wrangler@4.115.0 r2 object put "parley-recordings/downloads/Parley.dmg" --file "${DMG}" --remote
-          bunx wrangler@4.115.0 r2 object put "parley-recordings/downloads/latest.json" --file latest.json --remote
+          # Stage the updater signature for the compose-updater job.
+          mkdir -p updater-sig
+          cp "${TARGZ}.sig" updater-sig/darwin-aarch64.sig
+
+      - name: Hand the updater signature to compose-updater
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cloud-updater-darwin
+          path: updater-sig/darwin-aarch64.sig
+          retention-days: 1
+
+  build-windows:
+    name: Build Windows app
+    # After build-macos so the two tauri-action runs never race on creating the
+    # GitHub release: the Windows run finds the existing release and merges its
+    # platform into the release's latest.json.
+    needs: [prepare, build-macos]
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Fetch ONNX Runtime (win-x64) for speaker diarization
+        # Downloads onnxruntime.dll into src-tauri/onnxruntime/ so
+        # tauri.windows.conf.json bundles it. Loaded at runtime via ORT_DYLIB_PATH.
+        run: bash src-tauri/scripts/fetch-onnxruntime.sh
+
+      # Authenticode signing is intentionally not wired yet — the installer ships
+      # unsigned (SmartScreen shows an unknown-publisher warning). When a cert
+      # lands, plug it in here: import the PFX from a WINDOWS_CERTIFICATE secret
+      # into the runner's store and point bundle.windows.certificateThumbprint at
+      # it in tauri.windows.conf.json. The updater's integrity does NOT depend on
+      # this — it verifies the minisign signature below.
+
+      - name: Build and upload Tauri bundles
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_PARLEY_CLOUD: "false"
+          # Same minisign key as macOS — the app pins ONE updater pubkey.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ needs.prepare.outputs.tag }}
+          releaseName: "Parley ${{ needs.prepare.outputs.tag }}"
+          releaseBody: ${{ needs.prepare.outputs.body }}
+          releaseDraft: false
+          prerelease: false
+          tauriScript: bun run tauri
+          args: --target x86_64-pc-windows-msvc
+          assetNamePattern: "[name]-[version]-[platform]-[arch].[ext]"
+
+      - name: Build cloud edition
+        env:
+          VITE_PARLEY_CLOUD: "true"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bun run tauri build --config src-tauri/tauri.conf.cloud.json --target x86_64-pc-windows-msvc
+
+      - name: Upload cloud edition to R2 (website download)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BUNDLE="src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
+          SETUP="$(ls "${BUNDLE}"/nsis/Parley_*_x64-setup.exe | head -1)"
+          bunx wrangler@4.115.0 r2 object put "parley-recordings/downloads/Parley-setup.exe" --file "${SETUP}" --remote
+          # Stage the updater signature for the compose-updater job.
+          mkdir -p updater-sig
+          cp "${SETUP}.sig" updater-sig/windows-x86_64.sig
+
+      - name: Hand the updater signature to compose-updater
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cloud-updater-windows
+          path: updater-sig/windows-x86_64.sig
+          retention-days: 1
+
+  compose-updater:
+    # Writes downloads/latest.json with BOTH platforms. Runs last so the feed
+    # never points at an artifact whose upload failed; if one platform's build
+    # breaks, the feed simply stays at the previous release for both (re-run the
+    # failed job to publish). The GitHub channel needs no equivalent — tauri-action
+    # maintains that latest.json per release.
+    name: Publish cloud updater feed
+    needs: [prepare, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download updater signatures
+        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+        with:
+          pattern: cloud-updater-*
+          merge-multiple: true
+          path: sigs
+
+      - name: Compose and upload latest.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          node -e '
+            const fs = require("fs");
+            const sig = (f) => fs.readFileSync(`sigs/${f}`, "utf8").trim();
+            fs.writeFileSync("latest.json", JSON.stringify({
+              version: process.env.VERSION,
+              pub_date: new Date().toISOString(),
+              platforms: {
+                "darwin-aarch64": {
+                  signature: sig("darwin-aarch64.sig"),
+                  url: "https://api.parley.tw/download/Parley.app.tar.gz",
+                },
+                "windows-x86_64": {
+                  signature: sig("windows-x86_64.sig"),
+                  url: "https://api.parley.tw/download/Parley-setup.exe",
+                },
+              },
+            }, null, 2));
+          '
+          cat latest.json
+          npx wrangler@4.115.0 r2 object put "parley-recordings/downloads/latest.json" --file latest.json --remote
