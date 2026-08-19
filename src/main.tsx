@@ -4,12 +4,13 @@ import App from "./App";
 import "./index.css";
 import { attachConsoleOnce, log } from "./lib/log";
 import { initFolderRegistry } from "./lib/history/folders";
+import { desktopPlatform } from "./lib/platform";
 import { initZoomShortcuts } from "./lib/zoom";
 
 // Mirror webview console.* into the rotating log file (no-op outside Tauri).
 void attachConsoleOnce();
 
-// ⌘+ / ⌘− / ⌘0 page zoom, per window, persisted across launches.
+// ⌘/Ctrl + / − / 0 page zoom, per window, persisted across launches.
 initZoomShortcuts();
 
 // Hydrate the shared folder registry (disk-backed; see history/folders.ts).
@@ -37,6 +38,9 @@ log.info("ui: boot", { window: window_ });
 // undecorated + transparent (rounded macOS-style corners); the secondary
 // windows keep native decorations and an opaque background.
 document.documentElement.dataset.appWindow = window_;
+// And to the right OS: the transparent/rounded chrome is macOS-only — the
+// Windows main window is undecorated but opaque (see tauri.windows.conf.json).
+document.documentElement.dataset.platform = desktopPlatform();
 
 const SettingsApp = lazy(() =>
   import("./settings/SettingsApp").then((module) => ({ default: module.SettingsApp }))

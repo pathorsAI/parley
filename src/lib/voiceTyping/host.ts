@@ -9,6 +9,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
+import { isMac } from "../platform";
 import { isTauri } from "../tauriEvents";
 import { useStore } from "../store";
 import { sttApiKey, sttRelayUrl } from "../transcription/providers";
@@ -69,6 +70,11 @@ let capTimer: ReturnType<typeof setTimeout> | undefined;
 /** Wire up the host. Returns a cleanup function. No-op outside Tauri. */
 export function initVoiceTyping(): () => void {
   if (!isTauri()) return () => {};
+  // macOS-only for now: the Alt+Space global shortcut would fire on Windows
+  // too, but the delivery layer (clipboard + synthetic paste) isn't wired
+  // there yet — a session that transcribes and then drops the text is worse
+  // than no session.
+  if (!isMac()) return () => {};
   // listen() resolves asynchronously — a cleanup that runs before it resolves
   // (StrictMode's dev double-mount of App) must still unlisten the late
   // arrival, or the second init's handlers double up for the app's lifetime.

@@ -1,3 +1,4 @@
+import { isMac } from "./platform";
 import { isTauri } from "./tauriEvents";
 import { log } from "./log";
 
@@ -31,7 +32,9 @@ export function initZoomShortcuts(): void {
   }
 
   window.addEventListener("keydown", (e) => {
-    if (!e.metaKey || e.ctrlKey || e.altKey) return;
+    // ⌘ on macOS, Ctrl elsewhere — exclusively, so combos like Ctrl+⌘ pass through.
+    const mod = isMac() ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+    if (!mod || e.altKey) return;
     if (e.key === "=" || e.key === "+") zoom = clamp(zoom + STEP);
     else if (e.key === "-") zoom = clamp(zoom - STEP);
     else if (e.key === "0") zoom = 1;

@@ -50,13 +50,15 @@ body,
   margin: 0;
 }
 
-/* The main window is undecorated + transparent so the app shell can draw its
-   own rounded macOS-style corners (see App.tsx). Keep the surface transparent
-   so the corner notches reveal the desktop and macOS draws a rounded shadow.
-   Secondary windows use native decorations, so this is scoped to the main one. */
-html[data-app-window="main"],
-html[data-app-window="main"] body,
-html[data-app-window="main"] #root {
+/* The macOS main window is undecorated + transparent so the app shell can draw
+   its own rounded macOS-style corners (see App.tsx). Keep the surface
+   transparent so the corner notches reveal the desktop and macOS draws a
+   rounded shadow. Secondary windows use native decorations, and the Windows
+   main window is undecorated but opaque (tauri.windows.conf.json), so this is
+   scoped to macOS + main. */
+html[data-platform="macos"][data-app-window="main"],
+html[data-platform="macos"][data-app-window="main"] body,
+html[data-platform="macos"][data-app-window="main"] #root {
   background: transparent;
 }
 
