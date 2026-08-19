@@ -2,40 +2,63 @@ import SwiftUI
 
 /// The Parley keyboard's face.
 ///
-/// Two panes under one strip, in the shape dictation keyboards have settled on
-/// (Typeless, Wispr Flow): the wordmark and a two-way mode picker on top, then
-/// either the dictation pane — a status line, the mic pill with `⌫` and `@`
-/// flanking it, and a wide return key — or a full QWERTY plane. A horizontal
-/// swipe across the body moves between them, so the picker is a signpost rather
-/// than the only way across.
+/// Two panes under one strip: the voice pane — a live-transcript slot, one
+/// round record button and the three controls a dictating user reaches for —
+/// or a full QWERTY plane. The panes sit side by side on a track that follows
+/// the finger, so a horizontal drag moves between them and the strip's dots are
+/// a signpost rather than the only way across.
+///
+/// The voice pane is drawn as a **control panel, not a keyboard**. Nothing on
+/// it types a letter, so it borrows none of UIKit's key-cap treatment: flat
+/// translucent discs, no shadows, and one colour — the record button. Filling
+/// the pane with caps (which it used to do) made it read as a broken keyboard
+/// rather than a place to speak.
 ///
 /// The view paints no background of its own. The system's `UIInputView` is
 /// already the right colour, already has the right corners and already covers
 /// exactly the right area; painting over it was what made the keyboard seam
 /// against the row below and sit a shade off from the system's.
 ///
-/// Everything here is presentation only — no audio, no transcript history — so
-/// the extension stays well under the jetsam limit keyboard processes run
-/// against.
+/// Everything here is presentation only — no audio, no transcript history
+/// beyond the short tail shown above the button — so the extension stays well
+/// under the jetsam limit keyboard processes run against.
 struct KeyboardRootView: View {
     @ObservedObject var bridge: KeyboardBridge
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The host field's appearance, not the system's: a dark-themed app puts a
     /// dark keyboard on screen even in light mode.
     var dark: Bool
 
+    /// Live horizontal travel of the pane track while a drag is in flight.
+    @GestureState private var drag: CGFloat = 0
+
     var body: some View {
         VStack(spacing: 0) {
             modeStrip
-            pane
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // The swipe lives on the pane, not on a key, and demands real
-                // travel before it engages — otherwise a fat-fingered tap on
-                // `g` would throw the user into the other mode.
+            GeometryReader { geo in
+                let width = geo.size.width
+                HStack(spacing: 0) {
+                    voicePane.frame(width: width)
+                    LetterPane(bridge: bridge, dark: dark).frame(width: width)
+                }
+                .frame(width: width * 2, alignment: .leading)
+                // Follow the finger. Both panes are the same height now, so the
+                // track can slide without the keyboard resizing under it. The
+                // old gesture only committed on release, so nothing moved while
+                // the finger did — which is why nobody found the swipe.
+                .offset(x: (bridge.mode == .voice ? 0 : -width) + drag)
+                .animation(.interactiveSpring(response: 0.32, dampingFraction: 0.86), value: bridge.mode)
+                // The gesture lives on the track, not on a key, and demands
+                // real travel before it engages — otherwise a fat-fingered tap
+                // on `g` would throw the user into the other mode.
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 24)
+                        .updating($drag) { value, state, _ in
+                            state = rubberBanded(value.translation.width, width: width)
+                        }
                         .onEnded { value in
                             let dx = value.translation.width
                             guard abs(dx) > KBMetrics.swipeThreshold,
@@ -44,203 +67,194 @@ struct KeyboardRootView: View {
                             select(dx < 0 ? .letters : .voice)
                         }
                 )
+            }
+            .clipped()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    @ViewBuilder
-    private var pane: some View {
-        switch bridge.mode {
-        case .voice: voicePane
-        case .letters: LetterPane(bridge: bridge, dark: dark)
-        }
+    /// Resist a drag that would pull the track past either end, so the pane
+    /// never detaches from the edge of the keyboard.
+    private func rubberBanded(_ dx: CGFloat, width: CGFloat) -> CGFloat {
+        let overshoot = (bridge.mode == .voice && dx > 0) || (bridge.mode == .letters && dx < 0)
+        return overshoot ? dx / 4 : max(-width, min(width, dx))
     }
 
     private func select(_ mode: KeyboardMode) {
         guard bridge.mode != mode else { return }
-        withAnimation(.easeInOut(duration: 0.18)) { bridge.setMode(mode) }
+        bridge.setMode(mode)
     }
 
-    // MARK: mode strip — wordmark + picker
+    // MARK: mode strip — wordmark + where you are
 
+    /// The wordmark, and the current pane named next to two dots.
+    ///
+    /// It used to be a segmented control, which read as the *only* way across
+    /// and hid the fact that the pane swipes at all. Dots say "there is another
+    /// one of these, sideways" — and they stay tappable, so nothing is lost.
     private var modeStrip: some View {
         HStack(spacing: 0) {
             Text(verbatim: "Parley")
                 .font(.footnote.weight(.bold))
                 .foregroundStyle(KBTheme.wordmark(dark))
             Spacer(minLength: 8)
-            HStack(spacing: 2) {
-                segment(.voice, label: Image(systemName: "waveform"))
-                    .accessibilityLabel(Text("Voice dictation"))
-                segment(.letters, label: Text(verbatim: "EN"))
-                    .accessibilityLabel(Text("English keyboard"))
+            Text(bridge.mode == .voice ? "Voice" : "Keyboard")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(KBTheme.inkSoft(dark))
+                .padding(.trailing, 8)
+                .accessibilityHidden(true)
+            HStack(spacing: 5) {
+                dot(.voice, label: Text("Voice dictation"))
+                dot(.letters, label: Text("English keyboard"))
             }
-            .padding(2)
-            .background(Capsule().fill(KBTheme.segmentTrack(dark)))
         }
         .frame(height: KBMetrics.strip)
         .padding(.horizontal, 12)
     }
 
-    private func segment<Label: View>(_ mode: KeyboardMode, label: Label) -> some View {
+    private func dot(_ mode: KeyboardMode, label: Text) -> some View {
         let selected = bridge.mode == mode
-        return PressableButton(action: { select(mode) }) { pressed in
-            label
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(selected ? KBTheme.ink(dark) : KBTheme.inkSoft(dark))
-                .frame(width: 42, height: 26)
-                .background(
-                    Capsule()
-                        .fill(selected ? KBTheme.key(dark) : .clear)
-                        .opacity(pressed ? 0.6 : 1))
+        return Button(action: { select(mode) }) {
+            Capsule()
+                .fill(selected ? KBTheme.accent : KBTheme.inkSoft(dark).opacity(0.35))
+                .frame(width: selected ? 14 : 5, height: 5)
+                // Keep a finger-sized target around a deliberately small mark.
+                .contentShape(Rectangle().inset(by: -12))
+                .animation(.easeInOut(duration: 0.2), value: selected)
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
     // MARK: the voice pane
 
     private var voicePane: some View {
-        VStack(spacing: KBMetrics.voiceRowSpacing) {
-            caption
-            // The mic keeps the middle; delete and `@` flank it so the two
-            // edits a dictating user actually reaches for — take that back,
-            // type an address — never cost a trip through the EN pane.
-            HStack(spacing: 10) {
-                RepeatingKey(action: { bridge.backspace() }) { pressed in
-                    quickCap(pressed: pressed) {
-                        Image(systemName: "delete.left")
-                            .font(.system(size: 18, weight: .regular))
-                    }
-                }
-                .frame(width: KBMetrics.quickKeyWidth, height: KBMetrics.micHeight)
-                .accessibilityLabel(Text("Delete"))
-
-                micPill
-
-                PressableButton(action: { bridge.type("@") }) { pressed in
-                    quickCap(pressed: pressed) {
-                        Text(verbatim: "@").font(.system(size: 20))
-                    }
-                }
-                .frame(width: KBMetrics.quickKeyWidth, height: KBMetrics.micHeight)
-                .accessibilityLabel(Text("At sign"))
-            }
-            HStack(spacing: 10) {
-                // Always here, on every device: Parley ships no Bopomofo
-                // engine, so this key is a 注音 user's only way out.
-                GlobeKey(controller: bridge.controller, dark: dark)
-                    .frame(width: KBMetrics.quickKeyWidth, height: KBMetrics.quickRowHeight)
-                PressableButton(action: { bridge.newline() }) { pressed in
-                    ZStack {
-                        KeyCap(
-                            dark: dark, tint: bridge.returnKeyIsAccented ? .accent : .alt,
-                            pressed: pressed)
-                        Text(bridge.returnKeyLabel)
-                            .font(.system(size: 15))
-                            .foregroundStyle(
-                                bridge.returnKeyIsAccented ? .white : KBTheme.ink(dark))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: KBMetrics.quickRowHeight)
-                }
-                .accessibilityLabel(Text(bridge.returnKeyLabel))
-            }
+        VStack(spacing: KBMetrics.textToDeck) {
+            textSlot
+            deck
         }
-        .padding(.horizontal, 10)
-        .padding(.top, KBMetrics.paneTop)
-        .padding(.bottom, KBMetrics.paneBottom)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, KBMetrics.voiceSide)
+        .padding(.top, KBMetrics.voiceTop)
+        .padding(.bottom, KBMetrics.voiceBottom)
     }
 
-    private func quickCap<Content: View>(
-        pressed: Bool, @ViewBuilder glyph: () -> Content
+    /// The controls, arranged around the record button rather than in a row:
+    /// delete top-right, return under it, `@` bottom-left. Top-left is left
+    /// empty on purpose — it is where the pane breathes, and it is the slot the
+    /// globe takes on the devices that still need one.
+    private var deck: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: KBMetrics.deckRowGap) {
+                if bridge.showsGlobe {
+                    atKey
+                } else {
+                    Color.clear.frame(width: KBMetrics.roundKey, height: KBMetrics.roundKey)
+                }
+                if bridge.showsGlobe {
+                    // Bottom-left, where the system's own globe sits, so the
+                    // muscle memory carries over on the devices that show it.
+                    GlobeKey(controller: bridge.controller, dark: dark, round: true)
+                        .frame(width: KBMetrics.roundKey, height: KBMetrics.roundKey)
+                } else {
+                    atKey
+                }
+            }
+            Spacer(minLength: 0)
+            recordButton
+            Spacer(minLength: 0)
+            VStack(spacing: KBMetrics.deckRowGap) {
+                deleteKey
+                returnKey
+            }
+        }
+        .frame(height: KBMetrics.deckHeight)
+    }
+
+    // MARK: the round controls
+
+    private var atKey: some View {
+        PressableButton(action: { bridge.type("@") }) { pressed in
+            disc(pressed: pressed, quiet: true) {
+                Text(verbatim: "@").font(.system(size: 18))
+            }
+        }
+        .accessibilityLabel(Text("At sign"))
+    }
+
+    private var deleteKey: some View {
+        RepeatingKey(action: { bridge.backspace() }) { pressed in
+            disc(pressed: pressed) {
+                Image(systemName: "delete.left").font(.system(size: 17))
+            }
+        }
+        .accessibilityLabel(Text("Delete"))
+    }
+
+    /// Return, as a glyph rather than a word.
+    ///
+    /// The host decides what this key is *called* — Go, Send, Search — and a
+    /// 44pt disc has no room for "Search". A glyph is the better trade twice
+    /// over: it is legible at this size where five letters would not be, and it
+    /// keeps the pane's single colour on the record button. What the key
+    /// actually does never changes; see `KeyboardBridge.newline()`.
+    private var returnKey: some View {
+        PressableButton(action: { bridge.newline() }) { pressed in
+            disc(pressed: pressed) {
+                Image(systemName: bridge.returnKeyGlyph).font(.system(size: 17))
+            }
+        }
+        .accessibilityLabel(Text(bridge.returnKeyLabel))
+    }
+
+    private func disc<Content: View>(
+        pressed: Bool, quiet: Bool = false, @ViewBuilder glyph: () -> Content
     ) -> some View {
         ZStack {
-            KeyCap(dark: dark, tint: .alt, pressed: pressed)
-            glyph().foregroundStyle(KBTheme.ink(dark))
+            ControlDisc(dark: dark, pressed: pressed)
+            glyph().foregroundStyle(quiet ? KBTheme.inkSoft(dark) : KBTheme.ink(dark))
         }
+        .frame(width: KBMetrics.roundKey, height: KBMetrics.roundKey)
     }
 
-    // MARK: caption — the state line above the mic
+    // MARK: the record button
 
-    /// One fixed-height slot so the layout never jumps between states: the
-    /// Full Access explainer, the idle prompt, the listening indicator, or the
-    /// tentative tail (the words heard but not yet settled — settled text is
-    /// already in the document behind the keyboard, so it is never echoed).
-    private var caption: some View {
-        Group {
-            if !bridge.hasFullAccess {
-                VStack(spacing: 3) {
-                    Text("Voice typing needs Full Access")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(KBTheme.ink(dark))
-                    Text("Settings › General › Keyboard › Keyboards › Parley → Allow Full Access. Your voice is sent to your Parley account to be transcribed.")
-                        .font(.caption2)
-                        .foregroundStyle(KBTheme.inkSoft(dark))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 12)
-                }
-            } else if let error = bridge.errorText, !bridge.listening {
-                Text(error)
-                    .font(.footnote)
-                    .foregroundStyle(KBTheme.recording)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
-            } else if bridge.listening && !bridge.partial.isEmpty {
-                Text(bridge.partial)
-                    .font(.callout)
-                    .foregroundStyle(KBTheme.ink(dark).opacity(0.8))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
-            } else if bridge.listening {
-                HStack(spacing: 7) {
-                    PulseBars(color: KBTheme.recording)
-                    Text("Listening…")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(KBTheme.recording)
-                }
-            } else {
-                Text("Tap to speak")
-                    .font(.subheadline)
-                    .foregroundStyle(KBTheme.inkSoft(dark))
-            }
-        }
-        .frame(height: KBMetrics.captionHeight)
-        .frame(maxWidth: .infinity)
-        .animation(.easeInOut(duration: 0.15), value: bridge.listening)
-        .animation(.easeOut(duration: 0.15), value: bridge.partial)
-    }
-
-    // MARK: the mic pill
-
-    private var micPill: some View {
+    /// The one thing on this pane with a colour: idle it carries Pathors' brand
+    /// gradient, listening it goes flat recording red inside a breathing ring,
+    /// so "armed" is never something you have to read out of a gradient — and
+    /// never needs a second element saying "Listening…" beside it.
+    private var recordButton: some View {
         PressableButton(action: toggle) { pressed in
-            Image(systemName: bridge.listening ? "stop.fill" : "mic.fill")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(micInk)
-                .frame(width: KBMetrics.micWidth, height: KBMetrics.micHeight)
-                .background(
-                    Capsule().fill(micFill).brightness(pressed ? -0.08 : 0))
+            ZStack {
+                if bridge.listening && !reduceMotion {
+                    PulseRing(color: KBTheme.recording)
+                }
+                Circle()
+                    .fill(recordFill)
+                    .frame(width: KBMetrics.recordSize, height: KBMetrics.recordSize)
+                    .brightness(pressed ? -0.06 : 0)
+                Image(systemName: bridge.listening ? "stop.fill" : "mic.fill")
+                    .font(.system(size: bridge.listening ? 24 : 28, weight: .medium))
+                    .foregroundStyle(recordInk)
+            }
+            .frame(width: KBMetrics.deckHeight, height: KBMetrics.deckHeight)
         }
         .disabled(!bridge.hasFullAccess)
         .accessibilityLabel(
-            bridge.listening
-                ? Text("Stop dictation") : Text("Start dictation"))
+            bridge.listening ? Text("Stop dictation") : Text("Start dictation"))
     }
 
-    /// Idle: Pathors' brand gradient, the one place on the keyboard where
-    /// Parley is allowed to look like Parley. Recording: the flat recording red,
-    /// so "armed" is never something you have to read out of a gradient.
-    /// Disabled (no Full Access): a key-coloured pill so it reads inert.
-    private var micFill: AnyShapeStyle {
-        if !bridge.hasFullAccess { return AnyShapeStyle(KBTheme.key(dark)) }
+    /// Disabled (no Full Access) reads inert rather than inviting: the button
+    /// can't record until the user has been through Settings.
+    private var recordFill: AnyShapeStyle {
+        if !bridge.hasFullAccess { return AnyShapeStyle(KBTheme.control(dark)) }
         if bridge.listening { return AnyShapeStyle(KBTheme.recording) }
         return AnyShapeStyle(KBTheme.micGradient)
     }
 
-    private var micInk: Color {
-        if !bridge.hasFullAccess { return KBTheme.inkSoft(dark) }
-        return .white
+    private var recordInk: Color {
+        bridge.hasFullAccess ? .white : KBTheme.inkSoft(dark)
     }
 
     private func toggle() {
@@ -259,30 +273,108 @@ struct KeyboardRootView: View {
             }
         }
     }
+
+    // MARK: the text slot
+
+    /// One fixed-height slot above the button, so the keyboard never changes
+    /// shape between states: the Full Access explainer, an error, the live
+    /// transcript, or the idle prompt.
+    ///
+    /// The live case shows the settled tail in a softer ink followed by the
+    /// words not yet settled. Settled text has already been inserted into the
+    /// document, but the document is usually behind the keyboard — echoing a
+    /// short tail is what makes dictation read as continuous instead of as
+    /// words that appear and then vanish.
+    private var textSlot: some View {
+        Group {
+            if !bridge.hasFullAccess {
+                fullAccessNotice
+            } else if let error = bridge.errorText, !bridge.listening {
+                centered {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(KBTheme.recording)
+                        .multilineTextAlignment(.center)
+                }
+            } else if bridge.listening || !bridge.tail.isEmpty {
+                liveText
+            } else {
+                centered {
+                    Text("Tap to speak")
+                        .font(.subheadline)
+                        .foregroundStyle(KBTheme.inkSoft(dark))
+                }
+            }
+        }
+        .frame(height: KBMetrics.textHeight)
+        .frame(maxWidth: .infinity)
+        .animation(.easeInOut(duration: 0.15), value: bridge.listening)
+        .animation(.easeOut(duration: 0.12), value: bridge.partial)
+    }
+
+    private var liveText: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Spacer(minLength: 0)
+            (Text(bridge.tail).foregroundStyle(KBTheme.inkSoft(dark))
+                + Text(bridge.tail.isEmpty || bridge.partial.isEmpty ? "" : " ")
+                + Text(bridge.partial).foregroundStyle(KBTheme.ink(dark)))
+                .font(.system(size: 15))
+                .lineLimit(3)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var fullAccessNotice: some View {
+        VStack(spacing: 3) {
+            Spacer(minLength: 0)
+            Text("Voice typing needs Full Access")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(KBTheme.ink(dark))
+            Text("Settings › General › Keyboard › Keyboards › Parley → Allow Full Access. Your voice is sent to your Parley account to be transcribed.")
+                .font(.caption2)
+                .foregroundStyle(KBTheme.inkSoft(dark))
+                .multilineTextAlignment(.center)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func centered<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack {
+            Spacer(minLength: 0)
+            content()
+            Spacer(minLength: 0)
+        }
+    }
 }
 
-/// Three bars that keep breathing while the app is listening. Deliberately not
-/// a level meter: the audio lives in the container app, and streaming real
-/// levels across the App Group at frame rate would cost far more than the
-/// reassurance is worth. It says "still running", and nothing it can't know.
-private struct PulseBars: View {
+/// Two rings breathing outwards from the record button while the app is
+/// listening. Deliberately not a level meter: the audio lives in the container
+/// app, and streaming real levels across the App Group at frame rate would cost
+/// far more than the reassurance is worth. It says "still running", and nothing
+/// it can't know — which is also why it replaced the old "Listening…" caption
+/// rather than joining it.
+private struct PulseRing: View {
     let color: Color
     @State private var animating = false
 
     var body: some View {
-        HStack(spacing: 2.5) {
-            ForEach(0..<3, id: \.self) { i in
-                Capsule()
-                    .fill(color)
-                    .frame(width: 2.5, height: animating ? 12 : 4)
-                    .animation(
-                        .easeInOut(duration: 0.5)
-                            .repeatForever()
-                            .delay(Double(i) * 0.15),
-                        value: animating)
-            }
+        ZStack {
+            ring(delay: 0)
+            ring(delay: 0.6)
         }
-        .frame(height: 14)
+        .frame(width: KBMetrics.deckHeight, height: KBMetrics.deckHeight)
+        .allowsHitTesting(false)
         .onAppear { animating = true }
+    }
+
+    private func ring(delay: Double) -> some View {
+        Circle()
+            .fill(color.opacity(animating ? 0 : 0.30))
+            .frame(width: KBMetrics.recordSize, height: KBMetrics.recordSize)
+            .scaleEffect(animating ? 1.25 : 1)
+            .animation(
+                .easeOut(duration: 1.2).repeatForever(autoreverses: false).delay(delay),
+                value: animating)
     }
 }

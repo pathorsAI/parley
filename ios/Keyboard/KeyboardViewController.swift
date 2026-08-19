@@ -41,6 +41,7 @@ final class KeyboardViewController: UIInputViewController {
         super.viewDidLoad()
         bridge.controller = self
         bridge.hasFullAccess = hasFullAccess
+        bridge.showsGlobe = needsInputModeSwitchKey
         // Without Full Access there is nothing to dictate with, so open on the
         // pane that still works. App Review 4.4.1 judges the keyboard in
         // exactly this state.
@@ -96,6 +97,14 @@ final class KeyboardViewController: UIInputViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         bridge.hasFullAccess = hasFullAccess
+        // Re-read every time: the user can add or remove keyboards while ours
+        // is loaded, and that flips whether the system draws the globe for us.
+        bridge.showsGlobe = needsInputModeSwitchKey
+        // The tail belongs to the field it was dictated into. Coming back to a
+        // *different* field it would read as text that is already there, so it
+        // is dropped unless a session is still running — `drainDownlink` below
+        // puts it straight back when one is.
+        if !bridge.listening { bridge.tail = "" }
         refreshAppearance()
         refreshReturnKey()
         drainDownlink()
@@ -184,6 +193,7 @@ final class KeyboardViewController: UIInputViewController {
                 insertedCount: 0))
         bridge.listening = true
         bridge.partial = ""
+        bridge.tail = ""
         bridge.errorText = nil
 
         let target = session
@@ -219,6 +229,12 @@ final class KeyboardViewController: UIInputViewController {
     /// anything older is a leftover — a crashed app's frozen `listening` file
     /// or a long-finished transcript that would land in the wrong field.
     private static let adoptionWindow: TimeInterval = 150
+
+    /// How much settled text the keyboard echoes above the record button. Long
+    /// enough to read as a continuing sentence in the three lines the slot has,
+    /// short enough that this is a window rather than the transcript history a
+    /// keyboard extension must not hold.
+    private static let tailLimit = 140
 
     /// Read the transcript the app has published and insert whatever is new.
     /// Idempotent: `insertedCount` is the high-water mark, so a keyboard that
@@ -265,15 +281,22 @@ final class KeyboardViewController: UIInputViewController {
         }
 
         bridge.partial = d.partial
+        // The echoed window follows the settled text, not what this process
+        // happened to insert: a keyboard that was killed mid-session and came
+        // back still shows the sentence in progress.
+        bridge.tail = String(d.committed.suffix(Self.tailLimit))
         switch d.state {
         case .starting, .listening: bridge.listening = true
         case .finishing: bridge.listening = true
         case .done:
             bridge.listening = false
             bridge.partial = ""
+            // The tail stays: the last thing said is worth still being able to
+            // read once the button has gone quiet.
         case .error:
             bridge.listening = false
             bridge.partial = ""
+            bridge.tail = ""
             // Surface the app's failure where the user actually is. Swallowing
             // it (the old behavior) read as "the mic button does nothing".
             bridge.errorText = d.errorMessage ?? String(localized: "Couldn't start. Try again.")
@@ -353,6 +376,19 @@ final class KeyboardBridge: ObservableObject {
     @Published var hasFullAccess = false
     @Published var listening = false
     @Published var partial = ""
+    /// The last stretch of settled text for the running session, shown above
+    /// the record button in a softer ink so dictation reads as continuous.
+    ///
+    /// It is a short window, not history: settled text is already in the host's
+    /// document, and this only exists because the document is usually behind
+    /// the keyboard. Capped at `tailLimit` characters, cleared with the
+    /// session — a few hundred bytes, nowhere near the transcript store the
+    /// extension deliberately doesn't keep.
+    @Published var tail = ""
+    /// Whether the system wants *us* to draw a next-keyboard key. False from
+    /// iPhone X onwards, where iOS draws its own beneath the keyboard and the
+    /// HIG asks us not to repeat it. See `GlobeKey`.
+    @Published var showsGlobe = false
     /// The app's failure for the last session (sign-in, mic permission,
     /// connection), shown in the caption slot until the next start.
     @Published var errorText: String?
@@ -379,6 +415,23 @@ final class KeyboardBridge: ObservableObject {
         case .search: return "Search"
         case .done: return "Done"
         case .next: return "Next"
+        default: return "return"
+        }
+    }
+
+    /// The same meaning as `returnKeyLabel`, as a glyph.
+    ///
+    /// The voice pane's return is a 44pt disc with no room for "Search", and
+    /// the pane keeps its only colour on the record button — so it says what
+    /// the key does with a symbol instead of a word. The letter pane, which has
+    /// a wide key and follows the system's look, still uses the label.
+    var returnKeyGlyph: String {
+        switch returnKeyType {
+        case .go: return "arrow.right"
+        case .send: return "paperplane.fill"
+        case .search: return "magnifyingglass"
+        case .done: return "checkmark"
+        case .next: return "arrow.right.to.line"
         default: return "return"
         }
     }

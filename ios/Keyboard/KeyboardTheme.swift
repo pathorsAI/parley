@@ -60,6 +60,23 @@ enum KBTheme {
         dark ? Color(white: 0.30) : .white
     }
 
+    /// The voice pane's round control buttons.
+    ///
+    /// Deliberately *not* a key cap. The voice pane is a control panel, not a
+    /// keyboard — nothing on it types a letter — so it borrows none of UIKit's
+    /// cap treatment: no light fill, no hard shadow, no press inversion. A cap's
+    /// raised look says "there are twenty-six of these, start typing", which on
+    /// four control buttons is pure noise. A translucent wash over whatever the
+    /// input view is already showing also stays correct in both appearances
+    /// without a colour that has to be maintained twice.
+    static func control(_ dark: Bool) -> Color {
+        dark ? Color.white.opacity(0.10) : Color.black.opacity(0.075)
+    }
+
+    static func controlPressed(_ dark: Bool) -> Color {
+        dark ? Color.white.opacity(0.20) : Color.black.opacity(0.15)
+    }
+
     /// The trough behind the voice/EN segmented control in the mode strip.
     static func segmentTrack(_ dark: Bool) -> Color {
         dark ? Color(white: 0.20) : Color.black.opacity(0.06)
@@ -101,19 +118,36 @@ enum KBMetrics {
 
     static var lettersHeight: CGFloat { strip + lettersPane }
 
-    // The voice pane: one fixed-height status line, the mic flanked by its
-    // quick keys, then the globe + return row.
-    static let captionHeight: CGFloat = 48
-    static let micHeight: CGFloat = 52
-    static let micWidth: CGFloat = 150
-    static let quickKeyWidth: CGFloat = 56
-    static let quickRowHeight: CGFloat = 44
-    static let voiceRowSpacing: CGFloat = 12
+    // The voice pane. A control panel rather than a keyboard — nothing on it
+    // types a letter — so it is measured in round buttons and whitespace
+    // instead of caps and rows, and it is deliberately not full.
+    //
+    // The parts are chosen so the pane comes out at exactly `lettersPane`.
+    // That equality is the point: the two panes are one swipe apart, and a
+    // keyboard that changes height mid-swipe shoves the host app's content up
+    // and down every time the user crosses between them.
+    static let voiceTop: CGFloat = 16
+    static let voiceSide: CGFloat = 24
+    static let voiceBottom: CGFloat = 11
 
-    /// 8 + 48 + 12 + 52 + 12 + 44 + 4 = 180pt.
+    /// The live-transcript slot. Fixed height, so beginning to speak never
+    /// resizes the keyboard: idle it holds the prompt, listening it holds up to
+    /// three lines of what is being heard.
+    static let textHeight: CGFloat = 74
+    static let textToDeck: CGFloat = 12
+
+    /// The round control buttons: delete, return, `@`, and the globe on the
+    /// devices where the system doesn't already draw one.
+    static let roundKey: CGFloat = 44
+    static let deckRowGap: CGFloat = 12
+    /// The record button — the one thing on this pane carrying a colour.
+    static let recordSize: CGFloat = 80
+
+    static var deckHeight: CGFloat { roundKey * 2 + deckRowGap }
+
+    /// 16 + 74 + 12 + 100 + 11 = 213pt, which is `lettersPane` exactly.
     static var voicePane: CGFloat {
-        paneTop + captionHeight + voiceRowSpacing + micHeight + voiceRowSpacing
-            + quickRowHeight + paneBottom
+        voiceTop + textHeight + textToDeck + deckHeight + voiceBottom
     }
 
     static var voiceHeight: CGFloat { strip + voicePane }
