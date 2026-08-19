@@ -265,25 +265,23 @@
 
         /// Fills the live screen with a recording already in progress: settled
         /// runs plus an unfinished tail, which is the state worth showing.
-        static func seedLive(_ store: TranscriptStore) {
-            guard servesFixtures, store.segments.isEmpty else { return }
-            for line in lines.prefix(3) {
-                store.upsert(
-                    TranscriptSegment(
-                        id: "mix-\(line.ms)", source: "mix", speaker: line.speaker,
-                        text: line.text, isFinal: true,
-                        startMs: line.ms, endMs: line.ms + 12_000))
+        static func seedLive(_ recorder: MeetingRecorder) {
+            guard servesFixtures, recorder.segments.isEmpty else { return }
+            var seeded: [TranscriptSegment] = lines.prefix(3).map { line in
+                TranscriptSegment(
+                    id: "mix-\(line.ms)", source: "mix", speaker: line.speaker,
+                    text: line.text, isFinal: true,
+                    startMs: line.ms, endMs: line.ms + 12_000)
             }
-            store.upsert(
+            seeded.append(
                 TranscriptSegment(
                     id: "mix-tail", source: "mix", speaker: 2,
                     text: t(
                         "Two weeks assumes your SSO is already",
                         "兩週的前提是你們的 SSO 已經"),
                     isFinal: false, startMs: 58_000, endMs: 62_000))
-            store.isRecording = true
-            store.micLevel = 0.11
-            store.status = String(localized: "Transcribing live")
+            recorder.seedDemo(
+                segments: seeded, status: String(localized: "Transcribing live"))
         }
     }
 

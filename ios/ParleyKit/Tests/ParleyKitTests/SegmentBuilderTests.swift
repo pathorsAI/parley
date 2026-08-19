@@ -101,4 +101,29 @@ final class SegmentBuilderTests: XCTestCase {
         builder.endpoint()
         XCTAssertEqual(builder.currentSpeaker, 0, "reset after endpoint")
     }
+
+    // MARK: reconnected legs
+
+    /// A relay that has to be reopened mid-meeting restarts its own numbering
+    /// and its own clock at zero. Both are rebased so the second leg lands
+    /// after the first instead of on top of it.
+    func testReconnectedLegKeepsItsOwnIdsAndRebasedTimestamps() {
+        var second: [TranscriptSegment] = []
+        let leg = SegmentBuilder(source: "mix", idPrefix: "mix@1", timeOffsetMs: 60_000) {
+            second.append($0)
+        }
+        leg.pushFinal("Back again", speaker: 1, startMs: 0, endMs: 900)
+        leg.emitCommitted()
+        leg.emitTail("and still", speaker: 1, startMs: 900)
+
+        XCTAssertEqual(second[0].id, "mix@1-0", "must not collide with the first leg's mix-0")
+        XCTAssertEqual(second[0].source, "mix", "speaker labels still key off the source")
+        XCTAssertEqual(second[0].startMs, 60_000)
+        XCTAssertEqual(second[0].endMs, 60_900)
+        // The tail id is the one thing that stays put: every `-tail` check in
+        // the app and the cloud depends on this exact shape, and only one tail
+        // is ever on screen.
+        XCTAssertEqual(second[1].id, "mix-tail")
+        XCTAssertEqual(second[1].startMs, 60_900)
+    }
 }

@@ -358,6 +358,23 @@
         }
       }
     },
+    "Connecting transcription…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connecting transcription…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在連線轉錄服務…"
+          }
+        }
+      }
+    },
     "Connection failed. Please try again.": {
       "extractionState": "manual",
       "localizations": {
@@ -934,6 +951,40 @@
         }
       }
     },
+    "Live transcription stopped — the recording is still running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live transcription stopped — the recording is still running"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "即時轉錄已停止——錄音仍在繼續"
+          }
+        }
+      }
+    },
+    "Live transcription stopped, but the recording is still running and will be transcribed after it syncs.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live transcription stopped, but the recording is still running and will be transcribed after it syncs."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "即時轉錄已停止，但錄音仍在繼續，同步後會在雲端完成轉錄。"
+          }
+        }
+      }
+    },
     "Live transcription, no API key": {
       "extractionState": "manual",
       "localizations": {
@@ -964,6 +1015,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在載入 Parley"
+          }
+        }
+      }
+    },
+    "Lost the microphone: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lost the microphone: %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "麥克風已中斷：%@"
           }
         }
       }
@@ -1031,6 +1099,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "需要麥克風權限"
+          }
+        }
+      }
+    },
+    "Microphone is back — still recording": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Microphone is back — still recording"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "麥克風已恢復——錄音持續中"
+          }
+        }
+      }
+    },
+    "Microphone paused by the system — waiting to resume": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Microphone paused by the system — waiting to resume"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系統暫停了麥克風——正在等待恢復"
           }
         }
       }
@@ -1477,40 +1579,6 @@
         }
       }
     },
-    "Relay closed (%@)": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Relay closed (%@)"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "轉錄連線已關閉（%@）"
-          }
-        }
-      }
-    },
-    "Relay connection failed — recording audio only": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Relay connection failed — recording audio only"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "轉錄連線失敗，僅錄音"
-          }
-        }
-      }
-    },
     "Renewal terms — Northwind": {
       "extractionState": "manual",
       "localizations": {
@@ -1883,6 +1951,23 @@
         }
       }
     },
+    "Starting…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starting…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "啟動中…"
+          }
+        }
+      }
+    },
     "Support & feedback": {
       "extractionState": "manual",
       "localizations": {
@@ -2067,6 +2152,23 @@
         }
       }
     },
+    "The microphone isn't available right now.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The microphone isn't available right now."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前無法使用麥克風。"
+          }
+        }
+      }
+    },
     "Theme": {
       "extractionState": "manual",
       "localizations": {
@@ -2080,6 +2182,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "主題"
+          }
+        }
+      }
+    },
+    "This device's microphone format isn't supported.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This device's microphone format isn't supported."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不支援這台裝置的麥克風格式。"
           }
         }
       }
@@ -2131,6 +2250,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "即時轉錄中"
+          }
+        }
+      }
+    },
+    "Transcription dropped — reconnecting…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transcription dropped — reconnecting…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轉錄連線中斷，正在重新連線…"
           }
         }
       }
