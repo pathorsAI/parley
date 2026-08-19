@@ -119,19 +119,19 @@
         }
       }
     },
-    "Listening…": {
+    "Keyboard": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Listening…"
+            "value": "Keyboard"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在聽…"
+            "value": "鍵盤"
           }
         }
       }
@@ -166,23 +166,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "切換鍵盤"
-          }
-        }
-      }
-    },
-    "return": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "return"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "換行"
           }
         }
       }
@@ -314,6 +297,23 @@
         }
       }
     },
+    "Voice": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voice"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "語音"
+          }
+        }
+      }
+    },
     "Voice dictation": {
       "extractionState": "manual",
       "localizations": {
@@ -344,6 +344,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "語音輸入需要「完整取用權限」"
+          }
+        }
+      }
+    },
+    "return": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "return"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "換行"
           }
         }
       }

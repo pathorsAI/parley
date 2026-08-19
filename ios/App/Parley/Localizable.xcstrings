@@ -968,18 +968,18 @@
         }
       }
     },
-    "Map it to Parley Voice Typing to start dictation without switching keyboards.": {
+    "Map it to Parley Voice Typing and dictation starts without leaving the app you are in — no round trip at all.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Map it to Parley Voice Typing to start dictation without switching keyboards."
+            "value": "Map it to Parley Voice Typing and dictation starts without leaving the app you are in — no round trip at all."
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "把它設成 Parley Voice Typing，不用切鍵盤就能開始語音輸入。"
+            "value": "把它設成 Parley Voice Typing，語音輸入會直接在你當下的 app 裡開始，完全不用跳出去。"
           }
         }
       }

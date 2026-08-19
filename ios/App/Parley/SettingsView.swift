@@ -437,7 +437,7 @@ struct SettingsView: View {
                     detail: "Lets your voice reach your Parley account to be transcribed.")
                 dictationStep(
                     number: 3, title: "Action Button (optional)",
-                    detail: "Map it to Parley Voice Typing to start dictation without switching keyboards.")
+                    detail: "Map it to Parley Voice Typing and dictation starts without leaving the app you are in — no round trip at all.")
             } label: {
                 Text("Set-up steps").font(.parley.subheadlineEmphasized)
             }

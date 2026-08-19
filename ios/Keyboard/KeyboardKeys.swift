@@ -39,6 +39,21 @@ struct KeyCap: View {
     }
 }
 
+/// The voice pane's counterpart to `KeyCap`: a flat translucent disc.
+///
+/// The voice pane is a control panel, not a keyboard, so its buttons carry none
+/// of the cap treatment — no raised fill, no hard shadow, no inverted press.
+/// Compose it with `PressableButton` or `RepeatingKey` the same way a cap is.
+struct ControlDisc: View {
+    let dark: Bool
+    let pressed: Bool
+
+    var body: some View {
+        Circle()
+            .fill(pressed ? KBTheme.controlPressed(dark) : KBTheme.control(dark))
+    }
+}
+
 /// A button that reports its own pressed state, so keys and the mic control can
 /// darken under the finger the way system keys do. `.buttonStyle(.plain)` alone
 /// gives no feedback at all, which is what made the keys feel dead.
@@ -126,12 +141,18 @@ struct RepeatingKey<Content: View>: View {
     }
 }
 
-/// The globe.
+/// The globe, shown only where the system asks for one.
 ///
 /// Parley ships no Bopomofo engine — a keyboard extension can't reach the
 /// system Chinese input engine and we are not bundling our own — so a user who
-/// wants 注音 has to be able to leave, on *every* device rather than only where
-/// `needsInputModeSwitchKey` is true. That makes this key load-bearing.
+/// wants 注音 has to be able to leave. This key used to be drawn on *every*
+/// device to guarantee that exit, which was a mistake: from iPhone X onwards
+/// iOS draws the Emoji/Globe and Dictation keys itself, in the strip beneath a
+/// raised keyboard, **including over custom keyboards**, and the HIG asks
+/// explicitly not to repeat them ("Don't duplicate system-provided keyboard
+/// features … avoid causing confusion by repeating them in your keyboard").
+/// `needsInputModeSwitchKey` is how the system says which case it is in, so
+/// both panes now follow it rather than overriding it.
 ///
 /// It is a real `UIButton` because `handleInputModeList(from:with:)` demands the
 /// live `UIEvent` from a control action; a SwiftUI gesture has no event to hand
@@ -141,15 +162,21 @@ struct RepeatingKey<Content: View>: View {
 struct GlobeKey: View {
     weak var controller: UIInputViewController?
     let dark: Bool
+    /// The voice pane draws its controls as discs, the letter pane as caps.
+    var round = false
 
     @State private var pressed = false
 
     var body: some View {
         ZStack {
-            KeyCap(dark: dark, tint: .alt, pressed: pressed)
+            if round {
+                ControlDisc(dark: dark, pressed: pressed)
+            } else {
+                KeyCap(dark: dark, tint: .alt, pressed: pressed)
+            }
             Image(systemName: "globe")
-                .font(.system(size: 17, weight: .regular))
-                .foregroundStyle(KBTheme.ink(dark))
+                .font(.system(size: round ? 16 : 17, weight: .regular))
+                .foregroundStyle(round ? KBTheme.inkSoft(dark) : KBTheme.ink(dark))
                 .accessibilityHidden(true)
             InputModeSwitchButton(controller: controller, pressed: $pressed)
         }
@@ -196,7 +223,7 @@ private struct InputModeSwitchButton: UIViewRepresentable {
         -> CGSize?
     {
         CGSize(
-            width: proposal.width ?? KBMetrics.quickKeyWidth,
+            width: proposal.width ?? KBMetrics.roundKey,
             height: proposal.height ?? KBMetrics.keyHeight)
     }
 

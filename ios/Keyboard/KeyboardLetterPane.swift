@@ -116,16 +116,19 @@ struct LetterPane: View {
         }
     }
 
-    /// `123`/`ABC`, the globe, an optional `@`, the space bar, and return.
-    /// Space takes whatever the fixed keys leave, which lands it at roughly the
-    /// five-key width iOS gives it.
+    /// `123`/`ABC`, the globe when the system asks for one, an optional `@`,
+    /// the space bar, and return. Space takes whatever the fixed keys leave,
+    /// which lands it at roughly the five-key width iOS gives it — and a little
+    /// wider on the devices that draw their own globe below the keyboard.
     private func bottomRow(
         _ m: RowMetrics, planeLabel: String, planeTarget: KeyPlane, showsAtKey: Bool
     ) -> some View {
         row {
             planeKey(planeLabel, to: planeTarget, width: m.wide)
-            GlobeKey(controller: bridge.controller, dark: dark)
-                .frame(width: m.unit, height: KBMetrics.keyHeight)
+            if bridge.showsGlobe {
+                GlobeKey(controller: bridge.controller, dark: dark)
+                    .frame(width: m.unit, height: KBMetrics.keyHeight)
+            }
             if showsAtKey {
                 textKey("@", width: m.unit)
             }

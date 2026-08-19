@@ -143,24 +143,36 @@ Every measurement lives in `KBMetrics` (`KeyboardTheme.swift`) so the view and
 the height constraint can't disagree — a disagreement is a seam. The key
 geometry is the system portrait keyboard's: 42pt caps, 11pt between rows, 6pt
 between keys, 3pt at the screen edge. That puts the QWERTY pane's key area at
-213pt (≈ the system's 216pt) and the voice pane's at 180pt; each mode names its
-own height and the change is animated when the user crosses between them.
+213pt (≈ the system's 216pt).
+
+**The voice pane is measured to come out at 213pt too**, so both panes are
+251pt tall including the strip. That equality is load-bearing rather than tidy:
+the panes are one swipe apart, and a keyboard that changes height mid-swipe
+shoves the host app's content up and down every time the user crosses between
+them. Change one pane's numbers and the other has to follow.
 
 ### Mode strip
 
-Across the top, in the shape Typeless uses: the **Parley wordmark** on the left,
-and a two-segment control on the right — a waveform (voice) and `EN`. The
-selected segment gets a filled pill. **A left/right swipe across the pane body
-switches modes too**, on a `DragGesture` with a 24pt minimum distance and a 56pt
-threshold so a mistyped key is never read as a swipe.
+Across the top: the **Parley wordmark** on the left, and on the right the
+current pane named beside two dots — a long one for where you are, a short one
+for the pane you haven't got to. The dots stay tappable, so nothing is lost.
 
-The strip defaults to `EN` when there is no Full Access, because that is the
-pane that still works in that state.
+This replaced a two-segment control, which read as the *only* way across and
+hid the fact that the pane swipes at all. **The panes sit side by side on a
+track that follows the finger**: a `DragGesture` with a 24pt minimum distance
+drives the track's offset live and commits past a 56pt threshold, so a mistyped
+key is never read as a swipe but a real drag shows the other pane arriving. The
+previous gesture only committed on release — nothing moved while the finger did,
+which is why nobody found it.
+
+The strip defaults to the keyboard pane when there is no Full Access, because
+that is the pane that still works in that state.
 
 ### EN mode
 
 A real QWERTY plane — `qwertyuiop` / `asdfghjkl` (inset half a key, as iOS does)
-/ shift + `zxcvbnm` + delete / `123` + globe + `@` + space + return — plus the
+/ shift + `zxcvbnm` + delete / `123` + globe (only where the system asks for
+one) + `@` + space + return — plus the
 two symbol planes everyone expects: `1234567890` / `-/:;()$&@"` and
 `[]{}#%^*+=` / `_\|~<>$£¥•`, sharing a punctuation row and a bottom row.
 
@@ -187,18 +199,51 @@ The behaviours that make it feel like a keyboard rather than a grid of buttons:
 
 ### Voice mode
 
-The status caption, then the mic pill with `⌫` and `@` flanking it, then the
-globe and a wide return key. Those three quick keys are there because the edits
-a dictating user actually reaches for — take that back, type an address, break
-the line — should not cost a trip through the EN pane.
+**A control panel, not a keyboard.** Nothing on this pane types a letter, so it
+borrows none of UIKit's key-cap treatment — no raised caps, no hard shadows, no
+inverted press. It is a fixed-height text slot over a ⌀80 record button with
+three ⌀44 translucent discs arranged around it:
 
-The mic pill is one of exactly two places the keyboard is allowed to look like
-Parley rather than iOS: idle it carries Pathors' brand gradient (`#1469D4` →
-`#2DB6F3`, top-leading to bottom-trailing); listening it goes flat recording red,
-so "armed" is never something you have to read out of a gradient. The other is
-the wordmark (`#1469D4` light, `#2DB6F3` dark). Everything else — caps, press
-feedback, corner radius — stays system-coloured, because a keyboard that doesn't
-look like a keyboard reads as broken.
+```
+        live transcript (74pt, three lines, bottom-aligned)
+
+                                              ⌫
+   @                    ◉  record
+                                              ⏎
+```
+
+`⌫` and `⏎` stack on the right, where a right thumb falls, because they are the
+edits a dictating user actually reaches for. `@` takes the bottom-left corner —
+low-frequency, and the corner the system's own globe occupies on the devices
+that ask us to draw one (in which case `@` moves up and the globe takes that
+corner). **The top-left is deliberately empty**: it is where the pane breathes.
+
+The pane used to be caps — a mic pill flanked by two 56pt caps over a
+full-width `return` — and that was the mistake. A cap's raised look says "there
+are twenty-six of these, start typing"; on four control buttons it is noise, and
+the widest key on the keyboard was the least-pressed one. The two panes now read
+as different kinds of thing, which is itself a signal for which one you're on.
+
+The record button is one of exactly two places the keyboard is allowed to look
+like Parley rather than iOS: idle it carries Pathors' brand gradient (`#1469D4`
+→ `#2DB6F3`); listening it goes flat recording red inside two rings breathing
+outward, so "armed" is never something you have to read out of a gradient — and
+never needs a second element saying "Listening…" beside it. The other is the
+wordmark (`#1469D4` light, `#2DB6F3` dark). Nothing else on the pane carries a
+colour, including `⏎` when the host has asked for an action.
+
+**Return is a glyph, not a word.** The host decides what the key is *called* —
+Go, Send, Search — and a 44pt disc has no room for "Search"; `returnKeyGlyph`
+maps the type to a symbol instead. What the key *does* is unchanged: it types a
+line break, because a keyboard extension cannot fire the host's return action.
+
+**The live transcript.** The settled tail is echoed above the button in a softer
+ink, followed by the words not yet settled. Settled text has already been
+inserted into the document — but the document is usually behind the keyboard, so
+without the echo dictation reads as words that appear and then vanish. The
+window is capped at 140 characters and cleared with the session: a few hundred
+bytes, not the transcript history a keyboard extension must not hold. The slot's
+height is fixed so beginning to speak never resizes the keyboard.
 
 ### No Bopomofo engine — 注音 is the system's job
 
@@ -208,9 +253,25 @@ cannot reach the system's Chinese input engine, and bundling a Bopomofo engine
 not a round of polish on a dictation keyboard. Chinese input in Parley is
 dictation; Chinese *typing* belongs to the system 注音 keyboard.
 
-That makes the globe load-bearing, so it is present **on every device**, not
-only where `needsInputModeSwitchKey` is true — a 注音 user must always be one
-obvious tap from leaving. It is a real `UIButton` behind a SwiftUI cap, wired
+That made the globe look load-bearing, and it used to be drawn **on every
+device** rather than only where `needsInputModeSwitchKey` is true. That was
+wrong, and it is the one decision in this document that has been reversed.
+
+From iPhone X onwards **iOS draws the Emoji/Globe and Dictation keys itself**,
+in the strip beneath a raised keyboard, over custom keyboards included. That is
+why `needsInputModeSwitchKey` returns false there — the system is telling us it
+has the exit covered — and the HIG asks explicitly not to repeat it: "Don't
+duplicate system-provided keyboard features … avoid causing confusion by
+repeating them in your keyboard." Drawing our own was a duplicate key that cost
+a slot in both panes and made the voice pane read as crowded.
+
+**Both panes now follow the flag.** Where it is true (older, Home-button
+devices) the globe appears — bottom-left in the voice pane, in its usual place
+in the QWERTY bottom row. Where it is false the system's own key is the exit and
+we draw nothing. Either way a 注音 user is always one obvious tap from leaving,
+which is what App Review actually asks for.
+
+It is a real `UIButton` behind a SwiftUI cap or disc, wired
 whole-touch-sequence to `handleInputModeList(from:with:)`: that selector demands
 the live `UIEvent` from a control action, which a SwiftUI gesture has no way to
 supply, and it is UIKit's own globe behaviour — a tap advances to the next
@@ -220,9 +281,12 @@ more tap.
 ## App Review notes
 
 - **4.4.1** (keyboards must work without Full Access): with Full Access off the
-  keyboard opens in `EN` mode and the whole QWERTY plane, the quick keys and the
+  keyboard opens on the QWERTY pane, and the whole plane, the quick keys and the
   globe work normally — none of them need the network or the App Group. Only
   dictation is unavailable, and the voice pane says so with a jump to Settings.
+- **Never trapping the user**: the exit is the system's own globe on the devices
+  that draw one, and ours on the devices that don't — `needsInputModeSwitchKey`
+  decides, in both panes. See the 注音 section above.
 - **2.5.1** (private APIs): the auto-return path is private and version-gated to
   where it works; the rest of the flow (openURL, App Group, insertText, App
   Intents) is entirely public.
