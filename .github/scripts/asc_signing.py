@@ -1,27 +1,28 @@
 #!/usr/bin/env python3
-"""Mint — and then destroy — an App Store signing identity for one CI run.
+"""Install the App Store signing identity on a CI runner, and tidy up after.
 
 A GitHub runner is a fresh machine with an empty keychain, so it has nothing to
-sign a distribution build with. Xcode's cloud signing is supposed to fill that
-gap, but it reports `Cloud signing permission error` here and creates only a
-*development* identity, which `-exportArchive` cannot use for the App Store.
+sign a distribution build with, and Xcode's cloud signing does not fill the gap:
+it produces only a *development* identity and then reports the shortfall as
+`Cloud signing permission error` during export.
 
-So this script does explicitly what cloud signing does opaquely:
+    install  import the team's distribution certificate from a secret, create an
+             App Store provisioning profile per bundle id against it, and write
+             the export options the archive step needs.
 
-    mint     generate a private key and CSR, ask App Store Connect for an
-             Apple Distribution certificate, create an App Store provisioning
-             profile per bundle id, and install all of it into a throwaway
-             keychain. Writes the export options the archive step needs.
+    cleanup  delete those profiles and the keychain.
 
-    cleanup  revoke that certificate and delete those profiles.
+**Nothing here creates or revokes a certificate.** An earlier version minted one
+per run and revoked it afterwards, which worked but sent the account holder a
+"your certificate has been revoked" mail on every release — noise that trains
+people to ignore exactly the mail they should read. The certificate now lives in
+`APPLE_IOS_DIST_P12`; its private key was generated on a developer's own machine
+and only the CSR ever travelled, so the same identity is also in that machine's
+keychain and a hand-built release signs with it too.
 
-The private key never leaves the runner and dies with it, which is the whole
-point: a certificate whose private key is gone is landfill, and Apple caps how
-many a team may hold at once. `cleanup` runs even when the build fails, so a
-broken run does not leak a slot.
-
-Certificates and profiles created by other people are never touched — the state
-file records exactly what this run made, and cleanup reads only that.
+Provisioning profiles *are* still made and destroyed per run. Creating them is
+silent, they cost nothing, and a fresh one can never be stale against the
+certificate or the bundle ids' current capabilities.
 """
 
 from __future__ import annotations
@@ -38,19 +39,15 @@ from pathlib import Path
 import jwt
 import requests
 from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives.serialization import pkcs12
-from cryptography.x509.oid import NameOID
 
 BASE = "https://api.appstoreconnect.apple.com"
 TEAM_ID = "SXHVCQXJHZ"
 APP_BUNDLE = "com.pathors.parley.ios"
 KEYBOARD_BUNDLE = "com.pathors.parley.ios.keyboard"
 
-# Everything this run creates is named with this prefix so a human reading the
-# Apple developer portal can tell where it came from, and so cleanup can sanity
-# check that it is deleting its own work.
+# Everything this run creates is named with this prefix, so a human reading the
+# developer portal can tell where it came from and cleanup can sanity check that
+# it is deleting its own work.
 TAG = "parley-ci"
 
 RUNNER_TEMP = Path(os.environ.get("RUNNER_TEMP", "/tmp"))
@@ -88,7 +85,6 @@ def api(method: str, path: str, payload: dict | None = None) -> dict:
         timeout=60,
     )
     if r.status_code >= 400:
-        detail = ""
         try:
             detail = "\n".join(
                 f"  {e.get('title')}: {e.get('detail')}" for e in r.json().get("errors", [])
@@ -102,82 +98,40 @@ def api(method: str, path: str, payload: dict | None = None) -> dict:
 def run(*args: str, quiet: bool = False) -> None:
     """Run a command, and on failure say what it said.
 
-    `quiet` suppresses output on success only — several of the `security`
-    invocations below print the whole certificate on success, which is noise,
-    but swallowing their diagnostics on failure turns a one-line explanation
-    into an unexplained exit code.
+    `quiet` suppresses output on success only — several of the `security` calls
+    below print a whole certificate when they succeed, which is noise, but
+    swallowing their diagnostics on failure turns a one-line explanation into an
+    unexplained exit code.
     """
     proc = subprocess.run(args, capture_output=True, text=True)
     if proc.returncode != 0:
         raise SystemExit(
-            f"$ {' '.join(args)}\n"
-            f"exit {proc.returncode}\n"
-            f"{proc.stdout}{proc.stderr}"
+            f"$ {' '.join(args)}\nexit {proc.returncode}\n{proc.stdout}{proc.stderr}"
         )
     if not quiet and proc.stdout:
         print(proc.stdout, end="")
 
 
 # --------------------------------------------------------------------------
-# mint
+# install
 
 
-def mint() -> None:
-    state: dict = {"certificate_id": None, "profile_ids": []}
-    STATE.write_text(json.dumps(state))  # exists before the first write, so
+def install() -> None:
+    state: dict = {"profile_ids": []}
+    STATE.write_text(json.dumps(state))  # exists before the first profile, so
     # cleanup has something to read even if we die halfway through
 
-    print("▸ Generating a private key and CSR")
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    csr = (
-        x509.CertificateSigningRequestBuilder()
-        .subject_name(
-            x509.Name(
-                [
-                    x509.NameAttribute(NameOID.COMMON_NAME, f"{TAG} distribution"),
-                    x509.NameAttribute(NameOID.ORGANIZATION_NAME, TEAM_ID),
-                    x509.NameAttribute(NameOID.COUNTRY_NAME, "TW"),
-                ]
-            )
+    p12_b64 = os.environ.get("IOS_DIST_P12", "").strip()
+    p12_password = os.environ.get("IOS_DIST_P12_PASSWORD", "")
+    if not p12_b64 or not p12_password:
+        raise SystemExit(
+            "APPLE_IOS_DIST_P12 / APPLE_IOS_DIST_P12_PASSWORD are not set.\n"
+            "See ios/RELEASING.md — the distribution identity is stored as a "
+            "secret rather than minted per run."
         )
-        .sign(key, hashes.SHA256())
-    )
-    csr_pem = csr.public_bytes(serialization.Encoding.PEM).decode()
 
-    print("▸ Requesting an Apple Distribution certificate")
-    created = api(
-        "POST",
-        "/v1/certificates",
-        {
-            "data": {
-                "type": "certificates",
-                "attributes": {"certificateType": "DISTRIBUTION", "csrContent": csr_pem},
-            }
-        },
-    )["data"]
-    state["certificate_id"] = created["id"]
-    STATE.write_text(json.dumps(state))
-    cert_der = base64.b64decode(created["attributes"]["certificateContent"])
-    cert = x509.load_der_x509_certificate(cert_der)
-    identity = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
-    print(f"  {identity}  (id {created['id']})")
-
-    print("▸ Installing it into a throwaway keychain")
-    # Deliberately *not* `BestAvailableEncryption`. Modern cryptography writes
-    # PKCS#12 with AES-256 and PBKDF2, and macOS `security import` cannot read
-    # that container at all — it fails with a bare exit 1. Security's importer
-    # still wants the PKCS#12 v1 encryption from the 1990s, so ask for it by
-    # name. The password guards a file that exists for seconds on a throwaway
-    # runner, so the weak cipher costs nothing.
-    legacy = (
-        serialization.PrivateFormat.PKCS12.encryption_builder()
-        .key_cert_algorithm(pkcs12.PBES.PBESv1SHA1And3KeyTripleDESCBC)
-        .hmac_hash(hashes.SHA1())
-        .build(KEYCHAIN_PASSWORD.encode())
-    )
-    p12 = pkcs12.serialize_key_and_certificates(
-        name=TAG.encode(), key=key, cert=cert, cas=None, encryption_algorithm=legacy
-    )
+    print("▸ Importing the distribution identity")
+    p12 = base64.b64decode(p12_b64)
     p12_path = RUNNER_TEMP / "signing.p12"
     p12_path.write_bytes(p12)
     p12_path.chmod(0o600)
@@ -188,7 +142,7 @@ def mint() -> None:
     run(
         "security", "import", str(p12_path),
         "-k", str(KEYCHAIN),
-        "-P", KEYCHAIN_PASSWORD,
+        "-P", p12_password,
         "-T", "/usr/bin/codesign",
         "-T", "/usr/bin/security",
         quiet=True,
@@ -200,8 +154,8 @@ def mint() -> None:
         "-s", "-k", KEYCHAIN_PASSWORD, str(KEYCHAIN),
         quiet=True,
     )
-    # Prepend rather than replace: the default keychain still holds what the
-    # rest of the toolchain expects to find.
+    # Prepend rather than replace: the default keychain still holds what the rest
+    # of the toolchain expects to find.
     existing = subprocess.run(
         ["security", "list-keychains", "-d", "user"],
         check=True, capture_output=True, text=True,
@@ -211,6 +165,35 @@ def mint() -> None:
         "-s", str(KEYCHAIN), *[k.strip('"') for k in existing],
     )
     p12_path.unlink()
+
+    # Read the serial out of the container so the profiles below reference the
+    # certificate that is actually in this keychain. Matching by type alone would
+    # silently pick a different distribution certificate the day the team holds
+    # two, and the resulting profile would not match what signs the binary.
+    from cryptography.hazmat.primitives.serialization import pkcs12 as _p12
+
+    _, cert, _ = _p12.load_key_and_certificates(p12, p12_password.encode())
+    if cert is None:
+        raise SystemExit("the stored .p12 contains no certificate")
+    serial = f"{cert.serial_number:X}"
+    subject = cert.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)[0].value
+    print(f"  {subject}")
+    print(f"  serial {serial}  expires {cert.not_valid_after_utc:%Y-%m-%d}")
+
+    matches = [
+        c
+        for c in api("GET", "/v1/certificates?limit=200")["data"]
+        if c["attributes"].get("serialNumber", "").upper().lstrip("0")
+        == serial.upper().lstrip("0")
+    ]
+    if not matches:
+        raise SystemExit(
+            f"no certificate on the team has serial {serial}. The stored .p12 "
+            "has been revoked or belongs to another team — mint a new identity, "
+            "see ios/RELEASING.md."
+        )
+    certificate_id = matches[0]["id"]
+    print(f"  App Store Connect id {certificate_id}")
 
     print("▸ Creating App Store provisioning profiles")
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
@@ -232,13 +215,13 @@ def mint() -> None:
                 f"bundle id {bundle} is not registered on team {TEAM_ID}.\n"
                 f"registered: {', '.join(sorted(registered))}"
             )
-        # A profile carries exactly the capabilities enabled on its bundle id,
-        # so print them: a profile missing one fails export with a message about
-        # entitlements that never mentions the portal.
+        # A profile carries exactly the capabilities enabled on its bundle id, so
+        # print them: when one is missing, export complains about entitlements
+        # without ever mentioning the developer portal.
         #
-        # No `limit` — relationship endpoints reject it — and never fatal. This
-        # is a diagnostic, and a diagnostic that can fail the build is worse than
-        # no diagnostic at all, which is what happened the first time.
+        # No `limit` — relationship endpoints reject it — and never fatal. A
+        # diagnostic that can fail the build is worse than no diagnostic, which
+        # is what happened the first time this line existed.
         try:
             caps = api("GET", f"/v1/bundleIds/{bundle_id}/bundleIdCapabilities")
             enabled = sorted(
@@ -247,6 +230,14 @@ def mint() -> None:
             print(f"  {bundle} capabilities: {', '.join(enabled) or '(none)'}")
         except SystemExit as e:
             print(f"  {bundle} capabilities: could not read ({e})")
+
+        # A profile of this name may survive a run that died before cleanup.
+        # Apple rejects a duplicate name, so clear the old one first.
+        for stale in api("GET", "/v1/profiles?limit=200")["data"]:
+            if stale["attributes"].get("name") == f"{TAG} {bundle}":
+                print(f"  removing a leftover profile from an earlier run")
+                api("DELETE", f"/v1/profiles/{stale['id']}")
+
         name = f"{TAG} {bundle}"
         profile = api(
             "POST",
@@ -258,9 +249,7 @@ def mint() -> None:
                     "relationships": {
                         "bundleId": {"data": {"type": "bundleIds", "id": bundle_id}},
                         "certificates": {
-                            "data": [
-                                {"type": "certificates", "id": state["certificate_id"]}
-                            ]
+                            "data": [{"type": "certificates", "id": certificate_id}]
                         },
                     },
                 }
@@ -289,7 +278,7 @@ def mint() -> None:
 
     print("▸ Writing export options")
     # Manual signing, not automatic: automatic asks Xcode to go and find an
-    # identity, which is the path that failed. Everything it would look for now
+    # identity, which is the path that fails. Everything it would look for now
     # exists and is named here explicitly.
     options = {
         "method": "app-store-connect",
@@ -320,22 +309,14 @@ def cleanup() -> None:
         return
     state = json.loads(STATE.read_text())
 
+    # Profiles only. The certificate is the team's and outlives every run; the
+    # whole point of storing it in a secret was to stop revoking it.
     for profile_id in state.get("profile_ids", []):
         try:
             api("DELETE", f"/v1/profiles/{profile_id}")
             print(f"▸ Deleted profile {profile_id}")
         except SystemExit as e:
             print(f"  could not delete profile {profile_id}: {e}")
-
-    if cert_id := state.get("certificate_id"):
-        # Revoking is what keeps this sustainable. The private key died with the
-        # runner, so the certificate can never be used again by anyone — leaving
-        # it would burn one of the team's distribution slots for nothing.
-        try:
-            api("DELETE", f"/v1/certificates/{cert_id}")
-            print(f"▸ Revoked certificate {cert_id}")
-        except SystemExit as e:
-            print(f"  could not revoke certificate {cert_id}: {e}")
 
     if KEYCHAIN.exists():
         subprocess.run(
@@ -348,6 +329,6 @@ def cleanup() -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2 or sys.argv[1] not in {"mint", "cleanup"}:
-        raise SystemExit("usage: asc_signing.py mint|cleanup")
-    (mint if sys.argv[1] == "mint" else cleanup)()
+    if len(sys.argv) != 2 or sys.argv[1] not in {"install", "cleanup"}:
+        raise SystemExit("usage: asc_signing.py install|cleanup")
+    (install if sys.argv[1] == "install" else cleanup)()

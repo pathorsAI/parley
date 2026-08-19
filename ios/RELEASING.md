@@ -46,23 +46,78 @@ error: exportArchive No profiles for 'com.pathors.parley.ios' were found
 That message reads like a permissions problem and is not one. This document
 used to claim the API key's role was too narrow; it isn't. Probing the API with
 the current key returns `200` on `/v1/users`, which a Developer-role key cannot
-read at all. The actual cause is that **the team holds no iOS Distribution
-certificate** — only two `DEVELOPMENT` certificates and the macOS
-`DEVELOPER_ID_APPLICATION_G2` the desktop app notarizes with — and no
-provisioning profiles.
+read at all, and it mints certificates and profiles without complaint. The
+actual cause was that **the team held no iOS Distribution certificate** — only
+`DEVELOPMENT` certificates and the macOS `DEVELOPER_ID_APPLICATION_G2` the
+desktop app notarizes with — so cloud signing had nothing to find.
 
-So [`.github/scripts/asc_signing.py`](../.github/scripts/asc_signing.py) mints
-one per run: private key and CSR on the runner, an Apple Distribution
-certificate and two `IOS_APP_STORE` profiles from the App Store Connect API,
-installed into a throwaway keychain. An `always()` step revokes the certificate
-and deletes the profiles afterwards, because the private key dies with the
-runner and a certificate nobody can use still counts against Apple's per-team
-cap. It only ever deletes ids it recorded itself, so a certificate a human
-created is never touched.
+There is one now, and it is long-lived:
 
-Exporting **by hand from a Mac** needs none of this: Xcode signed in to the team
-has the identity in its own keychain, which is why releases up to 1.2 were made
-that way and never hit this.
+| secret | what it is |
+| --- | --- |
+| `APPLE_IOS_DIST_P12` | base64 of the `Apple Distribution: … (SXHVCQXJHZ)` identity, expires 2027-08-19 |
+| `APPLE_IOS_DIST_P12_PASSWORD` | its passphrase |
+
+[`.github/scripts/asc_signing.py install`](../.github/scripts/asc_signing.py)
+imports that into a throwaway keychain, creates an `IOS_APP_STORE` profile per
+bundle id against it, and writes an `ExportOptions.plist` naming those profiles
+— manual signing, so Xcode is never asked to go looking. `cleanup` deletes the
+profiles and the keychain and **never touches a certificate**.
+
+Profiles are per-run on purpose: creating them is silent and free, and a fresh
+one can never be stale against the certificate or the bundle ids' capabilities.
+
+<details>
+<summary>How that identity was created, and how to replace it</summary>
+
+The private key was generated on a developer's Mac and has never left it. Only
+the CSR travelled — a CSR carries a public key and a subject line and nothing
+else — and the certificate that came back is public by construction, so the
+whole exchange can happen in a workflow log on a public repository without
+leaking anything. Generating the key on a runner and shipping it out as a build
+artifact would have published the signing key to anyone who can read the repo.
+
+To replace it (expiry, or a lost key):
+
+```bash
+mkdir -p ~/.parley-signing && cd ~/.parley-signing
+openssl genrsa -out distribution.key.pem 2048 && chmod 600 distribution.key.pem
+openssl req -new -key distribution.key.pem -out distribution.csr.pem \
+  -subj "/CN=Parley distribution/O=SXHVCQXJHZ/C=TW"
+```
+
+Hand `distribution.csr.pem` to `POST /v1/certificates` with
+`certificateType: DISTRIBUTION` — from a machine that has the App Store Connect
+API key, which for this repo means a temporary workflow, since the key exists
+only as a secret. Save the returned certificate as `distribution.cert.pem`, then:
+
+```bash
+PASS="$(openssl rand -base64 24 | tr -d '\n')"
+openssl pkcs12 -export -legacy -inkey distribution.key.pem \
+  -in distribution.cert.pem -name "Parley distribution" \
+  -out distribution.p12 -passout "pass:$PASS"
+
+security import distribution.p12 -k ~/Library/Keychains/login.keychain-db \
+  -P "$PASS" -T /usr/bin/codesign          # this Mac can now sign by hand
+
+base64 -i distribution.p12 | tr -d '\n' | \
+  gh secret set APPLE_IOS_DIST_P12 --repo pathorsAI/parley
+printf '%s' "$PASS" | \
+  gh secret set APPLE_IOS_DIST_P12_PASSWORD --repo pathorsAI/parley
+```
+
+`-legacy` is not optional. Without it OpenSSL 3 writes PKCS#12 with AES-256 and
+PBKDF2, which `security import` cannot read and reports as a bare exit 1.
+
+Apple caps how many distribution certificates a team may hold at once, so
+revoke the old one only after the replacement is proven — and note that
+revoking invalidates every profile referencing it, including any on a
+colleague's machine.
+</details>
+
+Exporting **by hand from a Mac** needs none of the CI machinery: Xcode signed in
+to the team, or the `security import` above, puts the identity in the local
+keychain. That is how 1.0 through 1.3 actually shipped.
 
 **Build numbers.** Every upload needs a `CFBundleVersion` App Store Connect has
 not seen. `xcodegen generate` writes `App/Parley/Info.plist` from
