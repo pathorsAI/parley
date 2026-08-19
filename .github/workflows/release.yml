@@ -343,6 +343,12 @@ jobs:
           tauriScript: bun run tauri
           args: --target x86_64-pc-windows-msvc
           assetNamePattern: "[name]-[version]-[platform]-[arch].[ext]"
+          # Point the generic `windows-x86_64` updater key at the NSIS
+          # installer rather than the MSI (tauri-action's default). NSIS
+          # updates install silently; MSI runs msiexec and prompts for UAC on
+          # every update. This also matches the cloud channel's latest.json,
+          # which serves the NSIS setup.exe.
+          updaterJsonPreferNsis: true
 
       - name: Build cloud edition
         env:
