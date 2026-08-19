@@ -215,10 +215,31 @@ def mint() -> None:
     print("▸ Creating App Store provisioning profiles")
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     profiles: dict[str, str] = {}
+    # Match the identifier here rather than with `filter[identifier]`. That
+    # filter is not an exact match: asking it for `com.pathors.parley.ios` also
+    # returns `com.pathors.parley.ios.keyboard`, and with `limit=1` the profile
+    # for the app came back bound to the keyboard's app id — which surfaces much
+    # later as four unrelated-looking entitlement errors during export.
+    registered = {
+        b["attributes"]["identifier"]: b["id"]
+        for b in api("GET", "/v1/bundleIds?limit=200")["data"]
+    }
+
     for bundle in (APP_BUNDLE, KEYBOARD_BUNDLE):
-        found = api("GET", f"/v1/bundleIds?filter[identifier]={bundle}&limit=1")["data"]
-        if not found:
-            raise SystemExit(f"bundle id {bundle} is not registered on team {TEAM_ID}")
+        bundle_id = registered.get(bundle)
+        if not bundle_id:
+            raise SystemExit(
+                f"bundle id {bundle} is not registered on team {TEAM_ID}.\n"
+                f"registered: {', '.join(sorted(registered))}"
+            )
+        # A profile carries exactly the capabilities enabled on its bundle id,
+        # so print them: a profile missing one fails export with a message about
+        # entitlements that never mentions the portal.
+        caps = api("GET", f"/v1/bundleIds/{bundle_id}/bundleIdCapabilities?limit=50")
+        enabled = sorted(
+            c["attributes"].get("capabilityType", "?") for c in caps.get("data", [])
+        )
+        print(f"  {bundle} capabilities: {', '.join(enabled) or '(none)'}")
         name = f"{TAG} {bundle}"
         profile = api(
             "POST",
@@ -228,7 +249,7 @@ def mint() -> None:
                     "type": "profiles",
                     "attributes": {"name": name, "profileType": "IOS_APP_STORE"},
                     "relationships": {
-                        "bundleId": {"data": {"type": "bundleIds", "id": found[0]["id"]}},
+                        "bundleId": {"data": {"type": "bundleIds", "id": bundle_id}},
                         "certificates": {
                             "data": [
                                 {"type": "certificates", "id": state["certificate_id"]}
@@ -240,6 +261,17 @@ def mint() -> None:
         )["data"]
         state["profile_ids"].append(profile["id"])
         STATE.write_text(json.dumps(state))
+
+        # Read back what was actually bound. A profile pointing at the wrong app
+        # id is only reported by `exportArchive`, twenty minutes later, as an
+        # entitlements mismatch — which is not a sentence anybody connects to
+        # this line.
+        bound = api("GET", f"/v1/profiles/{profile['id']}/bundleId")["data"]
+        if bound["attributes"]["identifier"] != bundle:
+            raise SystemExit(
+                f"profile {name} came back bound to "
+                f"{bound['attributes']['identifier']}, not {bundle}"
+            )
 
         uuid = profile["attributes"]["uuid"]
         (PROFILE_DIR / f"{uuid}.mobileprovision").write_bytes(
