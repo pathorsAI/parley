@@ -1003,20 +1003,31 @@ fn num_workers(items: usize) -> usize {
 // Runtime + model acquisition
 // ---------------------------------------------------------------------------
 
-/// Locate `libonnxruntime.dylib` and point `ORT_DYLIB_PATH` at it. Checks the
+/// Platform-specific ONNX Runtime library file name. Bundled under
+/// `onnxruntime/` via the per-platform `bundle.resources` entry
+/// (tauri.macos.conf.json / tauri.windows.conf.json) and fetched by
+/// `scripts/fetch-onnxruntime.sh`.
+#[cfg(target_os = "macos")]
+const ORT_LIB_FILE: &str = "libonnxruntime.dylib";
+#[cfg(target_os = "windows")]
+const ORT_LIB_FILE: &str = "onnxruntime.dll";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const ORT_LIB_FILE: &str = "libonnxruntime.so";
+
+/// Locate the ONNX Runtime library and point `ORT_DYLIB_PATH` at it. Checks the
 /// bundled resource dir (release) first, then the crate-local `onnxruntime/` dir
-/// (dev, populated by `scripts/fetch-onnxruntime.sh`). The dylib is intentionally
+/// (dev, populated by `scripts/fetch-onnxruntime.sh`). The library is intentionally
 /// bundled rather than downloaded — it's the core runtime.
 fn locate_and_set_dylib(app: &AppHandle) -> Result<PathBuf> {
     let candidates = [
         app.path()
             .resource_dir()
             .ok()
-            .map(|d| d.join("onnxruntime").join("libonnxruntime.dylib")),
+            .map(|d| d.join("onnxruntime").join(ORT_LIB_FILE)),
         Some(
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("onnxruntime")
-                .join("libonnxruntime.dylib"),
+                .join(ORT_LIB_FILE),
         ),
     ];
     for cand in candidates.into_iter().flatten() {
@@ -1172,7 +1183,9 @@ mod tests {
     }
 
     fn dev_dylib() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("onnxruntime/libonnxruntime.dylib")
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("onnxruntime")
+            .join(ORT_LIB_FILE)
     }
 
     /// Locally-cached model for the test (download once to /tmp, or set

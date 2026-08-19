@@ -108,12 +108,12 @@ jobs:
           workspaces: src-tauri
 
       - name: Provide placeholder build inputs
-        # Same stand-ins as the macOS job; the .dylib placeholder satisfies the
-        # base tauri.conf.json resource list until the per-platform config
-        # split lands with the Windows port.
+        # Same stand-ins as the macOS job, for the Windows resource list in
+        # tauri.windows.conf.json.
         run: |
           mkdir -p dist src-tauri/onnxruntime
-          touch src-tauri/onnxruntime/libonnxruntime.dylib
+          touch src-tauri/onnxruntime/onnxruntime.dll
+          touch src-tauri/onnxruntime/onnxruntime_providers_shared.dll
         shell: bash
 
       - name: Check

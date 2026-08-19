@@ -62,9 +62,19 @@ sha2 = "0.10"
 # Pure-Rust symmetric eigendecomposition for NME spectral-clustering diarization
 # (no LAPACK/BLAS — keeps the no-native-deps posture of the load-dynamic ort setup).
 nalgebra = "0.35"
+tauri-plugin-os = "2.3.2"
+
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+# Desktop-only: routes a second app launch to the existing instance. macOS gets
+# the same via RunEvent::Reopen, but Windows/Linux have no Dock semantics.
+tauri-plugin-single-instance = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-sys = "0.2"
 core-foundation = "0.10"
 objc = "0.2"
 block2 = "0.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Microphone consent state lives in the registry capability consent store.
+winreg = "0.55"

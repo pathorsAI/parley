@@ -14,7 +14,9 @@ mod usage;
 mod voice_typing;
 
 use tauri::{Emitter, Manager};
-use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::ShortcutState;
+#[cfg(target_os = "macos")]
+use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
 use capture::{MicCoordinator, MicTap};
@@ -22,11 +24,17 @@ use commands::MeetingState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let shortcut_plugin = tauri_plugin_global_shortcut::Builder::new()
-        // Boot default until the frontend applies the saved selection (see
-        // hotkey::set_voice_typing_shortcut, called from the voice-typing host).
+    let shortcut_builder = tauri_plugin_global_shortcut::Builder::new();
+    // Boot default until the frontend applies the saved selection (see
+    // hotkey::set_voice_typing_shortcut, called from the voice-typing host).
+    // macOS only: voice typing isn't wired on Windows yet, and Alt+Space there
+    // is the native window system menu — claiming it would swallow an OS
+    // shortcut for nothing.
+    #[cfg(target_os = "macos")]
+    let shortcut_builder = shortcut_builder
         .with_shortcut(Shortcut::new(Some(Modifiers::ALT), Code::Space))
-        .expect("register dictation shortcut")
+        .expect("register dictation shortcut");
+    let shortcut_plugin = shortcut_builder
         .with_handler(|app, _shortcut, event| {
             // Exactly one voice-typing trigger is ever registered (the picker
             // unregisters everything before applying a change), so any firing
@@ -40,6 +48,13 @@ pub fn run() {
         .build();
 
     tauri::Builder::default()
+        // Registered before everything else per the plugin's docs: a second
+        // launch of the app (double-clicking the installed exe, taskbar pin,
+        // …) focuses the running instance instead of starting another one.
+        // macOS reaches the same behavior via RunEvent::Reopen below.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         // Registered FIRST so other plugins' logs are captured. Writes a rotating
         // file to the OS app-log dir (macOS: ~/Library/Logs/com.pathors.parley/),
         // plus stdout (dev) and the webview devtools. Captures Rust `log::` macros
@@ -68,6 +83,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Authoritative OS detection for the frontend's platform branches
+        // (src/lib/platform.ts) — window chrome, hidden panels, key caps.
+        .plugin(tauri_plugin_os::init())
         // Single source of truth for "who owns the mic" (meeting / mic test /
         // voice typing) — guarantees at most one live capture session.
         .manage(MicCoordinator::default())
@@ -172,10 +190,11 @@ pub fn run() {
         );
 }
 
-/// Bring the main window back for a Dock-icon click: un-minimize + show +
-/// focus. Recreated from the window config if it was destroyed — possible via
-/// paths that bypass the frontend's hide-on-close (e.g. a crashed webview).
-#[cfg(target_os = "macos")]
+/// Bring the main window back for a Dock-icon click (macOS Reopen) or a second
+/// app launch (single-instance callback): un-minimize + show + focus.
+/// Recreated from the window config if it was destroyed — possible via paths
+/// that bypass the frontend's hide-on-close (e.g. a crashed webview, or the
+/// Windows close button, which destroys the window).
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.unminimize();
