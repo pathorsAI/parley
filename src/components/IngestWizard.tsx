@@ -8,7 +8,7 @@ import { runAnalysis } from "../lib/analysis/engine";
 import { saveUploadToHistory } from "../lib/history/history";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
-import { FolderPicker } from "./FolderPicker";
+import { DestinationPicker } from "./DestinationPicker";
 import { Input } from "@/components/ui/input";
 import { MeetingContextField } from "./MeetingContextField";
 import { ReplayTranscript } from "./replay/ReplayTranscript";
@@ -17,6 +17,11 @@ import { TrimBar } from "./replay/TrimBar";
 import { useReplayPlayer } from "./replay/useReplayPlayer";
 import { useReplaySession } from "./replay/spine";
 import type { Source } from "../lib/types";
+import {
+  personalDestination,
+  type LibraryDestination,
+  type OrgHandoffMode,
+} from "../lib/library/destination";
 
 /** Speaker-count presets: `null` = auto-detect, then 2–8. */
 const COUNT_OPTIONS: (number | null)[] = [null, 2, 3, 4, 5, 6, 7, 8];
@@ -56,6 +61,8 @@ export function IngestWizard() {
   const step = useStore((s) => s.ingestWizardStep);
   const meetingFolderId = useStore((s) => s.meetingFolderId);
   const setMeetingFolder = useStore((s) => s.setMeetingFolder);
+  const meetingOrgShare = useStore((s) => s.meetingOrgShare);
+  const setMeetingOrgShare = useStore((s) => s.setMeetingOrgShare);
   const wizardError = useStore((s) => s.ingestWizardError);
   const setStep = useStore((s) => s.setIngestWizardStep);
   const close = useStore((s) => s.closeIngestWizard);
@@ -280,6 +287,29 @@ export function IngestWizard() {
     }
   }
 
+  /**
+   * The destination the picker shows, and what committing one does.
+   *
+   * A per-meeting org pick rides on `meetingOrgShare`, which the save path
+   * already honours; the personal folder rides on `meetingFolderId`. They stay
+   * two fields because a "copy" lands in both — going back to a personal
+   * destination only clears the org side when this meeting had explicitly
+   * chosen one, so the settings-wide auto-share default is left alone.
+   */
+  const orgShare = typeof meetingOrgShare === "object" ? meetingOrgShare : null;
+  const destination: LibraryDestination = orgShare
+    ? { scope: "org", orgId: orgShare.orgId, folderId: orgShare.folderId }
+    : personalDestination(meetingFolderId);
+
+  function pickDestination(next: LibraryDestination, mode: OrgHandoffMode | null) {
+    if (next.scope === "org") {
+      setMeetingOrgShare({ orgId: next.orgId, folderId: next.folderId, mode: mode ?? "copy" });
+      return;
+    }
+    setMeetingFolder(next.folderId);
+    if (orgShare) setMeetingOrgShare(null);
+  }
+
   const wide = step === "review" || step === "trim";
 
   return (
@@ -302,11 +332,16 @@ export function IngestWizard() {
               {/* Whose call is this? Asked on the way IN, because the import
                   doors that skipped the question are precisely the ones that
                   produced recordings needing after-the-fact filing. The save
-                  reads meetingFolderId (resolveMeetingSave), so picking the
-                  folder here is all the filing this needs. */}
+                  reads meetingFolderId and meetingOrgShare (resolveMeetingSave),
+                  so picking the destination here is all the filing this needs. */}
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] text-muted-foreground">{t("owner.label")}</span>
-                <FolderPicker value={meetingFolderId} onChange={setMeetingFolder} />
+                <DestinationPicker
+                  gateOnSync
+                  value={destination}
+                  mode={orgShare?.mode ?? null}
+                  onChange={pickDestination}
+                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] text-muted-foreground">{t("speakers.voiceCount")}</span>

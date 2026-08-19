@@ -84,9 +84,13 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [sharingId, setSharingId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [movePrompt, setMovePrompt] = useState<{ item: HistoryCardItem; org: CloudOrg } | null>(
-    null
-  );
+  /** A pending hand-off to an org: which recording, which org, and which of its
+   *  folders (null = the org root). The copy-or-move answer comes next. */
+  const [movePrompt, setMovePrompt] = useState<{
+    item: HistoryCardItem;
+    org: CloudOrg;
+    folderId: string | null;
+  } | null>(null);
 
   const isOrg = selection.kind === "org";
   const isVoice = selection.kind === "voice";
@@ -151,6 +155,15 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey]);
+
+  // The share menu offers each org's folders, so they have to be loaded before
+  // it opens — the org scopes load their own on selection, but a card being
+  // shared FROM the personal scope has never touched them.
+  const { orgs: allOrgs, ensureOrgFolders } = tree;
+  useEffect(() => {
+    if (isOrg) return;
+    for (const o of allOrgs) ensureOrgFolders(o.id);
+  }, [isOrg, allOrgs, ensureOrgFolders]);
 
   // ── Node visibility ───────────────────────────────────────────────────────
   const scopeFolders =
@@ -285,10 +298,10 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       setSharingId(p.item.id);
       try {
         if (mode === "copy") {
-          await shareRecordingToOrg(p.item.id, p.org.id);
+          await shareRecordingToOrg(p.item.id, p.org.id, p.folderId);
           toast.success(t("history.move.copied", { org: p.org.name }));
         } else {
-          await moveRecordingToOrg(p.item.id, p.org.id);
+          await moveRecordingToOrg(p.item.id, p.org.id, p.folderId);
           setEntries((prev) => prev?.filter((e) => e.id !== p.item.id) ?? null);
           toast.success(t("history.move.moved", { org: p.org.name }));
         }
@@ -328,6 +341,18 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   }
 
   const searching = searchQuery.length > 0;
+
+  // "Pathors AI / 和運租車" or "Pathors AI （根目錄）" — the dialog says exactly
+  // where the copy is about to land.
+  let promptTarget = "";
+  if (movePrompt) {
+    const folder = movePrompt.folderId
+      ? (tree.orgFolders[movePrompt.org.id] ?? []).find((f) => f.id === movePrompt.folderId)
+      : undefined;
+    promptTarget = folder
+      ? `${movePrompt.org.name} / ${folder.name}`
+      : `${movePrompt.org.name} ${t("history.move.rootLabel")}`;
+  }
   let emptyTitle: string;
   if (searching) emptyTitle = t("history.searchEmpty");
   else if (folderName) emptyTitle = t("history.folder.empty");
@@ -366,6 +391,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
             signedIn={tree.signedIn}
             isOrgContext={isOrg}
             orgs={tree.orgs}
+            orgFolders={tree.orgFolders}
             busy={busyId === entry.id}
             downloading={downloadingId === entry.id}
             sharing={sharingId === entry.id}
@@ -381,7 +407,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
             onRename={(title) => {
               rename(entry.id, title).catch(() => {});
             }}
-            onShare={(org) => setMovePrompt({ item: entry, org })}
+            onShare={(org, folderId) => setMovePrompt({ item: entry, org, folderId })}
             onMove={(folderId) => {
               const run = isOrg ? moveInOrg(entry, folderId) : move(entry, folderId);
               run.catch(() => {});
@@ -451,7 +477,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       {movePrompt && (
         <MoveDialog
           orgName={movePrompt.org.name}
-          target={`${movePrompt.org.name} ${t("history.move.rootLabel")}`}
+          target={promptTarget}
           onCopy={() => void resolveOrgHandoff("copy")}
           onMove={() => void resolveOrgHandoff("move")}
           onCancel={() => setMovePrompt(null)}

@@ -1,10 +1,8 @@
 import { useState } from "react";
 import { Folder, MoreHorizontal } from "lucide-react";
 import { useStore } from "../../lib/store";
-import { setEntryFolder } from "../../lib/history/history";
 import { listLocalFolders } from "../../lib/history/folders";
 import { useI18n } from "../../i18n";
-import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import {
@@ -13,7 +11,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { FolderPicker } from "../FolderPicker";
+import { DestinationPicker } from "../DestinationPicker";
+import { useRefile } from "../useRefile";
+import { personalDestination } from "../../lib/library/destination";
 import { MeetingContextSheet } from "../MeetingContextButton";
 
 /**
@@ -24,20 +24,17 @@ import { MeetingContextSheet } from "../MeetingContextButton";
  */
 export function StudyLinkBar() {
   const { t } = useI18n();
-  const readOnly = useStore((s) => s.replayReadOnly);
   const loadedHistoryId = useStore((s) => s.loadedHistoryId);
+  // Nothing to re-file: a read-only org recording can't be written back, and a
+  // session with no saved entry (never saved, or just handed over to an org)
+  // has nothing for the picker to act on.
+  const readOnly = useStore((s) => s.replayReadOnly) || !loadedHistoryId;
   const folderId = useStore((s) => s.replayFolderId);
+  const refile = useRefile();
   const folder = folderId ? (listLocalFolders().find((f) => f.id === folderId) ?? null) : null;
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
-
-  function move(id: string | null) {
-    if (!loadedHistoryId) return;
-    setEntryFolder(loadedHistoryId, id).catch((e) =>
-      log.warn("study: refile failed", { error: String(e) })
-    );
-  }
 
   return (
     <div className="mb-6 flex items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2">
@@ -102,7 +99,7 @@ export function StudyLinkBar() {
           }
         >
           <div className="px-4 py-3">
-            <FolderPicker value={folderId} onChange={move} />
+            <DestinationPicker value={personalDestination(folderId)} onChange={refile} />
           </div>
         </SheetContent>
       </Sheet>

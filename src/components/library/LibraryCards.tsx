@@ -192,12 +192,26 @@ function MoveMenu({
   );
 }
 
-/** Pick an org to hand this recording to; the copy-or-move choice follows. */
+/**
+ * Pick an org FOLDER to hand this recording to; the copy-or-move choice follows.
+ *
+ * Each org lists its own folders under it, because dropping every shared
+ * recording at the org root just moved the filing problem across the boundary —
+ * the folders were right there in the sidebar, and the only way into one was to
+ * share first and re-file afterwards.
+ */
 function ShareMenu({
   orgs,
+  orgFolders,
   sharing,
   onPick,
-}: Readonly<{ orgs: CloudOrg[]; sharing: boolean; onPick: (org: CloudOrg) => void }>) {
+}: Readonly<{
+  orgs: CloudOrg[];
+  /** Shared folders per org id; a missing entry just means "not loaded yet". */
+  orgFolders: Record<string, LocalFolder[]>;
+  sharing: boolean;
+  onPick: (org: CloudOrg, folderId: string | null) => void;
+}>) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   return (
@@ -218,19 +232,38 @@ function ShareMenu({
       {open && (
         <MenuShell title={t("history.share.menuTitle")} onClose={() => setOpen(false)}>
           {orgs.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              onClick={(ev) => {
-                ev.stopPropagation();
-                setOpen(false);
-                onPick(o);
-              }}
-              className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs hover:bg-muted"
-            >
-              <UsersRound className="size-3 shrink-0" />
-              <span className="truncate">{o.name}</span>
-            </button>
+            <div key={o.id}>
+              <button
+                type="button"
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  setOpen(false);
+                  onPick(o, null);
+                }}
+                className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs hover:bg-muted"
+              >
+                <UsersRound className="size-3 shrink-0" />
+                <span className="truncate">{o.name}</span>
+                <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                  {t("history.move.rootLabel")}
+                </span>
+              </button>
+              {(orgFolders[o.id] ?? []).map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    setOpen(false);
+                    onPick(o, f.id);
+                  }}
+                  className="flex w-full items-center gap-1.5 rounded py-1 pl-6 pr-2 text-left text-xs hover:bg-muted"
+                >
+                  <Folder className="size-3 shrink-0" />
+                  <span className="truncate">{f.name}</span>
+                </button>
+              ))}
+            </div>
           ))}
         </MenuShell>
       )}
@@ -258,7 +291,9 @@ export function MoveDialog({
       role="button"
       tabIndex={0}
       aria-label={t("history.move.cancel")}
-      className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-6"
+      // z-[100]: this is raised from the library grid, from inside a Sheet
+      // (z-[91]) and from the import modals (z-[70]) — it has to clear all three.
+      className="fixed inset-0 z-[100] grid place-items-center bg-black/40 p-6"
       onClick={onCancel}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " " || e.key === "Escape") {
@@ -303,6 +338,7 @@ export function LibraryCard({
   signedIn,
   isOrgContext,
   orgs,
+  orgFolders,
   busy,
   downloading,
   sharing,
@@ -318,6 +354,8 @@ export function LibraryCard({
   signedIn: boolean;
   isOrgContext: boolean;
   orgs: CloudOrg[];
+  /** Each org's shared folders, so sharing can name one directly. */
+  orgFolders: Record<string, LocalFolder[]>;
   busy: boolean;
   downloading: boolean;
   sharing: boolean;
@@ -326,7 +364,7 @@ export function LibraryCard({
   onOpen: () => void;
   onDelete: () => void;
   onRename: (title: string) => void;
-  onShare: (org: CloudOrg) => void;
+  onShare: (org: CloudOrg, folderId: string | null) => void;
   onMove: (folderId: string | null) => void;
 }>) {
   const { t } = useI18n();
@@ -441,7 +479,9 @@ export function LibraryCard({
               onMove={onMove}
             />
           )}
-          {canShare && <ShareMenu orgs={orgs} sharing={sharing} onPick={onShare} />}
+          {canShare && (
+            <ShareMenu orgs={orgs} orgFolders={orgFolders} sharing={sharing} onPick={onShare} />
+          )}
           {!isCloudOnly && !isOrgContext && (
             <button
               type="button"
