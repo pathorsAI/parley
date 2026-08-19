@@ -127,8 +127,14 @@ public final class SonioxStreamParser {
     /// Set once a `finished` marker arrives — the stream ended normally.
     public private(set) var finished = false
 
-    public init(source: String = "mix", sink: @escaping (TranscriptSegment) -> Void) {
-        self.builder = SegmentBuilder(source: source, sink: sink)
+    /// `idPrefix` and `timeOffsetMs` are forwarded to `SegmentBuilder` — see
+    /// its initializer for why a reconnected relay leg needs both.
+    public init(
+        source: String = "mix", idPrefix: String? = nil, timeOffsetMs: UInt64 = 0,
+        sink: @escaping (TranscriptSegment) -> Void
+    ) {
+        self.builder = SegmentBuilder(
+            source: source, idPrefix: idPrefix, timeOffsetMs: timeOffsetMs, sink: sink)
     }
 
     /// Feed one raw text frame from the socket. Throws `SonioxStreamError` on

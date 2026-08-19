@@ -155,27 +155,40 @@ final class DictationCoordinator: ObservableObject {
         ) { [weak self] event in
             Task { @MainActor in self?.handle(event) }
         }
+        relay = client
+
+        // Microphone first, socket second. The client buffers whatever the
+        // microphone hands it while the handshake is still in flight, so the
+        // round trip to the relay stops being a round trip the user waits
+        // through before their first word is captured. `AudioCapture.start()`
+        // is `async` for the same reason: activating the audio session is slow
+        // enough to be felt if it runs on the main actor.
+        let cap = AudioCapture(
+            onChunk: { [weak self] samples, level in
+                client.enqueue(pcm: samples)
+                Task { @MainActor in self?.micLevel = level }
+            },
+            onStatus: { [weak self] status in
+                Task { @MainActor in self?.handle(capture: status) }
+            })
         do {
-            try await client.start()
-            relay = client
+            try await cap.start()
+            capture = cap
         } catch {
-            fail(String(localized: "Connection failed. Please try again."))
+            relay = nil
+            client.cancel()
+            fail(String(localized: "Couldn't open the microphone."))
             return
         }
 
-        let cap = AudioCapture { [weak self] samples, level in
-            Task { @MainActor in self?.micLevel = level }
-            if let client = self?.relay {
-                Task { try? await client.send(pcm: samples) }
-            }
-        }
         do {
-            try cap.start()
-            capture = cap
+            try await client.start()
         } catch {
-            await relay?.finish()
+            capture = nil
             relay = nil
-            fail(String(localized: "Couldn't open the microphone."))
+            client.cancel()
+            await cap.stop()
+            fail(String(localized: "Connection failed. Please try again."))
             return
         }
 
@@ -213,6 +226,20 @@ final class DictationCoordinator: ObservableObject {
         }
     }
 
+    /// The microphone's own state. `AudioCapture` recovers from interruptions
+    /// and route changes on its own, so only the give-up case ends the session.
+    private func handle(capture status: AudioCapture.Status) {
+        guard active else { return }
+        switch status {
+        case .running, .resumed:
+            break
+        case .interrupted:
+            micLevel = 0
+        case .failed(let message):
+            fail(String(localized: "Lost the microphone: \(message)"))
+        }
+    }
+
     private func handle(_ event: SttRelayEvent) {
         switch event {
         case .segment(let seg):
@@ -242,8 +269,9 @@ final class DictationCoordinator: ObservableObject {
         #endif
         capTimer?.cancel()
         capTimer = nil
-        capture?.stop()
+        let cap = capture
         capture = nil
+        await cap?.stop()
         micLevel = 0
         state = .finishing
         publish()
@@ -272,8 +300,11 @@ final class DictationCoordinator: ObservableObject {
         state = .error
         capTimer?.cancel()
         capTimer = nil
-        capture?.stop()
+        let cap = capture
         capture = nil
+        // Detached because `fail` is the sync tail of half a dozen paths and
+        // closing the audio session is slow; nothing after this depends on it.
+        Task { await cap?.stop() }
         publish()
         active = false
         beginLinger()

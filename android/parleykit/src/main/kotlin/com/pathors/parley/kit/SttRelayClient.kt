@@ -86,6 +86,11 @@ class SttRelayClient(private val options: Options) {
      *   Simplified→Traditional rewrite pass.
      * @property feature billing attribution — one of [Feature]. Anything else is
      *   recorded as unattributed by the relay.
+     * @property idPrefix stem for committed segment ids, defaulting to the
+     *   source (`mix`). A recording that reopens the relay mid-meeting passes a
+     *   distinct prefix per leg — see [SegmentBuilder].
+     * @property timeOffsetMs added to every timestamp this session emits, so a
+     *   reconnected leg lands after the audio that preceded it rather than at 0.
      */
     data class Options(
         val bearerToken: String,
@@ -93,6 +98,8 @@ class SttRelayClient(private val options: Options) {
         val model: String = SttRelayClient.DEFAULT_MODEL,
         val languageHints: List<String>? = null,
         val feature: String = SttRelayClient.Feature.MEETING,
+        val idPrefix: String? = null,
+        val timeOffsetMs: Long = 0,
     )
 
     /** Billing attribution tags the relay recognizes (`?feature=`). */
@@ -130,15 +137,22 @@ class SttRelayClient(private val options: Options) {
         get() = terminated.get()
 
     /**
-     * Connect, send the config frame, and start the keepalive loop. Suspends
-     * until the handshake resolves.
+     * Open the socket and queue the config frame. Returns immediately — the
+     * handshake is still in flight.
+     *
+     * [sendPcm] may be called the moment this returns: OkHttp buffers frames
+     * until the upgrade completes and writes them in order, so the config frame
+     * is guaranteed to reach the relay ahead of any audio. That is what lets a
+     * caller open the microphone and the socket at the same time instead of
+     * making the person holding the phone wait out a round trip before their
+     * first word is recorded.
      *
      * A rejected handshake is **not** thrown: like every other failure it
      * arrives on [events] (as [SttRelayEvent.QuotaExceeded] or
      * [SttRelayEvent.Error]) so callers have one place to watch. Only a
      * malformed [Options.relayUrl] throws, as `IllegalArgumentException`.
      */
-    suspend fun connect() {
+    fun open() {
         check(webSocket == null) { "SttRelayClient is single-use; connect() was already called" }
 
         val request =
@@ -147,13 +161,15 @@ class SttRelayClient(private val options: Options) {
                 .addHeader("Authorization", "Bearer ${options.bearerToken}")
                 .build()
 
-        parser = SonioxStreamParser(SOURCE) { segment -> emit(SttRelayEvent.Segment(segment)) }
+        parser =
+            SonioxStreamParser(
+                source = SOURCE,
+                idPrefix = options.idPrefix ?: SOURCE,
+                timeOffsetMs = options.timeOffsetMs,
+            ) { segment -> emit(SttRelayEvent.Segment(segment)) }
 
-        val opened = CompletableDeferred<Unit>()
-        openSignal = opened
+        openSignal = CompletableDeferred()
         webSocket = client.newWebSocket(request, RelayListener())
-        opened.await()
-        if (terminated.get()) return
 
         // Relay mode: api_key stays null; the relay injects the master key.
         val config =
@@ -164,6 +180,17 @@ class SttRelayClient(private val options: Options) {
             )
         webSocket?.send(SonioxProtocol.encodeConfig(config))
         startKeepalive()
+    }
+
+    /** Suspend until the handshake resolves, one way or the other. */
+    suspend fun awaitOpen() {
+        openSignal?.await()
+    }
+
+    /** [open] then [awaitOpen]. */
+    suspend fun connect() {
+        open()
+        awaitOpen()
     }
 
     /**

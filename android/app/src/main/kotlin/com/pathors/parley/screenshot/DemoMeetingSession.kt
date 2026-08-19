@@ -48,6 +48,9 @@ class DemoMeetingSession(
     /** A demo meeting never has a transcription problem to report. */
     override val issue: StateFlow<TranscriptionIssue?> = MutableStateFlow(null).asStateFlow()
 
+    /** …and never loses the microphone, since it never opens one. */
+    override val micSilenced: StateFlow<Boolean> = MutableStateFlow(false).asStateFlow()
+
     private val _level = MutableStateFlow(0f)
     override val level: StateFlow<Float> = _level.asStateFlow()
 

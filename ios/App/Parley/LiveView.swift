@@ -6,10 +6,10 @@ import SwiftUI
 /// their session token — no API keys on the phone.
 struct LiveView: View {
     @EnvironmentObject private var app: AppState
-    @StateObject private var store = TranscriptStore()
-    @State private var capture: AudioCapture?
-    @State private var relay: SttRelayClient?
-    @State private var uploader: MeetingUploader?
+    /// Everything about the recording itself lives in the recorder, including
+    /// "am I recording?" — see `MeetingRecorder` for why that cannot be a flag
+    /// this view sets once the microphone is finally up.
+    @StateObject private var recorder = MeetingRecorder()
     @State private var showRecordingConsent = false
 
     var body: some View {
@@ -29,7 +29,7 @@ struct LiveView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Circle()
-                        .fill(store.isRecording ? Theme.recording : Theme.mutedForeground.opacity(0.4))
+                        .fill(recorder.isRecording ? Theme.recording : Theme.mutedForeground.opacity(0.4))
                         .frame(width: 9, height: 9)
                 }
                 // The product name is a wordmark, not a heading: Alexandria in
@@ -41,30 +41,36 @@ struct LiveView: View {
                         .accessibilityAddTraits(.isHeader)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    LevelMeter(level: store.micLevel)
+                    LevelMeter(level: recorder.micLevel)
                 }
                 // Copying works mid-meeting on purpose: the reason to grab a
                 // line is usually that it was just said.
                 ToolbarItem(placement: .topBarTrailing) {
                     CopyTranscriptButton(
                         text: {
-                            TranscriptClipboard.plainText(store.segments) {
+                            TranscriptClipboard.plainText(recorder.segments) {
                                 TranscriptClipboard.liveLabel(for: $0)
                             }
                         },
-                        isEmpty: store.segments.isEmpty)
+                        isEmpty: recorder.segments.isEmpty)
                 }
             }
             .alert("Before you start recording", isPresented: $showRecordingConsent) {
                 Button("Cancel", role: .cancel) {}
                 Button("Everyone has agreed") {
-                    Task { await start() }
+                    Task { await recorder.start(token: KeychainStore.get(AppState.tokenKey)) }
                 }
             } message: {
                 Text("Parley picks up the room through the microphone, sends the audio to your Parley account for live transcription, and syncs the recording and transcript there. Confirm that everyone present has agreed to be recorded.")
             }
+            // The microphone is not coming back. End the meeting rather than
+            // leave a recording on screen that records nothing — the audio up
+            // to the failure is on disk and worth keeping.
+            .onChange(of: recorder.lostMicrophone) {
+                if recorder.lostMicrophone { Task { await recorder.stop(app: app) } }
+            }
             #if DEBUG
-                .task { ScreenshotDemo.seedLive(store) }
+                .task { ScreenshotDemo.seedLive(recorder) }
             #endif
         }
     }
@@ -73,17 +79,17 @@ struct LiveView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    if store.segments.isEmpty {
+                    if recorder.segments.isEmpty {
                         emptyState
                     }
-                    ForEach(store.segments, id: \.id) { seg in
+                    ForEach(recorder.segments, id: \.id) { seg in
                         SegmentRow(segment: seg).id(seg.id)
                     }
                 }
                 .padding(20)
             }
-            .onChange(of: store.segments.count) {
-                if let last = store.segments.last {
+            .onChange(of: recorder.segments.count) {
+                if let last = recorder.segments.last {
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
             }
@@ -116,8 +122,8 @@ struct LiveView: View {
 
     private var controls: some View {
         VStack(spacing: 12) {
-            if store.status != "idle" {
-                Text(store.status)
+            if let status = recorder.status {
+                Text(status)
                     .font(.parley.caption)
                     .foregroundStyle(Theme.mutedForeground)
                     .lineLimit(2)
@@ -137,7 +143,7 @@ struct LiveView: View {
                     .background(buttonFill, in: RoundedRectangle(cornerRadius: Theme.radius))
             }
             .buttonStyle(.plain)
-            if !store.isRecording && !app.hasAccount {
+            if !recorder.isRecording && !app.hasAccount {
                 Text("Your session expired. Sign in with the button above and recording works again.")
                     .font(.parley.caption)
                     .foregroundStyle(Theme.mutedForeground)
@@ -151,7 +157,7 @@ struct LiveView: View {
     /// gradient. Recording is a state rather than an action — flat red, so a
     /// glance never mistakes "in progress" for "press me".
     private var buttonFill: AnyShapeStyle {
-        store.isRecording
+        recorder.isRecording
             ? AnyShapeStyle(Theme.recording)
             : AnyShapeStyle(Theme.brandGradient)
     }
@@ -159,14 +165,16 @@ struct LiveView: View {
     /// The button says what pressing it will actually do, so the signed-out case
     /// reads as a next step rather than a broken control.
     private var buttonTitle: String {
-        if store.isRecording { return String(localized: "End meeting") }
+        if recorder.isBusy { return String(localized: "Wrapping up…") }
+        if recorder.isRecording { return String(localized: "End meeting") }
         return app.hasAccount
             ? String(localized: "Start recording")
             : String(localized: "Sign in again to record")
     }
 
     private var buttonIcon: String {
-        if store.isRecording { return "stop.circle.fill" }
+        if recorder.isBusy { return "hourglass" }
+        if recorder.isRecording { return "stop.circle.fill" }
         return app.hasAccount ? "record.circle" : "person.crop.circle"
     }
 
@@ -174,128 +182,20 @@ struct LiveView: View {
     /// a permanently greyed-out Start recording on screen with no way to act on it — the
     /// bug App Review reported. A button that can't be pressed teaches nothing;
     /// one that opens sign-in does.
+    ///
+    /// It *is* inert while the meeting is wrapping up: at that point there is no
+    /// action left to take, and a press that started a second recording on top
+    /// of an upload is exactly the sort of thing this screen used to allow.
     private func toggle() {
-        if store.isRecording {
-            Task { await stop() }
+        guard !recorder.isBusy else { return }
+        if recorder.isRecording {
+            Task { await recorder.stop(app: app) }
         } else if app.hasAccount {
             showRecordingConsent = true
         } else {
             // The gate in RootView normally keeps this unreachable, but a
             // session can expire while the app is open and on this screen.
             app.signIn()
-        }
-    }
-
-    private func start() async {
-        guard await AudioCapture.requestPermission() else {
-            store.status = String(localized: "Microphone access is required")
-            return
-        }
-        store.clear()
-
-        // Signed in → stream through the hosted relay; otherwise level-only.
-        var relayClient: SttRelayClient?
-        if let token = KeychainStore.get(AppState.tokenKey) {
-            let client = SttRelayClient(
-                options: .init(bearerToken: token, feature: "meeting")
-            ) { event in
-                Task { @MainActor in handle(event) }
-            }
-            do {
-                try await client.start()
-                relayClient = client
-                store.status = String(localized: "Transcribing live")
-            } catch {
-                store.status = String(localized: "Relay connection failed — recording audio only")
-            }
-        } else {
-            store.status = String(localized: "Not signed in — microphone test only")
-        }
-        self.relay = relayClient
-
-        let rec = try? MeetingUploader()
-        self.uploader = rec
-
-        let cap = AudioCapture { samples, level in
-            Task { @MainActor in store.micLevel = level }
-            rec?.append(samples)
-            if let relayClient {
-                Task { try? await relayClient.send(pcm: samples) }
-            }
-        }
-        do {
-            try cap.start()
-            capture = cap
-            store.isRecording = true
-        } catch {
-            store.status = String(localized: "Audio error: \(error.localizedDescription)")
-            await relayClient?.finish()
-        }
-    }
-
-    private func stop() async {
-        capture?.stop()
-        capture = nil
-        store.isRecording = false
-        store.micLevel = 0
-        if let relay {
-            store.status = String(localized: "Wrapping up…")
-            await relay.finish()  // drain: the relay flushes the last utterance
-        }
-        await upload()
-    }
-
-    private func upload() async {
-        guard let uploader else {
-            store.status = "idle"
-            return
-        }
-        self.uploader = nil
-        guard app.signedIn else {
-            store.status = String(localized: "Not signed in — the recording was not uploaded")
-            return
-        }
-        store.status = String(localized: "Uploading…")
-        do {
-            let outcome = try await uploader.finishAndUpload(
-                segments: store.segments,
-                cloud: app.cloud,
-                defaultSave: app.defaultSave,
-                orgs: app.orgs)
-            if let outcome {
-                app.pendingUploadCount = MeetingUploader.pendingCount
-                store.status =
-                    outcome.sharedToOrgName.map { String(localized: "Synced, and shared to “\($0)”") }
-                    ?? String(localized: "Synced to the cloud")
-            } else {
-                store.status = String(localized: "That recording was too short to keep")
-            }
-        } catch let e as CloudError where e.status == 402 {
-            app.pendingUploadCount = MeetingUploader.pendingCount
-            store.status = String(
-                localized:
-                    "You're out of quota. The recording is safe on this phone and will sync once the quota resets."
-            )
-        } catch {
-            app.pendingUploadCount = MeetingUploader.pendingCount
-            store.status = String(
-                localized:
-                    "Sync failed for now. The recording is safe on this phone and will retry automatically."
-            )
-        }
-    }
-
-    private func handle(_ event: SttRelayEvent) {
-        switch event {
-        case .segment(let seg):
-            store.upsert(seg)
-        case .closed(let reason):
-            store.status =
-                store.isRecording ? String(localized: "Relay closed (\(reason))") : "idle"
-            relay = nil
-        case .error(let message):
-            store.status = message
-            relay = nil
         }
     }
 }

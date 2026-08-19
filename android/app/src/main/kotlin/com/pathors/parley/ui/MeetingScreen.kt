@@ -158,6 +158,7 @@ private fun MeetingContent(session: LiveMeeting, onStop: () -> Unit, onDone: () 
     val issue by session.issue.collectAsState()
     val level by session.level.collectAsState()
     val elapsed by session.elapsedMs.collectAsState()
+    val micSilenced by session.micSilenced.collectAsState()
 
     // A finished meeting is a transient state: show the outcome for a beat, drop
     // the session, and go back to the library where the new recording now lives.
@@ -187,6 +188,18 @@ private fun MeetingContent(session: LiveMeeting, onStop: () -> Unit, onDone: () 
         )
         Spacer(Modifier.height(12.dp))
         LevelMeter(level = level, live = state is MeetingState.Recording)
+
+        // Louder than the transcription banner on purpose: a silenced mic means
+        // the audio itself is empty, which is the one failure nothing later can
+        // recover from.
+        if (micSilenced) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = stringResource(R.string.meeting_mic_silenced),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
 
         issue?.let { current ->
             Spacer(Modifier.height(12.dp))

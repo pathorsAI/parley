@@ -21,6 +21,25 @@ public enum SttRelayEvent: Sendable {
 ///   socket. The relay must forward the finalize to Soniox and stream the
 ///   flushed tail back; closing now would truncate the last utterance. The
 ///   relay closes once Soniox finishes.
+///
+/// ## Audio goes in through a queue, not through the actor
+///
+/// Capture hands chunks over with `enqueue(pcm:)` from the audio thread. They
+/// land in an `AsyncStream` that a single writer task drains in order. Two
+/// things depend on this:
+///
+/// - **Order.** The obvious `Task { try await client.send(pcm:) }` per chunk
+///   spawns one unstructured task per 100 ms of audio, and nothing orders
+///   them: the socket could receive 3 s of speech with two chunks swapped,
+///   which the provider transcribes as the garbled thing it now is.
+/// - **The connect window.** The queue exists from `init`, so a caller may
+///   start the microphone and enqueue immediately while `start()` is still
+///   shaking hands. Nothing is consumed until the socket is up, and nothing is
+///   lost — which is what lets recording begin the instant the button is
+///   pressed instead of a round trip later.
+///
+/// One session per instance: after `finish()` or `cancel()` the client is
+/// spent. Reconnecting means a new instance (see `Options.idPrefix`).
 public actor SttRelayClient {
     public struct Options {
         public var relayURL: URL
@@ -30,19 +49,42 @@ public actor SttRelayClient {
         public var languageHints: [String]?
         /// Billing attribution (`?feature=`) — parley-internal#29.
         public var feature: String
+        /// Stem for committed segment ids, defaulting to the source (`mix`).
+        /// A recording that reopens the relay mid-meeting passes a distinct
+        /// prefix per leg — see `SegmentBuilder.init`.
+        public var idPrefix: String?
+        /// Added to every timestamp this session emits, so a reconnected leg
+        /// lands after the audio that preceded it rather than at 0.
+        public var timeOffsetMs: UInt64
 
         public init(
             relayURL: URL = URL(string: "wss://api.parley.tw/stt/stream")!,
             bearerToken: String, model: String = "stt-rt-v5",
-            languageHints: [String]? = nil, feature: String = "meeting"
+            languageHints: [String]? = nil, feature: String = "meeting",
+            idPrefix: String? = nil, timeOffsetMs: UInt64 = 0
         ) {
             self.relayURL = relayURL
             self.bearerToken = bearerToken
             self.model = model
             self.languageHints = languageHints
             self.feature = feature
+            self.idPrefix = idPrefix
+            self.timeOffsetMs = timeOffsetMs
         }
     }
+
+    /// Chunks held between the audio thread and the socket. A tap chunk is
+    /// ~85 ms, so this is ~45 s of slack — deep enough to cover a slow
+    /// handshake or a stalled radio, shallow enough that a socket that never
+    /// recovers cannot grow the process without bound. Overflow drops the
+    /// oldest chunk: the meeting's audio file is written straight from the tap
+    /// and is never at risk, so the worst case is a gap in the live transcript.
+    private static let maxQueuedChunks = 512
+
+    /// How long `finish()` waits for queued audio to reach the wire before
+    /// sending the finalize frame anyway. A dead socket must not hold up the
+    /// end of a meeting.
+    private static let drainTimeout: Duration = .seconds(3)
 
     private let options: Options
     private let onEvent: @Sendable (SttRelayEvent) -> Void
@@ -50,11 +92,22 @@ public actor SttRelayClient {
     private var parser: SonioxStreamParser?
     private var keepaliveTask: Task<Void, Never>?
     private var readTask: Task<Void, Never>?
+    private var writerTask: Task<Void, Never>?
     private var finalizeSent = false
+    private var terminated = false
+
+    private let outbound: AsyncStream<[Int16]>
+    /// `nonisolated` on purpose: `enqueue(pcm:)` is called from the audio
+    /// render thread and must not hop onto the actor to do it.
+    private nonisolated let sink: AsyncStream<[Int16]>.Continuation
 
     public init(options: Options, onEvent: @escaping @Sendable (SttRelayEvent) -> Void) {
         self.options = options
         self.onEvent = onEvent
+        let (stream, continuation) = AsyncStream<[Int16]>.makeStream(
+            bufferingPolicy: .bufferingNewest(Self.maxQueuedChunks))
+        self.outbound = stream
+        self.sink = continuation
     }
 
     /// Connect, send the config frame, and start the read + keepalive loops.
@@ -68,7 +121,9 @@ public actor SttRelayClient {
         self.task = task
 
         let sink = self.onEvent
-        self.parser = SonioxStreamParser(source: "mix") { seg in sink(.segment(seg)) }
+        self.parser = SonioxStreamParser(
+            source: "mix", idPrefix: options.idPrefix, timeOffsetMs: options.timeOffsetMs
+        ) { seg in sink(.segment(seg)) }
 
         task.resume()
 
@@ -81,30 +136,78 @@ public actor SttRelayClient {
 
         startKeepalive()
         startReadLoop()
+        startWriter()
     }
 
-    /// Stream one chunk of 16 kHz mono PCM.
-    public func send(pcm samples: [Int16]) async throws {
-        guard let task else { return }
-        try await task.send(.data(SonioxProtocol.pcmToLeBytes(samples)))
+    /// Hand one chunk of 16 kHz mono PCM to the writer. Non-blocking, safe from
+    /// the audio thread, and safe before `start()` has finished connecting.
+    public nonisolated func enqueue(pcm samples: [Int16]) {
+        sink.yield(samples)
     }
 
-    /// Input drained: send finalize and let the relay drain the tail. The
-    /// socket stays open until the server closes it (or `finished` arrives).
+    /// Input drained: flush what is still queued, send finalize, and let the
+    /// relay drain the tail. The socket stays open until the server closes it
+    /// (or `finished` arrives).
     public func finish() async {
         guard let task, !finalizeSent else { return }
         finalizeSent = true
+        sink.finish()
+        await drainWriter()
         keepaliveTask?.cancel()
         try? await task.send(.string(SonioxProtocol.finalizeFrame))
         // Deliberately no task.cancel() here — see the type doc.
     }
 
-    /// Hard teardown (app shutdown, user abort).
-    public func cancel() {
+    /// Hard teardown (app shutdown, user abort, a leg being replaced by a
+    /// reconnect). Idempotent, and callable from anywhere: closing the audio
+    /// queue is synchronous, so a caller that abandons this client knows no
+    /// further audio can reach it even before the socket has finished dying.
+    public nonisolated func cancel() {
+        sink.finish()
+        Task { await self.tearDown() }
+    }
+
+    private func tearDown() {
+        terminated = true
         keepaliveTask?.cancel()
         readTask?.cancel()
+        writerTask?.cancel()
         task?.cancel(with: .normalClosure, reason: nil)
         task = nil
+    }
+
+    // MARK: internals
+
+    /// Wait for the queued audio to reach the wire, but never longer than
+    /// `drainTimeout` — the writer is blocked on a socket that may be gone.
+    private func drainWriter() async {
+        guard let writerTask else { return }
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { _ = await writerTask.value }
+            group.addTask { try? await Task.sleep(for: Self.drainTimeout) }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+
+    private func startWriter() {
+        writerTask = Task { [weak self, outbound] in
+            for await chunk in outbound {
+                guard let self else { return }
+                await self.write(chunk)
+            }
+        }
+    }
+
+    private func write(_ samples: [Int16]) async {
+        guard let task, !terminated else { return }
+        do {
+            try await task.send(.data(SonioxProtocol.pcmToLeBytes(samples)))
+        } catch {
+            // The read loop owns the error reporting; a failed write only means
+            // the socket is on its way out, and the reader will say so.
+            terminated = true
+        }
     }
 
     private func startKeepalive() {
@@ -153,5 +256,13 @@ public actor SttRelayClient {
                 break
             }
         }
+        // Nothing will ever read from this socket again; let the writer stop
+        // rather than pile chunks into a dead connection.
+        markTerminated()
+    }
+
+    private func markTerminated() {
+        terminated = true
+        sink.finish()
     }
 }
