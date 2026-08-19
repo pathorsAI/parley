@@ -44,10 +44,12 @@ jobs:
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Typecheck
-        run: bunx tsc --noEmit
+        # Local node_modules binaries (installed from the frozen lockfile) —
+        # no ad-hoc registry resolution.
+        run: bun run tsc --noEmit
 
       - name: Unit tests
-        run: bunx vitest run
+        run: bun run test
 
   rust-macos:
     name: Rust (macOS)
