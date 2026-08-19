@@ -29,6 +29,7 @@
     "core:event:allow-emit-to",
     "core:event:allow-listen",
     "updater:default",
-    "process:default"
+    "process:default",
+    "os:default"
   ]
 }

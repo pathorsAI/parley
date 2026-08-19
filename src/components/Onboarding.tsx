@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Check, ChevronLeft, ChevronRight, Download, Keyboard, Loader2, LogIn, Mic, Volume2, X } from "lucide-react";
 import { useStore } from "../lib/store";
+import { isMac } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
 import { CLOUD_ENABLED } from "../lib/flags";
@@ -42,16 +43,19 @@ type StepId =
 // Ordered onboarding steps. The Parley sign-in step only exists in the official
 // (cloud) build — it offers the free hosted STT + LLM. CLOUD_ENABLED is a
 // compile-time constant, so the OSS build never ships the step at all.
+// The perms and voiceTyping steps are macOS-only: the TCC permission walk and
+// the global push-to-talk layer aren't wired on Windows yet (mic access there
+// is a system setting with no runtime prompt).
 const STEPS: StepId[] = [
   "lang",
   "welcome",
   ...(CLOUD_ENABLED ? (["login"] as StepId[]) : []),
   "llm",
   "stt",
-  "perms",
+  ...(isMac() ? (["perms"] as StepId[]) : []),
   "profile",
   "diarize",
-  "voiceTyping",
+  ...(isMac() ? (["voiceTyping"] as StepId[]) : []),
   "done",
 ];
 const STEP_COUNT = STEPS.length;

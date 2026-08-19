@@ -1,8 +1,11 @@
-//! macOS permission checks for onboarding + the Settings Permissions panel.
-//! Two permissions gate a real meeting: the microphone (your voice) and System
-//! Audio Recording (the Core Audio process tap that captures the other party —
-//! NOT Screen Recording; the tap has its own TCC service, prompted via
-//! `NSAudioCaptureUsageDescription`).
+//! OS permission checks for onboarding + the Settings Permissions panel.
+//! Two permissions gate a real meeting: the microphone (your voice) and system
+//! audio (the capture of the other party). On macOS the latter is the Core
+//! Audio process tap's own TCC service (NOT Screen Recording), prompted via
+//! `NSAudioCaptureUsageDescription`. On Windows the microphone is a per-app
+//! privacy setting read from the capability consent store; system audio
+//! (WASAPI loopback) needs no consent and reports `unsupported` until the
+//! loopback capture ships.
 //!
 //! Status checks here must be side-effect free: `check_permissions` is polled by
 //! onboarding, so it must never trigger an OS consent prompt. Anything that can
@@ -95,7 +98,47 @@ mod imp {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+mod imp {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    const CONSENT_STORE: &str =
+        r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
+
+    /// Windows gates the microphone per user in Settings › Privacy & security ›
+    /// Microphone. Desktop (non-packaged) apps are governed by two switches in
+    /// the capability consent store: the master `microphone` value and the
+    /// `NonPackaged` value ("Let desktop apps access your microphone"). Both
+    /// default to Allow when absent, so a missing key reads as authorized.
+    pub fn microphone_status() -> &'static str {
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let denied = |subkey: &str| -> bool {
+            hkcu.open_subkey(subkey)
+                .and_then(|k| k.get_value::<String, _>("Value"))
+                .map(|v| v.eq_ignore_ascii_case("Deny"))
+                .unwrap_or(false)
+        };
+        if denied(CONSENT_STORE) || denied(&format!(r"{CONSENT_STORE}\NonPackaged")) {
+            "denied"
+        } else {
+            "authorized"
+        }
+    }
+
+    /// Windows shows no runtime consent prompt for desktop apps — access is
+    /// toggled in Settings, which `open_privacy_settings` deep-links to.
+    pub fn request_microphone() {}
+
+    /// WASAPI loopback capture is not implemented yet; `unsupported` keeps the
+    /// system-audio rows hidden in onboarding and Settings. Flips to granted
+    /// when the loopback source lands (loopback needs no OS consent).
+    pub fn probe_system_audio() -> u8 {
+        super::SA_UNSUPPORTED
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod imp {
     pub fn microphone_status() -> &'static str {
         "unknown"
@@ -140,11 +183,13 @@ pub fn app_identity(app: AppHandle) -> AppIdentity {
         .ok()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "unknown".to_string());
-    let running_from_app_bundle = executable_path.contains(".app/Contents/MacOS/");
+    // Normalize separators so the heuristics below hold on Windows too.
+    let normalized = executable_path.replace('\\', "/");
+    let running_from_app_bundle = normalized.contains(".app/Contents/MacOS/");
     let likely_dev_binary = !running_from_app_bundle
-        && (executable_path.contains("/target/debug/")
-            || executable_path.contains("/cargo-target/debug/")
-            || executable_path.contains("/cursor-sandbox-cache/"));
+        && (normalized.contains("/target/debug/")
+            || normalized.contains("/cargo-target/debug/")
+            || normalized.contains("/cursor-sandbox-cache/"));
 
     AppIdentity {
         bundle_identifier: app.config().identifier.clone(),
@@ -201,6 +246,17 @@ pub fn open_privacy_settings(pane: String) {
         };
         let _ = std::process::Command::new("open").arg(url).spawn();
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        // Only the microphone has a Windows analogue; everything else lands on
+        // the privacy hub. explorer.exe resolves ms-settings: URIs without the
+        // cmd `start` quoting pitfalls.
+        let url = match pane.as_str() {
+            "microphone" => "ms-settings:privacy-microphone",
+            _ => "ms-settings:privacy",
+        };
+        let _ = std::process::Command::new("explorer.exe").arg(url).spawn();
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let _ = pane;
 }

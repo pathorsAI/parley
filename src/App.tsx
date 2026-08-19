@@ -23,6 +23,7 @@ import {
   listenForProsody,
   listenForTranscript,
 } from "./lib/tauriEvents";
+import { isMac } from "./lib/platform";
 import { listenForSettings } from "./lib/settingsSync";
 import { listenForViewLogsMenu } from "./lib/diagnostics";
 import { listenForSttUsage } from "./lib/usage/log";
@@ -95,7 +96,9 @@ const App = () => {
   useThemePreference();
   const onboarded = useStore((s) => s.settings.onboarded);
   const fullscreen = useFullscreen();
-  const rounded = isTauri() && !fullscreen;
+  // CSS-drawn rounded corners only make sense over the macOS transparent
+  // window; the Windows main window is opaque and DWM handles its shape.
+  const rounded = isTauri() && isMac() && !fullscreen;
   const [releaseNotes, setReleaseNotes] = useState<ReleaseNotes | null>(null);
 
   useEffect(() => {
@@ -197,6 +200,9 @@ const App = () => {
   // would also kill the voice-typing host that lives in this window, leaving
   // the global push-to-talk key dead until the app is relaunched. An active
   // meeting is still stopped first: a hidden window must never keep recording.
+  // On Windows close destroys the window as the platform expects (voice typing
+  // isn't wired there yet); relaunching goes through the single-instance
+  // plugin, which recreates the window from config.
   useEffect(() => {
     if (!isTauri()) return;
     let active = true;
@@ -210,7 +216,7 @@ const App = () => {
     getCurrentWindow()
       .onCloseRequested((event) => {
         stopIfRecording();
-        if (navigator.userAgent.includes("Mac")) {
+        if (isMac()) {
           event.preventDefault();
           getCurrentWindow()
             .hide()

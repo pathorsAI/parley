@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "title": "Parley",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "decorations": false,
+        "transparent": false,
+        "shadow": true
+      }
+    ]
+  },
+  "bundle": {
+    "resources": [
+      "onnxruntime/onnxruntime.dll",
+      "onnxruntime/onnxruntime_providers_shared.dll"
+    ]
+  }
+}

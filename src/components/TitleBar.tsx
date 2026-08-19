@@ -9,6 +9,7 @@ import { log } from "../lib/log";
 import { sttApiKey } from "../lib/transcription/providers";
 import { toast } from "sonner";
 import { stopMockStream } from "../lib/mockStream";
+import { isMac } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
 import { beginMeeting } from "../lib/meeting/start";
 import { openSettings } from "../lib/nav";
@@ -27,7 +28,7 @@ import { StudyGenerationChip } from "./study/StudyGenerationChip";
 
 
 type TFn = ReturnType<typeof useI18n>["t"];
-type WindowAction = "close" | "minimize" | "fullscreen";
+type WindowAction = "close" | "minimize" | "fullscreen" | "maximize";
 type StudyTab = "report" | "replay";
 type Layout = AppSettings["layout"];
 
@@ -493,12 +494,58 @@ function PrimaryAction({
 }
 
 /**
+ * Caption controls for the undecorated Windows main window: minimize /
+ * maximize / close at the trailing edge, full titlebar height, flat hover —
+ * the native caption-button convention (close hovers Windows signal red).
+ */
+function WindowsControls({
+  onAction,
+  t,
+}: Readonly<{
+  onAction: (action: WindowAction) => void;
+  t: TFn;
+}>) {
+  const base = "grid w-11 place-items-center text-muted-foreground transition-colors";
+  return (
+    <div className="absolute right-0 top-0 flex h-full items-stretch">
+      <button
+        type="button"
+        aria-label={t("titlebar.minimizeWindow")}
+        onClick={() => onAction("minimize")}
+        className={`${base} hover:bg-muted hover:text-foreground`}
+      >
+        <Minus className="size-4" strokeWidth={1.25} />
+      </button>
+      <button
+        type="button"
+        aria-label={t("titlebar.maximizeWindow")}
+        onClick={() => onAction("maximize")}
+        className={`${base} hover:bg-muted hover:text-foreground`}
+      >
+        <svg viewBox="0 0 10 10" aria-hidden className="size-[10px]">
+          <rect x="0.5" y="0.5" width="9" height="9" rx="1.5" fill="none" stroke="currentColor" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        aria-label={t("titlebar.closeWindow")}
+        onClick={() => onAction("close")}
+        className={`${base} hover:bg-[#C42B1C] hover:text-white`}
+      >
+        <X className="size-4" strokeWidth={1.25} />
+      </button>
+    </div>
+  );
+}
+
+/**
  * Custom window titlebar. The main Tauri window is undecorated, so this header
- * owns both the draggable region and the window controls.
+ * owns both the draggable region and the window controls: macOS traffic lights
+ * at the leading edge, Windows caption buttons at the trailing edge.
  *
  * In fullscreen there are no window controls (macOS hides the traffic lights and
- * reveals its own menu bar at the top edge), so we drop our traffic lights and
- * let the logo + brand sit at the leading edge.
+ * reveals its own menu bar at the top edge), so we drop our controls and let
+ * the logo + brand sit at the leading edge.
  */
 export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean }>) {
   const { t } = useI18n();
@@ -650,23 +697,30 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
       if (action === "minimize") await appWindow.minimize();
       // Native macOS maps the green button to full screen (not window zoom).
       if (action === "fullscreen") await appWindow.setFullscreen(!(await appWindow.isFullscreen()));
+      // Windows caption button semantics: maximize/restore, not fullscreen.
+      if (action === "maximize") await appWindow.toggleMaximize();
     } catch (e) {
       log.warn("window: action failed", { action, error: String(e) });
     }
   }
 
+  // Reserve the leading gutter for macOS traffic lights and the trailing one
+  // for Windows caption buttons; fullscreen shows no controls on either OS.
+  const mac = isMac();
+  const padLeft = !fullscreen && mac ? "pl-[104px]" : "pl-4";
+  const padRight = !fullscreen && !mac ? "pr-[140px]" : "pr-3";
+
   return (
     <header
       data-tauri-drag-region
-      className={`relative flex h-[52px] shrink-0 items-center justify-between border-b bg-background/85 pr-3 backdrop-blur ${
-        fullscreen ? "pl-4" : "pl-[104px]"
-      }`}
+      className={`relative flex h-[52px] shrink-0 items-center justify-between border-b bg-background/85 backdrop-blur ${padLeft} ${padRight}`}
     >
       {/* macOS traffic lights: native sizing/colours, glyphs reveal on hover of
           the whole cluster (not per-button), and the trio dims to grey when the
           window loses focus — matching the system buttons. Hidden in fullscreen,
           where macOS shows no window controls. */}
-      {!fullscreen && <TrafficLights focused={focused} onAction={controlWindow} t={t} />}
+      {!fullscreen && mac && <TrafficLights focused={focused} onAction={controlWindow} t={t} />}
+      {!fullscreen && !mac && <WindowsControls onAction={controlWindow} t={t} />}
 
       {/* Top-left: information, not brand (macOS's menu bar already says
           Parley) — while recording, the session vitals (rec + elapsed + mic

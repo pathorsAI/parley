@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { log } from "../lib/log";
 import { Check, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, Plus, ScrollText, Sun, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
+import { isMac } from "../lib/platform";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings, SETTINGS_NAVIGATE_EVENT } from "../lib/settingsSync";
 import { signInWithGoogle, signOut, CloudError } from "../lib/cloud/client";
@@ -88,13 +89,17 @@ const NAV: {
   labelKey: TranslationKey;
   keywordsKey: TranslationKey;
   cloudOnly?: boolean;
+  macOnly?: boolean;
 }[] = [
   { id: "basic", labelKey: "settings.nav.basic", keywordsKey: "settings.kw.basic" },
   { id: "account", labelKey: "settings.nav.account", keywordsKey: "settings.kw.account", cloudOnly: true },
   { id: "provider", labelKey: "settings.nav.provider", keywordsKey: "settings.kw.provider" },
   { id: "transcription", labelKey: "settings.nav.transcription", keywordsKey: "settings.kw.transcription" },
-  { id: "voiceTyping", labelKey: "settings.nav.voiceTyping", keywordsKey: "settings.kw.voiceTyping" },
-  { id: "permissions", labelKey: "settings.nav.permissions", keywordsKey: "settings.kw.permissions" },
+  // macOnly: voice typing's global hotkey / paste layer and the TCC permission
+  // panel aren't wired on Windows yet — hide the categories rather than show
+  // dead controls.
+  { id: "voiceTyping", labelKey: "settings.nav.voiceTyping", keywordsKey: "settings.kw.voiceTyping", macOnly: true },
+  { id: "permissions", labelKey: "settings.nav.permissions", keywordsKey: "settings.kw.permissions", macOnly: true },
   { id: "evaluations", labelKey: "settings.nav.evaluations", keywordsKey: "settings.kw.evaluations" },
   { id: "todos", labelKey: "settings.nav.todos", keywordsKey: "settings.kw.todos" },
   { id: "mcp", labelKey: "settings.nav.mcp", keywordsKey: "settings.kw.mcp" },
@@ -141,7 +146,7 @@ export function SettingsApp() {
   // provider panel and "麥克風"/"mic" finds transcription.
   const [navQuery, setNavQuery] = useState("");
   const navMatches = useMemo(() => {
-    const visible = NAV.filter((n) => CLOUD_ENABLED || !n.cloudOnly);
+    const visible = NAV.filter((n) => (CLOUD_ENABLED || !n.cloudOnly) && (isMac() || !n.macOnly));
     const q = navQuery.trim().toLowerCase();
     if (!q) return visible;
     return visible.filter((n) =>
