@@ -31,9 +31,38 @@ that produced the build.
 
 It authenticates with the `APPLE_API_KEY_CONTENT` / `APPLE_API_KEY` /
 `APPLE_API_ISSUER` secrets, the same App Store Connect API key the desktop
-workflow notarizes with. If upload fails with a permissions error, that key's
-role is too narrow: create a new key with **App Manager** in App Store Connect →
-Users and Access → Integrations, and update those three secrets.
+workflow notarizes with.
+
+**Signing on the runner is not Xcode-managed, and this is the part that will
+confuse you.** A runner's keychain is empty, so Xcode's cloud signing is
+supposed to fetch an identity. It does — but only a *development* one, and then
+`-exportArchive` fails with:
+
+```
+error: exportArchive Cloud signing permission error
+error: exportArchive No profiles for 'com.pathors.parley.ios' were found
+```
+
+That message reads like a permissions problem and is not one. This document
+used to claim the API key's role was too narrow; it isn't. Probing the API with
+the current key returns `200` on `/v1/users`, which a Developer-role key cannot
+read at all. The actual cause is that **the team holds no iOS Distribution
+certificate** — only two `DEVELOPMENT` certificates and the macOS
+`DEVELOPER_ID_APPLICATION_G2` the desktop app notarizes with — and no
+provisioning profiles.
+
+So [`.github/scripts/asc_signing.py`](../.github/scripts/asc_signing.py) mints
+one per run: private key and CSR on the runner, an Apple Distribution
+certificate and two `IOS_APP_STORE` profiles from the App Store Connect API,
+installed into a throwaway keychain. An `always()` step revokes the certificate
+and deletes the profiles afterwards, because the private key dies with the
+runner and a certificate nobody can use still counts against Apple's per-team
+cap. It only ever deletes ids it recorded itself, so a certificate a human
+created is never touched.
+
+Exporting **by hand from a Mac** needs none of this: Xcode signed in to the team
+has the identity in its own keychain, which is why releases up to 1.2 were made
+that way and never hit this.
 
 **Build numbers.** Every upload needs a `CFBundleVersion` App Store Connect has
 not seen. `xcodegen generate` writes `App/Parley/Info.plist` from
