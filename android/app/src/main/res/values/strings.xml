@@ -76,6 +76,7 @@
     <string name="meeting_transcript_empty">The transcript appears here as people speak.</string>
     <string name="meeting_issue_quota">Transcription stopped: the hosted transcription quota is used up. The audio is still being recorded.</string>
     <string name="meeting_issue_error">Transcription stopped unexpectedly. The audio is still being recorded.</string>
+    <string name="meeting_mic_silenced">Another app has taken the microphone — Parley is recording silence until it gives it back.</string>
     <string name="meeting_title_format">Meeting %1$s</string>
     <string name="speaker_label">Speaker %1$d</string>
     <string name="speaker_unknown">Speaker</string>

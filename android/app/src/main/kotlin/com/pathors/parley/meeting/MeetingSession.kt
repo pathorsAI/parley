@@ -1,6 +1,10 @@
 package com.pathors.parley.meeting
 
 import android.content.Context
+import android.media.AudioManager
+import android.media.AudioRecordingConfiguration
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import com.pathors.parley.audio.MicCapture
 import com.pathors.parley.audio.MicCaptureException
@@ -96,6 +100,19 @@ interface LiveMeeting {
     /** Input level, 0..1 — drives the level meter. */
     val level: StateFlow<Float>
     val elapsedMs: StateFlow<Long>
+
+    /**
+     * True while the platform is handing us silence because another app took
+     * the microphone.
+     *
+     * From Android 10 this is the *only* signal there is: `AudioRecord.read`
+     * keeps returning success and keeps returning zeroes, so without watching
+     * for it a meeting can record forty minutes of nothing and report no
+     * problem at all. The UI turns it into a banner; the recording deliberately
+     * keeps running, because the takeover usually ends by itself and what comes
+     * after it is still worth having.
+     */
+    val micSilenced: StateFlow<Boolean>
 }
 
 /**
@@ -136,17 +153,34 @@ class MeetingSession(
     private val _elapsedMs = MutableStateFlow(0L)
     override val elapsedMs: StateFlow<Long> = _elapsedMs.asStateFlow()
 
+    private val _micSilenced = MutableStateFlow(false)
+    override val micSilenced: StateFlow<Boolean> = _micSilenced.asStateFlow()
+
     /** RMS of the last microphone chunk, 0..1 — drives the level meter. */
     override val level: StateFlow<Float> get() = mic.level
 
     /** Wall-clock start, carried into the recording's `createdAt`. */
     val startedAtMs: Long = System.currentTimeMillis()
 
-    private var relay: SttRelayClient? = null
+    /** `@Volatile` because the microphone coroutine reads it for every chunk
+     *  while a reconnect may be swapping it on another thread. */
+    @Volatile private var relay: SttRelayClient? = null
     private var encoder: OggOpusEncoder? = null
     private var captureJob: Job? = null
     private var eventsJob: Job? = null
     private var tickerJob: Job? = null
+    private var reconnectJob: Job? = null
+    private var micMonitor: AudioManager.AudioRecordingCallback? = null
+
+    /** Bumped for every relay connection this recording makes; each leg
+     *  numbers its own segments from zero, so without a per-leg id prefix a
+     *  reconnect would overwrite the opening of the meeting. */
+    private var relayLeg = 0
+    private var reconnectAttempts = 0
+    /** `elapsedRealtime` at the first microphone chunk — the offset a
+     *  reconnected leg needs to place its timestamps after the audio that
+     *  came before it. */
+    private var captureStartedAt = 0L
 
     @Volatile private var finishRequested = false
 
@@ -179,25 +213,28 @@ class MeetingSession(
         }
         this.encoder = encoder
 
-        val client = SttRelayClient(
-            SttRelayClient.Options(
-                bearerToken = token,
-                feature = SttRelayClient.Feature.MEETING,
-            )
-        )
+        val client = newRelay(token, leg = 0, timeOffsetMs = 0)
         relay = client
-        // Collect before connecting: connect() does not wait for the stream, and
-        // a rejected handshake arrives as an event rather than an exception.
+        // Collect before connecting: open() does not wait for the handshake, and
+        // a rejected one arrives as an event rather than an exception.
         eventsJob = scope.launch { client.events.collect(::onRelayEvent) }
-        client.connect()
+        // `open()` rather than `connect()`: the socket does not have to be up
+        // before the microphone does. OkHttp holds the audio behind the config
+        // frame until the upgrade lands, so the recording begins when the user
+        // asked for it instead of one network round trip later.
+        client.open()
 
         _state.value = MeetingState.Recording
+        captureStartedAt = SystemClock.elapsedRealtime()
         startTicker()
+        startMicMonitor()
 
         try {
             mic.start().collect { chunk ->
                 encoder.append(chunk)
-                client.sendPcm(chunk)
+                // The field, not the local: a reconnect swaps the client, and a
+                // captured one would keep feeding a socket nobody reads.
+                relay?.sendPcm(chunk)
             }
         } catch (e: MicCaptureException) {
             abandon()
@@ -211,12 +248,92 @@ class MeetingSession(
     private fun onRelayEvent(event: SttRelayEvent) {
         when (event) {
             is SttRelayEvent.Segment -> upsert(event.segment)
+            // Out of quota is the one failure reconnecting cannot fix: the next
+            // handshake is refused the same way, so this stays a banner.
             is SttRelayEvent.QuotaExceeded -> _issue.value = TranscriptionIssue.QUOTA_EXCEEDED
-            is SttRelayEvent.Error -> _issue.value = TranscriptionIssue.RELAY_ERROR
+            is SttRelayEvent.Error -> {
+                _issue.value = TranscriptionIssue.RELAY_ERROR
+                scheduleReconnect()
+            }
             // A close after finalize is the normal end of the stream.
             is SttRelayEvent.Closed ->
-                if (!finishRequested) _issue.value = TranscriptionIssue.RELAY_CLOSED
+                if (!finishRequested) {
+                    _issue.value = TranscriptionIssue.RELAY_CLOSED
+                    scheduleReconnect()
+                }
         }
+    }
+
+    private fun newRelay(token: String, leg: Int, timeOffsetMs: Long) =
+        SttRelayClient(
+            SttRelayClient.Options(
+                bearerToken = token,
+                feature = SttRelayClient.Feature.MEETING,
+                idPrefix = if (leg == 0) null else "${SttRelayClient.SOURCE}@$leg",
+                timeOffsetMs = timeOffsetMs,
+            )
+        )
+
+    /**
+     * Reopen the relay while the microphone keeps running.
+     *
+     * Nothing about the audio file depends on the socket, so a dropped relay
+     * costs live transcript, not the recording — and the cloud transcribes the
+     * uploaded audio anyway. That is why this retries quietly in the background
+     * instead of failing the meeting.
+     */
+    private fun scheduleReconnect() {
+        if (finishRequested || reconnectJob != null) return
+        if (_state.value !is MeetingState.Recording) return
+        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return
+        reconnectAttempts += 1
+        // 1, 2, 4, 8 … capped. Long enough not to hammer a relay that is down,
+        // short enough that walking back into Wi-Fi picks up quickly.
+        val backoff = minOf(
+            RECONNECT_MAX_DELAY_MS,
+            RECONNECT_BASE_DELAY_MS shl (reconnectAttempts - 1),
+        )
+        reconnectJob = scope.launch {
+            delay(backoff)
+            reconnectJob = null
+            if (finishRequested || _state.value !is MeetingState.Recording) return@launch
+            val token = auth.currentToken() ?: return@launch
+
+            relayLeg += 1
+            val offset = SystemClock.elapsedRealtime() - captureStartedAt
+            val next = newRelay(token, relayLeg, offset)
+            eventsJob?.cancel()
+            runCatching { relay?.cancel() }
+            relay = next
+            eventsJob = scope.launch { next.events.collect(::onRelayEvent) }
+            next.open()
+            _issue.value = null
+        }
+    }
+
+    /**
+     * Watch for the platform silencing our microphone. See [LiveMeeting.micSilenced]
+     * — on Android 10 and up an app only ever sees its own recordings here, so
+     * "any silenced configuration" means ours.
+     */
+    private fun startMicMonitor() {
+        val audio = context.getSystemService(AudioManager::class.java) ?: return
+        val callback = object : AudioManager.AudioRecordingCallback() {
+            override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
+                _micSilenced.value = configs.any { it.isClientSilenced }
+            }
+        }
+        // A Handler is required: this runs on Dispatchers.IO, which has no Looper.
+        audio.registerAudioRecordingCallback(callback, Handler(Looper.getMainLooper()))
+        micMonitor = callback
+    }
+
+    private fun stopMicMonitor() {
+        val callback = micMonitor ?: return
+        micMonitor = null
+        _micSilenced.value = false
+        context.getSystemService(AudioManager::class.java)
+            ?.unregisterAudioRecordingCallback(callback)
     }
 
     private fun upsert(segment: TranscriptSegment) {
@@ -230,7 +347,7 @@ class MeetingSession(
     }
 
     private fun startTicker() {
-        val startedAt = SystemClock.elapsedRealtime()
+        val startedAt = captureStartedAt
         tickerJob = scope.launch {
             while (true) {
                 _elapsedMs.value = SystemClock.elapsedRealtime() - startedAt
@@ -252,6 +369,9 @@ class MeetingSession(
         finishRequested = true
         _state.value = MeetingState.Finishing
         tickerJob?.cancel()
+        reconnectJob?.cancel()
+        reconnectJob = null
+        stopMicMonitor()
 
         mic.stop()
         withTimeoutOrNull(CAPTURE_JOIN_TIMEOUT_MS) { captureJob?.join() }
@@ -317,6 +437,9 @@ class MeetingSession(
     fun abandon() {
         tickerJob?.cancel()
         eventsJob?.cancel()
+        reconnectJob?.cancel()
+        reconnectJob = null
+        runCatching { stopMicMonitor() }
         runCatching { mic.stop() }
         runCatching { relay?.cancel() }
         runCatching { encoder?.cancel() }
@@ -363,5 +486,12 @@ class MeetingSession(
         /** How long to wait for the relay's flushed tail before giving up on it. */
         const val TAIL_TIMEOUT_MS = 8_000L
         const val CAPTURE_JOIN_TIMEOUT_MS = 5_000L
+
+        /** Reconnect ceiling for one meeting — enough for a genuinely flaky
+         *  hour, few enough that a relay that is simply gone stops being
+         *  dialled. */
+        const val MAX_RECONNECT_ATTEMPTS = 8
+        const val RECONNECT_BASE_DELAY_MS = 1_000L
+        const val RECONNECT_MAX_DELAY_MS = 15_000L
     }
 }

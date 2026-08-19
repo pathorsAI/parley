@@ -21,9 +21,23 @@ package com.pathors.parley.kit
  *
  * Not thread-safe — drive it from one thread (the relay client drives it from
  * the single WebSocket reader thread).
+ *
+ * @property source the audio source stamped on every segment (`"mix"` on a
+ *   phone) and the stem of the tail id. Speaker labels are built from it, so it
+ *   stays the same for a whole recording.
+ * @property idPrefix the stem of *committed* segment ids, defaulting to
+ *   [source]. A recording that has to reopen its relay mid-meeting gives each
+ *   leg its own prefix, because the provider restarts its own numbering at 0
+ *   and the second leg's `mix-0` would otherwise overwrite the first minute of
+ *   the transcript.
+ * @property timeOffsetMs added to every timestamp, for the same reason: a
+ *   reconnected leg starts its clock at 0 and would sort itself back into the
+ *   beginning of the meeting.
  */
 class SegmentBuilder(
     private val source: String,
+    private val idPrefix: String = source,
+    private val timeOffsetMs: Long = 0,
     private val sink: (TranscriptSegment) -> Unit,
 ) {
     private var segIndex: Long = 0
@@ -66,17 +80,7 @@ class SegmentBuilder(
 
     /** Emit the open run under a fresh segment id and advance the index. */
     private fun commit() {
-        sink(
-            TranscriptSegment(
-                id = "$source-$segIndex",
-                source = source,
-                speaker = currentSpeaker,
-                text = curFinal,
-                isFinal = true,
-                startMs = curStart,
-                endMs = curEnd,
-            )
-        )
+        emitOpenRun()
         segIndex += 1
     }
 
@@ -86,22 +90,28 @@ class SegmentBuilder(
      */
     fun emitCommitted() {
         if (curFinal.isBlank()) return
+        emitOpenRun()
+    }
+
+    private fun emitOpenRun() {
         sink(
             TranscriptSegment(
-                id = "$source-$segIndex",
+                id = "$idPrefix-$segIndex",
                 source = source,
                 speaker = currentSpeaker,
                 text = curFinal,
                 isFinal = true,
-                startMs = curStart,
-                endMs = curEnd,
+                startMs = curStart + timeOffsetMs,
+                endMs = curEnd + timeOffsetMs,
             )
         )
     }
 
     /**
      * Emit the tentative tail under a stable `{source}-tail` id (empty text
-     * clears the previous tail in the UI).
+     * clears the previous tail in the UI). The id deliberately ignores
+     * [idPrefix]: there is only ever one tail on screen, and every `-tail`
+     * suffix check in the app and the cloud depends on this exact shape.
      */
     fun emitTail(text: String, speaker: Int, startMs: Long) {
         sink(
@@ -111,8 +121,8 @@ class SegmentBuilder(
                 speaker = speaker,
                 text = text,
                 isFinal = false,
-                startMs = startMs,
-                endMs = startMs,
+                startMs = startMs + timeOffsetMs,
+                endMs = startMs + timeOffsetMs,
             )
         )
     }

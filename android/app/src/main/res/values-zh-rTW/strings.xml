@@ -75,6 +75,7 @@
     <string name="meeting_transcript_empty">有人開口說話後，逐字稿會顯示在這裡。</string>
     <string name="meeting_issue_quota">轉錄已停止：託管轉錄額度已用完。錄音仍在繼續。</string>
     <string name="meeting_issue_error">轉錄意外中斷。錄音仍在繼續。</string>
+    <string name="meeting_mic_silenced">麥克風被其他 app 佔用中——在它釋放之前，Parley 錄到的是靜音。</string>
     <string name="meeting_title_format">會議 %1$s</string>
     <string name="speaker_label">說話者 %1$d</string>
     <string name="speaker_unknown">說話者</string>

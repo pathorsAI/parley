@@ -116,4 +116,30 @@ class SegmentBuilderTest {
         builder.endpoint()
         assertEquals("reset after endpoint", 0, builder.currentSpeaker)
     }
+
+    /**
+     * A relay that has to be reopened mid-meeting restarts its own numbering
+     * and its own clock at zero. Both are rebased so the second leg lands after
+     * the first instead of on top of it.
+     */
+    @Test
+    fun reconnectedLegKeepsItsOwnIdsAndRebasedTimestamps() {
+        val second = mutableListOf<TranscriptSegment>()
+        val leg = SegmentBuilder("mix", idPrefix = "mix@1", timeOffsetMs = 60_000) {
+            second.add(it)
+        }
+        leg.pushFinal("Back again", speaker = 1, startMs = 0, endMs = 900)
+        leg.emitCommitted()
+        leg.emitTail("and still", speaker = 1, startMs = 900)
+
+        assertEquals("must not collide with the first leg's mix-0", "mix@1-0", second[0].id)
+        assertEquals("speaker labels still key off the source", "mix", second[0].source)
+        assertEquals(60_000L, second[0].startMs)
+        assertEquals(60_900L, second[0].endMs)
+        // The tail id is the one thing that stays put: every `-tail` check in
+        // the app and the cloud depends on this exact shape, and only one tail
+        // is ever on screen.
+        assertEquals("mix-tail", second[1].id)
+        assertEquals(60_900L, second[1].startMs)
+    }
 }

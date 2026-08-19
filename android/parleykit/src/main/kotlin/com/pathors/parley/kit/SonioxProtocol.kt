@@ -142,9 +142,11 @@ class SonioxStreamError(
  */
 class SonioxStreamParser(
     source: String = "mix",
+    idPrefix: String = source,
+    timeOffsetMs: Long = 0,
     sink: (TranscriptSegment) -> Unit,
 ) {
-    private val builder = SegmentBuilder(source, sink)
+    private val builder = SegmentBuilder(source, idPrefix, timeOffsetMs, sink)
 
     /** Set once a `finished` marker arrives — the stream ended normally. */
     var finished: Boolean = false
