@@ -83,7 +83,22 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
-## What's New — 1.4.1
+## What's New — 1.4.2
+
+Dictation can stop leaving the app you are typing in. Turn on a microphone
+window in Settings — five minutes, fifteen, or an hour — and after a dictation
+Parley keeps the microphone for that long, so the next tap on the keyboard's mic
+types where you already are instead of opening Parley. iOS shows the orange
+microphone dot for the whole window, because Parley really is holding the
+microphone: nothing is recorded, transcribed or sent until you tap the mic, and
+sound that arrives before then is thrown away as it comes in. It is off until you
+turn it on, every window ends on its own, and you can end one early from
+Settings, from the record screen, or from the keyboard.
+
+Losing the connection is now a pause rather than the end. A network drop
+mid-sentence used to finish the recording and show an error; the transcript now
+reconnects on its own, keeps the audio from the gap instead of discarding it, and
+only gives up once it really cannot get back.
 
 The voice half of the keyboard was drawn like a keyboard, and it isn't one:
 nothing on it types a letter. It is now a round record button in the middle of
