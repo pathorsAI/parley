@@ -52,6 +52,25 @@ final class MeetingRecorder: ObservableObject {
     /// the meeting, which is what gets the audio captured so far onto disk and
     /// into the cloud instead of leaving a dead recording on screen.
     @Published private(set) var lostMicrophone = false
+    /// How the live transcript is doing, separately from `status`, so the view
+    /// can draw "reconnecting" as the temporary state it is instead of styling
+    /// it like the sentence that says the transcript is over.
+    @Published private(set) var transcription: TranscriptionHealth = .idle
+
+    /// The live transcript's side of the meeting. None of these ends the
+    /// recording: the audio file is written from the tap and uploaded either
+    /// way (see the type doc).
+    enum TranscriptionHealth: Equatable {
+        /// No relay this meeting — signed out, or nothing started yet.
+        case idle
+        case connecting
+        case live
+        /// The socket dropped; audio is being held for the next leg.
+        case reconnecting
+        /// Out of reach. The recording continues and the cloud transcribes the
+        /// upload; only the *live* transcript is over.
+        case stopped
+    }
 
     /// What the record button reflects. True from the tap, not from the moment
     /// the socket came up.
@@ -64,8 +83,10 @@ final class MeetingRecorder: ObservableObject {
     private var uploader: MeetingUploader?
     /// The audio thread writes here, not to a client it captured once. A
     /// reconnect swaps the client behind it; a tap closure holding the old one
-    /// directly would keep feeding a socket nobody reads.
-    private let sink = RelaySink()
+    /// directly would keep feeding a socket nobody reads. It also *holds* the
+    /// audio spoken while there is no socket, so a blip costs a pause in the
+    /// live transcript rather than the sentence that was said during it.
+    private let audio = RelayAudioBridge()
 
     /// Bumped for every relay connection this recording makes. Events carry the
     /// leg they came from so a socket that dies slowly cannot write into a
@@ -76,11 +97,11 @@ final class MeetingRecorder: ObservableObject {
     /// The user asked to stop, so a socket close is the expected end of the
     /// stream rather than something to reconnect from.
     private var finishRequested = false
-    /// Monotonic start of capture, for the offset a reconnected leg needs to
-    /// place its timestamps after the audio that came before it.
-    private var captureStartedAt: TimeInterval = 0
 
-    private static let maxReconnectAttempts = 8
+    /// How often and how fast to redial. The offset each new leg needs comes
+    /// from the bridge rather than the wall clock — the bridge is what knows
+    /// where in the recording the audio it held was spoken.
+    private static let reconnect = ReconnectPolicy()
 
     // MARK: control
 
@@ -95,6 +116,8 @@ final class MeetingRecorder: ObservableObject {
         lostMicrophone = false
         leg = 0
         reconnectAttempts = 0
+        transcription = .idle
+        audio.reset()
 
         guard await AudioCapture.requestPermission() else {
             phase = .idle
@@ -112,12 +135,12 @@ final class MeetingRecorder: ObservableObject {
         // first: the handshake stops being something the user waits through.
         let client = token.map { makeRelay(token: $0, leg: 0, timeOffsetMs: 0) }
         relay = client
+        if let client { audio.attach(client) }
 
-        sink.swap(client)
         let cap = AudioCapture(
-            onChunk: { [weak self, sink] samples, level in
+            onChunk: { [weak self, audio] samples, level in
                 recorder?.append(samples)
-                sink.send(samples)
+                audio.send(samples)
                 Task { @MainActor in self?.micLevel = level }
             },
             onStatus: { [weak self] captureStatus in
@@ -129,7 +152,7 @@ final class MeetingRecorder: ObservableObject {
         } catch {
             uploader = nil
             relay = nil
-            sink.swap(nil)
+            audio.discard()
             client?.cancel()
             phase = .idle
             status = String(localized: "Audio error: \(error.localizedDescription)")
@@ -142,13 +165,13 @@ final class MeetingRecorder: ObservableObject {
         }
 
         capture = cap
-        captureStartedAt = ProcessInfo.processInfo.systemUptime
         phase = .recording
 
         guard let client else {
             status = String(localized: "Not signed in — microphone test only")
             return
         }
+        transcription = .connecting
         status = String(localized: "Connecting transcription…")
         await connect(client, leg: 0)
     }
@@ -166,7 +189,9 @@ final class MeetingRecorder: ObservableObject {
         let cap = capture
         capture = nil
         await cap?.stop()
-        sink.swap(nil)
+        // Whatever the bridge is still holding belongs to no leg now; the
+        // finalize below drains what actually reached the relay.
+        audio.discard()
         micLevel = 0
 
         if let relay {
@@ -199,9 +224,13 @@ final class MeetingRecorder: ObservableObject {
             try await client.start()
             guard self.leg == leg, phase == .recording else { return }
             reconnectAttempts = 0
+            transcription = .live
             status = String(localized: "Transcribing live")
         } catch {
             guard self.leg == leg else { return }
+            // The handshake failed, so this leg never carried anything: hand
+            // the audio back to the hold buffer for the next one.
+            audio.hold()
             scheduleReconnect()
         }
     }
@@ -220,55 +249,86 @@ final class MeetingRecorder: ObservableObject {
             // owns the copy; once the meeting is winding down the stop path
             // does, and neither wants this overwriting it.
             guard !finishRequested, isRecording else { return }
+            guard !event.isQuotaExceeded else {
+                // Out of quota is the one failure a redial cannot fix: the
+                // next handshake is refused the same way.
+                let dying = relay
+                relay = nil
+                dying?.cancel()
+                giveUpOnTranscription(
+                    String(
+                        localized:
+                            "You're out of transcription quota — live transcription stopped. The recording is still running and will be transcribed once the quota resets."
+                    ))
+                return
+            }
             scheduleReconnect()
         }
     }
 
     /// Reopen the relay while the microphone keeps running. The audio file is
     /// untouched by any of this — the only thing at stake is how much of the
-    /// transcript appears live rather than after the upload.
+    /// transcript appears live rather than after the upload, and the bridge
+    /// keeps the words spoken in between for the leg that comes next.
     private func scheduleReconnect() {
         guard reconnectTask == nil, isRecording, !finishRequested else { return }
-        guard let token = KeychainStore.get(AppState.tokenKey) else {
-            status = String(localized: "Live transcription stopped — the recording is still running")
-            return
-        }
-        guard reconnectAttempts < Self.maxReconnectAttempts else {
-            status = String(
-                localized:
-                    "Live transcription stopped, but the recording is still running and will be transcribed after it syncs."
-            )
-            return
-        }
 
         let previous = relay
         relay = nil
-        sink.swap(nil)
+        audio.hold()
         previous?.cancel()
+
+        guard let token = KeychainStore.get(AppState.tokenKey) else {
+            giveUpOnTranscription(
+                String(
+                    localized: "Live transcription stopped — the recording is still running"))
+            return
+        }
+        guard case .retry(let backoff) = Self.reconnect.decide(attempt: reconnectAttempts + 1)
+        else {
+            giveUpOnTranscription(
+                String(
+                    localized:
+                        "Live transcription stopped, but the recording is still running and will be transcribed after it syncs."
+                ))
+            return
+        }
 
         reconnectAttempts += 1
         leg += 1
-        let attempt = reconnectAttempts
         let nextLeg = leg
-        // 1, 2, 4, 8 … capped at 15 s. Long enough not to hammer a relay that
-        // is down, short enough that walking back into Wi-Fi picks up quickly.
-        let backoff = min(15.0, pow(2.0, Double(attempt - 1)))
+        transcription = .reconnecting
         status = String(localized: "Transcription dropped — reconnecting…")
 
         reconnectTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(backoff))
+            try? await Task.sleep(for: backoff)
             guard !Task.isCancelled, let self else { return }
             await self.performReconnect(token: token, leg: nextLeg)
         }
     }
 
+    /// No leg is coming. Drop the held audio rather than carry a buffer nobody
+    /// will ever read for the rest of the meeting — the recording itself is
+    /// unaffected, and the cloud transcribes it after the upload.
+    private func giveUpOnTranscription(_ message: String) {
+        audio.discard()
+        transcription = .stopped
+        status = message
+    }
+
     private func performReconnect(token: String, leg targetLeg: Int) async {
         reconnectTask = nil
         guard leg == targetLeg, isRecording, !finishRequested else { return }
-        let offset = UInt64(max(0, (ProcessInfo.processInfo.systemUptime - captureStartedAt) * 1000))
-        let client = makeRelay(token: token, leg: targetLeg, timeOffsetMs: offset)
+        // The bridge decides the offset, because the bridge is what knows where
+        // in the recording the audio it is holding was actually spoken. A leg
+        // offset to "now" would file a gap's worth of speech after the words
+        // that followed it.
+        guard
+            let client = audio.attach({ offsetMs in
+                self.makeRelay(token: token, leg: targetLeg, timeOffsetMs: offsetMs)
+            })
+        else { return }
         relay = client
-        sink.swap(client)
         await connect(client, leg: targetLeg)
     }
 
@@ -372,30 +432,8 @@ final class MeetingRecorder: ObservableObject {
             self.segments = segments
             self.status = status
             phase = .recording
+            transcription = .live
             micLevel = 0.11
         }
     #endif
-}
-
-/// Hands microphone chunks to whichever relay leg is current.
-///
-/// Lives outside the actor on purpose: `send` runs on the audio render thread,
-/// where hopping to the main actor to look up a property is not an option. The
-/// lock is held only long enough to read a reference.
-private final class RelaySink: @unchecked Sendable {
-    private let lock = NSLock()
-    private var client: SttRelayClient?
-
-    func swap(_ next: SttRelayClient?) {
-        lock.lock()
-        client = next
-        lock.unlock()
-    }
-
-    func send(_ samples: [Int16]) {
-        lock.lock()
-        let current = client
-        lock.unlock()
-        current?.enqueue(pcm: samples)
-    }
 }

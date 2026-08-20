@@ -286,15 +286,28 @@ final class KeyboardViewController: UIInputViewController {
         // back still shows the sentence in progress.
         bridge.tail = String(d.committed.suffix(Self.tailLimit))
         switch d.state {
-        case .starting, .listening: bridge.listening = true
-        case .finishing: bridge.listening = true
+        case .starting, .listening: 
+            bridge.listening = true
+            bridge.reconnecting = false
+        case .reconnecting:
+            // Still a live session: the app's microphone is open and the audio
+            // is being held for the next relay leg. Saying so — rather than
+            // going quiet, or showing the red error copy — is the difference
+            // between "hold on" and "that didn't work".
+            bridge.listening = true
+            bridge.reconnecting = true
+        case .finishing:
+            bridge.listening = true
+            bridge.reconnecting = false
         case .done:
             bridge.listening = false
+            bridge.reconnecting = false
             bridge.partial = ""
             // The tail stays: the last thing said is worth still being able to
             // read once the button has gone quiet.
         case .error:
             bridge.listening = false
+            bridge.reconnecting = false
             bridge.partial = ""
             bridge.tail = ""
             // Surface the app's failure where the user actually is. Swallowing
@@ -375,6 +388,10 @@ final class KeyboardBridge: ObservableObject {
 
     @Published var hasFullAccess = false
     @Published var listening = false
+    /// The app lost the relay socket and is redialling it. Still listening —
+    /// this only changes what the caption says, never whether the session is
+    /// alive.
+    @Published var reconnecting = false
     @Published var partial = ""
     /// The last stretch of settled text for the running session, shown above
     /// the record button in a softer ink so dictation reads as continuous.

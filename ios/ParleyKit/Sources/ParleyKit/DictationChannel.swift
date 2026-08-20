@@ -60,6 +60,11 @@ public enum DictationChannel {
 
         public enum State: String, Codable, Sendable {
             case starting, listening, finishing, done, error
+            /// The relay socket dropped and the app is redialling it. The
+            /// microphone is still open and the audio is being held, so this
+            /// is a pause in the words arriving — deliberately not `error`,
+            /// which is where the session actually ends.
+            case reconnecting
         }
 
         public init(

@@ -25,7 +25,8 @@ struct DictationView: View {
     private var needsManualReturn: Bool {
         !coordinator.awaitingMicPermission
             && coordinator.returnableHost == nil
-            && (coordinator.state == .starting || coordinator.state == .listening)
+            && (coordinator.state == .starting || coordinator.state == .listening
+                || coordinator.state == .reconnecting)
     }
 
     var body: some View {
@@ -77,13 +78,16 @@ struct DictationView: View {
     }
 
     private var pulse: CGFloat {
-        coordinator.state == .listening ? 1.06 : 1
+        coordinator.state == .listening || coordinator.state == .reconnecting ? 1.06 : 1
     }
 
     private var statusIcon: String {
         switch coordinator.state {
         case .error: return "exclamationmark.triangle"
         case .finishing, .done: return "checkmark"
+        // Deliberately not the warning triangle: the microphone is still open
+        // and the words are being kept. This is a pause, not a failure.
+        case .reconnecting: return "arrow.triangle.2.circlepath"
         default: return "waveform"
         }
     }
@@ -94,6 +98,11 @@ struct DictationView: View {
         if coordinator.awaitingMicPermission {
             return String(localized: "Allow microphone access")
         }
+        // Ahead of the swipe guidance: a user watching this screen while it
+        // redials should be told what it is doing, not asked to leave.
+        if coordinator.state == .reconnecting {
+            return String(localized: "Reconnecting…")
+        }
         if needsManualReturn {
             return String(localized: "Swipe back to your app")
         }
@@ -103,6 +112,8 @@ struct DictationView: View {
         case .finishing: return String(localized: "Wrapping up…")
         case .done: return String(localized: "Done")
         case .error: return String(localized: "Couldn't start")
+        // Handled above, before the swipe guidance.
+        case .reconnecting: return String(localized: "Reconnecting…")
         }
     }
 
@@ -115,6 +126,12 @@ struct DictationView: View {
         }
         if coordinator.state == .error {
             return coordinator.errorMessage ?? String(localized: "Please try again.")
+        }
+        if coordinator.state == .reconnecting {
+            return String(
+                localized:
+                    "Keep talking — the microphone is still on and what you say is kept until the connection is back."
+            )
         }
         if needsManualReturn {
             return String(
