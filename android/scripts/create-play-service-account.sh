@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 #
-# Create the Google Cloud half of Play publishing and push the key into GitHub,
-# so `android-release.yml` can upload to Play (RELEASING.md §7).
+# Create the Google Cloud half of Play publishing — keyless — so
+# `android-release.yml` can upload to Play (RELEASING.md §7).
+#
+# No service-account key is minted. The pathors.com organization enforces
+# iam.disableServiceAccountKeyCreation, and that is the right default: a Play
+# publishing key in a GitHub secret is a long-lived credential that can ship
+# code to users. Instead this wires Workload Identity Federation, so each run
+# exchanges GitHub's own OIDC token for a credential that expires by itself.
 #
 # What this does NOT do, because there is no API for it: linking the Cloud
 # project to the Play developer account, and granting the service account the
@@ -9,8 +15,8 @@
 # cannot itself go through that API — it is Play Console web UI, by hand, and
 # the script prints the exact steps when it finishes.
 #
-# Idempotent: re-running reuses an existing project and service account, and
-# only ever mints a fresh key.
+# Idempotent: re-running reuses whatever already exists, so it is also the way
+# to repair one piece of the setup.
 #
 #   ./android/scripts/create-play-service-account.sh
 #
@@ -18,6 +24,8 @@ set -euo pipefail
 
 PROJECT_ID="${PLAY_PROJECT_ID:-pathors-play}"
 SA_NAME="parley-play-publisher"
+POOL="github"
+PROVIDER="pathorsai"
 REPO="${PLAY_SECRET_REPO:-pathorsAI/parley}"
 # The Play Console owner. A key minted from any other identity still works, but
 # a project owned by a personal account is a bus factor of one.
@@ -76,28 +84,54 @@ else
     --display-name="Parley Play publisher"
 fi
 
-step "Minting a JSON key"
-KEYFILE="$(mktemp -t play-sa-XXXXXX.json)"
-chmod 600 "$KEYFILE"
-# The key is the whole credential; keep it off disk for as long as possible and
-# never inside the repo.
-trap 'rm -f "$KEYFILE"' EXIT
-gcloud iam service-accounts keys create "$KEYFILE" \
-  --iam-account="$SA_EMAIL" --project="$PROJECT_ID"
+step "Workload Identity Federation for GitHub Actions"
+# No key is minted, and none can be: the pathors.com organization enforces
+# iam.disableServiceAccountKeyCreation. That is the right default — a Play
+# publishing key in a GitHub secret is a long-lived credential that can ship
+# code to users — so the release authenticates with the OIDC token GitHub mints
+# per run instead, and nothing is left at rest.
+gcloud services enable sts.googleapis.com iamcredentials.googleapis.com --project="$PROJECT_ID"
 
-step "Setting PLAY_SERVICE_ACCOUNT_JSON on $REPO"
-gh secret set PLAY_SERVICE_ACCOUNT_JSON --repo "$REPO" < "$KEYFILE"
-echo "set"
-
-if command -v pb >/dev/null; then
-  step "Filing the key in patchbay"
-  pb key store google-play-service-account-parley \
-    --label "Google Play publisher SA — Parley ($SA_EMAIL)" \
-    --purpose "Uploads app bundles to the Play internal track from android-release.yml; mirrors GitHub secret PLAY_SERVICE_ACCOUNT_JSON on $REPO" \
-    --value "$(cat "$KEYFILE")" --overwrite 2>/dev/null \
-    && echo "stored" \
-    || echo "skipped (store it by hand: pb key store google-play-service-account-parley)"
+if gcloud iam workload-identity-pools describe "$POOL" \
+     --project="$PROJECT_ID" --location=global >/dev/null 2>&1; then
+  echo "pool $POOL already exists — reusing"
+else
+  gcloud iam workload-identity-pools create "$POOL" --project="$PROJECT_ID" \
+    --location=global --display-name="GitHub Actions"
 fi
+
+if gcloud iam workload-identity-pools providers describe "$PROVIDER" \
+     --project="$PROJECT_ID" --location=global --workload-identity-pool="$POOL" >/dev/null 2>&1; then
+  echo "provider $PROVIDER already exists — reusing"
+else
+  # The attribute condition is the outer fence: without it any GitHub repository
+  # in the world can present a token to this provider.
+  gcloud iam workload-identity-pools providers create-oidc "$PROVIDER" \
+    --project="$PROJECT_ID" --location=global --workload-identity-pool="$POOL" \
+    --display-name="pathorsAI repos" \
+    --issuer-uri="https://token.actions.githubusercontent.com" \
+    --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
+    --attribute-condition="assertion.repository_owner=='${REPO%%/*}'"
+fi
+
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+WIF_PROVIDER="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/providers/${PROVIDER}"
+
+step "Letting $REPO — and only $REPO — impersonate the publisher"
+# The inner fence. The provider trusts the whole org; this trusts one repo.
+gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" --project="$PROJECT_ID" \
+  --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/attribute.repository/${REPO}" \
+  >/dev/null
+echo "bound"
+
+step "Publishing the config to $REPO"
+# Variables, not secrets: neither value authorizes anything on its own, and
+# reading them out of the workflow logs is how you debug a failed release.
+gh variable set PLAY_WIF_PROVIDER --repo "$REPO" --body "$WIF_PROVIDER"
+gh variable set PLAY_PUBLISHER_SERVICE_ACCOUNT --repo "$REPO" --body "$SA_EMAIL"
+echo "PLAY_WIF_PROVIDER              $WIF_PROVIDER"
+echo "PLAY_PUBLISHER_SERVICE_ACCOUNT $SA_EMAIL"
 
 cat <<MANUAL
 
@@ -121,5 +155,5 @@ before assuming it is misconfigured.
 
 Remember the first bundle for the package cannot go through the API at all.
 If nothing has been uploaded to Play by hand yet, do that first — see
-android/RELEASING.md → "Play service account".
+android/RELEASING.md → "Play publishing".
 MANUAL
