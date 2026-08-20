@@ -226,26 +226,31 @@ release exists, and nobody finds out until someone asks where the build went.
 The check runs immediately after checkout, so a misconfigured release costs
 seconds and leaves no half-made release behind.
 
-#### The two steps with no API
+#### Granting the service account access (done 2026-08-20)
 
-Linking a Cloud project to a Play account is what *enables* the Play Developer
-API, so it cannot go through the API it enables.
+**There is no "API access" page and no "Release manager" role any more.** Older
+guides — including earlier versions of this one — send you to
+`Setup → API access`, which now redirects to the app list. Google folded service
+accounts into ordinary user management, and roles into individual permissions.
 
-1. Play Console → **Setup → API access** → link the Cloud project `pathors-play`.
-2. Same page, under *Service accounts*,
-   `parley-play-publisher@pathors-play.iam.gserviceaccount.com` appears →
-   **Grant access** → **Release manager** (upload and release to testing tracks
-   and production, but no access to payments or account settings) → restrict to
-   Parley under *App permissions* → **Invite user**.
+The current path is **Users and permissions → Invite new user**, with the
+service account's email as the user:
 
-Permissions take minutes to hours to propagate on a fresh account. A
-`403 The caller does not have permission` on the first run is usually just that,
-not a misconfiguration.
+1. Play Console → **使用者和權限 / Users and permissions** → **邀請新的使用者 /
+   Invite new user**
+2. Email: `parley-play-publisher@pathors-play.iam.gserviceaccount.com`
+3. **App permissions** tab (not Account permissions — account permissions apply
+   to every app in the developer account) → add **Parley** → grant:
+   - 查看應用程式資訊 (唯讀) / View app information — the read access every
+     other permission is layered on
+   - 將應用程式發布至測試群組 / Release to testing tracks
+   - 發布正式版… / Release to production
+4. **Invite user**
 
-**The first bundle for a package cannot go through the API at all** — Play
-refuses until the app has a release created in the console. Run the workflow
-with `skip_play_upload=true`, upload that `.aab` by hand once, and every release
-after it goes through the API.
+No Cloud-project link is involved anywhere in this flow.
+
+Permissions can take minutes to propagate. A `403 The caller does not have
+permission` on the first run is usually just that, not a misconfiguration.
 
 ### 8. Dependency verification
 
@@ -313,11 +318,29 @@ are easy to get wrong:
    ```
 
    Verify: sign-in deep link, live meeting, file import, upload queue drain.
-5. **The first bundle only.** Play refuses a package's first bundle over the
-   API, so run the workflow manually with `skip_play_upload=true`, then
-   Play Console → Release → (track) → Create new release → upload the `.aab`
-   from the GitHub release, release notes (en + zh-TW), review, roll out. Every
-   release after that goes through the API and needs no console step.
+5. **Which track a tag ships to is configuration, not code.** The repository
+   variable `PLAY_TRACK` (default `internal`) decides; a `workflow_dispatch`
+   run can override it with the `track` input for one run. Moving the whole
+   pipeline to production is therefore one variable, with no commit and no
+   release cut to change it.
+
+   `PLAY_USER_FRACTION` (e.g. `0.1`) turns a production release into a staged
+   rollout — worth having, because it is the only undo Play offers once a build
+   is live.
+
+   **`PLAY_TRACK` stays `internal` until the app has actually launched.** Play
+   refuses a production release while the store listing, content rating, data
+   safety and target-audience forms are outstanding, so pointing at production
+   early would fail every release until someone finished them. As of 2026-08-20
+   the app dashboard reads *已完成 6 項，共 11 項*; the five outstanding ones are
+   登入詳細資料, 內容分級, 目標對象, 資料安全性, and the app category/contact
+   details. They are declarations about the app, not build config — nobody can
+   automate them, and the prepared answers are in `AppStore/`.
+
+   The first bundle for the package was uploaded by hand on 2026-08-18
+   (`0.1.0 (1)`, internal track), so the API can take over from `versionCode`
+   2 onward. Play rejects a `versionCode` it has already seen, which is why
+   `android-v0.1.0` could never have been published over the API.
 6. Keep the R8 `mapping.txt`. Every workflow run attaches it as an artifact and
    the Play upload step sends it along, so crash reports deobfuscate; a stack
    trace from a build whose mapping was lost is unreadable.
