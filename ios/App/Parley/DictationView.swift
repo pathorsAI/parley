@@ -19,9 +19,12 @@ struct DictationView: View {
     @ObservedObject var coordinator = DictationCoordinator.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// The user is stranded here and has to swipe back themselves.
+    /// The user is stranded here and has to swipe back themselves. Never while
+    /// the microphone prompt is up: swiping away would cancel the prompt as a
+    /// refusal, and the guidance was actively steering people into doing so.
     private var needsManualReturn: Bool {
-        coordinator.returnableHost == nil
+        !coordinator.awaitingMicPermission
+            && coordinator.returnableHost == nil
             && (coordinator.state == .starting || coordinator.state == .listening)
     }
 
@@ -88,6 +91,9 @@ struct DictationView: View {
     /// The headline is whatever the user must do next. Stranded here, that is
     /// the swipe back — "Listening…" would be answering the wrong question.
     private var statusTitle: String {
+        if coordinator.awaitingMicPermission {
+            return String(localized: "Allow microphone access")
+        }
         if needsManualReturn {
             return String(localized: "Swipe back to your app")
         }
@@ -101,6 +107,12 @@ struct DictationView: View {
     }
 
     private var statusSubtitle: String {
+        if coordinator.awaitingMicPermission {
+            return String(
+                localized:
+                    "Parley records here and types your words at the cursor. Answer the prompt first — dictation can't start without it."
+            )
+        }
         if coordinator.state == .error {
             return coordinator.errorMessage ?? String(localized: "Please try again.")
         }
