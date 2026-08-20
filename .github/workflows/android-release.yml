@@ -191,11 +191,9 @@ jobs:
           fail_on_unmatched_files: true
 
       # ── Play internal track ────────────────────────────────────────────────
-      # Skipped, silently and successfully, until PLAY_SERVICE_ACCOUNT_JSON
-      # exists. It cannot exist yet: the Play Developer API can only be enabled
-      # after the organization account clears identity verification. Everything
-      # above has already run by this point, so the bundle is on the GitHub
-      # release either way and can be uploaded through the Play Console UI.
+      # Reaching here means the precondition at the top of the job passed, so
+      # either the secret exists or the operator asked to skip. The mapping.txt
+      # rides along so Play can deobfuscate crash reports from this build.
       - name: Upload to the Play internal track
         if: ${{ !inputs.skip_play_upload }}
         uses: r0adkll/upload-google-play@935ef9c68bb393a8e6116b1575626a7f5be3a7fb # v1.1.3
