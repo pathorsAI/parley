@@ -17,7 +17,7 @@ commands):
 | `PLAY_UPLOAD_KEYSTORE_PASSWORD`   | signing the bundle       | **set**                         |
 | `PLAY_UPLOAD_KEY_ALIAS`           | signing the bundle       | **set** — `parley-upload`       |
 | `PLAY_UPLOAD_KEY_PASSWORD`        | signing the bundle       | **set**                         |
-| `PLAY_SERVICE_ACCOUNT_JSON`       | uploading to Play        | blocked on verification (§7)    |
+| `PLAY_SERVICE_ACCOUNT_JSON`       | uploading to Play        | **required, not yet set** (§7)  |
 
 The upload keystore itself is not in this repo and never will be. It lives in
 Pathors' private secret store alongside the Apple signing keys, together with a
@@ -36,10 +36,10 @@ listing (see §2).
   D-U-N-S number and verification (company registration docs, ~1–2 weeks).
 - Developer name shown on the store: `Pathors`.
 - **Status**: the Pathors account exists — developer account ID
-  **`6541030546953107772`** — and is **pending organization identity
-  verification**. Until that clears, the Play Developer API cannot be enabled,
-  which means no service account and therefore no automated upload
-  (see §7 below). Everything else on this page can be set up now.
+  **`6541030546953107772`** — and organization identity verification **cleared
+  on 2026-08-17**, along with the app itself (`com.pathors.parley`, app ID
+  `4972589806984548870`). The Play Developer API is therefore no longer blocked;
+  §7 is simply outstanding work.
 
 ### 2. Signing setup
 
@@ -170,44 +170,53 @@ Recommended path for the first release:
    through full review (typically 1–7 days; first-ever review of a new
    developer account can take longer).
 
-### 7. Play service account (blocked on identity verification)
+### 7. Play service account (outstanding — the last piece)
 
-This is the only piece that cannot be done yet. The Play Developer API is gated
-behind a verified account, so the service account below can only be created once
-account `6541030546953107772` clears identity verification. The release workflow
-already knows this: its Play upload step skips itself while
-`PLAY_SERVICE_ACCOUNT_JSON` is unset, so nothing needs changing in CI when the
-secret finally appears.
+Identity verification cleared on 2026-08-17, so nothing external blocks this any
+more; it is the one remaining step between pushing a tag and the build appearing
+on Play.
 
-When verification clears:
+**`android-release.yml` fails when `PLAY_SERVICE_ACCOUNT_JSON` is missing.** It
+used to skip the upload silently, which was defensible while the API was
+genuinely unreachable and is not any more: a release run that reports success
+without publishing anything is the worst kind of green — the tag is used up, the
+GitHub release exists, and nobody finds out until someone asks where the build
+went. The single case that legitimately cannot use the API is the *first* bundle
+for a package (below), and that is an explicit `skip_play_upload=true` on a
+manual run rather than something a missing secret decides.
 
-1. Play Console → **Setup → API access**.
-2. **Link a Google Cloud project** — create a fresh one (e.g. `pathors-play`)
-   rather than reusing an app's project; a Play account links exactly one
-   project and moving it later is a pain.
-3. **Create service account** → this bounces to the Cloud Console IAM page.
-   Name it `parley-play-publisher`, no project-level roles needed, then
-   **Keys → Add key → Create new key → JSON** and download it.
-4. Back in Play Console → API access the account appears under *Service
-   accounts*. **Grant access** → give it the **Release manager** role (upload
-   and release to testing tracks and production, but no access to payments or
-   account settings), restrict it to the Parley app under *App permissions*,
-   then **Invite user**.
-5. Push the JSON into GitHub and delete the local copy:
+The Cloud side is scripted; the Play Console side cannot be, because linking a
+Cloud project to a Play account is what *enables* the Play Developer API and so
+cannot go through the API it enables.
 
-   ```bash
-   gh secret set PLAY_SERVICE_ACCOUNT_JSON < ~/Downloads/pathors-play-*.json
-   rm ~/Downloads/pathors-play-*.json
-   ```
+```bash
+gcloud auth login          # as contact@pathors.com, the Play account owner
+./android/scripts/create-play-service-account.sh
+```
 
-6. Permissions take a few minutes to a few hours to propagate on a fresh
-   account. A `403 The caller does not have permission` on the first run is
-   usually just that, not a misconfiguration.
+That creates the `pathors-play` project, enables `androidpublisher`, creates the
+`parley-play-publisher` service account with **no** project-level IAM roles
+(everything it may do is granted in the Play Console instead), mints a JSON key,
+sets `PLAY_SERVICE_ACCOUNT_JSON` on the repo, files the key in patchbay, and
+deletes the local copy. It is idempotent — re-running reuses the project and the
+account and only mints a fresh key — and it prints the two remaining steps:
 
-Note that the **first** bundle for a package cannot go through the API — Play
-refuses until the app has a release created in the console. So the very first
-internal-track release is a manual upload regardless; automation takes over from
-the second one.
+1. Play Console → **Setup → API access** → link the Cloud project `pathors-play`.
+   A Play account links exactly one project and moving it later is a pain, which
+   is why the script makes a dedicated one rather than reusing an app's.
+2. Same page, under *Service accounts*, **Grant access** → **Release manager**
+   (upload and release to testing tracks and production, but no access to
+   payments or account settings) → restrict to Parley under *App permissions* →
+   **Invite user**.
+
+Permissions take minutes to hours to propagate on a fresh account. A
+`403 The caller does not have permission` on the first run is usually just that,
+not a misconfiguration.
+
+**The first bundle for a package cannot go through the API at all** — Play
+refuses until the app has a release created in the console. Run the workflow
+with `skip_play_upload=true`, upload that `.aab` by hand once, and every release
+after it goes through the API.
 
 ### 8. Dependency verification
 
@@ -255,9 +264,11 @@ are easy to get wrong:
 
    `.github/workflows/android-release.yml` runs the tests, builds and signs the
    bundle with the upload key, attaches the `.aab` to a GitHub Release, and
-   uploads it to the Play **internal** track — that last step skipping itself
-   until `PLAY_SERVICE_ACCOUNT_JSON` exists (§7). `workflow_dispatch` re-runs an
-   existing tag without needing a new commit, matching `ios-release.yml`.
+   uploads it to the Play **internal** track. Without
+   `PLAY_SERVICE_ACCOUNT_JSON` the run **fails** rather than publishing a
+   half-release (§7). `workflow_dispatch` re-runs an existing tag without
+   needing a new commit, matching `ios-release.yml`, and takes a
+   `skip_play_upload` input for the first-bundle case.
 3. To build the bundle by hand instead (Play requires `.aab`, not `.apk`):
 
    ```bash
@@ -274,9 +285,11 @@ are easy to get wrong:
    ```
 
    Verify: sign-in deep link, live meeting, file import, upload queue drain.
-5. While the Play upload is still manual: Play Console → Release → (track) →
-   Create new release → upload the `.aab` from the GitHub release, release notes
-   (en + zh-TW), review, roll out.
+5. **The first bundle only.** Play refuses a package's first bundle over the
+   API, so run the workflow manually with `skip_play_upload=true`, then
+   Play Console → Release → (track) → Create new release → upload the `.aab`
+   from the GitHub release, release notes (en + zh-TW), review, roll out. Every
+   release after that goes through the API and needs no console step.
 6. Keep the R8 `mapping.txt`. Every workflow run attaches it as an artifact and
    the Play upload step sends it along, so crash reports deobfuscate; a stack
    trace from a build whose mapping was lost is unreadable.

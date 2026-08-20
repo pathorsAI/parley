@@ -15,10 +15,12 @@ name: Android Release
 #
 # The final Play upload step is deliberately skippable. Pathors' Play account
 # (ID 6541030546953107772) is still going through organization identity
-# verification, and until that clears the Play Developer API cannot be enabled,
-# so no service account can exist. Until `PLAY_SERVICE_ACCOUNT_JSON` is set the
-# step is skipped and the run still produces a GitHub Release with the bundle,
-# which can be uploaded to the Play Console by hand.
+# verification. That has since cleared, so a missing `PLAY_SERVICE_ACCOUNT_JSON`
+# is now a misconfiguration and fails the run rather than quietly skipping the
+# upload — a release that reports success without publishing is the worst kind
+# of green. The one genuinely manual case, the first bundle for a package
+# (Play refuses it over the API), is served by the `skip_play_upload` input,
+# which has to be asked for.
 #
 # Runs on Linux (unlike the two macOS release workflows) because nothing here
 # needs Xcode. That only works because gradle/verification-metadata.xml carries
@@ -35,6 +37,15 @@ on:
         description: "Existing tag to build, for example android-v0.1.0"
         required: true
         type: string
+      skip_play_upload:
+        description: >-
+          Build and publish the GitHub release but do NOT upload to Play.
+          The one case that needs this is the first bundle for a package,
+          which Play refuses over the API until a release exists in the
+          console (android/RELEASING.md §7).
+        required: false
+        default: false
+        type: boolean
 
 # The bundle is attached to a GitHub Release.
 permissions:
@@ -165,8 +176,24 @@ jobs:
       # after the organization account clears identity verification. Everything
       # above has already run by this point, so the bundle is on the GitHub
       # release either way and can be uploaded through the Play Console UI.
+      # A release workflow that reports success without publishing is worse
+      # than one that fails: the tag is gone, the GitHub release exists, and
+      # nothing is on Play — and nobody finds out until someone asks where the
+      # build went. Skipping is therefore something the operator asks for, not
+      # something a missing secret decides.
+      - name: Check the Play upload can happen
+        if: ${{ !inputs.skip_play_upload }}
+        run: |
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::error title=PLAY_SERVICE_ACCOUNT_JSON is not set::This release cannot reach Play." \
+                 "Create the service account (android/RELEASING.md §7) and set the secret," \
+                 "or re-run this workflow with skip_play_upload=true if this is the first bundle" \
+                 "for the package, which Play refuses over the API until a release exists in the console."
+            exit 1
+          fi
+
       - name: Upload to the Play internal track
-        if: ${{ env.PLAY_SERVICE_ACCOUNT_JSON != '' }}
+        if: ${{ !inputs.skip_play_upload }}
         uses: r0adkll/upload-google-play@935ef9c68bb393a8e6116b1575626a7f5be3a7fb # v1.1.3
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
@@ -176,12 +203,20 @@ jobs:
           track: internal
           status: completed
 
-      - name: Report that the Play upload was skipped
-        if: ${{ env.PLAY_SERVICE_ACCOUNT_JSON == '' }}
+      # Deliberately loud. The run is green, so the summary is the only place
+      # that says this build is not on Play yet.
+      - name: Say that the Play upload was skipped on purpose
+        if: ${{ inputs.skip_play_upload }}
         run: |
-          echo "::notice::PLAY_SERVICE_ACCOUNT_JSON is not set, so the Play upload was skipped." \
-               "Download the .aab from this run's GitHub release and upload it in the Play Console" \
-               "(Testing → Internal testing). See android/RELEASING.md → \"Play service account\"."
+          {
+            echo "## Play upload skipped"
+            echo
+            echo "This run was started with \`skip_play_upload=true\`, so the bundle is **not** on Play."
+            echo "Download \`app-release.aab\` from the GitHub release and upload it in the Play Console"
+            echo "(Testing → Internal testing). Every later release should go through the API —"
+            echo "see \`android/RELEASING.md\` → \"Play service account\"."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning title=Not published to Play::skip_play_upload was set; upload the .aab by hand."
 
       - name: Remove the upload keystore
         if: always()
