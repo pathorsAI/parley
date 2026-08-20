@@ -170,6 +170,23 @@
         }
       }
     },
+    "Reconnecting… keep talking": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reconnecting… keep talking"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新連線中…可以繼續說"
+          }
+        }
+      }
+    },
     "Search": {
       "extractionState": "manual",
       "localizations": {

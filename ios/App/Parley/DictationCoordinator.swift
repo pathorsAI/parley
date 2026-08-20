@@ -41,6 +41,22 @@ final class DictationCoordinator: ObservableObject {
     private var session = ""
     private var capture: AudioCapture?
     private var relay: SttRelayClient?
+    /// The microphone's only counterparty. It forwards to the current relay
+    /// leg and *holds* what is spoken while there is none, so a dropped socket
+    /// costs a pause in the words appearing rather than the sentence said
+    /// during it. See `RelayAudioBridge`.
+    private let audio = RelayAudioBridge(holdLimit: .seconds(20))
+    /// Bumped per relay connection. Events carry their leg, so a socket dying
+    /// slowly cannot write into a session its replacement has moved on from,
+    /// and each leg's committed ids get their own prefix (a leg numbers its
+    /// segments from zero — without the prefix leg 2's first sentence would
+    /// overwrite leg 1's).
+    private var leg = 0
+    private var reconnectTask: Task<Void, Never>?
+    private var reconnectAttempts = 0
+    /// The session is ending on purpose, so a socket close is the expected end
+    /// of the stream rather than something to redial.
+    private var finishRequested = false
     private var capTimer: Task<Void, Never>?
     /// Persistent uplink listener (armed for the process's whole life): stop
     /// requests for the running session, and — the no-jump path — start
@@ -64,6 +80,11 @@ final class DictationCoordinator: ObservableObject {
     /// session the user forgets to stop can't quietly burn the whole hosted
     /// quota. The backstop stops the mic; the tail still flushes.
     private let maxSeconds: UInt64 = 120
+
+    /// Dictation redials faster and gives up sooner than a meeting does:
+    /// someone is standing there mid-sentence, and the whole session is capped
+    /// at two minutes. `ReconnectPolicy.dictation` is that ladder.
+    private static let reconnect = ReconnectPolicy.dictation
 
     private init() {
         armRequestObserver()
@@ -121,6 +142,12 @@ final class DictationCoordinator: ObservableObject {
         partial = ""
         state = .starting
         active = true
+        leg = 0
+        reconnectAttempts = 0
+        finishRequested = false
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        audio.reset()
         publish()
 
         #if DEBUG
@@ -187,25 +214,19 @@ final class DictationCoordinator: ObservableObject {
             }
         }
 
-        let client = SttRelayClient(
-            // "voice_typing" is the cloud's whitelisted tag for this flow (the
-            // relay only attributes meeting | voice_typing | realtime; anything
-            // else is billed unattributed).
-            options: .init(bearerToken: token, feature: "voice_typing")
-        ) { [weak self] event in
-            Task { @MainActor in self?.handle(event) }
-        }
+        let client = makeRelay(token: token, leg: 0, timeOffsetMs: 0)
         relay = client
+        audio.attach(client)
 
-        // Microphone first, socket second. The client buffers whatever the
+        // Microphone first, socket second. The bridge buffers whatever the
         // microphone hands it while the handshake is still in flight, so the
         // round trip to the relay stops being a round trip the user waits
         // through before their first word is captured. `AudioCapture.start()`
         // is `async` for the same reason: activating the audio session is slow
         // enough to be felt if it runs on the main actor.
         let cap = AudioCapture(
-            onChunk: { [weak self] samples, level in
-                client.enqueue(pcm: samples)
+            onChunk: { [weak self, audio] samples, level in
+                audio.send(samples)
                 Task { @MainActor in self?.micLevel = level }
             },
             onStatus: { [weak self] status in
@@ -216,6 +237,7 @@ final class DictationCoordinator: ObservableObject {
             capture = cap
         } catch {
             relay = nil
+            audio.discard()
             client.cancel()
             fail(String(localized: "Couldn't open the microphone."))
             return
@@ -226,6 +248,7 @@ final class DictationCoordinator: ObservableObject {
         } catch {
             capture = nil
             relay = nil
+            audio.discard()
             client.cancel()
             await cap.stop()
             fail(String(localized: "Connection failed. Please try again."))
@@ -235,6 +258,24 @@ final class DictationCoordinator: ObservableObject {
         state = .listening
         publish()
         armCap()
+    }
+
+    /// One relay leg. `feature: "voice_typing"` is the cloud's whitelisted tag
+    /// for this flow (the relay attributes meeting | voice_typing | realtime;
+    /// anything else is billed unattributed).
+    ///
+    /// A relay session cannot be resumed, so a reconnect is a new leg with its
+    /// own Soniox session — hence the per-leg id prefix and the offset, which
+    /// keep the second leg's segments from overwriting the first's.
+    private func makeRelay(token: String, leg: Int, timeOffsetMs: UInt64) -> SttRelayClient {
+        SttRelayClient(
+            options: .init(
+                bearerToken: token, feature: "voice_typing",
+                idPrefix: leg == 0 ? nil : "mix@\(leg)",
+                timeOffsetMs: timeOffsetMs)
+        ) { [weak self] event in
+            Task { @MainActor in self?.handle(event, from: leg) }
+        }
     }
 
     /// The uplink channel, listened to for the process's whole life:
@@ -318,7 +359,10 @@ final class DictationCoordinator: ObservableObject {
         }
     }
 
-    private func handle(_ event: SttRelayEvent) {
+    private func handle(_ event: SttRelayEvent, from eventLeg: Int) {
+        // A leg that dies slowly can still deliver: ignore anything from a leg
+        // this session has already replaced.
+        guard eventLeg == leg else { return }
         switch event {
         case .segment(let seg):
             if seg.id.hasSuffix("-tail") {
@@ -331,10 +375,137 @@ final class DictationCoordinator: ObservableObject {
             committed = runs.map(\.text).joined()
             publish()
         case .closed:
-            if active { finishUp() }
-        case .error(let message):
-            fail(message)
+            // After `finish()` this is the relay signing off, which is the end
+            // of the session. Any other time it is a dropped socket, and the
+            // microphone is still open — so redial instead of ending a session
+            // the user is still speaking into.
+            guard active else { return }
+            if finishRequested {
+                finishUp()
+            } else {
+                scheduleReconnect()
+            }
+        case .error:
+            // The message is wire text ("relay error 402: …"), never something
+            // to put in front of someone; the reconnect path owns the copy.
+            guard active else { return }
+            if finishRequested {
+                finishUp()
+            } else if event.isQuotaExceeded {
+                // The one failure a redial cannot fix — the next handshake is
+                // refused the same way, so say what actually happened instead
+                // of spending the ladder to arrive at "lost the connection".
+                foldPartialIn()
+                fail(
+                    String(
+                        localized:
+                            "You're out of transcription quota. Dictation works again once it resets."
+                    ))
+            } else {
+                scheduleReconnect()
+            }
         }
+    }
+
+    // MARK: reconnect
+
+    /// Redial the relay while the microphone keeps running.
+    ///
+    /// The gap is what this is really about: the bridge holds what is said
+    /// while there is no socket and hands it to the next leg, so a five-second
+    /// blip costs a pause in the words appearing, not the words. Only when the
+    /// ladder runs out does the session end — and it ends holding on to
+    /// everything that was already typed.
+    private func scheduleReconnect() {
+        guard reconnectTask == nil, active, !finishRequested else { return }
+
+        let previous = relay
+        relay = nil
+        audio.hold()
+        previous?.cancel()
+
+        // The tentative tail died with the socket: the relay will never settle
+        // it, and its audio was already sent to the leg that is gone. Folding
+        // it into the settled text is what `finishUp` does at the end of every
+        // session, for the same reason — it is the best record there is of
+        // what was said.
+        foldPartialIn()
+        publish()
+
+        guard let token = KeychainStore.get(AppState.tokenKey) else {
+            // The session expired mid-dictation. Redialling would only be
+            // refused, and the user needs to be told the actual reason.
+            audio.discard()
+            fail(String(localized: "Sign in to the Parley app before using the voice keyboard."))
+            return
+        }
+        guard case .retry(let backoff) = Self.reconnect.decide(attempt: reconnectAttempts + 1)
+        else {
+            endAfterLostConnection()
+            return
+        }
+
+        reconnectAttempts += 1
+        leg += 1
+        let nextLeg = leg
+        state = .reconnecting
+        publish()
+
+        reconnectTask = Task { [weak self] in
+            try? await Task.sleep(for: backoff)
+            guard !Task.isCancelled, let self else { return }
+            await self.performReconnect(token: token, leg: nextLeg)
+        }
+    }
+
+    private func performReconnect(token: String, leg targetLeg: Int) async {
+        reconnectTask = nil
+        guard leg == targetLeg, active, !finishRequested else { return }
+        // The bridge decides the offset: it is what knows where in the session
+        // the audio it held was actually spoken.
+        guard
+            let client = audio.attach({ offsetMs in
+                self.makeRelay(token: token, leg: targetLeg, timeOffsetMs: offsetMs)
+            })
+        else { return }
+        relay = client
+        do {
+            try await client.start()
+            guard leg == targetLeg, active, !finishRequested else { return }
+            reconnectAttempts = 0
+            state = .listening
+            publish()
+        } catch {
+            guard leg == targetLeg else { return }
+            audio.hold()
+            scheduleReconnect()
+        }
+    }
+
+    /// Out of redials. End the session rather than leave a microphone running
+    /// into nothing — but keep every word already settled, which the keyboard
+    /// has already typed into the user's document.
+    private func endAfterLostConnection() {
+        audio.discard()
+        fail(
+            String(
+                localized:
+                    "Lost the connection. What you already said has been typed — tap the mic to carry on."
+            ))
+    }
+
+    /// Move the tentative tail into the settled text, as a run of its own.
+    ///
+    /// It has to become a *run*, not just an append to `committed`: `committed`
+    /// is rebuilt from `runs` on every segment, so text appended to it directly
+    /// would vanish the moment the next leg said anything. The id cannot
+    /// collide with a relay's (`mix-N`, `mix@L-N`), and only one tail per leg
+    /// is ever folded. Callers publish.
+    private func foldPartialIn() {
+        guard !partial.isEmpty else { return }
+        runs.append((id: "folded@\(leg)", text: partial))
+        partial = ""
+        committed = runs.map(\.text).joined()
     }
 
     // MARK: stop / teardown
@@ -345,11 +516,19 @@ final class DictationCoordinator: ObservableObject {
             demoTask?.cancel()
             demoTask = nil
         #endif
+        // From here a socket close is the expected end of the stream, not
+        // something to redial, and no redial already in flight should land.
+        finishRequested = true
+        reconnectTask?.cancel()
+        reconnectTask = nil
         capTimer?.cancel()
         capTimer = nil
         let cap = capture
         capture = nil
         await cap?.stop()
+        // Anything still held belongs to a leg that will never exist; the
+        // finalize below drains what actually reached the relay.
+        audio.discard()
         micLevel = 0
         state = .finishing
         publish()
@@ -361,13 +540,13 @@ final class DictationCoordinator: ObservableObject {
 
     private func finishUp() {
         relay = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        audio.discard()
         state = .done
         // Fold the last partial into the committed text so nothing said right
         // before the endpoint is dropped from what the keyboard inserts.
-        if !partial.isEmpty {
-            committed += partial
-            partial = ""
-        }
+        foldPartialIn()
         publish()
         active = false
         beginLinger()
@@ -378,6 +557,12 @@ final class DictationCoordinator: ObservableObject {
         state = .error
         capTimer?.cancel()
         capTimer = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        let dying = relay
+        relay = nil
+        audio.discard()
+        dying?.cancel()
         let cap = capture
         capture = nil
         // Detached because `fail` is the sync tail of half a dozen paths and

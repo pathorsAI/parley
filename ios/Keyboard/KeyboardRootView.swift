@@ -296,6 +296,8 @@ struct KeyboardRootView: View {
                         .foregroundStyle(KBTheme.recording)
                         .multilineTextAlignment(.center)
                 }
+            } else if bridge.reconnecting {
+                reconnectingText
             } else if bridge.listening || !bridge.tail.isEmpty {
                 liveText
             } else {
@@ -309,7 +311,28 @@ struct KeyboardRootView: View {
         .frame(height: KBMetrics.textHeight)
         .frame(maxWidth: .infinity)
         .animation(.easeInOut(duration: 0.15), value: bridge.listening)
+        .animation(.easeInOut(duration: 0.15), value: bridge.reconnecting)
         .animation(.easeOut(duration: 0.12), value: bridge.partial)
+    }
+
+    /// The connection dropped mid-sentence. The transcript stays exactly where
+    /// it was — nothing typed is taken back — with one line above it saying
+    /// why it stopped growing. Amber rather than the error red: the session is
+    /// still alive and the words are being kept.
+    private var reconnectingText: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Spacer(minLength: 0)
+            Text("Reconnecting… keep talking")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(KBTheme.reconnecting)
+            Text(bridge.tail)
+                .font(.system(size: 15))
+                .foregroundStyle(KBTheme.inkSoft(dark))
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var liveText: some View {

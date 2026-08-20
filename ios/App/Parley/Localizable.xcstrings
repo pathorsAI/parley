@@ -850,6 +850,23 @@
         }
       }
     },
+    "Keep talking — the microphone is still on and what you say is kept until the connection is back.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep talking — the microphone is still on and what you say is kept until the connection is back."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "繼續說沒關係——麥克風還開著，這段話會先留著，等連線回來就送出。"
+          }
+        }
+      }
+    },
     "LIVE": {
       "extractionState": "manual",
       "localizations": {
@@ -1032,6 +1049,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在載入 Parley"
+          }
+        }
+      }
+    },
+    "Lost the connection. What you already said has been typed — tap the mic to carry on.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lost the connection. What you already said has been typed — tap the mic to carry on."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連線中斷了。剛才說過的內容已經打出來，點一下麥克風就能接著說。"
           }
         }
       }
@@ -1575,6 +1609,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "季度檢討 — 子午線"
+          }
+        }
+      }
+    },
+    "Reconnecting…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reconnecting…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新連線中…"
           }
         }
       }
@@ -2606,6 +2657,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "額度已用完。錄音已安全保留在手機上，額度恢復後會自動同步。"
+          }
+        }
+      }
+    },
+    "You're out of transcription quota — live transcription stopped. The recording is still running and will be transcribed once the quota resets.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You're out of transcription quota — live transcription stopped. The recording is still running and will be transcribed once the quota resets."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轉錄額度已用完，即時字幕停止了。錄音仍在繼續，額度重置後會自動轉錄。"
+          }
+        }
+      }
+    },
+    "You're out of transcription quota. Dictation works again once it resets.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You're out of transcription quota. Dictation works again once it resets."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轉錄額度已用完，額度重置後語音輸入就會恢復。"
           }
         }
       }

@@ -19,6 +19,9 @@ enum KBTheme {
     /// return key (Go / Send / Search / Done), the way iOS tints it.
     static let accent = Color(red: 0.04, green: 0.52, blue: 1.0)
     static let recording = Color(red: 0.90, green: 0.27, blue: 0.24)
+    /// The relay dropped and the app is redialling. Amber on purpose: red is
+    /// reserved for a session that actually ended, and a reconnect has not.
+    static let reconnecting = Color(red: 0.85, green: 0.55, blue: 0.09)
 
     /// Pathors' two brand blues, mirroring the tokens on the landing site
     /// (`#1469D4` deep and `#2DB6F3` sky). They are used sparingly and only

@@ -5,7 +5,21 @@ public enum SttRelayEvent: Sendable {
     case segment(TranscriptSegment)
     /// Stream ended: normally (`finished`/server close after finalize) or not.
     case closed(reason: String)
-    case error(String)
+    /// An in-band error frame. `code` is the relay's when it sent one — 402
+    /// (out of quota) is the case worth telling apart, because redialling a
+    /// refused account only produces the same refusal on a slower clock.
+    case error(String, code: Int? = nil)
+}
+
+extension SttRelayEvent {
+    /// The relay says this account is out of transcription quota. Reconnecting
+    /// cannot fix it; the next handshake is refused the same way.
+    public static let quotaExceededCode = 402
+
+    public var isQuotaExceeded: Bool {
+        if case .error(_, Self.quotaExceededCode) = self { return true }
+        return false
+    }
 }
 
 /// WebSocket client for Parley's hosted STT relay
@@ -244,7 +258,7 @@ public actor SttRelayClient {
                     break
                 }
             } catch let err as SonioxStreamError {
-                onEvent(.error("relay error \(err.code): \(err.message)"))
+                onEvent(.error("relay error \(err.code): \(err.message)", code: err.code))
                 break
             } catch {
                 // Server closed the socket (normal after drain) or transport

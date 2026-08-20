@@ -120,14 +120,50 @@ struct LiveView: View {
         .padding(.bottom, 24)
     }
 
+    /// The one line under the transcript. Its *look* is the transcription's
+    /// health, not just its words: a reconnect is a spinner in amber, because
+    /// it is a pause the recording will come back from, while the sentence
+    /// that says live transcription is over gets the icon and the weight of
+    /// something the user may want to act on. Both are still only about the
+    /// live transcript — the recording itself is unaffected either way.
+    @ViewBuilder
+    private func statusLine(_ status: String) -> some View {
+        let health = recorder.transcription
+        HStack(spacing: 6) {
+            switch health {
+            case .reconnecting:
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(Theme.warning)
+            case .stopped:
+                Image(systemName: "bolt.horizontal.circle")
+                    .font(.parley.caption)
+            default:
+                EmptyView()
+            }
+            Text(status)
+                .font(.parley.caption)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+        }
+        .foregroundStyle(
+            {
+                switch health {
+                case .reconnecting: return Theme.warning
+                // Full-weight ink rather than red: the live transcript is
+                // over, but the recording is not, and colouring this like a
+                // failure would say the opposite of what the sentence says.
+                case .stopped: return Theme.foreground
+                default: return Theme.mutedForeground
+                }
+            }())
+        .accessibilityElement(children: .combine)
+    }
+
     private var controls: some View {
         VStack(spacing: 12) {
             if let status = recorder.status {
-                Text(status)
-                    .font(.parley.caption)
-                    .foregroundStyle(Theme.mutedForeground)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
+                statusLine(status)
             }
             Button(action: toggle) {
                 Label(buttonTitle, systemImage: buttonIcon)
