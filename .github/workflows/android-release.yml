@@ -43,6 +43,14 @@ on:
         description: "Existing tag to build, for example android-v0.1.0"
         required: true
         type: string
+      track:
+        description: >-
+          Play track to publish to. Overrides the PLAY_TRACK repository
+          variable for this run only.
+        required: false
+        default: ""
+        type: choice
+        options: ["", "internal", "alpha", "beta", "production"]
       skip_play_upload:
         description: >-
           Build and publish the GitHub release but do NOT upload to Play.
@@ -215,7 +223,38 @@ jobs:
           workload_identity_provider: ${{ vars.PLAY_WIF_PROVIDER }}
           service_account: ${{ vars.PLAY_PUBLISHER_SERVICE_ACCOUNT }}
 
-      - name: Upload to the Play internal track
+      # Which track a tag ships to is configuration, not code: `PLAY_TRACK` moves
+      # the whole pipeline from testing to production without touching this file
+      # or cutting a release to change it. It stays `internal` until the app has
+      # actually launched — Play refuses a production release while the store
+      # listing, content rating, data safety and target-audience forms are
+      # outstanding, so defaulting to production would fail every release until
+      # someone finished them.
+      #
+      # `PLAY_USER_FRACTION` (e.g. 0.1) turns a production release into a staged
+      # rollout, which is the only undo Play offers once a build is live.
+      - name: Decide the track
+        id: play
+        if: ${{ !inputs.skip_play_upload }}
+        run: |
+          TRACK="${{ inputs.track }}"
+          [ -n "$TRACK" ] || TRACK="${{ vars.PLAY_TRACK }}"
+          [ -n "$TRACK" ] || TRACK="internal"
+          FRACTION="${{ vars.PLAY_USER_FRACTION }}"
+          if [ "$TRACK" = "production" ] && [ -n "$FRACTION" ]; then
+            STATUS="inProgress"
+          else
+            STATUS="completed"
+            FRACTION=""
+          fi
+          echo "track=$TRACK" >> "$GITHUB_OUTPUT"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "user_fraction=$FRACTION" >> "$GITHUB_OUTPUT"
+          echo "### Play release" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Track \`$TRACK\`, status \`$STATUS\`${FRACTION:+, rolling out to $FRACTION of users}." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload to Play
         if: ${{ !inputs.skip_play_upload }}
         uses: r0adkll/upload-google-play@935ef9c68bb393a8e6116b1575626a7f5be3a7fb # v1.1.3
         with:
@@ -226,8 +265,9 @@ jobs:
           packageName: com.pathors.parley
           releaseFiles: android/app/build/outputs/bundle/release/app-release.aab
           mappingFile: android/app/build/outputs/mapping/release/mapping.txt
-          track: internal
-          status: completed
+          track: ${{ steps.play.outputs.track }}
+          status: ${{ steps.play.outputs.status }}
+          userFraction: ${{ steps.play.outputs.user_fraction }}
 
       # Deliberately loud. The run is green, so the summary is the only place
       # that says this build is not on Play yet.
