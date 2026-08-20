@@ -108,6 +108,14 @@ final class AudioCapture: @unchecked Sendable {
         await AVAudioApplication.requestRecordPermission()
     }
 
+    /// The standing grant, read without ever prompting. Callers that may be in
+    /// the background need this: `requestPermission()` on an undetermined grant
+    /// can only show its prompt from a foreground app — from the background it
+    /// fails as if the user had said no, without the user ever being asked.
+    static var permission: AVAudioApplication.recordPermission {
+        AVAudioApplication.shared.recordPermission
+    }
+
     /// Configure the session and open the microphone.
     ///
     /// `async` rather than `throws` alone because the work underneath is

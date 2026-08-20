@@ -31,6 +31,12 @@ final class DictationCoordinator: ObservableObject {
     /// this iOS still allows the jump (see `HostReturn`). `nil` → show the
     /// manual "swipe to go back" guidance instead.
     @Published private(set) var returnableHost: String?
+    /// The system microphone prompt is up. The dictation screen must not say
+    /// "swipe back to your app" while it shows: obeying that guidance
+    /// backgrounds the app, which cancels the prompt as a refusal — the loop
+    /// that ended with users told to visit Settings for a permission they were
+    /// never actually asked for.
+    @Published private(set) var awaitingMicPermission = false
 
     private var session = ""
     private var capture: AudioCapture?
@@ -40,10 +46,14 @@ final class DictationCoordinator: ObservableObject {
     /// requests for the running session, and — the no-jump path — start
     /// requests from a keyboard while this process is awake in the background.
     private var requestObserver: DarwinObserver?
-    /// Keeps the process awake ~30 s after a session ends so an immediate
-    /// re-tap of the keyboard's mic starts over the Darwin channel with no
-    /// app switch. `.invalid` when no window is open.
+    /// Keeps the process awake ~30 s after a session ends — and after any trip
+    /// to the background (see `armLifecycleLinger`) — so the keyboard's next
+    /// mic tap starts over the Darwin channel with no app switch. `.invalid`
+    /// when no window is open.
     private var lingerTask: UIBackgroundTaskIdentifier = .invalid
+    /// See `armLifecycleLinger`. Held for the process's whole life, like
+    /// `requestObserver`.
+    private var lifecycleObservers: [NSObjectProtocol] = []
 
     /// Flatten the diarized segment stream to plain text: non-tail segments are
     /// settled runs (`mix-0`, `mix-1`, …) kept by id in arrival order; `mix-tail`
@@ -57,6 +67,7 @@ final class DictationCoordinator: ObservableObject {
 
     private init() {
         armRequestObserver()
+        armLifecycleLinger()
     }
 
     // MARK: entry points
@@ -139,12 +150,41 @@ final class DictationCoordinator: ObservableObject {
             return
         }
 
-        guard await AudioCapture.requestPermission() else {
+        switch AudioCapture.permission {
+        case .granted:
+            break
+        case .denied:
             fail(
                 String(
                     localized:
                         "Dictation needs microphone access. Turn it on in Settings › Parley."))
             return
+        default:
+            // First ask. The flag swaps the dictation screen's guidance from
+            // "swipe back" to "allow the prompt" while the system alert is up —
+            // swiping away would cancel the alert as a refusal.
+            awaitingMicPermission = true
+            let granted = await AudioCapture.requestPermission()
+            awaitingMicPermission = false
+            guard granted else {
+                // Re-read to name the actual situation: a refusal in the
+                // prompt is a Settings trip; a prompt that never got answered
+                // (backgrounding dismisses it) stays undetermined, and the
+                // next tap will simply ask again.
+                if AudioCapture.permission == .denied {
+                    fail(
+                        String(
+                            localized:
+                                "Dictation needs microphone access. Turn it on in Settings › Parley."
+                        ))
+                } else {
+                    fail(
+                        String(
+                            localized:
+                                "Microphone access wasn't granted. Tap the mic to try again."))
+                }
+                return
+            }
         }
 
         let client = SttRelayClient(
@@ -211,10 +251,48 @@ final class DictationCoordinator: ObservableObject {
                 if up.stopRequested {
                     if self.active, up.session == self.session { await self.stop() }
                 } else if !up.session.isEmpty, up.session != self.session {
+                    // Only honor a start here if the mic can actually open.
+                    // A background process cannot show the permission prompt —
+                    // answering the request anyway published "no microphone
+                    // access" for a permission the user had never been asked
+                    // for. Staying silent instead lets the keyboard's URL
+                    // fallback bring the app forward, where the prompt (or the
+                    // Settings guidance) can actually be seen.
+                    guard AudioCapture.permission == .granted
+                        || UIApplication.shared.applicationState == .active
+                    else { return }
                     await self.begin(session: up.session)
                 }
             }
         }
+    }
+
+    /// Arm the ~30 s linger every time the app leaves the foreground, not only
+    /// after a dictation session. The linger used to arm only in
+    /// `finishUp`/`fail`, so the most common beat — open Parley, switch to
+    /// another app, tap the keyboard's mic — always found this process
+    /// suspended and bounced the user through the app, even seconds after they
+    /// had it open. Thirty seconds is the platform's ceiling for a background
+    /// task; past it the URL round trip is the only way to wake us.
+    private func armLifecycleLinger() {
+        let center = NotificationCenter.default
+        lifecycleObservers = [
+            center.addObserver(
+                forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    // A live session's audio keeps the process awake already.
+                    guard let self, !self.active else { return }
+                    self.beginLinger()
+                }
+            },
+            center.addObserver(
+                forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                // Foreground needs no assertion; the next backgrounding re-arms.
+                Task { @MainActor in self?.endLinger() }
+            },
+        ]
     }
 
     private func armCap() {

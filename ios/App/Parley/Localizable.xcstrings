@@ -256,6 +256,23 @@
         }
       }
     },
+    "Allow microphone access": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow microphone access"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請允許使用麥克風"
+          }
+        }
+      }
+    },
     "Appearance": {
       "extractionState": "manual",
       "localizations": {
@@ -1103,6 +1120,23 @@
         }
       }
     },
+    "Microphone access wasn't granted. Tap the mic to try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Microphone access wasn't granted. Tap the mic to try again."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未取得麥克風權限，請再點一次麥克風重試。"
+          }
+        }
+      }
+    },
     "Microphone is back — still recording": {
       "extractionState": "manual",
       "localizations": {
@@ -1388,6 +1422,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Parley 會用麥克風收取房間的聲音，將音訊送往你的 Parley 帳號進行即時轉錄，並把錄音與逐字稿同步到雲端。請先確認在場所有人都同意錄音。"
+          }
+        }
+      }
+    },
+    "Parley records here and types your words at the cursor. Answer the prompt first — dictation can't start without it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley records here and types your words at the cursor. Answer the prompt first — dictation can't start without it."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley 會在這裡錄音，把你說的話即時輸入到游標處。請先回應權限詢問，聽寫才能開始。"
           }
         }
       }
