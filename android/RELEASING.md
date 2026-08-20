@@ -17,7 +17,12 @@ commands):
 | `PLAY_UPLOAD_KEYSTORE_PASSWORD`   | signing the bundle       | **set**                         |
 | `PLAY_UPLOAD_KEY_ALIAS`           | signing the bundle       | **set** — `parley-upload`       |
 | `PLAY_UPLOAD_KEY_PASSWORD`        | signing the bundle       | **set**                         |
-| `PLAY_SERVICE_ACCOUNT_JSON`       | uploading to Play        | **required, not yet set** (§7)  |
+| _(no secret)_                     | uploading to Play        | keyless via WIF — **set** (§7)  |
+
+Play publishing carries no secret at all. It authenticates with GitHub's OIDC
+token through Workload Identity Federation, configured by two repository
+*variables* (not secrets — they identify, they do not authorize):
+`PLAY_WIF_PROVIDER` and `PLAY_PUBLISHER_SERVICE_ACCOUNT`.
 
 The upload keystore itself is not in this repo and never will be. It lives in
 Pathors' private secret store alongside the Apple signing keys, together with a
@@ -170,44 +175,68 @@ Recommended path for the first release:
    through full review (typically 1–7 days; first-ever review of a new
    developer account can take longer).
 
-### 7. Play service account (outstanding — the last piece)
+### 7. Play publishing (keyless, via Workload Identity Federation)
 
-Identity verification cleared on 2026-08-17, so nothing external blocks this any
-more; it is the one remaining step between pushing a tag and the build appearing
-on Play.
+Identity verification cleared on 2026-08-17 and the Google Cloud side is **done**
+(2026-08-20). What is left is two clicks in the Play Console that have no API —
+see the end of this section.
 
-**`android-release.yml` fails when `PLAY_SERVICE_ACCOUNT_JSON` is missing.** It
-used to skip the upload silently, which was defensible while the API was
-genuinely unreachable and is not any more: a release run that reports success
-without publishing anything is the worst kind of green — the tag is used up, the
-GitHub release exists, and nobody finds out until someone asks where the build
-went. The single case that legitimately cannot use the API is the *first* bundle
-for a package (below), and that is an explicit `skip_play_upload=true` on a
-manual run rather than something a missing secret decides.
+**There is no service-account key, and there will not be one.** The `pathors.com`
+organization enforces `iam.disableServiceAccountKeyCreation`, so
+`gcloud iam service-accounts keys create` fails with
+`FAILED_PRECONDITION: Key creation is not allowed on this service account`. That
+policy is Google's default for new organizations and it is a good one: a Play
+publishing key sitting in a GitHub secret is a long-lived credential that can
+ship code to users. Rather than granting the project an exception, the release
+authenticates with the OIDC token GitHub mints for each run, which Google
+exchanges for a credential that expires on its own.
 
-The Cloud side is scripted; the Play Console side cannot be, because linking a
-Cloud project to a Play account is what *enables* the Play Developer API and so
-cannot go through the API it enables.
+What exists in Google Cloud:
+
+| | |
+| --- | --- |
+| project | `pathors-play` (474482934105) — dedicated; a Play account links exactly one project and moving it later is a pain |
+| API | `androidpublisher`, plus `sts` and `iamcredentials` for the exchange |
+| service account | `parley-play-publisher@pathors-play.iam.gserviceaccount.com`, **no project-level IAM roles** — everything it may do is granted in the Play Console |
+| pool / provider | `github` / `pathorsai`, issuer `token.actions.githubusercontent.com`, attribute condition `assertion.repository_owner=='pathorsAI'` |
+| impersonation | `roles/iam.workloadIdentityUser` for `attribute.repository/pathorsAI/parley` — that repository and no other |
+
+and in GitHub, as repository variables rather than secrets, because neither
+value authorizes anything on its own:
+
+```
+PLAY_WIF_PROVIDER              projects/474482934105/locations/global/workloadIdentityPools/github/providers/pathorsai
+PLAY_PUBLISHER_SERVICE_ACCOUNT parley-play-publisher@pathors-play.iam.gserviceaccount.com
+```
+
+To rebuild all of that from nothing — after `gcloud auth login` as the Play
+account owner:
 
 ```bash
-gcloud auth login          # as contact@pathors.com, the Play account owner
 ./android/scripts/create-play-service-account.sh
 ```
 
-That creates the `pathors-play` project, enables `androidpublisher`, creates the
-`parley-play-publisher` service account with **no** project-level IAM roles
-(everything it may do is granted in the Play Console instead), mints a JSON key,
-sets `PLAY_SERVICE_ACCOUNT_JSON` on the repo, files the key in patchbay, and
-deletes the local copy. It is idempotent — re-running reuses the project and the
-account and only mints a fresh key — and it prints the two remaining steps:
+It is idempotent, so it is also the way to repair a piece of it.
+
+**`android-release.yml` fails when Play publishing is not configured.** It used
+to skip the upload silently, which was defensible while the Play API was
+genuinely unreachable and is not any more: a release run that reports success
+without publishing is the worst kind of green — the tag is used up, the GitHub
+release exists, and nobody finds out until someone asks where the build went.
+The check runs immediately after checkout, so a misconfigured release costs
+seconds and leaves no half-made release behind.
+
+#### The two steps with no API
+
+Linking a Cloud project to a Play account is what *enables* the Play Developer
+API, so it cannot go through the API it enables.
 
 1. Play Console → **Setup → API access** → link the Cloud project `pathors-play`.
-   A Play account links exactly one project and moving it later is a pain, which
-   is why the script makes a dedicated one rather than reusing an app's.
-2. Same page, under *Service accounts*, **Grant access** → **Release manager**
-   (upload and release to testing tracks and production, but no access to
-   payments or account settings) → restrict to Parley under *App permissions* →
-   **Invite user**.
+2. Same page, under *Service accounts*,
+   `parley-play-publisher@pathors-play.iam.gserviceaccount.com` appears →
+   **Grant access** → **Release manager** (upload and release to testing tracks
+   and production, but no access to payments or account settings) → restrict to
+   Parley under *App permissions* → **Invite user**.
 
 Permissions take minutes to hours to propagate on a fresh account. A
 `403 The caller does not have permission` on the first run is usually just that,
@@ -264,9 +293,8 @@ are easy to get wrong:
 
    `.github/workflows/android-release.yml` runs the tests, builds and signs the
    bundle with the upload key, attaches the `.aab` to a GitHub Release, and
-   uploads it to the Play **internal** track. Without
-   `PLAY_SERVICE_ACCOUNT_JSON` the run **fails** rather than publishing a
-   half-release (§7). `workflow_dispatch` re-runs an existing tag without
+   uploads it to the Play **internal** track. When Play publishing is not
+   configured the run **fails** rather than publishing a half-release (§7). `workflow_dispatch` re-runs an existing tag without
    needing a new commit, matching `ios-release.yml`, and takes a
    `skip_play_upload` input for the first-bundle case.
 3. To build the bundle by hand instead (Play requires `.aab`, not `.apk`):

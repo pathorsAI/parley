@@ -15,12 +15,18 @@ name: Android Release
 #
 # The final Play upload step is deliberately skippable. Pathors' Play account
 # (ID 6541030546953107772) is still going through organization identity
-# verification. That has since cleared, so a missing `PLAY_SERVICE_ACCOUNT_JSON`
-# is now a misconfiguration and fails the run rather than quietly skipping the
-# upload — a release that reports success without publishing is the worst kind
-# of green. The one genuinely manual case, the first bundle for a package
-# (Play refuses it over the API), is served by the `skip_play_upload` input,
-# which has to be asked for.
+# verification. That has since cleared, and the upload now authenticates through
+# Workload Identity Federation rather than a service-account key: the pathors.com
+# organization enforces `iam.disableServiceAccountKeyCreation`, so no JSON key
+# can be minted, and punching a project-level hole in that policy to store a
+# long-lived Play-publishing credential in a secret is the wrong trade when
+# GitHub's OIDC token does the job with nothing at rest.
+#
+# A misconfiguration fails the run rather than quietly skipping the upload — a
+# release that reports success without publishing is the worst kind of green.
+# The one genuinely manual case, the first bundle for a package (Play refuses it
+# over the API), is served by the `skip_play_upload` input, which has to be
+# asked for.
 #
 # Runs on Linux (unlike the two macOS release workflows) because nothing here
 # needs Xcode. That only works because gradle/verification-metadata.xml carries
@@ -47,9 +53,11 @@ on:
         default: false
         type: boolean
 
-# The bundle is attached to a GitHub Release.
+# `contents` attaches the bundle to a GitHub Release; `id-token` mints the OIDC
+# token that Google exchanges for a short-lived credential.
 permissions:
   contents: write
+  id-token: write
 
 # Play rejects a bundle whose versionCode it has already seen, so two runs of
 # the same tag racing each other end in a confusing error, not a merge conflict.
@@ -68,7 +76,8 @@ jobs:
     # itself while the service account does not yet exist.
     env:
       PLAY_UPLOAD_KEYSTORE_BASE64: ${{ secrets.PLAY_UPLOAD_KEYSTORE_BASE64 }}
-      PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+      PLAY_WIF_PROVIDER: ${{ vars.PLAY_WIF_PROVIDER }}
+      PLAY_PUBLISHER_SERVICE_ACCOUNT: ${{ vars.PLAY_PUBLISHER_SERVICE_ACCOUNT }}
 
     steps:
       - name: Checkout
@@ -88,11 +97,11 @@ jobs:
       - name: Check this release can reach Play
         if: ${{ !inputs.skip_play_upload }}
         run: |
-          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
-            echo "::error title=PLAY_SERVICE_ACCOUNT_JSON is not set::This release cannot reach Play." \
-                 "Create the service account (android/RELEASING.md §7) and set the secret," \
-                 "or re-run this workflow with skip_play_upload=true if this is the first bundle" \
-                 "for the package, which Play refuses over the API until a release exists in the console."
+          if [ -z "$PLAY_WIF_PROVIDER" ] || [ -z "$PLAY_PUBLISHER_SERVICE_ACCOUNT" ]; then
+            echo "::error title=Play publishing is not configured::This release cannot reach Play." \
+                 "The repository variables PLAY_WIF_PROVIDER and PLAY_PUBLISHER_SERVICE_ACCOUNT must both be set" \
+                 "(android/RELEASING.md §7), or re-run this workflow with skip_play_upload=true if this is the" \
+                 "first bundle for the package, which Play refuses over the API until a release exists in the console."
             exit 1
           fi
 
@@ -192,13 +201,28 @@ jobs:
 
       # ── Play internal track ────────────────────────────────────────────────
       # Reaching here means the precondition at the top of the job passed, so
-      # either the secret exists or the operator asked to skip. The mapping.txt
-      # rides along so Play can deobfuscate crash reports from this build.
+      # either Play publishing is configured or the operator asked to skip. The
+      # mapping.txt rides along so Play can deobfuscate crash reports.
+      # Keyless. The OIDC token is minted for this run, exchanged for a
+      # credential that impersonates the publisher service account, and expires
+      # on its own; nothing long-lived exists to leak. The trust runs one way
+      # and is narrow — only `pathorsAI/parley` is bound to that account.
+      - name: Authenticate to Google
+        id: play_auth
+        if: ${{ !inputs.skip_play_upload }}
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.PLAY_WIF_PROVIDER }}
+          service_account: ${{ vars.PLAY_PUBLISHER_SERVICE_ACCOUNT }}
+
       - name: Upload to the Play internal track
         if: ${{ !inputs.skip_play_upload }}
         uses: r0adkll/upload-google-play@935ef9c68bb393a8e6116b1575626a7f5be3a7fb # v1.1.3
         with:
-          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          # The action only points GOOGLE_APPLICATION_CREDENTIALS at this file
+          # and lets the Google auth library resolve it, so the external-account
+          # credentials written above work exactly like a key would.
+          serviceAccountJson: ${{ steps.play_auth.outputs.credentials_file_path }}
           packageName: com.pathors.parley
           releaseFiles: android/app/build/outputs/bundle/release/app-release.aab
           mappingFile: android/app/build/outputs/mapping/release/mapping.txt
