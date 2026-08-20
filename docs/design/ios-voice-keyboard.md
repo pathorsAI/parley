@@ -246,16 +246,23 @@ Two things are worth writing down rather than repeating:
   (FB22247647 remains open). The destination does not have to be *detected*
   though — it can be *chosen*, which is how KeyboardKit 10.4 handles it, and is
   tracked separately.
-- **Our own pre-26.4 auto-return has never fired on any iOS version.**
-  `KeyboardHost.bundleID(of:)` probes `_hostBundleID` and
+- **Our own pre-26.4 auto-return had never fired on any iOS version** — now
+  fixed. `KeyboardHost.bundleID(of:)` probed `_hostBundleID` and
   `_hostApplicationBundleIdentifier` with `responds(to:)` **on the
-  `UIInputViewController` itself**. Both parts are wrong: the value lives on the
-  controller's `parent` (an `_UIViewServiceViewControllerOperator`), and
+  `UIInputViewController` itself**, and both parts were wrong: the value lives
+  on the controller's `parent` (an `_UIViewServiceViewControllerOperator`), and
   `_hostBundleID` is an **ivar with no getter**, so `responds(to:)` is
-  unconditionally false and only KVC's ivar fallback can reach it. So
-  `HostReturn.attempt` has never run, on 26.4 or before. Tracked separately; the
-  fix is small but it is a behaviour change nobody can verify without a device
-  below 26.4.
+  unconditionally false and only KVC's ivar fallback can reach it.
+  `HostReturn.attempt` had therefore never run, on 26.4 or before — which the
+  version gate made look like a decision rather than a bug.
+
+  The read now lives in `ParleyKit/HostBundleID.swift`, taking an `NSObject`
+  rather than a view controller so the dangerous half is testable: `value(forKey:)`
+  on an undefined key raises an Objective-C exception Swift cannot catch, so the
+  runtime is asked whether the class declares the ivar before KVC touches it. A
+  keyboard extension that crashes on appearance would be far worse than one that
+  never takes you back. **Whether the returned id actually gets a pre-26.4 user
+  home is still unverified** — it needs a device below 26.4.
 
 Neither is why the reported bug happens, which is worth being clear about: the
 report is that dictation *leaves*, and leaving is what the window fixes.
@@ -447,10 +454,13 @@ more tap.
   that draw one, and ours on the devices that don't — `needsInputModeSwitchKey`
   decides, in both panes. See the 注音 section above.
 - **2.5.1** (private APIs): the only private code in the project is the
-  pre-26.4 auto-return, version-gated to where it once worked and — as the
-  microphone-window section records — never actually reached. Everything the
-  feature runs on is public: audio session, openURL, App Group, Darwin
-  notifications, insertText, App Intents.
+  pre-26.4 auto-return — reading the host's bundle id, and asking
+  `LSApplicationWorkspace` to open it — version-gated to where it works. Every
+  symbol is assembled from fragments at runtime, so no literal appears in the
+  binary, and every failure path returns `nil` rather than guessing. Everything
+  the feature actually runs on is public: audio session, openURL, App Group,
+  Darwin notifications, insertText, App Intents. Note this path is now live for
+  the first time; before the `HostBundleID` fix it was unreachable code.
 - **The microphone window** is the one part of this keyboard that holds a
   system resource while the user is elsewhere. Its defence is consent that is
   visible and reversible: see that section.
