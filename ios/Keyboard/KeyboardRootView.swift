@@ -98,6 +98,10 @@ struct KeyboardRootView: View {
                 .font(.footnote.weight(.bold))
                 .foregroundStyle(KBTheme.wordmark(dark))
             Spacer(minLength: 8)
+            if showsWindowChip {
+                windowChip
+                Spacer(minLength: 8)
+            }
             Text(bridge.mode == .voice ? "Voice" : "Keyboard")
                 .font(.caption.weight(.medium))
                 .foregroundStyle(KBTheme.inkSoft(dark))
@@ -110,6 +114,55 @@ struct KeyboardRootView: View {
         }
         .frame(height: KBMetrics.strip)
         .padding(.horizontal, 12)
+    }
+
+    // MARK: the microphone window
+
+    /// Whether the next tap on the mic will stay in this app.
+    ///
+    /// The chip lives in the strip rather than on the voice pane for three
+    /// reasons: the strip already has the empty middle it needs, the fact is
+    /// true of the keyboard rather than of one pane, and the voice pane is
+    /// measured to the point where adding anything to it moves the record
+    /// button.
+    ///
+    /// Hidden during a session. The record button already says the microphone
+    /// is live, and a second element saying so is exactly the redundancy this
+    /// pane was rebuilt to remove — the chip is about the *next* tap, and
+    /// during a session there is no next tap to describe.
+    private var showsWindowChip: Bool {
+        bridge.hasFullAccess && !bridge.listening && bridge.windowIsOpen
+    }
+
+    /// Tapping it ends the window. That is the whole control: there is nothing
+    /// else a keyboard could usefully do to one, and a chip that says the
+    /// microphone is open without a way to close it is a notice rather than a
+    /// control.
+    private var windowChip: some View {
+        Button(action: { bridge.endWindow() }) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(KBTheme.micWindow)
+                    .frame(width: 6, height: 6)
+                Text("Mic ready")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(KBTheme.ink(dark))
+                if let minutes = bridge.windowMinutesLeft {
+                    Text(verbatim: "\(minutes)m")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(KBTheme.inkSoft(dark))
+                }
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(KBTheme.inkSoft(dark))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(KBTheme.control(dark)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("The microphone is ready. Tap to close it."))
     }
 
     private func dot(_ mode: KeyboardMode, label: Text) -> some View {
@@ -301,11 +354,7 @@ struct KeyboardRootView: View {
             } else if bridge.listening || !bridge.tail.isEmpty {
                 liveText
             } else {
-                centered {
-                    Text("Tap to speak")
-                        .font(.subheadline)
-                        .foregroundStyle(KBTheme.inkSoft(dark))
-                }
+                idleText
             }
         }
         .frame(height: KBMetrics.textHeight)
@@ -333,6 +382,29 @@ struct KeyboardRootView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Idle, and — for someone who has turned the microphone window on — what
+    /// this particular tap is going to do.
+    ///
+    /// The second line only appears while the feature is *on but closed*.
+    /// Without a window every tap opens Parley, always has, and saying so on a
+    /// keyboard someone is about to type on is noise. With one, it is the
+    /// difference the setting exists to make, and it must not be legible only
+    /// as the absence of a chip.
+    private var idleText: some View {
+        centered {
+            VStack(spacing: 3) {
+                Text("Tap to speak")
+                    .font(.subheadline)
+                    .foregroundStyle(KBTheme.inkSoft(dark))
+                if bridge.windowIsChosen && !bridge.windowIsOpen {
+                    Text("This tap opens Parley first")
+                        .font(.caption2)
+                        .foregroundStyle(KBTheme.inkSoft(dark).opacity(0.8))
+                }
+            }
+        }
     }
 
     private var liveText: some View {

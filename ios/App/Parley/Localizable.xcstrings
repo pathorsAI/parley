@@ -106,6 +106,57 @@
         }
       }
     },
+    "1 hour": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 hour"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 小時"
+          }
+        }
+      }
+    },
+    "15 minutes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "15 minutes"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "15 分鐘"
+          }
+        }
+      }
+    },
+    "5 minutes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "5 minutes"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "5 分鐘"
+          }
+        }
+      }
+    },
     "A pocket recorder for the meetings you have in person — live transcript while you talk, in the cloud by the time you stand up.": {
       "extractionState": "manual",
       "localizations": {
@@ -219,6 +270,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "管理員"
+          }
+        }
+      }
+    },
+    "After you dictate, Parley can hold the microphone open for a while, so the next tap on the keyboard's mic types where you already are instead of opening Parley.\n\niOS shows the orange microphone dot for the whole time, because Parley really is holding the microphone. It is not listening through it: nothing is recorded, transcribed, or sent until you tap the mic, and sound that arrives before then is thrown away as it comes in. The window ends on its own, and you can end it early here or from the keyboard.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After you dictate, Parley can hold the microphone open for a while, so the next tap on the keyboard's mic types where you already are instead of opening Parley.\n\niOS shows the orange microphone dot for the whole time, because Parley really is holding the microphone. It is not listening through it: nothing is recorded, transcribed, or sent until you tap the mic, and sound that arrives before then is thrown away as it comes in. The window ends on its own, and you can end it early here or from the keyboard."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聽寫結束後，Parley 可以先把麥克風留著一段時間。在這段時間內按鍵盤上的麥克風，就會直接在你正在打字的 App 裡開始聽寫，不會跳到 Parley。\n\n這段時間內 iOS 會一直顯示橘色的麥克風指示點，因為 Parley 確實佔用著麥克風。但它不會透過麥克風聽你說話：在你按下麥克風之前，不會錄音、不會轉錄、也不會送出任何東西，期間收到的聲音會邊收邊丟掉。時間到會自動結束，你也可以在這裡或在鍵盤上提前結束。"
           }
         }
       }
@@ -732,6 +800,23 @@
         }
       }
     },
+    "End": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "End"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "結束"
+          }
+        }
+      }
+    },
     "End meeting": {
       "extractionState": "manual",
       "localizations": {
@@ -745,6 +830,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "結束會議"
+          }
+        }
+      }
+    },
+    "End now": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "End now"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "立即結束"
           }
         }
       }
@@ -863,6 +965,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "繼續說沒關係——麥克風還開著，這段話會先留著，等連線回來就送出。"
+          }
+        }
+      }
+    },
+    "Keep the microphone ready": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep the microphone ready"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "麥克風待命時間"
+          }
+        }
+      }
+    },
+    "Keeping the microphone ready": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keeping the microphone ready"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讓麥克風保持待命"
           }
         }
       }
@@ -1154,6 +1290,23 @@
         }
       }
     },
+    "Microphone access wasn't granted, so there is no window to keep open.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Microphone access wasn't granted, so there is no window to keep open."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒有取得麥克風權限，因此無法讓麥克風保持待命。"
+          }
+        }
+      }
+    },
     "Microphone access wasn't granted. Tap the mic to try again.": {
       "extractionState": "manual",
       "localizations": {
@@ -1341,6 +1494,40 @@
         }
       }
     },
+    "Nothing is being recorded or transcribed.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing is being recorded or transcribed."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前沒有在錄音，也沒有在轉錄。"
+          }
+        }
+      }
+    },
+    "Off": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "關閉"
+          }
+        }
+      }
+    },
     "Only the uploader or an admin can delete this recording": {
       "extractionState": "manual",
       "localizations": {
@@ -1439,6 +1626,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Parley 桌面版"
+          }
+        }
+      }
+    },
+    "Parley needs microphone access. Turn it on in Settings › Parley.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley needs microphone access. Turn it on in Settings › Parley."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley 需要麥克風權限。請到「設定 › Parley」開啟。"
           }
         }
       }
@@ -2250,6 +2454,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "連線不穩，登入沒有完成。請確認網路後再試一次。"
+          }
+        }
+      }
+    },
+    "The microphone is open": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The microphone is open"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "麥克風開著"
+          }
+        }
+      }
+    },
+    "The microphone is open for the keyboard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The microphone is open for the keyboard"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "麥克風正為鍵盤待命中"
           }
         }
       }

@@ -22,6 +22,13 @@ enum KBTheme {
     /// The relay dropped and the app is redialling. Amber on purpose: red is
     /// reserved for a session that actually ended, and a reconnect has not.
     static let reconnecting = Color(red: 0.85, green: 0.55, blue: 0.09)
+    /// The microphone window is open. This is **iOS's own orange privacy
+    /// indicator**, not a Parley colour: the system is showing that exact dot
+    /// in the status bar for the same reason, and the two marks meaning the
+    /// same thing should look like the same thing. Close to `reconnecting`, but
+    /// never on screen at the same time — one is about the socket during a
+    /// session, the other about the microphone between them.
+    static let micWindow = Color(red: 0.99, green: 0.62, blue: 0.05)
 
     /// Pathors' two brand blues, mirroring the tokens on the landing site
     /// (`#1469D4` deep and `#2DB6F3` sky). They are used sparingly and only

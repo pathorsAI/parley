@@ -17,6 +17,10 @@ import UIKit
 final class KeyboardViewController: UIInputViewController {
     private let bridge = KeyboardBridge()
     private var down: DarwinObserver?
+    /// The app announcing that the microphone window opened, closed, or ticked.
+    /// It is what lets a tap that will stay put look different from a tap that
+    /// will jump — see `MicWindowState`.
+    private var windowNote: DarwinObserver?
 
     /// The keyboard's view of the current session. It mints the id, so it owns
     /// the truth about which downlink is "ours"; a downlink for any other
@@ -91,6 +95,12 @@ final class KeyboardViewController: UIInputViewController {
             down = DarwinObserver(DictationChannel.downNote) { [weak self] in
                 DispatchQueue.main.async { self?.drainDownlink() }
             }
+            // The app heartbeats an open window, so this note is also what
+            // ticks the chip's countdown down — the extension runs no timer of
+            // its own for it.
+            windowNote = DarwinObserver(DictationChannel.windowNote) { [weak self] in
+                DispatchQueue.main.async { self?.readWindow() }
+            }
         }
     }
 
@@ -107,6 +117,7 @@ final class KeyboardViewController: UIInputViewController {
         if !bridge.listening { bridge.tail = "" }
         refreshAppearance()
         refreshReturnKey()
+        readWindow()
         drainDownlink()
     }
 
@@ -209,6 +220,44 @@ final class KeyboardViewController: UIInputViewController {
             guard let self, self.session == target else { return }
             completion(DictationChannel.startURL(session: target))
         }
+    }
+
+    // MARK: the microphone window (called from SwiftUI)
+
+    /// Read what the app says about the microphone window.
+    ///
+    /// The keyboard reads it and never writes it, and it deliberately trusts
+    /// `isOpen()` rather than the expiry alone: the app can be killed without
+    /// ever writing again, and a chip promising a microphone that no longer
+    /// exists would be worse than no chip at all.
+    private func readWindow() {
+        guard hasFullAccess else {
+            bridge.windowIsOpen = false
+            bridge.windowIsChosen = false
+            return
+        }
+        let window = DictationChannel.readWindow()
+        bridge.windowIsChosen = (window?.length ?? .off) != .off
+        bridge.windowIsOpen = window?.isOpen() ?? false
+        // Rounded up, so "1m" never means "already gone": the number is there
+        // to say roughly how much room is left, and rounding down would let the
+        // chip read 0.
+        bridge.windowMinutesLeft = bridge.windowIsOpen
+            ? max(1, Int(((window?.remaining() ?? 0) / 60).rounded(.up)))
+            : nil
+    }
+
+    /// The keyboard's half of "end it early". A timestamp rather than a flag,
+    /// so nothing has to be cleared afterwards and a leftover request cannot
+    /// stop the next window from opening.
+    func endMicWindow() {
+        guard hasFullAccess else { return }
+        DictationChannel.writeWindowControl(.init(closeRequestedAt: Date()))
+        // Optimistic, and corrected by the app's next note either way: the app
+        // may be suspended, in which case the window died with it and the chip
+        // was already wrong.
+        bridge.windowIsOpen = false
+        bridge.windowMinutesLeft = nil
     }
 
     /// Ask the app to stop and flush the tail. The app is running during
@@ -410,6 +459,18 @@ final class KeyboardBridge: ObservableObject {
     /// connection), shown in the caption slot until the next start.
     @Published var errorText: String?
 
+    /// The microphone window is open: the next tap will be served where the
+    /// user already is, with no trip through Parley.
+    @Published var windowIsOpen = false
+    /// The user has chosen a window length at all. Distinct from
+    /// `windowIsOpen`, and the distinction is the whole point: someone who has
+    /// not turned the feature on is told nothing, while someone who has needs
+    /// to know that *this* tap falls outside it.
+    @Published var windowIsChosen = false
+    /// Roughly how long the open window has left, in whole minutes. Refreshed
+    /// by the app's heartbeat rather than by a timer in this process.
+    @Published var windowMinutesLeft: Int?
+
     /// Which pane is showing. Changing it also has to change the keyboard's
     /// height, which only the controller can do — hence `setMode` rather than a
     /// plain assignment.
@@ -470,6 +531,9 @@ final class KeyboardBridge: ObservableObject {
     }
     /// Older-iOS fallback when `openURL` reports the app didn't open.
     func fallbackOpen(_ url: URL) { controller?.openContainerApp(url) }
+    /// Close the microphone window from here rather than making the user go
+    /// and find the app.
+    func endWindow() { controller?.endMicWindow() }
     func stop() { controller?.stopDictation() }
     func backspace() { controller?.deleteBackward() }
     func type(_ text: String) { controller?.insert(text) }

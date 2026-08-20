@@ -23,6 +23,13 @@ enum Theme {
     static let success = adaptive(ParleyDesignTokens.Light.success, ParleyDesignTokens.Dark.success)
     static let radius = ParleyDesignTokens.radius
 
+    /// The microphone window (see `MicWindow`). Deliberately **iOS's own orange
+    /// privacy indicator** rather than a Parley token: while a window is open
+    /// the system is showing that exact dot in the status bar, and the app's
+    /// mark for the same fact should be recognisably the same mark. Fixed in
+    /// both appearances, because the system's is.
+    static let micWindow = Color(red: 0.99, green: 0.62, blue: 0.05)
+
     /// The pale blue section fill the landing site uses behind grouped
     /// content. Reach for this instead of `muted` when the intent is "this is a
     /// section", not "this text is secondary".
