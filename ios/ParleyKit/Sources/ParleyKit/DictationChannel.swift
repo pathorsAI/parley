@@ -5,10 +5,17 @@ import Foundation
 /// iOS 8, Full Access included), so dictation runs in the app and the transcript
 /// is handed back through the App Group container.
 ///
-/// Two single-writer mailboxes plus two Darwin notifications, so the two
-/// processes never contend on the same file:
+/// Four single-writer mailboxes, each with its own Darwin notification, so the
+/// two processes never contend on the same file:
 ///   - `downlink` (app → keyboard): the growing transcript + session state.
 ///   - `uplink`   (keyboard → app): the session request, host bundle id, stop.
+///   - `window`   (app → keyboard): the microphone window — whether the next
+///     tap will be served where the user is, or has to open Parley.
+///   - `window control` (keyboard → app): end the window now.
+///
+/// The window pair is separate from the session pair on purpose: a window
+/// outlives any one dictation and most of what it has to say happens when no
+/// session exists at all.
 ///
 /// Darwin notifications carry no payload — they are pure "go re-read" signals.
 /// The files are the source of truth, which is what makes this robust to the
@@ -26,6 +33,12 @@ public enum DictationChannel {
     /// so a Darwin note reaches it; starting instead goes through the URL so it
     /// can launch a suspended app).
     public static let upNote = "com.pathors.parley.dictation.up"
+    /// app → keyboard: the microphone window opened, closed, or ticked. Its own
+    /// note rather than `downNote` because the window outlives sessions — most
+    /// of what it announces happens when there is no downlink to speak of.
+    public static let windowNote = "com.pathors.parley.dictation.window"
+    /// keyboard → app: end the microphone window now.
+    public static let windowControlNote = "com.pathors.parley.dictation.window-control"
 
     /// The URL the keyboard opens to start a session. The app routes this in
     /// `onOpenURL`. The session id round-trips so a stale downlink from a prior
@@ -126,8 +139,37 @@ public enum DictationChannel {
         read("dictation-up.json")
     }
 
+    // MARK: microphone window (app writes state, keyboard writes control)
+
+    /// Publish the window the app is actually holding. Stamped on every write:
+    /// the stamp is what lets the keyboard tell an open window from the file a
+    /// killed process left behind (see `MicWindowState`).
+    public static func writeWindow(_ value: MicWindowState) {
+        var stamped = value
+        stamped.updatedAt = Date()
+        write(stamped, to: "dictation-window.json")
+        post(windowNote)
+    }
+
+    public static func readWindow() -> MicWindowState? {
+        read("dictation-window.json")
+    }
+
+    /// The keyboard asking for the window to end now.
+    public static func writeWindowControl(_ value: MicWindowControl) {
+        write(value, to: "dictation-window-control.json")
+        post(windowControlNote)
+    }
+
+    public static func readWindowControl() -> MicWindowControl? {
+        read("dictation-window-control.json")
+    }
+
     public static func clear() {
-        for name in ["dictation-down.json", "dictation-up.json"] {
+        for name in [
+            "dictation-down.json", "dictation-up.json",
+            "dictation-window.json", "dictation-window-control.json",
+        ] {
             if let url = container?.appendingPathComponent(name) {
                 try? FileManager.default.removeItem(at: url)
             }

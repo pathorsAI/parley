@@ -42,7 +42,8 @@ hand-off, and the in-app dictation session are new.
 2. **App records.** `onOpenURL` routes to `DictationCoordinator`, which starts
    the mic + relay and mirrors the growing transcript into a *downlink* file,
    posting a Darwin notification on each update.
-3. **Return to the host app.** See the two regimes below.
+3. **Return to the host app** — or, far better, never leave it. See the
+   microphone window below.
 4. **Keyboard inserts.** On the Darwin note (and on every `viewWillAppear`, in
    case it was suspended through the notification), the keyboard reads the
    downlink and inserts whatever is new past its high-water mark
@@ -55,13 +56,20 @@ hand-off, and the in-app dictation session are new.
 
 ### App Group channel
 
-`DictationChannel` (in ParleyKit, so both targets share it) is two single-writer
-mailboxes plus two Darwin notifications, so the two processes never contend on a
-file:
+`DictationChannel` (in ParleyKit, so both targets share it) is four
+single-writer mailboxes, each with its own Darwin notification, so the two
+processes never contend on a file:
 
 - `dictation-down.json` — app → keyboard: `{session, committed, partial, state}`.
 - `dictation-up.json` — keyboard → app: `{session, hostBundleID, stopRequested,
   insertedCount}`.
+- `dictation-window.json` — app → keyboard: `{length, openedAt, expiresAt,
+  updatedAt}`, the microphone window and its heartbeat.
+- `dictation-window-control.json` — keyboard → app: `{closeRequestedAt}`, the
+  keyboard's "end the window now".
+
+The window pair is separate from the session pair because a window outlives any
+one dictation, and most of what it has to say happens when no session exists.
 
 The files are the source of truth; the Darwin notes are pure "go re-read"
 signals (they carry no payload). This is what makes the hand-off robust to the
@@ -70,36 +78,187 @@ missed is still in the downlink when it returns.
 
 App Group id: `group.com.pathors.parley.ios` (entitlement on both targets).
 
-## The "jump back to the previous app" problem
+## Not leaving in the first place — the microphone window
 
-Typeless's signature touch — tap the keyboard, it opens the app, and the app
-*automatically returns you to where you were* — was never a public API. It relied
-on the keyboard reading the host app's bundle id through private getters
-(`_hostBundleID`) and the app calling the private
-`LSApplicationWorkspace.openApplicationWithBundleID:`.
+This section used to be called "the jump back to the previous app problem", and
+it framed the whole thing as closed by Apple: the private auto-return died in
+iOS 26.4, so the answer was a swipe-back guide. That framing is what sent this
+feature down the wrong path, because **the competitors' trick is not returning
+faster. It is not leaving.**
 
-**Apple closed this in iOS 26.4.** The host-bundle-id getters now return nil, and
-the private launch lands on the Home Screen rather than the host app. Wispr Flow's
-own docs confirm the change: before 26.4 their keyboard "briefly opened the Flow
-app and returned you automatically"; now they instruct users to swipe right on
-the home indicator to go back.
+Wispr Flow sells the microphone as a *window of time* rather than a per-tap
+permission — their docs describe sessions as windows during which you let the
+app use the microphone. The first tap opens the app and starts the window; while
+it is open the app stays resident, and every later tap records with no app switch
+at all. Parley already had the shape of that path and almost never won it.
 
-Parley's decision (隱蔽 + 版本閘門) is to keep the good experience where it still
-works and degrade cleanly where it doesn't:
+### Why the old path lost
 
-- **iOS < 26.4** (`HostReturn.canReturn == true`): the app auto-returns to the
-  host app via the private launch. Every private symbol is assembled from string
-  fragments at runtime and reached through `responds(to:)`/`perform`, so no
-  literal private symbol sits in the binary (lowering the odds of a static-scan
-  2.5.1 flag) and a missing getter is a `nil`, never a crash.
-- **iOS 26.4+**: no private call is attempted. The dictation screen owns the
-  hand-off instead — it teaches the one gesture that replaces auto-return (swipe
-  right on the home bar) with a looping first-run guide, and reassures that
-  talking still works from the other app (the audio session keeps the mic alive
-  under `UIBackgroundModes: audio`). This matches shipped Wispr Flow behavior.
+`KeyboardViewController.startDictation` publishes the request to the App Group,
+waits `startAckWindow` (700 ms) for the app to answer, and only opens
+`parley://dictate` if nothing does. An app that is awake answers in
+milliseconds. The problem was how briefly the app stayed awake:
+`DictationCoordinator.beginLinger` is a `beginBackgroundTask`, and iOS grants one
+of those roughly **30 seconds**. Pause to think mid-sentence and the window is
+gone — so in practice every tap took the round trip.
 
-If Apple ships a public round-trip API (their open enhancement is FB22247647),
-only steps 1–3 change.
+There is also a second, harder reason, and it is the one that makes "keep the
+process awake longer" insufficient on its own: **iOS refuses to let a
+backgrounded process start recording.** Activating a record session from the
+background returns `AVAudioSessionErrorCodeCannotStartRecording` with
+`Client … is in the background and doesn't have the entitlement to start
+recording in the background` in the log. Apple has never published exactly how
+this interacts with `UIBackgroundModes: audio`, and we cannot settle it from a
+simulator. A resident process that still could not open the microphone would
+have had to come forward anyway.
+
+### What a window is
+
+The window sidesteps both. `MicWindowLength` (`ParleyKit/MicWindow.swift`) is a
+user setting — off / 5 minutes / 15 minutes / 1 hour — and while a window is open
+the app **does not close the microphone at the end of a dictation**. The audio
+session stays active, which is what keeps the process resident for minutes rather
+than seconds, and the next session does not *start* recording at all: it borrows
+a capture that has been running since the app was last in the foreground. The
+question of whether a background start is allowed never comes up, because there
+is never a background start.
+
+```
+tap 1   keyboard → parley://dictate → app comes forward → mic opens (foreground)
+        dictation → user swipes back → dictation ends
+        ─── window opens: capture keeps running, audio goes nowhere ───
+tap 2   keyboard → Darwin note → app (background, mic already open) attaches
+        the relay to the running capture.  No app switch.
+tap 3   …
+        ─── window expires: capture stops, indicator goes out ───
+tap 4   round trip again
+```
+
+`AudioCapture` is unchanged. `DictationCoordinator` simply stopped treating the
+microphone as a session's property: `releaseMicrophone()` at the end of a
+dictation either hands it to the window or closes it, and `launch()` reuses
+whatever is already running. While no dictation is attached, chunks go into
+`RelayAudioBridge` with no leg and no hold, which counts them and drops them —
+**an open window records nothing, because there is nowhere for the audio to go.**
+
+### What it costs, and where that is said
+
+The microphone is genuinely open for the whole window, so **iOS shows the orange
+recording indicator for the whole window**. That is the real price of this
+design, and it is not something to discover.
+
+- The Settings picker states it in the same breath as the benefit, before the
+  choice is made — see the footer under *Keeping the microphone ready*. It says
+  the indicator will be on, that Parley really is holding the microphone, and
+  that nothing is recorded, transcribed, or sent until the mic is tapped.
+- The **Record tab** grows a bar while a window is open. Someone who notices an
+  orange dot opens Parley and lands there; a record screen saying "not
+  recording" under a lit indicator would read as a lie.
+- The keyboard shows a **"Mic ready" chip** in the mode strip, in iOS's own
+  indicator orange rather than a Parley colour — two marks for the same fact
+  should look like the same fact.
+
+Every one of those three is also a way to end the window early.
+
+### A tap that stays and a tap that jumps must not look the same
+
+The chip is the positive signal, and it sits in the mode strip rather than on the
+voice pane: the strip already has an empty middle, the fact is true of the
+keyboard rather than of one pane, and the voice pane's heights are measured to
+the point where adding an element moves the record button. It is hidden during a
+session — the record button already says the microphone is live, and the chip is
+about the *next* tap.
+
+The negative signal cannot be the mere absence of the chip, so the idle slot
+gains a second line — *This tap opens Parley first* — but **only for someone who
+has turned a window on**. Without the setting, every tap has always opened
+Parley; saying so on every keyboard would be noise rather than information.
+
+### Bounded on purpose: there is no "until I turn it off"
+
+Wispr Flow offers a never-expires option. Parley does not, for two reasons that
+are really one:
+
+1. **It is a promise the platform will not let us keep.** A window is a live
+   recording session in a backgrounded app. iOS reclaims those under memory
+   pressure; another app taking the microphone ends ours; neither gives us a
+   chance to tell anyone. A window we close ourselves is one we can be right
+   about.
+2. **It is the one option with no natural end.** Every other choice eventually
+   turns the indicator off on its own, which makes a forgotten window
+   self-correcting. An unbounded one is a microphone left open for a day because
+   someone tapped a picker once.
+
+For the same reason the default is **off**. The setting existing is the point;
+an on-by-default open microphone is not.
+
+### The heartbeat, and why the keyboard does not trust the expiry
+
+The app writes `dictation-window.json`; the app can also be killed without ever
+writing again. The file left behind still says "open for another 50 minutes", and
+a keyboard that believed it would show a ready microphone that does not exist and
+then jump anyway.
+
+So the app re-stamps the file every `MicWindowState.heartbeat` (20 s) for as long
+as the window is really open, and a reader disbelieves a stamp older than
+`staleAfter` (55 s). One mechanism, two jobs: the same heartbeat is what ticks the
+chip's countdown without the extension running a timer of its own. Expiry is
+still punctual — the app's loop sleeps the *shorter* of a heartbeat and whatever
+is left, because five minutes has to mean five minutes.
+
+Ending early is a **timestamp, not a flag**: the keyboard writes
+`closeRequestedAt` and the app closes any window opened at or before it. Neither
+side ever has to clear anything, and a leftover request cannot refuse to let the
+next window open.
+
+### What ends a window
+
+Expiry, the user (from the keyboard, the Record tab, or Settings), a session
+failure of any kind, the microphone being interrupted or lost, and a meeting
+recording starting — there is one microphone, and `MeetingRecorder.start` takes
+it. Interruption is deliberately fatal to the window rather than something to
+wait out: **a window that cannot be honoured is worse than one that ended early,
+because the user can see the second and cannot see the first.**
+
+A background task is never held while a window is open. `beginBackgroundTask` is
+worth nothing next to an active audio session, and ending an assertion in the
+background is a documented way to get suspended anyway.
+
+### App Review
+
+The defence is consent that is visible and reversible, in that order: the user
+chose the length, the indicator says it is happening, three separate surfaces say
+what it means, and each of them ends it. The window is bounded in every case, it
+holds no audio, and nothing leaves the device until the mic is tapped. No private
+API is involved anywhere in it — audio session, App Group, Darwin notifications,
+`insertText`.
+
+### The jump that is left, and what is actually known about it
+
+There is still a first tap, and a tap after a window closes. Those still open
+Parley, and the dictation screen still teaches the swipe back (`SwipeBackGuide`).
+Two things are worth writing down rather than repeating:
+
+- **On iOS 26.4+ the host app cannot be detected at all.** The private
+  bundle-id path returns nil and `UIApplication.suspend()` lands on the Home
+  Screen because the app was launched by an extension. Apple's DTS has answered
+  that there is no public way to identify the host or to return to it
+  (FB22247647 remains open). The destination does not have to be *detected*
+  though — it can be *chosen*, which is how KeyboardKit 10.4 handles it, and is
+  tracked separately.
+- **Our own pre-26.4 auto-return has never fired on any iOS version.**
+  `KeyboardHost.bundleID(of:)` probes `_hostBundleID` and
+  `_hostApplicationBundleIdentifier` with `responds(to:)` **on the
+  `UIInputViewController` itself**. Both parts are wrong: the value lives on the
+  controller's `parent` (an `_UIViewServiceViewControllerOperator`), and
+  `_hostBundleID` is an **ivar with no getter**, so `responds(to:)` is
+  unconditionally false and only KVC's ivar fallback can reach it. So
+  `HostReturn.attempt` has never run, on 26.4 or before. Tracked separately; the
+  fix is small but it is a behaviour change nobody can verify without a device
+  below 26.4.
+
+Neither is why the reported bug happens, which is worth being clear about: the
+report is that dictation *leaves*, and leaving is what the window fixes.
 
 ## Action Button / Control Center trigger
 
@@ -287,9 +446,14 @@ more tap.
 - **Never trapping the user**: the exit is the system's own globe on the devices
   that draw one, and ours on the devices that don't — `needsInputModeSwitchKey`
   decides, in both panes. See the 注音 section above.
-- **2.5.1** (private APIs): the auto-return path is private and version-gated to
-  where it works; the rest of the flow (openURL, App Group, insertText, App
-  Intents) is entirely public.
+- **2.5.1** (private APIs): the only private code in the project is the
+  pre-26.4 auto-return, version-gated to where it once worked and — as the
+  microphone-window section records — never actually reached. Everything the
+  feature runs on is public: audio session, openURL, App Group, Darwin
+  notifications, insertText, App Intents.
+- **The microphone window** is the one part of this keyboard that holds a
+  system resource while the user is elsewhere. Its defence is consent that is
+  visible and reversible: see that section.
 - Memory: the keyboard process holds no audio, no model, and no transcript
   history — it only shuttles text — to stay under the tight jetsam limit
   keyboard extensions run against.

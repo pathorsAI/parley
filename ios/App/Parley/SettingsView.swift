@@ -7,6 +7,10 @@ import SwiftUI
 /// phone rides the hosted providers with the account token (design doc D6).
 struct SettingsView: View {
     @EnvironmentObject private var app: AppState
+    /// Only for the microphone-window rows: how long the keyboard's mic stays
+    /// ready is settings, but *whether it is open right now* is live state that
+    /// belongs to the thing holding it.
+    @ObservedObject private var dictation = DictationCoordinator.shared
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
     @State private var showDeleteConfirmation = false
@@ -33,6 +37,7 @@ struct SettingsView: View {
                     }
                     if app.hasAccount {
                         dictationSection.id(Self.keyboardSectionID)
+                        micWindowSection
                     }
                     appearanceSection
                     languageSection
@@ -445,6 +450,78 @@ struct SettingsView: View {
             sectionHeader("Voice keyboard")
         }
         .listRowBackground(Theme.tintedSurface)
+    }
+
+    // MARK: the microphone window
+
+    /// The setting the whole of #286 is about, and the one place its cost is
+    /// stated. Everything here is written to be read *before* agreeing rather
+    /// than explained afterwards: an orange microphone indicator nobody expects
+    /// is worse than the app switch this replaces.
+    private var micWindowSection: some View {
+        Section {
+            if dictation.window.isOpen() {
+                openWindowRow
+            }
+            Picker("Keep the microphone ready", selection: micWindowBinding) {
+                ForEach(MicWindowLength.allCases) { length in
+                    Text(Self.micWindowLabel(length)).tag(length)
+                }
+            }
+            if let problem = dictation.windowProblem {
+                Label(problem, systemImage: "exclamationmark.triangle")
+                    .font(.parley.caption)
+                    .foregroundStyle(Theme.warning)
+            }
+        } header: {
+            sectionHeader("Keeping the microphone ready")
+        } footer: {
+            sectionFooter("After you dictate, Parley can hold the microphone open for a while, so the next tap on the keyboard's mic types where you already are instead of opening Parley.\n\niOS shows the orange microphone dot for the whole time, because Parley really is holding the microphone. It is not listening through it: nothing is recorded, transcribed, or sent until you tap the mic, and sound that arrives before then is thrown away as it comes in. The window ends on its own, and you can end it early here or from the keyboard.")
+        }
+        .listRowBackground(Theme.tintedSurface)
+    }
+
+    /// What is true right now, with the way out next to it. The countdown is a
+    /// system timer rather than a string this view refreshes: it is the cheap
+    /// way to be accurate to the second, and being accurate about when an open
+    /// microphone closes is the point.
+    @ViewBuilder
+    private var openWindowRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "mic.fill")
+                .font(.parley.footnote)
+                .foregroundStyle(Theme.micWindow)
+            Text("The microphone is open")
+                .font(.parley.subheadlineEmphasized)
+            Spacer(minLength: 8)
+            if let expiresAt = dictation.window.expiresAt {
+                Text(expiresAt, style: .timer)
+                    .font(.parley.caption.monospacedDigit())
+                    .foregroundStyle(Theme.mutedForeground)
+            }
+        }
+        .padding(.vertical, 2)
+        Button("End now") {
+            Task { await dictation.endWindow() }
+        }
+    }
+
+    private var micWindowBinding: Binding<MicWindowLength> {
+        Binding(
+            get: { dictation.window.length },
+            set: { length in Task { await dictation.setWindowLength(length) } })
+    }
+
+    /// Spelled out rather than "5 min": this picker is the moment someone
+    /// decides how long to leave a microphone open, and an abbreviation is a
+    /// worse thing to skim.
+    private static func micWindowLabel(_ length: MicWindowLength) -> LocalizedStringKey {
+        switch length {
+        case .off: return "Off"
+        case .fiveMinutes: return "5 minutes"
+        case .fifteenMinutes: return "15 minutes"
+        case .oneHour: return "1 hour"
+        }
     }
 
     private func dictationStep(number: Int, title: LocalizedStringKey, detail: LocalizedStringKey)

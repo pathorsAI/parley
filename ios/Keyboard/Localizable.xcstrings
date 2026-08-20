@@ -136,6 +136,23 @@
         }
       }
     },
+    "Mic ready": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mic ready"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "麥克風待命"
+          }
+        }
+      }
+    },
     "Next": {
       "extractionState": "manual",
       "localizations": {
@@ -310,6 +327,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "點一下開始說話"
+          }
+        }
+      }
+    },
+    "The microphone is ready. Tap to close it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The microphone is ready. Tap to close it."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "麥克風待命中，點一下即可關閉。"
+          }
+        }
+      }
+    },
+    "This tap opens Parley first": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This tap opens Parley first"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這次會先開啟 Parley"
           }
         }
       }

@@ -109,6 +109,11 @@ final class MeetingRecorder: ObservableObject {
     /// guard that makes the double-tap harmless.
     func start(token: String?) async {
         guard phase == .idle else { return }
+        // The dictation keyboard may be holding the microphone open for its
+        // window. There is one microphone: take it before opening a meeting's
+        // own capture, rather than leaving two `AudioCapture`s to rebuild the
+        // audio session out from under each other.
+        await DictationCoordinator.shared.yieldMicrophone()
         phase = .starting
         status = String(localized: "Starting…")
         segments = []

@@ -10,12 +10,20 @@ struct LiveView: View {
     /// "am I recording?" — see `MeetingRecorder` for why that cannot be a flag
     /// this view sets once the microphone is finally up.
     @StateObject private var recorder = MeetingRecorder()
+    /// Only for the microphone-window bar below. The keyboard's window is not
+    /// this screen's business, but the orange dot it lights is: someone who
+    /// notices that dot opens Parley and lands *here*, and a record screen that
+    /// says "not recording" while the indicator is on reads as a lie.
+    @ObservedObject private var dictation = DictationCoordinator.shared
     @State private var showRecordingConsent = false
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 transcript
+                if dictation.window.isOpen() && !recorder.isRecording {
+                    micWindowBar
+                }
                 Divider().overlay(Theme.border)
                 controls
             }
@@ -158,6 +166,43 @@ struct LiveView: View {
                 }
             }())
         .accessibilityElement(children: .combine)
+    }
+
+    /// What the orange dot means, and the way out of it. Shown only while a
+    /// window is actually open, and never during a meeting — a recording has
+    /// its own reason to hold the microphone, and two explanations for one
+    /// indicator is worse than none.
+    private var micWindowBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "mic.fill")
+                .font(.parley.footnote)
+                .foregroundStyle(Theme.micWindow)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("The microphone is open for the keyboard")
+                    .font(.parley.caption.weight(.semibold))
+                    .foregroundStyle(Theme.foreground)
+                Text("Nothing is being recorded or transcribed.")
+                    .font(.parley.caption2)
+                    .foregroundStyle(Theme.mutedForeground)
+            }
+            Spacer(minLength: 8)
+            if let expiresAt = dictation.window.expiresAt {
+                Text(expiresAt, style: .timer)
+                    .font(.parley.caption2.monospacedDigit())
+                    .foregroundStyle(Theme.mutedForeground)
+            }
+            Button("End") {
+                Task { await dictation.endWindow() }
+            }
+            .font(.parley.caption.weight(.semibold))
+            .buttonStyle(.plain)
+            .foregroundStyle(Theme.primary)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(Theme.tintedSurface)
+        .accessibilityElement(children: .contain)
     }
 
     private var controls: some View {
