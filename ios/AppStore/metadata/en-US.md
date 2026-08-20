@@ -83,6 +83,32 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.4.1
+
+The voice half of the keyboard was drawn like a keyboard, and it isn't one:
+nothing on it types a letter. It is now a round record button in the middle of
+the pane, with delete and return as small round keys under your right thumb and
+@ in the bottom-left corner. Return used to be the widest key on the keyboard
+and the least pressed one.
+
+You can watch the words arrive. The sentence being transcribed sits above the
+button, with the part already placed in your text in a lighter grey — dictation
+used to look like words that appeared and then vanished.
+
+The globe key now appears only where iOS doesn't already draw one. 1.3 put it on
+every device; on iPhone X and later the system already places its own globe and
+dictation keys below any keyboard, this one included, so ours was a second copy
+taking up a slot. On the phones without that strip it is still there, and the
+system Chinese keyboard is still one tap away.
+
+Swiping between voice and typing follows your finger instead of jumping when you
+let go, and the keyboard no longer changes height as you cross between them.
+
+Recording holds on to the microphone better. A recording survives leaving the
+foreground, one tap on record means one recording and not two, and the
+microphone permission prompt now survives the hand-off from the keyboard —
+coming back with permission granted starts dictation instead of stranding you.
+
 ## What's New — 1.3
 
 The keyboard is a keyboard now. Next to voice it has a full English layout —
