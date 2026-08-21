@@ -542,26 +542,25 @@ final class KeyboardBridge: ObservableObject {
 }
 
 /// Best-effort resolution of the app the keyboard is typing into, for the app's
-/// pre-iOS-26.4 auto-return. There is no public API; the host bundle id lives on
-/// private getters that Apple nulled out in iOS 26.4. Each candidate getter is
-/// assembled at runtime and reached through `responds(to:)`/`perform` so no
-/// literal private symbol sits in the binary and a missing getter is a `nil`,
-/// never a crash. On 26.4+ every candidate returns nil and the app falls back to
-/// the manual swipe.
+/// pre-iOS-26.4 auto-return.
+///
+/// There is no public API. This used to say the id "lives on private getters
+/// that Apple nulled out in iOS 26.4", which was true of one of the two things
+/// it probed and beside the point for both: it asked the wrong object, and for
+/// the ivar it wanted, `responds(to:)` can never be true. Nothing here had ever
+/// returned a value on any iOS version, so the auto-return it feeds had never
+/// run — a fact hidden behind a version gate that made it look deliberate.
+/// `HostBundleID` carries the details and the tests.
+///
+/// On 26.4+ this is still nil — there Apple really did empty the value — and
+/// the app falls back to the manual swipe.
 enum KeyboardHost {
+    /// The value hangs off the controller's **parent** — the
+    /// `_UIViewServiceViewControllerOperator` UIKit puts above an extension's
+    /// principal view controller — not off the controller itself. Asking the
+    /// controller, which this used to do, could never have worked; see
+    /// `HostBundleID` for the second defect that made it doubly dead.
     static func bundleID(of vc: UIInputViewController) -> String? {
-        let getters = [
-            ["_host", "BundleID"].joined(),
-            ["_host", "Application", "BundleIdentifier"].joined(),
-        ]
-        for name in getters {
-            let sel = NSSelectorFromString(name)
-            guard vc.responds(to: sel),
-                let value = vc.perform(sel)?.takeUnretainedValue() as? String,
-                !value.isEmpty
-            else { continue }
-            return value
-        }
-        return nil
+        HostBundleID.resolve(from: vc.parent)
     }
 }
