@@ -532,6 +532,33 @@ object DemoMode {
         endMs = 112_000,
     )
 
+    // ── dictation fixture ────────────────────────────────────────────────────
+
+    /**
+     * A dictated sentence, in the small pieces a speech recognizer actually
+     * delivers — the fixture [com.pathors.parley.voicetyping.VoiceTypingSession]
+     * plays back instead of opening a microphone while demo mode is on.
+     *
+     * The Android half of iOS `ScreenshotDemo.dictationScript`, and it exists for
+     * the same two reasons: the keyboard has to be capturable for the store, and
+     * an emulator has no microphone input at all — so this is the only way to
+     * exercise the real commit path (segments → composing/committed text →
+     * `InputConnection`) on a machine with no mic and no account. Only the
+     * *source* is faked; every piece downstream of it is production code.
+     */
+    fun dictationScript(locale: Locale = Locale.getDefault()): List<String> =
+        if (isChinese(locale)) {
+            listOf(
+                "跟財務", "確認過了，", "修訂報價", "今天下午", "就能寄出，",
+                "含鎖價", "條款。",
+            )
+        } else {
+            listOf(
+                "Confirmed ", "with finance ", "— the revised ", "quote goes ",
+                "out this ", "afternoon, ", "price hold ", "included.",
+            )
+        }
+
     private const val SCHEME = "parley"
     private const val HOST = "demo"
     private const val ROUTE_OFF = "off"

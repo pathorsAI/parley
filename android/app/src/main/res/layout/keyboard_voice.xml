@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The voice-typing keyboard's input view. Classic Views on purpose — see the
+  header of voicetyping/ParleyInputMethodService.kt.
+
+  Five controls, and no more: the mic toggle, the state line above it, and a
+  bottom row of globe / backspace / return. Colors and key backgrounds are
+  applied at runtime from KeyboardPalette (dynamic color on API 31+), so nothing
+  here names a color.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/keyboard_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="10dp"
+    android:paddingEnd="10dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="10dp">
+
+    <!-- Listening / transcribing / the reason it can't. Two lines is enough for
+         every message in strings.xml, including zh-TW. -->
+    <TextView
+        android:id="@+id/keyboard_state"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="40dp"
+        android:gravity="center"
+        android:maxLines="2"
+        android:ellipsize="end"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:textSize="14sp" />
+
+    <!-- Shown only when the keyboard cannot dictate on its own: no mic grant, or
+         no signed-in session. Tapping it hands off to the app. -->
+    <TextView
+        android:id="@+id/keyboard_setup_action"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="2dp"
+        android:minHeight="44dp"
+        android:gravity="center"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
+    <com.pathors.parley.voicetyping.MicButton
+        android:id="@+id/keyboard_mic"
+        android:layout_width="104dp"
+        android:layout_height="104dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="4dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginTop="10dp"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/keyboard_switch_ime"
+            android:layout_width="72dp"
+            android:layout_height="match_parent"
+            android:padding="14dp"
+            android:scaleType="fitCenter" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1" />
+
+        <ImageButton
+            android:id="@+id/keyboard_backspace"
+            android:layout_width="72dp"
+            android:layout_height="match_parent"
+            android:layout_marginEnd="8dp"
+            android:padding="14dp"
+            android:scaleType="fitCenter" />
+
+        <ImageButton
+            android:id="@+id/keyboard_enter"
+            android:layout_width="72dp"
+            android:layout_height="match_parent"
+            android:padding="14dp"
+            android:scaleType="fitCenter" />
+    </LinearLayout>
+</LinearLayout>
