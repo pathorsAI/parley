@@ -9,8 +9,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    connect_with_headers, drive_session, ensure_crypto_provider, LevelMeter, SegmentBuilder,
-    TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
+    clean_vocabulary, connect_with_headers, drive_session, ensure_crypto_provider, LevelMeter,
+    SegmentBuilder, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
@@ -36,6 +36,29 @@ struct SonioxConfig<'a> {
     language_hints: Option<Vec<String>>,
     enable_endpoint_detection: bool,
     enable_speaker_diarization: bool,
+    /// Custom vocabulary biasing. Omitted entirely when the phrase dictionary is
+    /// empty so the config frame stays byte-identical to what it was before —
+    /// including through the hosted relay, which forwards this same frame.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context: Option<SonioxContext>,
+}
+
+/// Soniox's recognition-context object: the domain terms to bias toward.
+#[derive(Serialize)]
+pub struct SonioxContext {
+    pub terms: Vec<String>,
+}
+
+/// Build the `context` field from the phrase dictionary — `None` when there is
+/// nothing to bias toward. Shared with the batch (replay) path so both requests
+/// carry the same shape.
+pub fn context_for(vocabulary: &[String]) -> Option<SonioxContext> {
+    let terms = clean_vocabulary(vocabulary);
+    if terms.is_empty() {
+        None
+    } else {
+        Some(SonioxContext { terms })
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -115,13 +138,16 @@ pub async fn run_session(
         language_hints,
         enable_endpoint_detection: true,
         enable_speaker_diarization: config.diarization,
+        context: context_for(&config.vocabulary),
     };
     write
         .send(Message::Text(serde_json::to_string(&wire)?))
         .await?;
     eprintln!(
-        "[soniox:{source}] connected, model={}, diarization={}",
-        config.model, config.diarization
+        "[soniox:{source}] connected, model={}, diarization={}, vocabulary={}",
+        config.model,
+        config.diarization,
+        config.vocabulary.len()
     );
 
     // Forward captured PCM, emit a level meter, keep the session alive, then

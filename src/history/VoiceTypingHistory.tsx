@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Copy, Mic, Search, Trash2 } from "lucide-react";
+import { Copy, Mic, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { useI18n } from "../i18n";
 import { log } from "../lib/log";
 import { Button } from "@/components/ui/button";
@@ -9,14 +9,26 @@ import {
   clearVoiceEntries,
   deleteVoiceEntry,
   listVoiceEntries,
+  updateVoiceEntryText,
   type VoiceEntry,
 } from "../lib/voiceTyping/history";
+import { detectCorrection } from "../lib/dictionary/diffCorrection";
+import { addEntry, isIgnoredTwice, whenDictionaryReady } from "../lib/dictionary";
 
-/** Past voice-typing dictations: search, copy, delete one, clear all. */
+/**
+ * Past voice-typing dictations: search, copy, delete one, clear all — and fix
+ * one after the fact. An edit here runs the same diff the overlay does when the
+ * user corrects a word in place, so a mishearing noticed later still teaches
+ * the dictionary.
+ */
 export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
   const { t } = useI18n();
   const [entries, setEntries] = useState<VoiceEntry[] | null>(null);
   const [query, setQuery] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  /** The correction an edit just revealed, offered on the row that produced it. */
+  const [learn, setLearn] = useState<{ entryId: string; from: string; to: string } | null>(null);
 
   const refresh = useCallback(() => {
     listVoiceEntries()
@@ -45,6 +57,28 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
     } catch {
       /* ignore */
     }
+  }
+
+  function startEdit(e: VoiceEntry) {
+    setLearn(null);
+    setDraft(e.text);
+    setEditingId(e.id);
+  }
+
+  /** Save the edited text, then ask whether the change was a mishearing worth
+   *  learning. The dictated text is both the baseline and what was "inserted" —
+   *  the whole entry is ours, so the diff may land anywhere in it. */
+  async function commitEdit(e: VoiceEntry) {
+    const next = draft.trim();
+    setEditingId(null);
+    if (!next || next === e.text) return;
+    await updateVoiceEntryText(e.id, next);
+    refresh();
+    // Both the "already declined this" check and the add that may follow need
+    // the real dictionary, not this window's pre-hydration blank.
+    await whenDictionaryReady();
+    const hit = detectCorrection(e.text, next, e.text);
+    if (hit && !isIgnoredTwice(hit.from, hit.to)) setLearn({ entryId: e.id, ...hit });
   }
 
   async function remove(id: string) {
@@ -78,12 +112,86 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
         {filtered.map((e) => (
           <div key={e.id} className="group/row flex items-start gap-3 rounded-lg border p-3">
             <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <p className="select-text whitespace-pre-wrap break-words text-sm leading-snug">
-                {e.text}
-              </p>
-              <span className="text-[11px] text-muted-foreground">{fmt.format(e.ts)}</span>
+              {editingId === e.id ? (
+                <Input
+                  autoFocus
+                  value={draft}
+                  onChange={(ev) => setDraft(ev.target.value)}
+                  onBlur={() => {
+                    commitEdit(e).catch((error) =>
+                      log.warn("voice typing history: edit commit failed", {
+                        id: e.id,
+                        error: String(error),
+                      }),
+                    );
+                  }}
+                  onKeyDown={(ev) => {
+                    if (ev.key === "Enter") {
+                      ev.preventDefault();
+                      ev.currentTarget.blur();
+                    } else if (ev.key === "Escape") {
+                      ev.preventDefault();
+                      setEditingId(null);
+                    }
+                  }}
+                  className="h-8 text-sm"
+                />
+              ) : (
+                <p className="select-text whitespace-pre-wrap break-words text-sm leading-snug">
+                  {e.text}
+                </p>
+              )}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] text-muted-foreground">{fmt.format(e.ts)}</span>
+                {e.appBundleId && (
+                  <span className="rounded bg-muted px-1.5 py-px text-[10px] text-muted-foreground">
+                    {e.appBundleId}
+                  </span>
+                )}
+              </div>
+              {/* The edit looked like a mishearing — offer it to the dictionary
+                  once, right where it happened. */}
+              {learn?.entryId === e.id && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-700 transition-colors hover:bg-sky-500/20 dark:text-sky-300"
+                    onClick={() => {
+                      addEntry({
+                        phrase: learn.to,
+                        variants: [learn.from],
+                        source: "correction",
+                      });
+                      setLearn(null);
+                      toast.success(t("history.voiceTyping.learned"));
+                    }}
+                  >
+                    <Plus className="size-3" />
+                    {t("history.voiceTyping.learn", { from: learn.from, to: learn.to })}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={t("history.voiceTyping.learnDismiss")}
+                    title={t("history.voiceTyping.learnDismiss")}
+                    className="grid size-5 place-items-center rounded-full text-muted-foreground hover:text-foreground"
+                    onClick={() => setLearn(null)}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/row:opacity-100">
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-7"
+                aria-label={t("history.voiceTyping.edit")}
+                title={t("history.voiceTyping.edit")}
+                onClick={() => startEdit(e)}
+              >
+                <Pencil className="size-3.5" />
+              </Button>
               <Button
                 size="icon"
                 variant="ghost"

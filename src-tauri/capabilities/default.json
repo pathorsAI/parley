@@ -30,6 +30,9 @@
     "core:event:allow-listen",
     "updater:default",
     "process:default",
-    "os:default"
+    "os:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-is-registered"
   ]
 }

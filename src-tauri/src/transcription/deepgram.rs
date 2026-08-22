@@ -10,14 +10,34 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    connect_with_headers, drive_session, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
-    TRANSCRIPT_EVENT,
+    clean_vocabulary, connect_with_headers, drive_session, urlencode, LevelMeter, SegmentBuilder,
+    TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
 
 const DEEPGRAM_BASE: &str = "wss://api.deepgram.com/v1/listen";
 const DEFAULT_MODEL: &str = "nova-3";
+
+/// Deepgram's custom-vocabulary query params, as a string ready to append to a
+/// `/v1/listen` URL (each term gets its OWN param — the API takes them repeated,
+/// not comma-joined). Which param depends on the model generation: nova-3 and
+/// newer take `keyterm` (Keyterm Prompting); everything older only understands
+/// the legacy `keywords`. Empty string when there is nothing to bias toward, so
+/// a URL built without a dictionary is unchanged.
+///
+/// Shared with the batch path in replay.rs so both requests bias identically.
+pub fn vocabulary_params(model: &str, vocabulary: &[String]) -> String {
+    let param = if model.trim().starts_with("nova-3") {
+        "keyterm"
+    } else {
+        "keywords"
+    };
+    clean_vocabulary(vocabulary)
+        .iter()
+        .map(|term| format!("&{param}={}", urlencode(term)))
+        .collect()
+}
 
 #[derive(Deserialize, Default)]
 struct DgWord {
@@ -80,6 +100,7 @@ pub async fn run_session(
     if let Some(lang) = config.language_hints.first() {
         url.push_str(&format!("&language={lang}"));
     }
+    url.push_str(&vocabulary_params(model, &config.vocabulary));
 
     let ws = connect_with_headers(
         &url,
@@ -208,4 +229,32 @@ pub async fn run_session(
     };
 
     drive_session("deepgram", forward, read_loop).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nova_3_gets_keyterm_and_older_models_get_keywords() {
+        let vocab = vec!["Parley".to_string(), "派勒".to_string()];
+        assert_eq!(
+            vocabulary_params("nova-3", &vocab),
+            "&keyterm=Parley&keyterm=%E6%B4%BE%E5%8B%92"
+        );
+        assert_eq!(
+            vocabulary_params("nova-3-medical", &vocab),
+            "&keyterm=Parley&keyterm=%E6%B4%BE%E5%8B%92"
+        );
+        assert_eq!(
+            vocabulary_params("nova-2", &vocab),
+            "&keywords=Parley&keywords=%E6%B4%BE%E5%8B%92"
+        );
+    }
+
+    #[test]
+    fn an_empty_dictionary_leaves_the_url_untouched() {
+        assert_eq!(vocabulary_params("nova-3", &[]), "");
+        assert_eq!(vocabulary_params("nova-3", &["   ".to_string()]), "");
+    }
 }

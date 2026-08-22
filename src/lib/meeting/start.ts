@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { useStore } from "../store";
 import { STT_BY_ID, sttApiKey, sttRelayUrl } from "../transcription/providers";
 import { startMockStream } from "../mockStream";
+import { vocabularyTerms } from "../dictionary";
 import { isTauri } from "../tauriEvents";
 import { translate, type TranslationKey } from "../../i18n/messages";
 import type { Settings } from "../types";
@@ -74,6 +75,9 @@ async function openCaptureSession(settings: Settings, sttKey: string): Promise<v
       diarization: provider.diarization,
       inputDevice: settings.inputDevice,
       relayUrl: sttRelayUrl(settings.transcriptionProvider, "meeting"),
+      // Bias the recognizer with the user's phrase dictionary — the terms it
+      // keeps mishearing in dictation are the same ones it mishears in a meeting.
+      vocabulary: vocabularyTerms(),
     });
   } catch (e) {
     log.error("meeting: start failed", {

@@ -17,7 +17,9 @@ import { useStore } from "../store";
 import type { ReplaySession } from "./types";
 import type { SttProviderInfo } from "../transcription/providers";
 import { STT_BY_ID, sttApiKey, sttBatchUrl } from "../transcription/providers";
-import { toTraditional } from "../zhConvert";
+import { normalizeTranscriptText } from "../textNormalize";
+import { languageHintsFromSettings } from "../transcription/languageHints";
+import { vocabularyTerms } from "../dictionary";
 import { log } from "../log";
 import { recordUsage } from "../usage/log";
 import { sttCostUsd } from "../usage/pricing";
@@ -242,6 +244,9 @@ export async function transcribeRecording(
     apiKey,
     model: null,
     languageHints,
+    // The user's phrase dictionary, as recognition bias — the same terms voice
+    // typing feeds the live session.
+    vocabulary: vocabularyTerms(),
     diarization: info.diarization,
     batchUrl: sttBatchUrl(provider) ?? null,
   });
@@ -252,13 +257,14 @@ export async function transcribeRecording(
   });
 
   // Soniox returns Simplified for zh audio; convert to Traditional to match the
-  // live transcription path (tauriEvents.ts also runs OpenCC cn→tw on segments).
+  // live transcription path (tauriEvents.ts also normalizes segments), and apply
+  // the phrase dictionary so known variants read the same everywhere.
   const segments: TranscriptSegment[] = await Promise.all(
     result.segments.map(async (s) => ({
       id: s.id,
       source: "them" as const,
       speaker: s.speaker,
-      text: await toTraditional(s.text),
+      text: await normalizeTranscriptText(s.text),
       isFinal: true,
       startMs: s.startMs,
       endMs: s.endMs,
@@ -307,15 +313,6 @@ export async function transcribeRecording(
 function reportStage(opts: IngestOptions, p: IngestProgress): void {
   log.debug("ingest: stage", { stage: p.stage });
   opts.onProgress?.(p);
-}
-
-/** Derive BCP-47 language hints from settings; empty array = auto-detect. */
-function languageHintsFromSettings(settings: Settings): string[] {
-  // The UI language is the only locale signal we currently persist. Map it to a
-  // hint and pair it with English, which covers the common bilingual case.
-  if (settings.language === "zh-TW") return ["zh", "en"];
-  if (settings.language === "en") return ["en"];
-  return [];
 }
 
 /** Last path component of an absolute file path (handles / and \\). */

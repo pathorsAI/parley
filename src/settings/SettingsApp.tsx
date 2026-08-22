@@ -64,6 +64,7 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
 import type { AppLanguage, AppTheme, EvalDef, LlmProvider,
   LlmWorkload, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 import { VoiceTypingSettings } from "./VoiceTypingSettings";
+import { DictionarySettings } from "./DictionarySettings";
 import { OrgSharePicker } from "../components/OrgSharePicker";
 import { PermissionsPanel } from "./PermissionsPanel";
 
@@ -95,6 +96,7 @@ const NAV: {
   { id: "account", labelKey: "settings.nav.account", keywordsKey: "settings.kw.account", cloudOnly: true },
   { id: "provider", labelKey: "settings.nav.provider", keywordsKey: "settings.kw.provider" },
   { id: "transcription", labelKey: "settings.nav.transcription", keywordsKey: "settings.kw.transcription" },
+  { id: "dictionary", labelKey: "settings.nav.dictionary", keywordsKey: "settings.kw.dictionary" },
   // macOnly: voice typing's global hotkey / paste layer and the TCC permission
   // panel aren't wired on Windows yet — hide the categories rather than show
   // dead controls.
@@ -795,6 +797,12 @@ export function SettingsApp() {
                 </label>
               ))}
             </div>
+          </Section>
+        )}
+
+        {cat === "dictionary" && (
+          <Section title={t("settings.dictionary.title")}>
+            <DictionarySettings />
           </Section>
         )}
 

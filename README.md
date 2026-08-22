@@ -22,7 +22,7 @@
 
 Parley does four things: **record, transcribe, analyze, search**. It captures both sides of a call, gives you a speaker-labelled transcript live, writes a debrief when the meeting ends, and makes every word you have ever recorded searchable.
 
-Then it opens all of it over a local **MCP server** — 48 tools — so Claude, Claude Code, Cursor or any other MCP client can read, search, file and re-analyze your whole meeting history without a copy-paste in sight.
+Then it opens all of it over a local **MCP server** — 52 tools — so Claude, Claude Code, Cursor or any other MCP client can read, search, file and re-analyze your whole meeting history without a copy-paste in sight.
 
 - 🎙️ **Both sides, live** — your mic and the meeting's system audio, transcribed and diarized as you talk.
 - 📼 **A debrief that stays** — commitments, action items, findings on a timeline, and a delivery scorecard. Generated once, saved with the recording.
@@ -89,7 +89,7 @@ Parley runs a local Model Context Protocol server. Point your MCP client at it �
 claude mcp add --transport http parley http://127.0.0.1:3011/mcp
 ```
 
-The exact endpoint, a ready-to-paste command, and a live view of what your client is doing are in **Settings → MCP Server**. 48 tools, in five groups:
+The exact endpoint, a ready-to-paste command, and a live view of what your client is doing are in **Settings → MCP Server**. 52 tools, in six groups:
 
 | Group | What it reaches | Tools |
 | --- | --- | --- |
@@ -98,6 +98,7 @@ The exact endpoint, a ready-to-paste command, and a live view of what your clien
 | **The library, organized** | Personal folders, filing, bulk text import, deletion | `list_folders`, `create_folder`, `rename_folder`, `delete_folder`, `move_recording_to_folder`, `import_transcript`, `delete_recording` |
 | **Your team's shared space** | The org side, with the same permissions the app enforces | `list_orgs`, `list_org_recordings`, `list_org_folders`, `create_org_folder`, `share_recording_to_org`, `move_org_recording_to_folder`, `copy_org_recording_to_personal`, `delete_org_recording` |
 | **Hand over the analysis** | Writing findings, action items and the debrief back into the app | `set_recording_analysis`, `update_recording_meta`, `list_findings`, `set_findings`, `update_finding`, `upsert_eval_template`, `upsert_todo_template` |
+| **How dictation spells things** | The voice-typing phrase dictionary — product names, jargon, people | `list_dictionary_phrases`, `add_dictionary_phrase`, `update_dictionary_phrase`, `delete_dictionary_phrase` |
 
 **Letting an external AI own the analysis.** Turn off **Auto-analyze recordings** in Settings and a finished or imported recording stays unanalyzed on purpose. An agent polls `list_recordings` with `since` / the `analyzed` flag, reads the transcript, and writes its own findings, action items and brief back with `set_recording_analysis` — stamping `author` so its findings stay distinguishable from Parley's own pass. Manual regeneration still works either way.
 

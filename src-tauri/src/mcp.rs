@@ -13,7 +13,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::{net::TcpListener, sync::RwLock};
 
 use crate::commands::{
-    session_command_results_path, session_commands_path, session_path, templates_path,
+    dictionary_path, session_command_results_path, session_commands_path, session_path,
+    templates_path,
 };
 
 const DEFAULT_PORT: u16 = 3011;
@@ -69,6 +70,9 @@ pub struct McpState {
 #[derive(Clone)]
 struct HttpState {
     templates_path: PathBuf,
+    /// The voice-typing phrase dictionary, edited by both the app and an MCP
+    /// client — same shared-file arrangement as `templates_path`.
+    dictionary_path: PathBuf,
     session_path: PathBuf,
     commands_path: PathBuf,
     /// RPC results appended by the frontend (see `call_frontend`).
@@ -150,6 +154,13 @@ pub fn start(app: AppHandle) -> McpState {
         templates_path: templates.to_string_lossy().into_owned(),
     }));
 
+    let dictionary = dictionary_path(&app).unwrap_or_else(|_| {
+        app.path()
+            .app_config_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("dictionary.json")
+    });
+
     let session = session_path(&app).unwrap_or_else(|_| {
         app.path()
             .app_config_dir()
@@ -182,7 +193,7 @@ pub fn start(app: AppHandle) -> McpState {
     };
     tauri::async_runtime::spawn(async move {
         if let Err(err) = run_http_server(
-            app, templates, session, commands, results, history, activity, info,
+            app, templates, dictionary, session, commands, results, history, activity, info,
         )
         .await
         {
@@ -217,6 +228,7 @@ pub async fn get_mcp_activity(state: tauri::State<'_, McpState>) -> Result<Value
 async fn run_http_server(
     app: AppHandle,
     templates_path: PathBuf,
+    dictionary_path: PathBuf,
     session_path: PathBuf,
     commands_path: PathBuf,
     results_path: PathBuf,
@@ -241,6 +253,7 @@ async fn run_http_server(
         .route("/mcp", post(handle_rpc))
         .with_state(HttpState {
             templates_path,
+            dictionary_path,
             session_path,
             commands_path,
             results_path,
@@ -436,6 +449,52 @@ fn tools() -> Vec<Value> {
             "delete_todo_template",
             "Delete TODO template",
             "Delete a TODO template by id.",
+            json!({ "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }),
+        ),
+        tool(
+            "list_dictionary_phrases",
+            "List dictionary phrases",
+            "List every phrase in the voice-typing dictionary as { id, phrase, variants, createdAt, source }. \
+             These are the terms dictation is biased toward — product names, jargon, people.",
+            json!({ "type": "object", "properties": {} }),
+        ),
+        tool(
+            "add_dictionary_phrase",
+            "Add dictionary phrase",
+            "Add a phrase to the voice-typing dictionary so speech recognition spells it this way. \
+             `variants` are the mis-transcriptions that should be corrected to it. Returns the new entry.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "phrase": { "type": "string", "description": "The correct spelling, e.g. \"Parley\"." },
+                    "variants": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Known mis-transcriptions of the phrase, e.g. [\"派勒\"]."
+                    }
+                },
+                "required": ["phrase"]
+            }),
+        ),
+        tool(
+            "update_dictionary_phrase",
+            "Update dictionary phrase",
+            "Update an existing dictionary phrase by id. Omitted fields are left untouched; \
+             supplying `variants` REPLACES the whole list. Returns the updated entry.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "phrase": { "type": "string" },
+                    "variants": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["id"]
+            }),
+        ),
+        tool(
+            "delete_dictionary_phrase",
+            "Delete dictionary phrase",
+            "Remove a phrase from the voice-typing dictionary by id.",
             json!({ "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }),
         ),
         tool(
@@ -1062,6 +1121,12 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             &state.templates_path,
             required_str(&args, "id")?
         )?),
+        "list_dictionary_phrases" => list_dictionary_phrases(&state.dictionary_path)?,
+        "add_dictionary_phrase" => add_dictionary_phrase(&state.dictionary_path, args)?,
+        "update_dictionary_phrase" => update_dictionary_phrase(&state.dictionary_path, args)?,
+        "delete_dictionary_phrase" => {
+            delete_dictionary_phrase(&state.dictionary_path, required_str(&args, "id")?)?
+        }
         "get_app_context" => {
             let s = read_session(&state.session_path);
             focus_context(&s)
@@ -1695,7 +1760,10 @@ fn search_meetings(history_dir: &std::path::Path, args: &Value) -> anyhow::Resul
             // What the analysis concluded.
             for (field, text) in [
                 ("brief", meta.get("brief").and_then(Value::as_str)),
-                ("context", meta.get("meetingContext").and_then(Value::as_str)),
+                (
+                    "context",
+                    meta.get("meetingContext").and_then(Value::as_str),
+                ),
             ] {
                 if let Some(text) = text {
                     if let Some(at) = find_ci(text, &query) {
@@ -1707,7 +1775,12 @@ fn search_meetings(history_dir: &std::path::Path, args: &Value) -> anyhow::Resul
                 ("finding", "findings", ["title", "detail"]),
                 ("actionItem", "actionItems", ["text", "rationale"]),
             ] {
-                for item in meta.get(key).and_then(Value::as_array).into_iter().flatten() {
+                for item in meta
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
                     let text = parts
                         .iter()
                         .filter_map(|p| item.get(*p).and_then(Value::as_str))
@@ -2077,6 +2150,159 @@ fn delete_todo_template(path: &PathBuf, id: &str) -> anyhow::Result<Value> {
     Ok(json!({ "deleted": deleted, "id": id }))
 }
 
+// --- Voice-typing phrase dictionary -------------------------------------------
+//
+// The FRONTEND owns this file's schema; these tools only ever reach into
+// `entries[]`. So the document is handled as a raw `serde_json::Value` rather
+// than a typed struct: anything we don't know about — the `ignored[]` array,
+// fields a newer app version added, extra keys on an individual entry — rides
+// through a read/modify/write untouched instead of being silently dropped.
+
+/// A dictionary document with nothing in it. Written keys match the frontend's
+/// schema so a file we create from scratch looks like one the app wrote.
+fn empty_dictionary() -> Value {
+    json!({ "entries": [], "ignored": [] })
+}
+
+/// Read `dictionary.json` as a JSON object. A missing or empty file is an empty
+/// dictionary (the same convention every optional config file here follows).
+///
+/// Malformed JSON is an ERROR rather than a silent fallback: these tools write
+/// the document back, so treating an unreadable file as empty would erase a
+/// dictionary we merely failed to parse.
+fn read_dictionary_doc(path: &PathBuf) -> anyhow::Result<Value> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(empty_dictionary()),
+        Err(err) => return Err(err.into()),
+    };
+    if raw.trim().is_empty() {
+        return Ok(empty_dictionary());
+    }
+    match serde_json::from_str::<Value>(&raw) {
+        Ok(value) if value.is_object() => Ok(value),
+        Ok(_) => anyhow::bail!("dictionary.json is not a JSON object"),
+        Err(err) => anyhow::bail!("dictionary.json is not valid JSON: {err}"),
+    }
+}
+
+fn write_dictionary_doc(path: &PathBuf, doc: &Value) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(doc)?))?;
+    Ok(())
+}
+
+/// The `entries` array, or an empty one when the key is absent or isn't an array.
+fn dictionary_entries(doc: &Value) -> Vec<Value> {
+    doc.get("entries")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Trim, drop blanks, and de-duplicate a variants list (order preserved), so an
+/// MCP client can't stuff the dictionary with whitespace-only "variants".
+fn clean_variants(variants: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for v in variants {
+        let v = v.trim().to_string();
+        if v.is_empty() || out.contains(&v) {
+            continue;
+        }
+        out.push(v);
+    }
+    out
+}
+
+fn list_dictionary_phrases(path: &PathBuf) -> anyhow::Result<Value> {
+    Ok(Value::Array(dictionary_entries(&read_dictionary_doc(
+        path,
+    )?)))
+}
+
+#[derive(Deserialize)]
+struct AddPhraseInput {
+    phrase: String,
+    #[serde(default)]
+    variants: Option<Vec<String>>,
+}
+
+fn add_dictionary_phrase(path: &PathBuf, args: Value) -> anyhow::Result<Value> {
+    let input: AddPhraseInput = serde_json::from_value(args)?;
+    let phrase = input.phrase.trim();
+    if phrase.is_empty() {
+        anyhow::bail!("phrase must not be empty");
+    }
+    let entry = json!({
+        "id": new_id(),
+        "phrase": phrase,
+        "variants": clean_variants(input.variants.unwrap_or_default()),
+        "createdAt": now_ms(),
+        // Stamped so the app can tell an agent-added phrase from one the user
+        // typed in Settings or accepted from a correction.
+        "source": "mcp",
+    });
+    let mut doc = read_dictionary_doc(path)?;
+    let mut entries = dictionary_entries(&doc);
+    entries.push(entry.clone());
+    doc["entries"] = Value::Array(entries);
+    write_dictionary_doc(path, &doc)?;
+    Ok(entry)
+}
+
+#[derive(Deserialize)]
+struct UpdatePhraseInput {
+    id: String,
+    #[serde(default)]
+    phrase: Option<String>,
+    #[serde(default)]
+    variants: Option<Vec<String>>,
+}
+
+fn update_dictionary_phrase(path: &PathBuf, args: Value) -> anyhow::Result<Value> {
+    let input: UpdatePhraseInput = serde_json::from_value(args)?;
+    let mut doc = read_dictionary_doc(path)?;
+    let mut entries = dictionary_entries(&doc);
+    let entry = entries
+        .iter_mut()
+        .find(|e| e.get("id").and_then(Value::as_str) == Some(input.id.as_str()))
+        .ok_or_else(|| anyhow::anyhow!("dictionary phrase not found: {}", input.id))?;
+    // Indexing a non-object Value would panic, so refuse a malformed entry
+    // instead of rewriting the file around it.
+    if !entry.is_object() {
+        anyhow::bail!("dictionary entry {} is not an object", input.id);
+    }
+    if let Some(phrase) = input.phrase {
+        let phrase = phrase.trim();
+        if phrase.is_empty() {
+            anyhow::bail!("phrase must not be empty");
+        }
+        entry["phrase"] = json!(phrase);
+    }
+    if let Some(variants) = input.variants {
+        entry["variants"] = json!(clean_variants(variants));
+    }
+    let updated = entry.clone();
+    doc["entries"] = Value::Array(entries);
+    write_dictionary_doc(path, &doc)?;
+    Ok(updated)
+}
+
+fn delete_dictionary_phrase(path: &PathBuf, id: &str) -> anyhow::Result<Value> {
+    let mut doc = read_dictionary_doc(path)?;
+    let mut entries = dictionary_entries(&doc);
+    let before = entries.len();
+    entries.retain(|e| e.get("id").and_then(Value::as_str) != Some(id));
+    let deleted = entries.len() < before;
+    if deleted {
+        doc["entries"] = Value::Array(entries);
+        write_dictionary_doc(path, &doc)?;
+    }
+    Ok(json!({ "deleted": deleted, "id": id }))
+}
+
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -2112,8 +2338,14 @@ mod tests {
     fn hit_omits_ellipsis_at_the_text_edges_and_atms_when_absent() {
         let h = hit("brief", "東森 outbound", 0, 2, None);
         let snippet = h["snippet"].as_str().unwrap();
-        assert!(!snippet.starts_with('…'), "no leading … at the start of the text");
-        assert!(!snippet.ends_with('…'), "no trailing … at the end of the text");
+        assert!(
+            !snippet.starts_with('…'),
+            "no leading … at the start of the text"
+        );
+        assert!(
+            !snippet.ends_with('…'),
+            "no trailing … at the end of the text"
+        );
         assert!(h.get("atMs").is_none());
     }
 
@@ -2122,5 +2354,108 @@ mod tests {
         let dir = std::path::Path::new("/nonexistent");
         assert!(search_meetings(dir, &json!({})).is_err());
         assert!(search_meetings(dir, &json!({ "query": "   " })).is_err());
+    }
+
+    /// A scratch `dictionary.json` path under the OS temp dir, unique per test.
+    fn temp_dictionary(tag: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "parley-dictionary-test-{tag}-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    #[test]
+    fn a_missing_or_empty_dictionary_reads_as_empty() {
+        let path = temp_dictionary("missing");
+        assert_eq!(
+            dictionary_entries(&read_dictionary_doc(&path).unwrap()).len(),
+            0
+        );
+        std::fs::write(&path, "   \n").unwrap();
+        assert_eq!(
+            dictionary_entries(&read_dictionary_doc(&path).unwrap()).len(),
+            0
+        );
+        // Malformed JSON must NOT read as empty — writing that back would erase
+        // a dictionary we only failed to parse.
+        std::fs::write(&path, "{ not json").unwrap();
+        assert!(read_dictionary_doc(&path).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn writes_round_trip_ignored_and_unknown_fields_untouched() {
+        let path = temp_dictionary("roundtrip");
+        std::fs::write(
+            &path,
+            json!({
+                "entries": [
+                    { "id": "e1", "phrase": "Parley", "variants": ["派勒"],
+                      "createdAt": 1756000000000u64, "source": "correction",
+                      "futureField": "keep me" }
+                ],
+                "ignored": [ { "variant": "派勒", "phrase": "Parley", "count": 2 } ],
+                "schemaVersion": 3
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        // Adding a phrase must not disturb anything else in the document.
+        let added = add_dictionary_phrase(
+            &path,
+            json!({ "phrase": " Cerana ", "variants": ["  ", "色瑞納", "色瑞納"] }),
+        )
+        .unwrap();
+        assert_eq!(added["phrase"], json!("Cerana"));
+        assert_eq!(added["source"], json!("mcp"));
+        // Blank dropped, duplicate collapsed.
+        assert_eq!(added["variants"], json!(["色瑞納"]));
+
+        let doc = read_dictionary_doc(&path).unwrap();
+        assert_eq!(
+            doc["ignored"],
+            json!([{ "variant": "派勒", "phrase": "Parley", "count": 2 }])
+        );
+        assert_eq!(doc["schemaVersion"], json!(3));
+        assert_eq!(doc["entries"][0]["futureField"], json!("keep me"));
+        assert_eq!(dictionary_entries(&doc).len(), 2);
+
+        // Updating touches only the named fields of the named entry.
+        let updated =
+            update_dictionary_phrase(&path, json!({ "id": "e1", "phrase": "Parley Inc" })).unwrap();
+        assert_eq!(updated["phrase"], json!("Parley Inc"));
+        assert_eq!(updated["variants"], json!(["派勒"]));
+        assert_eq!(updated["futureField"], json!("keep me"));
+        assert_eq!(updated["createdAt"], json!(1756000000000u64));
+
+        // Deleting reports whether it actually removed something.
+        let gone = delete_dictionary_phrase(&path, "e1").unwrap();
+        assert_eq!(gone, json!({ "deleted": true, "id": "e1" }));
+        let missing = delete_dictionary_phrase(&path, "e1").unwrap();
+        assert_eq!(missing, json!({ "deleted": false, "id": "e1" }));
+
+        let doc = read_dictionary_doc(&path).unwrap();
+        assert_eq!(dictionary_entries(&doc).len(), 1);
+        assert_eq!(doc["ignored"][0]["count"], json!(2));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn dictionary_writes_reject_blank_phrases_and_unknown_ids() {
+        let path = temp_dictionary("validation");
+        assert!(add_dictionary_phrase(&path, json!({ "phrase": "   " })).is_err());
+        assert!(update_dictionary_phrase(&path, json!({ "id": "nope", "phrase": "x" })).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn dictionary_tools_classify_as_read_or_write() {
+        assert_eq!(tool_kind("list_dictionary_phrases"), "read");
+        assert_eq!(tool_kind("add_dictionary_phrase"), "write");
+        assert_eq!(tool_kind("update_dictionary_phrase"), "write");
+        assert_eq!(tool_kind("delete_dictionary_phrase"), "write");
     }
 }

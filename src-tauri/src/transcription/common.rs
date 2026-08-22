@@ -49,12 +49,52 @@ pub struct TranscribeConfig {
     /// Whether the caller wants speaker diarization; adapters that don't support
     /// it just emit speaker 0.
     pub diarization: bool,
+    /// Custom vocabulary — the phrase dictionary's phrases (product names,
+    /// jargon, people) biased into recognition so the provider spells them the
+    /// way the user does. Every provider expresses this differently (Soniox
+    /// `context`, Deepgram `keyterm`/`keywords`, AssemblyAI `keyterms_prompt`,
+    /// an OpenAI transcription `prompt`, a Gemini system instruction), so each
+    /// adapter maps it onto its own wire field; empty = no biasing at all.
+    pub vocabulary: Vec<String>,
     /// Hosted "parley" mode: when set, this is the cloud STT relay's `wss://` URL.
     /// The adapter connects HERE (not the vendor) with `Authorization: Bearer
     /// {api_key}` and omits the provider key from its config frame — the relay
     /// injects the real key server-side, so the vendor stays hidden. `None` =
     /// BYOK direct-to-vendor (the default for every other provider).
     pub relay_endpoint: Option<String>,
+}
+
+/// Normalize a custom-vocabulary list before it goes on the wire: trim each
+/// term, drop the empties, and de-duplicate while preserving order. Every
+/// provider mapping starts here so a sloppy dictionary (stray whitespace, a
+/// phrase saved twice) can't inflate a query string or a prompt.
+pub fn clean_vocabulary(vocabulary: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for term in vocabulary {
+        let term = term.trim();
+        if term.is_empty() || out.iter().any(|t| t == term) {
+            continue;
+        }
+        out.push(term.to_string());
+    }
+    out
+}
+
+/// Percent-encode a string for use as a URL query-parameter VALUE. Vocabulary
+/// terms are arbitrary user text (CJK, spaces, `&`, `=`), and several providers
+/// take them as query params — encoding them by hand keeps the adapters free of
+/// another dependency. Everything outside the RFC 3986 unreserved set is escaped.
+pub fn urlencode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*byte as char)
+            }
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
 }
 
 /// Payload emitted to the frontend for each transcript update.
@@ -355,5 +395,31 @@ impl SegmentBuilder {
         }
         self.cur_speaker = None;
         self.cur_final.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clean_vocabulary_trims_drops_empties_and_dedupes_in_order() {
+        let raw = vec![
+            "  Parley ".to_string(),
+            "".to_string(),
+            "   ".to_string(),
+            "派勒".to_string(),
+            "Parley".to_string(),
+        ];
+        assert_eq!(clean_vocabulary(&raw), vec!["Parley", "派勒"]);
+    }
+
+    #[test]
+    fn urlencode_escapes_everything_outside_the_unreserved_set() {
+        assert_eq!(urlencode("Parley"), "Parley");
+        assert_eq!(urlencode("a-b_c.d~e"), "a-b_c.d~e");
+        assert_eq!(urlencode("a b&c=d"), "a%20b%26c%3Dd");
+        // CJK must be escaped per UTF-8 byte, not per char.
+        assert_eq!(urlencode("派"), "%E6%B4%BE");
     }
 }
