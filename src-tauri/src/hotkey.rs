@@ -122,7 +122,10 @@ pub fn set_voice_typing_shortcut(app: AppHandle, shortcut: String) -> HotkeyStat
         // A key combo drives push-to-talk; park the HID tap (matches nothing).
         imp::set_shortcut("alt-space");
         let ok = match parse_combo(&shortcut) {
-            Some(sc) => gs.register(sc).map_err(|e| log::warn!("voice-typing: register {shortcut:?} failed: {e}")).is_ok(),
+            Some(sc) => gs
+                .register(sc)
+                .map_err(|e| log::warn!("voice-typing: register {shortcut:?} failed: {e}"))
+                .is_ok(),
             None => {
                 log::warn!("voice-typing: unparsable shortcut {shortcut:?}");
                 false
@@ -554,7 +557,10 @@ mod imp {
             let source = CFMachPortCreateRunLoopSource(std::ptr::null(), port, 0);
             CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes);
             CGEventTapEnable(port, true);
-            log::info!("voice-typing: modifier-key HID tap started ({} mode)", tap_mode());
+            log::info!(
+                "voice-typing: modifier-key HID tap started ({} mode)",
+                tap_mode()
+            );
             let _ = tx.send(true);
             CFRunLoopRun();
         });

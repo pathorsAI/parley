@@ -98,6 +98,10 @@ pub async fn start_voice_typing(
     // watchdog that force-stops the mic if the webview never did, so the paid
     // relay can't stream forever. `None`/`0` (BYOK) = uncapped.
     max_duration_secs: Option<u64>,
+    // The phrase dictionary's phrases, biased into recognition by the selected
+    // provider (see `TranscribeConfig::vocabulary`). Optional so a caller that
+    // predates the dictionary still works — absent = no biasing.
+    vocabulary: Option<Vec<String>>,
 ) -> Result<(), String> {
     let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
     if api_key.trim().is_empty() {
@@ -166,6 +170,7 @@ pub async fn start_voice_typing(
         language_hints: language_hints.unwrap_or_default(),
         diarization: false,
         relay_endpoint,
+        vocabulary: vocabulary.unwrap_or_default(),
     };
     // Per-session cutoff: `stop_voice_typing` flips it to end the stream the
     // moment the key is released, before the mic thread even notices the gate.
@@ -306,11 +311,33 @@ pub fn copy_to_clipboard(text: String) -> Result<(), String> {
     imp::copy_to_clipboard(&text)
 }
 
+/// Outcome of an auto-paste: whether the keystroke went out, and WHO it went to.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PasteResult {
+    /// False when Accessibility isn't granted — nothing was posted.
+    pasted: bool,
+    /// Bundle identifier of the app that was frontmost at paste time (e.g.
+    /// "com.apple.Notes"), sampled BEFORE the ⌘V so it names the app that
+    /// actually received the text. `None` when there is no frontmost app, when
+    /// it has no bundle id (some helper processes), or off macOS.
+    app_bundle_id: Option<String>,
+}
+
 /// Paste into the frontmost app by simulating ⌘V. Requires Accessibility.
-/// Returns whether the keystroke was posted (false if not trusted).
+/// Reports whether the keystroke was posted (never, when untrusted) and which
+/// app received it — the dictionary's correction watcher needs to know which
+/// app's field it is about to observe.
 #[tauri::command]
-pub fn paste_to_frontmost() -> bool {
-    imp::paste_to_frontmost()
+pub fn paste_to_frontmost() -> PasteResult {
+    // Sample the frontmost app FIRST: posting ⌘V can move focus (a paste that
+    // opens a sheet, an app that activates on input), so reading it afterward
+    // could name the wrong app.
+    let app_bundle_id = imp::frontmost_bundle_id();
+    PasteResult {
+        pasted: imp::paste_to_frontmost(),
+        app_bundle_id,
+    }
 }
 
 /// Whether the app is trusted for Accessibility (needed for auto-paste).
@@ -431,6 +458,34 @@ mod imp {
         }
     }
 
+    /// Bundle identifier of the frontmost application, via
+    /// `NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier`.
+    /// `None` when nothing is frontmost or the app has no bundle id (which some
+    /// helper/agent processes genuinely don't). Needs no permission — unlike the
+    /// AX APIs, NSWorkspace's app list is not TCC-gated.
+    pub fn frontmost_bundle_id() -> Option<String> {
+        unsafe {
+            let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+            if workspace.is_null() {
+                return None;
+            }
+            let app: *mut Object = msg_send![workspace, frontmostApplication];
+            if app.is_null() {
+                return None;
+            }
+            // NSString is toll-free bridged to CFString, so we can read it
+            // through core-foundation instead of hand-rolling UTF-8 extraction.
+            let bundle_id: *const Object = msg_send![app, bundleIdentifier];
+            if bundle_id.is_null() {
+                return None;
+            }
+            // `bundleIdentifier` is a +0 (autoreleased) getter, so take a get-rule
+            // reference — wrapping it under the create rule would over-release.
+            let s = CFString::wrap_under_get_rule(bundle_id as _);
+            Some(s.to_string())
+        }
+    }
+
     pub fn paste_to_frontmost() -> bool {
         if !accessibility_trusted(false) {
             return false;
@@ -518,6 +573,9 @@ mod imp {
     }
     pub fn paste_to_frontmost() -> bool {
         false
+    }
+    pub fn frontmost_bundle_id() -> Option<String> {
+        None
     }
     pub fn accessibility_trusted(_prompt: bool) -> bool {
         false

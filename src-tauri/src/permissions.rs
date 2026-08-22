@@ -103,8 +103,7 @@ mod imp {
     use winreg::enums::HKEY_CURRENT_USER;
     use winreg::RegKey;
 
-    const CONSENT_STORE: &str =
-        r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
+    const CONSENT_STORE: &str = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
 
     /// Windows gates the microphone per user in Settings › Privacy & security ›
     /// Microphone. Desktop (non-packaged) apps are governed by two switches in

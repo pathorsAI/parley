@@ -2,7 +2,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useStore } from "./store";
-import { toTraditional } from "./zhConvert";
+import { normalizeTranscriptText } from "./textNormalize";
 import { log } from "./log";
 import { translate, type TranslationKey } from "../i18n/messages";
 import type { Source } from "./types";
@@ -32,7 +32,7 @@ export async function listenForTranscript(): Promise<UnlistenFn> {
     // Voice-typing dictation streams over the same event but belongs to the
     // floating overlay, not the meeting transcript — keep it out of the store.
     if ((p.source as string) === "voice-typing") return;
-    toTraditional(p.text)
+    normalizeTranscriptText(p.text)
       .then((text) => {
         useStore.getState().upsertSegment({
           id: p.id,

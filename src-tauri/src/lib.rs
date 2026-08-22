@@ -1,4 +1,5 @@
 mod audio;
+mod ax_observe;
 mod capture;
 mod commands;
 mod diarize;
@@ -127,6 +128,8 @@ pub fn run() {
             commands::read_templates,
             commands::write_templates,
             commands::get_templates_path,
+            commands::read_dictionary,
+            commands::write_dictionary,
             commands::read_folders,
             commands::write_folders,
             commands::read_log_tail,
@@ -150,6 +153,7 @@ pub fn run() {
             voice_typing::accessibility_status,
             voice_typing::present_voice_overlay,
             voice_typing::dismiss_voice_overlay,
+            ax_observe::observe_pasted_field,
             hotkey::ensure_fn_listener,
             hotkey::input_monitoring_status,
             hotkey::request_input_monitoring,

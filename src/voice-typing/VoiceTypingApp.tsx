@@ -1,10 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { listen, emit } from "@tauri-apps/api/event";
 import { Check, Loader2, Mic } from "lucide-react";
-import { preloadZhConverter, toTraditional } from "../lib/zhConvert";
+import { preloadZhConverter } from "../lib/zhConvert";
+import { normalizeTranscriptText } from "../lib/textNormalize";
 import { useI18n, type TranslationKey } from "../i18n";
 import { useThemePreference } from "../lib/theme";
 import { log } from "../lib/log";
+import {
+  SUGGEST_ACTION_EVENT,
+  SUGGEST_EVENT,
+  SUGGEST_STATE_EVENT,
+  type SuggestActionPayload,
+  type SuggestPayload,
+  type SuggestStatePayload,
+} from "../lib/voiceTyping/suggestEvents";
 
 const BAR_COUNT = 20;
 const BAR_FLOOR = 0.05;
@@ -60,6 +69,16 @@ function idIndex(id: string): number {
   return m ? Number.parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
 }
 
+/** Report a bubble button back to the host, which owns every decision. */
+function suggestAct(action: SuggestActionPayload["action"]): void {
+  emit(SUGGEST_ACTION_EVENT, { action } satisfies SuggestActionPayload).catch((error) =>
+    log.warn("voice typing overlay: suggest action emit failed", {
+      action,
+      error: String(error),
+    }),
+  );
+}
+
 /** Decay the waveform bars toward the floor (extracted to keep nesting shallow). */
 function decayBars(bars: number[]): number[] {
   return bars.map((b) => Math.max(BAR_FLOOR, b * 0.8));
@@ -78,9 +97,13 @@ function instantWaveform(level: number): number[] {
 
 /**
  * The floating dictation overlay. Listens to the same realtime transcription
- * events as a meeting (tagged source "voice-typing"), converts Simplified →
- * Traditional for display, and reports the current text back to the host so the
- * clipboard matches what's shown. A waveform tracks the live mic level.
+ * events as a meeting (tagged source "voice-typing"), normalizes them for
+ * display (Simplified → Traditional, then the user's phrase dictionary), and
+ * reports the current text back to the host so the clipboard matches what's
+ * shown. A waveform tracks the live mic level.
+ *
+ * It also renders the "add this correction to the dictionary?" bubble the host
+ * pushes here after the user fixes a word in the app they pasted into.
  */
 export const VoiceTypingApp = () => {
   const { t } = useI18n();
@@ -94,6 +117,10 @@ export const VoiceTypingApp = () => {
   // Drives the graceful fade-out of the whole overlay after the copied
   // confirmation has dwelled — reset whenever a new session starts.
   const [fading, setFading] = useState(false);
+  // The dictionary suggestion the host asked us to offer, and whether it has
+  // been accepted (the confirmation + undo state). Null = no bubble.
+  const [suggest, setSuggest] = useState<SuggestPayload | null>(null);
+  const [suggestAdded, setSuggestAdded] = useState(false);
   const [bars, setBars] = useState<number[]>(() =>
     Array.from({ length: BAR_COUNT }, () => BAR_FLOOR),
   );
@@ -135,12 +162,12 @@ export const VoiceTypingApp = () => {
       if (cached && cached.raw === raw) {
         conv = cached.conv;
       } else {
-        conv = await toTraditional(raw);
+        conv = await normalizeTranscriptText(raw);
         convertedRef.current.set(id, { raw, conv });
       }
       finals += conv;
     }
-    const interim = interimRef.current ? await toTraditional(interimRef.current) : "";
+    const interim = interimRef.current ? await normalizeTranscriptText(interimRef.current) : "";
     const full = (finals + interim).trim();
     setText(full);
     emit("voicetyping://text", { text: full }).catch((error) =>
@@ -207,6 +234,8 @@ export const VoiceTypingApp = () => {
           setError(null);
           setLimited(false);
           setFading(false);
+          setSuggest(null);
+          setSuggestAdded(false);
           setPhase("listening");
         } else if (p === "stop") {
           setPhase("finalizing");
@@ -220,6 +249,33 @@ export const VoiceTypingApp = () => {
         } else if (p === "error") {
           setError(message || "error");
           setPhase("done");
+        }
+      }),
+    );
+
+    // The host noticed the user fixing a word in whatever they pasted into and
+    // is bringing the overlay back to ask about it. The window may still be
+    // showing (and fading out) the last dictation — reset that presentation so
+    // the question is what's on screen.
+    track(
+      listen<SuggestPayload>(SUGGEST_EVENT, (e) => {
+        setSuggest(e.payload);
+        setSuggestAdded(false);
+        setText("");
+        setError(null);
+        setLimited(false);
+        setFading(false);
+        setPhase("done");
+      }),
+    );
+
+    track(
+      listen<SuggestStatePayload>(SUGGEST_STATE_EVENT, (e) => {
+        if (e.payload.state === "added") {
+          setSuggestAdded(true);
+        } else {
+          setSuggest(null);
+          setSuggestAdded(false);
         }
       }),
     );
@@ -242,11 +298,13 @@ export const VoiceTypingApp = () => {
   // fades: an error also lands on the "done" phase but must stay visible until
   // the session is dismissed (toggle mode has no release to hide it), so never
   // fade an error out from under the user.
+  // A suggestion bubble is interactive and lives on the host's own clock — never
+  // fade one out from under the user's cursor.
   useEffect(() => {
-    if (phase !== "done" || error) return;
+    if (phase !== "done" || error || suggest) return;
     const id = setTimeout(() => setFading(true), DONE_DWELL_MS);
     return () => clearTimeout(id);
-  }, [phase, error]);
+  }, [phase, error, suggest]);
 
   const errorKey = (error && ERROR_KEYS[error]) || "voiceTyping.error";
   const bubble = error ? t(errorKey) : text;
@@ -294,6 +352,52 @@ export const VoiceTypingApp = () => {
         <div className="flex items-center gap-1 rounded-full bg-emerald-500 px-2.5 py-0.5 text-[11px] font-medium text-white shadow-md">
           <Check className="size-2.5" strokeWidth={3} />
           {t("voiceTyping.copied")}
+        </div>
+      )}
+
+      {/* Learn-from-correction bubble. Same dark pill language as the
+          transcript; the panel is non-activating, so the buttons act on
+          pointer-down rather than assuming a focused window's click. Every
+          decision (write, undo, ignore, the timers) belongs to the host — this
+          only reports which button was hit. */}
+      {suggest && !suggestAdded && (
+        <div className="flex max-w-[420px] flex-col items-center gap-1.5 rounded-[14px] bg-foreground px-3.5 py-2 text-background shadow-md">
+          <span className="text-center text-[13px] font-medium leading-snug">
+            {t("dict.suggest.question", { from: suggest.from, to: suggest.to })}
+          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onPointerDown={() => suggestAct("add")}
+              className="flex items-center gap-1 rounded-full bg-sky-500 px-2.5 py-0.5 text-[11px] font-medium text-white"
+            >
+              {t("dict.suggest.add")}
+              <span className="opacity-70">{t("dict.suggest.shortcutHint")}</span>
+            </button>
+            <button
+              type="button"
+              onPointerDown={() => suggestAct("ignore")}
+              className="rounded-full bg-background/15 px-2.5 py-0.5 text-[11px] font-medium text-background"
+            >
+              {t("dict.suggest.ignore")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Accepted: confirm it landed, and keep an undo within reach for a beat. */}
+      {suggest && suggestAdded && (
+        <div className="flex items-center gap-1.5 rounded-full bg-emerald-500 px-2.5 py-0.5 text-[11px] font-medium text-white shadow-md">
+          <Check className="size-2.5" strokeWidth={3} />
+          {t("dict.suggest.added")}
+          <span className="opacity-60">·</span>
+          <button
+            type="button"
+            onPointerDown={() => suggestAct("undo")}
+            className="underline underline-offset-2"
+          >
+            {t("dict.suggest.undo")}
+          </button>
         </div>
       )}
 

@@ -16,8 +16,8 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    connect_with_headers, drive_session, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
-    TRANSCRIPT_EVENT,
+    clean_vocabulary, connect_with_headers, drive_session, LevelMeter, SegmentBuilder,
+    TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
@@ -66,13 +66,30 @@ pub async fn run_session(
     } else {
         format!("models/{model}")
     };
-    let setup = json!({
+    let mut setup = json!({
         "setup": {
             "model": model_path,
             "generationConfig": { "responseModalities": ["TEXT"] },
             "inputAudioTranscription": {}
         }
     });
+    // Gemini Live has no dedicated custom-vocabulary field, but the
+    // BidiGenerateContent setup frame does carry a `systemInstruction`
+    // (a Content), which is the documented hook for steering the model — so the
+    // phrase dictionary becomes a spelling instruction. Only added when the
+    // dictionary is non-empty, leaving the setup frame untouched otherwise.
+    let terms = clean_vocabulary(&config.vocabulary);
+    if !terms.is_empty() {
+        setup["setup"]["systemInstruction"] = json!({
+            "parts": [{
+                "text": format!(
+                    "Transcribe the input audio faithfully and verbatim. These domain terms may \
+                     occur; when they do, spell them exactly as written here: {}.",
+                    terms.join(", ")
+                )
+            }]
+        });
+    }
     write.send(Message::Text(setup.to_string())).await?;
     eprintln!("[gemini:{source}] connected, model={model} (diarization unsupported → speaker 0)");
 

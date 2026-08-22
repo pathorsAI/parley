@@ -17,7 +17,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::transcription::common::ensure_crypto_provider;
+use crate::transcription::common::{clean_vocabulary, ensure_crypto_provider};
+use crate::transcription::soniox::{context_for, SonioxContext};
 
 const SONIOX_BASE: &str = "https://api.soniox.com/v1";
 /// Async batch model (distinct from the realtime `stt-rt-v5`).
@@ -78,6 +79,10 @@ struct CreateTranscriptionRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     language_hints: Option<Vec<String>>,
     enable_speaker_diarization: bool,
+    /// Custom vocabulary biasing — the same `context` object the realtime
+    /// adapter sends, omitted entirely when the phrase dictionary is empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context: Option<SonioxContext>,
 }
 
 #[derive(Deserialize)]
@@ -153,8 +158,13 @@ pub async fn transcribe_file(
     // set, `api_key` is the cloud Bearer token (not a vendor key). Absent for
     // BYOK providers, which address their vendor from the adapter itself.
     batch_url: Option<String>,
+    // The phrase dictionary's phrases, biased into recognition by whichever
+    // batch API is used (see `TranscribeConfig::vocabulary` for the live twin).
+    // Optional so a caller that predates the dictionary still works.
+    vocabulary: Option<Vec<String>>,
 ) -> Result<TranscriptionResult, String> {
     ensure_crypto_provider();
+    let vocabulary = vocabulary.unwrap_or_default();
 
     // File (batch) transcription is dispatched by `provider` at the transcription
     // call below. The frontend only offers providers whose `supportsFileUpload`
@@ -251,20 +261,58 @@ pub async fn transcribe_file(
             model.as_deref().unwrap_or(DEFAULT_ASYNC_MODEL),
             &language_hints,
             diarization,
+            &vocabulary,
         )
         .await,
         "deepgram" => {
-            deepgram_batch(&client, &api_key, &upload_path, &language_hints, diarization).await
+            deepgram_batch(
+                &client,
+                &api_key,
+                &upload_path,
+                &language_hints,
+                diarization,
+                &vocabulary,
+            )
+            .await
         }
         "assemblyai" => {
-            assemblyai_batch(&client, &api_key, &upload_path, &language_hints, diarization).await
+            assemblyai_batch(
+                &client,
+                &api_key,
+                &upload_path,
+                &language_hints,
+                diarization,
+                &vocabulary,
+            )
+            .await
         }
         "openai" => {
-            openai_batch(&client, &api_key, &upload_path, model.as_deref(), &language_hints).await
+            openai_batch(
+                &client,
+                &api_key,
+                &upload_path,
+                model.as_deref(),
+                &language_hints,
+                &vocabulary,
+            )
+            .await
         }
         "gemini" => {
-            gemini_batch(&client, &api_key, &upload_path, model.as_deref(), &language_hints).await
+            gemini_batch(
+                &client,
+                &api_key,
+                &upload_path,
+                model.as_deref(),
+                &language_hints,
+                &vocabulary,
+            )
+            .await
         }
+        // Hosted mode takes no vocabulary: Parley Cloud's batch endpoint accepts
+        // only `diarization` + `language_hints` as query params, with no field
+        // for custom vocabulary, so there is nothing to map onto. Biasing here
+        // needs a cloud-side change first — inventing a param would just be
+        // ignored (or rejected).
         "parley" => match batch_url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
             Some(base) => {
                 parley_batch(
@@ -428,6 +476,7 @@ async fn run_upload_and_transcribe(
     model: &str,
     language_hints: &[String],
     diarization: bool,
+    vocabulary: &[String],
 ) -> Result<TranscriptionResult, String> {
     // 1. Upload the file → file id.
     let bytes = tokio::fs::read(upload_path)
@@ -471,6 +520,7 @@ async fn run_upload_and_transcribe(
         model,
         language_hints: hints,
         enable_speaker_diarization: diarization,
+        context: context_for(vocabulary),
     };
     let create_resp = client
         .post(format!("{SONIOX_BASE}/transcriptions"))
@@ -819,18 +869,26 @@ async fn deepgram_batch(
     upload_path: &str,
     language_hints: &[String],
     diarization: bool,
+    vocabulary: &[String],
 ) -> Result<TranscriptionResult, String> {
     let bytes = tokio::fs::read(upload_path)
         .await
         .map_err(|e| format!("Failed to read file: {e}"))?;
+    const BATCH_MODEL: &str = "nova-3";
     let mut url = format!(
-        "https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&punctuate=true&diarize={diarization}"
+        "https://api.deepgram.com/v1/listen?model={BATCH_MODEL}&smart_format=true&punctuate=true&diarize={diarization}"
     );
     // One language hint pins the language; otherwise let Deepgram auto-detect.
     match language_hints.first() {
         Some(lang) => url.push_str(&format!("&language={lang}")),
         None => url.push_str("&detect_language=true"),
     }
+    // Same keyterm/keywords split as the realtime adapter, keyed off the model
+    // this path pins.
+    url.push_str(&crate::transcription::deepgram::vocabulary_params(
+        BATCH_MODEL,
+        vocabulary,
+    ));
     let resp = client
         .post(url)
         .header("Authorization", format!("Token {api_key}"))
@@ -920,6 +978,7 @@ async fn assemblyai_batch(
     upload_path: &str,
     language_hints: &[String],
     diarization: bool,
+    vocabulary: &[String],
 ) -> Result<TranscriptionResult, String> {
     let bytes = tokio::fs::read(upload_path)
         .await
@@ -945,11 +1004,23 @@ async fn assemblyai_batch(
     );
     match language_hints.first() {
         Some(lang) => {
-            body.insert("language_code".into(), serde_json::Value::String(lang.clone()));
+            body.insert(
+                "language_code".into(),
+                serde_json::Value::String(lang.clone()),
+            );
         }
         None => {
             body.insert("language_detection".into(), serde_json::Value::Bool(true));
         }
+    }
+    // The batch API's custom vocabulary is `word_boost` (an array of terms) —
+    // the v2 spelling of what v3 streaming calls `keyterms_prompt`.
+    let boost = clean_vocabulary(vocabulary);
+    if !boost.is_empty() {
+        body.insert(
+            "word_boost".into(),
+            serde_json::Value::Array(boost.into_iter().map(serde_json::Value::String).collect()),
+        );
     }
     let create_resp = client
         .post("https://api.assemblyai.com/v2/transcript")
@@ -994,7 +1065,10 @@ async fn assemblyai_batch(
     };
 
     // 4. Prefer diarized utterances; fall back to the flat transcript text.
-    let duration_ms_meta = final_t.audio_duration.map(|d| (d * 1000.0) as u64).unwrap_or(0);
+    let duration_ms_meta = final_t
+        .audio_duration
+        .map(|d| (d * 1000.0) as u64)
+        .unwrap_or(0);
     let segments: Vec<ReplaySegment> = match final_t.utterances {
         Some(utts) if !utts.is_empty() => utts
             .into_iter()
@@ -1062,6 +1136,7 @@ async fn openai_batch(
     upload_path: &str,
     model: Option<&str>,
     language_hints: &[String],
+    vocabulary: &[String],
 ) -> Result<TranscriptionResult, String> {
     let bytes = tokio::fs::read(upload_path)
         .await
@@ -1083,6 +1158,13 @@ async fn openai_batch(
         .text("response_format", "verbose_json");
     if let Some(lang) = language_hints.first() {
         form = form.text("language", lang.clone());
+    }
+    // Whisper's only biasing hook is the free-text `prompt`; a comma-separated
+    // term list is the documented way to steer spelling. Same string the
+    // realtime adapter puts in `input_audio_transcription.prompt`.
+    let terms = clean_vocabulary(vocabulary);
+    if !terms.is_empty() {
+        form = form.text("prompt", terms.join(", "));
     }
     let resp = client
         .post("https://api.openai.com/v1/audio/transcriptions")
@@ -1156,6 +1238,7 @@ async fn gemini_batch(
     upload_path: &str,
     model: Option<&str>,
     _language_hints: &[String],
+    vocabulary: &[String],
 ) -> Result<TranscriptionResult, String> {
     use base64::Engine as _;
     let bytes = tokio::fs::read(upload_path)
@@ -1166,11 +1249,21 @@ async fn gemini_batch(
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     );
+    // Gemini has no custom-vocabulary field; the transcription is driven by a
+    // prompt, so the phrase dictionary becomes one more line of that prompt.
+    let mut prompt = "Transcribe this audio verbatim. Output only the transcript text, with no commentary, labels, or timestamps.".to_string();
+    let terms = clean_vocabulary(vocabulary);
+    if !terms.is_empty() {
+        prompt.push_str(&format!(
+            "\nDomain terms that may occur — spell them exactly as written: {}.",
+            terms.join(", ")
+        ));
+    }
     let body = serde_json::json!({
         "contents": [{
             "parts": [
                 { "inline_data": { "mime_type": guess_audio_mime(upload_path), "data": b64 } },
-                { "text": "Transcribe this audio verbatim. Output only the transcript text, with no commentary, labels, or timestamps." }
+                { "text": prompt }
             ]
         }]
     });

@@ -11,12 +11,21 @@ export interface VoiceEntry {
   text: string;
   /** Epoch milliseconds. */
   ts: number;
+  /** Bundle id of the app the text was pasted into ("com.apple.Notes"), when
+   *  the paste reported one. Older lines predate the field. */
+  appBundleId?: string | null;
 }
 
 /** Record one dictation (no-op for empty text / outside Tauri). */
-export async function appendVoiceEntry(text: string): Promise<void> {
+export async function appendVoiceEntry(
+  text: string,
+  appBundleId?: string | null,
+): Promise<void> {
   if (!isTauri() || !text.trim()) return;
   const entry: VoiceEntry = { id: crypto.randomUUID(), text, ts: Date.now() };
+  // Only carry the key when we actually know the target app, so lines written
+  // by an older build and lines from a blocked paste look the same.
+  if (appBundleId) entry.appBundleId = appBundleId;
   await invoke("append_voice_history", { line: JSON.stringify(entry) }).catch((error) =>
     log.warn("voice typing history: append failed", { id: entry.id, error: String(error) }),
   );
@@ -43,6 +52,15 @@ export async function listVoiceEntries(): Promise<VoiceEntry[]> {
   } catch {
     return [];
   }
+}
+
+/** Replace one entry's text, keeping its id, timestamp and app label — the
+ *  "correct & learn" edit in the history list. */
+export async function updateVoiceEntryText(id: string, text: string): Promise<void> {
+  if (!isTauri()) return;
+  const entries = await listVoiceEntries();
+  if (!entries.some((e) => e.id === id)) return;
+  await writeAll(entries.map((e) => (e.id === id ? { ...e, text } : e)));
 }
 
 /** Remove one entry by id. */

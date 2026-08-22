@@ -10,6 +10,7 @@ import {
   type ParsedTranscript,
 } from "./importTranscript";
 import { toTraditional } from "../zhConvert";
+import { normalizeTranscriptText } from "../textNormalize";
 import { log } from "../log";
 
 /** Shape returned by the Rust `read_transcript_file` command. */
@@ -49,8 +50,11 @@ export async function prepareTranscriptFile(path: string): Promise<PreparedTrans
     // Match both ingest paths: transcripts often arrive Simplified (exports,
     // other tools) — convert so display + analysis stay zh-TW.
     const segments = await Promise.all(
-      parsed.segments.map(async (s) => ({ ...s, text: await toTraditional(s.text) })),
+      parsed.segments.map(async (s) => ({ ...s, text: await normalizeTranscriptText(s.text) })),
     );
+    // Speaker labels are names the user (or the exporting tool) wrote, not
+    // recognizer output — convert the script, but leave the phrase dictionary
+    // out of it.
     const speakerNames: Record<string, string> = {};
     for (const [key, label] of Object.entries(parsed.speakerNames)) {
       speakerNames[key] = await toTraditional(label);

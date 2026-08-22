@@ -55,6 +55,28 @@ pub fn write_templates(app: AppHandle, json: String) -> Result<(), String> {
     write_config_file(&app, "templates.json", &json)
 }
 
+/// Path to the shared voice-typing phrase dictionary (app config dir). The local
+/// MCP server reads/writes the same file so phrases can be managed outside the
+/// app — same arrangement as [`templates_path`].
+pub(crate) fn dictionary_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app_config_file(app, "dictionary.json")
+}
+
+/// Read the phrase-dictionary JSON verbatim (empty string if the file doesn't
+/// exist yet). The frontend owns the schema and does the parsing; Rust only ever
+/// moves the bytes, so a dictionary written by a newer app version can't be
+/// mangled by an older backend.
+#[tauri::command]
+pub fn read_dictionary(app: AppHandle) -> Result<String, String> {
+    read_config_file(&app, "dictionary.json")
+}
+
+/// Write the phrase-dictionary JSON, creating the config dir if needed.
+#[tauri::command]
+pub fn write_dictionary(app: AppHandle, contents: String) -> Result<(), String> {
+    write_config_file(&app, "dictionary.json", &contents)
+}
+
 /// Read the shared personal-folder registry JSON (empty string if the file
 /// doesn't exist yet). The registry lives on DISK — one file for every window
 /// AND every app instance (packaged + `tauri dev` share the config dir) — so
@@ -193,6 +215,10 @@ pub fn start_meeting(
     // `api_key` is the cloud Bearer token (not a vendor key) and the adapter
     // relays through this URL. Absent for BYOK providers.
     relay_url: Option<String>,
+    // The phrase dictionary's phrases, biased into recognition by whichever
+    // provider is selected (see `TranscribeConfig::vocabulary`). Optional so a
+    // caller that predates the dictionary still works — absent = no biasing.
+    vocabulary: Option<Vec<String>>,
 ) -> Result<(), String> {
     let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
     if api_key.trim().is_empty() {
@@ -239,12 +265,14 @@ pub fn start_meeting(
     // Honor the request only if the provider can actually diarize.
     let diarization = diarization.unwrap_or(true) && provider.supports_diarization();
     let language_hints = language_hints.unwrap_or_default();
+    let vocabulary = vocabulary.unwrap_or_default();
     let make_config = || TranscribeConfig {
         api_key: api_key.clone(),
         model: model.clone(),
         language_hints: language_hints.clone(),
         diarization,
         relay_endpoint: relay_endpoint.clone(),
+        vocabulary: vocabulary.clone(),
     };
 
     // Diarizing providers separate speakers themselves, so mix mic + system

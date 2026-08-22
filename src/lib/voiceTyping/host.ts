@@ -9,14 +9,35 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
+import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import { isMac } from "../platform";
 import { isTauri } from "../tauriEvents";
 import { useStore } from "../store";
 import { sttApiKey, sttRelayUrl } from "../transcription/providers";
+import { languageHintsFromSettings } from "../transcription/languageHints";
 import { HOSTED_VOICE_TYPING_MAX_SECONDS } from "../limits";
 import { log } from "../log";
 import { showOverlay, hideOverlay, prewarmOverlay } from "./overlay";
 import { appendVoiceEntry } from "./history";
+import {
+  addEntry,
+  isIgnoredTwice,
+  recordIgnore,
+  removeEntry,
+  removeVariant,
+  vocabularyTerms,
+  whenDictionaryReady,
+  type AddResult,
+} from "../dictionary";
+import { detectCorrection } from "../dictionary/diffCorrection";
+import {
+  CORRECTION_CANDIDATE_EVENT,
+  SUGGEST_ACTION_EVENT,
+  SUGGEST_EVENT,
+  SUGGEST_STATE_EVENT,
+  type CorrectionCandidatePayload,
+  type SuggestActionPayload,
+} from "./suggestEvents";
 
 /** localStorage flag: the boot-time Accessibility prompt has been shown once
  *  for this install (see initVoiceTyping — later launches must not re-nag). */
@@ -39,6 +60,17 @@ const MAX_WAIT_MS = 3000;
  *  latency before the overlay's clock even starts) so the native hide always
  *  lands on an already-invisible window. */
 const HIDE_DELAY_MS = 2900;
+
+/** How long the "add this correction to the dictionary?" bubble waits for an
+ *  answer before it gives up. Silence is NOT a "no" — the counter that stops us
+ *  asking again only moves on an explicit Ignore. */
+const SUGGEST_TIMEOUT_MS = 8000;
+/** How long the "added · undo" confirmation stays up afterwards. */
+const SUGGEST_ADDED_MS = 4000;
+/** Accepts the suggestion without reaching for the mouse. Registered only while
+ *  a bubble is on screen — the combo belongs to whatever app the user is typing
+ *  in the rest of the time. */
+const SUGGEST_SHORTCUT = "Alt+Enter";
 
 /** Toggle mode: a press only toggles while "armed"; each release re-arms. So a
  *  tap is a key-down that FOLLOWS a key-up, and OS key-repeat (repeated downs
@@ -66,6 +98,21 @@ let hideTimer: ReturnType<typeof setTimeout> | undefined;
  *  starts to auto-finalize it (the free plan caps a single dictation). Cleared
  *  whenever the session ends by any other path. */
 let capTimer: ReturnType<typeof setTimeout> | undefined;
+
+// ── Correction → dictionary suggestion ──────────────────────────────────────
+/** Listener for the one correction candidate the current observation may
+ *  report (null while nothing is being observed). */
+let correctionUnlisten: UnlistenFn | null = null;
+/** Listener for the overlay's button clicks (null while no bubble is up). */
+let suggestActionUnlisten: UnlistenFn | null = null;
+/** Either the 8 s "answer me" timeout or the 4 s "added" dwell — never both. */
+let suggestTimer: ReturnType<typeof setTimeout> | undefined;
+let suggestShortcutOn = false;
+/** The correction currently being offered (null once answered). */
+let suggestion: { from: string; to: string } | null = null;
+/** Exactly what the last accept wrote, so undo can take back that and nothing
+ *  else: a whole new entry, or just the variant merged into an existing one. */
+let lastAdd: AddResult | null = null;
 
 /** Wire up the host. Returns a cleanup function. No-op outside Tauri. */
 export function initVoiceTyping(): () => void {
@@ -183,6 +230,8 @@ export function initVoiceTyping(): () => void {
   return () => {
     cancelled = true;
     clearTimeout(capTimer);
+    cancelSuggestion();
+    stopObserving();
     unsubs.forEach((u) => u());
   };
 }
@@ -217,6 +266,10 @@ async function onPtt(isDown: boolean) {
 }
 
 async function startSession() {
+  // A new dictation supersedes anything still pending from the last one: the
+  // overlay is about to be reused for this session, and a stale ⌥↩ must not
+  // silently learn a correction the user has moved on from.
+  cancelSuggestion();
   if (busy) {
     // A press during the previous dictation's settle window. Swallowing it
     // (the old behavior) left the user talking into nothing — instead deliver
@@ -263,7 +316,10 @@ async function startSession() {
   const starting = invoke("start_voice_typing", {
     provider,
     apiKey,
-    languageHints: [],
+    languageHints: languageHintsFromSettings(settings),
+    // The user's phrase dictionary, as recognition bias: the terms they've
+    // taught us are exactly the ones the model keeps getting wrong.
+    vocabulary: vocabularyTerms(),
     inputDevice: settings.inputDevice ?? null,
     relayUrl: sttRelayUrl(provider, "voice_typing"),
     maxDurationSecs: hosted ? HOSTED_VOICE_TYPING_MAX_SECONDS : null,
@@ -374,17 +430,31 @@ async function finalize() {
   clearTimeout(capTimer);
   const text = latestText.trim();
   if (text) {
+    let appBundleId: string | null = null;
     try {
       await invoke("copy_to_clipboard", { text });
       // Auto-paste is the default behaviour (no setting): simulate ⌘V into the
       // frontmost app; without Accessibility it degrades to clipboard-only.
-      const pasted = await invoke<boolean>("paste_to_frontmost");
-      if (!pasted) log.warn("voice-typing: auto-paste skipped (Accessibility not granted)");
-      log.info("voice-typing: copied", { chars: text.length, pasted });
+      const paste = await invoke<{ pasted: boolean; appBundleId: string | null }>(
+        "paste_to_frontmost",
+      );
+      appBundleId = paste.appBundleId;
+      if (!paste.pasted) log.warn("voice-typing: auto-paste skipped (Accessibility not granted)");
+      log.info("voice-typing: copied", {
+        chars: text.length,
+        pasted: paste.pasted,
+        appBundleId,
+      });
+      // Only a text that actually landed somewhere can be corrected in place.
+      if (paste.pasted) {
+        observePastedField(text, myGen).catch((error) =>
+          log.warn("voice-typing: field observation failed", { error: String(error) }),
+        );
+      }
     } catch (e) {
       log.error("voice-typing: copy/paste failed", { error: String(e) });
     }
-    appendVoiceEntry(text).catch((error) =>
+    appendVoiceEntry(text, appBundleId).catch((error) =>
       log.warn("voice-typing: append history failed", { error: String(error) }),
     );
   }
@@ -404,4 +474,152 @@ function scheduleHide() {
       log.warn("voice-typing: scheduled hide failed", { error: String(error) }),
     );
   }, HIDE_DELAY_MS);
+}
+
+// ── Learn from an in-place correction ───────────────────────────────────────
+//
+// We pasted; the user fixed a word we got wrong; Rust — watching only that one
+// field, only for a minute — reports the settled value. The diff is computed
+// here, offered once in the overlay, and forgotten unless the user says yes.
+
+/**
+ * Ask Rust to watch the field we just pasted into, and take AT MOST ONE
+ * candidate from it. `sessionGen` pins the dictation this observation belongs
+ * to: a new one starting while the setup is in flight makes this stale.
+ */
+async function observePastedField(text: string, sessionGen: number): Promise<void> {
+  stopObserving();
+  let started = false;
+  try {
+    started = await invoke<boolean>("observe_pasted_field", { insertedText: text });
+  } catch (e) {
+    log.warn("voice-typing: observe_pasted_field failed", { error: String(e) });
+    return;
+  }
+  if (!started || gen !== sessionGen) return;
+  const un = await listen<CorrectionCandidatePayload>(CORRECTION_CANDIDATE_EVENT, (e) => {
+    stopObserving(); // one candidate per observation, then we're done listening
+    onCorrectionCandidate(e.payload).catch((error) =>
+      log.warn("voice-typing: correction candidate failed", { error: String(error) }),
+    );
+  });
+  // listen() resolves asynchronously — a dictation that started meanwhile owns
+  // the overlay now, so drop this subscription instead of leaking it.
+  if (gen !== sessionGen) un();
+  else correctionUnlisten = un;
+}
+
+function stopObserving(): void {
+  correctionUnlisten?.();
+  correctionUnlisten = null;
+}
+
+async function onCorrectionCandidate(p: CorrectionCandidatePayload): Promise<void> {
+  // The ignore counter (and the write that may follow) only mean something once
+  // this window has read the dictionary file.
+  await whenDictionaryReady();
+  const hit = detectCorrection(p.baseline, p.current, p.insertedText);
+  if (!hit) return;
+  // Declined twice already — the answer isn't going to change.
+  if (isIgnoredTwice(hit.from, hit.to)) return;
+  log.info("voice-typing: correction candidate", { chars: hit.from.length });
+  await showSuggestion(hit);
+}
+
+/** Bring the overlay back with the question bubble, and give the user 8 s. */
+async function showSuggestion(hit: { from: string; to: string }): Promise<void> {
+  cancelSuggestion();
+  // A candidate can settle before the last dictation's overlay has been ordered
+  // out — that pending hide would take the question down with it.
+  clearTimeout(hideTimer);
+  suggestion = hit;
+  lastAdd = null;
+  suggestActionUnlisten = await listen<SuggestActionPayload>(SUGGEST_ACTION_EVENT, (e) =>
+    onSuggestAction(e.payload.action),
+  );
+  await showOverlay();
+  await emit(SUGGEST_EVENT, hit);
+  await register(SUGGEST_SHORTCUT, (event) => {
+    if (event.state === "Pressed") onSuggestAction("add");
+  })
+    .then(() => {
+      suggestShortcutOn = true;
+    })
+    .catch((error) =>
+      // Another app owns ⌥↩ — the buttons still work.
+      log.warn("voice-typing: suggest shortcut register failed", { error: String(error) }),
+    );
+  suggestTimer = setTimeout(() => {
+    // Silence is not an answer: hide, but never count it as an ignore.
+    hideSuggestion().catch((error) =>
+      log.warn("voice-typing: suggest timeout hide failed", { error: String(error) }),
+    );
+  }, SUGGEST_TIMEOUT_MS);
+}
+
+function onSuggestAction(action: SuggestActionPayload["action"]): void {
+  if (action === "add") {
+    acceptSuggestion();
+    return;
+  }
+  if (action === "ignore" && suggestion) {
+    // Only an explicit dismissal counts — twice and we stop offering this pair.
+    recordIgnore(suggestion.from, suggestion.to);
+  }
+  if (action === "undo" && lastAdd) {
+    if (lastAdd.kind === "entry") removeEntry(lastAdd.entryId);
+    else removeVariant(lastAdd.entryId, lastAdd.variant);
+    lastAdd = null;
+  }
+  hideSuggestion().catch((error) =>
+    log.warn("voice-typing: suggest hide failed", { action, error: String(error) }),
+  );
+}
+
+/** Write the correction, then hold the confirmation (with undo) for a beat. */
+function acceptSuggestion(): void {
+  if (!suggestion) return;
+  const { from, to } = suggestion;
+  suggestion = null;
+  lastAdd = addEntry({ phrase: to, variants: [from], source: "correction" });
+  clearTimeout(suggestTimer);
+  // ⌥↩ has done its job; the undo is a click.
+  void unregisterSuggestShortcut();
+  emit(SUGGEST_STATE_EVENT, { state: "added" }).catch((error) =>
+    log.warn("voice-typing: suggest added emit failed", { error: String(error) }),
+  );
+  suggestTimer = setTimeout(() => {
+    hideSuggestion().catch((error) =>
+      log.warn("voice-typing: suggest dwell hide failed", { error: String(error) }),
+    );
+  }, SUGGEST_ADDED_MS);
+}
+
+/** Take the bubble away and put the overlay back to sleep. */
+async function hideSuggestion(): Promise<void> {
+  cancelSuggestion();
+  await emit(SUGGEST_STATE_EVENT, { state: "hidden" }).catch((error) =>
+    log.warn("voice-typing: suggest hidden emit failed", { error: String(error) }),
+  );
+  await hideOverlay();
+}
+
+/** Drop every side effect the bubble owns — timers, the global shortcut, the
+ *  action listener — without touching the overlay window itself. */
+function cancelSuggestion(): void {
+  clearTimeout(suggestTimer);
+  suggestTimer = undefined;
+  suggestion = null;
+  lastAdd = null;
+  suggestActionUnlisten?.();
+  suggestActionUnlisten = null;
+  void unregisterSuggestShortcut();
+}
+
+async function unregisterSuggestShortcut(): Promise<void> {
+  if (!suggestShortcutOn) return;
+  suggestShortcutOn = false;
+  await unregister(SUGGEST_SHORTCUT).catch((error) =>
+    log.warn("voice-typing: suggest shortcut unregister failed", { error: String(error) }),
+  );
 }

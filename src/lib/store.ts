@@ -174,6 +174,10 @@ export type SettingsCategory =
   | "account"
   | "provider"
   | "transcription"
+  // The phrase dictionary is NOT part of Settings state: it lives in its own
+  // shared file (lib/dictionary) so the MCP server can edit it too. This is
+  // only the nav id for its panel.
+  | "dictionary"
   | "voiceTyping"
   | "permissions"
   | "evaluations"

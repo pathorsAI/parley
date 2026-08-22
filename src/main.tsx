@@ -4,6 +4,7 @@ import App from "./App";
 import "./index.css";
 import { attachConsoleOnce, log } from "./lib/log";
 import { initFolderRegistry } from "./lib/history/folders";
+import { initDictionary } from "./lib/dictionary";
 import { desktopPlatform } from "./lib/platform";
 import { initZoomShortcuts } from "./lib/zoom";
 
@@ -18,6 +19,13 @@ initZoomShortcuts();
 // (SaveDestinationPicker), replay (folder chip).
 void initFolderRegistry().catch((error) =>
   log.warn("folders: registry init failed", { error: String(error) })
+);
+
+// Hydrate the phrase dictionary (disk-backed; see lib/dictionary). Every window
+// needs it: the main window rewrites dictated text before it's pasted, the
+// voice-typing overlay rewrites what it displays, Settings edits the list.
+void initDictionary().catch((error) =>
+  log.warn("dictionary: init failed", { error: String(error) })
 );
 
 // Secondary windows load the same bundle at a `#<route>` hash; main.tsx routes

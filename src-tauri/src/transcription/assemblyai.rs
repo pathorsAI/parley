@@ -12,13 +12,31 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    connect_with_headers, drive_session, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
-    TRANSCRIPT_EVENT,
+    clean_vocabulary, connect_with_headers, drive_session, urlencode, LevelMeter, SegmentBuilder,
+    TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
 
 const AAI_BASE: &str = "wss://streaming.assemblyai.com/v3/ws";
+
+/// Universal-Streaming's custom-vocabulary query param, ready to append to the
+/// v3 websocket URL. The wire shape is `keyterms_prompt=<JSON array of terms>`,
+/// url-encoded — note the JSON array, not a repeated param (that is the v3
+/// streaming spelling; the batch API instead takes a `word_boost` body array).
+/// Empty string when there's nothing to bias toward.
+pub fn keyterms_param(vocabulary: &[String]) -> String {
+    let terms = clean_vocabulary(vocabulary);
+    if terms.is_empty() {
+        return String::new();
+    }
+    match serde_json::to_string(&terms) {
+        Ok(json) => format!("&keyterms_prompt={}", urlencode(&json)),
+        // Serializing a Vec<String> cannot realistically fail; if it somehow
+        // does, stream without biasing rather than with a malformed URL.
+        Err(_) => String::new(),
+    }
+}
 
 #[derive(Deserialize, Default)]
 struct AaiWord {
@@ -51,8 +69,9 @@ pub async fn run_session(
     mut pcm_rx: UnboundedReceiver<Vec<i16>>,
 ) -> Result<()> {
     let url = format!(
-        "{AAI_BASE}?sample_rate={}&encoding=pcm_s16le&format_turns=true",
-        TARGET_SAMPLE_RATE
+        "{AAI_BASE}?sample_rate={}&encoding=pcm_s16le&format_turns=true{}",
+        TARGET_SAMPLE_RATE,
+        keyterms_param(&config.vocabulary)
     );
     // AssemblyAI takes the API key directly in the Authorization header.
     let ws = connect_with_headers(&url, &[("Authorization", config.api_key.clone())]).await?;
@@ -139,4 +158,25 @@ pub async fn run_session(
     };
 
     drive_session("assemblyai", forward, read_loop).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keyterms_prompt_is_a_url_encoded_json_array() {
+        let vocab = vec!["Parley".to_string(), " Parley ".to_string()];
+        // The duplicate is normalized away, so the array carries one term.
+        assert_eq!(
+            keyterms_param(&vocab),
+            "&keyterms_prompt=%5B%22Parley%22%5D"
+        );
+    }
+
+    #[test]
+    fn an_empty_dictionary_leaves_the_url_untouched() {
+        assert_eq!(keyterms_param(&[]), "");
+        assert_eq!(keyterms_param(&["  ".to_string()]), "");
+    }
 }

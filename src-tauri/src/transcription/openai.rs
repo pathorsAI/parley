@@ -15,8 +15,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    connect_with_headers, drive_session, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
-    TRANSCRIPT_EVENT,
+    clean_vocabulary, connect_with_headers, drive_session, LevelMeter, SegmentBuilder,
+    TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use crate::audio::resample::pcm_to_le_bytes;
 
@@ -66,6 +66,14 @@ pub async fn run_session(
     let mut transcription = json!({ "model": model });
     if let Some(lang) = config.language_hints.first() {
         transcription["language"] = json!(lang);
+    }
+    // Custom vocabulary rides on the transcription `prompt` — the only biasing
+    // hook the realtime transcription session exposes. Whisper-style prompts are
+    // free text, and a comma-separated term list is the shape OpenAI documents
+    // for steering spelling.
+    let terms = clean_vocabulary(&config.vocabulary);
+    if !terms.is_empty() {
+        transcription["prompt"] = json!(terms.join(", "));
     }
     let setup = json!({
         "type": "transcription_session.update",
