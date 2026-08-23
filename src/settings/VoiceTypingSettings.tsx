@@ -138,6 +138,39 @@ function comboFromEvent(e: KeyboardEvent): VoiceTypingShortcut | null {
   return `combo:${[...mods, e.code].join("+")}` as VoiceTypingShortcut;
 }
 
+/**
+ * Register `shortcut` with the backend and return the resulting status (null
+ * when the apply itself failed). A single-key trigger needs Input Monitoring —
+ * request it right when the user picks one (the permission follows the
+ * feature), then re-apply so the tap arms immediately if macOS granted
+ * without a relaunch.
+ */
+async function applyShortcut(shortcut: VoiceTypingShortcut): Promise<HotkeyStatus | null> {
+  const s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(
+    (error) => {
+      log.warn("voice typing settings: shortcut apply failed", {
+        shortcut,
+        error: String(error),
+      });
+      return null;
+    },
+  );
+  if (!s || !isModifierId(shortcut) || s.authorized) return s;
+  await invoke("request_input_monitoring").catch((error) =>
+    log.warn("voice typing settings: input monitoring request failed", {
+      shortcut,
+      error: String(error),
+    }),
+  );
+  return invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch((error) => {
+    log.warn("voice typing settings: shortcut reapply failed", {
+      shortcut,
+      error: String(error),
+    });
+    return s;
+  });
+}
+
 interface AppIdentity {
   bundleIdentifier: string;
   executablePath: string;
@@ -221,35 +254,7 @@ export const VoiceTypingSettings = () => {
       broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
         log.warn("voice typing settings: broadcast failed", { error: String(error) }),
       );
-      let s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(
-        (error) => {
-          log.warn("voice typing settings: shortcut apply failed", {
-            shortcut,
-            error: String(error),
-          });
-          return null;
-        },
-      );
-      // A single-key trigger needs Input Monitoring — request it right when the
-      // user picks one (the permission follows the feature), then re-apply so the
-      // tap arms immediately if macOS granted without a relaunch.
-      if (s && isModifierId(shortcut) && !s.authorized) {
-        await invoke("request_input_monitoring").catch((error) =>
-          log.warn("voice typing settings: input monitoring request failed", {
-            shortcut,
-            error: String(error),
-          }),
-        );
-        s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(
-          (error) => {
-            log.warn("voice typing settings: shortcut reapply failed", {
-              shortcut,
-              error: String(error),
-            });
-            return s;
-          },
-        );
-      }
+      const s = await applyShortcut(shortcut);
       if (s) setStatus(s);
     } finally {
       setSaving(false);

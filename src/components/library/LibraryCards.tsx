@@ -115,7 +115,11 @@ function MenuShell({
           }
         }}
       />
+      {/* stopPropagation: the popover floats inside a clickable card — menu
+          interactions must not bubble into the card's own open handler. */}
       <div
+        role="menu"
+        aria-label={title}
         className="absolute right-0 top-7 z-40 max-h-64 min-w-40 overflow-y-auto rounded-md border bg-popover p-1 shadow-md"
         onClick={(ev) => ev.stopPropagation()}
         onKeyDown={(ev) => ev.stopPropagation()}
