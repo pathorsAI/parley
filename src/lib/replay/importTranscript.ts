@@ -68,7 +68,7 @@ function parseStampLine(line: string): { ms: number; text: string } | null {
 }
 
 /** A speaker label: short, no sentence punctuation — "Speaker 1", "Jojo", "業務". */
-const LABEL_TEXT_RE = /^[^\s:：。，,.?？!！""''()（）\d][^:：。，,.?？!！]{0,30}$/;
+const LABEL_TEXT_RE = /^[^\s:：。，,.?？!！"'()（）\d][^:：。，,.?？!！]{0,30}$/;
 /** Generic labels that are speakers even when they appear only once. */
 const GENERIC_LABEL_RE = /^(speaker|說話者|发言人|講者|讲者)\s*\d*$/i;
 
@@ -250,14 +250,12 @@ function titleFromPreamble(preamble: string[]): string | null {
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-/**
- * Parse a transcript's raw text. Returns null when there is no spoken content
- * at all (empty / whitespace-only file).
- */
-export function parseTranscript(raw: string): ParsedTranscript | null {
-  const lines = raw.replace(/\r\n?/g, "\n").split("\n");
-
-  const inlineSpeakers = collectInlineSpeakers(lines);
+/** How many lines look like a `[MM:SS]` stamp vs. a speaker label — the vote
+ *  that picks which parser runs. */
+function countFormatSignals(
+  lines: string[],
+  inlineSpeakers: Set<string>,
+): { stampCount: number; labelCount: number } {
   let stampCount = 0;
   let labelCount = 0;
   for (const l of lines) {
@@ -274,40 +272,40 @@ export function parseTranscript(raw: string): ParsedTranscript | null {
     const inline = inlineLabel(line);
     if (inline && inlineSpeakers.has(inline.label)) labelCount++;
   }
+  return { stampCount, labelCount };
+}
 
-  if (stampCount >= 2 && stampCount >= labelCount) {
-    const { segments, preamble } = parseTimestamped(lines);
-    if (segments.length) {
-      return {
-        segments,
-        speakerNames: {},
-        durationMs: segments[segments.length - 1].endMs,
-        embeddedTitle: titleFromPreamble(preamble),
-        format: "timestamps",
-      };
-    }
-  }
+/** Timestamped parse, or null when it yields nothing usable. */
+function asTimestamped(lines: string[]): ParsedTranscript | null {
+  const { segments, preamble } = parseTimestamped(lines);
+  if (!segments.length) return null;
+  return {
+    segments,
+    speakerNames: {},
+    durationMs: segments[segments.length - 1].endMs,
+    embeddedTitle: titleFromPreamble(preamble),
+    format: "timestamps",
+  };
+}
 
-  if (labelCount >= 1) {
-    const { blocks, preamble } = parseSpeakerBlocks(lines, inlineSpeakers);
-    const { segments, speakerNames } = synthesizeSegments(
-      blocks.map((b) => ({ label: b.label, text: b.lines.join("\n") })),
-    );
-    if (segments.length) {
-      return {
-        segments,
-        speakerNames,
-        durationMs: segments[segments.length - 1].endMs,
-        embeddedTitle: titleFromPreamble(preamble),
-        format: "speakers",
-      };
-    }
-  }
+/** Speaker-block parse, or null when it yields nothing usable. */
+function asSpeakerBlocks(lines: string[], inlineSpeakers: Set<string>): ParsedTranscript | null {
+  const { blocks, preamble } = parseSpeakerBlocks(lines, inlineSpeakers);
+  const { segments, speakerNames } = synthesizeSegments(
+    blocks.map((b) => ({ label: b.label, text: b.lines.join("\n") })),
+  );
+  if (!segments.length) return null;
+  return {
+    segments,
+    speakerNames,
+    durationMs: segments[segments.length - 1].endMs,
+    embeddedTitle: titleFromPreamble(preamble),
+    format: "speakers",
+  };
+}
 
-  // Plain fallback: paragraphs (blank-line separated) become segments. Long
-  // unbroken paragraphs — a whole meeting exported as one run of text is common
-  // — are further split at sentence boundaries so the synthesized timeline
-  // spreads across the recording (readable replay, anchorable findings).
+/** Blank-line separated paragraphs, with leading/trailing whitespace dropped. */
+function toParagraphs(lines: string[]): string[] {
   const paragraphs: string[] = [];
   let acc: string[] = [];
   for (const l of lines) {
@@ -319,7 +317,17 @@ export function parseTranscript(raw: string): ParsedTranscript | null {
     }
   }
   if (acc.length) paragraphs.push(acc.join("\n"));
-  const chunks = paragraphs.flatMap((p) => splitLongRun(p));
+  return paragraphs;
+}
+
+/**
+ * Plain fallback: paragraphs (blank-line separated) become segments. Long
+ * unbroken paragraphs — a whole meeting exported as one run of text is common
+ * — are further split at sentence boundaries so the synthesized timeline
+ * spreads across the recording (readable replay, anchorable findings).
+ */
+function asPlain(lines: string[]): ParsedTranscript | null {
+  const chunks = toParagraphs(lines).flatMap((p) => splitLongRun(p));
   const { segments } = synthesizeSegments(chunks.map((text) => ({ label: null, text })));
   if (!segments.length) return null;
   return {
@@ -329,6 +337,29 @@ export function parseTranscript(raw: string): ParsedTranscript | null {
     embeddedTitle: null,
     format: "plain",
   };
+}
+
+/**
+ * Parse a transcript's raw text. Returns null when there is no spoken content
+ * at all (empty / whitespace-only file).
+ */
+export function parseTranscript(raw: string): ParsedTranscript | null {
+  const lines = raw.replace(/\r\n?/g, "\n").split("\n");
+
+  const inlineSpeakers = collectInlineSpeakers(lines);
+  const { stampCount, labelCount } = countFormatSignals(lines, inlineSpeakers);
+
+  if (stampCount >= 2 && stampCount >= labelCount) {
+    const parsed = asTimestamped(lines);
+    if (parsed) return parsed;
+  }
+
+  if (labelCount >= 1) {
+    const parsed = asSpeakerBlocks(lines, inlineSpeakers);
+    if (parsed) return parsed;
+  }
+
+  return asPlain(lines);
 }
 
 // ── File-name helpers (shared by the dialog) ────────────────────────────────

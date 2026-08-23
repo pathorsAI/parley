@@ -26,7 +26,12 @@ import type { OrgHandoffMode } from "../library/destination";
 import { rediarizeSegments } from "../speakers/postDiarize";
 import { translate } from "../../i18n/messages";
 import type { ReplaySession } from "../replay/types";
-import type { ActionItem, TimelineEvent, TranscriptSegment } from "../types";
+import type {
+  ActionItem,
+  DefaultSaveLocation,
+  TimelineEvent,
+  TranscriptSegment,
+} from "../types";
 import type { HistoryEntry, HistoryEntrySummary } from "./types";
 
 const HISTORY_UPDATED_EVENT = "history://updated";
@@ -190,6 +195,20 @@ export type MeetingShare = OrgShareChoice | "off" | null;
  * shared copy (this call's pick, else the settings default). A shared copy is a
  * second destination, never a move — the local entry always lands.
  */
+/** The org share this meeting asks for, before the cloud/sync gate: the
+ *  meeting's own pick, else the settings default. `"off"` suppresses both. */
+function wantedOrgShare(
+  meetingOrgShare: MeetingShare,
+  def: DefaultSaveLocation,
+): OrgShareChoice | null {
+  if (meetingOrgShare === "off") return null;
+  if (meetingOrgShare) return meetingOrgShare;
+  if (def.scope === "org" && def.orgId) {
+    return { orgId: def.orgId, folderId: def.folderId ?? null, mode: "copy" };
+  }
+  return null;
+}
+
 export function resolveMeetingSave(): MeetingSaveTarget {
   const s = useStore.getState();
   const def = s.settings.defaultSaveLocation;
@@ -202,16 +221,7 @@ export function resolveMeetingSave(): MeetingSaveTarget {
     origin: picked ? "meeting" : "default",
   };
 
-  let wanted: OrgShareChoice | null = null;
-  if (s.meetingOrgShare === "off") {
-    wanted = null;
-  } else if (s.meetingOrgShare) {
-    wanted = s.meetingOrgShare;
-  } else {
-    if (def.scope === "org" && def.orgId) {
-      wanted = { orgId: def.orgId, folderId: def.folderId ?? null, mode: "copy" };
-    }
-  }
+  const wanted = wantedOrgShare(s.meetingOrgShare, def);
   if (!wanted) return base;
   // An org share needs the cloud edition, signed in, sync on.
   if (!CLOUD_ENABLED || !syncEnabled()) return { ...base, fallback: "syncOff" };
@@ -610,7 +620,7 @@ export async function updateEntryMeta(id: string, patch: EntryMetaPatch): Promis
     : meta.speakerNames;
   const updated: HistoryEntry = {
     ...meta,
-    ...(patch.meetingContext !== undefined ? { meetingContext: patch.meetingContext } : {}),
+    ...(patch.meetingContext === undefined ? {} : { meetingContext: patch.meetingContext }),
     speakerNames,
   };
   await invoke("save_history_entry", {
@@ -673,8 +683,8 @@ export async function setEntryAnalysis(
     ...meta,
     ...(patch.findings ? { findings: patch.findings } : {}),
     ...(patch.actionItems ? { actionItems: patch.actionItems } : {}),
-    ...(patch.brief !== undefined ? { brief: patch.brief } : {}),
-    ...(patch.analyzed !== undefined ? { analyzed: patch.analyzed } : {}),
+    ...(patch.brief === undefined ? {} : { brief: patch.brief }),
+    ...(patch.analyzed === undefined ? {} : { analyzed: patch.analyzed }),
   };
   await invoke("save_history_entry", {
     id,
@@ -719,6 +729,45 @@ export async function setEntryAnalysis(
  *
  * Idempotent, no flag, no cloud push of entries (a push re-uploads audio).
  */
+/** Refile one saved recording onto the surviving folder. Returns false when the
+ *  entry couldn't be rewritten — logged, never fatal: the sweep goes on. */
+async function repointEntryFolder(id: string, target: string): Promise<boolean> {
+  try {
+    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+    const updated: HistoryEntry = { ...meta, folderId: target };
+    await invoke("save_history_entry", {
+      id,
+      summaryJson: JSON.stringify(buildSummary(updated)),
+      metaJson: JSON.stringify(updated),
+      audioSourcePath: null, // leave the recording untouched
+      compress: false,
+    });
+    return true;
+  } catch (e) {
+    log.warn("history: folder dedupe failed for entry", { id, error: String(e) });
+    return false;
+  }
+}
+
+/** Refile every recording filed in a twin folder onto its survivor. `swept` is
+ *  false when the pass itself failed, so the twins must be kept for now. */
+async function repointRecordings(
+  survivorOf: ReadonlyMap<string, string>,
+): Promise<{ moved: number; swept: boolean }> {
+  let moved = 0;
+  try {
+    for (const summary of await listHistory()) {
+      const target = summary.folderId ? survivorOf.get(summary.folderId) : undefined;
+      if (!target) continue;
+      if (await repointEntryFolder(summary.id, target)) moved++;
+    }
+  } catch (e) {
+    log.warn("history: folder dedupe sweep failed", { error: String(e) });
+    return { moved, swept: false };
+  }
+  return { moved, swept: true };
+}
+
 export async function migrateDuplicateFolders(): Promise<number> {
   if (!isTauri()) return 0;
   const merges = planFolderDedupe(listLocalFolders());
@@ -726,35 +775,10 @@ export async function migrateDuplicateFolders(): Promise<number> {
   const survivorOf = new Map<string, string>();
   for (const m of merges) for (const twin of m.twinIds) survivorOf.set(twin, m.canonicalId);
 
-  let moved = 0;
-  try {
-    for (const summary of await listHistory()) {
-      const target = summary.folderId ? survivorOf.get(summary.folderId) : undefined;
-      if (!target) continue;
-      try {
-        const { meta } = await invoke<HistoryReadResult>("read_history_entry", {
-          id: summary.id,
-        });
-        const updated: HistoryEntry = { ...meta, folderId: target };
-        await invoke("save_history_entry", {
-          id: summary.id,
-          summaryJson: JSON.stringify(buildSummary(updated)),
-          metaJson: JSON.stringify(updated),
-          audioSourcePath: null, // leave the recording untouched
-          compress: false,
-        });
-        moved++;
-      } catch (e) {
-        log.warn("history: folder dedupe failed for entry", {
-          id: summary.id,
-          error: String(e),
-        });
-      }
-    }
-  } catch (e) {
-    log.warn("history: folder dedupe sweep failed", { error: String(e) });
-    return moved;
-  }
+  const { moved, swept } = await repointRecordings(survivorOf);
+  // A sweep that blew up may have left recordings on a twin — leave the twins in
+  // place; the next startup runs this again and converges.
+  if (!swept) return moved;
 
   // Recordings are safely off the twins — now the twins can go.
   for (const [twin] of survivorOf) {

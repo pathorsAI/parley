@@ -20,7 +20,7 @@ export const SETTINGS_NAVIGATE_EVENT = "settings://navigate";
 export async function openSettingsWindow(category?: SettingsCategory): Promise<void> {
   const hash = category ? `settings/${category}` : "settings";
   if (!isTauri()) {
-    window.location.hash = hash;
+    globalThis.location.hash = hash;
     return;
   }
   const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
@@ -101,9 +101,9 @@ export async function listenForSettings(): Promise<UnlistenFn> {
     // Cloud sign-in/out done in the other window (it's persisted under the same key).
     useStore.getState().setCloudAuth(cloudAuthFromPersist(e.newValue));
   };
-  window.addEventListener("storage", onStorage);
+  globalThis.addEventListener("storage", onStorage);
 
-  if (!isTauri()) return () => window.removeEventListener("storage", onStorage);
+  if (!isTauri()) return () => globalThis.removeEventListener("storage", onStorage);
 
   // Channel 1: the Tauri broadcast (fast path).
   const unlisten = await listen<Settings>(SETTINGS_EVENT, (e) => {
@@ -114,7 +114,7 @@ export async function listenForSettings(): Promise<UnlistenFn> {
     useStore.getState().applySettings(e.payload);
   });
   return () => {
-    window.removeEventListener("storage", onStorage);
+    globalThis.removeEventListener("storage", onStorage);
     unlisten();
   };
 }

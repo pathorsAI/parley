@@ -505,8 +505,8 @@ async function observePastedField(text: string, sessionGen: number): Promise<voi
   });
   // listen() resolves asynchronously — a dictation that started meanwhile owns
   // the overlay now, so drop this subscription instead of leaking it.
-  if (gen !== sessionGen) un();
-  else correctionUnlisten = un;
+  if (gen === sessionGen) correctionUnlisten = un;
+  else un();
 }
 
 function stopObserving(): void {

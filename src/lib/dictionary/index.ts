@@ -282,9 +282,9 @@ export function updateEntry(
     ...file,
     entries: file.entries.map((e) => {
       if (e.id !== id) return e;
-      const phrase = patch.phrase !== undefined ? patch.phrase.trim() : e.phrase;
+      const phrase = patch.phrase === undefined ? e.phrase : patch.phrase.trim();
       const variants =
-        patch.variants !== undefined ? cleanVariants(patch.variants, phrase) : e.variants;
+        patch.variants === undefined ? e.variants : cleanVariants(patch.variants, phrase);
       return { ...e, phrase, variants, source: patch.source ?? e.source };
     }),
   });
@@ -341,11 +341,36 @@ export function vocabularyTerms(): string[] {
 }
 
 const ASCII_ONLY = /^[\x00-\x7F]+$/;
-const WORD_EDGE_START = /^[A-Za-z0-9_]/;
-const WORD_EDGE_END = /[A-Za-z0-9_]$/;
+const WORD_EDGE_START = /^\w/;
+const WORD_EDGE_END = /\w$/;
 
 function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
+
+/** Every (variant → phrase) rewrite on file, longest variant first: with both
+ *  "Parley" and "Parley Cloud" known, the longer one has to win. */
+function replacementPairs(
+  entries: readonly DictionaryEntry[],
+): { variant: string; phrase: string }[] {
+  const pairs: { variant: string; phrase: string }[] = [];
+  for (const e of entries) {
+    const phrase = e.phrase.trim();
+    if (!phrase) continue;
+    for (const variant of e.variants) {
+      if (variant.trim()) pairs.push({ variant, phrase });
+    }
+  }
+  pairs.sort((a, b) => b.variant.length - a.variant.length);
+  return pairs;
+}
+
+/** Case-insensitive matcher for an ASCII variant, asserting a word boundary on
+ *  whichever sides actually start/end with a word character. */
+function asciiVariantRe(variant: string): RegExp {
+  const before = WORD_EDGE_START.test(variant) ? "(?<![A-Za-z0-9_])" : "";
+  const after = WORD_EDGE_END.test(variant) ? "(?![A-Za-z0-9_])" : "";
+  return new RegExp(`${before}${escapeRegExp(variant)}${after}`, "gi");
 }
 
 /**
@@ -367,22 +392,11 @@ export function applyReplacements(
   entries: readonly DictionaryEntry[] = listEntries(),
 ): string {
   if (!text) return text;
-  const pairs: { variant: string; phrase: string }[] = [];
-  for (const e of entries) {
-    const phrase = e.phrase.trim();
-    if (!phrase) continue;
-    for (const variant of e.variants) {
-      if (variant.trim()) pairs.push({ variant, phrase });
-    }
-  }
-  pairs.sort((a, b) => b.variant.length - a.variant.length);
   let out = text;
-  for (const { variant, phrase } of pairs) {
+  for (const { variant, phrase } of replacementPairs(entries)) {
     if (ASCII_ONLY.test(variant)) {
-      const before = WORD_EDGE_START.test(variant) ? "(?<![A-Za-z0-9_])" : "";
-      const after = WORD_EDGE_END.test(variant) ? "(?![A-Za-z0-9_])" : "";
       // A function replacer, so a `$` in the phrase stays literal.
-      out = out.replace(new RegExp(`${before}${escapeRegExp(variant)}${after}`, "gi"), () => phrase);
+      out = out.replace(asciiVariantRe(variant), () => phrase);
     } else {
       out = out.split(variant).join(phrase);
     }

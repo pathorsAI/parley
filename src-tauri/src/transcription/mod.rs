@@ -1,6 +1,7 @@
 //! Transcription adapters. Each provider speaks its own wire protocol but
 //! shares the primitives in [`common`] (segment building, level metering,
-//! event emission).
+//! event emission) and the websocket plumbing in [`ws`] (audio pump, frame
+//! classification, read loop).
 //!
 //! The dispatch contract is deliberately minimal: an adapter is handed a PCM
 //! receiver and decides how to consume it. Today every adapter streams audio to
@@ -14,6 +15,7 @@ pub mod deepgram;
 pub mod gemini;
 pub mod openai;
 pub mod soniox;
+pub mod ws;
 
 use anyhow::{anyhow, Result};
 use tauri::AppHandle;

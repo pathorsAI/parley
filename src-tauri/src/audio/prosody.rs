@@ -741,7 +741,18 @@ fn yin_f0(frame: &[f32], sample_rate: f32) -> Option<f32> {
         return None;
     }
 
-    // Difference function d(tau) over the integration window w.
+    let cmnd = cumulative_mean_normalized_difference(frame, w, tau_max);
+    let best_tau = first_dip_below_threshold(&cmnd, tau_min, tau_max)?;
+    let refined = parabolic_refine(&cmnd, best_tau, tau_min, tau_max);
+
+    let f0 = sample_rate / refined;
+    (F0_MIN_HZ..=F0_MAX_HZ).contains(&f0).then_some(f0)
+}
+
+/// YIN steps 1–2: the squared-difference function d(tau) over the integration
+/// window `w`, then its cumulative-mean normalization d'(tau). Index 0 is 1.0 so
+/// the zero lag never wins the threshold search.
+fn cumulative_mean_normalized_difference(frame: &[f32], w: usize, tau_max: usize) -> Vec<f32> {
     let mut d = vec![0.0f32; tau_max + 1];
     for (tau, slot) in d.iter_mut().enumerate().take(tau_max + 1).skip(1) {
         let mut sum = 0.0f32;
@@ -752,7 +763,6 @@ fn yin_f0(frame: &[f32], sample_rate: f32) -> Option<f32> {
         *slot = sum;
     }
 
-    // Cumulative mean normalized difference d'(tau).
     let mut cmnd = vec![1.0f32; tau_max + 1];
     let mut running = 0.0f32;
     for tau in 1..=tau_max {
@@ -763,39 +773,41 @@ fn yin_f0(frame: &[f32], sample_rate: f32) -> Option<f32> {
             1.0
         };
     }
+    cmnd
+}
 
-    // First lag below the threshold, then descend to its local minimum.
+/// YIN step 3: the first lag below the absolute threshold, descended to its
+/// local minimum. `None` when the frame is aperiodic (nothing ever dips).
+fn first_dip_below_threshold(cmnd: &[f32], tau_min: usize, tau_max: usize) -> Option<usize> {
     let mut tau = tau_min;
-    let best_tau = loop {
-        if tau > tau_max {
-            return None;
-        }
+    while tau <= tau_max {
         if cmnd[tau] < YIN_THRESHOLD {
             while tau < tau_max && cmnd[tau + 1] < cmnd[tau] {
                 tau += 1;
             }
-            break tau;
+            return Some(tau);
         }
         tau += 1;
-    };
+    }
+    None
+}
 
-    // Parabolic interpolation around best_tau for sub-sample precision.
-    let refined = if best_tau > tau_min && best_tau < tau_max {
-        let s0 = cmnd[best_tau - 1];
-        let s1 = cmnd[best_tau];
-        let s2 = cmnd[best_tau + 1];
-        let denom = 2.0 * (2.0 * s1 - s2 - s0);
-        if denom.abs() > f32::EPSILON {
-            best_tau as f32 + (s2 - s0) / denom
-        } else {
-            best_tau as f32
-        }
+/// YIN step 4: parabolic interpolation around `best_tau` for sub-sample
+/// precision. Falls back to the integer lag at the edges of the search range or
+/// when the parabola is degenerate.
+fn parabolic_refine(cmnd: &[f32], best_tau: usize, tau_min: usize, tau_max: usize) -> f32 {
+    if best_tau <= tau_min || best_tau >= tau_max {
+        return best_tau as f32;
+    }
+    let s0 = cmnd[best_tau - 1];
+    let s1 = cmnd[best_tau];
+    let s2 = cmnd[best_tau + 1];
+    let denom = 2.0 * (2.0 * s1 - s2 - s0);
+    if denom.abs() > f32::EPSILON {
+        best_tau as f32 + (s2 - s0) / denom
     } else {
         best_tau as f32
-    };
-
-    let f0 = sample_rate / refined;
-    (F0_MIN_HZ..=F0_MAX_HZ).contains(&f0).then_some(f0)
+    }
 }
 
 #[cfg(test)]

@@ -34,7 +34,7 @@ export function AppShell() {
   const saved = useDefaultLayout({
     id: "parley:shell",
     panelIds: ["tree", "route"],
-    storage: window.localStorage,
+    storage: globalThis.localStorage,
   });
 
   if (focused) {

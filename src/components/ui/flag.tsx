@@ -6,7 +6,7 @@ import { cn } from "../../lib/utils";
  * no CDN or runtime library. Renders nothing for an unknown/empty code so it
  * degrades gracefully next to the text label.
  */
-export function Flag({ code, className }: { code?: string; className?: string }) {
+export function Flag({ code, className }: Readonly<{ code?: string; className?: string }>) {
   if (!code) return null;
   return (
     <img

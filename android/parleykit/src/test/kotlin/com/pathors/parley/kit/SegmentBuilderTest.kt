@@ -6,6 +6,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
+/** The one id that never moves, whichever leg or run produced the tail. */
+private const val TAIL_ID = "mix-tail"
+
 /**
  * Semantics ported from `src-tauri/src/transcription/common.rs::SegmentBuilder`
  * (via `SegmentBuilderTests.swift`). These tests are the contract: if they
@@ -101,9 +104,9 @@ class SegmentBuilderTest {
         builder.emitTail("", speaker = 2, startMs = 300)
 
         assertEquals(2, emitted.size)
-        assertEquals("mix-tail", emitted[0].id)
+        assertEquals(TAIL_ID, emitted[0].id)
         assertFalse(emitted[0].isFinal)
-        assertEquals("mix-tail", emitted[1].id)
+        assertEquals(TAIL_ID, emitted[1].id)
         assertEquals("empty tail clears the UI row", "", emitted[1].text)
     }
 
@@ -139,7 +142,7 @@ class SegmentBuilderTest {
         // The tail id is the one thing that stays put: every `-tail` check in
         // the app and the cloud depends on this exact shape, and only one tail
         // is ever on screen.
-        assertEquals("mix-tail", second[1].id)
+        assertEquals(TAIL_ID, second[1].id)
         assertEquals(60_900L, second[1].startMs)
     }
 }

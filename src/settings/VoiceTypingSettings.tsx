@@ -124,6 +124,20 @@ export function shortcutCaps(shortcut: string, t: (k: TranslationKey) => string)
   return shortcut;
 }
 
+/** The combo id a recorded keydown selects, or null when the press needs a
+ *  modifier (a bare letter would swallow ordinary typing system-wide). */
+function comboFromEvent(e: KeyboardEvent): VoiceTypingShortcut | null {
+  const mods = [
+    e.metaKey ? "super" : null,
+    e.ctrlKey ? "control" : null,
+    e.altKey ? "alt" : null,
+    e.shiftKey ? "shift" : null,
+  ].filter((m): m is string => m !== null);
+  const isFKey = /^F([1-9]|1\d|2[0-4])$/.test(e.code);
+  if (mods.length === 0 && !isFKey) return null;
+  return `combo:${[...mods, e.code].join("+")}` as VoiceTypingShortcut;
+}
+
 interface AppIdentity {
   bundleIdentifier: string;
   executablePath: string;
@@ -292,20 +306,14 @@ export const VoiceTypingSettings = () => {
       }
       if (MODIFIER_CODES.has(e.code)) return; // still holding — wait for the key
       sawNonModifierRef.current = true; // a combo was attempted
-      const mods = [
-        e.metaKey ? "super" : null,
-        e.ctrlKey ? "control" : null,
-        e.altKey ? "alt" : null,
-        e.shiftKey ? "shift" : null,
-      ].filter((m): m is string => m !== null);
-      const isFKey = /^F([1-9]|1\d|2[0-4])$/.test(e.code);
-      if (mods.length === 0 && !isFKey) {
+      const combo = comboFromEvent(e);
+      if (!combo) {
         setRecordHint("settings.voiceTyping.recorder.needModifier");
         return;
       }
       setRecording(false);
       setRecordHint(null);
-      chooseShortcut(`combo:${[...mods, e.code].join("+")}` as VoiceTypingShortcut).catch((error) =>
+      chooseShortcut(combo).catch((error) =>
         log.error("voice-typing: choose combo shortcut failed", { error: String(error) }),
       );
     };
@@ -335,13 +343,13 @@ export const VoiceTypingSettings = () => {
       setRecording(false);
       setRecordHint(null);
     };
-    window.addEventListener("keydown", onKey, true);
-    window.addEventListener("keyup", onKeyUp, true);
-    window.addEventListener("blur", cancel);
+    globalThis.addEventListener("keydown", onKey, true);
+    globalThis.addEventListener("keyup", onKeyUp, true);
+    globalThis.addEventListener("blur", cancel);
     return () => {
-      window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("keyup", onKeyUp, true);
-      window.removeEventListener("blur", cancel);
+      globalThis.removeEventListener("keydown", onKey, true);
+      globalThis.removeEventListener("keyup", onKeyUp, true);
+      globalThis.removeEventListener("blur", cancel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recording]);

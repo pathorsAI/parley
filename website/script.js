@@ -21,7 +21,7 @@ nav.querySelectorAll(".nav__links a").forEach((a) =>
 
 // Scroll reveal
 const reveals = document.querySelectorAll(".reveal");
-if ("IntersectionObserver" in window) {
+if ("IntersectionObserver" in globalThis) {
   const io = new IntersectionObserver(
     (entries) => {
       entries.forEach((e) => {

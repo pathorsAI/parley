@@ -279,17 +279,22 @@ export function chainQueued(
  * ("while anything is missing, every artifact is visibly either generating,
  * queued, or failed") falls out of the same facts the scheduler acts on.
  */
+/** An untouched ("idle") artifact reads QUEUED while a run is still coming. */
+function displayStatus(status: AsyncTaskStatus, queued: boolean): StudyArtifactDisplay {
+  if (status === "idle") return queued ? "queued" : "idle";
+  return status;
+}
+
 export function deriveStudyPipeline(f: StudyPipelineFacts): StudyPipelineState {
   // "queued" is a promise that the scheduler WILL dispatch. With auto-analysis
   // off nothing is coming, so every untouched artifact reads idle rather than
   // queuing forever against a pipeline that will never run.
   const can = f.autoAnalyze && f.hasDeepKey && f.hasTranscript;
 
-  const findings: StudyArtifactDisplay =
-    f.analysisStatus !== "idle" ? f.analysisStatus : can ? "queued" : "idle";
+  const findings = displayStatus(f.analysisStatus, can);
 
   const chained = (status: AsyncTaskStatus): StudyArtifactDisplay =>
-    status !== "idle" ? status : chainQueued(f) ? "queued" : "idle";
+    displayStatus(status, chainQueued(f));
 
   const artifacts: StudyArtifactState[] = [
     { key: "findings", display: findings },

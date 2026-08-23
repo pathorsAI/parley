@@ -31,7 +31,7 @@ export function initZoomShortcuts(): void {
     apply(zoom).catch((e) => log.warn("zoom: restore failed", { error: String(e) }));
   }
 
-  window.addEventListener("keydown", (e) => {
+  globalThis.addEventListener("keydown", (e) => {
     // ⌘ on macOS, Ctrl elsewhere — exclusively, so combos like Ctrl+⌘ pass through.
     const mod = isMac() ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
     if (!mod || e.altKey) return;

@@ -22,6 +22,20 @@ import {
 } from "../lib/library/destination";
 
 /**
+ * Fetch one org's shared folders as an `[orgId, folders]` pair. Extracted to
+ * module scope so its `catch`/`map` callbacks don't push the surrounding loader
+ * closures past the nested-function depth limit. The lister is passed in
+ * because the cloud module is only ever reached through a lazy import.
+ */
+async function loadOrgFolderPair(
+  orgId: string,
+  listOrgFolders: (id: string) => Promise<Folder[]>
+): Promise<readonly [string, Folder[]]> {
+  const fs = await listOrgFolders(orgId).catch((): Folder[] => []);
+  return [orgId, fs.map((f) => ({ id: f.id, name: f.name, createdAt: f.createdAt }))] as const;
+}
+
+/**
  * THE control for "where does this recording live".
  *
  * One folder is one customer, so this is also the only "whose call was this"
@@ -95,12 +109,7 @@ export function DestinationPicker({
       const mine = await listMyOrgs();
       if (!alive) return;
       setOrgs(mine.map((o) => ({ id: o.id, name: o.name })));
-      const pairs = await Promise.all(
-        mine.map(async (o) => {
-          const fs = await listOrgFolders(o.id).catch(() => []);
-          return [o.id, fs.map((f) => ({ id: f.id, name: f.name, createdAt: f.createdAt }))] as const;
-        })
-      );
+      const pairs = await Promise.all(mine.map((o) => loadOrgFolderPair(o.id, listOrgFolders)));
       if (alive) setOrgFolders(Object.fromEntries(pairs));
     }
     load().catch((error) => log.warn("destination: org load failed", { error: String(error) }));

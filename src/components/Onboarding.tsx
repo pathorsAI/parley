@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { AppLanguage, LlmProvider, Settings, SttProviderId } from "../lib/types";
+import type { LlmProvider, Settings, SttProviderId } from "../lib/types";
 
 // systemAudio: unknown | granted | denied | unsupported (macOS < 14.2).
 type Perms = { microphone: string; systemAudio: string };
@@ -106,11 +106,11 @@ export function Onboarding() {
     };
     window.addEventListener("focus", recheckNow);
     document.addEventListener("visibilitychange", recheckNow);
-    const id = window.setInterval(recheckNow, 2000);
+    const id = globalThis.setInterval(recheckNow, 2000);
     return () => {
       window.removeEventListener("focus", recheckNow);
       document.removeEventListener("visibilitychange", recheckNow);
-      window.clearInterval(id);
+      globalThis.clearInterval(id);
     };
   }, [step]);
 
@@ -153,7 +153,7 @@ export function Onboarding() {
                   <button
                     key={lang.value}
                     type="button"
-                    onClick={() => patch({ language: lang.value as AppLanguage })}
+                    onClick={() => patch({ language: lang.value })}
                     className={`flex items-center justify-between rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
                       settings.language === lang.value
                         ? "border-primary bg-primary/10"

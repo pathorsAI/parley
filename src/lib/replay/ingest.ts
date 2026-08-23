@@ -59,7 +59,7 @@ export function isTranscriptPath(path: string): boolean {
   return /\.txt$/i.test(path);
 }
 
-const AUDIO_RE = new RegExp(`\\.(${AUDIO_EXTENSIONS.join("|")})$`, "i");
+const AUDIO_RE = new RegExp(String.raw`\.(${AUDIO_EXTENSIONS.join("|")})$`, "i");
 
 /** Whether a picked/dropped path is an audio recording we can transcribe. */
 export function isAudioPath(path: string): boolean {

@@ -17,6 +17,8 @@ import { beginMeeting } from "../../lib/meeting/start";
 import { useStore, type LibrarySelection } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import type { LibraryTree } from "./useLibraryTree";
+import type { Folder as LocalFolder } from "../../lib/history/folders";
+import type { CloudOrg } from "../../lib/cloud/types";
 
 /**
  * The one tree (issue #195).
@@ -161,32 +163,19 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
                 />
                 {open &&
                   (tree.orgFolders[o.id] ?? []).map((f) => (
-                    <Row
+                    <OrgFolderRow
                       key={f.id}
-                      depth={1}
-                      icon={<Folder className="size-3.5" />}
-                      label={f.name}
+                      tree={tree}
+                      org={o}
+                      folder={f}
                       active={libraryActive && orgSel?.id === o.id && orgSel.folderId === f.id}
                       onSelect={() =>
                         selectLibrary({ kind: "org", id: o.id, name: o.name, folderId: f.id })
                       }
-                      onRename={(name) => {
-                        tree.renameOrgFolder(o.id, f.id, name).catch(() => {});
-                      }}
-                      onDelete={() => {
-                        tree
-                          .deleteOrgFolder(o.id, f)
-                          .then((deleted) => {
-                            if (deleted && orgSel?.id === o.id && orgSel.folderId === f.id) {
-                              selectLibrary({
-                                kind: "org",
-                                id: o.id,
-                                name: o.name,
-                                folderId: null,
-                              });
-                            }
-                          })
-                          .catch(() => {});
+                      onDeleted={() => {
+                        if (orgSel?.id === o.id && orgSel.folderId === f.id) {
+                          selectLibrary({ kind: "org", id: o.id, name: o.name, folderId: null });
+                        }
                       }}
                     />
                   ))}
@@ -216,6 +205,48 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
       )}
 
     </nav>
+  );
+}
+
+/**
+ * One shared folder under an org. Its own component so the rename/delete
+ * promise handlers don't sit five callbacks deep inside the org list.
+ */
+function OrgFolderRow({
+  tree,
+  org,
+  folder,
+  active,
+  onSelect,
+  onDeleted,
+}: Readonly<{
+  tree: LibraryTree;
+  org: CloudOrg;
+  folder: LocalFolder;
+  active: boolean;
+  onSelect: () => void;
+  /** Called only when the delete actually went through. */
+  onDeleted: () => void;
+}>) {
+  return (
+    <Row
+      depth={1}
+      icon={<Folder className="size-3.5" />}
+      label={folder.name}
+      active={active}
+      onSelect={onSelect}
+      onRename={(name) => {
+        tree.renameOrgFolder(org.id, folder.id, name).catch(() => {});
+      }}
+      onDelete={() => {
+        tree
+          .deleteOrgFolder(org.id, folder)
+          .then((deleted) => {
+            if (deleted) onDeleted();
+          })
+          .catch(() => {});
+      }}
+    />
   );
 }
 

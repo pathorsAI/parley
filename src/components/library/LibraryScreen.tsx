@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ChevronRight, Folder, Loader2, Plus, RefreshCw, Search, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "../../i18n";
-import { useStore } from "../../lib/store";
+import { useStore, type LibrarySelection } from "../../lib/store";
 import {
   deleteHistoryEntry,
   loadHistoryEntry,
@@ -30,6 +30,7 @@ import { isTauri } from "../../lib/tauriEvents";
 import { VoiceTypingHistory } from "../../history/VoiceTypingHistory";
 import { LibraryCard, MoveDialog } from "./LibraryCards";
 import type { LibraryTree } from "../shell/useLibraryTree";
+import type { Folder as LocalFolder } from "../../lib/history/folders";
 import type { CloudOrg, CloudRecordingSummary } from "../../lib/cloud/types";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -51,6 +52,49 @@ function orgCard(c: CloudRecordingSummary): HistoryCardItem {
     sync: "cloud",
     cloudUpdatedAt: c.updatedAt,
   };
+}
+
+type Translate = ReturnType<typeof useI18n>["t"];
+
+/** The name of the folder the selection points at, or null at a scope root. */
+function openFolderName(selection: LibrarySelection, folders: LocalFolder[]): string | null {
+  let id: string | null = null;
+  if (selection.kind === "org") id = selection.folderId;
+  else if (selection.kind === "personal" && selection.node.kind === "folder") {
+    id = selection.node.folderId;
+  }
+  if (!id) return null;
+  return folders.find((f) => f.id === id)?.name ?? null;
+}
+
+/** "Pathors AI / 和運租車" or "Pathors AI （根目錄）" — the dialog says exactly
+ *  where the copy is about to land. */
+function handoffTarget(
+  t: Translate,
+  prompt: Readonly<{ org: CloudOrg; folderId: string | null }> | null,
+  orgFolders: Record<string, LocalFolder[]>
+): string {
+  if (!prompt) return "";
+  const folder = prompt.folderId
+    ? (orgFolders[prompt.org.id] ?? []).find((f) => f.id === prompt.folderId)
+    : undefined;
+  if (folder) return `${prompt.org.name} / ${folder.name}`;
+  return `${prompt.org.name} ${t("history.move.rootLabel")}`;
+}
+
+/** Which "nothing here" copy fits the open scope. */
+function emptyStateCopy(
+  t: Translate,
+  scope: Readonly<{ searching: boolean; hasFolder: boolean; isOrg: boolean }>
+): { title: string; hint: string } {
+  if (scope.searching) {
+    return { title: t("history.searchEmpty"), hint: t("history.searchEmptyHint") };
+  }
+  if (scope.hasFolder) {
+    return { title: t("history.folder.empty"), hint: t("history.folder.emptyHint") };
+  }
+  if (scope.isOrg) return { title: t("history.org.empty"), hint: t("history.org.emptyHint") };
+  return { title: t("library.unassigned.empty"), hint: t("library.unassigned.emptyHint") };
 }
 
 /** "+ Import": the shared import flow (R7) — audio → ingest wizard, .txt →
@@ -333,37 +377,10 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   }
 
   // ── Header identity: name the node the way the tree names it ──────────────
-  let folderName: string | null = null;
-  if (isOrg && selection.kind === "org" && selection.folderId) {
-    folderName = scopeFolders.find((f) => f.id === selection.folderId)?.name ?? null;
-  } else if (node?.kind === "folder") {
-    folderName = scopeFolders.find((f) => f.id === node.folderId)?.name ?? null;
-  }
-
+  const folderName = openFolderName(selection, scopeFolders);
   const searching = searchQuery.length > 0;
-
-  // "Pathors AI / 和運租車" or "Pathors AI （根目錄）" — the dialog says exactly
-  // where the copy is about to land.
-  let promptTarget = "";
-  if (movePrompt) {
-    const folder = movePrompt.folderId
-      ? (tree.orgFolders[movePrompt.org.id] ?? []).find((f) => f.id === movePrompt.folderId)
-      : undefined;
-    promptTarget = folder
-      ? `${movePrompt.org.name} / ${folder.name}`
-      : `${movePrompt.org.name} ${t("history.move.rootLabel")}`;
-  }
-  let emptyTitle: string;
-  if (searching) emptyTitle = t("history.searchEmpty");
-  else if (folderName) emptyTitle = t("history.folder.empty");
-  else if (isOrg) emptyTitle = t("history.org.empty");
-  else emptyTitle = t("library.unassigned.empty");
-
-  let emptyHint: string;
-  if (searching) emptyHint = t("history.searchEmptyHint");
-  else if (folderName) emptyHint = t("history.folder.emptyHint");
-  else if (isOrg) emptyHint = t("history.org.emptyHint");
-  else emptyHint = t("library.unassigned.emptyHint");
+  const promptTarget = handoffTarget(t, movePrompt, tree.orgFolders);
+  const empty = emptyStateCopy(t, { searching, hasFolder: !!folderName, isOrg });
 
   let body;
   if (entries === null) {
@@ -376,8 +393,8 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   } else if (visible.length === 0) {
     body = (
       <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
-        <p className="text-sm text-muted-foreground">{emptyTitle}</p>
-        <p className="max-w-80 text-xs text-muted-foreground/70">{emptyHint}</p>
+        <p className="text-sm text-muted-foreground">{empty.title}</p>
+        <p className="max-w-80 text-xs text-muted-foreground/70">{empty.hint}</p>
       </div>
     );
   } else {
@@ -478,8 +495,12 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         <MoveDialog
           orgName={movePrompt.org.name}
           target={promptTarget}
-          onCopy={() => void resolveOrgHandoff("copy")}
-          onMove={() => void resolveOrgHandoff("move")}
+          onCopy={() => {
+            resolveOrgHandoff("copy").catch(() => {});
+          }}
+          onMove={() => {
+            resolveOrgHandoff("move").catch(() => {});
+          }}
           onCancel={() => setMovePrompt(null)}
         />
       )}

@@ -210,6 +210,30 @@ mod imp {
         })
     }
 
+    /// One tick's reading of the watched field, or `None` when polling must
+    /// stop: a newer paste superseded us, focus left the element, or the value
+    /// became unreadable (element went away, stopped being a string, grew past
+    /// the cap).
+    fn read_tick(element: &OwnedElement, generation: u64) -> Option<String> {
+        // A newer paste owns the field now — stop without a word.
+        if GENERATION.load(Ordering::SeqCst) != generation {
+            return None;
+        }
+        // Focus must still be on the very element we pasted into. Comparing
+        // the AX refs (rather than, say, the app) is what keeps us from
+        // reporting on a different field that happens to look edited.
+        let still_focused = unsafe {
+            match copy_focused_element() {
+                Some(current) => CFEqual(current.0, element.0),
+                None => false,
+            }
+        };
+        if !still_focused {
+            return None;
+        }
+        unsafe { copy_value_string(element.0) }
+    }
+
     fn poll(
         app: AppHandle,
         element: OwnedElement,
@@ -225,25 +249,7 @@ mod imp {
 
         for _ in 0..ticks {
             std::thread::sleep(POLL_INTERVAL);
-            // A newer paste owns the field now — stop without a word.
-            if GENERATION.load(Ordering::SeqCst) != generation {
-                return;
-            }
-            // Focus must still be on the very element we pasted into. Comparing
-            // the AX refs (rather than, say, the app) is what keeps us from
-            // reporting on a different field that happens to look edited.
-            let still_focused = unsafe {
-                match copy_focused_element() {
-                    Some(current) => CFEqual(current.0, element.0),
-                    None => false,
-                }
-            };
-            if !still_focused {
-                return;
-            }
-            let Some(current) = (unsafe { copy_value_string(element.0) }) else {
-                // Unreadable now (element went away, value stopped being a
-                // string, grew past the cap) — give up silently.
+            let Some(current) = read_tick(&element, generation) else {
                 return;
             };
 
@@ -253,45 +259,42 @@ mod imp {
                 stable_ticks = 0;
                 continue;
             }
-            match &candidate {
-                Some(previous) if *previous == current => {
-                    stable_ticks += 1;
-                    if stable_ticks >= SETTLED_TICKS {
-                        // The baseline is snapshotted right after the ⌘V is
-                        // POSTED, not after the target app has PROCESSED it. If
-                        // the app was slow, the paste itself shows up here as
-                        // "the field changed" — adopt it as the real baseline
-                        // and keep watching for the actual correction instead
-                        // of spending our one event on it.
-                        if is_paste_landing(&baseline, &current, &inserted_text) {
-                            baseline = current;
-                            candidate = None;
-                            stable_ticks = 0;
-                            continue;
-                        }
-                        log::info!(
-                            "ax_observe: correction candidate (baseline {} chars, current {} chars)",
-                            baseline.chars().count(),
-                            current.chars().count()
-                        );
-                        let _ = app.emit(
-                            CORRECTION_CANDIDATE_EVENT,
-                            json!({
-                                "baseline": baseline,
-                                "current": current,
-                                "insertedText": inserted_text,
-                            }),
-                        );
-                        return;
-                    }
-                }
-                // First sighting of this value (or it changed again): restart
-                // the settle count with this reading as tick one.
-                _ => {
-                    candidate = Some(current);
-                    stable_ticks = 1;
-                }
+            // First sighting of this value (or it changed again): restart the
+            // settle count with this reading as tick one.
+            if candidate.as_deref() != Some(current.as_str()) {
+                candidate = Some(current);
+                stable_ticks = 1;
+                continue;
             }
+            stable_ticks += 1;
+            if stable_ticks < SETTLED_TICKS {
+                continue;
+            }
+            // The baseline is snapshotted right after the ⌘V is POSTED, not
+            // after the target app has PROCESSED it. If the app was slow, the
+            // paste itself shows up here as "the field changed" — adopt it as
+            // the real baseline and keep watching for the actual correction
+            // instead of spending our one event on it.
+            if is_paste_landing(&baseline, &current, &inserted_text) {
+                baseline = current;
+                candidate = None;
+                stable_ticks = 0;
+                continue;
+            }
+            log::info!(
+                "ax_observe: correction candidate (baseline {} chars, current {} chars)",
+                baseline.chars().count(),
+                current.chars().count()
+            );
+            let _ = app.emit(
+                CORRECTION_CANDIDATE_EVENT,
+                json!({
+                    "baseline": baseline,
+                    "current": current,
+                    "insertedText": inserted_text,
+                }),
+            );
+            return;
         }
     }
 

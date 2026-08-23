@@ -11,7 +11,7 @@ export function useThemePreference() {
   const theme = useStore((s) => s.settings.theme);
 
   useEffect(() => {
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const media = globalThis.matchMedia("(prefers-color-scheme: dark)");
 
     function apply() {
       const resolved = resolveTheme(theme, media.matches);

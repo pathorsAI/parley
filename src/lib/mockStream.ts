@@ -64,11 +64,11 @@ export function startMockStream() {
           endMs: Date.now() - base,
         });
       });
-      if (!isFinal) {
-        timer = setTimeout(emitWord, 90 + Math.random() * 120); // NOSONAR — non-cryptographic jitter for mock stream timing, not security-sensitive
-      } else {
+      if (isFinal) {
         line++;
         timer = setTimeout(emitLine, 1200);
+      } else {
+        timer = setTimeout(emitWord, 90 + Math.random() * 120); // NOSONAR — non-cryptographic jitter for mock stream timing, not security-sensitive
       }
     }
     emitWord();

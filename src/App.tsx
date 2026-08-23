@@ -60,6 +60,20 @@ function createFullscreenResizeHandler(sync: () => Promise<void>): () => void {
 }
 
 /**
+ * Run the drop-import flow for a set of dropped paths. Extracted to module
+ * scope so the lazy-import `then`/`catch` callbacks don't push the surrounding
+ * drag-drop listener closures past the nested-function depth limit.
+ */
+function importDroppedFiles(paths: string[]): void {
+  import("./lib/replay/ingest")
+    .then(({ importDroppedPaths }) => importDroppedPaths(paths))
+    .catch((error) => {
+      log.error("import: drop failed", { error: String(error) });
+      toast.error(error instanceof Error ? error.message : String(error));
+    });
+}
+
+/**
  * Track main-window fullscreen state. Drives both the rounded corners (a
  * fullscreen window fills the display edge-to-edge, so it squares off; a
  * zoomed/maximized window is still a floating window and stays rounded) and the
@@ -253,12 +267,7 @@ const App = () => {
           if (isMeetingActive(useStore.getState().meetingStatus)) return;
           const { paths } = e.payload;
           log.info("import: files dropped", { count: paths.length });
-          import("./lib/replay/ingest")
-            .then(({ importDroppedPaths }) => importDroppedPaths(paths))
-            .catch((error) => {
-              log.error("import: drop failed", { error: String(error) });
-              toast.error(error instanceof Error ? error.message : String(error));
-            });
+          importDroppedFiles(paths);
         })
       )
       .then((fn) => {

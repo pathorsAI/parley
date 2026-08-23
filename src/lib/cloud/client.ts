@@ -55,7 +55,8 @@ export async function signInWithGoogle(signal?: AbortSignal): Promise<void> {
     signal?.addEventListener("abort", onAbort);
 
     listen<{ token?: string; error?: string }>("auth://callback", (e) => {
-      if (e.payload.token) settle(() => resolve(e.payload.token!));
+      const received = e.payload.token;
+      if (received) settle(() => resolve(received));
       else settle(() => reject(new Error(e.payload.error || "sign-in failed")));
     }).then((fn) => {
       unlisten = fn;

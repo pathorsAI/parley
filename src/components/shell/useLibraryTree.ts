@@ -202,7 +202,7 @@ export function useLibraryTree(): LibraryTree {
 
   const deletePersonalFolder = useCallback(
     (folder: LocalFolder) => {
-      if (!window.confirm(t("history.folder.deleteConfirm", { name: folder.name }))) return;
+      if (!globalThis.confirm(t("history.folder.deleteConfirm", { name: folder.name }))) return;
       deleteLocalFolder(folder.id);
       setPersonalFolders(listLocalFolders());
       if (CLOUD_ENABLED && syncEnabled()) {
@@ -247,7 +247,8 @@ export function useLibraryTree(): LibraryTree {
    *  a selection that pointed at it). */
   const deleteOrgFolderUI = useCallback(
     async (orgId: string, folder: LocalFolder) => {
-      if (!window.confirm(t("history.folder.deleteConfirm", { name: folder.name }))) return false;
+      if (!globalThis.confirm(t("history.folder.deleteConfirm", { name: folder.name })))
+        return false;
       try {
         await deleteOrgFolder(orgId, folder.id);
         ensureOrgFolders(orgId, true);

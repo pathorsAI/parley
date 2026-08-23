@@ -657,7 +657,7 @@ fn urldecode(s: &str) -> String {
 /// registration, unlike a custom-scheme deep link). Gives up after 5 minutes.
 #[tauri::command]
 pub fn start_oauth_loopback(app: AppHandle) -> Result<u16, String> {
-    use std::io::{Read, Write};
+    use std::io::Read;
     use std::net::TcpListener;
 
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
@@ -671,34 +671,9 @@ pub fn start_oauth_loopback(app: AppHandle) -> Result<u16, String> {
                 Ok((mut stream, _)) => {
                     let mut buf = [0u8; 4096];
                     let n = stream.read(&mut buf).unwrap_or(0);
-                    let req = String::from_utf8_lossy(&buf[..n]);
-                    // Request line: "GET /cb?token=… HTTP/1.1"
-                    let path = req
-                        .lines()
-                        .next()
-                        .and_then(|l| l.split_whitespace().nth(1))
-                        .unwrap_or("");
-                    let query = path.split_once('?').map_or("", |(_, q)| q);
-                    let (mut token, mut error) = (None::<String>, None::<String>);
-                    for pair in query.split('&') {
-                        let mut kv = pair.splitn(2, '=');
-                        match (kv.next(), kv.next()) {
-                            (Some("token"), Some(v)) => token = Some(urldecode(v)),
-                            (Some("error"), Some(v)) => error = Some(urldecode(v)),
-                            _ => {}
-                        }
-                    }
-                    let body = "<!doctype html><meta charset=utf-8><title>Parley</title>\
-<body style=\"font-family:system-ui;padding:3rem;text-align:center;color:#333\">\
-<h2>Parley</h2><p>登入完成，可以關閉這個分頁回到 Parley。</p>\
-<p>You're signed in — close this tab and return to Parley.</p></body>";
-                    let resp = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                        body.len(),
-                        body
-                    );
-                    let _ = stream.write_all(resp.as_bytes());
-                    let _ = stream.flush();
+                    let (token, error) =
+                        parse_loopback_callback(&String::from_utf8_lossy(&buf[..n]));
+                    write_close_tab_page(&mut stream);
                     let _ = app.emit(
                         "auth://callback",
                         serde_json::json!({ "token": token, "error": error }),
@@ -719,6 +694,44 @@ pub fn start_oauth_loopback(app: AppHandle) -> Result<u16, String> {
     });
 
     Ok(port)
+}
+
+/// Pull `token` / `error` out of the loopback request's query string.
+fn parse_loopback_callback(req: &str) -> (Option<String>, Option<String>) {
+    // Request line: "GET /cb?token=… HTTP/1.1"
+    let path = req
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .unwrap_or("");
+    let query = path.split_once('?').map_or("", |(_, q)| q);
+    let (mut token, mut error) = (None::<String>, None::<String>);
+    for pair in query.split('&') {
+        let mut kv = pair.splitn(2, '=');
+        match (kv.next(), kv.next()) {
+            (Some("token"), Some(v)) => token = Some(urldecode(v)),
+            (Some("error"), Some(v)) => error = Some(urldecode(v)),
+            _ => {}
+        }
+    }
+    (token, error)
+}
+
+/// Serve the bilingual "you can close this tab" page and flush it.
+fn write_close_tab_page(stream: &mut std::net::TcpStream) {
+    use std::io::Write;
+
+    let body = "<!doctype html><meta charset=utf-8><title>Parley</title>\
+<body style=\"font-family:system-ui;padding:3rem;text-align:center;color:#333\">\
+<h2>Parley</h2><p>登入完成，可以關閉這個分頁回到 Parley。</p>\
+<p>You're signed in — close this tab and return to Parley.</p></body>";
+    let resp = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let _ = stream.write_all(resp.as_bytes());
+    let _ = stream.flush();
 }
 
 /// Tee the mic ("me") PCM through a [`ProsodyAnalyzer`](crate::audio::prosody::ProsodyAnalyzer)
