@@ -7,27 +7,22 @@
 
 use anyhow::{anyhow, Result};
 use base64::Engine;
-use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
 use tauri::AppHandle;
-use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::common::{
     clean_vocabulary, connect_with_headers, drive_session, LevelMeter, SegmentBuilder,
     TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
+use super::ws::{self, Next, OnClose, Pump, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
 
 const OPENAI_RT_URL: &str = "wss://api.openai.com/v1/realtime?intent=transcription";
 const DEFAULT_MODEL: &str = "gpt-4o-transcribe";
-
-type WsWrite = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
-type WsRead = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 
 #[derive(Deserialize, Default)]
 struct OaiError {
@@ -46,16 +41,6 @@ struct OaiEvent {
     /// Present on `error` events — the session-level failure detail.
     #[serde(default)]
     error: Option<OaiError>,
-}
-
-/// What the read loop should do with one incoming websocket frame.
-enum Frame {
-    /// A JSON payload to parse.
-    Payload(String),
-    /// Nothing of interest — keep reading.
-    Skip,
-    /// The stream ended; stop reading.
-    Stop,
 }
 
 /// Build the realtime session's `transcription_session.update` frame.
@@ -83,46 +68,20 @@ fn setup_frame(config: &TranscribeConfig, model: &str) -> serde_json::Value {
     })
 }
 
-/// Stream PCM as base64 append events until the input drains or a send fails.
-/// Resolves with whether the input drained (normal stop) or a send failed (dead
-/// socket) — drive_session reports the latter as a failure.
+/// Stream PCM as base64 append events. The realtime session has no keepalive or
+/// goodbye frame — closing the write half is the whole shutdown.
 async fn forward_audio(
-    mut write: WsWrite,
-    mut meter: LevelMeter,
-    mut pcm_rx: UnboundedReceiver<Vec<i16>>,
+    write: WsWrite,
+    meter: LevelMeter,
+    pcm_rx: UnboundedReceiver<Vec<i16>>,
 ) -> bool {
     let b64 = base64::engine::general_purpose::STANDARD;
-    let drained = loop {
-        let Some(chunk) = pcm_rx.recv().await else {
-            break true;
-        };
-        meter.push(&chunk);
-        let bytes = pcm_to_le_bytes(&chunk);
-        let audio = b64.encode(&bytes);
+    ws::forward_audio(write, meter, pcm_rx, Pump::default(), move |chunk| {
+        let audio = b64.encode(pcm_to_le_bytes(chunk));
         let msg = json!({ "type": "input_audio_buffer.append", "audio": audio });
-        if write.send(Message::Text(msg.to_string())).await.is_err() {
-            break false;
-        }
-    };
-    let _ = write.close().await;
-    drained
-}
-
-/// Classify one websocket frame into "parse this" / "ignore" / "we're done".
-fn classify(msg: Result<Message, tokio_tungstenite::tungstenite::Error>, source: &str) -> Frame {
-    match msg {
-        Ok(Message::Text(t)) => Frame::Payload(t.to_string()),
-        Ok(Message::Binary(b)) => Frame::Payload(String::from_utf8_lossy(&b).into_owned()),
-        Ok(Message::Close(frame)) => {
-            eprintln!("[openai:{source}] closed by server: {frame:?}");
-            Frame::Stop
-        }
-        Ok(_) => Frame::Skip,
-        Err(e) => {
-            eprintln!("[openai:{source}] read error: {e}");
-            Frame::Stop
-        }
-    }
+        Message::Text(msg.to_string())
+    })
+    .await
 }
 
 /// Fold one transcription event into the segment builder. Returns the terminal
@@ -171,28 +130,19 @@ fn apply_event(
 
 /// Parse server events into transcript segments until the socket ends or a
 /// terminal error event arrives.
-async fn read_transcripts(app: AppHandle, source: &'static str, mut read: WsRead) -> Result<()> {
+async fn read_transcripts(app: AppHandle, source: &'static str, read: WsRead) -> Result<()> {
     let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT);
     let mut interim = String::new();
-    let mut msg_count: u64 = 0;
-    while let Some(msg) = read.next().await {
-        let payload = match classify(msg, source) {
-            Frame::Payload(p) => p,
-            Frame::Skip => continue,
-            Frame::Stop => break,
+    ws::read_frames("openai", source, read, OnClose::Stop, |payload| {
+        let Ok(ev) = serde_json::from_str::<OaiEvent>(payload) else {
+            return Ok(Next::Continue);
         };
-        msg_count += 1;
-        if msg_count <= 3 {
-            eprintln!("[openai:{source}] RX raw#{msg_count}: {payload}");
+        match apply_event(&mut builder, &mut interim, ev, source, payload) {
+            Some(err) => Err(err),
+            None => Ok(Next::Continue),
         }
-        let Ok(ev) = serde_json::from_str::<OaiEvent>(&payload) else {
-            continue;
-        };
-        if let Some(err) = apply_event(&mut builder, &mut interim, ev, source, &payload) {
-            return Err(err);
-        }
-    }
-    Ok(())
+    })
+    .await
 }
 
 pub async fn run_session(

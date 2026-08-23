@@ -5,32 +5,26 @@
 //! Note: Gemini Live does not diarize input audio and gives no per-word
 //! timestamps, so segments are emitted under speaker 0 with zeroed timings.
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use base64::Engine;
-use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
 use tauri::AppHandle;
-use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedReceiver;
-use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::common::{
     clean_vocabulary, connect_with_headers, drive_session, LevelMeter, SegmentBuilder,
     TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
+use super::ws::{self, Next, OnClose, Pump, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
 
 const GEMINI_BASE: &str =
     "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 const DEFAULT_MODEL: &str = "gemini-2.0-flash-live-001";
-
-type WsWrite = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
-type WsRead = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 
 #[derive(Deserialize, Default)]
 struct GeminiTranscription {
@@ -50,18 +44,6 @@ struct GeminiServerContent {
 struct GeminiMessage {
     #[serde(rename = "serverContent", default)]
     server_content: Option<GeminiServerContent>,
-}
-
-/// What the read loop should do with one incoming websocket frame.
-enum Frame {
-    /// A JSON payload to parse.
-    Payload(String),
-    /// Nothing of interest — keep reading.
-    Skip,
-    /// The stream ended in a way that isn't an error.
-    Stop,
-    /// The server closed abnormally: terminal, with its reason as the detail.
-    Failed(String),
 }
 
 /// Build the BidiGenerateContent `setup` frame for `model_path`.
@@ -93,59 +75,23 @@ fn setup_frame(model_path: &str, terms: &[String]) -> serde_json::Value {
     setup
 }
 
-/// Stream PCM as base64 media chunks until the input drains or a send fails.
-/// Resolves with whether the input drained (normal stop) or a send failed (dead
-/// socket) — drive_session reports the latter as a failure.
+/// Stream PCM as base64 media chunks. Gemini Live has no keepalive or goodbye
+/// frame — closing the write half is the whole shutdown.
 async fn forward_audio(
-    mut write: WsWrite,
-    mut meter: LevelMeter,
+    write: WsWrite,
+    meter: LevelMeter,
     mime: String,
-    mut pcm_rx: UnboundedReceiver<Vec<i16>>,
+    pcm_rx: UnboundedReceiver<Vec<i16>>,
 ) -> bool {
     let b64 = base64::engine::general_purpose::STANDARD;
-    let drained = loop {
-        let Some(chunk) = pcm_rx.recv().await else {
-            break true;
-        };
-        meter.push(&chunk);
-        let bytes = pcm_to_le_bytes(&chunk);
-        let data = b64.encode(&bytes);
+    ws::forward_audio(write, meter, pcm_rx, Pump::default(), move |chunk| {
+        let data = b64.encode(pcm_to_le_bytes(chunk));
         let msg = json!({
             "realtimeInput": { "mediaChunks": [ { "mimeType": mime, "data": data } ] }
         });
-        if write.send(Message::Text(msg.to_string())).await.is_err() {
-            break false;
-        }
-    };
-    let _ = write.close().await;
-    drained
-}
-
-/// Classify one websocket frame. Gemini Live signals terminal errors (bad key,
-/// quota, invalid setup) by closing with an abnormal code + reason rather than
-/// an in-band message; a normal close (1000) follows our own close.
-fn classify(msg: Result<Message, tokio_tungstenite::tungstenite::Error>, source: &str) -> Frame {
-    let msg = match msg {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("[gemini:{source}] read error: {e}");
-            return Frame::Stop;
-        }
-    };
-    match msg {
-        Message::Text(t) => Frame::Payload(t.to_string()),
-        Message::Binary(b) => Frame::Payload(String::from_utf8_lossy(&b).into_owned()),
-        Message::Close(frame) => {
-            eprintln!("[gemini:{source}] closed by server: {frame:?}");
-            match frame {
-                Some(f) if f.code != CloseCode::Normal => {
-                    Frame::Failed(format!("{} {}", u16::from(f.code), f.reason))
-                }
-                _ => Frame::Stop,
-            }
-        }
-        _ => Frame::Skip,
-    }
+        Message::Text(msg.to_string())
+    })
+    .await
 }
 
 /// Fold one parsed server message into the segment builder, growing `interim`
@@ -168,26 +114,20 @@ fn apply_message(builder: &mut SegmentBuilder, interim: &mut String, m: GeminiMe
 }
 
 /// Parse server frames into transcript segments until the socket ends.
-async fn read_transcripts(app: AppHandle, source: &'static str, mut read: WsRead) -> Result<()> {
+///
+/// Gemini Live signals terminal errors (bad key, quota, invalid setup) by
+/// closing with an abnormal code + reason rather than an in-band message, so an
+/// abnormal close is the failure — a normal close (1000) follows our own.
+async fn read_transcripts(app: AppHandle, source: &'static str, read: WsRead) -> Result<()> {
     let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT);
     let mut interim = String::new();
-    let mut msg_count: u64 = 0;
-    while let Some(msg) = read.next().await {
-        let payload = match classify(msg, source) {
-            Frame::Payload(p) => p,
-            Frame::Skip => continue,
-            Frame::Stop => break,
-            Frame::Failed(detail) => return Err(anyhow!("closed by server: {detail}")),
-        };
-        msg_count += 1;
-        if msg_count <= 3 {
-            eprintln!("[gemini:{source}] RX raw#{msg_count}: {payload}");
-        }
-        if let Ok(m) = serde_json::from_str::<GeminiMessage>(&payload) {
+    ws::read_frames("gemini", source, read, OnClose::FailIfAbnormal, |payload| {
+        if let Ok(m) = serde_json::from_str::<GeminiMessage>(payload) {
             apply_message(&mut builder, &mut interim, m);
         }
-    }
-    Ok(())
+        Ok(Next::Continue)
+    })
+    .await
 }
 
 pub async fn run_session(

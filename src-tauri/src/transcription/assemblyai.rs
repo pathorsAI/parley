@@ -5,25 +5,21 @@
 //! emitted under speaker 0 (a single speaker in the UI).
 
 use anyhow::{anyhow, Result};
-use futures_util::stream::SplitStream;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use serde::Deserialize;
 use tauri::AppHandle;
-use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::common::{
     clean_vocabulary, connect_with_headers, drive_session, urlencode, LevelMeter, SegmentBuilder,
     TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
+use super::ws::{self, Next, OnClose, Pump, WsRead};
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
 
 const AAI_BASE: &str = "wss://streaming.assemblyai.com/v3/ws";
-
-type WsRead = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 
 /// Universal-Streaming's custom-vocabulary query param, ready to append to the
 /// v3 websocket URL. The wire shape is `keyterms_prompt=<JSON array of terms>`,
@@ -67,33 +63,6 @@ struct AaiMessage {
     error: Option<String>,
 }
 
-/// What the read loop should do with one incoming websocket frame.
-enum Frame {
-    /// A JSON payload to parse.
-    Payload(String),
-    /// Nothing of interest — keep reading.
-    Skip,
-    /// The stream ended; stop reading.
-    Stop,
-}
-
-/// Classify one websocket frame into "parse this" / "ignore" / "we're done".
-fn classify(msg: Result<Message, tokio_tungstenite::tungstenite::Error>, source: &str) -> Frame {
-    match msg {
-        Ok(Message::Text(t)) => Frame::Payload(t.to_string()),
-        Ok(Message::Binary(b)) => Frame::Payload(String::from_utf8_lossy(&b).into_owned()),
-        Ok(Message::Close(frame)) => {
-            eprintln!("[assemblyai:{source}] closed by server: {frame:?}");
-            Frame::Stop
-        }
-        Ok(_) => Frame::Skip,
-        Err(e) => {
-            eprintln!("[assemblyai:{source}] read error: {e}");
-            Frame::Stop
-        }
-    }
-}
-
 /// Turn one "Turn" message into either a committed segment (settled and
 /// punctuated) or the tentative tail for the in-progress turn.
 fn apply_turn(builder: &mut SegmentBuilder, m: &AaiMessage) {
@@ -118,24 +87,14 @@ fn apply_turn(builder: &mut SegmentBuilder, m: &AaiMessage) {
 
 /// Parse server frames into transcript segments until the socket ends or an
 /// in-band error arrives.
-async fn read_transcripts(app: AppHandle, source: &'static str, mut read: WsRead) -> Result<()> {
+async fn read_transcripts(app: AppHandle, source: &'static str, read: WsRead) -> Result<()> {
     let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT);
-    let mut msg_count: u64 = 0;
-    while let Some(msg) = read.next().await {
-        let payload = match classify(msg, source) {
-            Frame::Payload(p) => p,
-            Frame::Skip => continue,
-            Frame::Stop => break,
-        };
-        msg_count += 1;
-        if msg_count <= 3 {
-            eprintln!("[assemblyai:{source}] RX raw#{msg_count}: {payload}");
-        }
-        let m: AaiMessage = match serde_json::from_str(&payload) {
+    ws::read_frames("assemblyai", source, read, OnClose::Stop, |payload| {
+        let m: AaiMessage = match serde_json::from_str(payload) {
             Ok(m) => m,
             Err(e) => {
                 eprintln!("[assemblyai:{source}] parse error: {e}");
-                continue;
+                return Ok(Next::Continue);
             }
         };
         if let Some(err) = m.error {
@@ -144,19 +103,20 @@ async fn read_transcripts(app: AppHandle, source: &'static str, mut read: WsRead
             eprintln!("[assemblyai:{source}] error: {err}");
             return Err(anyhow!("server error: {err}"));
         }
-        if m.msg_type != "Turn" {
-            continue; // Begin / Termination / etc.
+        // Everything that isn't a Turn (Begin, Termination, …) is ignored.
+        if m.msg_type == "Turn" {
+            apply_turn(&mut builder, &m);
         }
-        apply_turn(&mut builder, &m);
-    }
-    Ok(())
+        Ok(Next::Continue)
+    })
+    .await
 }
 
 pub async fn run_session(
     app: AppHandle,
     config: TranscribeConfig,
     source: &'static str,
-    mut pcm_rx: UnboundedReceiver<Vec<i16>>,
+    pcm_rx: UnboundedReceiver<Vec<i16>>,
 ) -> Result<()> {
     let url = format!(
         "{AAI_BASE}?sample_rate={}&encoding=pcm_s16le&format_turns=true{}",
@@ -165,29 +125,18 @@ pub async fn run_session(
     );
     // AssemblyAI takes the API key directly in the Authorization header.
     let ws = connect_with_headers(&url, &[("Authorization", config.api_key.clone())]).await?;
-    let (mut write, read) = ws.split();
+    let (write, read) = ws.split();
     eprintln!("[assemblyai:{source}] connected (diarization unsupported → speaker 0)");
 
-    let mut meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
-    // Resolves with whether the input drained (normal stop) or a send failed
-    // (dead socket) — drive_session reports the latter as a failure.
-    let forward = async move {
-        let drained = loop {
-            let Some(chunk) = pcm_rx.recv().await else {
-                break true;
-            };
-            meter.push(&chunk);
-            let bytes = pcm_to_le_bytes(&chunk);
-            if write.send(Message::Binary(bytes)).await.is_err() {
-                break false;
-            }
-        };
-        let _ = write
-            .send(Message::Text("{\"type\":\"Terminate\"}".to_string()))
-            .await;
-        let _ = write.close().await;
-        drained
+    let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
+    // Raw pcm_s16le on the wire; `Terminate` is v3's goodbye frame.
+    let pump = Pump {
+        finish: Some("{\"type\":\"Terminate\"}"),
+        ..Pump::default()
     };
+    let forward = ws::forward_audio(write, meter, pcm_rx, pump, |chunk| {
+        Message::Binary(pcm_to_le_bytes(chunk))
+    });
 
     drive_session("assemblyai", forward, read_transcripts(app, source, read)).await
 }

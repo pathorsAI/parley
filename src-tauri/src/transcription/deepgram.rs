@@ -1,29 +1,23 @@
 //! Deepgram realtime adapter. Streams linear16 PCM over a WebSocket and parses
 //! Deepgram's `Results` messages (with optional word-level diarization).
 
-use anyhow::{anyhow, Result};
-use futures_util::stream::{SplitSink, SplitStream};
-use futures_util::{SinkExt, StreamExt};
+use anyhow::Result;
+use futures_util::StreamExt;
 use serde::Deserialize;
 use tauri::AppHandle;
-use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedReceiver;
-use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::common::{
     clean_vocabulary, connect_with_headers, drive_session, urlencode, LevelMeter, SegmentBuilder,
     TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
+use super::ws::{self, Next, OnClose, Pump, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
 
 const DEEPGRAM_BASE: &str = "wss://api.deepgram.com/v1/listen";
 const DEFAULT_MODEL: &str = "nova-3";
-
-type WsWrite = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
-type WsRead = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 
 /// Deepgram's custom-vocabulary query params, as a string ready to append to a
 /// `/v1/listen` URL (each term gets its OWN param — the API takes them repeated,
@@ -85,18 +79,6 @@ struct DgResponse {
     speech_final: bool,
 }
 
-/// What the read loop should do with one incoming websocket frame.
-enum Frame {
-    /// A JSON payload to parse.
-    Payload(String),
-    /// Nothing of interest — keep reading.
-    Skip,
-    /// The stream ended in a way that isn't an error.
-    Stop,
-    /// The server closed abnormally: terminal, with its reason as the detail.
-    Failed(String),
-}
-
 /// The `/v1/listen` URL for this session: fixed stream shape plus the optional
 /// diarization, language and custom-vocabulary knobs.
 fn listen_url(config: &TranscribeConfig, model: &str) -> String {
@@ -114,65 +96,24 @@ fn listen_url(config: &TranscribeConfig, model: &str) -> String {
     url
 }
 
-/// Forward PCM as binary frames; keep alive; close cleanly. Resolves with
-/// whether the input drained (normal stop) or a send failed (dead socket).
+/// Forward PCM as binary frames; keep alive; close cleanly.
 async fn forward_audio(
-    mut write: WsWrite,
-    mut meter: LevelMeter,
-    mut pcm_rx: UnboundedReceiver<Vec<i16>>,
+    write: WsWrite,
+    meter: LevelMeter,
+    pcm_rx: UnboundedReceiver<Vec<i16>>,
 ) -> bool {
-    let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(5));
-    keepalive.tick().await;
-    let drained = loop {
-        tokio::select! {
-            maybe_chunk = pcm_rx.recv() => {
-                let Some(chunk) = maybe_chunk else { break true };
-                meter.push(&chunk);
-                let bytes = pcm_to_le_bytes(&chunk);
-                if write.send(Message::Binary(bytes)).await.is_err() {
-                    break false;
-                }
-            }
-            _ = keepalive.tick() => {
-                if write.send(Message::Text("{\"type\":\"KeepAlive\"}".to_string())).await.is_err() {
-                    break false;
-                }
-            }
-        }
+    let pump = Pump {
+        keepalive: Some((
+            std::time::Duration::from_secs(5),
+            "{\"type\":\"KeepAlive\"}",
+        )),
+        finish: Some("{\"type\":\"CloseStream\"}"),
+        close: true,
     };
-    let _ = write
-        .send(Message::Text("{\"type\":\"CloseStream\"}".to_string()))
-        .await;
-    let _ = write.close().await;
-    drained
-}
-
-/// Classify one websocket frame. Deepgram has no in-band error messages —
-/// terminal errors arrive as an abnormal close code (1008 DATA-*, 1011 NET-*, …)
-/// whose reason is the only diagnostic we get. A normal close (1000) follows our
-/// CloseStream.
-fn classify(msg: Result<Message, tokio_tungstenite::tungstenite::Error>, source: &str) -> Frame {
-    let msg = match msg {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("[deepgram:{source}] read error: {e}");
-            return Frame::Stop;
-        }
-    };
-    match msg {
-        Message::Text(t) => Frame::Payload(t.to_string()),
-        Message::Binary(b) => Frame::Payload(String::from_utf8_lossy(&b).into_owned()),
-        Message::Close(frame) => {
-            eprintln!("[deepgram:{source}] closed by server: {frame:?}");
-            match frame {
-                Some(f) if f.code != CloseCode::Normal => {
-                    Frame::Failed(format!("{} {}", u16::from(f.code), f.reason))
-                }
-                _ => Frame::Stop,
-            }
-        }
-        _ => Frame::Skip,
-    }
+    ws::forward_audio(write, meter, pcm_rx, pump, |chunk| {
+        Message::Binary(pcm_to_le_bytes(chunk))
+    })
+    .await
 }
 
 /// Settled words → push each into its speaker-run, then commit.
@@ -228,26 +169,26 @@ fn apply_response(builder: &mut SegmentBuilder, resp: DgResponse) {
 }
 
 /// Parse server frames into transcript segments until the socket ends.
-async fn read_transcripts(app: AppHandle, source: &'static str, mut read: WsRead) -> Result<()> {
+///
+/// Deepgram has no in-band error messages — terminal errors arrive as an
+/// abnormal close code (1008 DATA-*, 1011 NET-*, …) whose reason is the only
+/// diagnostic we get. A normal close (1000) follows our CloseStream.
+async fn read_transcripts(app: AppHandle, source: &'static str, read: WsRead) -> Result<()> {
     let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT);
-    let mut msg_count: u64 = 0;
-    while let Some(msg) = read.next().await {
-        let payload = match classify(msg, source) {
-            Frame::Payload(p) => p,
-            Frame::Skip => continue,
-            Frame::Stop => break,
-            Frame::Failed(detail) => return Err(anyhow!("closed by server: {detail}")),
-        };
-        msg_count += 1;
-        if msg_count <= 3 {
-            eprintln!("[deepgram:{source}] RX raw#{msg_count}: {payload}");
-        }
-        match serde_json::from_str::<DgResponse>(&payload) {
-            Ok(resp) => apply_response(&mut builder, resp),
-            Err(e) => eprintln!("[deepgram:{source}] parse error: {e}"),
-        }
-    }
-    Ok(())
+    ws::read_frames(
+        "deepgram",
+        source,
+        read,
+        OnClose::FailIfAbnormal,
+        |payload| {
+            match serde_json::from_str::<DgResponse>(payload) {
+                Ok(resp) => apply_response(&mut builder, resp),
+                Err(e) => eprintln!("[deepgram:{source}] parse error: {e}"),
+            }
+            Ok(Next::Continue)
+        },
+    )
+    .await
 }
 
 pub async fn run_session(

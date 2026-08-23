@@ -2,27 +2,21 @@
 //! token stream (with speaker diarization) into transcript segments.
 
 use anyhow::{anyhow, Result};
-use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
-use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::common::{
     clean_vocabulary, connect_with_headers, drive_session, ensure_crypto_provider, LevelMeter,
     SegmentBuilder, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
+use super::ws::{self, Next, OnClose, Pump, Ws, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
 
 const SONIOX_WS_URL: &str = "wss://stt-rt.soniox.com/transcribe-websocket";
-
-type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
-type WsWrite = SplitSink<Ws, Message>;
-type WsRead = SplitStream<Ws>;
 
 /// Soniox endpoint markers. `<end>` closes an utterance; `<fin>` is the final
 /// token emitted when the whole stream ends.
@@ -96,16 +90,6 @@ struct SonioxResponse {
     finished: bool,
 }
 
-/// What the read loop should do with one incoming websocket frame.
-enum Frame {
-    /// A JSON payload to parse.
-    Payload(String),
-    /// Nothing of interest — keep reading.
-    Skip,
-    /// The stream ended; stop reading.
-    Stop,
-}
-
 /// Open the session's socket. Hosted "parley" relay (config.relay_endpoint set):
 /// connect to the cloud WSS with a Bearer token instead of the vendor with an
 /// api_key. Otherwise BYOK: straight to Soniox. Both yield the same Soniox wire
@@ -151,79 +135,46 @@ fn wire_config(config: &TranscribeConfig) -> SonioxConfig<'_> {
 }
 
 /// Forward captured PCM, emit a level meter, keep the session alive, then
-/// finalize and close. Resolves `true` when the input drained (normal stop) and
-/// `false` when a send failed, i.e. the socket died under us — drive_session
-/// reports that as a failure.
+/// finalize and close.
 async fn forward_audio(
-    mut write: WsWrite,
-    mut meter: LevelMeter,
-    mut pcm_rx: UnboundedReceiver<Vec<i16>>,
+    write: WsWrite,
+    meter: LevelMeter,
+    pcm_rx: UnboundedReceiver<Vec<i16>>,
     source: &'static str,
     is_relay: bool,
 ) -> bool {
+    let pump = Pump {
+        // Soniox closes with a 408 if it doesn't see traffic regularly; mirror
+        // the SDK and send keep-alives on an interval.
+        keepalive: Some((
+            std::time::Duration::from_secs(2),
+            "{\"type\":\"keepalive\"}",
+        )),
+        finish: Some("{\"type\":\"finalize\"}"),
+        // BYOK: close our write half so Soniox flushes the final tokens to our
+        // still-open read half and then ends. In hosted RELAY mode, do NOT close
+        // here — the relay must forward this finalize to Soniox and stream the
+        // flushed tail BACK to us first; closing now would make the relay's
+        // server socket fire 'close' and stop relaying, truncating the last
+        // utterance. The relay closes the socket once Soniox finishes, which ends
+        // the read loop below (it also breaks on Soniox's `finished` marker).
+        close: !is_relay,
+    };
+
     let mut total: u64 = 0;
     let mut next_log: u64 = TARGET_SAMPLE_RATE as u64;
-    // Soniox closes with a 408 if it doesn't see traffic regularly; mirror
-    // the SDK and send keep-alives on an interval.
-    let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(2));
-    keepalive.tick().await;
-
-    let drained = loop {
-        tokio::select! {
-            maybe_chunk = pcm_rx.recv() => {
-                let Some(chunk) = maybe_chunk else { break true };
-                meter.push(&chunk);
-                total += chunk.len() as u64;
-                if total >= next_log {
-                    eprintln!("[soniox:{source}] TX {}s audio sent", total / TARGET_SAMPLE_RATE as u64);
-                    next_log += TARGET_SAMPLE_RATE as u64;
-                }
-                let bytes = pcm_to_le_bytes(&chunk);
-                if write.send(Message::Binary(bytes)).await.is_err() {
-                    break false;
-                }
-            }
-            _ = keepalive.tick() => {
-                if write.send(Message::Text("{\"type\":\"keepalive\"}".to_string())).await.is_err() {
-                    break false;
-                }
-            }
+    ws::forward_audio(write, meter, pcm_rx, pump, move |chunk| {
+        total += chunk.len() as u64;
+        if total >= next_log {
+            eprintln!(
+                "[soniox:{source}] TX {}s audio sent",
+                total / TARGET_SAMPLE_RATE as u64
+            );
+            next_log += TARGET_SAMPLE_RATE as u64;
         }
-    };
-    let _ = write
-        .send(Message::Text("{\"type\":\"finalize\"}".to_string()))
-        .await;
-    // BYOK: close our write half so Soniox flushes the final tokens to our
-    // still-open read half and then ends. In hosted RELAY mode, do NOT close
-    // here — the relay must forward this finalize to Soniox and stream the
-    // flushed tail BACK to us first; closing now would make the relay's
-    // server socket fire 'close' and stop relaying, truncating the last
-    // utterance. The relay closes the socket once Soniox finishes, which ends
-    // the read loop below (it also breaks on Soniox's `finished` marker).
-    if !is_relay {
-        let _ = write.close().await;
-    }
-    drained
-}
-
-/// Classify one websocket frame into "parse this" / "ignore" / "we're done".
-fn classify(msg: Result<Message, tokio_tungstenite::tungstenite::Error>, source: &str) -> Frame {
-    let msg = match msg {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("[soniox:{source}] read error: {e}");
-            return Frame::Stop;
-        }
-    };
-    match msg {
-        Message::Text(t) => Frame::Payload(t.to_string()),
-        Message::Binary(b) => Frame::Payload(String::from_utf8_lossy(&b).into_owned()),
-        Message::Close(frame) => {
-            eprintln!("[soniox:{source}] socket closed by server: {frame:?}");
-            Frame::Stop
-        }
-        _ => Frame::Skip,
-    }
+        Message::Binary(pcm_to_le_bytes(chunk))
+    })
+    .await
 }
 
 /// Split one response's tokens into committed speaker-runs (pushed straight into
@@ -261,26 +212,14 @@ fn apply_tokens(builder: &mut SegmentBuilder, tokens: &[SonioxToken]) -> bool {
 /// an in-band error frame (e.g. a rejected api key) so the caller's error
 /// surface fires — the session is dead from that point, and returning Ok would
 /// leave the UI listening to nothing.
-async fn read_transcripts(app: AppHandle, source: &'static str, mut read: WsRead) -> Result<()> {
+async fn read_transcripts(app: AppHandle, source: &'static str, read: WsRead) -> Result<()> {
     let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT);
-    let mut msg_count: u64 = 0;
-
-    while let Some(msg) = read.next().await {
-        let payload = match classify(msg, source) {
-            Frame::Payload(p) => p,
-            Frame::Skip => continue,
-            Frame::Stop => break,
-        };
-        msg_count += 1;
-        if msg_count <= 3 {
-            eprintln!("[soniox:{source}] RX raw#{msg_count}: {payload}");
-        }
-
-        let resp: SonioxResponse = match serde_json::from_str(&payload) {
+    ws::read_frames("soniox", source, read, OnClose::Stop, |payload| {
+        let resp: SonioxResponse = match serde_json::from_str(payload) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("[soniox:{source}] RX parse error: {e} — payload: {payload}");
-                continue;
+                return Ok(Next::Continue);
             }
         };
 
@@ -293,11 +232,13 @@ async fn read_transcripts(app: AppHandle, source: &'static str, mut read: WsRead
         if apply_tokens(&mut builder, &resp.tokens) {
             builder.endpoint();
         }
-        if resp.finished {
-            break;
-        }
-    }
-    Ok(())
+        Ok(if resp.finished {
+            Next::Stop
+        } else {
+            Next::Continue
+        })
+    })
+    .await
 }
 
 /// Run one Soniox realtime session: stream PCM from `pcm_rx`, parse the token

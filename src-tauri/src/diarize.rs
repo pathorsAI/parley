@@ -427,7 +427,7 @@ fn embed_worker(
         }
         // else: too short / out of range — filled from a neighbour later.
         let done = processed.fetch_add(1, Ordering::Relaxed) + 1;
-        if done % step == 0 || done == n {
+        if done.is_multiple_of(step) || done == n {
             let _ = app.emit(
                 "diarize://progress",
                 Progress {
