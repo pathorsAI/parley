@@ -252,6 +252,14 @@ function useShortcutRecorder(
   }, [recording]);
 }
 
+/** The recorder button's leading icon: spinner while saving, pulsing dot while
+ *  capturing, otherwise the keyboard glyph. */
+function recorderIcon(saving: boolean, recording: boolean): ReactNode {
+  if (saving) return <Loader2 className="size-3.5 animate-spin" />;
+  if (recording) return <Circle className="size-2.5 animate-pulse fill-current" />;
+  return <Keyboard className="size-3.5" />;
+}
+
 interface AppIdentity {
   bundleIdentifier: string;
   executablePath: string;
@@ -409,14 +417,7 @@ export const VoiceTypingSettings = () => {
   // Guidance renders as single inline lines (no nested boxes) and only when
   // actionable — the default state is just the recorder, the chips and one
   // caption.
-  let recorderIcon: ReactNode;
-  if (saving) {
-    recorderIcon = <Loader2 className="size-3.5 animate-spin" />;
-  } else if (recording) {
-    recorderIcon = <Circle className="size-2.5 animate-pulse fill-current" />;
-  } else {
-    recorderIcon = <Keyboard className="size-3.5" />;
-  }
+  const icon = recorderIcon(saving, recording);
 
   return (
     <div className="flex max-w-md flex-col gap-6">
@@ -508,7 +509,7 @@ export const VoiceTypingSettings = () => {
                 : "hover:bg-muted/50"
             }`}
           >
-            {recorderIcon}
+            {icon}
             {recording ? (
               <span className="text-xs">{t("settings.voiceTyping.recorder.listening")}</span>
             ) : (
