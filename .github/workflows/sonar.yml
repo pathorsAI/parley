@@ -12,6 +12,11 @@ name: Sonar
 # and exclusions live in sonar-project.properties, which the scanner picks up
 # with no extra flag.
 
+# The comment step below writes to the PR; everything else only reads.
+permissions:
+  contents: read
+  pull-requests: write
+
 on:
   workflow_dispatch:
   pull_request:
@@ -165,3 +170,86 @@ jobs:
               ` new_lines=${m.new_lines ?? "(absent)"} ncloc=${m.ncloc ?? "?"}`,
             );
           '
+
+      # Leave the scan result on the PR itself, so nobody has to open the
+      # Sonar UI to learn how the gate went. Sticky: the same comment is
+      # updated in place on every push, keyed by the hidden marker, so the PR
+      # never fills up with stale reports. Best-effort by design
+      # (continue-on-error + `|| true`): a comment that could not be posted
+      # must never turn a green scan red.
+      - name: Comment the result on the PR
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_KEY: pathorsAI_parley
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          API=https://sonar.pathors.com/api
+          curl -sS -u "$SONAR_TOKEN:" \
+            "$API/qualitygates/project_status?projectKey=$PROJECT_KEY&pullRequest=$PR_NUMBER" \
+            > "$RUNNER_TEMP/gate.json" || true
+          curl -sS -u "$SONAR_TOKEN:" \
+            "$API/issues/search?componentKeys=$PROJECT_KEY&pullRequest=$PR_NUMBER&resolved=false&ps=10" \
+            > "$RUNNER_TEMP/issues.json" || true
+
+          node -e '
+            const fs = require("fs");
+            const read = (n) => {
+              try { return JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/${n}`, "utf8")); }
+              catch { return null; }
+            };
+            const key = process.env.PROJECT_KEY;
+            const pr = process.env.PR_NUMBER;
+            const url = `https://sonar.pathors.com/dashboard?id=${encodeURIComponent(key)}&pullRequest=${pr}`;
+
+            const status = read("gate.json")?.projectStatus;
+            if (!status) process.exit(0); // nothing worth posting
+
+            const icon = status.status === "OK" ? "✅" : "❌";
+            const verdict = status.status === "OK" ? "passed" : status.status;
+            const lines = [
+              `<!-- sonar-scan-report:${key} -->`,
+              `### ${icon} SonarQube Quality Gate ${verdict} — [${key}](${url})`,
+              "",
+            ];
+
+            const conds = (status.conditions ?? []).filter((c) => c.status !== "OK");
+            if (conds.length) {
+              lines.push("| failed condition | value | threshold |", "|---|---|---|");
+              for (const c of conds) {
+                lines.push(`| ${c.metricKey} | ${c.actualValue} | ${c.comparator === "GT" ? "≤" : "≥"} ${c.errorThreshold} |`);
+              }
+              lines.push("");
+            }
+
+            const issues = read("issues.json");
+            if (issues?.total != null) {
+              const n = issues.total;
+              lines.push(`**${n} open issue${n === 1 ? "" : "s"} on this PR**${n ? ":" : "."}`);
+              for (const i of issues.issues ?? []) {
+                const file = (i.component ?? "").split(":").pop();
+                const loc = i.line ? `${file}:${i.line}` : file;
+                lines.push(`- **${i.severity}** \`${i.rule}\` — ${i.message} (\`${loc}\`)`);
+              }
+              const shown = (issues.issues ?? []).length;
+              if (n > shown) lines.push(`- …and ${n - shown} more on the [dashboard](${url}).`);
+            } else {
+              lines.push(`Details on the [dashboard](${url}).`);
+            }
+            fs.writeFileSync(`${process.env.RUNNER_TEMP}/comment.md`, lines.join("\n") + "\n");
+          ' || exit 0
+
+          [ -f "$RUNNER_TEMP/comment.md" ] || exit 0
+          MARKER="<!-- sonar-scan-report:$PROJECT_KEY -->"
+          EXISTING=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" 2>/dev/null | head -1)
+          if [ -n "$EXISTING" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" \
+              -F "body=@$RUNNER_TEMP/comment.md" > /dev/null || true
+          else
+            gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" \
+              -F "body=@$RUNNER_TEMP/comment.md" > /dev/null || true
+          fi
