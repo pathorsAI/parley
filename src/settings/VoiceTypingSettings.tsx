@@ -171,6 +171,87 @@ async function applyShortcut(shortcut: VoiceTypingShortcut): Promise<HotkeyStatu
   });
 }
 
+/**
+ * Key-capture mode: the settings window is focused, so plain DOM key events
+ * are enough — no global listener, no extra permission. Esc cancels; a combo
+ * must include a modifier (or be an F-key) so a bare letter can't be armed as
+ * a system-wide hotkey that swallows normal typing.
+ */
+function useShortcutRecorder(
+  recording: boolean,
+  chooseShortcut: (shortcut: VoiceTypingShortcut) => Promise<void>,
+  setRecording: (recording: boolean) => void,
+  setRecordHint: (hint: TranslationKey | null) => void,
+) {
+  /** Set once any non-modifier keydown happens in the current recording
+   *  session — a later lone-modifier keyup then no longer picks a hold-key. */
+  const sawNonModifierRef = useRef(false);
+
+  useEffect(() => {
+    if (!recording) return;
+    sawNonModifierRef.current = false;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.code === "Escape") {
+        setRecording(false);
+        setRecordHint(null);
+        return;
+      }
+      if (MODIFIER_CODES.has(e.code)) return; // still holding — wait for the key
+      sawNonModifierRef.current = true; // a combo was attempted
+      const combo = comboFromEvent(e);
+      if (!combo) {
+        setRecordHint("settings.voiceTyping.recorder.needModifier");
+        return;
+      }
+      setRecording(false);
+      setRecordHint(null);
+      chooseShortcut(combo).catch((error) =>
+        log.error("voice-typing: choose combo shortcut failed", { error: String(error) }),
+      );
+    };
+    // Users routinely press a lone modifier here hoping to pick it as a
+    // hold-key. A tap only becomes distinguishable from "start of a combo" at
+    // keyup, so react there: a lone right-side modifier is selected directly
+    // (same as clicking its chip below); left-side/Shift get an explanatory
+    // hint. Skipped as soon as any non-modifier key was involved.
+    const onKeyUp = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (sawNonModifierRef.current) return;
+      const rightId = RIGHT_MODIFIER_BY_CODE[e.code];
+      if (rightId) {
+        setRecording(false);
+        setRecordHint(null);
+        chooseShortcut(rightId).catch((error) =>
+          log.error("voice-typing: choose modifier shortcut failed", {
+            error: String(error),
+            shortcut: rightId,
+          }),
+        );
+        return;
+      }
+      if (LEFT_MODIFIER_CODES.has(e.code)) {
+        setRecordHint("settings.voiceTyping.recorder.leftModifier");
+      }
+    };
+    const cancel = () => {
+      setRecording(false);
+      setRecordHint(null);
+    };
+    globalThis.addEventListener("keydown", onKey, true);
+    globalThis.addEventListener("keyup", onKeyUp, true);
+    globalThis.addEventListener("blur", cancel);
+    return () => {
+      globalThis.removeEventListener("keydown", onKey, true);
+      globalThis.removeEventListener("keyup", onKeyUp, true);
+      globalThis.removeEventListener("blur", cancel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recording]);
+}
+
 interface AppIdentity {
   bundleIdentifier: string;
   executablePath: string;
@@ -203,9 +284,6 @@ export const VoiceTypingSettings = () => {
   const [saving, setSaving] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordHint, setRecordHint] = useState<TranslationKey | null>(null);
-  /** Set once any non-modifier keydown happens in the current recording
-   *  session — a later lone-modifier keyup then no longer picks a hold-key. */
-  const sawNonModifierRef = useRef(false);
 
   const refreshStatus = useCallback(() => {
     invoke<HotkeyStatus>("voice_typing_hotkey_status")
@@ -294,71 +372,7 @@ export const VoiceTypingSettings = () => {
     refreshStatus();
   };
 
-  // Key-capture mode: the settings window is focused, so plain DOM key events
-  // are enough — no global listener, no extra permission. Esc cancels; a combo
-  // must include a modifier (or be an F-key) so a bare letter can't be armed as
-  // a system-wide hotkey that swallows normal typing.
-  useEffect(() => {
-    if (!recording) return;
-    sawNonModifierRef.current = false;
-    const onKey = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.code === "Escape") {
-        setRecording(false);
-        setRecordHint(null);
-        return;
-      }
-      if (MODIFIER_CODES.has(e.code)) return; // still holding — wait for the key
-      sawNonModifierRef.current = true; // a combo was attempted
-      const combo = comboFromEvent(e);
-      if (!combo) {
-        setRecordHint("settings.voiceTyping.recorder.needModifier");
-        return;
-      }
-      setRecording(false);
-      setRecordHint(null);
-      chooseShortcut(combo).catch((error) =>
-        log.error("voice-typing: choose combo shortcut failed", { error: String(error) }),
-      );
-    };
-    // Users routinely press a lone modifier here hoping to pick it as a
-    // hold-key. A tap only becomes distinguishable from "start of a combo" at
-    // keyup, so react there: a lone right-side modifier is selected directly
-    // (same as clicking its chip below); left-side/Shift get an explanatory
-    // hint. Skipped as soon as any non-modifier key was involved.
-    const onKeyUp = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (sawNonModifierRef.current) return;
-      const rightId = RIGHT_MODIFIER_BY_CODE[e.code];
-      if (rightId) {
-        setRecording(false);
-        setRecordHint(null);
-        chooseShortcut(rightId).catch((error) =>
-          log.error("voice-typing: choose modifier shortcut failed", { error: String(error), shortcut: rightId }),
-        );
-        return;
-      }
-      if (LEFT_MODIFIER_CODES.has(e.code)) {
-        setRecordHint("settings.voiceTyping.recorder.leftModifier");
-      }
-    };
-    const cancel = () => {
-      setRecording(false);
-      setRecordHint(null);
-    };
-    globalThis.addEventListener("keydown", onKey, true);
-    globalThis.addEventListener("keyup", onKeyUp, true);
-    globalThis.addEventListener("blur", cancel);
-    return () => {
-      globalThis.removeEventListener("keydown", onKey, true);
-      globalThis.removeEventListener("keyup", onKeyUp, true);
-      globalThis.removeEventListener("blur", cancel);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recording]);
-
+  useShortcutRecorder(recording, chooseShortcut, setRecording, setRecordHint);
   if (!isTauri()) return null;
 
   const selected = settings.voiceTypingShortcut;
