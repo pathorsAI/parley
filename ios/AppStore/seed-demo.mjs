@@ -2,9 +2,22 @@
 // Content is fictional but written the way real B2B meetings actually sound —
 // screenshots should show the product doing its job, not a placeholder.
 // No real companies, people, or customer data appear anywhere.
-import { readFileSync } from "node:fs";
+//
+// Usage: PARLEY_REVIEW_TOKEN=<reviewer account API token> node seed-demo.mjs
+//
+// The token comes from the environment rather than a file under /tmp: that
+// directory is world-writable, so any local process could swap the token out
+// from under this script. Pull the value from the approved secret manager at
+// call time (see README step 6) and never write it into the repository.
 
-const TOKEN = readFileSync("/tmp/review-token.txt", "utf8").trim();
+const TOKEN = process.env.PARLEY_REVIEW_TOKEN?.trim();
+if (!TOKEN) {
+  console.error(
+    "PARLEY_REVIEW_TOKEN is not set — export the reviewer account's API token before running this script."
+  );
+  process.exit(1);
+}
+
 const API = "https://api.parley.tw";
 
 const seg = (i, speaker, text, startMs, endMs) => ({
