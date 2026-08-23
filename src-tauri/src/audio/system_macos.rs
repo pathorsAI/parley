@@ -31,7 +31,7 @@ use tauri::{AppHandle, Emitter};
 
 use anyhow::{anyhow, Result};
 use core_foundation::array::CFArray;
-use core_foundation::base::TCFType;
+use core_foundation::base::{CFType, TCFType};
 use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::string::CFString;
@@ -176,40 +176,7 @@ fn run(tx: UnboundedSender<Vec<i16>>, running: Arc<AtomicBool>, app: &AppHandle)
         let uid = tap_uuid_string(desc);
 
         // 3. Wrap the tap in a private aggregate device we can run an IOProc on.
-        let sub_tap = CFDictionary::from_CFType_pairs(&[
-            (
-                CFString::new("uid").as_CFType(),
-                CFString::new(&uid).as_CFType(),
-            ),
-            (
-                CFString::new("drift").as_CFType(),
-                CFBoolean::true_value().as_CFType(),
-            ),
-        ]);
-        let tap_list = CFArray::from_CFTypes(&[sub_tap]);
-        let agg_desc = CFDictionary::from_CFType_pairs(&[
-            (
-                CFString::new("name").as_CFType(),
-                CFString::new("Parley System Tap").as_CFType(),
-            ),
-            (
-                CFString::new("uid").as_CFType(),
-                CFString::new(&format!("com.pathors.parley.agg.{uid}")).as_CFType(),
-            ),
-            (
-                CFString::new("private").as_CFType(),
-                CFBoolean::true_value().as_CFType(),
-            ),
-            (
-                CFString::new("stacked").as_CFType(),
-                CFBoolean::false_value().as_CFType(),
-            ),
-            (CFString::new("taps").as_CFType(), tap_list.as_CFType()),
-            (
-                CFString::new("tapautostart").as_CFType(),
-                CFBoolean::true_value().as_CFType(),
-            ),
-        ]);
+        let agg_desc = aggregate_description(&uid);
 
         let mut agg_id: AudioObjectID = 0;
         let status = AudioHardwareCreateAggregateDevice(
@@ -227,16 +194,13 @@ fn run(tx: UnboundedSender<Vec<i16>>, running: Arc<AtomicBool>, app: &AppHandle)
         // 4. Read the tap's audio format to configure the resampler. Failing to
         // read it is the "created but unauthorized" signature — keep going (the
         // watchdog below reports if no frames ever arrive), but say why.
-        let in_rate = match tap_sample_rate(tap_id) {
-            Some(r) => r,
-            None => {
-                log::warn!(
-                    "[system] tap exposes no stream format — System Audio Recording permission \
-                     likely missing; assuming 48 kHz"
-                );
-                48_000.0
-            }
-        };
+        let in_rate = tap_sample_rate(tap_id).unwrap_or_else(|| {
+            log::warn!(
+                "[system] tap exposes no stream format — System Audio Recording permission \
+                 likely missing; assuming 48 kHz"
+            );
+            48_000.0
+        });
         log::info!("[system] tap @ {in_rate} Hz → {TARGET_SAMPLE_RATE} Hz mono");
 
         // 5. Install + start the IOProc.
@@ -272,29 +236,9 @@ fn run(tx: UnboundedSender<Vec<i16>>, running: Arc<AtomicBool>, app: &AppHandle)
         std::thread::spawn(kick_system_output);
 
         // 6. Hold the device open until the meeting stops, then tear everything
-        // down. Watchdog: an unauthorized tap "starts" fine but its IOProc never
-        // fires — detect that (zero frames a few seconds in) and tell the UI, so
-        // a permission problem doesn't just look like a silent remote party.
-        let started_at = Instant::now();
-        let mut checked = false;
-        while running.load(Ordering::Relaxed) {
-            std::thread::sleep(Duration::from_millis(100));
-            if !checked && started_at.elapsed() >= Duration::from_secs(3) {
-                checked = true;
-                if frames.load(Ordering::Relaxed) == 0 {
-                    log::warn!(
-                        "[system] tap delivered no frames in 3s — grant \"System Audio \
-                         Recording\" (Settings → Permissions) and restart the meeting"
-                    );
-                    let _ = app.emit(
-                        "meeting://warning",
-                        serde_json::json!({ "code": "system-audio-silent" }),
-                    );
-                } else {
-                    crate::permissions::note_system_audio_granted();
-                }
-            }
-        }
+        // down.
+        hold_until_stopped(&running, &frames, app);
+
         AudioDeviceStop(agg_id, proc_id);
         AudioDeviceDestroyIOProcID(agg_id, proc_id);
         AudioHardwareDestroyAggregateDevice(agg_id);
@@ -303,6 +247,79 @@ fn run(tx: UnboundedSender<Vec<i16>>, running: Arc<AtomicBool>, app: &AppHandle)
         let _: () = msg_send![desc, release];
     }
     Ok(())
+}
+
+/// Describe the private aggregate device that wraps the process tap `uid`, in
+/// the CFDictionary shape `AudioHardwareCreateAggregateDevice` expects.
+fn aggregate_description(uid: &str) -> CFDictionary<CFType, CFType> {
+    let sub_tap = CFDictionary::from_CFType_pairs(&[
+        (
+            CFString::new("uid").as_CFType(),
+            CFString::new(uid).as_CFType(),
+        ),
+        (
+            CFString::new("drift").as_CFType(),
+            CFBoolean::true_value().as_CFType(),
+        ),
+    ]);
+    let tap_list = CFArray::from_CFTypes(&[sub_tap]);
+    CFDictionary::from_CFType_pairs(&[
+        (
+            CFString::new("name").as_CFType(),
+            CFString::new("Parley System Tap").as_CFType(),
+        ),
+        (
+            CFString::new("uid").as_CFType(),
+            CFString::new(&format!("com.pathors.parley.agg.{uid}")).as_CFType(),
+        ),
+        (
+            CFString::new("private").as_CFType(),
+            CFBoolean::true_value().as_CFType(),
+        ),
+        (
+            CFString::new("stacked").as_CFType(),
+            CFBoolean::false_value().as_CFType(),
+        ),
+        (CFString::new("taps").as_CFType(), tap_list.as_CFType()),
+        (
+            CFString::new("tapautostart").as_CFType(),
+            CFBoolean::true_value().as_CFType(),
+        ),
+    ])
+}
+
+/// Park until the meeting stops, running the delivery watchdog once on the way:
+/// an unauthorized tap "starts" fine but its IOProc never fires — detect that
+/// (zero frames a few seconds in) and tell the UI, so a permission problem
+/// doesn't just look like a silent remote party.
+fn hold_until_stopped(running: &AtomicBool, frames: &AtomicU64, app: &AppHandle) {
+    let started_at = Instant::now();
+    let mut checked = false;
+    while running.load(Ordering::Relaxed) {
+        std::thread::sleep(Duration::from_millis(100));
+        if checked || started_at.elapsed() < Duration::from_secs(3) {
+            continue;
+        }
+        checked = true;
+        report_tap_delivery(frames.load(Ordering::Relaxed), app);
+    }
+}
+
+/// Turn the watchdog's frame count into either a permission warning for the UI
+/// or a note that the System Audio Recording grant is confirmed working.
+fn report_tap_delivery(frames: u64, app: &AppHandle) {
+    if frames > 0 {
+        crate::permissions::note_system_audio_granted();
+        return;
+    }
+    log::warn!(
+        "[system] tap delivered no frames in 3s — grant \"System Audio \
+         Recording\" (Settings → Permissions) and restart the meeting"
+    );
+    let _ = app.emit(
+        "meeting://warning",
+        serde_json::json!({ "code": "system-audio-silent" }),
+    );
 }
 
 /// Realtime callback: downmix the tapped interleaved float frames to mono,

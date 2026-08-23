@@ -36,6 +36,21 @@ export function connState(info: McpActivityInfo | null, now: number): McpConnSta
   return "idle";
 }
 
+/** Status-dot classes per connection state. */
+const DOT_CLASS: Record<McpConnState, string> = {
+  active: "bg-emerald-500 animate-pulse",
+  connected: "bg-emerald-500",
+  idle: "bg-muted-foreground/50",
+  none: "bg-muted-foreground/25",
+};
+
+/** "name vX" for the connected client, or null when nobody has connected. */
+export function clientLabel(client: McpActivityInfo["client"] | undefined): string | null {
+  if (!client) return null;
+  const version = client.version ? ` v${client.version}` : "";
+  return `${client.name ?? "?"}${version}`;
+}
+
 export function relativeTime(t: ReturnType<typeof useI18n>["t"], at: number, now: number): string {
   const s = Math.max(0, Math.round((now - at) / 1000));
   if (s < 10) return t("mcp.time.justNow");
@@ -93,14 +108,7 @@ export function McpStatusChip() {
 
   const state = connState(info, now);
   const stateLabel = t(`mcp.state.${state}`);
-  const dotClass =
-    state === "active"
-      ? "bg-emerald-500 animate-pulse"
-      : state === "connected"
-        ? "bg-emerald-500"
-        : state === "idle"
-          ? "bg-muted-foreground/50"
-          : "bg-muted-foreground/25";
+  const dotClass = DOT_CLASS[state];
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
@@ -131,9 +139,7 @@ export function McpStatusChip() {
             <div className="flex items-baseline justify-between gap-2">
               <span className="shrink-0 text-muted-foreground">{t("mcp.panel.client")}</span>
               <span className="truncate font-medium">
-                {info?.client
-                  ? `${info.client.name ?? "?"}${info.client.version ? ` v${info.client.version}` : ""}`
-                  : t("mcp.panel.noClient")}
+                {clientLabel(info?.client ?? null) ?? t("mcp.panel.noClient")}
               </span>
             </div>
             <div className="flex items-baseline justify-between gap-2">

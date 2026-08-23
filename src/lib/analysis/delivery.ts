@@ -74,7 +74,7 @@ export interface DeliveryThresholds {
 export const DEFAULT_THRESHOLDS: DeliveryThresholds = {
   calibrationSec: 30,
   paceZ: 1.5,
-  paceAbsHz: 4.0,
+  paceAbsHz: 4,
   monotoneSemitones: 1.2,
   monotoneMinVoiced: 0.55,
   deadAirMs: 6000,

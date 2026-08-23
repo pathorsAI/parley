@@ -99,8 +99,8 @@ export function FindingSolutionApp() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") dismiss().catch((error) => log.error("finding-solution: dismiss failed", { error: String(error) }));
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    globalThis.addEventListener("keydown", onKey);
+    return () => globalThis.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -24,7 +24,7 @@ interface TranscriptEventPayload {
  * Tauri (e.g. plain `vite` in a browser) — it just resolves to a no-op.
  */
 export async function listenForTranscript(): Promise<UnlistenFn> {
-  if (!("__TAURI_INTERNALS__" in window)) {
+  if (!("__TAURI_INTERNALS__" in globalThis)) {
     return () => {};
   }
   return listen<TranscriptEventPayload>("transcript://segment", (event) => {
@@ -72,7 +72,7 @@ interface ProsodyEventPayload {
  * outside Tauri. Only "me" is ever emitted, but we filter defensively.
  */
 export async function listenForProsody(): Promise<UnlistenFn> {
-  if (!("__TAURI_INTERNALS__" in window)) {
+  if (!("__TAURI_INTERNALS__" in globalThis)) {
     return () => {};
   }
   return listen<ProsodyEventPayload>("audio://prosody", (event) => {
@@ -119,7 +119,7 @@ const MEETING_ERROR_KEY_BY_CODE: Partial<Record<string, TranslationKey>> = {
  * toast. No-op outside Tauri.
  */
 export async function listenForMeetingError(): Promise<UnlistenFn> {
-  if (!("__TAURI_INTERNALS__" in window)) {
+  if (!("__TAURI_INTERNALS__" in globalThis)) {
     return () => {};
   }
   return listen<MeetingErrorPayload>("meeting://error", (event) => {
@@ -150,7 +150,7 @@ interface MeetingWarningPayload {
  */
 let warnedSystemAudio = false;
 export async function listenForMeetingWarning(): Promise<UnlistenFn> {
-  if (!("__TAURI_INTERNALS__" in window)) {
+  if (!("__TAURI_INTERNALS__" in globalThis)) {
     return () => {};
   }
   const unStatus = await listen<string>("meeting://status", () => {
@@ -173,5 +173,5 @@ export async function listenForMeetingWarning(): Promise<UnlistenFn> {
 
 /** True when running inside the Tauri shell (vs a plain browser dev session). */
 export function isTauri(): boolean {
-  return "__TAURI_INTERNALS__" in window;
+  return "__TAURI_INTERNALS__" in globalThis;
 }

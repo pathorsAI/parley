@@ -30,7 +30,7 @@ void initDictionary().catch((error) =>
 
 // Secondary windows load the same bundle at a `#<route>` hash; main.tsx routes
 // each to its own root component (Settings / Field Log / How-to-reply).
-const route = window.location.hash.replace(/^#/, "");
+const route = globalThis.location.hash.replace(/^#/, "");
 // `history` is deliberately NOT here: the recordings library is a route inside
 // the main window's shell now (#195), not a window of its own.
 const ROUTES = [

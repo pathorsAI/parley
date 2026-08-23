@@ -49,6 +49,13 @@
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!--
+      No Subresource Integrity on this one: the Google Fonts CSS2 endpoint serves a
+      different stylesheet per user agent (woff2 vs. legacy formats, varying
+      unicode-range subsets), so a single hash would break the font for most
+      visitors. The response is CSS only — the fonts it points at are separate
+      requests — and it is served over HTTPS from a pinned host.
+    -->
     <link
       href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&display=swap"
       rel="stylesheet"

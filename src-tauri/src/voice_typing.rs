@@ -130,36 +130,11 @@ pub async fn start_voice_typing(
         }
         vt.seq
     };
-    let rx = match coord.begin(MicUser::VoiceTyping) {
-        Begin::Started(gate) => {
-            let mic = Microphone {
-                device_name: input_device,
-            };
-            match spawn_capture(&coord, MicUser::VoiceTyping, mic, gate, "voice-typing") {
-                Ok(rx) => rx,
-                Err(e) => {
-                    coord.stop(MicUser::VoiceTyping);
-                    return Err(format!("microphone failed to start: {e}"));
-                }
-            }
-        }
+    let Some(rx) = acquire_mic(&coord, &tap, input_device)? else {
         // Unreachable in practice: the host serializes press/release, so no
         // second voice-typing start can land between the stop above and this
         // begin. Kept for safety.
-        Begin::AlreadyActive => return Ok(()),
-        // Dictating DURING a meeting: the meeting owns the one input stream,
-        // so read a tee of its raw mic instead of opening a second capture.
-        // Everything downstream (session, overlay, cutoff, paste) is
-        // identical; teardown is self-cleaning — when this session's receiver
-        // drops (release cutoff, abort, or new start), the tap unregisters on
-        // its next failed send. The dictated speech naturally also lands in
-        // the meeting transcript, like anything else said aloud.
-        Begin::Busy(MicUser::Meeting) => {
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-            tap.subscribe(tx)?;
-            rx
-        }
-        Begin::Busy(owner) => return Err(format!("microphone is in use by {owner:?}")),
+        return Ok(());
     };
     let model = model
         .filter(|m| !m.trim().is_empty())
@@ -208,26 +183,69 @@ pub async fn start_voice_typing(
     // can never stop a newer session started in the meantime. No-op if that
     // session already ended (mic not owned, task already taken).
     if let Some(secs) = max_duration_secs.filter(|s| *s > 0) {
-        let app = app.clone();
-        let inner = state.0.clone();
-        let deadline = std::time::Duration::from_secs(secs) + CAP_BACKEND_GRACE;
-        tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(deadline).await;
-            let still_current = { inner.lock().unwrap().seq == my_seq };
-            if !still_current {
-                return;
-            }
-            log::warn!("voice-typing: hosted session exceeded {secs}s cap; backend safety-stop");
-            app.state::<MicCoordinator>().stop(MicUser::VoiceTyping);
-            let mut vt = inner.lock().unwrap();
-            if vt.seq == my_seq {
-                if let Some(task) = vt.task.take() {
-                    task.abort();
-                }
-            }
-        });
+        arm_cap_watchdog(&app, state.0.clone(), my_seq, secs);
     }
     Ok(())
+}
+
+/// Take the microphone for a dictation session: our own capture normally, or a
+/// tee of the meeting's raw mic when a meeting owns the one input stream.
+/// `Ok(None)` means voice typing already holds the mic and the start is a no-op.
+fn acquire_mic(
+    coord: &MicCoordinator,
+    tap: &MicTap,
+    input_device: Option<String>,
+) -> Result<Option<tokio::sync::mpsc::UnboundedReceiver<Vec<i16>>>, String> {
+    match coord.begin(MicUser::VoiceTyping) {
+        Begin::Started(gate) => {
+            let mic = Microphone {
+                device_name: input_device,
+            };
+            match spawn_capture(coord, MicUser::VoiceTyping, mic, gate, "voice-typing") {
+                Ok(rx) => Ok(Some(rx)),
+                Err(e) => {
+                    coord.stop(MicUser::VoiceTyping);
+                    Err(format!("microphone failed to start: {e}"))
+                }
+            }
+        }
+        Begin::AlreadyActive => Ok(None),
+        // Dictating DURING a meeting: the meeting owns the one input stream,
+        // so read a tee of its raw mic instead of opening a second capture.
+        // Everything downstream (session, overlay, cutoff, paste) is
+        // identical; teardown is self-cleaning — when this session's receiver
+        // drops (release cutoff, abort, or new start), the tap unregisters on
+        // its next failed send. The dictated speech naturally also lands in
+        // the meeting transcript, like anything else said aloud.
+        Begin::Busy(MicUser::Meeting) => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+            tap.subscribe(tx)?;
+            Ok(Some(rx))
+        }
+        Begin::Busy(owner) => Err(format!("microphone is in use by {owner:?}")),
+    }
+}
+
+/// Force-stop the mic once the hosted per-dictation cap (+ grace) has passed,
+/// unless the session identified by `my_seq` already ended or was superseded.
+fn arm_cap_watchdog(app: &AppHandle, inner: Arc<Mutex<VtInner>>, my_seq: u64, secs: u64) {
+    let app = app.clone();
+    let deadline = std::time::Duration::from_secs(secs) + CAP_BACKEND_GRACE;
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(deadline).await;
+        let still_current = { inner.lock().unwrap().seq == my_seq };
+        if !still_current {
+            return;
+        }
+        log::warn!("voice-typing: hosted session exceeded {secs}s cap; backend safety-stop");
+        app.state::<MicCoordinator>().stop(MicUser::VoiceTyping);
+        let mut vt = inner.lock().unwrap();
+        if vt.seq == my_seq {
+            if let Some(task) = vt.task.take() {
+                task.abort();
+            }
+        }
+    });
 }
 
 /// Name of the voice-typing history file (one JSON object per line) in the app

@@ -42,12 +42,12 @@ export function cardPosition(
   dot: { left: number; right: number; top: number; bottom: number; width: number },
   cardH: number,
   preferBelow: boolean,
-  viewport: { width: number; height: number } = {
-    width: window.innerWidth,
-    height: window.innerHeight,
-  },
+  // Defaults to the live window; read per call rather than from a parameter
+  // default so a resize between renders isn't captured by a stale literal.
+  viewport?: { width: number; height: number },
 ) {
-  const { width: vw, height: vh } = viewport;
+  const vw = viewport?.width ?? window.innerWidth;
+  const vh = viewport?.height ?? window.innerHeight;
   const x = Math.min(
     Math.max(EDGE_GAP, dot.left + dot.width / 2 - CARD_W / 2),
     vw - CARD_W - EDGE_GAP,

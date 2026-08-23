@@ -26,7 +26,7 @@ export function clearCacheByPrefix(prefix: string): number {
   try {
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const k = localStorage.key(i);
-      if (k && k.startsWith(prefix)) {
+      if (k?.startsWith(prefix)) {
         localStorage.removeItem(k);
         removed++;
       }

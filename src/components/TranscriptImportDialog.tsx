@@ -19,6 +19,50 @@ import {
   type OrgHandoffMode,
 } from "../lib/library/destination";
 
+/** An org destination — the branch that needs a copy-or-move handoff. */
+type OrgDestination = Extract<LibraryDestination, { scope: "org" }>;
+
+/**
+ * Write the parsed transcripts to local history and return the new entry ids.
+ * Extracted from the dialog's confirm handler to keep it readable.
+ */
+async function saveTranscripts(
+  files: PreparedTranscriptFile[],
+  destination: LibraryDestination,
+): Promise<string[]> {
+  const imported: string[] = [];
+  for (const f of files) {
+    const parsed = f.parsed;
+    if (!parsed) continue;
+    const id = await saveTranscriptToHistory({
+      title: f.title.trim() || f.fileName,
+      segments: parsed.segments,
+      speakerNames: parsed.speakerNames,
+      durationMs: parsed.durationMs,
+      createdAt: f.createdAt,
+      // An org destination still writes locally first: the share endpoint
+      // copies from the user's own cloud keyspace, so the entry has to
+      // exist before it can be handed over.
+      folderId: destination.scope === "personal" ? destination.folderId : null,
+    });
+    if (id) imported.push(id);
+  }
+  return imported;
+}
+
+/** Hand the freshly saved entries over to the chosen org (copy or move). */
+async function handOffToOrg(
+  imported: string[],
+  destination: OrgDestination,
+  handoff: OrgHandoffMode | null,
+): Promise<void> {
+  const { moveRecordingToOrg, shareRecordingToOrg } = await import("../lib/cloud/sync");
+  const hand = handoff === "move" ? moveRecordingToOrg : shareRecordingToOrg;
+  for (const id of imported) {
+    await hand(id, destination.orgId, destination.folderId);
+  }
+}
+
 /**
  * Import picked/dropped .txt transcripts as audio-less history entries (issue
  * #130's text-ingest path). Shows one row per file (parsed stats + editable
@@ -75,33 +119,11 @@ export function TranscriptImportDialog() {
   async function confirm() {
     if (!valid.length || importing) return;
     setImporting(true);
-    const imported: string[] = [];
+    let imported: string[] = [];
     try {
-      for (const f of valid) {
-        const parsed = f.parsed;
-        if (!parsed) continue;
-        const id = await saveTranscriptToHistory({
-          title: f.title.trim() || f.fileName,
-          segments: parsed.segments,
-          speakerNames: parsed.speakerNames,
-          durationMs: parsed.durationMs,
-          createdAt: f.createdAt,
-          // An org destination still writes locally first: the share endpoint
-          // copies from the user's own cloud keyspace, so the entry has to
-          // exist before it can be handed over.
-          folderId: destination.scope === "personal" ? destination.folderId : null,
-        });
-        if (id) imported.push(id);
-      }
+      imported = await saveTranscripts(valid, destination);
       if (destination.scope === "org") {
-        const { moveRecordingToOrg, shareRecordingToOrg } = await import("../lib/cloud/sync");
-        for (const id of imported) {
-          if (handoff === "move") {
-            await moveRecordingToOrg(id, destination.orgId, destination.folderId);
-          } else {
-            await shareRecordingToOrg(id, destination.orgId, destination.folderId);
-          }
-        }
+        await handOffToOrg(imported, destination, handoff);
       }
     } catch (e) {
       log.error("import: transcript save failed", { error: String(e) });

@@ -111,9 +111,9 @@ export function parseClockMs(raw: string | undefined): number | null {
   if (!m) return null;
   const a = Number(m[1]);
   const b = Number(m[2]);
-  const c = m[3] !== undefined ? Number(m[3]) : null;
-  // [h:mm:ss] vs [m:ss]
-  const totalSec = c !== null ? a * 3600 + b * 60 + c : a * 60 + b;
+  const c = m[3] === undefined ? null : Number(m[3]);
+  // [m:ss] vs [h:mm:ss]
+  const totalSec = c === null ? a * 60 + b : a * 3600 + b * 60 + c;
   if (!Number.isFinite(totalSec)) return null;
   return totalSec * 1000;
 }

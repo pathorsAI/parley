@@ -652,13 +652,13 @@ function Stage({
       <span className="text-sm font-medium text-foreground">{label}</span>
       {sub && <span className="text-[11px] text-muted-foreground">{sub}</span>}
       <div className="mt-1 h-1.5 w-48 overflow-hidden rounded-full bg-muted">
-        {progress != null ? (
+        {progress == null ? (
+          <div className="h-full w-1/3 animate-pulse rounded-full bg-emerald-500/70" />
+        ) : (
           <div
             className="h-full rounded-full bg-emerald-500 transition-all"
             style={{ width: `${Math.min(100, Math.round(progress * 100))}%` }}
           />
-        ) : (
-          <div className="h-full w-1/3 animate-pulse rounded-full bg-emerald-500/70" />
         )}
       </div>
     </div>

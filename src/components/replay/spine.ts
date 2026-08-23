@@ -11,7 +11,7 @@ import { useStore, type ReplayTrim } from "../../lib/store";
 // Canonical contract published by the ingest module.
 import type { ReplaySession } from "../../lib/replay/types";
 
-export type { ReplaySession };
+export type { ReplaySession } from "../../lib/replay/types";
 
 export function useAppMode(): "live" | "replay" {
   // The library route never hosts a replay spine; treat it as live for the

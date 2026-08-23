@@ -99,9 +99,8 @@ function MenuShell({
   const { t } = useI18n();
   return (
     <>
-      <div
-        role="button"
-        tabIndex={0}
+      <button
+        type="button"
         aria-label={t("common.cancel")}
         className="fixed inset-0 z-30"
         onClick={(ev) => {
@@ -117,7 +116,6 @@ function MenuShell({
         }}
       />
       <div
-        role="presentation"
         className="absolute right-0 top-7 z-40 max-h-64 min-w-40 overflow-y-auto rounded-md border bg-popover p-1 shadow-md"
         onClick={(ev) => ev.stopPropagation()}
         onKeyDown={(ev) => ev.stopPropagation()}
@@ -287,27 +285,25 @@ export function MoveDialog({
 }>) {
   const { t } = useI18n();
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      aria-label={t("history.move.cancel")}
-      // z-[100]: this is raised from the library grid, from inside a Sheet
-      // (z-[91]) and from the import modals (z-[70]) — it has to clear all three.
-      className="fixed inset-0 z-[100] grid place-items-center bg-black/40 p-6"
-      onClick={onCancel}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " " || e.key === "Escape") {
-          e.preventDefault();
-          onCancel();
-        }
-      }}
-    >
-      <div
-        role="presentation"
-        className="w-full max-w-sm rounded-lg border bg-popover p-4 shadow-lg"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-      >
+    // z-[100]: this is raised from the library grid, from inside a Sheet
+    // (z-[91]) and from the import modals (z-[70]) — it has to clear all three.
+    <div className="fixed inset-0 z-[100] grid place-items-center p-6">
+      {/* The scrim is a SIBLING of the panel, not its parent: a real <button>
+          cannot wrap the panel's own buttons, and this way a click on the panel
+          never has to be stopped from reaching the scrim. */}
+      <button
+        type="button"
+        aria-label={t("history.move.cancel")}
+        className="absolute inset-0 bg-black/40"
+        onClick={onCancel}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+      />
+      <div className="relative w-full max-w-sm rounded-lg border bg-popover p-4 shadow-lg">
         <div className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
           <UsersRound className="size-4 text-sky-500" />
           {t("history.move.title", { org: orgName })}
@@ -328,6 +324,81 @@ export function MoveDialog({
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** The hover toolbar in a card's top-right corner: move, share, rename, delete. */
+function CardActions({
+  entry,
+  isOrgContext,
+  isCloudOnly,
+  canShare,
+  orgs,
+  orgFolders,
+  busy,
+  sharing,
+  folders,
+  onDelete,
+  onRenameStart,
+  onShare,
+  onMove,
+}: Readonly<{
+  entry: HistoryCardItem;
+  isOrgContext: boolean;
+  isCloudOnly: boolean;
+  canShare: boolean;
+  orgs: CloudOrg[];
+  orgFolders: Record<string, LocalFolder[]>;
+  busy: boolean;
+  sharing: boolean;
+  folders: LocalFolder[];
+  onDelete: () => void;
+  onRenameStart: () => void;
+  onShare: (org: CloudOrg, folderId: string | null) => void;
+  onMove: (folderId: string | null) => void;
+}>) {
+  const { t } = useI18n();
+  // An org card files into org folders (so it needs at least one); a personal
+  // one needs local meta to retag, which a cloud-only card does not have.
+  const canMove = isOrgContext ? folders.length > 0 : !isCloudOnly;
+  const canRename = !isCloudOnly && !isOrgContext;
+  const deleteLabel = isOrgContext ? t("history.org.remove") : t("history.delete");
+  return (
+    <div className="absolute right-2 top-2 z-10 flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
+      {canMove && (
+        <MoveMenu folders={folders} currentFolderId={entry.folderId ?? null} onMove={onMove} />
+      )}
+      {canShare && (
+        <ShareMenu orgs={orgs} orgFolders={orgFolders} sharing={sharing} onPick={onShare} />
+      )}
+      {canRename && (
+        <button
+          type="button"
+          aria-label={t("history.rename")}
+          title={t("history.rename")}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            onRenameStart();
+          }}
+          className="grid size-6 place-items-center rounded-md bg-background/70 text-muted-foreground backdrop-blur transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <Pencil className="size-3.5" />
+        </button>
+      )}
+      <button
+        type="button"
+        aria-label={deleteLabel}
+        title={deleteLabel}
+        disabled={busy}
+        onClick={(ev) => {
+          ev.stopPropagation();
+          onDelete();
+        }}
+        className="grid size-6 place-items-center rounded-md bg-background/70 text-muted-foreground backdrop-blur transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
+      >
+        <Trash2 className="size-3.5" />
+      </button>
     </div>
   );
 }
@@ -471,45 +542,21 @@ export function LibraryCard({
       }`}
     >
       {!editing && (
-        <div className="absolute right-2 top-2 z-10 flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
-          {(isOrgContext ? folders.length > 0 : !isCloudOnly) && (
-            <MoveMenu
-              folders={folders}
-              currentFolderId={entry.folderId ?? null}
-              onMove={onMove}
-            />
-          )}
-          {canShare && (
-            <ShareMenu orgs={orgs} orgFolders={orgFolders} sharing={sharing} onPick={onShare} />
-          )}
-          {!isCloudOnly && !isOrgContext && (
-            <button
-              type="button"
-              aria-label={t("history.rename")}
-              title={t("history.rename")}
-              onClick={(ev) => {
-                ev.stopPropagation();
-                startEdit();
-              }}
-              className="grid size-6 place-items-center rounded-md bg-background/70 text-muted-foreground backdrop-blur transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <Pencil className="size-3.5" />
-            </button>
-          )}
-          <button
-            type="button"
-            aria-label={isOrgContext ? t("history.org.remove") : t("history.delete")}
-            title={isOrgContext ? t("history.org.remove") : t("history.delete")}
-            disabled={busy}
-            onClick={(ev) => {
-              ev.stopPropagation();
-              onDelete();
-            }}
-            className="grid size-6 place-items-center rounded-md bg-background/70 text-muted-foreground backdrop-blur transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
-          >
-            <Trash2 className="size-3.5" />
-          </button>
-        </div>
+        <CardActions
+          entry={entry}
+          isOrgContext={isOrgContext}
+          isCloudOnly={isCloudOnly}
+          canShare={canShare}
+          orgs={orgs}
+          orgFolders={orgFolders}
+          busy={busy}
+          sharing={sharing}
+          folders={folders}
+          onDelete={onDelete}
+          onRenameStart={startEdit}
+          onShare={onShare}
+          onMove={onMove}
+        />
       )}
 
       {editing ? (

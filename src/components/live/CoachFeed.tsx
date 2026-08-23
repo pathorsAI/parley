@@ -77,6 +77,30 @@ interface AskCard {
   busy: boolean;
 }
 
+/** Replace one ask card by id, leaving the rest untouched. */
+function patchCard(cards: AskCard[], id: string, patch: Partial<AskCard>): AskCard[] {
+  return cards.map((x) => (x.id === id ? { ...x, ...patch } : x));
+}
+
+/** Append a streamed chunk to one ask card's answer. */
+function appendToCard(cards: AskCard[], id: string, chunk: string): AskCard[] {
+  return cards.map((x) => (x.id === id ? { ...x, answer: x.answer + chunk } : x));
+}
+
+/**
+ * The header upload button's other replacement: import from the idle feed —
+ * the shared flow (R7), so it takes .txt transcripts too, not just audio.
+ */
+async function importRecording() {
+  try {
+    const { startImportFlow } = await import("../../lib/replay/ingest");
+    await startImportFlow();
+  } catch (e) {
+    log.error("feed: import failed", { error: String(e) });
+    toast.error(e instanceof Error ? e.message : String(e));
+  }
+}
+
 /** Rotating ask-bar suggestions (same catalog the old Ask pane used). */
 const SUGGESTIONS = [
   "ask.suggestion.next",
@@ -172,9 +196,7 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
     setAskCards((c) => [...c, { id, question: q, answer: "", busy: true }]);
     const state = useStore.getState();
     if (!hasProviderKey(state.settings, "realtime")) {
-      setAskCards((c) =>
-        c.map((x) => (x.id === id ? { ...x, answer: t("ask.missingKey"), busy: false } : x))
-      );
+      setAskCards((c) => patchCard(c, id, { answer: t("ask.missingKey"), busy: false }));
       return;
     }
     try {
@@ -186,35 +208,19 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
         meetingContext: meetingBriefText(state),
         names: state.speakerNames,
         onDelta: (chunk) => {
-          setAskCards((c) =>
-            c.map((x) => (x.id === id ? { ...x, answer: x.answer + chunk } : x))
-          );
+          setAskCards((c) => appendToCard(c, id, chunk));
         },
       });
     } catch (e) {
       log.error("feed: ask failed", { error: String(e) });
-      setAskCards((c) =>
-        c.map((x) => (x.id === id ? { ...x, answer: String(e), busy: false } : x))
-      );
+      setAskCards((c) => patchCard(c, id, { answer: String(e), busy: false }));
     } finally {
-      setAskCards((c) => c.map((x) => (x.id === id ? { ...x, busy: false } : x)));
+      setAskCards((c) => patchCard(c, id, { busy: false }));
     }
   }
 
   const empty = findings.length === 0 && askCards.length === 0;
   const recording = useStore((s) => s.meetingStatus === "recording");
-
-  // The header upload button's other replacement: import from the idle feed —
-  // the shared flow (R7), so it takes .txt transcripts too, not just audio.
-  async function importRecording() {
-    try {
-      const { startImportFlow } = await import("../../lib/replay/ingest");
-      await startImportFlow();
-    } catch (e) {
-      log.error("feed: import failed", { error: String(e) });
-      toast.error(e instanceof Error ? e.message : String(e));
-    }
-  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">

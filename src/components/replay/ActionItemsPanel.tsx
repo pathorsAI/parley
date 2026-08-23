@@ -56,7 +56,10 @@ export function ActionItemsPanel({
             <p className="px-1 pt-4 text-center text-xs text-muted-foreground">{t("actionItems.empty")}</p>
           )}
 
-          {items.map((a) => (
+          {items.map((a) => {
+            // Bound to a const so the seek callback keeps the non-null narrowing.
+            const atMs = a.atMs;
+            return (
             <div key={a.id} className="rounded-lg border px-2.5 py-2">
               <label className="flex cursor-pointer items-start gap-2">
                 <input
@@ -70,23 +73,24 @@ export function ActionItemsPanel({
                     {a.text}
                   </span>
                   <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{a.rationale}</span>
-                  {a.atMs !== null && (
+                  {atMs !== null && (
                     <button
                       type="button"
                       onClick={(e) => {
                         e.preventDefault();
-                        onSeek(a.atMs!);
+                        onSeek(atMs);
                       }}
                       className="mt-1 inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
                     >
                       <span className={cn("size-2 rounded-full", a.severity ? SEVERITY_DOT[a.severity] : "bg-muted-foreground")} />
-                      <span className="font-mono tabular-nums">{formatClock(a.atMs)}</span>
+                      <span className="font-mono tabular-nums">{formatClock(atMs)}</span>
                     </button>
                   )}
                 </span>
               </label>
             </div>
-          ))}
+            );
+          })}
 
       {/* Still streaming, but rows are already showing. */}
       {!keyMissing && running && items.length > 0 && (

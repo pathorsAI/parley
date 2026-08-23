@@ -13,7 +13,7 @@ const VIEW_LOGS_MENU = "menu://view-logs";
  */
 export async function openDiagnosticsWindow(): Promise<void> {
   if (!isTauri()) {
-    window.location.hash = "diagnostics";
+    globalThis.location.hash = "diagnostics";
     return;
   }
   const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");

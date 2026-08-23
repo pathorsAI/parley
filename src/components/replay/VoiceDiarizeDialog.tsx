@@ -125,7 +125,31 @@ export function VoiceDiarizeDialog({ onClose }: Readonly<{ onClose: () => void }
         </div>
 
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 py-3.5">
-          {!named ? (
+          {named ? (
+            <>
+              <p className="text-[12px] leading-relaxed text-muted-foreground">
+                {t("speakers.voiceFound", { speakers: speakers.length })}
+              </p>
+              <div className="flex flex-col gap-2.5">
+                {speakers.map((sp) => (
+                  <div key={sp.key} className="flex items-start gap-2">
+                    <span className={`mt-2.5 size-2 shrink-0 rounded-full ${speakerDotClass(sp)}`} />
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <Input
+                        value={speakerNames[sp.key] ?? ""}
+                        onChange={(e) => setSpeakerName(sp.key, e.target.value)}
+                        placeholder={defaultSpeakerLabel(sp)}
+                        className="h-8 text-sm"
+                      />
+                      <span className="truncate text-[11px] text-muted-foreground" title={sp.sample}>
+                        “{sp.sample}”
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
             <>
               <p className="text-[12px] leading-relaxed text-muted-foreground">{t("speakers.voiceIntro")}</p>
 
@@ -161,35 +185,15 @@ export function VoiceDiarizeDialog({ onClose }: Readonly<{ onClose: () => void }
                 </p>
               )}
             </>
-          ) : (
-            <>
-              <p className="text-[12px] leading-relaxed text-muted-foreground">
-                {t("speakers.voiceFound", { speakers: speakers.length })}
-              </p>
-              <div className="flex flex-col gap-2.5">
-                {speakers.map((sp) => (
-                  <div key={sp.key} className="flex items-start gap-2">
-                    <span className={`mt-2.5 size-2 shrink-0 rounded-full ${speakerDotClass(sp)}`} />
-                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <Input
-                        value={speakerNames[sp.key] ?? ""}
-                        onChange={(e) => setSpeakerName(sp.key, e.target.value)}
-                        placeholder={defaultSpeakerLabel(sp)}
-                        className="h-8 text-sm"
-                      />
-                      <span className="truncate text-[11px] text-muted-foreground" title={sp.sample}>
-                        “{sp.sample}”
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
           )}
         </div>
 
         <div className="flex justify-end gap-2 border-t px-4 py-3">
-          {!named ? (
+          {named ? (
+            <Button size="sm" className="h-8" onClick={onClose}>
+              {t("speakers.voiceDone")}
+            </Button>
+          ) : (
             <>
               <button
                 type="button"
@@ -209,10 +213,6 @@ export function VoiceDiarizeDialog({ onClose }: Readonly<{ onClose: () => void }
                 {busy ? t("speakers.voiceRunning") : t("speakers.voiceRun")}
               </Button>
             </>
-          ) : (
-            <Button size="sm" className="h-8" onClick={onClose}>
-              {t("speakers.voiceDone")}
-            </Button>
           )}
         </div>
       </div>

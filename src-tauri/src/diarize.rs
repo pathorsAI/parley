@@ -276,15 +276,61 @@ fn run_pipeline(
         bail!("decoded audio was empty");
     }
 
-    // Embedding is embarrassingly parallel — each slice is independent. ONNX
-    // Runtime's `Session::run` takes `&mut self`, so instead of sharing one
-    // session we give each worker thread its OWN single-threaded session and feed
-    // them from a shared ROLLING WORK QUEUE: a worker claims the next unclaimed
-    // segment (one atomic fetch_add) the instant it's free, so a slow long segment
-    // never makes the others idle — no batch barrier, naturally load-balanced.
-    // W workers running 1-intra-thread sessions ≈ W cores busy, no oversubscription.
-    // Capped to bound memory (each session holds the ~27 MB model) and skipped for
-    // small jobs where the spin-up isn't worth it.
+    let n = spans.len();
+    let (embedded, matrix) = embed_all_segments(&app, &model, &audio, &spans)?;
+
+    emit("clustering", 0, 0);
+    let labels = cluster_embeddings(&matrix, num_speakers);
+    let k_final = labels.iter().copied().max().map(|m| m + 1).unwrap_or(1);
+    let centroids = compute_centroids(&matrix, &labels, k_final);
+    log::info!("diarize: {} segments → {} speakers", matrix.len(), k_final);
+
+    // (label, confidence) per segment; embedded ones first.
+    let mut assigned: Vec<Option<(usize, f32)>> = vec![None; n];
+    for (j, &i) in embedded.iter().enumerate() {
+        let conf = margin_confidence(&matrix[j], &centroids, labels[j]);
+        assigned[i] = Some((labels[j], conf));
+    }
+
+    // Short/failed slices inherit the temporally nearest embedded speaker:
+    // carry the last seen label forward, then back-fill any leading gap.
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by_key(|&i| spans[i].start_ms);
+    carry_labels(&mut assigned, order.iter().copied());
+    carry_labels(&mut assigned, order.iter().rev().copied());
+
+    Ok(spans
+        .into_iter()
+        .enumerate()
+        .map(|(i, sp)| {
+            let (lab, conf) = assigned[i].unwrap_or((0, 0.0));
+            SegSpeaker {
+                id: sp.id,
+                speaker: lab + 1, // 1-based, matches the LLM re-attribution path
+                confidence: conf,
+            }
+        })
+        .collect())
+}
+
+/// Embed every long-enough slice in parallel. Returns the indices that produced
+/// an embedding and the matching embedding matrix (same order).
+///
+/// Embedding is embarrassingly parallel — each slice is independent. ONNX
+/// Runtime's `Session::run` takes `&mut self`, so instead of sharing one
+/// session we give each worker thread its OWN single-threaded session and feed
+/// them from a shared ROLLING WORK QUEUE: a worker claims the next unclaimed
+/// segment (one atomic fetch_add) the instant it's free, so a slow long segment
+/// never makes the others idle — no batch barrier, naturally load-balanced.
+/// W workers running 1-intra-thread sessions ≈ W cores busy, no oversubscription.
+/// Capped to bound memory (each session holds the ~27 MB model) and skipped for
+/// small jobs where the spin-up isn't worth it.
+fn embed_all_segments(
+    app: &AppHandle,
+    model: &Path,
+    audio: &[f32],
+    spans: &[SegSpan],
+) -> Result<(Vec<usize>, Vec<Vec<f32>>)> {
     let n = spans.len();
     let step = (n / 100).max(1); // throttle to ~100 progress events total
     let cores = std::thread::available_parallelism()
@@ -305,42 +351,8 @@ fn run_pipeline(
         let handles: Vec<_> = (0..workers)
             .map(|_| {
                 let (spans, audio, model, next, processed, app) =
-                    (&spans, &audio, &model, &next, &processed, &app);
-                scope.spawn(move || -> Result<Vec<IndexedEmbedding>> {
-                    let mut session = build_session(model)?;
-                    let mut out: Vec<IndexedEmbedding> = Vec::new();
-                    loop {
-                        // Claim the next segment; stop when the queue is drained.
-                        let i = next.fetch_add(1, Ordering::Relaxed);
-                        if i >= spans.len() {
-                            break;
-                        }
-                        let sp = &spans[i];
-                        let start = (sp.start_ms as usize) * SAMPLES_PER_MS;
-                        let end = ((sp.end_ms as usize) * SAMPLES_PER_MS).min(audio.len());
-                        if end > start && end - start >= MIN_SLICE_SAMPLES {
-                            match embed_segment(&mut session, &audio[start..end]) {
-                                Ok(v) => out.push((i, v)),
-                                Err(e) => {
-                                    log::warn!("diarize: embed failed for segment {i}: {e:#}")
-                                }
-                            }
-                        }
-                        // else: too short / out of range — filled from a neighbour later.
-                        let done = processed.fetch_add(1, Ordering::Relaxed) + 1;
-                        if done % step == 0 || done == n {
-                            let _ = app.emit(
-                                "diarize://progress",
-                                Progress {
-                                    stage: "embedding",
-                                    received: done as u64,
-                                    total: n as u64,
-                                },
-                            );
-                        }
-                    }
-                    Ok(out)
-                })
+                    (spans, audio, model, &next, &processed, app);
+                scope.spawn(move || embed_worker(app, model, audio, spans, next, processed, step))
             })
             .collect();
         handles
@@ -381,45 +393,84 @@ fn run_pipeline(
         .iter()
         .map(|&i| embeds[i].take().unwrap())
         .collect();
+    Ok((embedded, matrix))
+}
 
-    // Cluster. NME spectral clustering is the primary method (auto-picks the
-    // affinity pruning AND, when unknown, the speaker count via the eigengap).
-    // It needs enough segments to be stable, so small/huge jobs fall back to the
-    // simpler methods: spherical k-means (known count) / agglomerative (auto).
-    emit("clustering", 0, 0);
+/// One embedding worker: claim slices off the shared cursor until the queue is
+/// drained, embedding each and reporting progress.
+fn embed_worker(
+    app: &AppHandle,
+    model: &Path,
+    audio: &[f32],
+    spans: &[SegSpan],
+    next: &AtomicUsize,
+    processed: &AtomicUsize,
+    step: usize,
+) -> Result<Vec<IndexedEmbedding>> {
+    let n = spans.len();
+    let mut session = build_session(model)?;
+    let mut out: Vec<IndexedEmbedding> = Vec::new();
+    loop {
+        // Claim the next segment; stop when the queue is drained.
+        let i = next.fetch_add(1, Ordering::Relaxed);
+        if i >= spans.len() {
+            break;
+        }
+        let sp = &spans[i];
+        let start = (sp.start_ms as usize) * SAMPLES_PER_MS;
+        let end = ((sp.end_ms as usize) * SAMPLES_PER_MS).min(audio.len());
+        if end > start && end - start >= MIN_SLICE_SAMPLES {
+            match embed_segment(&mut session, &audio[start..end]) {
+                Ok(v) => out.push((i, v)),
+                Err(e) => log::warn!("diarize: embed failed for segment {i}: {e:#}"),
+            }
+        }
+        // else: too short / out of range — filled from a neighbour later.
+        let done = processed.fetch_add(1, Ordering::Relaxed) + 1;
+        if done % step == 0 || done == n {
+            let _ = app.emit(
+                "diarize://progress",
+                Progress {
+                    stage: "embedding",
+                    received: done as u64,
+                    total: n as u64,
+                },
+            );
+        }
+    }
+    Ok(out)
+}
+
+/// Pick a clustering method and run it. NME spectral clustering is the primary
+/// method (auto-picks the affinity pruning AND, when unknown, the speaker count
+/// via the eigengap). It needs enough segments to be stable, so small/huge jobs
+/// fall back to the simpler methods: spherical k-means (known count) /
+/// agglomerative (auto).
+fn cluster_embeddings(matrix: &[Vec<f32>], num_speakers: Option<usize>) -> Vec<usize> {
     let len = matrix.len();
     let use_nme = (NME_MIN_SEGMENTS..=NME_MAX_SEGMENTS).contains(&len);
-    let labels = match num_speakers.filter(|&k| k >= 1) {
+    match num_speakers.filter(|&k| k >= 1) {
         Some(k) => {
             let k = k.min(len);
             if k <= 1 {
                 vec![0usize; len]
             } else if use_nme {
-                nme_spectral(&matrix, Some(k))
+                nme_spectral(matrix, Some(k))
             } else {
-                spherical_kmeans(&matrix, k)
+                spherical_kmeans(matrix, k)
             }
         }
-        None if use_nme => nme_spectral(&matrix, None),
-        None => agglomerative(&matrix),
-    };
-    let k_final = labels.iter().copied().max().map(|m| m + 1).unwrap_or(1);
-    let centroids = compute_centroids(&matrix, &labels, k_final);
-    log::info!("diarize: {} segments → {} speakers", matrix.len(), k_final);
-
-    // (label, confidence) per segment; embedded ones first.
-    let mut assigned: Vec<Option<(usize, f32)>> = vec![None; n];
-    for (j, &i) in embedded.iter().enumerate() {
-        let conf = margin_confidence(&matrix[j], &centroids, labels[j]);
-        assigned[i] = Some((labels[j], conf));
+        None if use_nme => nme_spectral(matrix, None),
+        None => agglomerative(matrix),
     }
+}
 
-    // Short/failed slices inherit the temporally nearest embedded speaker:
-    // carry the last seen label forward, then back-fill any leading gap.
-    let mut order: Vec<usize> = (0..n).collect();
-    order.sort_by_key(|&i| spans[i].start_ms);
+/// Fill unassigned slots with the label of the nearest already-assigned segment
+/// seen while walking `order` (run forwards, then backwards, to cover both
+/// sides). Inherited assignments carry zero confidence.
+fn carry_labels(assigned: &mut [Option<(usize, f32)>], order: impl Iterator<Item = usize>) {
     let mut carry: Option<usize> = None;
-    for &i in &order {
+    for i in order {
         match assigned[i] {
             Some((lab, _)) => carry = Some(lab),
             None => {
@@ -429,30 +480,6 @@ fn run_pipeline(
             }
         }
     }
-    let mut back: Option<usize> = None;
-    for &i in order.iter().rev() {
-        match assigned[i] {
-            Some((lab, _)) => back = Some(lab),
-            None => {
-                if let Some(lab) = back {
-                    assigned[i] = Some((lab, 0.0));
-                }
-            }
-        }
-    }
-
-    Ok(spans
-        .into_iter()
-        .enumerate()
-        .map(|(i, sp)| {
-            let (lab, conf) = assigned[i].unwrap_or((0, 0.0));
-            SegSpeaker {
-                id: sp.id,
-                speaker: lab + 1, // 1-based, matches the LLM re-attribution path
-                confidence: conf,
-            }
-        })
-        .collect())
 }
 
 /// Build a single-threaded ONNX session for the speaker model. One per worker
@@ -586,8 +613,31 @@ fn margin_confidence(point: &[f32], centroids: &[Vec<f32>], own: usize) -> f32 {
 /// cluster label in [0, k) per row. `k` is assumed ≥ 2 and ≤ matrix.len().
 fn spherical_kmeans(matrix: &[Vec<f32>], k: usize) -> Vec<usize> {
     let n = matrix.len();
-    // Farthest-first seeding: start at 0, then repeatedly take the point least
-    // similar to all chosen centroids. Deterministic (no RNG → reproducible).
+    let mut centroids = farthest_first_cosine(matrix, k);
+    let mut labels = vec![0usize; n];
+    for _ in 0..KMEANS_ITERS {
+        let mut changed = false;
+        for (i, v) in matrix.iter().enumerate() {
+            let lab = (0..k)
+                .max_by(|&a, &b| dot(v, &centroids[a]).total_cmp(&dot(v, &centroids[b])))
+                .unwrap_or(0);
+            if lab != labels[i] {
+                changed = true;
+                labels[i] = lab;
+            }
+        }
+        refresh_centroids_cosine(matrix, &mut labels, &mut centroids);
+        if !changed {
+            break;
+        }
+    }
+    labels
+}
+
+/// Farthest-first seeding under cosine similarity: start at 0, then repeatedly
+/// take the point least similar to all chosen centroids. Deterministic (no RNG
+/// → reproducible).
+fn farthest_first_cosine(matrix: &[Vec<f32>], k: usize) -> Vec<Vec<f32>> {
     let mut centroids: Vec<Vec<f32>> = vec![matrix[0].clone()];
     while centroids.len() < k {
         let mut best_i = 0;
@@ -602,48 +652,34 @@ fn spherical_kmeans(matrix: &[Vec<f32>], k: usize) -> Vec<usize> {
         }
         centroids.push(matrix[best_i].clone());
     }
+    centroids
+}
 
-    let mut labels = vec![0usize; n];
-    for _ in 0..KMEANS_ITERS {
-        let mut changed = false;
-        for (i, v) in matrix.iter().enumerate() {
-            let lab = (0..k)
-                .max_by(|&a, &b| dot(v, &centroids[a]).total_cmp(&dot(v, &centroids[b])))
-                .unwrap_or(0);
-            if lab != labels[i] {
-                changed = true;
-                labels[i] = lab;
+/// Recompute cosine centroids; re-seed any emptied cluster with the worst-fitting
+/// point overall (lowest similarity to its own current centroid) and steal it, so
+/// k clusters stay populated.
+fn refresh_centroids_cosine(matrix: &[Vec<f32>], labels: &mut [usize], centroids: &mut [Vec<f32>]) {
+    let n = matrix.len();
+    for c in 0..centroids.len() {
+        let members: Vec<&Vec<f32>> = matrix
+            .iter()
+            .zip(labels.iter())
+            .filter(|(_, &l)| l == c)
+            .map(|(v, _)| v)
+            .collect();
+        if members.is_empty() {
+            drop(members);
+            if let Some(worst) = (0..n).min_by(|&a, &b| {
+                dot(&matrix[a], &centroids[labels[a]])
+                    .total_cmp(&dot(&matrix[b], &centroids[labels[b]]))
+            }) {
+                labels[worst] = c;
+                centroids[c] = matrix[worst].clone();
             }
-        }
-        // Recompute centroids; re-seed any emptied cluster with the point
-        // farthest from its current centroid so k clusters stay populated.
-        for c in 0..k {
-            let members: Vec<&Vec<f32>> = matrix
-                .iter()
-                .zip(&labels)
-                .filter(|(_, &l)| l == c)
-                .map(|(v, _)| v)
-                .collect();
-            if members.is_empty() {
-                // Reseed an emptied cluster with the worst-fitting point overall
-                // (lowest similarity to its own current centroid) and steal it.
-                drop(members);
-                if let Some(worst) = (0..n).min_by(|&a, &b| {
-                    dot(&matrix[a], &centroids[labels[a]])
-                        .total_cmp(&dot(&matrix[b], &centroids[labels[b]]))
-                }) {
-                    labels[worst] = c;
-                    centroids[c] = matrix[worst].clone();
-                }
-            } else {
-                centroids[c] = normalized_mean(&members);
-            }
-        }
-        if !changed {
-            break;
+        } else {
+            centroids[c] = normalized_mean(&members);
         }
     }
-    labels
 }
 
 /// Agglomerative average-linkage clustering on cosine similarity. Merges the most
@@ -656,54 +692,19 @@ fn agglomerative(matrix: &[Vec<f32>]) -> Vec<usize> {
         return vec![0];
     }
 
-    // Pairwise item similarities.
-    let mut sim = vec![vec![0f32; n]; n];
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let s = dot(&matrix[i], &matrix[j]);
-            sim[i][j] = s;
-            sim[j][i] = s;
-        }
-    }
-
     // Active clusters as member-index lists, plus cross-cluster similarity SUMS
     // (average linkage = sum / (|A|*|B|)). `members[c]` empty ⇒ cluster merged away.
     let mut members: Vec<Vec<usize>> = (0..n).map(|i| vec![i]).collect();
-    let mut sumsim = sim.clone(); // sumsim[a][b] starts as the single-pair sim
+    let mut sumsim = pairwise_similarity(matrix); // sumsim[a][b] starts as the single-pair sim
     let mut active: Vec<usize> = (0..n).collect();
 
     while active.len() > 1 {
-        // Best mergeable pair by average linkage.
-        let (mut ba, mut bb, mut best) = (0usize, 0usize, f32::MIN);
-        for ia in 0..active.len() {
-            for ib in (ia + 1)..active.len() {
-                let a = active[ia];
-                let b = active[ib];
-                let avg = sumsim[a][b] / (members[a].len() * members[b].len()) as f32;
-                if avg > best {
-                    best = avg;
-                    ba = a;
-                    bb = b;
-                }
-            }
-        }
-
+        let (ba, bb, best) = best_linkage_pair(&active, &members, &sumsim);
         let must_reduce = active.len() > KMAX;
         if !must_reduce && best < MERGE_THRESHOLD {
             break;
         }
-
-        // Merge bb into ba: combine members and fold similarity sums.
-        let moved = std::mem::take(&mut members[bb]);
-        members[ba].extend(moved);
-        for &c in &active {
-            if c != ba && c != bb {
-                let s = sumsim[ba][c] + sumsim[bb][c];
-                sumsim[ba][c] = s;
-                sumsim[c][ba] = s;
-            }
-        }
-        active.retain(|&c| c != bb);
+        merge_clusters(ba, bb, &mut active, &mut members, &mut sumsim);
     }
 
     // Densify: active cluster id → 0..k.
@@ -714,6 +715,63 @@ fn agglomerative(matrix: &[Vec<f32>]) -> Vec<usize> {
         }
     }
     labels
+}
+
+/// Symmetric N×N pairwise cosine similarity, diagonal 0.
+fn pairwise_similarity(matrix: &[Vec<f32>]) -> Vec<Vec<f32>> {
+    let n = matrix.len();
+    let mut sim = vec![vec![0f32; n]; n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let s = dot(&matrix[i], &matrix[j]);
+            sim[i][j] = s;
+            sim[j][i] = s;
+        }
+    }
+    sim
+}
+
+/// The most similar pair of active clusters by average linkage, as
+/// `(a, b, similarity)`.
+fn best_linkage_pair(
+    active: &[usize],
+    members: &[Vec<usize>],
+    sumsim: &[Vec<f32>],
+) -> (usize, usize, f32) {
+    let (mut ba, mut bb, mut best) = (0usize, 0usize, f32::MIN);
+    for ia in 0..active.len() {
+        for ib in (ia + 1)..active.len() {
+            let a = active[ia];
+            let b = active[ib];
+            let avg = sumsim[a][b] / (members[a].len() * members[b].len()) as f32;
+            if avg > best {
+                best = avg;
+                ba = a;
+                bb = b;
+            }
+        }
+    }
+    (ba, bb, best)
+}
+
+/// Merge `bb` into `ba`: combine members, fold similarity sums, drop `bb`.
+fn merge_clusters(
+    ba: usize,
+    bb: usize,
+    active: &mut Vec<usize>,
+    members: &mut [Vec<usize>],
+    sumsim: &mut [Vec<f32>],
+) {
+    let moved = std::mem::take(&mut members[bb]);
+    members[ba].extend(moved);
+    for &c in active.iter() {
+        if c != ba && c != bb {
+            let s = sumsim[ba][c] + sumsim[bb][c];
+            sumsim[ba][c] = s;
+            sumsim[c][ba] = s;
+        }
+    }
+    active.retain(|&c| c != bb);
 }
 
 // ---------------------------------------------------------------------------
@@ -735,49 +793,9 @@ fn nme_spectral(matrix: &[Vec<f32>], known_k: Option<usize>) -> Vec<usize> {
     let aff = cosine_affinity(matrix);
     let max_k = KMAX.min(n - 1).max(1);
 
-    // Search the neighbour count p: keep the p whose pruned affinity yields the
-    // cleanest spectrum, scored r(p) = p / g(p) with g the normalized max eigengap.
-    // Each p is an independent eigendecomposition → workers pull from a shared
-    // rolling queue (claim next p when free), same load-balanced pattern as the
-    // embedding loop — no fixed chunk that could leave a worker idle.
     let p_max = (n / 4).clamp(2, n - 1);
     let cands = p_candidates(p_max, NME_MAX_P_CANDIDATES);
-    let workers = num_workers(cands.len());
-    let cursor = AtomicUsize::new(0);
-
-    let scored: Vec<(usize, f32, usize)> = std::thread::scope(|scope| {
-        let (aff, cands, cursor) = (&aff, &cands, &cursor);
-        let handles: Vec<_> = (0..workers)
-            .map(|_| {
-                scope.spawn(move || {
-                    let mut local: Vec<(usize, f32, usize)> = Vec::new();
-                    loop {
-                        let idx = cursor.fetch_add(1, Ordering::Relaxed);
-                        if idx >= cands.len() {
-                            break;
-                        }
-                        let p = cands[idx];
-                        let lap = pruned_laplacian(aff, p);
-                        let mut evals: Vec<f64> =
-                            lap.symmetric_eigenvalues().iter().copied().collect();
-                        evals.sort_by(|a, b| a.total_cmp(b));
-                        let (g, k_est) = nme_and_count(&evals, max_k);
-                        let r = if g > 0.0 {
-                            p as f32 / g as f32
-                        } else {
-                            f32::INFINITY
-                        };
-                        local.push((p, r, k_est));
-                    }
-                    local
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|h| h.join().unwrap_or_default())
-            .collect()
-    });
+    let scored = score_p_candidates(&aff, &cands, max_k);
 
     let (best_p, _, k_est) = scored
         .into_iter()
@@ -795,6 +813,56 @@ fn nme_spectral(matrix: &[Vec<f32>], known_k: Option<usize>) -> Vec<usize> {
     let se = SymmetricEigen::new(lap);
     let spec = spectral_embedding(&se, k);
     kmeans_euclidean(&spec, k)
+}
+
+/// Search the neighbour count p: score each candidate p by r(p) = p / g(p), with
+/// g the normalized max eigengap of the pruned affinity's spectrum (lower r =
+/// cleaner spectrum). Returns `(p, r, estimated speaker count)` per candidate.
+///
+/// Each p is an independent eigendecomposition → workers pull from a shared
+/// rolling queue (claim next p when free), same load-balanced pattern as the
+/// embedding loop — no fixed chunk that could leave a worker idle.
+fn score_p_candidates(aff: &[Vec<f32>], cands: &[usize], max_k: usize) -> Vec<(usize, f32, usize)> {
+    let workers = num_workers(cands.len());
+    let cursor = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        let cursor = &cursor;
+        let handles: Vec<_> = (0..workers)
+            .map(|_| scope.spawn(move || score_p_worker(aff, cands, cursor, max_k)))
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap_or_default())
+            .collect()
+    })
+}
+
+/// One p-search worker: claim candidates off the shared cursor until drained.
+fn score_p_worker(
+    aff: &[Vec<f32>],
+    cands: &[usize],
+    cursor: &AtomicUsize,
+    max_k: usize,
+) -> Vec<(usize, f32, usize)> {
+    let mut local: Vec<(usize, f32, usize)> = Vec::new();
+    loop {
+        let idx = cursor.fetch_add(1, Ordering::Relaxed);
+        if idx >= cands.len() {
+            break;
+        }
+        let p = cands[idx];
+        let lap = pruned_laplacian(aff, p);
+        let mut evals: Vec<f64> = lap.symmetric_eigenvalues().iter().copied().collect();
+        evals.sort_by(|a, b| a.total_cmp(b));
+        let (g, k_est) = nme_and_count(&evals, max_k);
+        let r = if g > 0.0 {
+            p as f32 / g as f32
+        } else {
+            f32::INFINITY
+        };
+        local.push((p, r, k_est));
+    }
+    local
 }
 
 /// N×N cosine affinity (embeddings are L2-normalized, so this is a dot product),
@@ -904,7 +972,30 @@ fn spectral_embedding(se: &SymmetricEigen<f64, nalgebra::Dyn>, k: usize) -> Vec<
 fn kmeans_euclidean(points: &[Vec<f32>], k: usize) -> Vec<usize> {
     let n = points.len();
     let dim = points.first().map(|p| p.len()).unwrap_or(0);
+    let mut centroids = farthest_first_euclidean(points, k);
+    let mut labels = vec![0usize; n];
+    for _ in 0..KMEANS_ITERS {
+        let mut changed = false;
+        for (i, pt) in points.iter().enumerate() {
+            let lab = (0..k)
+                .min_by(|&a, &b| sqdist(pt, &centroids[a]).total_cmp(&sqdist(pt, &centroids[b])))
+                .unwrap_or(0);
+            if lab != labels[i] {
+                changed = true;
+                labels[i] = lab;
+            }
+        }
+        refresh_centroids_euclidean(points, &mut labels, &mut centroids, dim);
+        if !changed {
+            break;
+        }
+    }
+    labels
+}
 
+/// Farthest-first seeding under squared Euclidean distance: start at 0, then
+/// repeatedly take the point farthest from every chosen centroid.
+fn farthest_first_euclidean(points: &[Vec<f32>], k: usize) -> Vec<Vec<f32>> {
     let mut centroids: Vec<Vec<f32>> = vec![points[0].clone()];
     while centroids.len() < k {
         let mut best_i = 0;
@@ -921,53 +1012,52 @@ fn kmeans_euclidean(points: &[Vec<f32>], k: usize) -> Vec<usize> {
         }
         centroids.push(points[best_i].clone());
     }
+    centroids
+}
 
-    let mut labels = vec![0usize; n];
-    for _ in 0..KMEANS_ITERS {
-        let mut changed = false;
-        for (i, pt) in points.iter().enumerate() {
-            let lab = (0..k)
-                .min_by(|&a, &b| sqdist(pt, &centroids[a]).total_cmp(&sqdist(pt, &centroids[b])))
-                .unwrap_or(0);
-            if lab != labels[i] {
-                changed = true;
-                labels[i] = lab;
+/// Recompute Euclidean centroids as member means; an emptied cluster steals the
+/// worst-fitting point (farthest from its own current centroid) instead.
+fn refresh_centroids_euclidean(
+    points: &[Vec<f32>],
+    labels: &mut [usize],
+    centroids: &mut [Vec<f32>],
+    dim: usize,
+) {
+    let n = points.len();
+    for c in 0..centroids.len() {
+        let members: Vec<&Vec<f32>> = points
+            .iter()
+            .zip(labels.iter())
+            .filter(|(_, &l)| l == c)
+            .map(|(p, _)| p)
+            .collect();
+        if members.is_empty() {
+            drop(members);
+            if let Some(worst) = (0..n).max_by(|&a, &b| {
+                sqdist(&points[a], &centroids[labels[a]])
+                    .total_cmp(&sqdist(&points[b], &centroids[labels[b]]))
+            }) {
+                labels[worst] = c;
+                centroids[c] = points[worst].clone();
             }
-        }
-        for c in 0..k {
-            let members: Vec<&Vec<f32>> = points
-                .iter()
-                .zip(&labels)
-                .filter(|(_, &l)| l == c)
-                .map(|(p, _)| p)
-                .collect();
-            if members.is_empty() {
-                drop(members);
-                if let Some(worst) = (0..n).max_by(|&a, &b| {
-                    sqdist(&points[a], &centroids[labels[a]])
-                        .total_cmp(&sqdist(&points[b], &centroids[labels[b]]))
-                }) {
-                    labels[worst] = c;
-                    centroids[c] = points[worst].clone();
-                }
-            } else {
-                let mut mean = vec![0f32; dim];
-                for m in &members {
-                    for (a, x) in mean.iter_mut().zip(m.iter()) {
-                        *a += x;
-                    }
-                }
-                for a in &mut mean {
-                    *a /= members.len() as f32;
-                }
-                centroids[c] = mean;
-            }
-        }
-        if !changed {
-            break;
+        } else {
+            centroids[c] = mean_point(&members, dim);
         }
     }
-    labels
+}
+
+/// Arithmetic mean of `members` in `dim` dimensions.
+fn mean_point(members: &[&Vec<f32>], dim: usize) -> Vec<f32> {
+    let mut mean = vec![0f32; dim];
+    for m in members {
+        for (a, x) in mean.iter_mut().zip(m.iter()) {
+            *a += x;
+        }
+    }
+    for a in &mut mean {
+        *a /= members.len() as f32;
+    }
+    mean
 }
 
 fn sqdist(a: &[f32], b: &[f32]) -> f32 {

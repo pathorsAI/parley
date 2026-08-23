@@ -322,7 +322,8 @@ class OggOpusEncoder private constructor(
     private fun captureCsd(buffer: ByteBuffer) {
         if (capturedCsd.size < 3) {
             val copy = ByteArray(bufferInfo.size)
-            buffer.get(copy)
+            // Bulk read: `ByteBuffer.get(ByteArray)` reads as an indexed accessor in Kotlin.
+            buffer[copy]
             capturedCsd.add(copy)
         }
     }

@@ -18,8 +18,10 @@ export interface OrgShareTarget {
 }
 
 const OFF = "off";
-const serialize = (v: OrgShareTarget | null): string =>
-  v ? (v.folderId ? `${v.orgId}:${v.folderId}` : v.orgId) : OFF;
+const serialize = (v: OrgShareTarget | null): string => {
+  if (!v) return OFF;
+  return v.folderId ? `${v.orgId}:${v.folderId}` : v.orgId;
+};
 const parse = (v: string): OrgShareTarget | null => {
   if (v === OFF) return null;
   const idx = v.indexOf(":");

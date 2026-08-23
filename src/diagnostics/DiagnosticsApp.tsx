@@ -112,10 +112,10 @@ export function DiagnosticsApp() {
         .catch((e) => log.warn("diagnostics: read_log_tail failed", { error: String(e) }));
     };
     tick();
-    const timer = window.setInterval(tick, POLL_MS);
+    const timer = globalThis.setInterval(tick, POLL_MS);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      globalThis.clearInterval(timer);
     };
   }, []);
 

@@ -15,7 +15,7 @@ function normalizeVersion(version: string): string {
 
 function storage(): Storage | null {
   try {
-    return window.localStorage;
+    return globalThis.localStorage;
   } catch {
     return null;
   }

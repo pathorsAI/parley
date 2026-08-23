@@ -54,7 +54,7 @@ export function ReplayScreen() {
   // Persist the dragged column proportions (transcript / findings) to
   // localStorage so they survive reloads. v2 id: the old key stored a 3-column
   // layout that no longer matches this 2-panel group.
-  const saved = useDefaultLayout({ id: "parley:replay-v2", storage: window.localStorage });
+  const saved = useDefaultLayout({ id: "parley:replay-v2", storage: globalThis.localStorage });
 
   if (!session) {
     return (

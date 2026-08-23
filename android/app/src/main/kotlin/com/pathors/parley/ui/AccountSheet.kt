@@ -1,5 +1,6 @@
 package com.pathors.parley.ui
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -57,26 +58,7 @@ fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
                 style = MaterialTheme.typography.titleLarge,
             )
 
-            when {
-                account.loading -> Text(
-                    text = stringResource(R.string.account_loading),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-
-                account.failed -> Text(
-                    text = stringResource(R.string.account_load_failed),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
-
-                else -> {
-                    account.user?.let { user ->
-                        Text(text = user.email, style = MaterialTheme.typography.bodyLarge)
-                    }
-                    account.quota?.let { quota -> QuotaLines(quota) }
-                }
-            }
+            AccountIdentity(account)
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
@@ -92,44 +74,13 @@ fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
                 )
             }
 
-            // Same condition as iOS: shown once `me()` has confirmed who is
-            // signed in. While the account is merely unreachable there is no
-            // point offering a call that cannot reach the server either.
-            if (account.user != null) {
-                TextButton(
-                    onClick = {
-                        viewModel.clearDeleteAccountError()
-                        confirmingDelete = true
-                    },
-                    enabled = !account.deleting,
-                ) {
-                    Text(
-                        text = stringResource(
-                            if (account.deleting) {
-                                R.string.account_delete_in_progress
-                            } else {
-                                R.string.account_delete
-                            }
-                        ),
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-
-                account.deleteError?.let { error ->
-                    Text(
-                        text = stringResource(
-                            when (error) {
-                                DeleteAccountError.OWNS_ORGANIZATIONS ->
-                                    R.string.account_delete_error_owns_organizations
-
-                                DeleteAccountError.FAILED -> R.string.account_delete_error_failed
-                            }
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            }
+            DeleteAccountSection(
+                account = account,
+                onArm = {
+                    viewModel.clearDeleteAccountError()
+                    confirmingDelete = true
+                },
+            )
         }
     }
 
@@ -142,6 +93,73 @@ fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
             onDismiss = { confirmingDelete = false },
         )
     }
+}
+
+/**
+ * Who is signed in and what the plan has left — or why neither is known yet.
+ */
+@Composable
+private fun AccountIdentity(account: HomeViewModel.AccountState) {
+    when {
+        account.loading -> Text(
+            text = stringResource(R.string.account_loading),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        account.failed -> Text(
+            text = stringResource(R.string.account_load_failed),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+        )
+
+        else -> {
+            account.user?.let { user ->
+                Text(text = user.email, style = MaterialTheme.typography.bodyLarge)
+            }
+            account.quota?.let { quota -> QuotaLines(quota) }
+        }
+    }
+}
+
+/**
+ * The first step of deletion: a destructive button that only arms the
+ * confirmation dialog, plus whatever the last attempt failed with.
+ *
+ * Same condition as iOS: shown once `me()` has confirmed who is signed in.
+ * While the account is merely unreachable there is no point offering a call
+ * that cannot reach the server either.
+ */
+@Composable
+private fun DeleteAccountSection(account: HomeViewModel.AccountState, onArm: () -> Unit) {
+    if (account.user == null) return
+
+    TextButton(onClick = onArm, enabled = !account.deleting) {
+        Text(
+            text = stringResource(
+                if (account.deleting) {
+                    R.string.account_delete_in_progress
+                } else {
+                    R.string.account_delete
+                }
+            ),
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+
+    account.deleteError?.let { error ->
+        Text(
+            text = stringResource(deleteErrorMessage(error)),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+}
+
+@StringRes
+private fun deleteErrorMessage(error: DeleteAccountError): Int = when (error) {
+    DeleteAccountError.OWNS_ORGANIZATIONS -> R.string.account_delete_error_owns_organizations
+    DeleteAccountError.FAILED -> R.string.account_delete_error_failed
 }
 
 /**

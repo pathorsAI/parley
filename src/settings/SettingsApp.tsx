@@ -28,7 +28,7 @@ import { isTauri } from "../lib/tauriEvents";
 import { fetchLatestReleaseNotes, markReleaseNotesSeen, type ReleaseNotes } from "../lib/releaseNotes";
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
-import { connState, relativeTime, type McpActivityInfo } from "../components/McpStatusChip";
+import { clientLabel, connState, relativeTime, type McpActivityInfo } from "../components/McpStatusChip";
 import { ReleaseNotesDialog } from "../components/ReleaseNotesDialog";
 import { UsagePanel } from "./UsagePanel";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
@@ -110,7 +110,7 @@ const NAV: {
 
 /** The nav panel a `#settings/<category>` deep-link hash asks for, if valid. */
 function categoryFromHash(): Category | null {
-  const seg = window.location.hash.replace(/^#settings\/?/, "");
+  const seg = globalThis.location.hash.replace(/^#settings\/?/, "");
   return NAV.some((n) => n.id === seg) ? (seg as Category) : null;
 }
 
@@ -238,11 +238,11 @@ export function SettingsApp() {
         );
     };
     refreshMcpInfo();
-    const mcpTimer = window.setInterval(() => {
+    const mcpTimer = globalThis.setInterval(() => {
       if (!mcpInfo?.running) refreshMcpInfo();
     }, 1000);
     return () => {
-      window.clearInterval(mcpTimer);
+      globalThis.clearInterval(mcpTimer);
       invoke("stop_mic_test").catch((error) => log.warn("settings: stop mic test on cleanup failed", { error: String(error) }));
     };
   }, [mcpInfo?.running]);
@@ -260,10 +260,10 @@ export function SettingsApp() {
         .catch(() => {});
     };
     refresh();
-    const id = window.setInterval(refresh, 3000);
+    const id = globalThis.setInterval(refresh, 3000);
     return () => {
       alive = false;
-      window.clearInterval(id);
+      globalThis.clearInterval(id);
     };
   }, [cat]);
 
@@ -1004,9 +1004,7 @@ export function SettingsApp() {
                   {t(`mcp.state.${connState(mcpActivity, Date.now())}`)}
                 </span>
                 <span className="ml-auto truncate text-xs text-muted-foreground">
-                  {mcpActivity?.client
-                    ? `${mcpActivity.client.name ?? "?"}${mcpActivity.client.version ? ` v${mcpActivity.client.version}` : ""}`
-                    : t("mcp.panel.noClient")}
+                  {clientLabel(mcpActivity?.client) ?? t("mcp.panel.noClient")}
                 </span>
               </div>
               <div className="mt-1 text-[11px] text-muted-foreground">
@@ -1783,16 +1781,7 @@ function OrgPanel() {
                   the final button stays disabled until the org name is retyped
                   exactly — two deliberate confirmations before anything dies. */}
               {org.role === "owner" &&
-                (!deletingOpen[org.id] ? (
-                  <button
-                    type="button"
-                    aria-expanded={false}
-                    className="self-start text-[11px] text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
-                    onClick={() => setDeletingOpen((m) => ({ ...m, [org.id]: true }))}
-                  >
-                    {t("settings.account.org.delete")}
-                  </button>
-                ) : (
+                (deletingOpen[org.id] ? (
                   <div className="flex flex-col gap-1.5 rounded-md border border-destructive/40 bg-destructive/5 p-2">
                     <p className="text-[11px] text-destructive">
                       {t("settings.account.org.deleteWarning")}
@@ -1837,6 +1826,15 @@ function OrgPanel() {
                       </Button>
                     </div>
                   </div>
+                ) : (
+                  <button
+                    type="button"
+                    aria-expanded={false}
+                    className="self-start text-[11px] text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
+                    onClick={() => setDeletingOpen((m) => ({ ...m, [org.id]: true }))}
+                  >
+                    {t("settings.account.org.delete")}
+                  </button>
                 ))}
             </div>
           ))}

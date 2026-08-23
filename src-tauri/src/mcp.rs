@@ -1542,13 +1542,11 @@ fn focused_content(state: &HttpState) -> Value {
         s.get("findings").cloned().unwrap_or_else(|| json!([])),
     );
     // Every analysis artifact the app has for the loaded content.
-    for key in ["brief", "actionItems", "deliveryAssessment"] {
-        if let Some(v) = s.get(key) {
-            if !v.is_null() {
-                out.insert(key.into(), v.clone());
-            }
-        }
-    }
+    copy_missing_keys(
+        &mut out,
+        &s,
+        &["brief", "actionItems", "deliveryAssessment"],
+    );
     if focus == "live-meeting" || focus == "live-post-meeting" {
         out.insert(
             "todos".into(),
@@ -1560,36 +1558,55 @@ fn focused_content(state: &HttpState) -> Value {
         );
     }
     if focus == "replay" {
-        if let Some(id) = ctx
-            .pointer("/replay/savedHistoryId")
-            .and_then(Value::as_str)
-        {
-            // Backfill from disk anything the snapshot didn't carry (e.g. a
-            // snapshot written by an older app version).
-            if let Ok(meta) = read_meta(&state.history_dir, id) {
-                for key in ["title", "brief", "actionItems", "deliveryAssessment"] {
-                    if out.contains_key(key) {
-                        continue;
-                    }
-                    if let Some(v) = meta.get(key) {
-                        if !v.is_null() {
-                            out.insert(key.into(), v.clone());
-                        }
-                    }
-                }
-            }
-        } else {
-            out.insert(
-                "note".into(),
-                json!(
-                    "This recording is not in the local library (an unsaved upload or an \
-                       org recording viewed read-only), so saved extras like action items \
-                       are unavailable here."
-                ),
-            );
-        }
+        add_replay_extras(&mut out, &ctx, &state.history_dir);
     }
     Value::Object(out)
+}
+
+/// Copy each non-null `keys` entry from `src` into `out`, leaving whatever `out`
+/// already carries untouched.
+fn copy_missing_keys(out: &mut serde_json::Map<String, Value>, src: &Value, keys: &[&str]) {
+    for key in keys {
+        if out.contains_key(*key) {
+            continue;
+        }
+        if let Some(v) = src.get(*key) {
+            if !v.is_null() {
+                out.insert((*key).to_string(), v.clone());
+            }
+        }
+    }
+}
+
+/// For a replay, backfill from `meta.json` anything the snapshot didn't carry
+/// (e.g. a snapshot written by an older app version). A recording that isn't in
+/// the local library gets a note saying so instead.
+fn add_replay_extras(
+    out: &mut serde_json::Map<String, Value>,
+    ctx: &Value,
+    history_dir: &std::path::Path,
+) {
+    let Some(id) = ctx
+        .pointer("/replay/savedHistoryId")
+        .and_then(Value::as_str)
+    else {
+        out.insert(
+            "note".into(),
+            json!(
+                "This recording is not in the local library (an unsaved upload or an \
+                       org recording viewed read-only), so saved extras like action items \
+                       are unavailable here."
+            ),
+        );
+        return;
+    };
+    if let Ok(meta) = read_meta(history_dir, id) {
+        copy_missing_keys(
+            out,
+            &meta,
+            &["title", "brief", "actionItems", "deliveryAssessment"],
+        );
+    }
 }
 
 // ── Local recording store (read-only; mirrors the history.rs layout) ─────────
@@ -1620,41 +1637,53 @@ fn list_recordings(history_dir: &std::path::Path, args: &Value) -> anyhow::Resul
     let since = args.get("since").and_then(Value::as_i64).unwrap_or(0);
     let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(50) as usize;
 
-    let mut items: Vec<Value> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(history_dir) {
-        for entry in entries.flatten() {
-            let Ok(raw) = std::fs::read_to_string(entry.path().join("summary.json")) else {
-                continue;
-            };
-            let Ok(v) = serde_json::from_str::<Value>(&raw) else {
-                continue;
-            };
-            if let Some(folder) = folder {
-                if v.get("folderId").and_then(Value::as_str) != Some(folder) {
-                    continue;
-                }
-            }
-            if since > 0 && v.get("createdAt").and_then(Value::as_i64).unwrap_or(0) < since {
-                continue;
-            }
-            if !query.is_empty() {
-                let title = v.get("title").and_then(Value::as_str).unwrap_or("");
-                let snippet = v.get("snippet").and_then(Value::as_str).unwrap_or("");
-                if !title.to_lowercase().contains(&query)
-                    && !snippet.to_lowercase().contains(&query)
-                {
-                    continue;
-                }
-            }
-            items.push(v);
-        }
-    }
+    let mut items: Vec<Value> = read_entry_files(history_dir, "summary.json")
+        .filter(|v| in_scope(v, folder, since) && summary_matches_query(v, &query))
+        .collect();
     items.sort_by_key(|v| {
         std::cmp::Reverse(v.get("createdAt").and_then(Value::as_i64).unwrap_or(0))
     });
     let total = items.len();
     items.truncate(limit);
     Ok(json!({ "recordings": items, "total": total, "returned": items.len() }))
+}
+
+/// Every entry's `file` (`summary.json` / `meta.json`) in the store, as JSON.
+/// Entries that can't be read or parsed are skipped — a half-written recording
+/// shouldn't fail the whole listing. Lazy: one entry is held at a time, so a
+/// large library's `meta.json` files never all sit in memory at once.
+fn read_entry_files<'a>(
+    history_dir: &std::path::Path,
+    file: &'a str,
+) -> impl Iterator<Item = Value> + 'a {
+    std::fs::read_dir(history_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(move |entry| std::fs::read_to_string(entry.path().join(file)).ok())
+        .filter_map(|raw| serde_json::from_str::<Value>(&raw).ok())
+}
+
+/// Folder + `since` scoping, shared by the listing and the search.
+fn in_scope(v: &Value, folder: Option<&str>, since: i64) -> bool {
+    if let Some(folder) = folder {
+        if v.get("folderId").and_then(Value::as_str) != Some(folder) {
+            return false;
+        }
+    }
+    since <= 0 || v.get("createdAt").and_then(Value::as_i64).unwrap_or(0) >= since
+}
+
+/// The listing's shallow text filter: title or first-line snippet only (the deep
+/// search is `search_meetings`). An empty query matches everything. `query` is
+/// already lowercased.
+fn summary_matches_query(v: &Value, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let title = v.get("title").and_then(Value::as_str).unwrap_or("");
+    let snippet = v.get("snippet").and_then(Value::as_str).unwrap_or("");
+    title.to_lowercase().contains(query) || snippet.to_lowercase().contains(query)
 }
 
 /// Where a search hit landed. Ordered by how much a reader trusts it: a line
@@ -1723,100 +1752,18 @@ fn search_meetings(history_dir: &std::path::Path, args: &Value) -> anyhow::Resul
 
     let mut results: Vec<Value> = Vec::new();
     let mut scanned = 0usize;
-    if let Ok(entries) = std::fs::read_dir(history_dir) {
-        for entry in entries.flatten() {
-            let Ok(raw) = std::fs::read_to_string(entry.path().join("meta.json")) else {
-                continue;
-            };
-            let Ok(meta) = serde_json::from_str::<Value>(&raw) else {
-                continue;
-            };
-            if let Some(folder) = folder {
-                if meta.get("folderId").and_then(Value::as_str) != Some(folder) {
-                    continue;
-                }
-            }
-            if since > 0 && meta.get("createdAt").and_then(Value::as_i64).unwrap_or(0) < since {
-                continue;
-            }
-            scanned += 1;
-            let mut hits: Vec<Value> = Vec::new();
-
-            // What was said. Segment-level so each hit carries a seek target.
-            if let Some(segs) = meta.get("segments").and_then(Value::as_array) {
-                for s in segs {
-                    let text = s.get("text").and_then(Value::as_str).unwrap_or("");
-                    if let Some(at) = find_ci(text, &query) {
-                        hits.push(hit(
-                            "transcript",
-                            text,
-                            at,
-                            qlen,
-                            s.get("startMs").and_then(Value::as_i64),
-                        ));
-                    }
-                }
-            }
-            // What the analysis concluded.
-            for (field, text) in [
-                ("brief", meta.get("brief").and_then(Value::as_str)),
-                (
-                    "context",
-                    meta.get("meetingContext").and_then(Value::as_str),
-                ),
-            ] {
-                if let Some(text) = text {
-                    if let Some(at) = find_ci(text, &query) {
-                        hits.push(hit(field, text, at, qlen, None));
-                    }
-                }
-            }
-            for (field, key, parts) in [
-                ("finding", "findings", ["title", "detail"]),
-                ("actionItem", "actionItems", ["text", "rationale"]),
-            ] {
-                for item in meta
-                    .get(key)
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                {
-                    let text = parts
-                        .iter()
-                        .filter_map(|p| item.get(*p).and_then(Value::as_str))
-                        .collect::<Vec<_>>()
-                        .join(" — ");
-                    if let Some(at) = find_ci(&text, &query) {
-                        hits.push(hit(
-                            field,
-                            &text,
-                            at,
-                            qlen,
-                            item.get("atMs").and_then(Value::as_i64),
-                        ));
-                    }
-                }
-            }
-            if hits.is_empty() {
-                continue;
-            }
-            let total = hits.len();
-            // Most-trusted field first, then chronological within a field.
-            hits.sort_by_key(|h| {
-                let f = h.get("field").and_then(Value::as_str).unwrap_or("");
-                let rank = SEARCH_FIELDS.iter().position(|x| *x == f).unwrap_or(9);
-                (rank, h.get("atMs").and_then(Value::as_i64).unwrap_or(0))
-            });
-            hits.truncate(per_recording);
-            results.push(json!({
-                "id": meta.get("id").cloned().unwrap_or(Value::Null),
-                "title": meta.get("title").cloned().unwrap_or(Value::Null),
-                "createdAt": meta.get("createdAt").cloned().unwrap_or(Value::Null),
-                "folderId": meta.get("folderId").cloned().unwrap_or(Value::Null),
-                "hitCount": total,
-                "hits": hits,
-            }));
+    for meta in read_entry_files(history_dir, "meta.json") {
+        if !in_scope(&meta, folder, since) {
+            continue;
         }
+        scanned += 1;
+        let mut hits = segment_hits(&meta, &query, qlen);
+        hits.extend(summary_field_hits(&meta, &query, qlen));
+        hits.extend(list_field_hits(&meta, &query, qlen));
+        if hits.is_empty() {
+            continue;
+        }
+        results.push(recording_hits(&meta, hits, per_recording));
     }
     // Recordings with the most to say about the query first; ties break newest.
     results.sort_by_key(|r| {
@@ -1834,6 +1781,97 @@ fn search_meetings(history_dir: &std::path::Path, args: &Value) -> anyhow::Resul
         "returned": results.len(),
         "recordings": results,
     }))
+}
+
+/// What was said. Segment-level so each hit carries a seek target.
+fn segment_hits(meta: &Value, query: &str, qlen: usize) -> Vec<Value> {
+    let Some(segs) = meta.get("segments").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    segs.iter()
+        .filter_map(|s| {
+            let text = s.get("text").and_then(Value::as_str).unwrap_or("");
+            let at = find_ci(text, query)?;
+            Some(hit(
+                "transcript",
+                text,
+                at,
+                qlen,
+                s.get("startMs").and_then(Value::as_i64),
+            ))
+        })
+        .collect()
+}
+
+/// What the analysis concluded, in the single-string fields.
+fn summary_field_hits(meta: &Value, query: &str, qlen: usize) -> Vec<Value> {
+    [
+        ("brief", meta.get("brief").and_then(Value::as_str)),
+        (
+            "context",
+            meta.get("meetingContext").and_then(Value::as_str),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(field, text)| {
+        let text = text?;
+        let at = find_ci(text, query)?;
+        Some(hit(field, text, at, qlen, None))
+    })
+    .collect()
+}
+
+/// What the analysis concluded, in the list fields (findings, action items).
+/// Each item's parts are joined so a query spanning title and detail still hits.
+fn list_field_hits(meta: &Value, query: &str, qlen: usize) -> Vec<Value> {
+    let mut hits: Vec<Value> = Vec::new();
+    for (field, key, parts) in [
+        ("finding", "findings", ["title", "detail"]),
+        ("actionItem", "actionItems", ["text", "rationale"]),
+    ] {
+        for item in meta
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let text = parts
+                .iter()
+                .filter_map(|p| item.get(*p).and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join(" — ");
+            if let Some(at) = find_ci(&text, query) {
+                hits.push(hit(
+                    field,
+                    &text,
+                    at,
+                    qlen,
+                    item.get("atMs").and_then(Value::as_i64),
+                ));
+            }
+        }
+    }
+    hits
+}
+
+/// One recording's search result: its identity plus the best `per_recording`
+/// hits, most-trusted field first and chronological within a field.
+fn recording_hits(meta: &Value, mut hits: Vec<Value>, per_recording: usize) -> Value {
+    let total = hits.len();
+    hits.sort_by_key(|h| {
+        let f = h.get("field").and_then(Value::as_str).unwrap_or("");
+        let rank = SEARCH_FIELDS.iter().position(|x| *x == f).unwrap_or(9);
+        (rank, h.get("atMs").and_then(Value::as_i64).unwrap_or(0))
+    });
+    hits.truncate(per_recording);
+    json!({
+        "id": meta.get("id").cloned().unwrap_or(Value::Null),
+        "title": meta.get("title").cloned().unwrap_or(Value::Null),
+        "createdAt": meta.get("createdAt").cloned().unwrap_or(Value::Null),
+        "folderId": meta.get("folderId").cloned().unwrap_or(Value::Null),
+        "hitCount": total,
+        "hits": hits,
+    })
 }
 
 /// Read one recording in full: curated meta fields + the transcript rebuilt as
@@ -1900,35 +1938,29 @@ fn transcript_text(meta: &Value, names: &Value) -> String {
             let total = start / 1000;
             let source = s.get("source").and_then(Value::as_str).unwrap_or("me");
             let speaker = s.get("speaker").and_then(Value::as_i64).unwrap_or(0);
-            let key = format!("{source}-{speaker}");
-            let label = match names.get(&key).and_then(Value::as_str) {
-                Some(custom) => custom.to_string(),
-                None => {
-                    let display = if speaker == 0 { 1 } else { speaker };
-                    match source {
-                        "mix" => format!("Speaker {display}"),
-                        "me" => {
-                            if display <= 1 {
-                                "You".to_string()
-                            } else {
-                                format!("Speaker {display}")
-                            }
-                        }
-                        _ => {
-                            if speaker > 0 {
-                                format!("Remote {speaker}")
-                            } else {
-                                "Them".to_string()
-                            }
-                        }
-                    }
-                }
-            };
+            let label = speaker_label(names, source, speaker);
             let text = s.get("text").and_then(Value::as_str).unwrap_or("").trim();
             format!("[{}:{:02}] [{label}] {text}", total / 60, total % 60)
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// One segment's speaker label: the user's own name for that voice when there is
+/// one, otherwise the same default the frontend's speakerLabel derives (store.ts).
+fn speaker_label(names: &Value, source: &str, speaker: i64) -> String {
+    let key = format!("{source}-{speaker}");
+    if let Some(custom) = names.get(&key).and_then(Value::as_str) {
+        return custom.to_string();
+    }
+    let display = if speaker == 0 { 1 } else { speaker };
+    match source {
+        "mix" => format!("Speaker {display}"),
+        "me" if display <= 1 => "You".to_string(),
+        "me" => format!("Speaker {display}"),
+        _ if speaker > 0 => format!("Remote {speaker}"),
+        _ => "Them".to_string(),
+    }
 }
 
 // ── RPC bridge: enqueue a command, wait for the frontend's result ─────────────

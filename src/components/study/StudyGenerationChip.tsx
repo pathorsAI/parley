@@ -172,16 +172,18 @@ export function StudyGenerationChip() {
 type TFn = ReturnType<typeof useI18n>["t"];
 type Pipeline = ReturnType<typeof useStudyPipeline>;
 
+/** Chip tone, in priority order: missing key → running → errors → idle. */
+function chipTone(p: Pipeline): string {
+  if (!p.hasDeepKey) return "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400";
+  if (p.active) return "border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400";
+  if (p.errors > 0) return "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400";
+  return "border-transparent text-muted-foreground hover:border-border hover:text-foreground";
+}
+
 function chipClass(p: Pipeline): string {
   return cn(
     "flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium transition-colors",
-    !p.hasDeepKey
-      ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-      : p.active
-        ? "border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400"
-        : p.errors > 0
-          ? "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400"
-          : "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
+    chipTone(p),
   );
 }
 

@@ -8,7 +8,15 @@ import { clearStudyCache } from "../history/studyCache";
 import { makeRunGuard } from "./runGuard";
 import { translate } from "../../i18n";
 import { isTauri } from "../tauriEvents";
-import type { EvalDef, Settings, TimelineEvent, TranscriptSegment } from "../types";
+import type {
+  DeliveryAssessment,
+  EvalDef,
+  LlmWorkload,
+  Settings,
+  TimelineEvent,
+  ToneVerdict,
+  TranscriptSegment,
+} from "../types";
 
 /** Bump when the analysis prompt/output shape changes, to invalidate caches. */
 const ANALYSIS_CACHE_VERSION = "7";
@@ -71,6 +79,49 @@ export async function listenForCacheClear(): Promise<() => void> {
   });
 }
 
+type AnalysisMode = "live" | "replay";
+type StoreState = ReturnType<typeof useStore.getState>;
+
+/** LIVE vs REPLAY for this run: an explicit request wins, else the app mode. */
+function resolveMode(state: StoreState, requested?: AnalysisMode): AnalysisMode {
+  if (requested) return requested;
+  return state.appMode === "study" ? "replay" : "live";
+}
+
+/** REPLAY honors the trim keep-window — trimmed segments are excluded. */
+function segmentsForMode(state: StoreState, mode: AnalysisMode): TranscriptSegment[] {
+  if (mode === "replay") return state.segments.filter((s) => !isTrimmed(s, state.replayTrim));
+  return state.segments;
+}
+
+/** Replay analyses ride the deep lane; live ones the realtime lane. */
+function workloadForMode(mode: AnalysisMode): LlmWorkload {
+  return mode === "replay" ? "deep" : "realtime";
+}
+
+/** Apply a cached replay analysis, if there is one. True when it was applied. */
+function applyCachedAnalysis(cacheKey: string, evalSig: string): boolean {
+  const cached = readJsonCache<TimelineEvent[]>(cacheKey);
+  if (!cached) return false;
+  const state = useStore.getState();
+  state.setFindings(cached);
+  state.setAnalysisStatus("done");
+  useStore.setState({ analyzedEvalSig: evalSig });
+  return true;
+}
+
+/** The message the UI shows for a failed pass — hosted credit/auth exhaustion
+ *  gets its own copy, everything else falls back to the raw provider error. */
+async function analysisErrorMessage(err: unknown, provider: string): Promise<string> {
+  const { describeAiError, hostedLlmErrorCode } = await import("../ai/errors");
+  const { translate } = await import("../../i18n/messages");
+  const code = hostedLlmErrorCode(err, provider);
+  const lang = useStore.getState().settings.language;
+  if (code === "credits") return translate(lang, "analysis.error.credits");
+  if (code === "auth") return translate(lang, "analysis.error.auth");
+  return describeAiError(err);
+}
+
 /**
  * Run the unified analysis over the current transcript and write time-anchored
  * findings into the shared store slice. Used by LIVE's "Analyze" button (mode
@@ -83,17 +134,14 @@ export async function listenForCacheClear(): Promise<() => void> {
  */
 const analysisGuard = makeRunGuard();
 export async function runAnalysis(opts?: {
-  mode?: "live" | "replay";
+  mode?: AnalysisMode;
   force?: boolean;
 }): Promise<void> {
   const state = useStore.getState();
   const { settings, speakerNames } = state;
-  const mode = opts?.mode ?? (state.appMode === "study" ? "replay" : "live");
-  // REPLAY: honor the trim keep-window — trimmed segments are excluded from analysis.
-  const segments =
-    mode === "replay" ? state.segments.filter((s) => !isTrimmed(s, state.replayTrim)) : state.segments;
-
-  const workload = mode === "replay" ? ("deep" as const) : ("realtime" as const);
+  const mode = resolveMode(state, opts?.mode);
+  const segments = segmentsForMode(state, mode);
+  const workload = workloadForMode(mode);
 
   // Reentrancy guard: the status IS the lock (set synchronously below, so two
   // back-to-back calls can't interleave — JS is single-threaded between awaits).
@@ -117,15 +165,7 @@ export async function runAnalysis(opts?: {
   // Remember which eval set these findings reflect, so the UI can flag them as
   // stale when the template / evals change before the next re-analysis.
   const evalSig = evalSignature(settings.evaluations);
-  if (cacheKey && !opts?.force) {
-    const cached = readJsonCache<TimelineEvent[]>(cacheKey);
-    if (cached) {
-      state.setFindings(cached);
-      state.setAnalysisStatus("done");
-      useStore.setState({ analyzedEvalSig: evalSig });
-      return;
-    }
-  }
+  if (cacheKey && !opts?.force && applyCachedAnalysis(cacheKey, evalSig)) return;
 
   const alive = analysisGuard.begin();
   state.setAnalysisError(null);
@@ -153,16 +193,7 @@ export async function runAnalysis(opts?: {
   } catch (err) {
     console.error("[analysis]", err);
     if (!alive()) return;
-    const { describeAiError, hostedLlmErrorCode } = await import("../ai/errors");
-    const { translate } = await import("../../i18n/messages");
-    const code = hostedLlmErrorCode(err, settings.llmProviders[workload]);
-    const lang = useStore.getState().settings.language;
-    const message =
-      code === "credits"
-        ? translate(lang, "analysis.error.credits")
-        : code === "auth"
-          ? translate(lang, "analysis.error.auth")
-          : describeAiError(err);
+    const message = await analysisErrorMessage(err, settings.llmProviders[workload]);
     useStore.getState().setAnalysisError(message);
     useStore.getState().setAnalysisStatus("error");
   }
@@ -178,6 +209,35 @@ export async function runAnalysis(opts?: {
 const TONE_COOLDOWN_MS = 15_000;
 /** New finalized speech (ms) required since the last tone check before re-running. */
 const TONE_MIN_NEW_SPEECH_MS = 2_000;
+
+/**
+ * Store a fresh delivery assessment and raise at most ONE nudge from it: tone
+ * first when it's sharp/aggressive/rude, otherwise over-frequent fillers — the
+ * two never stack.
+ */
+function applyDeliveryAssessment(
+  res: DeliveryAssessment,
+  toneFlagged: ReadonlySet<ToneVerdict>
+): void {
+  const store = useStore.getState();
+  store.setDeliveryAssessment(res);
+  const lang = store.settings.language;
+  if (toneFlagged.has(res.tone)) {
+    store.pushDeliveryNudge({
+      kind: "tone",
+      severity: res.tone === "sharp" ? "info" : "warn",
+      message: translate(lang, "delivery.nudge.tone"),
+      evidence: res.toneEvidence || undefined,
+    });
+  } else if (res.fillers.level === "frequent") {
+    store.pushDeliveryNudge({
+      kind: "filler",
+      severity: "info",
+      message: translate(lang, "delivery.nudge.filler"),
+      evidence: res.fillers.examples.slice(0, 3).join("、") || undefined,
+    });
+  }
+}
 
 export function useAnalysisEngine() {
   const meetingStatus = useStore((s) => s.meetingStatus);
@@ -252,33 +312,16 @@ export function useAnalysisEngine() {
         toneBusy.current = true;
         const prosody = useStore.getState().prosody;
         import("../ai/delivery")
-          .then(({ analyzeDelivery, TONE_FLAGGED }) =>
-            analyzeDelivery({ settings, segments, names: speakerNames, prosody, mode: "live" }).then(
-              (res) => {
-                if (!res) return;
-                const store = useStore.getState();
-                store.setDeliveryAssessment(res);
-                const lang = store.settings.language;
-                // Tone nudge when sharp/aggressive/rude.
-                if (TONE_FLAGGED.has(res.tone)) {
-                  store.pushDeliveryNudge({
-                    kind: "tone",
-                    severity: res.tone === "sharp" ? "info" : "warn",
-                    message: translate(lang, "delivery.nudge.tone"),
-                    evidence: res.toneEvidence || undefined,
-                  });
-                } else if (res.fillers.level === "frequent") {
-                  // Otherwise, nudge on over-frequent fillers (don't stack two).
-                  store.pushDeliveryNudge({
-                    kind: "filler",
-                    severity: "info",
-                    message: translate(lang, "delivery.nudge.filler"),
-                    evidence: res.fillers.examples.slice(0, 3).join("、") || undefined,
-                  });
-                }
-              }
-            )
-          )
+          .then(async ({ analyzeDelivery, TONE_FLAGGED }) => {
+            const res = await analyzeDelivery({
+              settings,
+              segments,
+              names: speakerNames,
+              prosody,
+              mode: "live",
+            });
+            if (res) applyDeliveryAssessment(res, TONE_FLAGGED);
+          })
           .catch((e) => console.error("[delivery]", e))
           .finally(() => {
             toneBusy.current = false;
