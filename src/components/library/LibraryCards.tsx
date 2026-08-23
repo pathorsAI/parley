@@ -120,6 +120,9 @@ function MenuShell({
       <div
         role="menu"
         aria-label={title}
+        // -1: programmatically focusable (the interactive role requires it);
+        // the menu items themselves are the tab stops.
+        tabIndex={-1}
         className="absolute right-0 top-7 z-40 max-h-64 min-w-40 overflow-y-auto rounded-md border bg-popover p-1 shadow-md"
         onClick={(ev) => ev.stopPropagation()}
         onKeyDown={(ev) => ev.stopPropagation()}
