@@ -1,0 +1,167 @@
+name: Sonar
+
+# CI-based SonarQube analysis against the self-hosted instance
+# (https://sonar.pathors.com — pathorsAI/pathors#2250). This repo previously
+# used SonarCloud Automatic Analysis; SonarCloud was retired org-wide, so
+# public repos scan against the self-hosted server too, same as the pathors
+# monorepo. PR analysis on the Community Build is provided by the
+# community-branch-plugin, which accepts the same sonar.pullrequest.*
+# properties SonarCloud did.
+#
+# Single project, no matrix — this repo is one deployable unit. Project key
+# and exclusions live in sonar-project.properties, which the scanner picks up
+# with no extra flag.
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+# One analysis per ref. Superseded pushes carry no information once a newer
+# commit exists.
+concurrency:
+  group: sonar-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sonar:
+    # A fork PR cannot read SONAR_TOKEN (GitHub withholds secrets from fork
+    # runs), so the scan is skipped there instead of failing. Same-repo PRs
+    # and pushes to main are analysed. If this check is ever made required,
+    # remember a skipped run counts as passing.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          # Sonar reads git blame to attribute issues to authors and to work
+          # out what counts as new code. A shallow clone silently degrades
+          # both.
+          fetch-depth: 0
+
+      # The scanner would otherwise download and provision its own JRE on
+      # every run. 21 matches what the bootstrapper would fetch itself.
+      - name: Setup Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: SonarQube scan
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          # Every one of these MUST stay an env var and never be interpolated
+          # into the script below. `${{ }}` is substituted as raw text before
+          # bash parses the script, and a branch name is attacker-influenced
+          # input (githubactions:S7630).
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          # An array, not a string: quoting survives into the argv, so a
+          # branch name containing spaces stays one argument.
+          ARGS=(-Dsonar.host.url=https://sonar.pathors.com)
+
+          # Use the JDK from the tool cache rather than letting the
+          # bootstrapper fetch its own. Both flags are required: skipping
+          # provisioning without naming an executable leaves it with no JVM.
+          ARGS+=("-Dsonar.scanner.skipJreProvisioning=true")
+          ARGS+=("-Dsonar.scanner.javaExePath=$JAVA_HOME/bin/java")
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            ARGS+=("-Dsonar.pullrequest.key=$PR_NUMBER")
+            ARGS+=("-Dsonar.pullrequest.branch=$PR_HEAD_REF")
+            ARGS+=("-Dsonar.pullrequest.base=$PR_BASE_REF")
+          else
+            ARGS+=("-Dsonar.branch.name=$REF_NAME")
+          fi
+
+          npx --yes sonarqube-scanner@5.0.0 "${ARGS[@]}"
+
+      # The scanner prints "QUALITY GATE STATUS: FAILED" and nothing else —
+      # not which condition tripped, not what the threshold was. Ask the API
+      # here instead, so the failing log explains itself. Same step as the
+      # pathors monorepo's sonar.yml, minus the matrix plumbing.
+      - name: Explain the Quality Gate failure
+        if: failure()
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          PROJECT_KEY: pathorsAI_parley
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            SCOPE="pullRequest=$PR_NUMBER"
+          else
+            SCOPE="branch=$REF_NAME"
+          fi
+          API=https://sonar.pathors.com/api
+
+          # Diagnostics must never turn a green run red or mask the real
+          # error, so every request is best-effort and the step always exits 0.
+          curl -sS -u "$SONAR_TOKEN:" \
+            "$API/qualitygates/project_status?projectKey=$PROJECT_KEY&$SCOPE" \
+            > "$RUNNER_TEMP/gate.json" || true
+          curl -sS -u "$SONAR_TOKEN:" \
+            "$API/measures/component?component=$PROJECT_KEY&$SCOPE&metricKeys=alert_status,new_lines,ncloc" \
+            > "$RUNNER_TEMP/measures.json" || true
+          curl -sS -u "$SONAR_TOKEN:" \
+            "$API/new_code_periods/show?project=$PROJECT_KEY" \
+            > "$RUNNER_TEMP/ncd.json" || true
+
+          node -e '
+            const read = (name) => {
+              try {
+                const path = `${process.env.RUNNER_TEMP}/${name}`;
+                return JSON.parse(require("fs").readFileSync(path, "utf8"));
+              } catch { return null; }
+            };
+            const gate = read("gate.json");
+            const measures = read("measures.json");
+
+            const status = gate?.projectStatus;
+            if (!status) {
+              console.log("Could not read the Quality Gate:",
+                JSON.stringify(gate ?? "no response"));
+            } else {
+              console.log(`Quality Gate: ${status.status}`);
+              for (const c of status.conditions ?? []) {
+                const mark = c.status === "OK" ? "  ok  " : "  FAIL";
+                console.log(
+                  `${mark} ${c.metricKey} = ${c.actualValue}` +
+                  ` (must be ${c.comparator === "GT" ? "<=" : ">="} ${c.errorThreshold})`,
+                );
+              }
+              if (!(status.conditions ?? []).length) {
+                console.log(
+                  "  No conditions were evaluated. The gate is entirely new-code" +
+                  " metrics, so this means the analysis produced no new code" +
+                  " period — check the New Code Definition printed below," +
+                  " not the code.",
+                );
+              }
+            }
+
+            const ncd = read("ncd.json")?.newCodePeriod;
+            if (ncd) {
+              console.log(
+                `new code definition: ${ncd.type}` +
+                (ncd.value ? `=${ncd.value}` : "") +
+                (ncd.inherited ? " (inherited from global setting)" : ""),
+              );
+            }
+
+            const m = Object.fromEntries(
+              (measures?.component?.measures ?? []).map((x) => [x.metric, x.value]),
+            );
+            console.log(
+              `measures: alert_status=${m.alert_status ?? "(absent)"}` +
+              ` new_lines=${m.new_lines ?? "(absent)"} ncloc=${m.ncloc ?? "?"}`,
+            );
+          '
