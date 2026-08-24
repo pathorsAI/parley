@@ -494,7 +494,10 @@ let observation: { insertedText: string; sessionGen: number; rearmsLeft: number 
  * to: a new one starting while the setup is in flight makes this stale.
  */
 async function observePastedField(text: string, sessionGen: number): Promise<void> {
-  observation = { insertedText: text, sessionGen, rearmsLeft: 2 };
+  // 3 re-arms, not fewer: in Chromium-family fields the paste itself lands as
+  // a replace (never matching Rust's splice check), so the first candidate of
+  // EVERY dictation is a rejected paste-landing that costs one re-arm.
+  observation = { insertedText: text, sessionGen, rearmsLeft: 3 };
   await armObservation();
 }
 
@@ -535,6 +538,14 @@ function stopObserving(): void {
 }
 
 async function onCorrectionCandidate(p: CorrectionCandidatePayload): Promise<void> {
+  // A candidate from a dictation the user has already moved past must not
+  // hijack the overlay — it may be showing the NEXT dictation's live text
+  // right now. Rust's generation guard covers most of this, but a candidate
+  // emitted just before the next paste can still arrive after startSession.
+  if (!observation || gen !== observation.sessionGen) {
+    log.info("voice-typing: correction candidate dropped (stale dictation)");
+    return;
+  }
   // The ignore counter (and the write that may follow) only mean something once
   // this window has read the dictionary file.
   await whenDictionaryReady();
