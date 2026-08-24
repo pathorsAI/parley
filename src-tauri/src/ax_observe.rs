@@ -59,6 +59,10 @@ mod imp {
     /// Consecutive identical reads before a changed value counts as settled —
     /// so mid-typing snapshots ("Parle", "Parl") don't fire a candidate.
     const SETTLED_TICKS: u32 = 2;
+    /// Consecutive failed reads tolerated before giving up. AX queries fail
+    /// transiently (kAXErrorCannotComplete) while the target app is busy; one
+    /// hiccup must not end a legitimate observation.
+    const MAX_MISSES: u32 = 3;
     /// Values longer than this are not worth diffing (a whole document, a code
     /// editor's buffer): reading them every second is wasteful and the diff
     /// would be meaningless. Counted in CHARS, not bytes.
@@ -76,12 +80,12 @@ mod imp {
             value: *mut CFTypeRef,
         ) -> i32;
         fn AXUIElementGetTypeID() -> usize;
+        fn AXUIElementGetPid(element: AXUIElementRef, pid: *mut i32) -> i32;
     }
 
     #[link(name = "CoreFoundation", kind = "framework")]
     extern "C" {
         fn CFRelease(cf: CFTypeRef);
-        fn CFEqual(a: CFTypeRef, b: CFTypeRef) -> bool;
         fn CFGetTypeID(cf: CFTypeRef) -> usize;
         fn CFStringGetTypeID() -> usize;
     }
@@ -167,10 +171,24 @@ mod imp {
         Some(s)
     }
 
+    /// The pid of the app the element belongs to — the identity that decides
+    /// whether "focus is still where we pasted". Element-ref equality (CFEqual)
+    /// is NOT usable for that: Chromium-family apps (browsers, Electron) mint a
+    /// fresh AX wrapper object per query, so ref equality false-negatives on
+    /// the very apps people dictate into most.
+    unsafe fn element_pid(element: AXUIElementRef) -> Option<i32> {
+        let mut pid: i32 = 0;
+        if AXUIElementGetPid(element, &mut pid) != 0 || pid <= 0 {
+            return None;
+        }
+        Some(pid)
+    }
+
     pub fn observe(app: AppHandle, inserted_text: String) -> bool {
         // Auto-paste and this share the one permission: without Accessibility
         // there is no AX tree to read, so there is nothing to observe.
         if !crate::voice_typing::is_accessibility_trusted() {
+            log::info!("ax_observe: not armed (accessibility not granted)");
             return false;
         }
         // Claim the newest generation before anything else. Even if this call
@@ -178,17 +196,37 @@ mod imp {
         // watcher is now stale and should stop rather than report on it.
         let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
 
-        let (element, baseline) = unsafe {
+        let (element, target_pid, baseline) = unsafe {
             let Some(element) = copy_focused_element() else {
+                log::info!("ax_observe: not armed (no focused element)");
+                return false;
+            };
+            let Some(pid) = element_pid(element.0) else {
+                log::info!("ax_observe: not armed (focused element has no pid)");
                 return false;
             };
             let Some(baseline) = copy_value_string(element.0) else {
+                log::info!("ax_observe: not armed (field value not a readable string)");
                 return false;
             };
-            (element, baseline)
+            (element, pid, baseline)
         };
 
-        std::thread::spawn(move || poll(app, element, baseline, inserted_text, generation));
+        log::info!(
+            "ax_observe: armed (baseline {} chars, target pid {})",
+            baseline.chars().count(),
+            target_pid
+        );
+        std::thread::spawn(move || {
+            poll(
+                app,
+                element,
+                target_pid,
+                baseline,
+                inserted_text,
+                generation,
+            )
+        });
         true
     }
 
@@ -210,33 +248,35 @@ mod imp {
         })
     }
 
-    /// One tick's reading of the watched field, or `None` when polling must
-    /// stop: a newer paste superseded us, focus left the element, or the value
-    /// became unreadable (element went away, stopped being a string, grew past
-    /// the cap).
-    fn read_tick(element: &OwnedElement, generation: u64) -> Option<String> {
+    /// One tick's reading of the watched field. `Ok(None)` is a tolerable miss
+    /// (transient AX failure — skip this tick); `Err(reason)` ends the
+    /// observation (superseded, or focus moved to another app).
+    fn read_tick(
+        element: &OwnedElement,
+        target_pid: i32,
+        generation: u64,
+    ) -> Result<Option<String>, &'static str> {
         // A newer paste owns the field now — stop without a word.
         if GENERATION.load(Ordering::SeqCst) != generation {
-            return None;
+            return Err("superseded by a newer dictation");
         }
-        // Focus must still be on the very element we pasted into. Comparing
-        // the AX refs (rather than, say, the app) is what keeps us from
-        // reporting on a different field that happens to look edited.
-        let still_focused = unsafe {
-            match copy_focused_element() {
-                Some(current) => CFEqual(current.0, element.0),
-                None => false,
-            }
-        };
-        if !still_focused {
-            return None;
+        // Focus must still be inside the app we pasted into. The value is
+        // always read off the ORIGINAL element ref, so a different field of
+        // the same app coming into focus is harmless — that ref's value simply
+        // stops changing. App identity is compared by pid, not CFEqual (see
+        // element_pid).
+        match unsafe { copy_focused_element().and_then(|e| element_pid(e.0)) } {
+            Some(pid) if pid == target_pid => {}
+            Some(_) => return Err("focus left the app"),
+            None => return Ok(None), // transient: focus query failed
         }
-        unsafe { copy_value_string(element.0) }
+        Ok(unsafe { copy_value_string(element.0) })
     }
 
     fn poll(
         app: AppHandle,
         element: OwnedElement,
+        target_pid: i32,
         mut baseline: String,
         inserted_text: String,
         generation: u64,
@@ -246,12 +286,26 @@ mod imp {
         // consecutive ticks it has held.
         let mut candidate: Option<String> = None;
         let mut stable_ticks: u32 = 0;
+        let mut misses: u32 = 0;
 
         for _ in 0..ticks {
             std::thread::sleep(POLL_INTERVAL);
-            let Some(current) = read_tick(&element, generation) else {
-                return;
+            let current = match read_tick(&element, target_pid, generation) {
+                Err(reason) => {
+                    log::info!("ax_observe: stopped ({reason})");
+                    return;
+                }
+                Ok(None) => {
+                    misses += 1;
+                    if misses > MAX_MISSES {
+                        log::info!("ax_observe: stopped (field unreadable for {misses} ticks)");
+                        return;
+                    }
+                    continue;
+                }
+                Ok(Some(current)) => current,
             };
+            misses = 0;
 
             if current == baseline {
                 // Back to what we pasted: whatever edit was in flight was undone.
@@ -296,6 +350,7 @@ mod imp {
             );
             return;
         }
+        log::info!("ax_observe: window expired with no correction");
     }
 
     #[cfg(test)]

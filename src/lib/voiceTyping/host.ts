@@ -482,21 +482,41 @@ function scheduleHide() {
 // field, only for a minute — reports the settled value. The diff is computed
 // here, offered once in the overlay, and forgotten unless the user says yes.
 
+/** The observation the current dictation owns. `rearmsLeft` lets a rejected
+ *  candidate re-arm with a fresh baseline — a target app that transforms the
+ *  paste (smart quotes, autocapitalize) or an unrelated multi-word edit would
+ *  otherwise spend the single Rust event and go deaf to the real correction. */
+let observation: { insertedText: string; sessionGen: number; rearmsLeft: number } | null = null;
+
 /**
- * Ask Rust to watch the field we just pasted into, and take AT MOST ONE
- * candidate from it. `sessionGen` pins the dictation this observation belongs
+ * Ask Rust to watch the field we just pasted into. Each armed observation
+ * reports AT MOST ONE candidate; `sessionGen` pins the dictation it belongs
  * to: a new one starting while the setup is in flight makes this stale.
  */
 async function observePastedField(text: string, sessionGen: number): Promise<void> {
+  observation = { insertedText: text, sessionGen, rearmsLeft: 2 };
+  await armObservation();
+}
+
+async function armObservation(): Promise<void> {
   stopObserving();
+  if (!observation || gen !== observation.sessionGen) return;
   let started = false;
   try {
-    started = await invoke<boolean>("observe_pasted_field", { insertedText: text });
+    started = await invoke<boolean>("observe_pasted_field", {
+      insertedText: observation.insertedText,
+    });
   } catch (e) {
     log.warn("voice-typing: observe_pasted_field failed", { error: String(e) });
     return;
   }
-  if (!started || gen !== sessionGen) return;
+  if (!started) {
+    // Rust already logged why (no AX trust, no focused element, value not a
+    // readable string). Note it here too so the TS log tells the whole story.
+    log.info("voice-typing: field observation not armed");
+    return;
+  }
+  if (gen !== observation.sessionGen) return;
   const un = await listen<CorrectionCandidatePayload>(CORRECTION_CANDIDATE_EVENT, (e) => {
     stopObserving(); // one candidate per observation, then we're done listening
     onCorrectionCandidate(e.payload).catch((error) =>
@@ -505,7 +525,7 @@ async function observePastedField(text: string, sessionGen: number): Promise<voi
   });
   // listen() resolves asynchronously — a dictation that started meanwhile owns
   // the overlay now, so drop this subscription instead of leaking it.
-  if (gen === sessionGen) correctionUnlisten = un;
+  if (observation && gen === observation.sessionGen) correctionUnlisten = un;
   else un();
 }
 
@@ -519,9 +539,25 @@ async function onCorrectionCandidate(p: CorrectionCandidatePayload): Promise<voi
   // this window has read the dictionary file.
   await whenDictionaryReady();
   const hit = detectCorrection(p.baseline, p.current, p.insertedText);
-  if (!hit) return;
+  if (!hit) {
+    log.info("voice-typing: correction candidate rejected by diff", {
+      baselineChars: p.baseline.length,
+      currentChars: p.current.length,
+      insertedChars: p.insertedText.length,
+    });
+    // Watch again from the field's CURRENT state — the change we just rejected
+    // becomes part of the new baseline, so a real one-word fix can still land.
+    if (observation && gen === observation.sessionGen && observation.rearmsLeft > 0) {
+      observation.rearmsLeft -= 1;
+      await armObservation();
+    }
+    return;
+  }
   // Declined twice already — the answer isn't going to change.
-  if (isIgnoredTwice(hit.from, hit.to)) return;
+  if (isIgnoredTwice(hit.from, hit.to)) {
+    log.info("voice-typing: correction candidate suppressed (ignored twice)");
+    return;
+  }
   log.info("voice-typing: correction candidate", { chars: hit.from.length });
   await showSuggestion(hit);
 }
