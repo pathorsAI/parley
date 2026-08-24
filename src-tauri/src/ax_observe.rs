@@ -249,8 +249,9 @@ mod imp {
     }
 
     /// One tick's reading of the watched field. `Ok(None)` is a tolerable miss
-    /// (transient AX failure — skip this tick); `Err(reason)` ends the
-    /// observation (superseded, or focus moved to another app).
+    /// (transient AX failure, focus briefly elsewhere — skip this tick);
+    /// `Err(reason)` ends the observation (superseded by a newer dictation).
+    /// Persistent misses end it too, via the caller's counter.
     fn read_tick(
         element: &OwnedElement,
         target_pid: i32,
@@ -260,17 +261,27 @@ mod imp {
         if GENERATION.load(Ordering::SeqCst) != generation {
             return Err("superseded by a newer dictation");
         }
-        // Focus must still be inside the app we pasted into. The value is
-        // always read off the ORIGINAL element ref, so a different field of
-        // the same app coming into focus is harmless — that ref's value simply
-        // stops changing. App identity is compared by pid, not CFEqual (see
-        // element_pid).
-        match unsafe { copy_focused_element().and_then(|e| element_pid(e.0)) } {
+        // Reads happen only while focus is inside the app we pasted into
+        // (compared by pid — see element_pid). A mismatch is a MISS, not an
+        // instant stop: Electron apps briefly vend focus under helper pids,
+        // and users peek at other windows mid-correction. A mismatch that
+        // persists past the miss budget ends the observation.
+        let focused = unsafe { copy_focused_element() };
+        match focused.as_ref().and_then(|e| unsafe { element_pid(e.0) }) {
             Some(pid) if pid == target_pid => {}
-            Some(_) => return Err("focus left the app"),
-            None => return Ok(None), // transient: focus query failed
+            _ => return Ok(None),
         }
-        Ok(unsafe { copy_value_string(element.0) })
+        // Prefer the element we armed on, but fall back to the currently
+        // focused one (same app, checked above): Chromium-family apps rebuild
+        // the accessibility node when a contenteditable re-renders, which is
+        // exactly what the user's delete-and-retype does — the armed ref goes
+        // stale at the very moment the correction we're waiting for happens.
+        let value = unsafe { copy_value_string(element.0) }.or_else(|| {
+            focused
+                .as_ref()
+                .and_then(|e| unsafe { copy_value_string(e.0) })
+        });
+        Ok(value)
     }
 
     fn poll(
@@ -298,7 +309,9 @@ mod imp {
                 Ok(None) => {
                     misses += 1;
                     if misses > MAX_MISSES {
-                        log::info!("ax_observe: stopped (field unreadable for {misses} ticks)");
+                        log::info!(
+                            "ax_observe: stopped (no readable value for {misses} ticks — focus moved away or the field went stale)"
+                        );
                         return;
                     }
                     continue;
