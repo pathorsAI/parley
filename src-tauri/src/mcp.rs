@@ -646,6 +646,7 @@ fn tools() -> Vec<Value> {
                     "id": { "type": "string" },
                     "atMs": { "type": "number", "description": "Moment on the recording timeline (ms)." },
                     "side": { "type": "string", "enum": ["me", "them"] },
+                    "category": { "type": "string", "enum": ["decision", "open", "fact"] },
                     "severity": { "type": "string", "enum": ["info", "warn", "critical"] },
                     "source": { "type": "string", "enum": ["eval", "extra"] },
                     "title": { "type": "string" },
@@ -794,7 +795,6 @@ fn tools() -> Vec<Value> {
                             "properties": {
                                 "id": { "type": "string", "description": "Stable id; omit to mint a new one." },
                                 "text": { "type": "string", "description": "The concrete next step / follow-up." },
-                                "rationale": { "type": "string", "description": "Why it matters." },
                                 "done": { "type": "boolean" },
                                 "linkedEventId": { "type": "string", "description": "The finding this derives from, if any." },
                                 "atMs": { "type": "number", "description": "Seek target on the recording, if any." },
@@ -1059,15 +1059,19 @@ fn tools() -> Vec<Value> {
     ]
 }
 
-/// JSON-Schema for one TimelineEvent, shared by set_findings. `me` = a problem/
-/// mistake by ME; `them` = a point/pressure the other party raised.
+/// JSON-Schema for one TimelineEvent, shared by set_findings. Which fields apply
+/// depends on the recording's meeting kind: a sales or negotiation finding is
+/// laned by `side` (`me` = a problem/mistake by ME, `them` = a point/pressure the
+/// other party raised), while an internal-meeting finding has no side and is
+/// bucketed by `category` instead.
 fn finding_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
             "id": { "type": "string", "description": "Stable id; omit to mint a new one." },
             "atMs": { "type": "number", "description": "Moment on the recording timeline (ms)." },
-            "side": { "type": "string", "enum": ["me", "them"], "description": "Lane: my problem vs their move." },
+            "side": { "type": "string", "enum": ["me", "them"], "description": "Lane: my problem vs their move. Omit for an internal meeting, which has no opposing side." },
+            "category": { "type": "string", "enum": ["decision", "open", "fact"], "description": "Internal-meeting bucket: settled / still open / merely established. Omit when a side is set." },
             "severity": { "type": "string", "enum": ["info", "warn", "critical"] },
             "source": { "type": "string", "enum": ["eval", "extra"], "description": "From an eval, or an AI-caught extra moment." },
             "title": { "type": "string", "description": "Short label." },
@@ -1078,7 +1082,7 @@ fn finding_schema() -> Value {
             "resolution": { "type": "string", "description": "One line on how ME handled it (only when resolved)." },
             "author": { "type": "string", "description": "Which analyst wrote this marker (e.g. 'claude'); omit for Parley's own pass." }
         },
-        "required": ["atMs", "side", "severity", "title", "detail"]
+        "required": ["atMs", "severity", "title", "detail"]
     })
 }
 
@@ -1827,7 +1831,7 @@ fn list_field_hits(meta: &Value, query: &str, qlen: usize) -> Vec<Value> {
     let mut hits: Vec<Value> = Vec::new();
     for (field, key, parts) in [
         ("finding", "findings", ["title", "detail"]),
-        ("actionItem", "actionItems", ["text", "rationale"]),
+        ("actionItem", "actionItems", ["text"]),
     ] {
         for item in meta
             .get(key)

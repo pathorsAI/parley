@@ -8,6 +8,7 @@ import type {
   Evaluation,
   FindingSolutionEntry,
   LlmProvider,
+  MeetingKind,
   MeetingStatus,
   ProsodyMetrics,
   ProviderModels,
@@ -24,12 +25,12 @@ import type { MeetingShare } from "./history/history";
 import type { LibraryNode } from "./library/scope";
 import {
   buildBuiltinEvalLabels,
-  buildPresetEvalDefs,
+  defaultEvalDefs,
   buildPresetEvalTemplates,
-  evalSignature,
   evalsFromDefs,
 } from "./evaluations/presets";
 import { reconcileTemplates } from "./templates";
+import { analysisSignature } from "./analysis/lens";
 import { buildPresetTodoTemplates } from "./todoTemplates";
 import { translate, type TranslationKey } from "../i18n/messages";
 import { DEFAULT_MODELS } from "./ai/providers";
@@ -144,7 +145,7 @@ const DEFAULT_SETTINGS: Settings = {
   voiceTypingEnabled: true,
   voiceTypingShortcut: "alt-space",
   voiceTypingMode: "hold",
-  evaluations: buildPresetEvalDefs(tDefault),
+  evaluations: defaultEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),
   todoTemplates: buildPresetTodoTemplates(tDefault),
   // Pace + pauses are free (timing/DSP) so default on; pitch + tone (LLM cost)
@@ -236,6 +237,7 @@ const CLEARED_STUDY_SLICE: Pick<
   | "deliveryStatus"
   | "brief"
   | "briefStatus"
+  | "meetingKind"
 > = {
   findings: [],
   analysisStatus: "idle",
@@ -251,6 +253,7 @@ const CLEARED_STUDY_SLICE: Pick<
   deliveryStatus: "idle",
   brief: null,
   briefStatus: "idle",
+  meetingKind: null,
 };
 
 /**
@@ -385,6 +388,13 @@ interface ParleyState {
   brief: string | null;
   briefStatus: AsyncTaskStatus;
   setBrief: (brief: string | null) => void;
+  /** What kind of meeting the loaded recording is — detected once by the
+   *  analysis pass and overridable from the report page. It picks the analysis
+   *  LENS (what the findings and brief look like), so changing it invalidates
+   *  every derived output. `null` = not yet classified; readers fall back to the
+   *  decision lens. See lib/analysis/lens.ts. */
+  meetingKind: MeetingKind | null;
+  setMeetingKind: (kind: MeetingKind | null) => void;
   /** Append a streamed chunk to the brief (streaming render). */
   appendBrief: (chunk: string) => void;
   setBriefStatus: (status: AsyncTaskStatus) => void;
@@ -603,6 +613,7 @@ export const useStore = create<ParleyState>()(
       analysisStatus: "idle",
       analysisError: null,
       analyzedEvalSig: "",
+      meetingKind: null,
       studyManualForId: null,
       selectedFindingId: null,
       solutionFindingId: null,
@@ -740,13 +751,14 @@ export const useStore = create<ParleyState>()(
       ...CLEARED_STUDY_SLICE,
       findings: entry.findings,
       analysisStatus: analysisDone ? "done" : "idle",
-      analyzedEvalSig: evalSignature(state.evaluations),
+      analyzedEvalSig: analysisSignature(entry.meetingKind, state.evaluations),
       actionItems: entry.actionItems,
       actionItemsStatus: analysisDone ? "done" : "idle",
       deliveryAssessment: entry.deliveryAssessment ?? null,
       deliveryStatus: entry.deliveryAssessment ? "done" : "idle",
       brief: entry.brief ?? null,
       briefStatus: entry.brief ? "done" : "idle",
+      meetingKind: entry.meetingKind ?? null,
       // Restore the per-meeting context + negotiation setup.
       meetingContext: entry.meetingContext,
       meetingFolderId: entry.folderId ?? null,
@@ -805,6 +817,7 @@ export const useStore = create<ParleyState>()(
   brief: null,
   briefStatus: "idle",
   setBrief: (brief) => set({ brief }),
+  setMeetingKind: (meetingKind) => set({ meetingKind }),
   appendBrief: (chunk) => set((s) => ({ brief: (s.brief ?? "") + chunk })),
   setBriefStatus: (status) => set({ briefStatus: status }),
   // Replace the findings list, keeping the selection + cached solutions of any
@@ -1115,7 +1128,7 @@ export const useStore = create<ParleyState>()(
         // keeping any custom (non-built-in id) evaluations as saved.
         const builtinLabels = buildBuiltinEvalLabels(t);
         const persistedEvals =
-          (p.evaluations as Settings["evaluations"]) ?? buildPresetEvalDefs(t);
+          (p.evaluations as Settings["evaluations"]) ?? defaultEvalDefs(t);
         const relabeledEvals = persistedEvals.map((e) => {
           const label = builtinLabels.get(e.id);
           return label ? { ...e, name: label.name, description: label.description } : e;

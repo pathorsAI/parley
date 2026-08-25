@@ -8,7 +8,8 @@ import { toast } from "sonner";
 import { useI18n } from "../../i18n";
 import { useStore, hasSpokenSegment } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
-import { evalSignature, findActiveTemplate } from "../../lib/evaluations/presets";
+import { findActiveTemplate } from "../../lib/evaluations/presets";
+import { analysisSignature } from "../../lib/analysis/lens";
 import { TranscriptCopyMenu } from "../TranscriptCopyMenu";
 import { AnalysisTimeline } from "../analysis/AnalysisTimeline";
 import { FindingsPanel } from "../analysis/FindingsPanel";
@@ -50,6 +51,7 @@ export function ReplayScreen() {
   const evalTemplates = useStore((s) => s.settings.evalTemplates);
   const evaluations = useStore((s) => s.settings.evaluations);
   const analyzedEvalSig = useStore((s) => s.analyzedEvalSig);
+  const meetingKind = useStore((s) => s.meetingKind);
 
   // Persist the dragged column proportions (transcript / findings) to
   // localStorage so they survive reloads. v2 id: the old key stored a 3-column
@@ -67,7 +69,9 @@ export function ReplayScreen() {
   // Which eval template is active, and whether the findings predate an eval change.
   const activeTemplate = findActiveTemplate(evalTemplates, evaluations);
   const templateStale =
-    findings.length > 0 && analysisStatus === "done" && evalSignature(evaluations) !== analyzedEvalSig;
+    findings.length > 0 &&
+    analysisStatus === "done" &&
+    analysisSignature(meetingKind, evaluations) !== analyzedEvalSig;
 
   // Save the recording's audio out to a folder the user picks, then reveal it.
   async function exportRecording() {

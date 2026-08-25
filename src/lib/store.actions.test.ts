@@ -43,7 +43,7 @@ describe("enterReplay / exitReplay", () => {
       selectedFindingId: "old",
       analysisStatus: "done",
       actionItems: [
-        { id: "ai", text: "x", rationale: "y", done: false, linkedEventId: null, atMs: null },
+        { id: "ai", text: "x", done: false, linkedEventId: null, atMs: null },
       ],
     });
 
@@ -117,7 +117,7 @@ describe("loadHistory", () => {
       speakerNames: { "them-1": "Bob" },
       findings: [makeFinding("f1"), makeFinding("f2")],
       actionItems: [
-        { id: "ai", text: "follow up", rationale: "why", done: false, linkedEventId: null, atMs: null },
+        { id: "ai", text: "follow up", done: false, linkedEventId: null, atMs: null },
       ],
       meetingContext: "context here",
       meetingBatna: "batna",
@@ -622,7 +622,7 @@ describe("todos + action items", () => {
   it("toggleActionItem flips done by id", () => {
     useStore.setState({
       actionItems: [
-        { id: "x", text: "follow up", rationale: "r", done: false, linkedEventId: null, atMs: null },
+        { id: "x", text: "follow up", done: false, linkedEventId: null, atMs: null },
       ],
     });
     useStore.getState().toggleActionItem("x");

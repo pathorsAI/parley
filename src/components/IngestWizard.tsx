@@ -16,7 +16,9 @@ import { Scrubber } from "./replay/Scrubber";
 import { TrimBar } from "./replay/TrimBar";
 import { useReplayPlayer } from "./replay/useReplayPlayer";
 import { useReplaySession } from "./replay/spine";
-import type { Source } from "../lib/types";
+import { MEETING_KINDS } from "../lib/analysis/lens";
+import { chooseMeetingKind } from "../lib/analysis/kindTemplate";
+import type { MeetingKind, Source } from "../lib/types";
 import {
   personalDestination,
   type LibraryDestination,
@@ -72,8 +74,6 @@ export function IngestWizard() {
   const setSpeakerName = useStore((s) => s.setSpeakerName);
   const analysisStatus = useStore((s) => s.analysisStatus);
   const analysisError = useStore((s) => s.analysisError);
-  const evalTemplates = useStore((s) => s.settings.evalTemplates);
-  const updateSettings = useStore((s) => s.updateSettings);
 
   // Player for the pre-diarize trim step (drives a local <audio>). Store-backed,
   // so it shares the playhead with the (idle, behind-the-modal) replay screen.
@@ -81,7 +81,9 @@ export function IngestWizard() {
   const player = useReplayPlayer(session?.durationMs ?? 0, session?.audioOffsetMs ?? 0);
 
   const [numSpeakers, setNumSpeakers] = useState<number | null>(null);
-  const [templateId, setTemplateId] = useState("");
+  // "" = nothing chosen yet, "auto" = explicitly leave it to the detection pass,
+  // otherwise a pinned MeetingKind.
+  const [kindChoice, setKindChoice] = useState<"" | "auto" | MeetingKind>("");
   const [txStage, setTxStage] = useState<string | null>(null);
   const [dz, setDz] = useState<DiarizeProgress | null>(null);
   const [trimDraft, setTrimDraft] = useState<ReplayTrim | null>(null);
@@ -199,12 +201,13 @@ export function IngestWizard() {
     }
   }
 
-  function applyTemplate(id: string) {
-    const tpl = evalTemplates.find((x) => x.id === id);
-    if (!tpl) return;
-    // Set the active evaluations for THIS analysis (same path the live panel uses).
-    updateSettings({ evaluations: tpl.evals.map((e) => ({ ...e })) });
-    setTemplateId(id);
+  /** Pin how this upload gets analyzed, or hand that judgement to the model. */
+  function chooseKind(choice: "auto" | MeetingKind) {
+    setKindChoice(choice);
+    // "auto" leaves meetingKind null so the analysis pass classifies it; a
+    // pinned kind sets both the lens and the watchers, and detection skips.
+    if (choice === "auto") useStore.getState().setMeetingKind(null);
+    else chooseMeetingKind(choice);
   }
 
   /**
@@ -542,22 +545,24 @@ export function IngestWizard() {
             <>
               <p className="text-[12px] leading-relaxed text-muted-foreground">{t("ingest.templateIntro")}</p>
               <div className="flex flex-col gap-1.5">
-                {evalTemplates.map((tpl) => {
-                  const selected = templateId === tpl.id;
+                {(["auto", ...MEETING_KINDS] as const).map((choice) => {
+                  const selected = kindChoice === choice;
                   return (
                     <button
-                      key={tpl.id}
+                      key={choice}
                       type="button"
-                      onClick={() => applyTemplate(tpl.id)}
-                      className={`flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors ${
+                      onClick={() => chooseKind(choice)}
+                      className={`flex flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left text-xs transition-colors ${
                         selected
                           ? "border-emerald-500/60 bg-emerald-500/15 text-foreground"
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      <span className="font-medium">{tpl.name}</span>
-                      <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                        {t("ingest.templateEvals", { count: tpl.evals.length })}
+                      <span className="font-medium">
+                        {choice === "auto" ? t("ingest.kindAuto") : t(`meetingKind.${choice}`)}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {choice === "auto" ? t("ingest.kindAutoHint") : t(`meetingKind.${choice}.hint`)}
                       </span>
                     </button>
                   );
@@ -611,7 +616,7 @@ export function IngestWizard() {
             </Button>
           )}
           {step === "template" &&
-            (templateId ? (
+            (kindChoice ? (
               <Button size="sm" className="h-8 gap-1.5" onClick={confirmAnalyze}>
                 <Check className="size-3.5" />
                 {t("ingest.confirm")}

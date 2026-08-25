@@ -15,12 +15,15 @@ import { DestinationPicker } from "../DestinationPicker";
 import { useRefile } from "../useRefile";
 import { personalDestination } from "../../lib/library/destination";
 import { MeetingContextSheet } from "../MeetingContextButton";
+import { MeetingKindPicker } from "../MeetingKindPicker";
 
 /**
- * The report page's filing bar: a recording saved in a hurry lands in no folder
- * at all, and this is where it gets one after the fact — plus the study-side
- * door into the meeting-context editor. Read-only org recordings can't be
- * written back, so they get no filing affordances.
+ * The report page's meta bar: which folder this recording is filed under, and
+ * WHAT KIND of meeting it was — the control that decides which analysis the
+ * report below is written with. Both belong here rather than in the titlebar:
+ * the report is where you find out the kind was wrong, so it is where you fix
+ * it. Read-only org recordings can't be written back, so they get no filing
+ * affordances (the kind still shows — it explains the report you're reading).
  */
 export function StudyLinkBar() {
   const { t } = useI18n();
@@ -71,6 +74,10 @@ export function StudyLinkBar() {
           )}
         </div>
       )}
+
+      {/* What this recording is being read AS. Changing it doesn't re-run
+          anything on its own — the analysis chip owns regeneration. */}
+      <MeetingKindPicker className="h-7 w-[132px] shrink-0" />
 
       <DropdownMenu>
         <DropdownMenuTrigger

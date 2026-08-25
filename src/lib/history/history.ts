@@ -102,6 +102,8 @@ function snapshotAnalysis() {
     speechRateHz: s.replay?.speechRateHz ?? null,
     // Study outputs ride along so a plain save/overwrite never drops them.
     brief: s.brief,
+    // The kind SHAPED those outputs, so it is part of them.
+    meetingKind: s.meetingKind,
   };
 }
 
@@ -521,6 +523,7 @@ export async function persistStudyOutputs(): Promise<void> {
   const updated: HistoryEntry = {
     ...meta,
     brief: s.brief ?? meta.brief ?? null,
+    meetingKind: s.meetingKind ?? meta.meetingKind ?? null,
     deliveryAssessment: s.deliveryAssessment ?? meta.deliveryAssessment ?? null,
   };
   await invoke("save_history_entry", {

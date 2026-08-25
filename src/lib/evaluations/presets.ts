@@ -3,9 +3,13 @@ import type { TranslationKey } from "../../i18n/messages";
 
 /**
  * Built-in evaluation definitions and the template library that ship with
- * Parley, covering the use-cases Parley markets: job interviews, salary
- * negotiations, sales calls, deal-making, and diligence calls — plus a
- * general-purpose set.
+ * Parley — one template per {@link MeetingKind}: internal working meetings,
+ * sales calls, price negotiations, and talks with a competitor.
+ *
+ * These are the WATCHER lists only. What the analysis OUTPUT looks like is the
+ * other axis (analysis/lens.ts), which the same kind selects; keeping the two
+ * separate is what lets 議價 and 對手談判 share an output shape while watching
+ * for completely different things.
  *
  * Display strings (names/descriptions) are looked up through i18n so built-in
  * templates follow the UI language. The `prompt` field is the instruction handed
@@ -15,7 +19,7 @@ import type { TranslationKey } from "../../i18n/messages";
 /** A translate function bound to the current language: `(key) => string`. */
 type T = (key: TranslationKey) => string;
 
-/** Core, general-purpose evaluation definitions (the default active set). */
+/** Shared evaluation definitions the templates below draw from. */
 export function buildPresetEvalDefs(t: T): EvalDef[] {
   return [
     {
@@ -173,51 +177,104 @@ function nextMove(t: T): EvalDef {
   };
 }
 
+/**
+ * Watchers for an INTERNAL working meeting. Nothing here judges a counterparty —
+ * there isn't one. What goes wrong in a team meeting is the opposite failure:
+ * things that felt decided but weren't, work nobody owns, and questions that
+ * scrolled past unanswered.
+ */
+function internalDefs(t: T, unanswered: EvalDef, checklist: EvalDef): EvalDef[] {
+  return [
+    {
+      id: "in-undecided",
+      name: t("tpl.eval.in-undecided.name"),
+      description: t("tpl.eval.in-undecided.desc"),
+      prompt:
+        "Watch for topics the room TREATED as settled without actually settling them: a proposal met with " +
+        "'sure' or silence and never confirmed, two people agreeing to different things in the same breath, " +
+        "or a decision announced while an unanswered objection was still on the table. Flag each one and name " +
+        "the specific thing that still needs an explicit decision. A genuine, explicit agreement is NOT a finding.",
+    },
+    {
+      id: "in-unowned",
+      name: t("tpl.eval.in-unowned.name"),
+      description: t("tpl.eval.in-unowned.desc"),
+      prompt:
+        "Track work the meeting created and whether anyone actually took it. Flag every task, follow-up, or " +
+        "investigation that was agreed but left with NO named owner, no deadline, or an owner who never " +
+        "acknowledged it ('someone should…', 'we need to…'). Quote the line where the work appeared.",
+    },
+    {
+      id: "in-scope",
+      name: t("tpl.eval.in-scope.name"),
+      description: t("tpl.eval.in-scope.desc"),
+      prompt:
+        "Watch for scope quietly growing: new requirements, extra cases, or 'while we're in there' additions " +
+        "folded into existing work without anyone weighing the cost or moving a date. Flag what was added and " +
+        "what it was added onto, so the trade-off gets made deliberately instead of by accident.",
+    },
+    {
+      id: "in-blocked",
+      name: t("tpl.eval.in-blocked.name"),
+      description: t("tpl.eval.in-blocked.desc"),
+      prompt:
+        "Surface dependencies and blockers named in the meeting: work waiting on another person, team, " +
+        "decision, or external party. Flag each with what is blocked and what it is waiting on. Also flag a " +
+        "blocker that was mentioned in passing and never assigned to anyone to unblock.",
+    },
+    unanswered, // questions raised and never answered
+    checklist, // topics this kind of meeting should have covered but didn't
+  ];
+}
+
+/**
+ * Watchers for a conversation with a COMPETITOR or otherwise genuinely opposed
+ * party. The failure mode here isn't losing on price — it's telling them things
+ * and taking on commitments they never matched.
+ */
+function rivalryDefs(t: T, shared: { deception: EvalDef; inconsistency: EvalDef; batna: EvalDef; pushback: EvalDef; topicShift: EvalDef }): EvalDef[] {
+  return [
+    {
+      id: "rv-leak",
+      name: t("tpl.eval.rv-leak.name"),
+      description: t("tpl.eval.rv-leak.desc"),
+      prompt:
+        "Watch what MY side gives away. Flag every moment ME volunteered information a competitor could use: " +
+        "roadmap, pricing structure, margins, customer names, headcount, timelines, weaknesses, or how badly " +
+        "ME needs this deal. Note whether THEM gave anything comparable in return — a one-sided disclosure is " +
+        "the finding, even when it felt like rapport.",
+    },
+    {
+      id: "rv-probing",
+      name: t("tpl.eval.rv-probing.name"),
+      description: t("tpl.eval.rv-probing.desc"),
+      prompt:
+        "Detect THEM probing for intelligence rather than negotiating: questions about MY costs, customers, " +
+        "capacity, other deals, or internal plans that go beyond what this agreement needs. Flag each probe " +
+        "and what it is really after, so ME can decide what to answer.",
+    },
+    {
+      id: "rv-commitment",
+      name: t("tpl.eval.rv-commitment.name"),
+      description: t("tpl.eval.rv-commitment.desc"),
+      prompt:
+        "Track the SYMMETRY of commitments. Flag when ME commits to something concrete (a date, a number, an " +
+        "exclusivity, a restriction) while THEM stays deliberately vague — 'we'd look at it', 'in principle', " +
+        "'subject to internal approval'. Name the specific commitment ME made and the vague answer it bought.",
+    },
+    shared.batna,
+    shared.deception,
+    shared.inconsistency,
+    shared.pushback,
+    shared.topicShift,
+  ];
+}
+
 /** Build the full built-in template library for a given language. */
 export function buildPresetEvalTemplates(t: T): EvalTemplate[] {
   const core = buildPresetEvalDefs(t);
-  const [deception, inconsistency, pushback, unanswered, , claims, topicShift, leverage] = core;
-  const [interests, batna, zopa, criteria] = principledDefs(t);
-  // The clean principled-negotiation set (interests/BATNA/ZOPA/criteria + options
-  // + the key tactics), offered as its own template.
-  const principled: EvalDef[] = [interests, batna, zopa, criteria, leverage, pushback, deception, inconsistency];
-
-  const interviewDefs: EvalDef[] = [
-    {
-      id: "iv-exaggeration",
-      name: t("tpl.eval.iv-exaggeration.name"),
-      description: t("tpl.eval.iv-exaggeration.desc"),
-      prompt:
-        "You are helping interview a candidate ('them'). Flag exaggeration or inflation: vague ownership " +
-        "claims ('we built…' vs concrete personal contribution), inflated scope/seniority/years, buzzwords " +
-        "without substance, or dodging specifics when asked to go deeper. Quote the suspicious lines.",
-    },
-    {
-      id: "iv-consistency",
-      name: t("tpl.eval.iv-consistency.name"),
-      description: t("tpl.eval.iv-consistency.desc"),
-      prompt:
-        "Track the candidate's statements about roles, timelines, team sizes, and metrics. Flag any internal " +
-        "contradiction or timeline that doesn't add up, citing the conflicting quotes.",
-    },
-    {
-      id: "iv-redflags",
-      name: t("tpl.eval.iv-redflags.name"),
-      description: t("tpl.eval.iv-redflags.desc"),
-      prompt:
-        "Watch for behavioral red flags: blaming others for all failures, lack of accountability, " +
-        "dismissiveness, ethical concerns, or contradictions about why they left roles. Flag with the quote.",
-    },
-    {
-      id: "iv-followup",
-      name: t("tpl.eval.iv-followup.name"),
-      description: t("tpl.eval.iv-followup.desc"),
-      prompt:
-        "Identify claims or topics the candidate raised that deserve a deeper follow-up question and that I " +
-        "('me') have not yet probed. Suggest the specific follow-up to ask.",
-    },
-    topicShift, // topic shift / focus dilution (candidate dodging)
-  ];
+  const [deception, inconsistency, pushback, unanswered, checklist, claims, topicShift, leverage] = core;
+  const [, batna, zopa, criteria] = principledDefs(t);
 
   const salesDefs: EvalDef[] = [
     {
@@ -246,56 +303,15 @@ export function buildPresetEvalTemplates(t: T): EvalTemplate[] {
         "Detect objections or concerns the prospect ('them') raises — price, timing, fit, competitor, risk, " +
         "authority. Flag each one, and especially any that I ('me') have NOT yet addressed. Quote the objection.",
     },
-    // (sl-nextstep retired by the C integration: the board's next-step slot +
-    // deterministic gate own that concern — one home, no LLM pass.)
     claims, // claims to verify
-    topicShift, // topic shift / focus dilution
+    unanswered, // questions they dodged
     nextMove(t), // recommend the next move
   ];
 
-  const salaryDefs: EvalDef[] = [
-    {
-      id: "sa-market",
-      name: t("tpl.eval.sa-market.name"),
-      description: t("tpl.eval.sa-market.desc"),
-      prompt:
-        "The other party ('them') is the employer/recruiter in a compensation discussion. Extract claims about " +
-        "market rate, internal bands, budget limits, or 'this is the most we can do' — these are negotiable " +
-        "positions, not facts. List each so I ('me') can verify or challenge it.",
-    },
-    {
-      id: "sa-components",
-      name: t("tpl.eval.sa-components.name"),
-      description: t("tpl.eval.sa-components.desc"),
-      prompt:
-        "Track every compensation component discussed: base, bonus, equity (amount, vesting, strike), sign-on, " +
-        "benefits, title, start date, review timing. Summarize what has been offered vs. still open, and flag " +
-        "where I ('me') gave ground without getting something back.",
-    },
-    pushback, // when to push back
-    {
-      id: "sa-pressure",
-      name: t("tpl.eval.sa-pressure.name"),
-      description: t("tpl.eval.sa-pressure.desc"),
-      prompt:
-        "Watch for negotiation pressure tactics from the employer: low anchoring, artificial deadlines, " +
-        "'exploding' offers, take-it-or-leave-it framing, or appeals to fairness/policy to shut down asks. " +
-        "Flag the tactic and suggest how I ('me') can hold my position.",
-    },
-    unanswered, // unanswered questions
-    topicShift, // topic shift / focus dilution
-    leverage, // trade-offs to steer toward my goal
-    nextMove(t), // recommend the next move
-  ];
-
-  const dealDefs: EvalDef[] = [
-    interests, // interests, not positions
-    batna, // BATNA / walk-away leverage
+  const pricingDefs: EvalDef[] = [
     zopa, // zone of possible agreement
-    criteria, // objective criteria
-    deception, // deception / pressure tactics
-    inconsistency, // self-contradiction
-    pushback, // when to push back
+    batna, // walk-away leverage
+    criteria, // objective criteria over pressure
     {
       id: "ng-concessions",
       name: t("tpl.eval.ng-concessions.name"),
@@ -304,56 +320,37 @@ export function buildPresetEvalTemplates(t: T): EvalTemplate[] {
         "Track concessions and commitments on both sides: what each party has offered, conceded, or agreed to. " +
         "Flag asymmetric exchanges where I ('me') gave more than I received. Summarize the current state of the deal.",
     },
-    unanswered, // unanswered questions
-    claims, // claims to verify
-    topicShift, // topic shift / focus dilution
-    leverage, // trade-offs to steer toward my goal
+    pushback, // when to push back
+    leverage, // trades that expand the pie
+    deception, // pressure tactics
     nextMove(t), // recommend the next move
   ];
 
-  const diligenceDefs: EvalDef[] = [
-    {
-      id: "dd-claims",
-      name: t("tpl.eval.dd-claims.name"),
-      description: t("tpl.eval.dd-claims.desc"),
-      prompt:
-        "This is a due-diligence call. Extract every concrete, verifiable claim the other party ('them') makes " +
-        "about financials, revenue, growth, customers, churn, headcount, legal status, or IP. List each as a " +
-        "diligence item to verify against documents later, quoting the claim.",
-    },
-    {
-      id: "dd-risk",
-      name: t("tpl.eval.dd-risk.name"),
-      description: t("tpl.eval.dd-risk.desc"),
-      prompt:
-        "Surface risk signals: financial, legal, operational, customer-concentration, or team risks, and any " +
-        "numbers or statements that are internally inconsistent or seem too good. Flag each with the quote and " +
-        "why it warrants follow-up.",
-    },
-    unanswered, // unanswered questions
-    {
-      id: "dd-checklist",
-      name: t("tpl.eval.dd-checklist.name"),
-      description: t("tpl.eval.dd-checklist.desc"),
-      prompt:
-        "Given a due-diligence context, identify standard areas that have NOT yet been covered — financials, " +
-        "customer concentration, churn/retention, unit economics, legal/compliance, cap table, key-person risk, " +
-        "tech debt/security. Flag the gaps so I ('me') can raise them before the call ends.",
-    },
-    deception, // deception / manipulation
-    inconsistency, // self-contradiction
-    topicShift, // topic shift / focus dilution
-  ];
-
   return [
-    { id: "tpl-general", name: t("tpl.evalSet.tpl-general.name"), builtin: true, evals: core },
-    { id: "tpl-principled", name: t("tpl.evalSet.tpl-principled.name"), builtin: true, evals: principled },
-    { id: "tpl-interview", name: t("tpl.evalSet.tpl-interview.name"), builtin: true, evals: interviewDefs },
-    { id: "tpl-salary", name: t("tpl.evalSet.tpl-salary.name"), builtin: true, evals: salaryDefs },
+    {
+      id: "tpl-internal",
+      name: t("tpl.evalSet.tpl-internal.name"),
+      builtin: true,
+      evals: internalDefs(t, unanswered, checklist),
+    },
     { id: "tpl-sales", name: t("tpl.evalSet.tpl-sales.name"), builtin: true, evals: salesDefs },
-    { id: "tpl-negotiation", name: t("tpl.evalSet.tpl-negotiation.name"), builtin: true, evals: dealDefs },
-    { id: "tpl-diligence", name: t("tpl.evalSet.tpl-diligence.name"), builtin: true, evals: diligenceDefs },
+    { id: "tpl-pricing", name: t("tpl.evalSet.tpl-pricing.name"), builtin: true, evals: pricingDefs },
+    {
+      id: "tpl-rivalry",
+      name: t("tpl.evalSet.tpl-rivalry.name"),
+      builtin: true,
+      evals: rivalryDefs(t, { deception, inconsistency, batna, pushback, topicShift }),
+    },
   ];
+}
+
+/**
+ * The evaluation set a fresh install starts with: the internal-meeting watchers,
+ * matching the decision lens that an unclassified recording falls back to.
+ */
+export function defaultEvalDefs(t: T): EvalDef[] {
+  const tpl = buildPresetEvalTemplates(t).find((x) => x.id === "tpl-internal");
+  return (tpl?.evals ?? []).map((e) => ({ ...e }));
 }
 
 /**

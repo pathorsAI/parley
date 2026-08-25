@@ -176,13 +176,14 @@ export function AnalysisTimeline({
   // of the timeline (see FindingHoverCard), so it needs viewport coordinates.
   const [hovered, setHovered] = useState<HoveredDot | null>(null);
 
-  const { them, me } = useMemo(
-    () => ({
-      them: findings.filter((e) => e.side === "them"),
-      me: findings.filter((e) => e.side === "me"),
-    }),
-    [findings]
-  );
+  // Two lanes only when the findings HAVE sides. A working-meeting record has
+  // no opposing party, so its findings carry no side at all — laning them would
+  // mean inventing a "them" for a room where everyone was on the same side.
+  const { sided, them, me } = useMemo(() => {
+    const them = findings.filter((e) => e.side === "them");
+    const me = findings.filter((e) => e.side === "me");
+    return { sided: them.length + me.length === findings.length && findings.length > 0, them, me };
+  }, [findings]);
 
   return (
     <div className="shrink-0 border-b px-4 py-2">
@@ -248,6 +249,23 @@ export function AnalysisTimeline({
       </div>
 
       <div className="flex flex-col gap-1">
+        {!sided && (
+          <Lane
+            label={t("timeline.laneAll")}
+            events={findings}
+            axisMaxMs={axisMaxMs}
+            playheadMs={playheadMs}
+            selectedId={selectedId}
+            hovered={hovered}
+            setHovered={setHovered}
+            onSelect={onSelect}
+            extraLabel={t("timeline.extra")}
+            tooltipTime={t("timeline.atMoment")}
+            tooltipBelow
+          />
+        )}
+        {sided && (
+          <>
         <Lane
           label={t("timeline.laneThem")}
           events={them}
@@ -275,6 +293,8 @@ export function AnalysisTimeline({
           extraLabel={t("timeline.extra")}
           tooltipTime={t("timeline.atMoment")}
         />
+          </>
+        )}
       </div>
 
       {/* Legend: what the dot colours (severity) and the ring (AI-extra) mean. */}

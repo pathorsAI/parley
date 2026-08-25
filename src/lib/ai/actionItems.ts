@@ -5,14 +5,12 @@ import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext, outputLanguageInstruction } from "./profile";
 import { parseClockMs } from "./timeline";
-import type { ActionItem, Settings, TimelineEvent, TranscriptSegment } from "../types";
+import { actionsIntro } from "../analysis/lens";
+import type { AnalysisLens, ActionItem, Settings, TimelineEvent, TranscriptSegment } from "../types";
 
 // Strict json_schema: every property present, `.nullable()` not `.optional()`.
 const itemSchema = z.object({
   text: z.string().describe("A concrete next step / follow-up ME should take after this meeting."),
-  rationale: z
-    .string()
-    .describe('Why it matters, grounded in what happened — e.g. "you left their pricing question unanswered".'),
   linkedEventId: z
     .string()
     .nullable()
@@ -27,29 +25,35 @@ const itemSchema = z.object({
 // the parse fails. Keep schema key + prompt aligned (cf. timeline's "moments").
 const schema = z.object({ actions: z.array(itemSchema) });
 
-const SYSTEM = `You are writing the POST-MEETING ACTION ITEMS for the user ("ME") after a finished negotiation/interview against the other party ("THEM"). The meeting is OVER.
+function systemFor(lens: AnalysisLens): string {
+  const flavour =
+    lens === "decision"
+      ? `Produce the follow-ups this meeting generated — things someone agreed to do, decisions that need writing up or communicating, and open questions that need chasing before the next session. For each action:
+- text: the concrete next step, phrased as an action. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.`
+      : `Produce a short, concrete list of follow-up ACTIONS ME should take next — things to send, clarify, prepare, decide, or do differently next time. For each action:
+- text: the concrete next step, phrased as an action ME can do. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.`;
 
-You are given the FINDINGS from the retro analysis (notable moments, each with an id) and the full timestamped transcript. Produce a short, concrete list of follow-up ACTIONS ME should take next — things to send, clarify, prepare, decide, or do differently next time. For each action:
-- text: the concrete next step, phrased as an action ME can do.
-- rationale: one sentence on why, grounded in what happened.
+  return `${actionsIntro(lens)}
+
+You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. ${flavour}
 - linkedEventId: the finding id it derives from when it maps to one, else null.
 - time: the [m:ss] it relates to (copy a real transcript timestamp), else null.
 
 Be selective — surface the actions that genuinely matter (typically 3-7), not busywork. Ground everything in what was actually said.`;
+}
 
 /** A (possibly half-streamed) raw action item — every field may be absent. */
-type RawItem = { text?: string | null; rationale?: string | null; linkedEventId?: string | null; time?: string | null };
+type RawItem = { text?: string | null; linkedEventId?: string | null; time?: string | null };
 
 /** Resolve ONE raw item → an ActionItem, or null if it isn't ready yet. `id` is
  *  caller-supplied so it's stable across partial updates. */
 function mapActionItem(it: RawItem, id: string, byId: Map<string, TimelineEvent>): ActionItem | null {
-  if (!it.text || !it.rationale) return null; // still streaming → don't show a blank row
+  if (!it.text) return null; // still streaming → don't show a blank row
   const linked = it.linkedEventId && byId.has(it.linkedEventId) ? byId.get(it.linkedEventId)! : null;
   const atMs = linked ? linked.atMs : parseClockMs(it.time ?? undefined);
   return {
     id,
     text: it.text,
-    rationale: it.rationale,
     done: false,
     linkedEventId: linked ? linked.id : null,
     atMs: atMs ?? null,
@@ -68,11 +72,13 @@ export async function generateActionItems(opts: {
   segments: TranscriptSegment[];
   findings: TimelineEvent[];
   meetingContext?: string;
+  /** How to frame the follow-ups. Defaults to plain meeting notes. */
+  lens?: AnalysisLens;
   names?: Record<string, string>;
   /** Called with the cumulative items as they stream in. */
   onPartial?: (items: ActionItem[]) => void;
 }): Promise<ActionItem[]> {
-  const { settings, segments, findings, meetingContext, names, onPartial } = opts;
+  const { settings, segments, findings, meetingContext, names, lens = "decision", onPartial } = opts;
   const transcript = transcriptWithTimestamps(segments, names);
   if (!transcript.trim()) return [];
 
@@ -80,7 +86,9 @@ export async function generateActionItems(opts: {
     profileContext(settings) +
     (meetingContext?.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "");
   const findingsList = findings.length
-    ? findings.map((f) => `### id: ${f.id}\n[${f.side}] ${f.title}: ${f.detail}`).join("\n\n")
+    ? findings
+        .map((f) => `### id: ${f.id}\n[${f.side ?? f.category ?? "note"}] ${f.title}: ${f.detail}`)
+        .join("\n\n")
     : "(no findings)";
 
   const byId = new Map(findings.map((f) => [f.id, f]));
@@ -102,7 +110,7 @@ export async function generateActionItems(opts: {
     settings,
     workload: "deep",
     schema,
-    system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
+    system: systemFor(lens) + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: `${ctx}Findings:\n${findingsList}\n\nFull transcript:\n${transcript}`,
     onPartial: (p) => {
       if (!onPartial) return;

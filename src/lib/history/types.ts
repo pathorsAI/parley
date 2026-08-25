@@ -8,6 +8,7 @@
 import type {
   ActionItem,
   DeliveryAssessment,
+  MeetingKind,
   TimelineEvent,
   TranscriptSegment,
 } from "../types";
@@ -59,6 +60,11 @@ export interface HistoryEntry {
   /** Which personal folder this entry lives in; null/absent = the personal root
    *  (個人). A folderId not in the live personal folder list renders at the root. */
   folderId?: string | null;
+  /** What kind of meeting this was — detected on the first analysis pass, or set
+   *  by hand from the report page. Picks the analysis lens, so it is saved with
+   *  the outputs it shaped. Absent on entries predating the field (and on ones
+   *  whose detection failed) → read as the decision lens. */
+  meetingKind?: MeetingKind | null;
 }
 
 /** The card shown in the history grid — small, so listing stays cheap. */

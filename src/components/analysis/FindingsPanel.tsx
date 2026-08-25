@@ -1,6 +1,5 @@
 import { Loader2, Sparkles } from "lucide-react";
 import { useStore } from "../../lib/store";
-import { findActiveTemplate } from "../../lib/evaluations/presets";
 import { runAnalysis } from "../../lib/analysis/engine";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { PROVIDER_BY_ID } from "../../lib/ai/providers";
@@ -12,18 +11,12 @@ import { DeliveryPanel } from "../delivery/DeliveryPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { MeetingKindPicker } from "../MeetingKindPicker";
 
 /**
  * The right-hand analysis pane, shared by both modes. Renders the findings list
- * (each row drills into "how it should have been done") and the eval-template
- * selector. In LIVE it also surfaces the primary "Analyze" action (+ an optional
+ * (each row drills into "how it should have been done") and the meeting-kind
+ * picker that decides how they are read. In LIVE it also surfaces the primary "Analyze" action (+ an optional
  * auto-interval) and the ambient delivery card; in REPLAY the analysis runs once
  * on load, so it just shows status — the debrief and delivery live on the study
  * report page now, not here.
@@ -39,44 +32,19 @@ export function FindingsPanel({
   const findings = useStore((s) => s.findings);
   const selectedId = useStore((s) => s.selectedFindingId);
   const analysisStatus = useStore((s) => s.analysisStatus);
-  const templates = useStore((s) => s.settings.evalTemplates);
-  const evaluations = useStore((s) => s.settings.evaluations);
   const provider = useStore((s) => s.settings.llmProviders.realtime);
   const keyMissing = useStore((s) => !hasProviderKey(s.settings, "realtime"));
-  const updateSettings = useStore((s) => s.updateSettings);
   const autoAnalyze = useStore((s) => s.autoAnalyze);
   const autoAnalyzeSec = useStore((s) => s.autoAnalyzeSec);
   const setAutoAnalyze = useStore((s) => s.setAutoAnalyze);
   const setAutoAnalyzeSec = useStore((s) => s.setAutoAnalyzeSec);
   const running = analysisStatus === "running";
 
-  function applyTemplate(id: string) {
-    const tpl = templates.find((x) => x.id === id);
-    if (!tpl) return;
-    // Apply the set; the picker's value re-derives from it. Findings don't re-run
-    // here — the user re-analyzes from the player's Analyze menu (stale banner).
-    updateSettings({ evaluations: tpl.evals.map((e) => ({ ...e })) });
-  }
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
         <span className="text-xs font-medium">{t("timeline.title")}</span>
-        <Select
-          value={findActiveTemplate(templates, evaluations)?.id ?? ""}
-          onValueChange={applyTemplate}
-        >
-          <SelectTrigger size="sm" className="ml-auto h-7 w-[150px] text-[11px]">
-            <SelectValue placeholder={t("evaluations.applyTemplate")} />
-          </SelectTrigger>
-          <SelectContent>
-            {templates.map((tpl) => (
-              <SelectItem key={tpl.id} value={tpl.id}>
-                {tpl.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <MeetingKindPicker className="ml-auto h-7 w-[150px]" />
       </div>
 
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">

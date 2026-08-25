@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { evalsFromDefs } from "./presets";
+import { buildPresetEvalTemplates, defaultEvalDefs, evalsFromDefs, findActiveTemplate } from "./presets";
+import { EVAL_TEMPLATE_OF, MEETING_KINDS } from "../analysis/lens";
 import type { EvalDef, Evaluation } from "../types";
 
 // evalsFromDefs is the domain transform that turns persisted definitions into
@@ -52,5 +53,35 @@ describe("evalsFromDefs", () => {
     const prev: Evaluation[] = [{ ...def("gone"), status: "ok" }];
     const out = evalsFromDefs([def("a")], prev);
     expect(out.map((e) => e.id)).toEqual(["a"]);
+  });
+});
+
+// The built-in library is now one template per MeetingKind: picking a kind must
+// always find watchers to switch to, or applyKindTemplate silently no-ops and
+// the lens and the watcher list drift apart.
+describe("built-in templates", () => {
+  const t = ((key: string) => key) as Parameters<typeof buildPresetEvalTemplates>[0];
+
+  it("ships exactly one template per meeting kind", () => {
+    const ids = buildPresetEvalTemplates(t).map((tpl) => tpl.id);
+    expect(ids).toHaveLength(MEETING_KINDS.length);
+    for (const kind of MEETING_KINDS) expect(ids).toContain(EVAL_TEMPLATE_OF[kind]);
+  });
+
+  it("gives every built-in evaluation a unique id and a real prompt", () => {
+    for (const tpl of buildPresetEvalTemplates(t)) {
+      const ids = tpl.evals.map((e) => e.id);
+      expect(new Set(ids).size, `${tpl.id} has duplicate eval ids`).toBe(ids.length);
+      for (const e of tpl.evals) expect(e.prompt.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  // A fresh install must look like a recognised template, otherwise the very
+  // first auto-detected kind reads the untouched default as "hand-edited" and
+  // refuses to switch the watchers.
+  it("starts on the internal template, verbatim", () => {
+    const templates = buildPresetEvalTemplates(t);
+    const active = findActiveTemplate(templates, defaultEvalDefs(t));
+    expect(active?.id).toBe(EVAL_TEMPLATE_OF.internal);
   });
 });

@@ -72,7 +72,6 @@ export function ActionItemsPanel({
                   <span className={cn("block text-xs font-medium", a.done && "text-muted-foreground line-through")}>
                     {a.text}
                   </span>
-                  <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{a.rationale}</span>
                   {atMs !== null && (
                     <button
                       type="button"

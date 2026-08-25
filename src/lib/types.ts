@@ -116,16 +116,36 @@ export interface FindingSolutionEntry {
 }
 
 /**
- * One time-anchored finding from the whole-recording retro analysis, rendered as
- * a marker on the replay timeline. Two lanes (`side`): "them" = a point/argument/
- * pressure the other party raised; "me" = a problem/mistake/missed move by ME.
+ * What kind of meeting a recording WAS — auto-detected from the transcript,
+ * overridable per recording. Picks both the analysis lens (what the outputs look
+ * like) and the evaluation template (what gets watched for). See analysis/lens.ts.
+ */
+export type MeetingKind = "internal" | "sales" | "pricing" | "rivalry";
+
+/** The SHAPE of an analysis: which finding fields and brief sections apply. */
+export type AnalysisLens = "decision" | "opportunity" | "adversarial";
+
+/** A decision-lens finding's bucket: settled / still open / merely established. */
+export type FindingCategory = "decision" | "open" | "fact";
+
+/**
+ * One time-anchored finding from the whole-recording analysis, rendered as a
+ * marker on the replay timeline.
+ *
+ * Which fields are populated depends on the lens (see analysis/lens.ts):
+ * adversarial and opportunity findings carry a me/them `side` (two lanes);
+ * decision findings carry a `category` and NO side, because a working meeting
+ * has no opposing party to lane them against.
  */
 export interface TimelineEvent {
   id: string;
   /** Moment on the recording timeline (ms). */
   atMs: number;
-  /** My problem vs their move → which lane the marker sits in. */
-  side: "me" | "them";
+  /** My problem vs their move → which lane the marker sits in. Absent under the
+   *  decision lens, where there is only one lane. */
+  side?: "me" | "them";
+  /** 決議 / 未解 / 事實 — decision lens only. */
+  category?: FindingCategory;
   severity: "info" | "warn" | "critical";
   /** From a configured evaluation, or an AI-caught "extra" moment. */
   source: "eval" | "extra";
@@ -136,7 +156,7 @@ export interface TimelineEvent {
   title: string;
   /** One or two sentences explaining the moment. */
   detail: string;
-  /** REPLAY/post-eval: true when ME meaningfully mitigated / repaired this
+  /** ADVERSARIAL lens only: true when ME meaningfully mitigated / repaired this
    *  moment elsewhere in the conversation. A mere reply or weak concession is not
    *  enough. Rendered GREEN ("resolved") instead of the severity colour, and its
    *  {@link resolution} is fed to the reply coach as labeled hindsight. */
@@ -162,14 +182,13 @@ export interface TodoItem {
  * A post-meeting action item generated from the replay analysis — a concrete
  * next step / follow-up, optionally linked back to the finding that motivated it.
  * Deliberately distinct from TodoItem (a pre-meeting agenda checkbox): action
- * items are generated, carry a rationale, and link to a moment on the recording.
+ * items are generated and link to a moment on the recording.
  */
 export interface ActionItem {
   id: string;
   /** The concrete next step / follow-up. */
   text: string;
   /** Why it matters — e.g. "because at 12:30 you conceded the price floor". */
-  rationale: string;
   done: boolean;
   /** The TimelineEvent it derives from, or null for a general item. */
   linkedEventId: string | null;

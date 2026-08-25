@@ -2,7 +2,9 @@ import { useEffect, useRef } from "react";
 import { useStore, isTrimmed, hasSpokenSegment, meetingBriefText } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { analyzeTimeline } from "../ai/timeline";
-import { evalSignature } from "../evaluations/presets";
+import { detectMeetingKind } from "../ai/meetingKind";
+import { analysisSignature, lensOf } from "./lens";
+import { applyKindTemplate } from "./kindTemplate";
 import { readJsonCache, writeJsonCache, clearCacheByPrefix } from "../cache";
 import { clearStudyCache } from "../history/studyCache";
 import { makeRunGuard } from "./runGuard";
@@ -12,6 +14,7 @@ import type {
   DeliveryAssessment,
   EvalDef,
   LlmWorkload,
+  MeetingKind,
   Settings,
   TimelineEvent,
   ToneVerdict,
@@ -19,7 +22,7 @@ import type {
 } from "../types";
 
 /** Bump when the analysis prompt/output shape changes, to invalidate caches. */
-const ANALYSIS_CACHE_VERSION = "7";
+const ANALYSIS_CACHE_VERSION = "8";
 
 /** Deterministic 32-bit FNV-1a hash → hex; good enough for a content cache key. */
 function fnv1a(s: string): string {
@@ -42,7 +45,8 @@ function analysisCacheKey(
   segments: TranscriptSegment[],
   evals: EvalDef[],
   meetingContext: string,
-  names: Record<string, string>
+  names: Record<string, string>,
+  kind: MeetingKind | null
 ): string {
   // Replay analyses ride the deep lane (see runAnalysis) — key the cache on it.
   const deepProvider = settings.llmProviders.deep;
@@ -51,11 +55,11 @@ function analysisCacheKey(
     .filter((s) => s.isFinal && s.text.trim())
     .map((s) => `${s.id}|${s.speaker}|${s.startMs}|${s.endMs}|${s.text}`)
     .join("\n");
-  const evalSig = evalSignature(evals);
+  const evalSig = analysisSignature(kind, evals);
   // The self-profile feeds the prompt (who is "us" vs "them"), so a change
   // to it must invalidate the cache and re-analyze.
   const profile = `${settings.userName}|${settings.userRole}|${settings.userCompany}|${settings.userBackground}`;
-  const raw = `${ANALYSIS_CACHE_VERSION} ${model} ${profile} ${meetingContext} ${JSON.stringify(names)} ${evalSig} ${segSig}`;
+  const raw = `${ANALYSIS_CACHE_VERSION} ${model} ${kind ?? "?"} ${profile} ${meetingContext} ${JSON.stringify(names)} ${evalSig} ${segSig}`;
   return `parley:analysis:${fnv1a(raw)}`;
 }
 
@@ -153,6 +157,36 @@ export async function runAnalysis(opts?: {
   // so it both feeds the prompt AND keys the cache (editing setup → re-analysis).
   const meetingContext = meetingBriefText(state);
 
+  // Take the lock BEFORE the first await. The status IS the reentrancy guard
+  // and the pipeline scheduler dispatches every idle stage on each store tick —
+  // the classification below both awaits AND writes to the store, so leaving the
+  // status idle across it would dispatch a second (and third) analysis pass off
+  // its own progress.
+  const alive = analysisGuard.begin();
+  state.setAnalysisError(null);
+  state.setAnalysisStatus("running");
+
+  // WHICH KIND of meeting this is decides the analysis LENS — the finding
+  // fields asked for and the brief's sections. Classify once per recording, on
+  // the cheap lane, before the deep pass it shapes; a hand-set kind (the report
+  // page's picker) is already non-null and is never overwritten. A failed
+  // detection stays null and reads as the decision lens, which is the reading
+  // that is wrong in the least damaging way.
+  let kind = state.meetingKind;
+  if (kind === null && mode === "replay" && hasProviderKey(settings, "realtime")) {
+    kind = await detectMeetingKind({ settings, segments, meetingContext, names: speakerNames });
+    if (!alive()) return;
+    if (kind) {
+      useStore.getState().setMeetingKind(kind);
+      // Watchers follow the kind — but only when the user hasn't hand-picked a
+      // set. A custom eval list is a deliberate choice; do not stomp it.
+      applyKindTemplate(kind);
+    }
+  }
+  const lens = lensOf(kind);
+  // applyKindTemplate may have swapped the eval set; re-read it.
+  const evals = useStore.getState().settings.evaluations;
+
   // REPLAY: reuse a cached analysis for the exact same recording + template +
   // speaker names + model — re-analyzing the same upload is then instant + free.
   // (LIVE re-runs over a growing transcript, so it isn't cached.) `force` (the
@@ -160,24 +194,23 @@ export async function runAnalysis(opts?: {
   // READ so the model runs fresh — the fresh result still overwrites the cache.
   const cacheKey =
     mode === "replay"
-      ? analysisCacheKey(settings, segments, settings.evaluations, meetingContext, speakerNames)
+      ? analysisCacheKey(settings, segments, evals, meetingContext, speakerNames, kind)
       : null;
   // Remember which eval set these findings reflect, so the UI can flag them as
   // stale when the template / evals change before the next re-analysis.
-  const evalSig = evalSignature(settings.evaluations);
+  const evalSig = analysisSignature(kind, evals);
+  // A cache hit lands the findings and flips the status to "done" itself.
   if (cacheKey && !opts?.force && applyCachedAnalysis(cacheKey, evalSig)) return;
 
-  const alive = analysisGuard.begin();
-  state.setAnalysisError(null);
-  state.setAnalysisStatus("running");
   try {
     const events = await analyzeTimeline({
       settings,
       segments,
-      evals: settings.evaluations,
+      evals,
       meetingContext,
       names: speakerNames,
       mode,
+      lens,
       // Stream findings into the store as they're generated so dots + rows appear
       // progressively instead of all at once when the whole pass finishes.
       onPartial: (partial) => {

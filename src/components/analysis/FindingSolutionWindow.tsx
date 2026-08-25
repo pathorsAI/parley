@@ -35,7 +35,7 @@ export function FindingSolutionWindow() {
             <span
               className={cn(
                 "truncate text-sm font-semibold",
-                finding.side === "me" ? "text-sky-400" : "text-amber-400"
+                finding.side === "me" ? "text-sky-400" : finding.side === "them" ? "text-amber-400" : "text-foreground"
               )}
               title={finding.title}
             >

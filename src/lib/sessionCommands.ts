@@ -121,7 +121,13 @@ function normalizeFinding(raw: unknown): TimelineEvent | null {
   return {
     id: idOrNew(o.id),
     atMs: asNumber(o.atMs, 0),
-    side: o.side === "me" ? "me" : "them",
+    // Absent side is MEANINGFUL, not a default: a decision-lens finding has no
+    // lane. Only "me"/"them" are honoured; anything else leaves it unset.
+    side: o.side === "me" || o.side === "them" ? o.side : undefined,
+    category:
+      o.category === "decision" || o.category === "open" || o.category === "fact"
+        ? o.category
+        : undefined,
     severity: normalizeSeverity(o.severity),
     source: o.source === "eval" ? "eval" : "extra",
     evalIds: asStringArray(o.evalIds),
@@ -151,7 +157,6 @@ function normalizeActionItem(raw: unknown): ActionItem | null {
   return {
     id: idOrNew(o.id),
     text,
-    rationale: asString(o.rationale, ""),
     done: o.done === true,
     linkedEventId: asNonEmptyString(o.linkedEventId) ?? null,
     atMs: Number.isFinite(o.atMs) ? Number(o.atMs) : null,

@@ -156,7 +156,9 @@ export async function streamObjectResilient<OBJECT>(opts: {
   schema: z.ZodType<OBJECT>;
   system: string;
   prompt: string;
-  onPartial: (partial: unknown) => void;
+  /** Receives the deeply-partial object as it fills in. Omit for a one-shot
+   *  answer with nothing to render mid-stream (e.g. a classification). */
+  onPartial?: (partial: unknown) => void;
 }) {
   const { settings, workload, schema, system, prompt, onPartial } = opts;
   const provider = settings.llmProviders[workload];
@@ -174,12 +176,12 @@ export async function streamObjectResilient<OBJECT>(opts: {
       prompt,
       maxOutputTokens,
     });
-    for await (const partial of result.partialObjectStream) onPartial(partial);
+    for await (const partial of result.partialObjectStream) onPartial?.(partial);
     return { object: await result.object, usage: await result.usage };
   } catch (err) {
     logAiError("ai.streamObject (falling back to non-streamed)", tag, err);
     const res = await generateObjectResilient({ settings, workload, schema, system, prompt });
-    onPartial(res.object);
+    onPartial?.(res.object);
     return { object: res.object, usage: res.usage };
   }
 }
