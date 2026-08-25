@@ -1829,9 +1829,11 @@ fn summary_field_hits(meta: &Value, query: &str, qlen: usize) -> Vec<Value> {
 /// Each item's parts are joined so a query spanning title and detail still hits.
 fn list_field_hits(meta: &Value, query: &str, qlen: usize) -> Vec<Value> {
     let mut hits: Vec<Value> = Vec::new();
+    // Slices, not fixed-size arrays: the two entries no longer search the same
+    // number of fields (an action item is just its text now).
     for (field, key, parts) in [
-        ("finding", "findings", ["title", "detail"]),
-        ("actionItem", "actionItems", ["text"]),
+        ("finding", "findings", &["title", "detail"][..]),
+        ("actionItem", "actionItems", &["text"][..]),
     ] {
         for item in meta
             .get(key)
