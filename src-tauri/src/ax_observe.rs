@@ -45,6 +45,7 @@ mod imp {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use core_foundation::base::TCFType;
+    use core_foundation::boolean::CFBoolean;
     use core_foundation::string::CFString;
     use serde_json::json;
     use tauri::{AppHandle, Emitter};
@@ -81,6 +82,12 @@ mod imp {
         ) -> i32;
         fn AXUIElementGetTypeID() -> usize;
         fn AXUIElementGetPid(element: AXUIElementRef, pid: *mut i32) -> i32;
+        fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
+        fn AXUIElementSetAttributeValue(
+            element: AXUIElementRef,
+            attribute: *const c_void,
+            value: CFTypeRef,
+        ) -> i32;
     }
 
     #[link(name = "CoreFoundation", kind = "framework")]
@@ -95,6 +102,17 @@ mod imp {
     /// pasteboard UTI, and it keeps the extern block to the functions.
     const AX_FOCUSED_UI_ELEMENT: &str = "AXFocusedUIElement";
     const AX_VALUE: &str = "AXValue";
+    /// Electron's documented switch for its lazily-enabled accessibility tree.
+    /// Chromium ships with the tree OFF until an assistive client shows up, and
+    /// "no focused element" is what that looks like from outside. Setting this
+    /// on the APP element asks it to turn the tree on; non-Electron apps answer
+    /// with an AX error we ignore.
+    const AX_MANUAL_ACCESSIBILITY: &str = "AXManualAccessibility";
+
+    /// How often and how long to retry arming after the nudge — Chromium needs
+    /// a beat to build the tree once asked.
+    const ARM_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+    const ARM_RETRY_TRIES: u32 = 12;
 
     /// Bumped by every call; a running observation compares against it and exits
     /// the moment it is no longer the newest. That makes back-to-back dictations
@@ -184,6 +202,54 @@ mod imp {
         Some(pid)
     }
 
+    /// The target app's own AX element (owned).
+    unsafe fn app_element(pid: i32) -> Option<OwnedElement> {
+        let element = AXUIElementCreateApplication(pid);
+        if element.is_null() {
+            return None;
+        }
+        Some(OwnedElement(element))
+    }
+
+    /// The element the target APP says has keyboard focus. App-scoped rather
+    /// than system-wide, because Chromium apps often answer this while the
+    /// system-wide query comes back empty.
+    unsafe fn copy_app_focused_element(pid: i32) -> Option<OwnedElement> {
+        let app = app_element(pid)?;
+        let focused = copy_attribute(app.0, AX_FOCUSED_UI_ELEMENT)?;
+        if CFGetTypeID(focused) != AXUIElementGetTypeID() {
+            CFRelease(focused);
+            return None;
+        }
+        Some(OwnedElement(focused))
+    }
+
+    /// Flip Electron's manual-accessibility switch on the target app.
+    /// Best-effort; returns whether the app accepted it, so the observation
+    /// can switch it back off when it ends.
+    unsafe fn set_manual_accessibility(pid: i32, on: bool) -> bool {
+        let Some(app) = app_element(pid) else {
+            return false;
+        };
+        let name = CFString::new(AX_MANUAL_ACCESSIBILITY);
+        let value = CFBoolean::from(on);
+        AXUIElementSetAttributeValue(
+            app.0,
+            name.as_concrete_TypeRef() as *const c_void,
+            value.as_CFTypeRef() as CFTypeRef,
+        ) == 0
+    }
+
+    /// Focused element + readable value for the target app: system-wide query
+    /// first (gated to the target pid — the user may have switched apps), then
+    /// the app-scoped one.
+    unsafe fn snapshot(pid: i32) -> Option<(OwnedElement, String)> {
+        let sys = copy_focused_element().filter(|e| element_pid(e.0) == Some(pid));
+        let element = sys.or_else(|| copy_app_focused_element(pid))?;
+        let baseline = copy_value_string(element.0)?;
+        Some((element, baseline))
+    }
+
     pub fn observe(app: AppHandle, inserted_text: String) -> bool {
         // Auto-paste and this share the one permission: without Accessibility
         // there is no AX tree to read, so there is nothing to observe.
@@ -196,36 +262,71 @@ mod imp {
         // watcher is now stale and should stop rather than report on it.
         let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
 
-        let (element, target_pid, baseline) = unsafe {
-            let Some(element) = copy_focused_element() else {
-                log::info!("ax_observe: not armed (no focused element)");
-                return false;
-            };
-            let Some(pid) = element_pid(element.0) else {
-                log::info!("ax_observe: not armed (focused element has no pid)");
-                return false;
-            };
-            let Some(baseline) = copy_value_string(element.0) else {
-                log::info!("ax_observe: not armed (field value not a readable string)");
-                return false;
-            };
-            (element, pid, baseline)
+        // The app we pasted into, from NSWorkspace — deliberately NOT derived
+        // from the focused AX element, which is exactly the thing that's absent
+        // when an Electron app's tree is still off.
+        let Some(target_pid) = crate::voice_typing::frontmost_app_pid() else {
+            log::info!("ax_observe: not armed (no frontmost app)");
+            return false;
         };
 
+        // Quick path: the tree is already on (native apps, previously-nudged
+        // Electron apps).
+        if let Some((element, baseline)) = unsafe { snapshot(target_pid) } {
+            log::info!(
+                "ax_observe: armed (baseline {} chars, target pid {})",
+                baseline.chars().count(),
+                target_pid
+            );
+            std::thread::spawn(move || {
+                poll(
+                    app,
+                    element,
+                    target_pid,
+                    baseline,
+                    inserted_text,
+                    generation,
+                    false,
+                )
+            });
+            return true;
+        }
+
+        // No focused element: almost always Chromium's lazily-enabled tree.
+        // Nudge it on and retry off-thread; the paste just happened, so a few
+        // hundred ms of arming delay loses nothing.
         log::info!(
-            "ax_observe: armed (baseline {} chars, target pid {})",
-            baseline.chars().count(),
-            target_pid
+            "ax_observe: no focused element yet — nudging accessibility on pid {target_pid}"
         );
         std::thread::spawn(move || {
-            poll(
-                app,
-                element,
-                target_pid,
-                baseline,
-                inserted_text,
-                generation,
-            )
+            let nudged = unsafe { set_manual_accessibility(target_pid, true) };
+            for _ in 0..ARM_RETRY_TRIES {
+                std::thread::sleep(ARM_RETRY_INTERVAL);
+                if GENERATION.load(Ordering::SeqCst) != generation {
+                    return; // a newer paste owns arming (and the nudge) now
+                }
+                if let Some((element, baseline)) = unsafe { snapshot(target_pid) } {
+                    log::info!(
+                        "ax_observe: armed after nudge (baseline {} chars, target pid {})",
+                        baseline.chars().count(),
+                        target_pid
+                    );
+                    poll(
+                        app,
+                        element,
+                        target_pid,
+                        baseline,
+                        inserted_text,
+                        generation,
+                        nudged,
+                    );
+                    return;
+                }
+            }
+            log::info!("ax_observe: not armed (no focused element after nudge)");
+            if nudged && GENERATION.load(Ordering::SeqCst) == generation {
+                unsafe { set_manual_accessibility(target_pid, false) };
+            }
         });
         true
     }
@@ -248,43 +349,71 @@ mod imp {
         })
     }
 
-    /// One tick's reading of the watched field. `Ok(None)` is a tolerable miss
-    /// (transient AX failure, focus briefly elsewhere — skip this tick);
-    /// `Err(reason)` ends the observation (superseded by a newer dictation).
-    /// Persistent misses end it too, via the caller's counter.
-    fn read_tick(
-        element: &OwnedElement,
-        target_pid: i32,
-        generation: u64,
-    ) -> Result<Option<String>, &'static str> {
-        // A newer paste owns the field now — stop without a word.
-        if GENERATION.load(Ordering::SeqCst) != generation {
-            return Err("superseded by a newer dictation");
-        }
-        // Reads happen only while focus is inside the app we pasted into
-        // (compared by pid — see element_pid). A mismatch is a MISS, not an
-        // instant stop: Electron apps briefly vend focus under helper pids,
-        // and users peek at other windows mid-correction. A mismatch that
-        // persists past the miss budget ends the observation.
-        let focused = unsafe { copy_focused_element() };
-        match focused.as_ref().and_then(|e| unsafe { element_pid(e.0) }) {
-            Some(pid) if pid == target_pid => {}
-            _ => return Ok(None),
-        }
-        // Prefer the element we armed on, but fall back to the currently
-        // focused one (same app, checked above): Chromium-family apps rebuild
-        // the accessibility node when a contenteditable re-renders, which is
-        // exactly what the user's delete-and-retype does — the armed ref goes
-        // stale at the very moment the correction we're waiting for happens.
-        let value = unsafe { copy_value_string(element.0) }.or_else(|| {
-            focused
-                .as_ref()
-                .and_then(|e| unsafe { copy_value_string(e.0) })
-        });
-        Ok(value)
+    /// What one polling tick saw.
+    enum Tick {
+        /// A readable value for the watched field.
+        Value(String),
+        /// Nothing readable this tick — transient AX failure or a stale ref.
+        NoValue,
+        /// The system-wide focus resolves to a DIFFERENT app. (Resolving to
+        /// nothing is normal for Chromium apps and is NOT a departure signal.)
+        FocusAway,
+        /// A newer dictation owns the field now.
+        Superseded,
     }
 
+    fn read_tick(element: &OwnedElement, target_pid: i32, generation: u64) -> Tick {
+        if GENERATION.load(Ordering::SeqCst) != generation {
+            return Tick::Superseded;
+        }
+        if let Some(pid) = unsafe { copy_focused_element().and_then(|e| element_pid(e.0)) } {
+            if pid != target_pid {
+                return Tick::FocusAway;
+            }
+        }
+        // Prefer the element we armed on, then the app-scoped focused element:
+        // Chromium rebuilds the accessibility node when a contenteditable
+        // re-renders — exactly what delete-and-retype does — so the armed ref
+        // can go stale at the very moment the correction happens. Both reads
+        // are scoped to the target app; nothing else is ever touched.
+        let value = unsafe {
+            copy_value_string(element.0).or_else(|| {
+                copy_app_focused_element(target_pid).and_then(|e| copy_value_string(e.0))
+            })
+        };
+        match value {
+            Some(v) => Tick::Value(v),
+            None => Tick::NoValue,
+        }
+    }
+
+    /// Runs the tick loop, then — if this observation switched an Electron
+    /// accessibility tree on — politely switches it back off, unless a newer
+    /// observation has taken over in the meantime (it may still need the tree).
+    #[allow(clippy::too_many_arguments)]
     fn poll(
+        app: AppHandle,
+        element: OwnedElement,
+        target_pid: i32,
+        baseline: String,
+        inserted_text: String,
+        generation: u64,
+        nudged: bool,
+    ) {
+        poll_loop(
+            app,
+            element,
+            target_pid,
+            baseline,
+            inserted_text,
+            generation,
+        );
+        if nudged && GENERATION.load(Ordering::SeqCst) == generation {
+            unsafe { set_manual_accessibility(target_pid, false) };
+        }
+    }
+
+    fn poll_loop(
         app: AppHandle,
         element: OwnedElement,
         target_pid: i32,
@@ -297,28 +426,41 @@ mod imp {
         // consecutive ticks it has held.
         let mut candidate: Option<String> = None;
         let mut stable_ticks: u32 = 0;
+        // Consecutive unreadable ticks / consecutive ticks focused on another
+        // app. Counted separately: a glance at another window shouldn't spend
+        // the budget that tolerates a busy target app, and vice versa.
         let mut misses: u32 = 0;
+        let mut away: u32 = 0;
 
         for _ in 0..ticks {
             std::thread::sleep(POLL_INTERVAL);
             let current = match read_tick(&element, target_pid, generation) {
-                Err(reason) => {
-                    log::info!("ax_observe: stopped ({reason})");
+                Tick::Superseded => {
+                    log::info!("ax_observe: stopped (superseded by a newer dictation)");
                     return;
                 }
-                Ok(None) => {
+                Tick::FocusAway => {
+                    away += 1;
+                    if away > MAX_MISSES {
+                        log::info!("ax_observe: stopped (focus left the app)");
+                        return;
+                    }
+                    continue;
+                }
+                Tick::NoValue => {
                     misses += 1;
                     if misses > MAX_MISSES {
                         log::info!(
-                            "ax_observe: stopped (no readable value for {misses} ticks — focus moved away or the field went stale)"
+                            "ax_observe: stopped (no readable value for {misses} ticks — the field went stale or away)"
                         );
                         return;
                     }
                     continue;
                 }
-                Ok(Some(current)) => current,
+                Tick::Value(current) => current,
             };
             misses = 0;
+            away = 0;
 
             if current == baseline {
                 // Back to what we pasted: whatever edit was in flight was undone.

@@ -372,6 +372,19 @@ pub(crate) fn is_accessibility_trusted() -> bool {
     imp::accessibility_trusted(false)
 }
 
+/// Pid of the frontmost app (the one voice typing pastes into), used by
+/// ax_observe to scope its queries to that app. NSWorkspace, not AX — works
+/// even when the target's accessibility tree is still switched off.
+#[cfg(target_os = "macos")]
+pub(crate) fn frontmost_app_pid() -> Option<i32> {
+    imp::frontmost_pid()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn frontmost_app_pid() -> Option<i32> {
+    None
+}
+
 /// Show the overlay above ALL apps without activating Parley or stealing focus
 /// (`orderFrontRegardless` + a floating level + all-spaces / full-screen
 /// collection behaviour). Driving visibility natively avoids Tauri's `show()`,
@@ -501,6 +514,23 @@ mod imp {
             // reference — wrapping it under the create rule would over-release.
             let s = CFString::wrap_under_get_rule(bundle_id as _);
             Some(s.to_string())
+        }
+    }
+
+    /// `NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier` —
+    /// same no-permission-needed source as `frontmost_bundle_id`.
+    pub fn frontmost_pid() -> Option<i32> {
+        unsafe {
+            let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+            if workspace.is_null() {
+                return None;
+            }
+            let app: *mut Object = msg_send![workspace, frontmostApplication];
+            if app.is_null() {
+                return None;
+            }
+            let pid: i32 = msg_send![app, processIdentifier];
+            (pid > 0).then_some(pid)
         }
     }
 
