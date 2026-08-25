@@ -127,6 +127,38 @@ async function analysisErrorMessage(err: unknown, provider: string): Promise<str
 }
 
 /**
+ * WHICH KIND of meeting this is decides the analysis LENS — the finding fields
+ * asked for and the brief's sections. Classify once per recording, on the cheap
+ * lane, before the deep pass it shapes.
+ *
+ * A hand-set kind (the report page's picker, the ingest wizard) is already
+ * non-null and is never overwritten. A failed detection stays null and reads as
+ * the decision lens — the reading that is wrong in the least damaging way.
+ *
+ * Only REPLAY classifies: a live meeting is still arriving, and the frame it
+ * would be judged by should not flip mid-conversation.
+ */
+async function resolveMeetingKind(args: {
+  state: StoreState;
+  mode: AnalysisMode;
+  segments: TranscriptSegment[];
+  meetingContext: string;
+}): Promise<MeetingKind | null> {
+  const { state, mode, segments, meetingContext } = args;
+  const { settings, speakerNames, meetingKind } = state;
+  if (meetingKind !== null) return meetingKind;
+  if (mode !== "replay" || !hasProviderKey(settings, "realtime")) return null;
+
+  const kind = await detectMeetingKind({ settings, segments, meetingContext, names: speakerNames });
+  if (!kind) return null;
+  useStore.getState().setMeetingKind(kind);
+  // Watchers follow the kind — but only when the user hasn't hand-picked a set.
+  // A custom eval list is a deliberate choice; do not stomp it on a guess.
+  applyKindTemplate(kind);
+  return kind;
+}
+
+/**
  * Run the unified analysis over the current transcript and write time-anchored
  * findings into the shared store slice. Used by LIVE's "Analyze" button (mode
  * "live", over the transcript so far) and REPLAY's once-on-load (mode "replay",
@@ -166,23 +198,8 @@ export async function runAnalysis(opts?: {
   state.setAnalysisError(null);
   state.setAnalysisStatus("running");
 
-  // WHICH KIND of meeting this is decides the analysis LENS — the finding
-  // fields asked for and the brief's sections. Classify once per recording, on
-  // the cheap lane, before the deep pass it shapes; a hand-set kind (the report
-  // page's picker) is already non-null and is never overwritten. A failed
-  // detection stays null and reads as the decision lens, which is the reading
-  // that is wrong in the least damaging way.
-  let kind = state.meetingKind;
-  if (kind === null && mode === "replay" && hasProviderKey(settings, "realtime")) {
-    kind = await detectMeetingKind({ settings, segments, meetingContext, names: speakerNames });
-    if (!alive()) return;
-    if (kind) {
-      useStore.getState().setMeetingKind(kind);
-      // Watchers follow the kind — but only when the user hasn't hand-picked a
-      // set. A custom eval list is a deliberate choice; do not stomp it.
-      applyKindTemplate(kind);
-    }
-  }
+  const kind = await resolveMeetingKind({ state, mode, segments, meetingContext });
+  if (!alive()) return;
   const lens = lensOf(kind);
   // applyKindTemplate may have swapped the eval set; re-read it.
   const evals = useStore.getState().settings.evaluations;

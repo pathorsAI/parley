@@ -145,19 +145,16 @@ const OPPORTUNITY_INTERPRETATION = `
 - Distinguish a stated problem from a QUANTIFIED one. "Our current process is slow" is a lead, not a pain — flag that it was never sized (cost, hours, risk, a compelling event).
 - Be honest about qualification gaps on MY side: budget, decision process, who actually signs, the competing option, the timeline. An unasked question is a finding.`;
 
+const INTERPRETATION: Record<AnalysisLens, string> = {
+  decision: DECISION_INTERPRETATION,
+  opportunity: OPPORTUNITY_INTERPRETATION,
+  adversarial: ADVERSARIAL_INTERPRETATION,
+};
+
 /** Build the whole system prompt for one lens + mode. */
 function buildSystem(lens: AnalysisLens, mode: "live" | "replay"): string {
-  const interpretation =
-    lens === "decision"
-      ? DECISION_INTERPRETATION
-      : lens === "opportunity"
-        ? OPPORTUNITY_INTERPRETATION
-        : ADVERSARIAL_INTERPRETATION;
-
-  const modeBlock =
-    mode === "live"
-      ? liveModeInstructions(lens)
-      : replayModeInstructions(lens);
+  const interpretation = INTERPRETATION[lens];
+  const modeBlock = mode === "live" ? liveModeInstructions(lens) : replayModeInstructions(lens);
 
   return `${findingsIntro(lens, mode)}
 
