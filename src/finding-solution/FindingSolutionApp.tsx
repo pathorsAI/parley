@@ -8,6 +8,7 @@ import { listenForSettings } from "../lib/settingsSync";
 import { useI18n } from "../i18n";
 import { hasProviderKey } from "../lib/ai/settings";
 import { FindingSolutionView } from "../components/analysis/FindingSolutionView";
+import { findingTitleClass } from "../components/analysis/FindingRow";
 import {
   closeFindingSolution,
   helloFindingSolution,
@@ -137,7 +138,7 @@ export function FindingSolutionApp() {
             <span
               className={cn(
                 "truncate text-sm font-semibold",
-                finding.side === "me" ? "text-sky-400" : finding.side === "them" ? "text-amber-400" : "text-foreground"
+                findingTitleClass(finding)
               )}
               title={finding.title}
             >

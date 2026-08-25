@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { useStore, formatClock } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import { FindingSolutionCard } from "./FindingSolutionCard";
+import { findingTitleClass } from "./FindingRow";
 
 /**
  * Floating "how to reply" window (browser-dev fallback for the standalone OS
@@ -35,7 +36,7 @@ export function FindingSolutionWindow() {
             <span
               className={cn(
                 "truncate text-sm font-semibold",
-                finding.side === "me" ? "text-sky-400" : finding.side === "them" ? "text-amber-400" : "text-foreground"
+                findingTitleClass(finding)
               )}
               title={finding.title}
             >
