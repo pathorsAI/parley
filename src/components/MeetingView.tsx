@@ -21,7 +21,8 @@ function buildMarkdown(): string {
   if (findings.length) {
     lines.push("## Findings", "");
     for (const f of findings) {
-      lines.push(`- [${formatClock(f.atMs)}] **${f.title}** (${f.side}, ${f.severity}): ${f.detail}`);
+      const tag = [f.side ?? f.category, f.severity].filter(Boolean).join(", ");
+      lines.push(`- [${formatClock(f.atMs)}] **${f.title}** (${tag}): ${f.detail}`);
     }
     lines.push("");
   }

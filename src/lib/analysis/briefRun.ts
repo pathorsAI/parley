@@ -1,6 +1,7 @@
 import { useStore, isTrimmed, hasSpokenSegment, meetingBriefText } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { generatePostMeetingReport } from "../ai/report";
+import { lensOf } from "./lens";
 import { makeRunGuard } from "./runGuard";
 import { log } from "../log";
 
@@ -34,6 +35,7 @@ export async function runBriefGeneration(opts?: { force?: boolean }): Promise<vo
       todos: state.actionItems.map((a) => ({ id: a.id, text: a.text, done: a.done })),
       names: state.speakerNames,
       meetingContext: meetingBriefText(state),
+      lens: lensOf(state.meetingKind),
       onDelta: (chunk) => {
         if (alive()) useStore.getState().appendBrief(chunk);
       },

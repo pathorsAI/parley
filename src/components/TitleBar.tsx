@@ -23,7 +23,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LevelMeter } from "./LevelMeter";
 import { McpStatusChip } from "./McpStatusChip";
-import { ReplayOwnerChip } from "./ReplayOwnerChip";
 import { StudyGenerationChip } from "./study/StudyGenerationChip";
 
 
@@ -727,21 +726,18 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           level). Where the meeting saves is decided by the folder picker, so a
           second folder chip here would be a silently-losing source of truth. */}
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
-        {/* Tense badge (R6): the ONE fixed "which tense am I in" signal —
-            green while a live meeting runs, purple while a recording is open.
-            The center slot is pure page tabs, so this carries the identity. */}
+        {/* LIVE is the one badge worth a fixed slot: a recording in progress is
+            state you must not miss. The study tense needs no counterpart — the
+            purple page tabs in the center already say which tense you are in,
+            and a "書房" chip in front of every meeting name only pushed the name
+            it was labelling out of view. Filing likewise has ONE home, the
+            report page's link bar; a second "還沒歸檔" here just nagged. */}
         {meetingActive && (
           <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold tracking-wider text-emerald-600 dark:text-emerald-400">
             LIVE
           </span>
         )}
-        {studyMode && (
-          <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-bold tracking-wider text-violet-600 dark:text-violet-400">
-            {t("tense.study")}
-          </span>
-        )}
         {studyMode && <ReplayTitle t={t} />}
-        {studyMode && <ReplayOwnerChip />}
         {/* A loaded recording stays reachable while you look at something else.
             Navigating the tree away from it used to leave nothing on screen
             pointing back — the only route out was 離開, which discards it. */}

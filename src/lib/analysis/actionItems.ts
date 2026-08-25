@@ -1,6 +1,7 @@
 import { useStore, isTrimmed, hasSpokenSegment, meetingBriefText } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { generateActionItems } from "../ai/actionItems";
+import { lensOf } from "./lens";
 import { makeRunGuard } from "./runGuard";
 
 /**
@@ -31,6 +32,7 @@ export async function runActionItems(): Promise<void> {
       findings,
       meetingContext,
       names: speakerNames,
+      lens: lensOf(state.meetingKind),
       // Stream items into the store so they appear one-by-one while generating.
       onPartial: (partial) => {
         if (alive()) useStore.getState().setActionItems(partial);

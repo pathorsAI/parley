@@ -3,26 +3,25 @@ import { getModel, getProviderOptions } from "./provider";
 import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext, outputLanguageInstruction } from "./profile";
+import { briefIntro, briefSections } from "../analysis/lens";
 import { log } from "../log";
-import type { Evaluation, Settings, TodoItem, TranscriptSegment } from "../types";
+import type { AnalysisLens, Evaluation, Settings, TodoItem, TranscriptSegment } from "../types";
 
-const SYSTEM = `You are writing a POST-MEETING debrief for ME after a live interview, negotiation, sales, or diligence call. The meeting is OVER and you can see the full transcript, so judge the whole conversation, not the moment.
+/**
+ * The brief's system prompt for one lens. The SECTIONS are the lens's whole
+ * point: meeting notes get 決議 / 未解 / 下次議程, a sales call gets pain and
+ * qualification gaps, and only a real negotiation gets "what fell short" — which
+ * used to be written for every recording regardless of what it was.
+ */
+function systemFor(lens: AnalysisLens): string {
+  return `${briefIntro(lens)}
 
-Write a concise, candid debrief in Markdown with exactly these sections:
+Write it in Markdown with exactly these sections:
 
-## Outcome
-How it went overall and whether ME achieved the goal.
-
-## What fell short
-Objectives or evaluation criteria that were NOT met — each with a one-line piece of evidence from the transcript.
-
-## How to improve
-Concrete, specific things ME could do better next time. No generic advice.
-
-## Key moments
-2–4 pivotal points. Start each bullet with the moment's timestamp in [m:ss] form (copy it from the transcript line), then: what happened, then the counterfactual — "when X happened, if ME had done Y, THEM could not have Z."
+${briefSections(lens)}
 
 Each transcript line is prefixed with its [m:ss] start time. Cite those timestamps verbatim whenever you point at a specific moment so the reader can jump back to it. Ground everything in what was actually said. Skip filler and praise that isn't earned. If the transcript is too short to assess, say so plainly.`;
+}
 
 export async function generatePostMeetingReport(opts: {
   settings: Settings;
@@ -31,10 +30,12 @@ export async function generatePostMeetingReport(opts: {
   todos: TodoItem[];
   names?: Record<string, string>;
   meetingContext?: string;
+  /** Which sections to write. Defaults to plain meeting notes. */
+  lens?: AnalysisLens;
   onDelta: (chunk: string) => void;
   signal?: AbortSignal;
 }): Promise<string> {
-  const { settings, segments, evaluations, todos, names, meetingContext, onDelta, signal } = opts;
+  const { settings, segments, evaluations, todos, names, meetingContext, lens = "decision", onDelta, signal } = opts;
 
   const transcript = transcriptWithTimestamps(segments, names);
   const rubric = evaluations.map((e) => `- ${e.name}: ${e.prompt}`).join("\n");
@@ -50,14 +51,14 @@ export async function generatePostMeetingReport(opts: {
 
   const provider = settings.llmProviders.deep;
   const model = settings.models[provider].deep;
-  log.info("ai.report: start", { provider, model, segments: segments.length });
+  log.info("ai.report: start", { provider, model, lens, segments: segments.length });
 
   let full = "";
   try {
     const result = streamText({
       model: getModel(settings, "deep"),
       providerOptions: getProviderOptions(settings, "deep"),
-      system: SYSTEM + outputLanguageInstruction(settings),
+      system: systemFor(lens) + outputLanguageInstruction(settings),
       abortSignal: signal,
       prompt,
     });

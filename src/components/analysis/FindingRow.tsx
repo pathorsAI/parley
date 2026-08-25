@@ -16,6 +16,20 @@ const SEVERITY_DOT: Record<TimelineEvent["severity"], string> = {
 const RESOLVED_DOT = "bg-emerald-500";
 
 /**
+ * Title colour, shared by the row and both solution windows. Sided findings keep
+ * the lane colours; a decision-lens finding has no lane, so it reads by what it
+ * IS — a settled decision earns emphasis, an open question a warning tint, a
+ * plain fact nothing.
+ */
+export function findingTitleClass(event: TimelineEvent): string {
+  if (event.side === "me") return "text-sky-400";
+  if (event.side === "them") return "text-amber-400";
+  if (event.category === "decision") return "text-emerald-600 dark:text-emerald-400";
+  if (event.category === "open") return "text-amber-500 dark:text-amber-400";
+  return "text-foreground";
+}
+
+/**
  * One finding in the right-hand list. Clicking the row HIGHLIGHTS the finding and
  * seeks to its moment — it does NOT open the reply window (that would spend a
  * generation on every click). The "how to reply" button is the explicit, separate
@@ -68,9 +82,12 @@ export function FindingRow({
             <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
               {formatClock(event.atMs)}
             </span>
-            <span className={cn("text-xs font-medium", event.side === "me" ? "text-sky-400" : "text-amber-400")}>
-              {event.title}
-            </span>
+            {event.category && (
+              <span className="shrink-0 rounded bg-muted px-1 text-[9px] text-muted-foreground">
+                {t(`finding.cat.${event.category}`)}
+              </span>
+            )}
+            <span className={cn("text-xs font-medium", findingTitleClass(event))}>{event.title}</span>
             {event.resolved && (
               <span className="rounded bg-emerald-500/10 px-1 text-[9px] font-medium text-emerald-600 dark:text-emerald-400">
                 {t("timeline.resolved")}
