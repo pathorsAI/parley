@@ -87,11 +87,6 @@ enum KBTheme {
         dark ? Color.white.opacity(0.20) : Color.black.opacity(0.15)
     }
 
-    /// The trough behind the voice/EN segmented control in the mode strip.
-    static func segmentTrack(_ dark: Bool) -> Color {
-        dark ? Color(white: 0.20) : Color.black.opacity(0.06)
-    }
-
     static func ink(_ dark: Bool) -> Color {
         dark ? .white : Color(white: 0.08)
     }
@@ -126,7 +121,32 @@ enum KBMetrics {
         paneTop + keyHeight * 4 + rowSpacing * 3 + paneBottom
     }
 
-    static var lettersHeight: CGFloat { strip + lettersPane }
+    // The 注音 pane. Four rows of 大千 keys plus a function row — five rows
+    // where QWERTY has four — and it still has to come out at `lettersPane`,
+    // for the same reason the voice pane does.
+    //
+    // So the row spacing tightens and the key height is *derived* rather than
+    // chosen. The result (≈34.6pt) is close to what iOS's own 注音 keyboard
+    // draws, which is not a coincidence: it is the same five rows in the same
+    // space. The two symbol planes the pane shares with QWERTY keep the 42pt
+    // caps and four rows, so switching to `123` from either side lands on the
+    // same 213pt.
+    static let zhuyinRows = 5
+    static let zhuyinRowSpacing: CGFloat = 7
+
+    /// (213 − 8 − 4 − 4×7) ÷ 5 ≈ 34.6pt.
+    static var zhuyinKeyHeight: CGFloat {
+        (lettersPane - paneTop - paneBottom - zhuyinRowSpacing * CGFloat(zhuyinRows - 1))
+            / CGFloat(zhuyinRows)
+    }
+
+    /// Equal to `lettersPane` by construction — `zhuyinKeyHeight` is what it is
+    /// in order to make this true. Spelled out rather than aliased so the
+    /// arithmetic is checkable where it is used.
+    static var zhuyinPane: CGFloat {
+        paneTop + zhuyinKeyHeight * CGFloat(zhuyinRows)
+            + zhuyinRowSpacing * CGFloat(zhuyinRows - 1) + paneBottom
+    }
 
     // The voice pane. A control panel rather than a keyboard — nothing on it
     // types a letter — so it is measured in round buttons and whitespace
@@ -160,9 +180,23 @@ enum KBMetrics {
         voiceTop + textHeight + textToDeck + deckHeight + voiceBottom
     }
 
-    static var voiceHeight: CGFloat { strip + voicePane }
+    /// Every pane's content area, and every pane's total height with the strip.
+    ///
+    /// The three numbers are equal, which is the whole point: the panes sit side
+    /// by side on one track, and a keyboard that changes height mid-swipe shoves
+    /// the host app's content up and down every time the user crosses between
+    /// them. Change one pane's parts and the others have to follow.
+    static func pane(_ pane: KeyboardPane) -> CGFloat {
+        switch pane {
+        case .voice: return voicePane
+        case .english: return lettersPane
+        case .zhuyin: return zhuyinPane
+        }
+    }
 
-    /// How far a finger has to travel sideways before it counts as a mode
+    static func height(_ pane: KeyboardPane) -> CGFloat { strip + self.pane(pane) }
+
+    /// How far a finger has to travel sideways before it counts as a pane
     /// swipe rather than a mistyped key.
     static let swipeThreshold: CGFloat = 56
 }

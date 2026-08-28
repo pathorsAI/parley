@@ -37,15 +37,18 @@ final class KeyboardViewController: UIInputViewController {
     private var host: UIHostingController<KeyboardRootView>?
     private var heightConstraint: NSLayoutConstraint?
 
+    /// 傳統注音 input for the 注音 pane. Cheap to hold: the dictionary behind it
+    /// does not touch its resource until the first syllable is finalized, so a
+    /// keyboard that only ever dictates never pays for it.
+    private var zhuyin = ZhuyinComposer(dictionary: .bundled)
+
     /// A keyboard has no intrinsic height — without one it collapses to the
-    /// system minimum and the layout looks broken. The two panes are genuinely
-    /// different shapes, so each names its own height in `KBMetrics` and the
-    /// constraint follows the mode.
+    /// system minimum and the layout looks broken. Every pane is measured to the
+    /// same content area (`KBMetrics.height`), but the constraint still follows
+    /// the pane so a future pane that isn't can't silently disagree with the
+    /// view about it.
     private var preferredHeight: CGFloat {
-        switch bridge.mode {
-        case .voice: return KBMetrics.voiceHeight
-        case .letters: return KBMetrics.lettersHeight
-        }
+        KBMetrics.height(bridge.pane)
     }
 
     override func viewDidLoad() {
@@ -53,10 +56,12 @@ final class KeyboardViewController: UIInputViewController {
         bridge.controller = self
         bridge.hasFullAccess = hasFullAccess
         bridge.showsGlobe = needsInputModeSwitchKey
+        let typing = TypingKeyboards.enabled().map(KeyboardPane.init)
+        bridge.setPanes([.voice] + typing)
         // Without Full Access there is nothing to dictate with, so open on the
-        // pane that still works. App Review 4.4.1 judges the keyboard in
+        // first pane that still works. App Review 4.4.1 judges the keyboard in
         // exactly this state.
-        bridge.setMode(hasFullAccess ? .voice : .letters, notify: false)
+        bridge.setPane(hasFullAccess ? .voice : (typing.first ?? .english), notify: false)
 
         // Let the system's own input view supply the background. It is already
         // the right colour, already rounds its corners the way the host expects
@@ -124,6 +129,12 @@ final class KeyboardViewController: UIInputViewController {
         // Re-read every time: the user can add or remove keyboards while ours
         // is loaded, and that flips whether the system draws the globe for us.
         bridge.showsGlobe = needsInputModeSwitchKey
+        refreshPanes()
+        // A half-typed syllable belongs to the field it was started in, so it is
+        // dropped rather than committed — the same rule as the transcript tail
+        // below, and for the same reason.
+        zhuyin.clear()
+        publishComposition()
         // The tail belongs to the field it was dictated into. Coming back to a
         // *different* field it would read as text that is already there, so it
         // is dropped unless a session is still running — `drainDownlink` below
@@ -166,8 +177,25 @@ final class KeyboardViewController: UIInputViewController {
         applyHeight(animated: false)
     }
 
+    /// Which typing keyboards the track carries. Re-read on every appearance
+    /// rather than watched: the user can flip the toggles in Parley while this
+    /// extension is loaded, and there is no notification an extension without
+    /// Full Access is allowed to receive.
+    private func refreshPanes() {
+        let typing = TypingKeyboards.enabled().map(KeyboardPane.init)
+        bridge.setPanes([.voice] + typing)
+        // The pane we were on may have just been switched off in Settings.
+        if !bridge.panes.contains(bridge.pane) {
+            bridge.setPane(hasFullAccess ? .voice : (typing.first ?? .english), notify: false)
+            applyHeight(animated: false)
+        }
+    }
+
     /// Called by the bridge when the user moves between panes.
-    func modeDidChange() {
+    func paneDidChange() {
+        // Leaving the 注音 pane commits what was pending rather than dropping
+        // it: the user swiped away, they didn't press delete.
+        apply(zhuyin.confirm())
         applyHeight(animated: true)
     }
 
@@ -448,16 +476,60 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    // MARK: 注音 (called from SwiftUI)
+
+    /// A bopomofo key.
+    func zhuyinSymbol(_ symbol: Character) { apply(zhuyin.symbol(symbol)) }
+
+    /// A tone key: finalize the syllable and show its candidates.
+    func zhuyinTone(_ tone: ZhuyinTone) { apply(zhuyin.tone(tone)) }
+
+    /// The user picked a character out of the candidate bar.
+    func zhuyinPick(_ candidate: String) { apply(zhuyin.pick(candidate)) }
+
+    /// Do whatever the composer asked for, then republish what it is holding.
+    ///
+    /// `passThrough` is the composer saying "nothing was pending" — which is
+    /// how space, delete and return keep their ordinary meanings on every other
+    /// pane without the panes having to know a composer exists.
+    private func apply(
+        _ outcome: ZhuyinComposer.Outcome, passThrough: () -> Void = {}
+    ) {
+        switch outcome {
+        case .handled: break
+        case .insert(let text): textDocumentProxy.insertText(text)
+        case .passThrough: passThrough()
+        }
+        publishComposition()
+    }
+
+    private func publishComposition() {
+        if bridge.composition != zhuyin.reading { bridge.composition = zhuyin.reading }
+        if bridge.candidates != zhuyin.candidates { bridge.candidates = zhuyin.candidates }
+    }
+
     // MARK: keys (called from SwiftUI)
 
-    func deleteBackward() { textDocumentProxy.deleteBackward() }
+    /// Delete edits the 注音 buffer before it edits the document — the candidate
+    /// bar first, then the syllable slot by slot — and only reaches the field
+    /// once there is nothing pending. See `ZhuyinComposer.delete()`.
+    func deleteBackward() {
+        apply(zhuyin.delete()) { textDocumentProxy.deleteBackward() }
+    }
+
     func insert(_ text: String) { textDocumentProxy.insertText(text) }
 
     /// Return always types a line break. A keyboard extension cannot submit a
     /// form — there is no public way to fire the host's return action — so a
     /// key labelled "Send" that quietly did nothing would be worse than one
     /// that visibly types.
-    func insertReturn() { textDocumentProxy.insertText("\n") }
+    ///
+    /// With a 注音 syllable pending it commits that instead, the way the system
+    /// keyboard does: the first return closes the composition, the next one
+    /// breaks the line.
+    func insertReturn() {
+        apply(zhuyin.confirm()) { textDocumentProxy.insertText("\n") }
+    }
 
     /// How close two taps on the space bar have to be to count as the period
     /// shortcut rather than two spaces.
@@ -468,7 +540,22 @@ final class KeyboardViewController: UIInputViewController {
     /// becomes ". " when it is actually ending a word — after punctuation or at
     /// the start of a line, two taps are just two spaces, which is what the
     /// system does too.
+    ///
+    /// On the 注音 pane space is the first tone and then the confirm key, so a
+    /// pending syllable claims it first.
     func insertSpace() {
+        switch zhuyin.space() {
+        case .handled:
+            publishComposition()
+            return
+        case .insert(let text):
+            textDocumentProxy.insertText(text)
+            publishComposition()
+            return
+        case .passThrough:
+            break
+        }
+
         let now = Date()
         let context = textDocumentProxy.documentContextBeforeInput ?? ""
         if now.timeIntervalSince(lastSpaceAt) < Self.doubleSpaceWindow,
@@ -487,12 +574,26 @@ final class KeyboardViewController: UIInputViewController {
     }
 }
 
-/// Which pane the keyboard is showing. Dictation and typing are different
-/// enough — different keys, different heights — to be modes rather than one
-/// crowded layout.
-enum KeyboardMode {
+/// One pane on the track. Dictation and typing are different enough — different
+/// keys, different shape — to be separate panes rather than one crowded layout,
+/// and English and 注音 are different enough from each other for the same
+/// reason.
+///
+/// Flat rather than `.voice` + `.typing(TypingKeyboard)` because that is how it
+/// is used: the view switches on a pane and the metrics table names a height for
+/// each, and a nested case would put a `case .typing(.english)` in front of
+/// every one of those without buying anything.
+enum KeyboardPane: String, Hashable, CaseIterable {
     case voice
-    case letters
+    case english
+    case zhuyin
+
+    init(_ typing: TypingKeyboard) {
+        switch typing {
+        case .english: self = .english
+        case .zhuyin: self = .zhuyin
+        }
+    }
 }
 
 /// Bridges the UIKit input controller to the SwiftUI view: published state the
@@ -553,19 +654,47 @@ final class KeyboardBridge: ObservableObject {
     /// button becomes ⏹ before the user has read the glyph.
     var opensApp: Bool { hasFullAccess && (!ready || !windowIsOpen) }
 
+    /// The track, in order: the voice pane, then the typing keyboards the user
+    /// has enabled in Parley's Settings. Never empty of typing panes — see
+    /// `TypingKeyboards.enabled()`.
+    @Published private(set) var panes: [KeyboardPane] = [.voice, .english]
+
     /// Which pane is showing. Changing it also has to change the keyboard's
-    /// height, which only the controller can do — hence `setMode` rather than a
+    /// height, which only the controller can do — hence `setPane` rather than a
     /// plain assignment.
-    @Published private(set) var mode: KeyboardMode = .voice
+    @Published private(set) var pane: KeyboardPane = .voice
+
+    /// A 注音 syllable part-way through being typed, shown in the strip. Empty
+    /// when nothing is pending, which is also what puts the wordmark back.
+    @Published var composition = ""
+    /// The characters the composition could be, most frequent first. Only
+    /// non-empty once the syllable has a tone.
+    @Published var candidates: [String] = []
 
     /// What the host field wants the return key to say. It never changes what
     /// the key does.
     @Published var returnKeyType: UIReturnKeyType = .default
 
-    func setMode(_ mode: KeyboardMode, notify: Bool = true) {
-        guard self.mode != mode else { return }
-        self.mode = mode
-        if notify { controller?.modeDidChange() }
+    var paneIndex: Int { panes.firstIndex(of: pane) ?? 0 }
+
+    func setPanes(_ panes: [KeyboardPane]) {
+        guard self.panes != panes else { return }
+        self.panes = panes
+    }
+
+    func setPane(_ pane: KeyboardPane, notify: Bool = true) {
+        guard self.pane != pane, panes.contains(pane) else { return }
+        self.pane = pane
+        if notify { controller?.paneDidChange() }
+    }
+
+    /// Move one pane along the track. Clamped rather than wrapped: the rubber
+    /// band at each end says there is nothing further, and a swipe that jumped
+    /// from 注音 back to the mic would contradict it.
+    func stepPane(by delta: Int) {
+        let target = paneIndex + delta
+        guard panes.indices.contains(target) else { return }
+        setPane(panes[target])
     }
 
     var returnKeyLabel: LocalizedStringKey {
@@ -621,6 +750,12 @@ final class KeyboardBridge: ObservableObject {
     func type(_ text: String) { controller?.insert(text) }
     func space() { controller?.insertSpace() }
     func newline() { controller?.insertReturn() }
+
+    // 注音. The composer that answers these lives in the controller, so the
+    // view never holds input state of its own.
+    func zhuyinSymbol(_ symbol: Character) { controller?.zhuyinSymbol(symbol) }
+    func zhuyinTone(_ tone: ZhuyinTone) { controller?.zhuyinTone(tone) }
+    func pickCandidate(_ candidate: String) { controller?.zhuyinPick(candidate) }
 }
 
 /// Best-effort resolution of the app the keyboard is typing into, for the app's

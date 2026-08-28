@@ -3,11 +3,12 @@ import SwiftUI
 
 /// The Parley keyboard's face.
 ///
-/// Two panes under one strip: the voice pane — a live-transcript slot, one
-/// round record button and the three controls a dictating user reaches for —
-/// or a full QWERTY plane. The panes sit side by side on a track that follows
-/// the finger, so a horizontal drag moves between them and the strip's dots are
-/// a signpost rather than the only way across.
+/// N panes under one strip: the voice pane — a live-transcript slot, one round
+/// record button and the three controls a dictating user reaches for — followed
+/// by the typing keyboards the user has enabled, QWERTY and 注音. The panes sit
+/// side by side on a track that follows the finger, so a horizontal drag moves
+/// one pane either way and the strip's dots are a signpost rather than the only
+/// way across.
 ///
 /// The voice pane is drawn as a **control panel, not a keyboard**. Nothing on
 /// it types a letter, so it borrows none of UIKit's key-cap treatment: flat
@@ -41,19 +42,21 @@ struct KeyboardRootView: View {
             GeometryReader { geo in
                 let width = geo.size.width
                 HStack(spacing: 0) {
-                    voicePane.frame(width: width)
-                    LetterPane(bridge: bridge, dark: dark).frame(width: width)
+                    ForEach(bridge.panes, id: \.self) { pane in
+                        paneView(pane).frame(width: width)
+                    }
                 }
-                .frame(width: width * 2, alignment: .leading)
-                // Follow the finger. Both panes are the same height now, so the
+                .frame(width: width * CGFloat(bridge.panes.count), alignment: .leading)
+                // Follow the finger. Every pane is the same height, so the
                 // track can slide without the keyboard resizing under it. The
                 // old gesture only committed on release, so nothing moved while
                 // the finger did — which is why nobody found the swipe.
-                .offset(x: (bridge.mode == .voice ? 0 : -width) + drag)
-                .animation(.interactiveSpring(response: 0.32, dampingFraction: 0.86), value: bridge.mode)
+                .offset(x: -width * CGFloat(bridge.paneIndex) + drag)
+                .animation(
+                    .interactiveSpring(response: 0.32, dampingFraction: 0.86), value: bridge.pane)
                 // The gesture lives on the track, not on a key, and demands
                 // real travel before it engages — otherwise a fat-fingered tap
-                // on `g` would throw the user into the other mode.
+                // on `g` would throw the user into the next pane.
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 24)
@@ -65,7 +68,7 @@ struct KeyboardRootView: View {
                             guard abs(dx) > KBMetrics.swipeThreshold,
                                 abs(dx) > abs(value.translation.height) * 1.5
                             else { return }
-                            select(dx < 0 ? .letters : .voice)
+                            bridge.stepPane(by: dx < 0 ? 1 : -1)
                         }
                 )
             }
@@ -74,47 +77,119 @@ struct KeyboardRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    @ViewBuilder
+    private func paneView(_ pane: KeyboardPane) -> some View {
+        switch pane {
+        case .voice: voicePane
+        case .english: LetterPane(bridge: bridge, dark: dark)
+        case .zhuyin: ZhuyinPane(bridge: bridge, dark: dark)
+        }
+    }
+
     /// Resist a drag that would pull the track past either end, so the pane
     /// never detaches from the edge of the keyboard.
     private func rubberBanded(_ dx: CGFloat, width: CGFloat) -> CGFloat {
-        let overshoot = (bridge.mode == .voice && dx > 0) || (bridge.mode == .letters && dx < 0)
+        let index = bridge.paneIndex
+        let overshoot = (index == 0 && dx > 0) || (index == bridge.panes.count - 1 && dx < 0)
         return overshoot ? dx / 4 : max(-width, min(width, dx))
     }
 
-    private func select(_ mode: KeyboardMode) {
-        guard bridge.mode != mode else { return }
-        bridge.setMode(mode)
-    }
+    // MARK: mode strip — wordmark + where you are, or the candidate bar
 
-    // MARK: mode strip — wordmark + where you are
-
-    /// The wordmark, and the current pane named next to two dots.
+    /// The wordmark, and the current pane named next to one dot per pane.
     ///
     /// It used to be a segmented control, which read as the *only* way across
     /// and hid the fact that the pane swipes at all. Dots say "there is another
     /// one of these, sideways" — and they stay tappable, so nothing is lost.
+    ///
+    /// While a 注音 syllable is being typed the whole row is given over to the
+    /// composition and its candidates. It is the one row the keyboard has to
+    /// spare, and the alternative — a bar of its own above the keys — would make
+    /// the pane taller than its neighbours every time someone started a word.
     private var modeStrip: some View {
         HStack(spacing: 0) {
-            Text(verbatim: "Parley")
-                .font(.footnote.weight(.bold))
-                .foregroundStyle(KBTheme.wordmark(dark))
-            Spacer(minLength: 8)
-            if showsWindowChip {
-                windowChip
+            if bridge.composition.isEmpty {
+                Text(verbatim: "Parley")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(KBTheme.wordmark(dark))
                 Spacer(minLength: 8)
-            }
-            Text(bridge.mode == .voice ? "Voice" : "Keyboard")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(KBTheme.inkSoft(dark))
-                .padding(.trailing, 8)
-                .accessibilityHidden(true)
-            HStack(spacing: 5) {
-                dot(.voice, label: Text("Voice dictation"))
-                dot(.letters, label: Text("English keyboard"))
+                if showsWindowChip {
+                    windowChip
+                    Spacer(minLength: 8)
+                }
+                paneName(bridge.pane)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(KBTheme.inkSoft(dark))
+                    .padding(.trailing, 8)
+                    .accessibilityHidden(true)
+                HStack(spacing: 5) {
+                    ForEach(bridge.panes, id: \.self) { dot($0) }
+                }
+            } else {
+                compositionChip
+                candidateBar
             }
         }
         .frame(height: KBMetrics.strip)
         .padding(.horizontal, 12)
+    }
+
+    /// The pane's short name. 注音 keeps its own name in both localizations: the
+    /// keys on that pane *are* 注音, and nothing an English word could say
+    /// would identify it faster.
+    @ViewBuilder
+    private func paneName(_ pane: KeyboardPane) -> some View {
+        switch pane {
+        case .voice: Text("Voice")
+        case .english: Text("English")
+        case .zhuyin: Text(verbatim: "注音")
+        }
+    }
+
+    private func paneLabel(_ pane: KeyboardPane) -> Text {
+        switch pane {
+        case .voice: return Text("Voice dictation")
+        case .english: return Text("English keyboard")
+        case .zhuyin: return Text("Bopomofo keyboard")
+        }
+    }
+
+    // MARK: 注音 composition
+
+    /// The syllable being typed, in the accent so it reads as pending rather
+    /// than as text that has landed somewhere.
+    private var compositionChip: some View {
+        Text(verbatim: bridge.composition)
+            .font(.system(size: 17))
+            .foregroundStyle(KBTheme.accent)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 1)
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(KBTheme.control(dark)))
+            .padding(.trailing, 8)
+            .accessibilityLabel(Text("Composing"))
+            .accessibilityValue(Text(verbatim: bridge.composition))
+    }
+
+    /// The characters that reading could be, most frequent first, scrollable
+    /// because some readings have dozens. Tapping one commits it; space commits
+    /// the first, which is why it is worth having it be the first.
+    private var candidateBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 2) {
+                ForEach(Array(bridge.candidates.enumerated()), id: \.offset) { _, candidate in
+                    Button(action: { bridge.pickCandidate(candidate) }) {
+                        Text(verbatim: candidate)
+                            .font(.system(size: 22))
+                            .foregroundStyle(KBTheme.ink(dark))
+                            .frame(minWidth: 32, minHeight: KBMetrics.strip - 4)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
     }
 
     // MARK: the microphone window
@@ -166,9 +241,9 @@ struct KeyboardRootView: View {
         .accessibilityLabel(Text("The microphone is ready. Tap to close it."))
     }
 
-    private func dot(_ mode: KeyboardMode, label: Text) -> some View {
-        let selected = bridge.mode == mode
-        return Button(action: { select(mode) }) {
+    private func dot(_ pane: KeyboardPane) -> some View {
+        let selected = bridge.pane == pane
+        return Button(action: { bridge.setPane(pane) }) {
             Capsule()
                 .fill(selected ? KBTheme.accent : KBTheme.inkSoft(dark).opacity(0.35))
                 .frame(width: selected ? 14 : 5, height: 5)
@@ -177,7 +252,7 @@ struct KeyboardRootView: View {
                 .animation(.easeInOut(duration: 0.2), value: selected)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
+        .accessibilityLabel(paneLabel(pane))
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
