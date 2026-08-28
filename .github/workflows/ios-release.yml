@@ -55,6 +55,19 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
+      # The signing tooling comes from the same commit as this workflow file,
+      # never from the tag being built. A dispatch replays an old tag with the
+      # *current* workflow, and a workflow that calls the tag's copy of
+      # asc_signing.py gets whatever that script knew at the time — the first
+      # replay after the manual-signing change handed `-xcconfig` an empty step
+      # output and archived nothing. App sources still come from the tag above;
+      # only .github/ is taken from here.
+      - name: Checkout release tooling from the workflow ref
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          path: release-tooling
+          sparse-checkout: .github
+
       # Pick the newest Xcode installed rather than pinning a runner image path,
       # which Apple and GitHub both move. String Catalogs need 15, and the
       # keyboard's App Intents need an 18 SDK to compile the @available branch,
@@ -150,7 +163,7 @@ jobs:
           # what it is.
           python3 -m venv "$RUNNER_TEMP/ascvenv"
           "$RUNNER_TEMP/ascvenv/bin/pip" install --quiet pyjwt cryptography requests
-          "$RUNNER_TEMP/ascvenv/bin/python" .github/scripts/asc_signing.py install
+          "$RUNNER_TEMP/ascvenv/bin/python" release-tooling/.github/scripts/asc_signing.py install
 
       # No `-allowProvisioningUpdates` and no API key: without them xcodebuild
       # cannot mint a certificate even if it decides it wants one, and a signing
@@ -219,7 +232,7 @@ jobs:
           ASC_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
         run: |
           if [ -x "$RUNNER_TEMP/ascvenv/bin/python" ]; then
-            "$RUNNER_TEMP/ascvenv/bin/python" .github/scripts/asc_signing.py cleanup
+            "$RUNNER_TEMP/ascvenv/bin/python" release-tooling/.github/scripts/asc_signing.py cleanup
           fi
 
       # Keep the symbols: a crash report from TestFlight is unreadable without
