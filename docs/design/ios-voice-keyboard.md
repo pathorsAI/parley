@@ -38,25 +38,51 @@ hand-off, and the in-app dictation session are new.
    *uplink* file to the App Group, and opens `parley://dictate?session=…` with
    SwiftUI's `openURL` action (the responder-chain `openURL:` walk was disabled
    for keyboards in iOS 18; `openURL` is the public path that still works, with
-   the walk kept only as an older-system fallback).
+   the walk kept only as an older-system fallback). Only when there is
+   something to start: a keyboard whose readiness mailbox says the app has no
+   account or no microphone permission mints no session and opens the bare
+   `parley://` instead — see *Four states* below.
 2. **App records.** `onOpenURL` routes to `DictationCoordinator`, which starts
    the mic + relay and mirrors the growing transcript into a *downlink* file,
    posting a Darwin notification on each update.
 3. **Return to the host app** — or, far better, never leave it. See the
    microphone window below.
-4. **Keyboard inserts.** On the Darwin note (and on every `viewWillAppear`, in
-   case it was suspended through the notification), the keyboard reads the
-   downlink and inserts whatever is new past its high-water mark
-   (`insertedCount`), so a keyboard that was killed and relaunched mid-session
-   never double-inserts. The tentative tail is shown above the keys, never
-   inserted.
-5. **Stop.** The keyboard's ⏹ writes `stopRequested` and posts the uplink note;
-   the app finishes the relay, drains the last utterance, folds the final tail
-   into the committed text, and marks the session done.
+4. **Keyboard watches, and inserts nothing yet.** On the Darwin note (and on
+   every `viewWillAppear`, in case it was suspended through the notification)
+   the keyboard reads the downlink and shows the settled tail followed by the
+   tentative partial above the keys. Nothing reaches the host's document while
+   the session is `starting`, `listening`, `reconnecting` or `finishing`.
+5. **Stop, then one insertion.** The keyboard's ⏹ writes `stopRequested` and
+   posts the uplink note; the app finishes the relay, drains the last utterance,
+   folds the final tail into the committed text, and marks the session `done`.
+   That state is the keyboard's cue: it inserts the whole committed text in a
+   single `insertText`, then writes the character count back to the uplink as
+   its high-water mark (`insertedCount`), so a keyboard killed mid-session and
+   relaunched after the session ended still pastes exactly once. `error` inserts
+   nothing at all.
+
+#### Why one insertion rather than a stream
+
+The keyboard used to insert each delta as the relay settled it, which read as
+the more live design and was the worse one. Settled is not final: the relay
+revises runs it has already emitted, so a document collected the churn, and
+`insertText` cannot take anything back. Worse, every way a session can end
+badly — a lost socket, quota, the user walking away — left a half sentence in
+someone's field, punctuated wherever the relay happened to have got to. One
+insertion at `done` makes the transaction the whole utterance: either the
+sentence lands, or the field is exactly as it was and the error says so. This is
+also what the copy on the failure paths now says (it used to promise that what
+was already said "has been typed").
+
+The price is that the keyboard's own text slot stops being a nicety and becomes
+the only place the words are visible while they are being spoken — see *The live
+transcript* below — and that the transcript now depends on the keyboard coming
+back within the downlink's adoption window (150 s) rather than on it having been
+alive at the right moments.
 
 ### App Group channel
 
-`DictationChannel` (in ParleyKit, so both targets share it) is four
+`DictationChannel` (in ParleyKit, so both targets share it) is five
 single-writer mailboxes, each with its own Darwin notification, so the two
 processes never contend on a file:
 
@@ -67,9 +93,21 @@ processes never contend on a file:
   updatedAt}`, the microphone window and its heartbeat.
 - `dictation-window-control.json` — keyboard → app: `{closeRequestedAt}`, the
   keyboard's "end the window now".
+- `dictation-ready.json` — app → keyboard: `{signedIn, micGranted, updatedAt}`,
+  whether a tap could dictate at all.
 
 The window pair is separate from the session pair because a window outlives any
 one dictation, and most of what it has to say happens when no session exists.
+
+**Readiness is the one mailbox with no staleness rule**, and that is a
+difference in kind rather than an omission. A window is a claim about a live
+process, so a file nobody is re-stamping is a lie (hence the heartbeat). An
+account and a microphone grant are facts about the *installation*: they are
+still true when the app is dead, so the newest file is always right. A missing
+file is not an unknown either — it means Parley has never run here, which is
+exactly the state the pane needs to describe. The app republishes on launch, on
+every foregrounding, on sign-in and sign-out, and the moment the microphone
+prompt is answered.
 
 The files are the source of truth; the Darwin notes are pure "go re-read"
 signals (they carry no payload). This is what makes the hand-off robust to the
@@ -169,10 +207,14 @@ the point where adding an element moves the record button. It is hidden during a
 session — the record button already says the microphone is live, and the chip is
 about the *next* tap.
 
-The negative signal cannot be the mere absence of the chip, so the idle slot
-gains a second line — *This tap opens Parley first* — but **only for someone who
-has turned a window on**. Without the setting, every tap has always opened
-Parley; saying so on every keyboard would be noise rather than information.
+The negative signal cannot be the mere absence of the chip. It used to be a
+second line under *Tap to speak* — *This tap opens Parley first* — shown only to
+someone who had turned a window on, on the grounds that without the setting
+every tap had always opened Parley and saying so would be noise. That reasoning
+was wrong in the one way that mattered: the headline still said *Tap to speak*,
+which is a promise about this keyboard, and the button still drew a microphone.
+The fix is in the state list below — the promise now lives in the headline and on
+the button's own glyph, so the caption has nothing left to add and is gone.
 
 ### Bounded on purpose: there is no "until I turn it off"
 
@@ -398,18 +440,54 @@ never needs a second element saying "Listening…" beside it. The other is the
 wordmark (`#1469D4` light, `#2DB6F3` dark). Nothing else on the pane carries a
 colour, including `⏎` when the host has asked for an action.
 
+#### Four states, and only one of them is a microphone
+
+The pane used to draw the mic button and *Tap to speak* in every state, so a
+keyboard that could not transcribe a word looked identical to one that could —
+which is how a feature that was merely not set up got reported as broken. The
+glyph is what changed: the colour stays (the button is still the thing to press)
+but a **microphone is only drawn when speaking here would actually work.**
+
+| state | button | text slot |
+|---|---|---|
+| no Full Access | dimmed, mic | *Voice typing needs Full Access* + the Settings path |
+| not set up (`!ready`) | gradient, `arrow.up.forward.app` | *Set up voice typing in Parley* / *Tap to open the app* |
+| set up, no open window | gradient, `arrow.up.forward.app` | *Dictation starts in Parley* |
+| microphone window open | gradient, `mic.fill` | *Tap to speak* |
+
+These are the *idle* states. A live session takes the slot ahead of all four
+(the transcript, or the reconnecting line), and so does an error from the last
+one — an error names the actual problem, where this table can only name a
+destination.
+
+`ready` is the readiness mailbox saying both `signedIn` and `micGranted`; a
+missing file counts as not ready. The not-set-up tap **mints no session** — it
+opens `parley://` and nothing else, because a start request in that state can
+only be answered with a failure, and a pane that flipped to "listening" to show
+it would be the same lie in a new state.
+
+The third row is the interesting one, because it describes a tap whose outcome
+is not yet known: it goes through the ordinary `startDictation` path, so if the
+app is still resident it acks over the Darwin channel within milliseconds and
+the pane flips to listening *in place*. Promising the jump and then not making it
+is the right way round — the reverse is the bug this whole section is about — and
+in practice the user reads the glyph after the button has already become ⏹.
+
 **Return is a glyph, not a word.** The host decides what the key is *called* —
 Go, Send, Search — and a 44pt disc has no room for "Search"; `returnKeyGlyph`
 maps the type to a symbol instead. What the key *does* is unchanged: it types a
 line break, because a keyboard extension cannot fire the host's return action.
 
 **The live transcript.** The settled tail is echoed above the button in a softer
-ink, followed by the words not yet settled. Settled text has already been
-inserted into the document — but the document is usually behind the keyboard, so
-without the echo dictation reads as words that appear and then vanish. The
-window is capped at 140 characters and cleared with the session: a few hundred
-bytes, not the transcript history a keyboard extension must not hold. The slot's
-height is fixed so beginning to speak never resizes the keyboard.
+ink, followed by the words not yet settled. This began as an echo — settled text
+was already in the document, which is usually hidden behind the keyboard — and
+since insertion moved to the end of the session it is the *only* place the words
+are visible while they are being spoken. The window is still capped at 140
+characters and cleared with the session: a few hundred bytes, not the transcript
+history a keyboard extension must not hold. Raising the cap would not show more,
+because three lines at this size hold fewer characters than that — it would only
+push more of the newest words past the truncation. The slot's height is fixed so
+beginning to speak never resizes the keyboard.
 
 ### No Bopomofo engine — 注音 is the system's job
 

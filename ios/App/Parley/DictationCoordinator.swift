@@ -262,6 +262,10 @@ final class DictationCoordinator: ObservableObject {
             awaitingMicPermission = true
             let granted = await AudioCapture.requestPermission()
             awaitingMicPermission = false
+            // The prompt is the moment the keyboard's pane can stop saying
+            // "set up voice typing" — or must start saying it. Published
+            // either way, since a refusal is news too.
+            AppState.publishKeyboardReadiness()
             guard granted else {
                 // Re-read to name the actual situation: a refusal in the
                 // prompt is a Settings trip; a prompt that never got answered
@@ -607,14 +611,19 @@ final class DictationCoordinator: ObservableObject {
     }
 
     /// Out of redials. End the session rather than leave a microphone running
-    /// into nothing — but keep every word already settled, which the keyboard
-    /// has already typed into the user's document.
+    /// into nothing.
+    ///
+    /// The copy used to say the settled words had already been typed. They had,
+    /// when the keyboard inserted every delta as it arrived; it now inserts once
+    /// at `.done`, and an error is not `.done` — so an ended session leaves the
+    /// user's field untouched, and saying otherwise would send them looking for
+    /// text that is not there.
     private func endAfterLostConnection() {
         audio.discard()
         fail(
             String(
                 localized:
-                    "Lost the connection. What you already said has been typed — tap the mic to carry on."
+                    "Lost the connection before anything could be typed. Tap the mic to try again."
             ))
     }
 
@@ -863,7 +872,9 @@ final class DictationCoordinator: ObservableObject {
                 publishWindow()
                 return
             default:
-                guard await AudioCapture.requestPermission() else {
+                let granted = await AudioCapture.requestPermission()
+                AppState.publishKeyboardReadiness()
+                guard granted else {
                     windowProblem = String(
                         localized: "Microphone access wasn't granted, so there is no window to keep open.")
                     window = .closed(length: length)

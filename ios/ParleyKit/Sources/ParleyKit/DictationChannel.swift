@@ -5,17 +5,21 @@ import Foundation
 /// iOS 8, Full Access included), so dictation runs in the app and the transcript
 /// is handed back through the App Group container.
 ///
-/// Four single-writer mailboxes, each with its own Darwin notification, so the
+/// Five single-writer mailboxes, each with its own Darwin notification, so the
 /// two processes never contend on the same file:
 ///   - `downlink` (app → keyboard): the growing transcript + session state.
 ///   - `uplink`   (keyboard → app): the session request, host bundle id, stop.
 ///   - `window`   (app → keyboard): the microphone window — whether the next
 ///     tap will be served where the user is, or has to open Parley.
 ///   - `window control` (keyboard → app): end the window now.
+///   - `readiness` (app → keyboard): whether dictation could work at all —
+///     an account on this device, and microphone permission.
 ///
 /// The window pair is separate from the session pair on purpose: a window
 /// outlives any one dictation and most of what it has to say happens when no
-/// session exists at all.
+/// session exists at all. Readiness is separate from both for the opposite
+/// reason: it is not about a moment but about the installation, and it is the
+/// one thing here that has to be readable before anything has ever happened.
 ///
 /// Darwin notifications carry no payload — they are pure "go re-read" signals.
 /// The files are the source of truth, which is what makes this robust to the
@@ -39,6 +43,9 @@ public enum DictationChannel {
     public static let windowNote = "com.pathors.parley.dictation.window"
     /// keyboard → app: end the microphone window now.
     public static let windowControlNote = "com.pathors.parley.dictation.window-control"
+    /// app → keyboard: the answer to "could a tap dictate at all" changed —
+    /// someone signed in or out, or the microphone prompt was answered.
+    public static let readyNote = "com.pathors.parley.dictation.ready"
 
     /// The URL the keyboard opens to start a session. The app routes this in
     /// `onOpenURL`. The session id round-trips so a stale downlink from a prior
@@ -46,6 +53,12 @@ public enum DictationChannel {
     public static func startURL(session: String) -> URL {
         URL(string: "parley://dictate?session=\(session)")!
     }
+
+    /// Just open the app, with nothing asked of it. The keyboard uses this when
+    /// there is no session worth minting — no account, or no microphone
+    /// permission — because a start request in that state can only be answered
+    /// with a failure the user has to leave for the app to fix anyway.
+    public static let appURL = URL(string: "parley://")!
 
     public static func session(fromStart url: URL) -> String? {
         guard url.scheme == "parley", url.host == "dictate",
@@ -165,10 +178,57 @@ public enum DictationChannel {
         read("dictation-window-control.json")
     }
 
+    // MARK: readiness (app writes, keyboard reads)
+
+    /// Whether tapping the keyboard's mic could transcribe anything at all.
+    ///
+    /// The keyboard has no Keychain of its own and no microphone to ask about,
+    /// so without this it could only find out by minting a session and reading
+    /// back the app's failure — which is why its mic button used to invite a tap
+    /// it could not honour. Both facts belong to the *installation* rather than
+    /// to a moment: they outlive the app's process, so unlike `MicWindowState`
+    /// this needs no heartbeat and no staleness rule. A missing file is not a
+    /// stale answer, it is the honest one — Parley has never been set up here.
+    public struct KeyboardReadiness: Codable, Sendable, Equatable {
+        /// This device holds a Parley session. The app's own gate uses the same
+        /// notion, so an offline user who is signed in still counts.
+        public var signedIn: Bool
+        /// `AVAudioApplication` record permission is granted. Anything else —
+        /// denied, or never asked — means the app cannot open the microphone
+        /// without the user answering something first.
+        public var micGranted: Bool
+        /// When the app last wrote this file (stamped by `writeReadiness`).
+        /// Optional so files written before the field existed still decode. It
+        /// is diagnostic only: nothing reads it to decide whether to believe
+        /// the rest, because these facts do not go stale.
+        public var updatedAt: Date?
+
+        public init(signedIn: Bool = false, micGranted: Bool = false, updatedAt: Date? = nil) {
+            self.signedIn = signedIn
+            self.micGranted = micGranted
+            self.updatedAt = updatedAt
+        }
+
+        /// Both halves are in place, so a tap can actually record.
+        public var canDictate: Bool { signedIn && micGranted }
+    }
+
+    public static func writeReadiness(_ value: KeyboardReadiness) {
+        var stamped = value
+        stamped.updatedAt = Date()
+        write(stamped, to: "dictation-ready.json")
+        post(readyNote)
+    }
+
+    public static func readReadiness() -> KeyboardReadiness? {
+        read("dictation-ready.json")
+    }
+
     public static func clear() {
         for name in [
             "dictation-down.json", "dictation-up.json",
             "dictation-window.json", "dictation-window-control.json",
+            "dictation-ready.json",
         ] {
             if let url = container?.appendingPathComponent(name) {
                 try? FileManager.default.removeItem(at: url)
