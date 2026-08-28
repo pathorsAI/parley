@@ -6,9 +6,18 @@ sign a distribution build with, and Xcode's cloud signing does not fill the gap:
 it produces only a *development* identity and then reports the shortfall as
 `Cloud signing permission error` during export.
 
+Worse, it does not stop producing them. Every runner is new, so every archive
+run with `-allowProvisioningUpdates` minted another certificate named "Created
+via API", and a team may hold only so many at once. On 2026-08-28 the eleventh
+one hit the cap and the archive died with `Choose a certificate to revoke` — a
+message about a limit nobody knew was being consumed. So nothing in this
+workflow may be allowed to mint anything; both the archive and the export sign
+manually against what is installed here.
+
     install  import the team's distribution certificate from a secret, create an
-             App Store provisioning profile per bundle id against it, and write
-             the export options the archive step needs.
+             App Store provisioning profile per bundle id against it, install
+             those profiles where Xcode looks for them, and write the xcconfig
+             the archive signs with and the export options the export needs.
 
     cleanup  delete those profiles and the keychain.
 
@@ -54,7 +63,17 @@ RUNNER_TEMP = Path(os.environ.get("RUNNER_TEMP", "/tmp"))
 STATE = RUNNER_TEMP / "asc-signing-state.json"
 KEYCHAIN = RUNNER_TEMP / "parley-signing.keychain-db"
 KEYCHAIN_PASSWORD = "parley-ci"
-PROFILE_DIR = Path.home() / "Library/MobileDevice/Provisioning Profiles"
+XCCONFIG = RUNNER_TEMP / "parley-ci-signing.xcconfig"
+
+# Both, because which one Xcode reads depends on the version and the runner
+# image moves: 15 and earlier used the MobileDevice path, 16 introduced the
+# UserData one and still reads the old one. Writing a profile twice costs
+# nothing; guessing wrong costs a twenty-minute run and reports itself as
+# `No profiles for 'com.pathors.parley.ios' were found`.
+PROFILE_DIRS = (
+    Path.home() / "Library/MobileDevice/Provisioning Profiles",
+    Path.home() / "Library/Developer/Xcode/UserData/Provisioning Profiles",
+)
 
 
 # --------------------------------------------------------------------------
@@ -196,8 +215,10 @@ def install() -> None:
     print(f"  App Store Connect id {certificate_id}")
 
     print("▸ Creating App Store provisioning profiles")
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    for d in PROFILE_DIRS:
+        d.mkdir(parents=True, exist_ok=True)
     profiles: dict[str, str] = {}
+    uuids: dict[str, str] = {}
     # Match the identifier here rather than with `filter[identifier]`. That
     # filter is not an exact match: asking it for `com.pathors.parley.ios` also
     # returns `com.pathors.parley.ios.keyboard`, and with `limit=1` the profile
@@ -270,11 +291,14 @@ def install() -> None:
             )
 
         uuid = profile["attributes"]["uuid"]
-        (PROFILE_DIR / f"{uuid}.mobileprovision").write_bytes(
-            base64.b64decode(profile["attributes"]["profileContent"])
-        )
+        content = base64.b64decode(profile["attributes"]["profileContent"])
+        for d in PROFILE_DIRS:
+            (d / f"{uuid}.mobileprovision").write_bytes(content)
         profiles[bundle] = name
+        uuids[bundle] = uuid
         print(f"  {name}  ({uuid})")
+
+    write_signing_xcconfig(profiles)
 
     print("▸ Writing export options")
     # Manual signing, not automatic: automatic asks Xcode to go and find an
@@ -296,7 +320,58 @@ def install() -> None:
     if gh_out := os.environ.get("GITHUB_OUTPUT"):
         with open(gh_out, "a") as fh:
             fh.write(f"export_options={out}\n")
+            fh.write(f"xcconfig={XCCONFIG}\n")
             fh.write(f"keychain={KEYCHAIN}\n")
+            fh.write(f"app_profile={profiles[APP_BUNDLE]}\n")
+            fh.write(f"keyboard_profile={profiles[KEYBOARD_BUNDLE]}\n")
+            fh.write(f"app_profile_uuid={uuids[APP_BUNDLE]}\n")
+            fh.write(f"keyboard_profile_uuid={uuids[KEYBOARD_BUNDLE]}\n")
+
+
+def write_signing_xcconfig(profiles: dict[str, str]) -> None:
+    """Write the xcconfig the archive signs with.
+
+    Two bundle ids need two different profiles, and a build setting given on the
+    xcodebuild command line applies to *every* target at once — so
+    `PROVISIONING_PROFILE_SPECIFIER=…` would hand the app's profile to the
+    keyboard extension as well and the archive would fail on a mismatch.
+
+    The way out is that `PRODUCT_BUNDLE_IDENTIFIER` is already per-target, so it
+    can name the setting to read: `:identifier` rewrites
+    `com.pathors.parley.ios` into `com_pathors_parley_ios`, and each target
+    resolves the indirection to its own profile. A target with no entry here
+    resolves it to empty, which is the same as not setting it.
+
+    This has to be an xcconfig rather than command-line settings for a second
+    reason: `project.yml` commits `CODE_SIGN_STYLE = Automatic` as a *target*
+    build setting, because that is what a developer archiving on their own Mac
+    wants, and a target setting outranks a command-line one. `xcodebuild
+    -xcconfig` is the one lever above both (see `man xcodebuild`), so CI can
+    override the committed default without the committed default being wrong.
+    """
+    lines = [
+        "// Generated per run by .github/scripts/asc_signing.py. Not committed:",
+        "// it names profiles that exist only for the length of this run.",
+        "",
+    ]
+    for bundle, name in profiles.items():
+        key = "".join(c if c.isalnum() else "_" for c in bundle)
+        lines.append(f"PARLEY_CI_PROFILE_{key} = {name}")
+    lines += [
+        "",
+        "CODE_SIGN_STYLE = Manual",
+        f"DEVELOPMENT_TEAM = {TEAM_ID}",
+        "// By name, not by fingerprint: the identity is whatever",
+        "// APPLE_IOS_DIST_P12 currently holds, and replacing it must not mean",
+        "// editing a script.",
+        "CODE_SIGN_IDENTITY = Apple Distribution",
+        "PROVISIONING_PROFILE_SPECIFIER = "
+        "$(PARLEY_CI_PROFILE_$(PRODUCT_BUNDLE_IDENTIFIER:identifier))",
+        "",
+    ]
+    print("▸ Writing the archive signing xcconfig")
+    XCCONFIG.write_text("\n".join(lines))
+    print(f"  {XCCONFIG}")
 
 
 # --------------------------------------------------------------------------

@@ -6,10 +6,11 @@ name: iOS Release
 # on `v*.*.*` tags and ships a GitHub Release; iOS builds on `ios-v*` tags and
 # ships to TestFlight, where Apple — not this repo — decides what users get.
 #
-# Signing is Xcode-managed. The App Store Connect API key below is the same one
-# the desktop workflow uses for notarization; it is passed to both the archive
-# and the export so `-allowProvisioningUpdates` can mint profiles on a runner
-# that has never seen this team before.
+# Signing is manual end to end, and deliberately so — see the "Install the App
+# Store signing identity" step below for why cloud signing had to go. The App
+# Store Connect API key is the same one the desktop workflow notarizes with; it
+# creates this run's provisioning profiles and authenticates the upload, and is
+# no longer handed to xcodebuild at all.
 #
 #   git tag ios-v1.1 && git push origin ios-v1.1
 #
@@ -102,9 +103,10 @@ jobs:
             exit 1
           fi
 
-      # `-authenticationKeyPath` needs a file. Written outside the workspace so
-      # it cannot be picked up by a later step or an artifact upload, and removed
-      # in an always() step below.
+      # `altool --upload-app` reads the key from a file, not from the
+      # environment. Written outside the workspace so it cannot be picked up by
+      # a later step or an artifact upload, and removed in an always() step
+      # below. xcodebuild is never given it — see the archive step.
       - name: Write the App Store Connect API key
         env:
           KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
@@ -121,8 +123,19 @@ jobs:
       # A runner's keychain is empty, so there is nothing here to sign a
       # distribution build with. Xcode's cloud signing is meant to fill that gap
       # and does not: it produces only a *development* identity and then reports
-      # the shortfall as `Cloud signing permission error` during export. So the
-      # team's distribution certificate is imported from a secret instead.
+      # the shortfall as `Cloud signing permission error` during export.
+      #
+      # It also does not stop. Each run is a new machine, so each run minted
+      # another certificate named "Created via API", and a team may hold only so
+      # many at once. The eleventh one filled the cap and the archive started
+      # failing with `Choose a certificate to revoke` and `No profiles for
+      # 'com.pathors.parley.ios' were found` — a message about a limit that
+      # nothing here knew it was spending. Eleven were revoked by hand to unblock
+      # ios-v1.5; the fix is that no step may mint anything any more.
+      #
+      # So the team's long-lived distribution certificate is imported from a
+      # secret, this run's profiles are created against it through the API, and
+      # both xcodebuild invocations below sign manually against those.
       - name: Install the App Store signing identity
         id: signing
         env:
@@ -139,6 +152,18 @@ jobs:
           "$RUNNER_TEMP/ascvenv/bin/pip" install --quiet pyjwt cryptography requests
           "$RUNNER_TEMP/ascvenv/bin/python" .github/scripts/asc_signing.py install
 
+      # No `-allowProvisioningUpdates` and no API key: without them xcodebuild
+      # cannot mint a certificate even if it decides it wants one, and a signing
+      # setup that has drifted fails here, loudly, instead of quietly consuming
+      # one of the team's certificate slots.
+      #
+      # `-xcconfig` rather than `SETTING=value` arguments. Command-line settings
+      # apply to every target at once, which cannot express "the app gets
+      # com.pathors.parley.ios and the extension gets …ios.keyboard", and they
+      # are outranked by the `CODE_SIGN_STYLE = Automatic` that project.yml
+      # commits for developers archiving on their own Macs. An xcconfig passed
+      # here beats both (`man xcodebuild`), and asc_signing.py generates it with
+      # a per-target lookup keyed on PRODUCT_BUNDLE_IDENTIFIER.
       - name: Archive
         run: |
           cd ios/App
@@ -146,27 +171,23 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/Parley.xcarchive" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey.p8" \
-            -authenticationKeyID "${{ secrets.APPLE_API_KEY }}" \
-            -authenticationKeyIssuerID "${{ secrets.APPLE_API_ISSUER }}" \
+            -xcconfig "${{ steps.signing.outputs.xcconfig }}" \
             archive
 
       # The checked-in ExportOptions.plist asks for automatic signing, which is
       # the path that fails here; the generated one names the profiles minted
       # above. The file on disk stays as it is because it is what a developer
       # exporting by hand from their own Mac wants.
+      #
+      # Manual signing against profiles that are already on disk needs nothing
+      # from App Store Connect, so the API key is not passed here either.
       - name: Export
         run: |
           cd ios/App
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/Parley.xcarchive" \
             -exportOptionsPlist "${{ steps.signing.outputs.export_options }}" \
-            -exportPath "$RUNNER_TEMP/export" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey.p8" \
-            -authenticationKeyID "${{ secrets.APPLE_API_KEY }}" \
-            -authenticationKeyIssuerID "${{ secrets.APPLE_API_ISSUER }}"
+            -exportPath "$RUNNER_TEMP/export"
           ls -la "$RUNNER_TEMP/export"
 
       # Uploading as its own step rather than letting the export do it: when the
@@ -187,7 +208,9 @@ jobs:
       # Always, including after a failed archive: a half-finished run must not
       # leave a profile behind, because Apple rejects a duplicate profile name
       # and the next run would fail for a reason with nothing to do with itself.
-      # The certificate is never touched — it is the team's and it outlives runs.
+      # The certificate is never touched — it is the team's, it outlives runs,
+      # and the cap it counts against is exactly what the old cloud-signing path
+      # exhausted.
       - name: Remove this run's provisioning profiles
         if: always()
         env:

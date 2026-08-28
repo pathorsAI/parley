@@ -61,9 +61,12 @@ targets:
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Automatic is for a developer archiving on their own Mac: Xcode holds
+        # the identity and manages the profile. CI overrides this to Manual with
+        # an xcconfig generated per run (.github/scripts/asc_signing.py), so the
+        # committed default never has to describe a runner.
         CODE_SIGN_STYLE: Automatic
-        # 科技派斯 (Pathors). Xcode manages the certificate and profile; CI can
-        # pass an App Store Connect API key with -allowProvisioningUpdates.
+        # 科技派斯 (Pathors).
         DEVELOPMENT_TEAM: SXHVCQXJHZ
 
   ParleyKeyboard:
