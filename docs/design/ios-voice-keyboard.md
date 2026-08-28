@@ -436,7 +436,16 @@ auto-return problem; the keyboard button remains the discoverable default.
 ## The keyboard's face
 
 The extension is a `UIInputViewController` hosting one SwiftUI tree
-(`KeyboardRootView`). It is two panes under one strip.
+(`KeyboardRootView`). It is a **list of panes under one strip**: the voice pane
+first, then the typing keyboards the user has switched on — English, 注音, or
+both. `TypingKeyboards` (ParleyKit) holds that list in the App Group's
+`UserDefaults` and the extension re-reads it on every `viewWillAppear`, because
+there is no notification an extension without Full Access is allowed to receive
+and a setting does not need one: whoever flipped it in Parley is not typing at
+that moment.
+
+`UserDefaults` rather than a `DictationChannel` mailbox for the same reason —
+the mailboxes need Full Access, and the pane list must not.
 
 ### Not painting a background
 
@@ -468,40 +477,69 @@ geometry is the system portrait keyboard's: 42pt caps, 11pt between rows, 6pt
 between keys, 3pt at the screen edge. That puts the QWERTY pane's key area at
 213pt (≈ the system's 216pt).
 
-**The voice pane is measured to come out at 213pt too**, so both panes are
+**Every other pane is measured to come out at 213pt too**, so all of them are
 251pt tall including the strip. That equality is load-bearing rather than tidy:
 the panes are one swipe apart, and a keyboard that changes height mid-swipe
 shoves the host app's content up and down every time the user crosses between
-them. Change one pane's numbers and the other has to follow.
+them. Change one pane's numbers and the others have to follow.
+
+The two panes that aren't QWERTY get there differently, and both are worth
+knowing about:
+
+- The **voice pane** is arranged from round buttons and whitespace — 16 + 74 +
+  12 + 100 + 11 — and the whitespace is what was tuned until it landed on 213.
+- The **注音 pane** has five rows where QWERTY has four, so it cannot keep 42pt
+  caps. `KBMetrics.zhuyinKeyHeight` is therefore *derived* — (213 − 8 − 4 − 4×7)
+  ÷ 5 ≈ 34.6pt — rather than picked. Shorter 注音 caps are also what iOS's own
+  注音 keyboard does, for exactly this reason.
 
 ### Mode strip
 
 Across the top: the **Parley wordmark** on the left, and on the right the
-current pane named beside two dots — a long one for where you are, a short one
-for the pane you haven't got to. The dots stay tappable, so nothing is lost.
+current pane named beside one dot per pane — a long one for where you are, short
+ones for the panes you haven't got to. The dots stay tappable, so nothing is
+lost. The names are *Voice*, *English*, and *注音* — which keeps its own name in
+both localizations, because the keys on that pane are 注音 and no English word
+identifies it faster.
 
 This replaced a two-segment control, which read as the *only* way across and
 hid the fact that the pane swipes at all. **The panes sit side by side on a
 track that follows the finger**: a `DragGesture` with a 24pt minimum distance
 drives the track's offset live and commits past a 56pt threshold, so a mistyped
-key is never read as a swipe but a real drag shows the other pane arriving. The
+key is never read as a swipe but a real drag shows the next pane arriving. The
 previous gesture only committed on release — nothing moved while the finger did,
 which is why nobody found it.
 
-The strip defaults to the keyboard pane when there is no Full Access, because
-that is the pane that still works in that state.
+A swipe moves **one pane**, clamped rather than wrapped, with the track rubber-
+banding at both ends. Clamped because the rubber band is a promise that there is
+nothing further that way, and a swipe that jumped from 注音 back to the mic
+would contradict it two panes later.
 
-### EN mode
+The strip defaults to the first typing pane when there is no Full Access,
+because that is the pane that still works in that state.
+
+While a 注音 syllable is being typed the strip gives its whole row over to the
+composition and its candidates — see below. It is the one row the keyboard has
+to spare, and a candidate bar of its own above the keys would make that pane
+taller than its neighbours every time somebody started a word.
+
+### English pane
 
 A real QWERTY plane — `qwertyuiop` / `asdfghjkl` (inset half a key, as iOS does)
 / shift + `zxcvbnm` + delete / `123` + globe (only where the system asks for
-one) + `@` + space + return — plus the
+one) + `@` + space + return — over the
 two symbol planes everyone expects: `1234567890` / `-/:;()$&@"` and
 `[]{}#%^*+=` / `_\|~<>$£¥•`, sharing a punctuation row and a bottom row.
 
-Layout is arithmetic rather than a table: one letter key is the unit, every wide
-key is expressed in units, so the rows line up on a 320pt SE and a 440pt Pro Max
-alike.
+Those two planes are `SymbolPlanes`, a view of its own, because the 注音 pane
+reaches the same two through the same `123` key. They fit either side without
+resizing the keyboard: four 42pt rows is exactly what QWERTY measures, so `123`
+from the shorter 注音 rows still lands on 213pt.
+
+Layout is arithmetic rather than a table: one key is the unit (`KeyRowMetrics`),
+every wide key is expressed in units, so the rows line up on a 320pt SE and a
+440pt Pro Max alike — and the same arithmetic does 大千's eleven-key top row by
+being told there are eleven columns instead of ten.
 
 The behaviours that make it feel like a keyboard rather than a grid of buttons:
 
@@ -520,7 +558,7 @@ The behaviours that make it feel like a keyboard rather than a grid of buttons:
   action, and a key labelled Send that quietly did nothing would be worse than
   one that visibly types.
 
-### Voice mode
+### Voice pane
 
 **A control panel, not a keyboard.** Nothing on this pane types a letter, so it
 borrows none of UIKit's key-cap treatment — no raised caps, no hard shadows, no
@@ -544,8 +582,9 @@ corner). **The top-left is deliberately empty**: it is where the pane breathes.
 The pane used to be caps — a mic pill flanked by two 56pt caps over a
 full-width `return` — and that was the mistake. A cap's raised look says "there
 are twenty-six of these, start typing"; on four control buttons it is noise, and
-the widest key on the keyboard was the least-pressed one. The two panes now read
-as different kinds of thing, which is itself a signal for which one you're on.
+the widest key on the keyboard was the least-pressed one. The voice pane and the
+typing panes now read as different kinds of thing, which is itself a signal for
+which one you're on.
 
 The record button is one of exactly two places the keyboard is allowed to look
 like Parley rather than iOS: idle it carries Pathors' brand gradient (`#1469D4`
@@ -604,31 +643,134 @@ because three lines at this size hold fewer characters than that — it would on
 push more of the newest words past the truncation. The slot's height is fixed so
 beginning to speak never resizes the keyboard.
 
-### No Bopomofo engine — 注音 is the system's job
+### 注音 pane
 
-**Parley deliberately ships no Chinese input engine.** A keyboard extension
-cannot reach the system's Chinese input engine, and bundling a Bopomofo engine
-(a phonetic table, a candidate bar, a user dictionary) is a product of its own,
-not a round of polish on a dictation keyboard. Chinese input in Parley is
-dictation; Chinese *typing* belongs to the system 注音 keyboard.
+This section used to be called "No Bopomofo engine — 注音 is the system's job",
+and it argued that Chinese input in Parley is dictation while Chinese *typing*
+belongs to the system 注音 keyboard. **That is reversed.**
 
-That made the globe look load-bearing, and it used to be drawn **on every
-device** rather than only where `needsInputModeSwitchKey` is true. That was
-wrong, and it is the one decision in this document that has been reversed.
+What the old argument missed is what it was actually asking of the user.
+Switching to the system 注音 keyboard is not a neutral hop between layouts — it
+is leaving Parley's keyboard, and the mic button with it, mid-conversation.
+Someone typing Chinese has to give up dictation to do it, which is the one thing
+this keyboard exists to offer. "Bundling a Bopomofo engine is a product of its
+own" was true about a full IME and beside the point about the pane actually
+needed: per-syllable 注音 with a frequency-ordered candidate bar is a week of
+work, not a product.
 
-From iPhone X onwards **iOS draws the Emoji/Globe and Dictation keys itself**,
-in the strip beneath a raised keyboard, over custom keyboards included. That is
-why `needsInputModeSwitchKey` returns false there — the system is telling us it
-has the exit covered — and the HIG asks explicitly not to repeat it: "Don't
-duplicate system-provided keyboard features … avoid causing confusion by
-repeating them in your keyboard." Drawing our own was a duplicate key that cost
-a slot in both panes and made the voice pane read as crowded.
+**v1 is 傳統注音, one syllable at a time.**
 
-**Both panes now follow the flag.** Where it is true (older, Home-button
-devices) the globe appears — bottom-left in the voice pane, in its usual place
-in the QWERTY bottom row. Where it is false the system's own key is the exit and
-we draw nothing. Either way a 注音 user is always one obvious tap from leaving,
-which is what App Review actually asks for.
+- **大千 layout**, as it is actually defined: a mapping onto a QWERTY board. So
+  the top row is *eleven* keys (`1234567890-`) and the three below it are ten,
+  centred by the same half-key inset QWERTY's home row uses. A tidy 4×10 grid
+  would have to drop `ㄦ`, and 兒/二/而/耳 are not optional. 37 symbols + 4 tone
+  marks = 41 keys, which is the whole block.
+- **Slots, not a string.** `ZhuyinSyllable` is at most one 聲母, one 介音, one
+  韻母 and one tone, so a symbol *replaces* whatever is in its slot. Typing
+  `ㄅㄆ` leaves `ㄆ`. An out-of-order or doubled reading is unrepresentable
+  rather than something to validate after the fact — and the slots are what give
+  delete a definition: it clears the last slot filled.
+- **Tones finalize.** 大千 has no first-tone key, so **space is the first tone**;
+  `ˊˇˋ˙` finalize with theirs. A finalized syllable queries the dictionary and
+  its candidates take over the strip. A second tone key re-tones and re-queries,
+  because `ㄕˋ` for `ㄕˊ` is the mistake everyone makes.
+- **Space confirms; the next syllable auto-confirms.** Once candidates are up,
+  space commits the first one and starting the next syllable commits it too.
+  That second rule is what makes a sentence typeable without ever looking at the
+  bar.
+- **Delete edits the buffer before the document**: out of the candidate bar,
+  then the syllable slot by slot, and only then does it reach the field.
+- **Return** commits a pending syllable and otherwise types a line break, the
+  way the system keyboard behaves.
+- Leaving the pane commits what was pending — the user swiped, they didn't press
+  delete. Coming back to a *different* field drops it, the same rule the
+  transcript tail follows and for the same reason.
+
+Everything above is `ZhuyinComposer` in ParleyKit, which never touches the
+document: it answers `handled` / `insert(_)` / `passThrough` and the keyboard
+does the inserting. That is what makes it testable on a Mac with `swift test`,
+and it is why `passThrough` exists at all — space, delete and return keep their
+ordinary meanings on every other pane without those panes knowing a composer
+exists.
+
+#### The dictionary
+
+`zhuyin-dict.txt` (~93 KiB, in ParleyKit's resources) is reading → characters,
+most frequent first, generated by `scripts/gen-zhuyin-dict.mjs` from
+**McBopomofo's MIT-licensed data**: `BPMFBase.txt` for the readings and
+`phrase.occ` for the ordering. `BPMFMappings.txt` is deliberately skipped — it
+is the file their README marks as simplified from libtabe's `tsi.src`, so it
+carries a second license's provenance, and it is phrases, which v1 does not
+convert. Attribution is in `ios/THIRD-PARTY.md`; the generator pins the download
+to a commit and stamps it into the resource's header, so the committed file names
+what it was built from.
+
+It is loaded **lazily and once**, on the first finalized syllable, because this
+process runs against a jetsam limit far tighter than an app's — a keyboard opened
+on the voice or QWERTY pane never pays for it. ~1,400 readings over ~27,000
+characters is a few hundred kilobytes resident, and the file's own string is
+dropped as soon as it is parsed. Rows are stored with no separator between
+characters because every character in the source is exactly one Unicode scalar,
+including the ones outside the BMP.
+
+The 大千 table was checked, not eyeballed: McBopomofo's data carries a 大千
+keystroke column beside every reading, and the table in `ZhuyinDachen` agrees
+with 26,648 of their 26,652 rows (the four misses are typos in their key column,
+e.g. `公 ㄍㄨㄥ˙ … ej/5`). That is why the table is written out in Swift rather
+than derived from the data.
+
+#### What v1 does not do
+
+Named here so nobody has to guess whether it was forgotten:
+
+- **No phrase conversion.** No lattice, no viterbi, no 2–6 character lexicon. A
+  sentence is typed one character at a time with a frequency-ordered bar. This is
+  the deliberate line: per-syllable done well before phrases done adequately.
+- **No user dictionary and no learning.** The bar's order is the corpus's, not
+  yours. A keyboard extension that accumulated a per-user model would be holding
+  state this process is deliberately kept free of.
+- **No 漢語拼音 or 倚天 layouts**, and no half-width/full-width punctuation
+  switch — punctuation comes from the symbol planes shared with QWERTY.
+- **No associated-phrase prompts** after a commit.
+
+#### The globe, and why it is still not on every device
+
+The old section's argument about the globe survives its reversal, because it was
+never really about 注音: App Review asks that a keyboard not trap the user, so
+there has to be a way out to another keyboard.
+
+The globe used to be drawn **on every device** rather than only where
+`needsInputModeSwitchKey` is true. That was wrong. From iPhone X onwards **iOS
+draws the Emoji/Globe and Dictation keys itself**, in the strip beneath a raised
+keyboard, over custom keyboards included. That is why `needsInputModeSwitchKey`
+returns false there — the system is telling us it has the exit covered — and the
+HIG asks explicitly not to repeat it: "Don't duplicate system-provided keyboard
+features … avoid causing confusion by repeating them in your keyboard." Drawing
+our own was a duplicate key that cost a slot in every pane and made the voice
+pane read as crowded.
+
+**Every pane now follows the flag.** Where it is true (older, Home-button
+devices) the globe appears — bottom-left in the voice pane, in its usual place in
+the QWERTY and 注音 bottom rows. Where it is false the system's own key is the
+exit and we draw nothing.
+
+### Which keyboards are on
+
+`Settings › Keyboards` in the app is one toggle per typing keyboard. The default
+before anyone touches it: **English and 注音 for a phone whose language list
+includes Traditional Chinese, English alone for everyone else.** The asymmetry is
+deliberate — for a Taiwanese user the 注音 pane is the reason to install this
+keyboard, and for an English-only user it is a pane of unfamiliar symbols one
+swipe from the mic button.
+
+At least one has to stay on, and the way that is said is a toggle that won't move
+rather than an alert after the tap. It is also the only reason `TypingKeyboards.enabled()`
+can never return empty: a keyboard with no typing pane would leave someone with
+Full Access off unable to type at all.
+
+The section sits outside the account gate the dictation sections are behind.
+Typing needs neither an account nor Full Access, which is the whole reason the
+keyboard has typing panes — see 4.4.1 below.
 
 It is a real `UIButton` behind a SwiftUI cap or disc, wired
 whole-touch-sequence to `handleInputModeList(from:with:)`: that selector demands
@@ -640,12 +782,16 @@ more tap.
 ## App Review notes
 
 - **4.4.1** (keyboards must work without Full Access): with Full Access off the
-  keyboard opens on the QWERTY pane, and the whole plane, the quick keys and the
-  globe work normally — none of them need the network or the App Group. Only
+  keyboard opens on the first typing pane, and the whole plane, the quick keys,
+  the globe and the 注音 pane work normally — none of them need the network or
+  the App Group, and the 注音 dictionary is a file inside our own bundle. Only
   dictation is unavailable, and the voice pane says so with a jump to Settings.
 - **Never trapping the user**: the exit is the system's own globe on the devices
   that draw one, and ours on the devices that don't — `needsInputModeSwitchKey`
-  decides, in both panes. See the 注音 section above.
+  decides, on every pane. See the 注音 section above.
+- **Third-party data**: the 注音 dictionary is generated from McBopomofo's
+  MIT-licensed lexicon and attributed in `ios/THIRD-PARTY.md`. No phrase data
+  with murkier provenance is shipped; see that section.
 - **2.5.1** (private APIs): the only private code in the project is the
   pre-26.4 auto-return — reading the host's bundle id, and asking
   `LSApplicationWorkspace` to open it — version-gated to where it works. Every
@@ -659,4 +805,5 @@ more tap.
   visible and reversible: see that section.
 - Memory: the keyboard process holds no audio, no model, and no transcript
   history — it only shuttles text — to stay under the tight jetsam limit
-  keyboard extensions run against.
+  keyboard extensions run against. The one file it does read is the 注音
+  dictionary, lazily and once; see that section for what it costs.
