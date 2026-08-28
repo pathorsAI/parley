@@ -31,7 +31,9 @@ that produced the build.
 
 It authenticates with the `APPLE_API_KEY_CONTENT` / `APPLE_API_KEY` /
 `APPLE_API_ISSUER` secrets, the same App Store Connect API key the desktop
-workflow notarizes with.
+workflow notarizes with. The key creates this run's provisioning profiles and
+authenticates the TestFlight upload; it is deliberately **not** passed to
+`xcodebuild` — see below.
 
 **Signing on the runner is not Xcode-managed, and this is the part that will
 confuse you.** A runner's keychain is empty, so Xcode's cloud signing is
@@ -60,12 +62,75 @@ There is one now, and it is long-lived:
 
 [`.github/scripts/asc_signing.py install`](../.github/scripts/asc_signing.py)
 imports that into a throwaway keychain, creates an `IOS_APP_STORE` profile per
-bundle id against it, and writes an `ExportOptions.plist` naming those profiles
-— manual signing, so Xcode is never asked to go looking. `cleanup` deletes the
+bundle id against it, installs those profiles into both directories Xcode reads
+them from, and writes the two files the build signs with. `cleanup` deletes the
 profiles and the keychain and **never touches a certificate**.
 
 Profiles are per-run on purpose: creating them is silent and free, and a fresh
 one can never be stale against the certificate or the bundle ids' capabilities.
+
+### Both xcodebuild steps sign manually, and neither may mint anything
+
+The archive is given a generated `.xcconfig`; the export is given a generated
+`ExportOptions.plist`. Neither gets `-allowProvisioningUpdates` and neither gets
+the API key, so **no step can create a certificate or a profile**, and a signing
+setup that has drifted fails at once instead of silently repairing itself.
+
+Two bundle ids need two different profiles, and a build setting passed on the
+`xcodebuild` command line applies to every target at once — a single
+`PROVISIONING_PROFILE_SPECIFIER=` would give the keyboard extension the app's
+profile. The generated xcconfig looks the profile up per target instead:
+
+```
+PARLEY_CI_PROFILE_com_pathors_parley_ios          = parley-ci com.pathors.parley.ios
+PARLEY_CI_PROFILE_com_pathors_parley_ios_keyboard = parley-ci com.pathors.parley.ios.keyboard
+
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = Apple Distribution
+PROVISIONING_PROFILE_SPECIFIER = $(PARLEY_CI_PROFILE_$(PRODUCT_BUNDLE_IDENTIFIER:identifier))
+```
+
+`PRODUCT_BUNDLE_IDENTIFIER` is per-target and `:identifier` rewrites its dots to
+underscores, so each target resolves the indirection to its own profile.
+
+It has to be an xcconfig rather than command-line settings for a second reason:
+`project.yml` commits `CODE_SIGN_STYLE: Automatic` as a *target* setting — which
+is what you want archiving on your own Mac — and a target setting outranks a
+command-line one. `xcodebuild -xcconfig` outranks both (`man xcodebuild`: *"will
+override all other settings, including settings passed individually on the
+command line"*), so CI overrides the developer default without the developer
+default being wrong.
+
+### "Created via API" certificates, and the cap
+
+Before that, the archive step ran with `-allowProvisioningUpdates` and the API
+key. On every fresh runner Xcode's cloud signing minted a new `DEVELOPMENT`
+certificate named **`Created via API`** and left it behind. They accumulate, and
+a team may hold only so many at once. On 2026-08-28 the eleventh one filled the
+cap and every run started failing at *Archive* with:
+
+```
+error: Choose a certificate to revoke. Your account has reached the maximum
+       number of certificates.
+error: No profiles for 'com.pathors.parley.ios' were found
+```
+
+The second line is a consequence of the first, not a separate problem, and
+neither mentions the certificate the run itself created.
+
+If this ever recurs, list the team's certificates and revoke the CI-minted
+development ones — never the `Apple Distribution` one in `APPLE_IOS_DIST_P12`,
+and never the `DEVELOPER_ID_APPLICATION_G2` the desktop app notarizes with:
+
+```bash
+# from a machine holding the App Store Connect API key; auth as asc_signing.py does
+GET    /v1/certificates?limit=200      # look for certificateType DEVELOPMENT
+                                       #   whose displayName is "Created via API"
+DELETE /v1/certificates/{id}           # one call per certificate
+```
+
+The archive no longer creates them, so the cap should now only move when a human
+moves it.
 
 <details>
 <summary>How that identity was created, and how to replace it</summary>
