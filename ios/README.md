@@ -10,6 +10,7 @@ Lives in the main repo as `ios/` alongside the desktop app, `android/`, and `web
 - `SonioxProtocol` + `SonioxStreamParser` — the Soniox realtime wire protocol as spoken through Parley's hosted STT relay (`wss://api.parley.tw/stt/stream`): config frame without vendor key, `keepalive`/`finalize` control frames, `<end>`/`<fin>` endpoint markers, error frames
 - `SttRelayClient` — `URLSessionWebSocketTask` relay session honoring the drain rule (never close the socket after `finalize`; the relay flushes the tail first)
 - `EditDiff` + `Lexicon`/`LexiconStore` + `LexiconCapture` — the personal dictionary the voice keyboard learns from post-dictation corrections (the phone's counterpart to the desktop's `src/lib/dictionary/`). See [`../docs/design/ios-voice-keyboard.md`](../docs/design/ios-voice-keyboard.md)
+- `ZhuyinSyllable` / `ZhuyinDachen` / `ZhuyinComposer` / `ZhuyinDictionary` — 傳統注音 input for the keyboard's 注音 pane: the 大千 layout, slot-based syllable composition, and frequency-ordered single-character candidates
 
 Design doc: [`../docs/design/ios-app.md`](../docs/design/ios-app.md). Cloud prerequisites are tracked in parley-internal (Phase 0 epic).
 
@@ -40,6 +41,17 @@ xcodebuild -project Parley.xcodeproj -scheme Parley \
 ```
 
 The `.xcodeproj` is generated from `App/project.yml` (XcodeGen) and not committed.
+
+The 注音 pane's candidate dictionary is a generated resource:
+
+```bash
+node scripts/gen-zhuyin-dict.mjs   # → ParleyKit/Sources/ParleyKit/Resources/zhuyin-dict.txt
+```
+
+It is built from McBopomofo's MIT-licensed lexicon data — see
+[`THIRD-PARTY.md`](THIRD-PARTY.md) and the 注音 section of the keyboard's design
+doc. If Xcode ships a build without the file in `ParleyKit_ParleyKit.bundle`, the
+package graph is cached: clear the project's DerivedData and build again.
 
 ## Localization
 

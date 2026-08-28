@@ -18,6 +18,23 @@
         }
       }
     },
+    "Bopomofo keyboard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bopomofo keyboard"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "注音鍵盤"
+          }
+        }
+      }
+    },
     "Caps lock": {
       "extractionState": "manual",
       "localizations": {
@@ -31,6 +48,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "大寫鎖定"
+          }
+        }
+      }
+    },
+    "Composing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Composing"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "組字中"
           }
         }
       }
@@ -101,6 +135,23 @@
         }
       }
     },
+    "English": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "English"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "英文"
+          }
+        }
+      }
+    },
     "English keyboard": {
       "extractionState": "manual",
       "localizations": {
@@ -114,6 +165,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "英文鍵盤"
+          }
+        }
+      }
+    },
+    "Fourth tone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fourth tone"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "四聲"
           }
         }
       }
@@ -135,23 +203,6 @@
         }
       }
     },
-    "Keyboard": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Keyboard"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "鍵盤"
-          }
-        }
-      }
-    },
     "Mic ready": {
       "extractionState": "manual",
       "localizations": {
@@ -165,6 +216,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "麥克風待命"
+          }
+        }
+      }
+    },
+    "Neutral tone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neutral tone"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "輕聲"
           }
         }
       }
@@ -249,6 +317,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "搜尋"
+          }
+        }
+      }
+    },
+    "Second tone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Second tone"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "二聲"
           }
         }
       }
@@ -424,6 +509,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "麥克風待命中，點一下即可關閉。"
+          }
+        }
+      }
+    },
+    "Third tone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Third tone"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "三聲"
           }
         }
       }

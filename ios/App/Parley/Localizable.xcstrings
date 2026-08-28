@@ -426,6 +426,23 @@
         }
       }
     },
+    "Bopomofo keyboard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bopomofo keyboard"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "注音鍵盤"
+          }
+        }
+      }
+    },
     "Can't reach the cloud right now": {
       "extractionState": "manual",
       "localizations": {
@@ -936,6 +953,23 @@
         }
       }
     },
+    "English keyboard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "English keyboard"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "英文鍵盤"
+          }
+        }
+      }
+    },
     "Everyone has agreed": {
       "extractionState": "manual",
       "localizations": {
@@ -1101,6 +1135,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "讓麥克風保持待命"
+          }
+        }
+      }
+    },
+    "Keyboards": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keyboards"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "鍵盤"
           }
         }
       }
@@ -2522,6 +2573,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "在下面的橫條上往右滑"
+          }
+        }
+      }
+    },
+    "Swipe sideways on the Parley keyboard to move between the mic and the keyboards you have turned on here. At least one keyboard stays on.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Swipe sideways on the Parley keyboard to move between the mic and the keyboards you have turned on here. At least one keyboard stays on."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 Parley 鍵盤上左右滑動，就能在語音和你在這裡開啟的鍵盤之間切換。至少要留一個鍵盤開著。"
           }
         }
       }

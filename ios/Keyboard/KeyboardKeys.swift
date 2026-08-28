@@ -18,6 +18,30 @@ enum KeyTint {
     case accent
 }
 
+/// Every width on a key row, derived from the widest row's key count: one key is
+/// the unit and every wide key is expressed in units, so the rows line up on a
+/// 320pt SE and a 440pt Pro Max alike.
+///
+/// `columns` is 10 for QWERTY and 11 for 大千 — 注音's top row is
+/// `1234567890-`, because the 41st key is `ㄦ` and 兒/二/而/耳 are not optional.
+struct KeyRowMetrics {
+    /// One ordinary key.
+    let unit: CGFloat
+    /// Shift, delete, `123`, `ABC`, return — one and a half keys, which is what
+    /// falls out of asking three keys and a gap to cover two of them.
+    let wide: CGFloat
+
+    init(width: CGFloat, columns: Int = 10) {
+        let content = max(width - KBMetrics.sideInset * 2, 1)
+        unit = (content - KBMetrics.keyGap * CGFloat(columns - 1)) / CGFloat(columns)
+        wide = (3 * unit + KBMetrics.keyGap) / 2
+    }
+
+    /// The half-key iOS insets the QWERTY home row by — and exactly what centres
+    /// a ten-key 注音 row under the eleven-key one above it.
+    var halfKey: CGFloat { (unit + KBMetrics.keyGap) / 2 }
+}
+
 /// A key cap. 5pt corners and a 1pt hard shadow, which is what UIKit draws.
 struct KeyCap: View {
     let dark: Bool
@@ -141,24 +165,73 @@ struct RepeatingKey<Content: View>: View {
     }
 }
 
+/// One cap, one label, one action — the key every typing pane is built out of.
+///
+/// `width == nil` lets the key stretch to share whatever the row has left over,
+/// which is how space ends up at roughly its system width without anyone naming
+/// a number for it. `height` is a parameter because the 注音 plane fits five
+/// rows into the four rows' worth of space QWERTY uses.
+struct KeyButton<Label: View>: View {
+    let dark: Bool
+    var tint: KeyTint = .letter
+    var width: CGFloat?
+    var height: CGFloat = KBMetrics.keyHeight
+    var ink: Color?
+    let action: () -> Void
+    @ViewBuilder var label: () -> Label
+
+    var body: some View {
+        PressableButton(action: action) { pressed in
+            ZStack {
+                KeyCap(dark: dark, tint: tint, pressed: pressed)
+                label().foregroundStyle(ink ?? KBTheme.ink(dark))
+            }
+            .frame(width: width, height: height)
+            .frame(maxWidth: width == nil ? .infinity : nil)
+        }
+    }
+}
+
+/// Delete, with the system key's hold-to-repeat. Its own type rather than a
+/// `KeyButton` because a `Button` only reports on touch-up — see `RepeatingKey`.
+struct DeleteKey: View {
+    let dark: Bool
+    var width: CGFloat?
+    var height: CGFloat = KBMetrics.keyHeight
+    let action: () -> Void
+
+    var body: some View {
+        RepeatingKey(action: action) { pressed in
+            ZStack {
+                KeyCap(dark: dark, tint: .alt, pressed: pressed)
+                Image(systemName: "delete.left")
+                    .font(.system(size: 19, weight: .regular))
+                    .foregroundStyle(KBTheme.ink(dark))
+            }
+            .frame(width: width, height: height)
+            .frame(maxWidth: width == nil ? .infinity : nil)
+        }
+        .accessibilityLabel(Text("Delete"))
+    }
+}
+
 /// The globe, shown only where the system asks for one.
 ///
-/// Parley ships no Bopomofo engine — a keyboard extension can't reach the
-/// system Chinese input engine and we are not bundling our own — so a user who
-/// wants 注音 has to be able to leave. This key used to be drawn on *every*
+/// App Review 4.4.1 asks that a keyboard never trap the user, so there has to
+/// be a way out to another keyboard. This key used to be drawn on *every*
 /// device to guarantee that exit, which was a mistake: from iPhone X onwards
 /// iOS draws the Emoji/Globe and Dictation keys itself, in the strip beneath a
 /// raised keyboard, **including over custom keyboards**, and the HIG asks
 /// explicitly not to repeat them ("Don't duplicate system-provided keyboard
 /// features … avoid causing confusion by repeating them in your keyboard").
 /// `needsInputModeSwitchKey` is how the system says which case it is in, so
-/// both panes now follow it rather than overriding it.
+/// every pane follows it rather than overriding it.
 ///
 /// It is a real `UIButton` because `handleInputModeList(from:with:)` demands the
 /// live `UIEvent` from a control action; a SwiftUI gesture has no event to hand
 /// it. Wiring the whole touch sequence to that one selector is UIKit's own
 /// globe behaviour: a tap advances to the next keyboard, a hold presents the
-/// system keyboard picker, from which 注音 is one more tap.
+/// system keyboard picker.
 struct GlobeKey: View {
     weak var controller: UIInputViewController?
     let dark: Bool

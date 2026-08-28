@@ -11,6 +11,10 @@ struct SettingsView: View {
     /// ready is settings, but *whether it is open right now* is live state that
     /// belongs to the thing holding it.
     @ObservedObject private var dictation = DictationCoordinator.shared
+    /// The keyboard's typing panes. Read once here and written straight through
+    /// to the App Group's defaults, which is where the extension looks for them
+    /// on every appearance — there is no live binding across a process boundary.
+    @State private var enabled = TypingKeyboards.enabled()
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
     @State private var showDeleteConfirmation = false
@@ -39,6 +43,7 @@ struct SettingsView: View {
                         dictationSection.id(Self.keyboardSectionID)
                         micWindowSection
                     }
+                    keyboardsSection
                     appearanceSection
                     languageSection
                     aboutSection
@@ -446,6 +451,56 @@ struct SettingsView: View {
             sectionFooter("Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right.")
         }
         .listRowBackground(Theme.tintedSurface)
+    }
+
+    // MARK: which keyboards the swipe track carries
+
+    /// The typing panes on the Parley keyboard, beside the voice pane that is
+    /// always there.
+    ///
+    /// Deliberately outside the `hasAccount` gate the two sections above sit in:
+    /// typing needs neither an account nor Full Access, which is the whole
+    /// reason the keyboard has typing panes at all (App Review 4.4.1). Someone
+    /// who has installed the keyboard and never signed in can still choose
+    /// which of them to carry.
+    private var keyboardsSection: some View {
+        Section {
+            ForEach(TypingKeyboard.allCases) { keyboard in
+                Toggle(Self.keyboardLabel(keyboard), isOn: keyboardBinding(keyboard))
+                    // The last one on can't be turned off. A toggle that won't
+                    // move says so before the tap; an alert afterwards would be
+                    // the same rule delivered as a telling-off.
+                    .disabled(enabled == [keyboard])
+            }
+        } header: {
+            sectionHeader("Keyboards")
+        } footer: {
+            sectionFooter("Swipe sideways on the Parley keyboard to move between the mic and the keyboards you have turned on here. At least one keyboard stays on.")
+        }
+        .listRowBackground(Theme.tintedSurface)
+    }
+
+    private func keyboardBinding(_ keyboard: TypingKeyboard) -> Binding<Bool> {
+        Binding(
+            get: { enabled.contains(keyboard) },
+            set: { on in
+                var next = Set(enabled)
+                if on { next.insert(keyboard) } else { next.remove(keyboard) }
+                guard !next.isEmpty else { return }
+                let ordered = TypingKeyboard.allCases.filter(next.contains)
+                TypingKeyboards.setEnabled(ordered)
+                enabled = ordered
+            })
+    }
+
+    /// 注音 is named in its own script in the Chinese localization and spelled
+    /// out in the English one — "Bopomofo" is what an English speaker searching
+    /// for it would type.
+    private static func keyboardLabel(_ keyboard: TypingKeyboard) -> LocalizedStringKey {
+        switch keyboard {
+        case .english: return "English keyboard"
+        case .zhuyin: return "Bopomofo keyboard"
+        }
     }
 
     // MARK: the microphone window
