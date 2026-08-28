@@ -24,6 +24,16 @@ public enum SonioxProtocol {
     /// First frame on the socket. In relay mode `apiKey` stays nil — the relay
     /// injects the master key server-side and forces the model, so neither
     /// secret nor model choice rides in the client frame.
+    ///
+    /// **No recognition context here, deliberately.** Soniox's config frame
+    /// takes a `context.terms` list to bias vocabulary, and the desktop fills it
+    /// from the phrase dictionary (`src-tauri/src/transcription/soniox.rs`). The
+    /// phone's personal dictionary has the terms ready
+    /// (`LexiconStore.recognitionTerms`) and does not send them: whether the
+    /// hosted relay forwards a `context` from an iOS client is not something
+    /// this side can establish, and a config frame the relay rejects costs the
+    /// user dictation altogether. Adding the field is the known follow-up —
+    /// see `docs/design/ios-voice-keyboard.md`.
     public struct Config: Encodable {
         public var apiKey: String?
         public var model: String

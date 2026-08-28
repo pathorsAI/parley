@@ -88,26 +88,12 @@ struct SettingsView: View {
 
     private static let keyboardSectionID = "voice-keyboard"
 
-    /// Section headers as the landing site's eyebrow — brand blue and in the
-    /// sentence case they were written in, rather than the system's grey
-    /// all-caps. It is the one place a `Form` lets a brand speak.
-    ///
-    /// `primary` rather than `brand`, because this is small text: brand blue is
-    /// exactly what the dark palette swaps for sky, on the grounds that it
-    /// cannot be read on a navy-black page.
     private func sectionHeader(_ title: LocalizedStringKey) -> some View {
-        Text(title)
-            .font(.parley.footnote.weight(.semibold))
-            .foregroundStyle(Theme.primary)
-            .textCase(nil)
+        SettingsSection.header(title)
     }
 
-    /// Footers are the quiet half of a settings page: same DM Sans, one step
-    /// down, muted.
     private func sectionFooter(_ text: LocalizedStringKey) -> some View {
-        Text(text)
-            .font(.parley.footnote)
-            .foregroundStyle(Theme.mutedForeground)
+        SettingsSection.footer(text)
     }
 
     // MARK: account
@@ -446,8 +432,18 @@ struct SettingsView: View {
             } label: {
                 Text("Set-up steps").font(.parley.subheadlineEmphasized)
             }
+
+            // Below the set-up, because it is only worth anything once the
+            // keyboard is in use: the dictionary fills itself from dictation.
+            NavigationLink {
+                PersonalDictionaryView()
+            } label: {
+                Label("Personal dictionary", systemImage: "text.book.closed")
+            }
         } header: {
             sectionHeader("Voice keyboard")
+        } footer: {
+            sectionFooter("Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right.")
         }
         .listRowBackground(Theme.tintedSurface)
     }
@@ -603,6 +599,32 @@ struct SettingsView: View {
             deleteAccountError = String(
                 localized: "Your account was not deleted. Check your connection and try again.")
         }
+    }
+}
+
+/// The settings page's section grammar, shared by `SettingsView` and the screens
+/// it pushes so a pushed screen doesn't quietly fall back to the system's look.
+enum SettingsSection {
+    /// Section headers as the landing site's eyebrow — brand blue and in the
+    /// sentence case they were written in, rather than the system's grey
+    /// all-caps. It is the one place a `Form` lets a brand speak.
+    ///
+    /// `primary` rather than `brand`, because this is small text: brand blue is
+    /// exactly what the dark palette swaps for sky, on the grounds that it
+    /// cannot be read on a navy-black page.
+    static func header(_ title: LocalizedStringKey) -> some View {
+        Text(title)
+            .font(.parley.footnote.weight(.semibold))
+            .foregroundStyle(Theme.primary)
+            .textCase(nil)
+    }
+
+    /// Footers are the quiet half of a settings page: same DM Sans, one step
+    /// down, muted.
+    static func footer(_ text: LocalizedStringKey) -> some View {
+        Text(text)
+            .font(.parley.footnote)
+            .foregroundStyle(Theme.mutedForeground)
     }
 }
 
