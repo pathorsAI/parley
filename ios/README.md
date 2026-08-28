@@ -9,6 +9,7 @@ Lives in the main repo as `ios/` alongside the desktop app, `android/`, and `web
 - `SegmentBuilder` — speaker-run accumulation, stable segment ids, partial/final tail semantics (port of `src-tauri/src/transcription/common.rs`)
 - `SonioxProtocol` + `SonioxStreamParser` — the Soniox realtime wire protocol as spoken through Parley's hosted STT relay (`wss://api.parley.tw/stt/stream`): config frame without vendor key, `keepalive`/`finalize` control frames, `<end>`/`<fin>` endpoint markers, error frames
 - `SttRelayClient` — `URLSessionWebSocketTask` relay session honoring the drain rule (never close the socket after `finalize`; the relay flushes the tail first)
+- `EditDiff` + `Lexicon`/`LexiconStore` + `LexiconCapture` — the personal dictionary the voice keyboard learns from post-dictation corrections (the phone's counterpart to the desktop's `src/lib/dictionary/`). See [`../docs/design/ios-voice-keyboard.md`](../docs/design/ios-voice-keyboard.md)
 
 Design doc: [`../docs/design/ios-app.md`](../docs/design/ios-app.md). Cloud prerequisites are tracked in parley-internal (Phase 0 epic).
 
