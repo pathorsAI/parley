@@ -114,6 +114,10 @@ signals (they carry no payload). This is what makes the hand-off robust to the
 keyboard being suspended/killed while the app is foregrounded — whatever it
 missed is still in the downlink when it returns.
 
+`lexicon.json` sits in the same container but is **not** part of this channel:
+it is shared state rather than a mailbox, read at the two moments it matters and
+carrying no notification of its own. See the personal dictionary below.
+
 App Group id: `group.com.pathors.parley.ios` (entitlement on both targets).
 
 ## Not leaving in the first place — the microphone window
@@ -308,6 +312,117 @@ Two things are worth writing down rather than repeating:
 
 Neither is why the reported bug happens, which is worth being clear about: the
 report is that dictation *leaves*, and leaving is what the window fixes.
+
+## Personal dictionary
+
+Dictation types and forgets. A name the STT mishears stays wrong in every future
+dictation, and the user re-fixes it every time — which is the loop the desktop
+closed in #295 with a phrase dictionary learned from post-paste corrections. This
+is the phone's version of it, and the interesting differences are all in what a
+keyboard extension is able to see.
+
+`Lexicon` / `LexiconStore` (ParleyKit) hold correction pairs and hand-added terms
+in `lexicon.json` in the App Group container — same plumbing as
+`DictationChannel`, atomic writes and a tolerant decode, no Darwin note because
+nothing here is live. Every rule lives on the `Lexicon` **value**; the store is
+the same API with a file behind it, which is what lets all of it be unit-tested
+on a machine that has no App Group container.
+
+### What it can see, and what it can't
+
+The desktop reads the field it pasted into through the Accessibility API and
+watches the value settle. The keyboard has no such thing. Its entire view of the
+field is `textDocumentProxy.documentContextBeforeInput`: a run of text ending at
+the cursor, clipped at a length iOS does not promise, with no notification when
+anything changes. So the shape is a snapshot and a comparison — snapshot the
+window when the dictated text has just landed (`state == .done`), compare it
+against the window again at `viewWillDisappear` or at the start of the next
+session, diff, record.
+
+**The scope this buys is narrow, and it is worth stating rather than discovering:
+only edits the user makes while our keyboard is still up in that same field.**
+Dismiss the keyboard, switch apps, or move to another field before fixing the
+word and the correction is never seen. Nothing in the extension API would let it
+be — the field belongs to the host app, and the proxy exists only while we are
+the active input. Two smaller limits sit under it: the window can slide out of
+alignment in a field longer than 200 characters when an edit changes the text's
+length, and `viewWillDisappear` is not a promise on a process iOS kills without
+ceremony. In both cases nothing is learned, which is the intended failure —
+**capturing garbage here becomes a rule that rewrites the user's words from then
+on**, and that is far worse than capturing nothing.
+
+`LexiconCapture.alignable` is the one gate: the two windows have to agree at one
+end or the other, or they are two different pieces of text. It deliberately does
+*not* trim them down to their disagreement first, because a character-level trim
+cuts through the middle of words — "we use pearly" against "we use Parley" shares
+the prefix `we use ` and the suffix `y`, so the trimmed pair is `pearl → Parle`,
+a rule that could never match again since Latin pairs need a whole word. Handing
+both whole windows to a token-level diff is what keeps a learned pair at word
+edges. The anchor is also *weighted* rather than counted — an ideograph is worth
+two — because Chinese packs into five characters what English spends a clause on,
+and a raw count would have refused 在 → 再, the correction this was built for.
+
+`EditDiff` is that token-level diff: Latin runs are words, ideographs are single
+characters, an LCS aligns them, and adjacent changed tokens merge into one span.
+Most of the file is refusals — pure insertions, pure deletions, case,
+punctuation, whitespace, and anything over ten characters on either side. An
+insertion, a deletion, a typo fix and a wholesale rewrite all arrive through the
+same channel; only one of them is vocabulary.
+
+### Why a pair does nothing until it has been seen twice
+
+`Lexicon.autoApplyThreshold` is 2, and the second sighting is the whole point. A
+single edit is as likely to be someone rewording their sentence as it is to be a
+word Parley gets wrong, and the two are indistinguishable from a diff. Acting on
+one sighting would mean that the first time a user changed their mind mid-phrase,
+dictation started silently rewriting that word forever. Twice is cheap for a real
+mishearing — it recurs every time the word is said — and expensive for a
+coincidence. Until then the Settings row says *Learning* rather than showing a
+count, because a list of guesses should not look like a list of rules.
+
+A second, different correction of the same original follows one blunt rule: **the
+newer correction wins unless the standing one has already been confirmed.** Seen
+once is a guess and a fresher guess is better; seen twice is a habit and stays.
+It costs the ability to re-learn a confirmed pair a different way — deleting the
+row in Settings is how that is done, which is a thing the user can see, unlike a
+scoring rule.
+
+### Applied in the app, at the final fold
+
+`DictationCoordinator.applyLexicon` runs once, in `finishUp`, right after the
+last partial is folded in and right before the `done` downlink — the first moment
+the transcript is finished and the last before the keyboard reads it. Mid-session
+is excluded on purpose: the relay is still revising those words, and the keyboard
+has already typed them.
+
+It rewrites **only the tail the keyboard has not typed yet.** The keyboard
+inserts settled text as it arrives and keeps its place with a plain character
+count (`Uplink.insertedCount`); rewriting text already in the user's document
+would move that boundary out from under it and the next insertion would be
+spliced in at the wrong offset — a correction bought at the price of mangling the
+sentence around it. Once insertion becomes one shot at `done` (#309) the boundary
+is zero and the whole transcript goes through the dictionary, which is where this
+wants to end up.
+
+Application itself is three rules, each of them a way of not doing damage: only
+confirmed pairs; longest original first (with both `parley` and `parley cloud` on
+file the longer has to win, or it comes out as neither); and word boundaries with
+case-insensitive matching for an all-ASCII original against a plain substring
+replacement for CJK, which is what makes `api` leave the `api` inside `rapid`
+alone while 在 → 再 works at all. A pair whose replacement properly contains its
+original is never applied — it would grow the text on every pass.
+
+### Known follow-up: recognition context
+
+The dictionary currently only rewrites text after the fact. Biasing recognition
+*at the source* would be better and the terms are ready for it
+(`LexiconStore.recognitionTerms`), but the wire is deliberately untouched:
+Soniox's config frame takes a `context.terms` list and the desktop fills it
+(`src-tauri/src/transcription/soniox.rs`), while `SonioxProtocol.Config` on the
+phone carries no such field. Whether the hosted relay forwards a `context` from
+an iOS client cannot be established from this side, and a config frame the relay
+rejects costs the user dictation altogether — so adding it is a separate change,
+made against a relay whose behaviour has been confirmed.
 
 ## Action Button / Control Center trigger
 

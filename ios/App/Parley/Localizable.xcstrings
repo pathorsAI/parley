@@ -224,6 +224,40 @@
         }
       }
     },
+    "Add": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加入"
+          }
+        }
+      }
+    },
+    "Add a name or term": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a name or term"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加入名字或術語"
+          }
+        }
+      }
+    },
     "Add the Parley keyboard": {
       "extractionState": "manual",
       "localizations": {
@@ -439,6 +473,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "取消"
+          }
+        }
+      }
+    },
+    "Clear everything": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear everything"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部清空"
+          }
+        }
+      }
+    },
+    "Clear the dictionary": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear the dictionary"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清空詞庫"
+          }
+        }
+      }
+    },
+    "Clear your personal dictionary?": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear your personal dictionary?"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要清空個人詞庫嗎？"
           }
         }
       }
@@ -885,6 +970,23 @@
         }
       }
     },
+    "Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聽寫完馬上把字改對，Parley 就會記住你的說法。學到的東西都在個人詞庫裡，你也可以在那裡加上該念對的名字。"
+          }
+        }
+      }
+    },
     "Getting ready…": {
       "extractionState": "manual",
       "localizations": {
@@ -1033,6 +1135,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "語言"
+          }
+        }
+      }
+    },
+    "Learned corrections": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Learned corrections"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "學到的更正"
+          }
+        }
+      }
+    },
+    "Learning": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Learning"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "學習中"
           }
         }
       }
@@ -1408,6 +1544,23 @@
         }
       }
     },
+    "Names, jargon, and anything else you say often. Parley keeps them so it can prefer your spelling — this list is yours to keep even where transcription can't yet be biased toward it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Names, jargon, and anything else you say often. Parley keeps them so it can prefer your spelling — this list is yours to keep even where transcription can't yet be biased toward it."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名字、行話，還有任何你常講的詞。Parley 會留著，好照你的寫法來寫——即使目前還無法讓辨識偏向這份清單，它仍然是你的。"
+          }
+        }
+      }
+    },
     "No matches.": {
       "extractionState": "manual",
       "localizations": {
@@ -1506,6 +1659,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "目前沒有在錄音，也沒有在轉錄。"
+          }
+        }
+      }
+    },
+    "Nothing learned yet.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing learned yet."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "還沒學到任何東西。"
           }
         }
       }
@@ -1629,6 +1799,23 @@
         }
       }
     },
+    "Parley forgets every correction it has learned and every term you added. It starts learning again from your next dictation.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley forgets every correction it has learned and every term you added. It starts learning again from your next dictation."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley 會忘掉學到的每一項更正，以及你加入的每一個詞，並從下一次聽寫重新開始學。"
+          }
+        }
+      }
+    },
     "Parley needs microphone access. Turn it on in Settings › Parley.": {
       "extractionState": "manual",
       "localizations": {
@@ -1710,6 +1897,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "個人"
+          }
+        }
+      }
+    },
+    "Personal dictionary": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Personal dictionary"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "個人詞庫"
           }
         }
       }
@@ -2813,6 +3017,23 @@
         }
       }
     },
+    "When you fix a word straight after dictating it, Parley notices. It waits until it has seen the same fix twice before using it, so one change of mind doesn't become a rule. Swipe a row away to unlearn it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When you fix a word straight after dictating it, Parley notices. It waits until it has seen the same fix twice before using it, so one change of mind doesn't become a rule. Swipe a row away to unlearn it."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聽寫完馬上改字，Parley 會記下來。同一個改法看到兩次才會真的採用，這樣臨時改個念頭就不會變成規則。往左滑掉某一列就是叫它忘掉。"
+          }
+        }
+      }
+    },
     "Wrapping up…": {
       "extractionState": "manual",
       "localizations": {
@@ -2996,6 +3217,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "登入已過期。按上面的按鈕重新登入，就能繼續錄音。"
+          }
+        }
+      }
+    },
+    "Your terms": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your terms"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你的詞"
           }
         }
       }

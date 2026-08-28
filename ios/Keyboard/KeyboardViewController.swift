@@ -30,6 +30,10 @@ final class KeyboardViewController: UIInputViewController {
     /// session is a leftover from a previous dictation and is ignored.
     private var session = ""
     private var insertedCount = 0
+    /// Learns the user's words from the edits they make right after dictating.
+    /// Everything it does lives in `KeyboardLexiconWatch`; this class only tells
+    /// it when the text landed and when the editing is over.
+    private let lexicon = KeyboardLexiconWatch()
     private var host: UIHostingController<KeyboardRootView>?
     private var heightConstraint: NSLayoutConstraint?
 
@@ -132,6 +136,14 @@ final class KeyboardViewController: UIInputViewController {
         drainDownlink()
     }
 
+    /// The keyboard is going away, which is the end of the user's chance to fix
+    /// the words in this field — so it is the moment to learn from whatever they
+    /// fixed. See `KeyboardLexiconWatch` for what this can and cannot see.
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
+    }
+
     /// A keyboard follows the appearance of the *field* it is typing into, not
     /// the system's: a dark-themed host app asks for a dark keyboard even while
     /// iOS is in light mode. `textInputMode` changes as the user moves between
@@ -205,6 +217,9 @@ final class KeyboardViewController: UIInputViewController {
     /// URL for the visible round trip.
     func startDictation(completion: @escaping (URL?) -> Void) {
         guard hasFullAccess else { return }
+        // A new session ends the last one's editing window: anything the user
+        // was going to fix, they have finished fixing.
+        lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
         session = UUID().uuidString
         insertedCount = 0
         DictationChannel.writeUplink(
@@ -400,6 +415,9 @@ final class KeyboardViewController: UIInputViewController {
             bridge.listening = false
             bridge.reconnecting = false
             bridge.partial = ""
+            // The dictated text is all in the field now, so this is the picture
+            // any later edit gets compared against.
+            lexicon.noteInserted(context: textDocumentProxy.documentContextBeforeInput)
             // The tail stays: the last thing said is worth still being able to
             // read once the button has gone quiet.
         case .error:

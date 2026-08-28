@@ -641,6 +641,40 @@ final class DictationCoordinator: ObservableObject {
         committed = runs.map(\.text).joined()
     }
 
+    /// Rewrite the finished transcript through the user's personal dictionary,
+    /// so the keyboard types the words they actually use (see `LexiconStore`).
+    ///
+    /// **Once, at the fold, and never mid-session.** While a sentence is still
+    /// arriving the relay keeps revising it, so a correction applied to
+    /// half-settled words would be applied to text that then changes underneath
+    /// it — and the keyboard would have typed the uncorrected version anyway.
+    /// The fold is the first moment the transcript is finished and the last
+    /// moment before the keyboard reads it.
+    ///
+    /// **And only the part the keyboard has not typed yet.** Today the keyboard
+    /// inserts settled text as it arrives and keeps its place with a plain
+    /// character count (`Uplink.insertedCount`). Rewriting text that is already
+    /// in the user's document would move that boundary out from under it, and
+    /// the keyboard's next insertion would be spliced in at the wrong offset —
+    /// a correction bought at the price of mangling the sentence around it. So
+    /// the already-typed prefix is left exactly as it is. Once insertion becomes
+    /// one shot at `done` (#309) the boundary is zero and the whole transcript
+    /// goes through the dictionary, which is where this wants to end up.
+    ///
+    /// This is the last write to `committed`: the relay leg is finished and
+    /// detached by the time `finishUp` runs, so no further segment can rebuild
+    /// it from `runs`.
+    private func applyLexicon() {
+        guard !committed.isEmpty else { return }
+        let typed = DictationChannel.readUplink().map {
+            $0.session == session ? $0.insertedCount : 0
+        } ?? 0
+        let boundary = min(max(typed, 0), committed.count)
+        let tail = String(committed.dropFirst(boundary))
+        guard !tail.isEmpty else { return }
+        committed = String(committed.prefix(boundary)) + LexiconStore.apply(to: tail)
+    }
+
     // MARK: stop / teardown
 
     func stop() async {
@@ -682,6 +716,7 @@ final class DictationCoordinator: ObservableObject {
         // Fold the last partial into the committed text so nothing said right
         // before the endpoint is dropped from what the keyboard inserts.
         foldPartialIn()
+        applyLexicon()
         publish()
         active = false
         // Not `beginLinger()` any more: whether this leaves a ~30 s background
