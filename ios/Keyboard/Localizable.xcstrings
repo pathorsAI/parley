@@ -68,6 +68,22 @@
         }
       }
     },
+    "Dictation starts in Parley": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dictation starts in Parley"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "語音輸入從 Parley 開始"
+          }
+        }
+      }
+    },
     "Done": {
       "extractionState": "manual",
       "localizations": {
@@ -187,6 +203,22 @@
         }
       }
     },
+    "Open Parley to set up voice typing": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Parley to set up voice typing"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開啟 Parley 設定語音輸入"
+          }
+        }
+      }
+    },
     "Reconnecting… keep talking": {
       "extractionState": "manual",
       "localizations": {
@@ -234,6 +266,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "傳送"
+          }
+        }
+      }
+    },
+    "Set up voice typing in Parley": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set up voice typing in Parley"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "到 Parley 完成語音輸入設定"
           }
         }
       }
@@ -299,6 +347,22 @@
         }
       }
     },
+    "Start dictation, which opens Parley first": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start dictation, which opens Parley first"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開始語音輸入，會先開啟 Parley"
+          }
+        }
+      }
+    },
     "Stop dictation": {
       "localizations": {
         "en": {
@@ -311,6 +375,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "停止語音輸入"
+          }
+        }
+      }
+    },
+    "Tap to open the app": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap to open the app"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "點一下開啟 Parley"
           }
         }
       }
@@ -344,23 +424,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "麥克風待命中，點一下即可關閉。"
-          }
-        }
-      }
-    },
-    "This tap opens Parley first": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This tap opens Parley first"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "這次會先開啟 Parley"
           }
         }
       }

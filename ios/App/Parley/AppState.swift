@@ -56,6 +56,25 @@ final class AppState: NSObject, ObservableObject {
     /// `signedIn`, so being offline is never mistaken for being signed out.
     var hasAccount: Bool { user != nil || hasStoredSession }
 
+    /// Tell the keyboard whether tapping its mic could transcribe anything.
+    ///
+    /// The keyboard cannot read the Keychain or ask about the microphone, so
+    /// without this it could only find out by starting a session and reading
+    /// back the failure — which is why it used to offer a mic button that could
+    /// not record. Both facts outlive this process, so the keyboard reads them
+    /// with no staleness rule; see `DictationChannel.KeyboardReadiness`.
+    ///
+    /// `static` because the microphone prompt resolves inside
+    /// `DictationCoordinator`, which has no `AppState` to ask. The Keychain is
+    /// the same source `hasStoredSession` mirrors, and `user != nil` always
+    /// implies a stored token, so the two readings cannot disagree.
+    static func publishKeyboardReadiness() {
+        DictationChannel.writeReadiness(
+            .init(
+                signedIn: KeychainStore.get(tokenKey) != nil,
+                micGranted: AudioCapture.permission == .granted))
+    }
+
     private(set) lazy var cloud = CloudClient {
         KeychainStore.get(AppState.tokenKey)
     }
@@ -90,6 +109,10 @@ final class AppState: NSObject, ObservableObject {
         let token = KeychainStore.get(Self.tokenKey)
         hasStoredSession = token != nil
         bootstrapped = true
+        // Launch is the one beat that has to republish unconditionally: iOS
+        // restarts the app when microphone permission is changed in Settings,
+        // so the grant may have flipped while nothing was running to notice.
+        Self.publishKeyboardReadiness()
         guard token != nil else { return }
 
         do {
@@ -227,11 +250,13 @@ final class AppState: NSObject, ObservableObject {
     private func storeToken(_ token: String) {
         KeychainStore.set(token, for: Self.tokenKey)
         hasStoredSession = true
+        Self.publishKeyboardReadiness()
     }
 
     private func clearStoredToken() {
         KeychainStore.delete(Self.tokenKey)
         hasStoredSession = false
+        Self.publishKeyboardReadiness()
     }
 
     #if DEBUG

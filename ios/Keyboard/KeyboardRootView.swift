@@ -1,3 +1,4 @@
+import ParleyKit
 import SwiftUI
 
 /// The Parley keyboard's face.
@@ -277,6 +278,12 @@ struct KeyboardRootView: View {
     /// gradient, listening it goes flat recording red inside a breathing ring,
     /// so "armed" is never something you have to read out of a gradient — and
     /// never needs a second element saying "Listening…" beside it.
+    ///
+    /// The **glyph** is where the button stops promising more than it can do. A
+    /// microphone means "speak now and the words appear here", and that is only
+    /// true when the app is set up and holding an open microphone window;
+    /// otherwise the tap goes to Parley, and the button says so. The colour
+    /// stays either way — the button is still the thing to press.
     private var recordButton: some View {
         PressableButton(action: toggle) { pressed in
             ZStack {
@@ -287,15 +294,31 @@ struct KeyboardRootView: View {
                     .fill(recordFill)
                     .frame(width: KBMetrics.recordSize, height: KBMetrics.recordSize)
                     .brightness(pressed ? -0.06 : 0)
-                Image(systemName: bridge.listening ? "stop.fill" : "mic.fill")
-                    .font(.system(size: bridge.listening ? 24 : 28, weight: .medium))
+                Image(systemName: recordGlyph)
+                    .font(.system(size: bridge.listening ? 24 : 27, weight: .medium))
                     .foregroundStyle(recordInk)
             }
             .frame(width: KBMetrics.deckHeight, height: KBMetrics.deckHeight)
         }
         .disabled(!bridge.hasFullAccess)
-        .accessibilityLabel(
-            bridge.listening ? Text("Stop dictation") : Text("Start dictation"))
+        .accessibilityLabel(recordLabel)
+    }
+
+    private var recordGlyph: String {
+        if bridge.listening { return "stop.fill" }
+        return bridge.opensApp ? "arrow.up.forward.app" : "mic.fill"
+    }
+
+    /// The label says what the tap does, not what the button is called — the
+    /// three idle states are three different actions.
+    private var recordLabel: Text {
+        if bridge.listening { return Text("Stop dictation") }
+        // Without Full Access the button is dimmed and the slot explains why;
+        // the label stays what it was so nothing about that state changes.
+        guard bridge.hasFullAccess else { return Text("Start dictation") }
+        if !bridge.ready { return Text("Open Parley to set up voice typing") }
+        if !bridge.windowIsOpen { return Text("Start dictation, which opens Parley first") }
+        return Text("Start dictation")
     }
 
     /// Disabled (no Full Access) reads inert rather than inviting: the button
@@ -313,17 +336,29 @@ struct KeyboardRootView: View {
     private func toggle() {
         if bridge.listening {
             bridge.stop()
+        } else if !bridge.ready {
+            // Nothing to start. Without an account or microphone permission the
+            // app can only answer a session request with a failure, and minting
+            // one would flip this pane into a listening state that never
+            // listens — so the tap does the one thing that helps and opens
+            // Parley, where both can be fixed.
+            open(DictationChannel.appURL)
         } else {
             // The bridge tries the no-jump start first; the completion only
-            // fires when the app really has to come forward. SwiftUI's openURL
-            // is the path that still opens the container app from a keyboard
-            // on iOS 18+; the responder-chain walk covers older releases.
+            // fires when the app really has to come forward.
             bridge.start { url in
                 guard let url else { return }
-                openURL(url) { accepted in
-                    if !accepted { bridge.fallbackOpen(url) }
-                }
+                open(url)
             }
+        }
+    }
+
+    /// Open the container app. SwiftUI's `openURL` is the path that still works
+    /// from a keyboard on iOS 18+; the responder-chain walk covers older
+    /// releases.
+    private func open(_ url: URL) {
+        openURL(url) { accepted in
+            if !accepted { bridge.fallbackOpen(url) }
         }
     }
 
@@ -331,13 +366,17 @@ struct KeyboardRootView: View {
 
     /// One fixed-height slot above the button, so the keyboard never changes
     /// shape between states: the Full Access explainer, an error, the live
-    /// transcript, or the idle prompt.
+    /// transcript, the set-up notice, or the idle prompt.
     ///
     /// The live case shows the settled tail in a softer ink followed by the
-    /// words not yet settled. Settled text has already been inserted into the
-    /// document, but the document is usually behind the keyboard — echoing a
-    /// short tail is what makes dictation read as continuous instead of as
-    /// words that appear and then vanish.
+    /// words not yet settled. The transcript only reaches the document when the
+    /// session is done, so until then this slot is where the words are — which
+    /// is also why the fixed height matters more than it looks: beginning to
+    /// speak must not resize the keyboard.
+    ///
+    /// The set-up notice sits *below* the error, not above it: an error names
+    /// the actual problem ("turn the microphone on in Settings"), and the
+    /// generic invitation to open the app is only better than saying nothing.
     private var textSlot: some View {
         Group {
             if !bridge.hasFullAccess {
@@ -353,6 +392,8 @@ struct KeyboardRootView: View {
                 reconnectingText
             } else if bridge.listening || !bridge.tail.isEmpty {
                 liveText
+            } else if !bridge.ready {
+                setUpNotice
             } else {
                 idleText
             }
@@ -365,9 +406,9 @@ struct KeyboardRootView: View {
     }
 
     /// The connection dropped mid-sentence. The transcript stays exactly where
-    /// it was — nothing typed is taken back — with one line above it saying
-    /// why it stopped growing. Amber rather than the error red: the session is
-    /// still alive and the words are being kept.
+    /// it was — nothing already said is thrown away — with one line above it
+    /// saying why it stopped growing. Amber rather than the error red: the
+    /// session is still alive and the words are being kept.
     private var reconnectingText: some View {
         VStack(alignment: .leading, spacing: 2) {
             Spacer(minLength: 0)
@@ -384,26 +425,46 @@ struct KeyboardRootView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Idle, and — for someone who has turned the microphone window on — what
-    /// this particular tap is going to do.
+    /// Parley has never been set up far enough to dictate: no account on this
+    /// device, or no microphone permission.
     ///
-    /// The second line only appears while the feature is *on but closed*.
-    /// Without a window every tap opens Parley, always has, and saying so on a
-    /// keyboard someone is about to type on is noise. With one, it is the
-    /// difference the setting exists to make, and it must not be legible only
-    /// as the absence of a chip.
-    private var idleText: some View {
+    /// Which of the two it is deliberately isn't said here. The keyboard knows,
+    /// but neither can be fixed from a keyboard, the slot is three lines, and
+    /// both end in the same place — so the copy names the destination instead of
+    /// the diagnosis.
+    private var setUpNotice: some View {
         centered {
             VStack(spacing: 3) {
-                Text("Tap to speak")
-                    .font(.subheadline)
-                    .foregroundStyle(KBTheme.inkSoft(dark))
-                if bridge.windowIsChosen && !bridge.windowIsOpen {
-                    Text("This tap opens Parley first")
-                        .font(.caption2)
-                        .foregroundStyle(KBTheme.inkSoft(dark).opacity(0.8))
+                Text("Set up voice typing in Parley")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(KBTheme.ink(dark))
+                Text("Tap to open the app")
+                    .font(.caption2)
+                    .foregroundStyle(KBTheme.inkSoft(dark).opacity(0.8))
+            }
+            .multilineTextAlignment(.center)
+        }
+    }
+
+    /// Idle and set up: what this particular tap is going to do.
+    ///
+    /// "Tap to speak" is only true while a microphone window is open. It used to
+    /// be the headline in both cases, with a caption underneath — *This tap
+    /// opens Parley first* — for the people who had turned a window on. That was
+    /// backwards: the common case is the one that leaves, and the caption said
+    /// exactly what this line now says. So the promise moved into the headline,
+    /// where it matches the glyph on the button.
+    private var idleText: some View {
+        centered {
+            Group {
+                if bridge.windowIsOpen {
+                    Text("Tap to speak")
+                } else {
+                    Text("Dictation starts in Parley")
                 }
             }
+            .font(.subheadline)
+            .foregroundStyle(KBTheme.inkSoft(dark))
         }
     }
 

@@ -5,6 +5,7 @@ import SwiftUI
 struct ParleyApp: App {
     @StateObject private var app = AppState()
     @StateObject private var dictation = DictationCoordinator.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     /// The navigation and tab bars are drawn by UIKit and never see a SwiftUI
     /// `.font()`, so their appearance proxies are configured once here, before
@@ -36,6 +37,14 @@ struct ParleyApp: App {
                 // in the background — the cover is ready when it next appears).
                 .fullScreenCover(isPresented: dictationPresented) {
                     DictationView(coordinator: dictation)
+                }
+                // Every foregrounding, not only launch: a trip to Settings to
+                // grant the microphone brings the app back here rather than
+                // through `init`, and the keyboard's pane is only honest for as
+                // long as this file is.
+                .onChange(of: scenePhase) { _, phase in
+                    guard phase == .active else { return }
+                    AppState.publishKeyboardReadiness()
                 }
         }
     }

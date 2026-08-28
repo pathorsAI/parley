@@ -1189,19 +1189,18 @@
         }
       }
     },
-    "Lost the connection. What you already said has been typed — tap the mic to carry on.": {
-      "extractionState": "manual",
+    "Lost the connection before anything could be typed. Tap the mic to try again.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Lost the connection. What you already said has been typed — tap the mic to carry on."
+            "value": "Lost the connection before anything could be typed. Tap the mic to try again."
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "連線中斷了。剛才說過的內容已經打出來，點一下麥克風就能接著說。"
+            "value": "連線中斷，還沒來得及打出任何文字。點一下麥克風再試一次。"
           }
         }
       }
@@ -2419,7 +2418,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "在 Parley 鍵盤上點麥克風，說的話就會即時打進游標處。"
+            "value": "在 Parley 鍵盤上點麥克風，說的話就會打進游標處。"
           }
         }
       }
@@ -3001,18 +3000,18 @@
         }
       }
     },
-    "Your words show up on the Parley keyboard and land at the cursor as you talk — nothing happens on this screen.": {
+    "Your words show up on the Parley keyboard as you talk, and land at the cursor when you stop — nothing happens on this screen.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Your words show up on the Parley keyboard and land at the cursor as you talk — nothing happens on this screen."
+            "value": "Your words show up on the Parley keyboard as you talk, and land at the cursor when you stop — nothing happens on this screen."
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "說話的內容會直接顯示在 Parley 鍵盤上、即時打進游標處——這個畫面不會顯示任何東西。"
+            "value": "說話的內容會顯示在 Parley 鍵盤上，停止後整段話會打進游標處——這個畫面不會顯示任何東西。"
           }
         }
       }

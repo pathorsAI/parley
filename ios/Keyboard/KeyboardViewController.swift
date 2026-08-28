@@ -7,9 +7,9 @@ import UIKit
 /// A keyboard extension is forbidden from opening the microphone, so this
 /// keyboard doesn't try. Its mic button opens `parley://dictate`; the container
 /// app records and streams the transcript back through the App Group; this
-/// keyboard inserts the settled text with `textDocumentProxy.insertText`. The
-/// design and its constraints are written up in
-/// `docs/design/ios-voice-keyboard.md`.
+/// keyboard shows it live above the keys and, when the session is done, inserts
+/// the finished text in one `textDocumentProxy.insertText`. The design and its
+/// constraints are written up in `docs/design/ios-voice-keyboard.md`.
 ///
 /// Everything expensive (audio, the relay, any model) stays in the app. This
 /// process only shuttles text, which keeps it well under the tight jetsam limit
@@ -21,6 +21,9 @@ final class KeyboardViewController: UIInputViewController {
     /// It is what lets a tap that will stay put look different from a tap that
     /// will jump — see `MicWindowState`.
     private var windowNote: DarwinObserver?
+    /// The app announcing that the answer to "could a tap dictate at all"
+    /// changed — a sign-in, a sign-out, or the microphone prompt being answered.
+    private var readyNote: DarwinObserver?
 
     /// The keyboard's view of the current session. It mints the id, so it owns
     /// the truth about which downlink is "ours"; a downlink for any other
@@ -101,6 +104,13 @@ final class KeyboardViewController: UIInputViewController {
             windowNote = DarwinObserver(DictationChannel.windowNote) { [weak self] in
                 DispatchQueue.main.async { self?.readWindow() }
             }
+            // Rare compared to the others — signing in and answering the
+            // microphone prompt happen once — but it is the note that turns a
+            // "set up voice typing" pane into a working one without the user
+            // having to dismiss the keyboard and bring it back.
+            readyNote = DarwinObserver(DictationChannel.readyNote) { [weak self] in
+                DispatchQueue.main.async { self?.readReadiness() }
+            }
         }
     }
 
@@ -117,6 +127,7 @@ final class KeyboardViewController: UIInputViewController {
         if !bridge.listening { bridge.tail = "" }
         refreshAppearance()
         refreshReturnKey()
+        readReadiness()
         readWindow()
         drainDownlink()
     }
@@ -222,6 +233,23 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    // MARK: readiness
+
+    /// Read whether the app is in a state where a tap could transcribe at all.
+    ///
+    /// Deliberately without the staleness rule the window gets: an account and a
+    /// microphone grant are facts about the installation, not about a process
+    /// that may have died, so the newest file is always the truth. A *missing*
+    /// file is not an unknown either — it means Parley has never run here, which
+    /// is exactly the state this pane needs to describe.
+    private func readReadiness() {
+        guard hasFullAccess else {
+            bridge.ready = false
+            return
+        }
+        bridge.ready = DictationChannel.readReadiness()?.canDictate ?? false
+    }
+
     // MARK: the microphone window (called from SwiftUI)
 
     /// Read what the app says about the microphone window.
@@ -233,11 +261,13 @@ final class KeyboardViewController: UIInputViewController {
     private func readWindow() {
         guard hasFullAccess else {
             bridge.windowIsOpen = false
-            bridge.windowIsChosen = false
             return
         }
+        // Only whether it is open now. Whether the user has *chosen* a length
+        // used to be mirrored too, to decide whether the idle slot should warn
+        // that the tap would leave — the pane now says so unconditionally, in
+        // the headline and on the button, so there is nothing left to decide.
         let window = DictationChannel.readWindow()
-        bridge.windowIsChosen = (window?.length ?? .off) != .off
         bridge.windowIsOpen = window?.isOpen() ?? false
         // Rounded up, so "1m" never means "already gone": the number is there
         // to say roughly how much room is left, and rounding down would let the
@@ -279,15 +309,27 @@ final class KeyboardViewController: UIInputViewController {
     /// or a long-finished transcript that would land in the wrong field.
     private static let adoptionWindow: TimeInterval = 150
 
-    /// How much settled text the keyboard echoes above the record button. Long
-    /// enough to read as a continuing sentence in the three lines the slot has,
-    /// short enough that this is a window rather than the transcript history a
-    /// keyboard extension must not hold.
+    /// How much settled text the keyboard echoes above the record button.
+    ///
+    /// Since nothing is inserted until the session is done, this echo is the
+    /// only place the words are visible while they are being spoken — but it is
+    /// still a window, not a transcript. Three lines at this size hold rather
+    /// fewer than 140 characters, so the cap is already past what the slot can
+    /// show; raising it would only push more of the newest words out of view.
     private static let tailLimit = 140
 
-    /// Read the transcript the app has published and insert whatever is new.
-    /// Idempotent: `insertedCount` is the high-water mark, so a keyboard that
-    /// was killed and relaunched mid-session never re-inserts settled text.
+    /// Read the transcript the app has published, and insert it once the app
+    /// says the session is done.
+    ///
+    /// Nothing is inserted while the session runs. Streaming each delta into the
+    /// host field as it settled meant the relay's revisions landed as visible
+    /// churn in someone's document, and a dictation abandoned halfway left a
+    /// half-sentence behind; the live view above the record button is where the
+    /// words belong until they are final.
+    ///
+    /// Idempotent either way: `insertedCount` is the high-water mark, persisted
+    /// through the uplink, so a keyboard killed and relaunched after the session
+    /// finished still inserts the transcript exactly once.
     private func drainDownlink() {
         guard hasFullAccess, let d = DictationChannel.readDownlink() else { return }
 
@@ -319,10 +361,16 @@ final class KeyboardViewController: UIInputViewController {
             insertedCount = up.insertedCount
         }
 
+        // One insertion, at the end. `.done` is the only state that has the
+        // whole transcript — `finishing` is still waiting on the relay's last
+        // utterance — and `.error` deliberately inserts nothing at all: a
+        // session that failed leaves the user's field exactly as they left it.
+        // The high-water mark is still what makes this safe, because `.done`
+        // republishes on every drain and the keyboard drains on every
+        // appearance.
         let committed = Array(d.committed)
-        if committed.count > insertedCount {
-            let delta = String(committed[insertedCount...])
-            textDocumentProxy.insertText(delta)
+        if d.state == .done, committed.count > insertedCount {
+            textDocumentProxy.insertText(String(committed[insertedCount...]))
             insertedCount = committed.count
             var up = DictationChannel.readUplink() ?? .init(session: session)
             up.insertedCount = insertedCount
@@ -445,11 +493,11 @@ final class KeyboardBridge: ObservableObject {
     /// The last stretch of settled text for the running session, shown above
     /// the record button in a softer ink so dictation reads as continuous.
     ///
-    /// It is a short window, not history: settled text is already in the host's
-    /// document, and this only exists because the document is usually behind
-    /// the keyboard. Capped at `tailLimit` characters, cleared with the
-    /// session — a few hundred bytes, nowhere near the transcript store the
-    /// extension deliberately doesn't keep.
+    /// It is a short window, not history: the transcript lands in the host's
+    /// document in one piece when the session is done, and until then this is
+    /// where the words are visible. Capped at `tailLimit` characters, cleared
+    /// with the session — a few hundred bytes, nowhere near the transcript
+    /// store the extension deliberately doesn't keep.
     @Published var tail = ""
     /// Whether the system wants *us* to draw a next-keyboard key. False from
     /// iPhone X onwards, where iOS draws its own beneath the keyboard and the
@@ -459,17 +507,33 @@ final class KeyboardBridge: ObservableObject {
     /// connection), shown in the caption slot until the next start.
     @Published var errorText: String?
 
+    /// Parley is set up far enough for a tap to actually transcribe: an account
+    /// on this device, and microphone permission granted. False when the
+    /// readiness file is missing too, which is what "Parley has never run here"
+    /// looks like from inside the extension.
+    ///
+    /// The pane used to offer a mic button in every state, so someone who had
+    /// never opened the app tapped a button that could only fail — the bug this
+    /// exists to close. See `DictationChannel.KeyboardReadiness`.
+    @Published var ready = false
+
     /// The microphone window is open: the next tap will be served where the
     /// user already is, with no trip through Parley.
     @Published var windowIsOpen = false
-    /// The user has chosen a window length at all. Distinct from
-    /// `windowIsOpen`, and the distinction is the whole point: someone who has
-    /// not turned the feature on is told nothing, while someone who has needs
-    /// to know that *this* tap falls outside it.
-    @Published var windowIsChosen = false
     /// Roughly how long the open window has left, in whole minutes. Refreshed
     /// by the app's heartbeat rather than by a timer in this process.
     @Published var windowMinutesLeft: Int?
+
+    /// This tap leaves for Parley rather than recording here: the app is not set
+    /// up, or there is no open microphone window to borrow.
+    ///
+    /// It is what the record button draws instead of a microphone. A mic glyph
+    /// that cannot open a mic is the whole bug — and even in the merely
+    /// windowless case the honest promise is "this opens Parley", because
+    /// staying put depends on a process that may already be gone. When it
+    /// happens to still be there, the pane flips to listening in place and the
+    /// button becomes ⏹ before the user has read the glyph.
+    var opensApp: Bool { hasFullAccess && (!ready || !windowIsOpen) }
 
     /// Which pane is showing. Changing it also has to change the keyboard's
     /// height, which only the controller can do — hence `setMode` rather than a

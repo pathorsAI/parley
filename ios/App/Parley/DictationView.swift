@@ -136,7 +136,7 @@ struct DictationView: View {
         if needsManualReturn {
             return String(
                 localized:
-                    "Your words show up on the Parley keyboard and land at the cursor as you talk — nothing happens on this screen."
+                    "Your words show up on the Parley keyboard as you talk, and land at the cursor when you stop — nothing happens on this screen."
             )
         }
         return String(localized: "You're back in your app — just talk.")
