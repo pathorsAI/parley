@@ -141,10 +141,39 @@ final class DictationCoordinator: ObservableObject {
     /// answer in the background, long after any view is gone.
     nonisolated static let windowLengthKey = "micWindowLength"
 
+    /// Where the "Polish with AI" switch lives. Read straight out of
+    /// `UserDefaults` for the same reason `windowLengthKey` is: a session can
+    /// end with the app in the background and no view alive to have bound it.
+    nonisolated static let polishKey = "dictationPolishEnabled"
+
     var windowLength: MicWindowLength {
         MicWindowLength(
             rawValue: UserDefaults.standard.string(forKey: Self.windowLengthKey) ?? "") ?? .off
     }
+
+    /// On unless the user turned it off. "Never touched" is not "off": the
+    /// pass is what makes dictated text read like writing instead of like
+    /// speech, and its every failure mode is "keep the raw words" — so the
+    /// absent key defaults to true rather than to the `bool(forKey:)` false.
+    var polishEnabled: Bool {
+        guard UserDefaults.standard.object(forKey: Self.polishKey) != nil else { return true }
+        return UserDefaults.standard.bool(forKey: Self.polishKey)
+    }
+
+    /// The coordinator's own cloud client. `AppState`'s is not reachable from
+    /// here — a session can end in the background, long after any view that
+    /// held one — and both read the same Keychain token, so a second client
+    /// costs nothing and owns nothing.
+    private lazy var cloud = CloudClient { KeychainStore.get(AppState.tokenKey) }
+
+    /// How long the cleanup pass may hold the finished transcript.
+    ///
+    /// This is the user's foreground wait: they have stopped speaking and are
+    /// watching the field where the words are about to land. The raw words are
+    /// ready the whole time, so everything past this budget is time spent on a
+    /// nicety nobody asked to wait for — short enough to read as a beat, not as
+    /// a hang, and the raw transcript is what ships when it runs out.
+    private nonisolated static let polishBudget = Duration.seconds(6)
 
     private init() {
         window = .closed(length: MicWindowLength(
@@ -651,15 +680,15 @@ final class DictationCoordinator: ObservableObject {
     /// The fold is the first moment the transcript is finished and the last
     /// moment before the keyboard reads it.
     ///
-    /// **And only the part the keyboard has not typed yet.** Today the keyboard
-    /// inserts settled text as it arrives and keeps its place with a plain
-    /// character count (`Uplink.insertedCount`). Rewriting text that is already
-    /// in the user's document would move that boundary out from under it, and
-    /// the keyboard's next insertion would be spliced in at the wrong offset —
-    /// a correction bought at the price of mangling the sentence around it. So
-    /// the already-typed prefix is left exactly as it is. Once insertion becomes
-    /// one shot at `done` (#309) the boundary is zero and the whole transcript
-    /// goes through the dictionary, which is where this wants to end up.
+    /// **And only the part the keyboard has not typed yet.** The boundary is
+    /// `Uplink.insertedCount`, the plain character count the keyboard keeps of
+    /// what it has already put in the document. Rewriting text that is already
+    /// there would move that count out from under it and splice the next
+    /// insertion in at the wrong offset — a correction bought at the price of
+    /// mangling the sentence around it. Since #312 the keyboard inserts once,
+    /// at `done`, so in practice the count is zero and the whole transcript
+    /// goes through the dictionary; the boundary stays because it is what makes
+    /// that safe rather than merely true right now.
     ///
     /// This is the last write to `committed`: the relay leg is finished and
     /// detached by the time `finishUp` runs, so no further segment can rebuild
@@ -707,23 +736,118 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private func finishUp() {
+        // One session ends once. The relay signing off lands here while `stop`
+        // is still awaiting the drain that provoked it, and then `stop`'s own
+        // tail arrives — everything below used to be idempotent enough not to
+        // care, but a network round trip is not, and the second caller must not
+        // start a second one.
+        guard active else { return }
         relay = nil
         reconnectTask?.cancel()
         reconnectTask = nil
         audio.discard()
         reportsLevel.set(false)
-        state = .done
         // Fold the last partial into the committed text so nothing said right
         // before the endpoint is dropped from what the keyboard inserts.
         foldPartialIn()
+
+        guard wantsPolish() else {
+            settle()
+            // Not `beginLinger()` any more: whether this leaves a ~30 s
+            // background task or an open microphone window is
+            // `releaseMicrophone`'s decision, and the two must never both be in
+            // flight. Reached from the relay signing off as well as from
+            // `stop`, hence the Task.
+            Task { await releaseMicrophone() }
+            return
+        }
+
+        // The cleanup pass runs *before* `done`, not after it, because `done`
+        // is the keyboard's one and only cue to insert: it stopped typing
+        // deltas in 1.5 and now pastes the whole transcript once, when this
+        // state arrives. So the session simply stays `finishing` a moment
+        // longer, and the text that eventually ships with `done` already is the
+        // final text — no second insertion, no swap under the cursor, and not a
+        // byte of the wire protocol changes. Publishing here keeps `updatedAt`
+        // fresh so the keyboard's adoption window cannot age out mid-request.
+        publish()
+        // The session is over as far as this app's own UI is concerned, and
+        // `releaseMicrophone` declines to act while it thinks otherwise. It
+        // goes first on purpose: an HTTP call needs no microphone, and what
+        // releasing arms — the window, or the ~30 s linger — is exactly what
+        // keeps this process resident long enough to finish one.
+        active = false
+        Task { await releaseMicrophone() }
+
+        let raw = committed
+        let target = session
+        let client = cloud
+        // The dictionary rides along so the model cannot "fix" the corrections
+        // the user made by hand; `applyLexicon` then has the last word anyway.
+        let terms = LexiconStore.recognitionTerms()
+        Task {
+            let polished = await Self.polished(raw: raw, cloud: client, terms: terms)
+            // A new session, or a `fail`, may have landed while the request was
+            // out. Either way this is no longer the transcript the keyboard is
+            // waiting for, and publishing it now would be publishing over
+            // somebody else's.
+            guard self.session == target, self.state == .finishing else { return }
+            self.committed = polished ?? raw
+            self.settle()
+        }
+    }
+
+    /// Whether the finished transcript is worth a trip to the cloud.
+    private func wantsPolish() -> Bool {
+        #if DEBUG
+            // ScreenshotDemo runs with no account and no network by design —
+            // the whole flow has to be capturable without either — so its
+            // sessions keep the plain synchronous ending.
+            if ScreenshotDemo.isActive { return false }
+        #endif
+        guard polishEnabled else { return false }
+        // The keyboard only reaches a signed-in app, but a session can have
+        // expired mid-dictation. No token, no request; the raw words stand.
+        guard KeychainStore.get(AppState.tokenKey) != nil else { return false }
+        return TranscriptPolisher.shouldPolish(committed)
+    }
+
+    /// The last beat of a session: hand the finished text to the keyboard as
+    /// `done`, which is its cue to insert.
+    private func settle() {
+        state = .done
+        // After the polish, never before. The dictionary holds corrections the
+        // user made by hand, and a model that undid one of them has to lose to
+        // the person who typed it.
         applyLexicon()
         publish()
         active = false
-        // Not `beginLinger()` any more: whether this leaves a ~30 s background
-        // task or an open microphone window is `releaseMicrophone`'s decision,
-        // and the two must never both be in flight. Reached from the relay
-        // signing off as well as from `stop`, hence the Task.
-        Task { await releaseMicrophone() }
+    }
+
+    /// The cleanup pass with a deadline on it. Every way this can go wrong — a
+    /// timeout, no network, an HTTP error, a reply that failed `accept` — comes
+    /// back as `nil`, which the caller reads as "keep the raw transcript". None
+    /// of them is ever news the user has to be told.
+    ///
+    /// `nonisolated` so the waiting happens off the main actor: the coordinator
+    /// is the main actor, and holding it for six seconds to be polite about
+    /// punctuation would be a strange trade.
+    private nonisolated static func polished(
+        raw: String, cloud: CloudClient, terms: [String]
+    ) async -> String? {
+        let outcome = try? await withThrowingTaskGroup(of: String?.self) { group -> String? in
+            group.addTask {
+                try await TranscriptPolisher.polish(
+                    raw: raw, cloud: cloud, protectedTerms: terms)
+            }
+            group.addTask {
+                try await Task.sleep(for: polishBudget)
+                throw PolishTimedOut()
+            }
+            defer { group.cancelAll() }
+            return try await group.next() ?? nil
+        }
+        return outcome ?? nil
     }
 
     private func fail(_ message: String) {
@@ -1042,6 +1166,10 @@ final class DictationCoordinator: ObservableObject {
         }
     #endif
 }
+
+/// The polish budget ran out. Never surfaced: it exists only to lose the race
+/// inside `polished`, where losing means the raw transcript ships.
+private struct PolishTimedOut: Error {}
 
 /// A boolean the audio thread may read on every chunk.
 ///

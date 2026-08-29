@@ -308,6 +308,23 @@
         }
       }
     },
+    "After dictation ends, AI tidies the wording and punctuation before the text is inserted. The original language is preserved.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After dictation ends, AI tidies the wording and punctuation before the text is inserted. The original language is preserved."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聽寫結束後，AI 會先整理用詞與標點再貼上文字，並維持原本的語言。"
+          }
+        }
+      }
+    },
     "After you dictate, Parley can hold the microphone open for a while, so the next tap on the keyboard's mic types where you already are instead of opening Parley.\n\niOS shows the orange microphone dot for the whole time, because Parley really is holding the microphone. It is not listening through it: nothing is recorded, transcribed, or sent until you tap the mic, and sound that arrives before then is thrown away as it comes in. The window ends on its own, and you can end it early here or from the keyboard.": {
       "extractionState": "manual",
       "localizations": {
@@ -2016,6 +2033,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "請再試一次。"
+          }
+        }
+      }
+    },
+    "Polish with AI": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Polish with AI"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI 潤飾"
           }
         }
       }
