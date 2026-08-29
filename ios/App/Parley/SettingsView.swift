@@ -15,6 +15,10 @@ struct SettingsView: View {
     /// to the App Group's defaults, which is where the extension looks for them
     /// on every appearance — there is no live binding across a process boundary.
     @State private var enabled = TypingKeyboards.enabled()
+    /// The cleanup pass after dictation. Bound here, read raw by the
+    /// coordinator: both sides are `UserDefaults.standard`, and the coordinator
+    /// has to be able to answer this in the background with no view alive.
+    @AppStorage(DictationCoordinator.polishKey) private var polishEnabled = true
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
     @State private var showDeleteConfirmation = false
@@ -437,6 +441,18 @@ struct SettingsView: View {
             } label: {
                 Text("Set-up steps").font(.parley.subheadlineEmphasized)
             }
+
+            // Directly above the dictionary, because the two are about the same
+            // text and run in this order: the model tidies what was said, then
+            // the dictionary has the last word over what it did.
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Polish with AI", isOn: $polishEnabled)
+                Text("After dictation ends, AI tidies the wording and punctuation before the text is inserted. The original language is preserved.")
+                    .font(.parley.caption)
+                    .foregroundStyle(Theme.mutedForeground)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 2)
 
             // Below the set-up, because it is only worth anything once the
             // keyboard is in use: the dictionary fills itself from dictation.

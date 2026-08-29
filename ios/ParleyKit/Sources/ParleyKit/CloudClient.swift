@@ -195,6 +195,16 @@ public actor CloudClient {
             body: body, contentType: "application/json")
     }
 
+    // MARK: generic JSON POST
+
+    /// `POST` a JSON body and hand back the raw response body, for callers that
+    /// own their own request/response shapes — the OpenAI-compatible
+    /// `v1/chat/completions` endpoint the dictation polish pass uses. Same
+    /// auth header and same 2xx-or-`CloudError` discipline as every call above.
+    public func postJSON(_ path: String, body: Data) async throws -> Data {
+        try await request(path, method: "POST", body: body, contentType: "application/json")
+    }
+
     // MARK: plumbing
 
     private func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
