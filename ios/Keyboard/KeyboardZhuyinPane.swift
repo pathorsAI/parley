@@ -50,14 +50,22 @@ struct ZhuyinPane: View {
         }
     }
 
-    /// `123`, the globe where the system asks for one, space, delete, return.
+    /// The mode key, `123`, the globe where the system asks for one, space,
+    /// delete, return.
     ///
     /// Delete lives here rather than beside the symbols, because all 41 大千 keys
-    /// are spoken for — there is no shift row to borrow a corner from.
+    /// are spoken for — there is no shift row to borrow a corner from. The mode
+    /// key takes the bottom-left corner it has on every other pane, and the
+    /// width it costs comes out of the space bar: this row is already five keys
+    /// in the height of four, so nothing here can grow downwards.
     private func functionRow(_ m: KeyRowMetrics) -> some View {
         row {
+            ModeKey(
+                bridge: bridge, dark: dark, width: m.mode,
+                height: KBMetrics.zhuyinKeyHeight)
             KeyButton(
-                dark: dark, tint: .alt, width: m.wide, height: KBMetrics.zhuyinKeyHeight,
+                dark: dark, tint: .alt, shape: .pill, width: m.wide,
+                height: KBMetrics.zhuyinKeyHeight,
                 action: { symbols = true }
             ) {
                 Text(verbatim: "123").font(.system(size: 16, weight: .regular))
@@ -73,7 +81,7 @@ struct ZhuyinPane: View {
             // caption changes under the finger is harder to aim at than one
             // whose meaning follows the state.
             KeyButton(
-                dark: dark, width: nil, height: KBMetrics.zhuyinKeyHeight,
+                dark: dark, shape: .pill, width: nil, height: KBMetrics.zhuyinKeyHeight,
                 action: { bridge.space() }
             ) {
                 Text("Space").font(.system(size: 15))

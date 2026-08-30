@@ -822,6 +822,16 @@ final class DictationCoordinator: ObservableObject {
         applyLexicon()
         publish()
         active = false
+        // No haptic here, deliberately. `done` is not delivery — it is this
+        // process saying the text is *ready* — and the transcript is only ever
+        // handed to anyone by the keyboard's one `insertText` (see
+        // `KeyboardViewController.drainDownlink`). That holds for both entry
+        // points: `DictationView` is a hand-off screen that shows no transcript
+        // and has no stop control, and `StartDictationIntent` is delivered by
+        // "whatever Parley keyboard is frontmost" too. So the success pattern
+        // belongs to the keyboard process, which is also the one the user is
+        // actually holding — this one is usually in the background by now, and
+        // iOS drops haptics from a background app.
     }
 
     /// The cleanup pass with a deadline on it. Every way this can go wrong — a

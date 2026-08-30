@@ -62,14 +62,17 @@ struct SymbolPlanes: View {
         }
     }
 
+    /// The mode key keeps the corner it has on every pane, so `123` does not
+    /// become the one plane you have to leave before you can change keyboard.
     private func bottomRow(_ m: KeyRowMetrics) -> some View {
         row {
+            ModeKey(bridge: bridge, dark: dark, width: m.mode)
             altKey(homeLabel, width: m.wide, action: onHome)
             if bridge.showsGlobe {
                 GlobeKey(controller: bridge.controller, dark: dark)
                     .frame(width: m.unit, height: KBMetrics.keyHeight)
             }
-            KeyButton(dark: dark, width: nil, action: { bridge.space() }) {
+            KeyButton(dark: dark, shape: .pill, width: nil, action: { bridge.space() }) {
                 Text("Space").font(.system(size: 15))
             }
             .accessibilityLabel(Text("Space"))
@@ -95,7 +98,7 @@ struct SymbolPlanes: View {
     private func altKey(
         _ label: String, width: CGFloat, action: @escaping () -> Void
     ) -> some View {
-        KeyButton(dark: dark, tint: .alt, width: width, action: action) {
+        KeyButton(dark: dark, tint: .alt, shape: .pill, width: width, action: action) {
             Text(verbatim: label).font(.system(size: 16, weight: .regular))
         }
         .accessibilityLabel(Text(verbatim: label))
@@ -117,7 +120,8 @@ struct ReturnKey: View {
     var body: some View {
         let accented = bridge.returnKeyIsAccented
         return KeyButton(
-            dark: dark, tint: accented ? .accent : .alt, width: width, height: height,
+            dark: dark, tint: accented ? .accent : .alt, shape: .pill, width: width,
+            height: height,
             ink: accented ? .white : KBTheme.ink(dark),
             action: { bridge.newline() }
         ) {
