@@ -70,26 +70,6 @@ enum KBTheme {
         dark ? Color(white: 0.30) : .white
     }
 
-    /// The colour under a key cap, ported from `@pathors/ui`'s `--shadow-sm`.
-    ///
-    /// A neutral blue-black rather than the brand blue on purpose: a shadow is
-    /// the absence of light, and tinting it with the accent is the fastest way
-    /// to make a keyboard look like a mock-up. The cap stacks two of these —
-    /// `capShadowNear` hugging the edge and `capShadowFar` under it — because
-    /// SwiftUI has no shadow *spread*, so the CSS token's tight-plus-soft pair
-    /// is approximated by two blurs rather than one.
-    private static let capShadowInk = Color(red: 0.078, green: 0.118, blue: 0.176)
-
-    /// Both appearances carry it. Dark mode used to draw no shadow at all,
-    /// which left every cap floating flat against the input view.
-    static func capShadowNear(_ dark: Bool) -> Color {
-        dark ? Color.black.opacity(0.50) : capShadowInk.opacity(0.10)
-    }
-
-    static func capShadowFar(_ dark: Bool) -> Color {
-        dark ? Color.black.opacity(0.50) : capShadowInk.opacity(0.06)
-    }
-
     /// The voice pane's round control buttons.
     ///
     /// Deliberately *not* a key cap. The voice pane is a control panel, not a
@@ -134,30 +114,6 @@ enum KBMetrics {
     static let sideInset: CGFloat = 3
     static let paneTop: CGFloat = 8
     static let paneBottom: CGFloat = 4
-
-    /// A character cap's corners. The function keys around them are pills
-    /// instead (`KeyShape`), which is what separates the two families at a
-    /// glance now that both carry the same soft shadow.
-    static let keyRadius: CGFloat = 7
-
-    /// The narrowest the mode key is allowed to get. A row's `wide` unit falls
-    /// below the 44pt minimum target on a 320pt SE, so the mode key takes the
-    /// difference out of the space bar rather than out of the finger.
-    static let modeKeyWidth: CGFloat = 44
-
-    // How a key answers a finger. The cap shrinks a hair going down and springs
-    // back coming up, on top of the fill swap that was already there.
-    //
-    // 80ms and 0.97 deliberately differ from the `@pathors/ui` web token
-    // (`active:scale-[0.98]`, 150ms): a key is pressed a few times a second,
-    // and at typing speed a 150ms settle reads as lag rather than as feedback.
-    // The tighter scale is what keeps the shorter animation legible.
-    static let pressScale: CGFloat = 0.97
-    static let pressDuration: Double = 0.08
-    static let pressDown = Animation.easeOut(duration: KBMetrics.pressDuration)
-    /// Coming back up is a spring rather than the ease: the release is the beat
-    /// the finger is no longer on the key for, so it can afford the overshoot.
-    static let pressUp = Animation.spring(response: 0.2, dampingFraction: 0.75)
 
     /// Four rows of caps: 8 + 4×42 + 3×11 + 4 = 213pt, within a few points of
     /// the ~216pt key area of the system portrait keyboard.

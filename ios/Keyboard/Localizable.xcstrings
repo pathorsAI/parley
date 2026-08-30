@@ -464,23 +464,6 @@
         }
       }
     },
-    "Switch input mode": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Switch input mode"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "切換輸入模式"
-          }
-        }
-      }
-    },
     "Tap to open the app": {
       "localizations": {
         "en": {

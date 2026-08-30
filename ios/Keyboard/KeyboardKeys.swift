@@ -18,15 +18,6 @@ enum KeyTint {
     case accent
 }
 
-/// What a cap is cut to. Characters keep UIKit's rounded rectangle; the
-/// function keys around them — shift, delete, `123`, the globe, space, return
-/// and the mode key — are pills, which is how the two families stay tellable
-/// apart at a glance when both carry the same soft shadow.
-enum KeyShape {
-    case cap
-    case pill
-}
-
 /// Every width on a key row, derived from the widest row's key count: one key is
 /// the unit and every wide key is expressed in units, so the rows line up on a
 /// 320pt SE and a 440pt Pro Max alike.
@@ -49,39 +40,18 @@ struct KeyRowMetrics {
     /// The half-key iOS insets the QWERTY home row by — and exactly what centres
     /// a ten-key 注音 row under the eleven-key one above it.
     var halfKey: CGFloat { (unit + KBMetrics.keyGap) / 2 }
-
-    /// The mode key. A `wide` key on a 320pt SE comes out at 42pt, under the
-    /// 44pt minimum target — so this one key takes its floor from the metrics
-    /// table and the difference comes out of the space bar, which is the only
-    /// key in the row with slack to give.
-    var mode: CGFloat { max(wide, KBMetrics.modeKeyWidth) }
 }
 
-/// A key cap: 7pt corners on a character, a pill on a function key, over two
-/// stacked soft shadows in both appearances.
-///
-/// It used to be 5pt corners and a single hard 1pt shadow that was switched off
-/// entirely in dark mode — the copy of UIKit's own cap. The softer pair reads as
-/// Parley's rather than as a slightly-wrong system keyboard, and dark mode gets
-/// a shadow at all, which it did not before.
+/// A key cap. 5pt corners and a 1pt hard shadow, which is what UIKit draws.
 struct KeyCap: View {
     let dark: Bool
     let tint: KeyTint
-    var shape: KeyShape = .cap
     let pressed: Bool
 
     var body: some View {
-        Group {
-            switch shape {
-            case .cap:
-                RoundedRectangle(cornerRadius: KBMetrics.keyRadius, style: .continuous)
-                    .fill(fill)
-            case .pill:
-                Capsule().fill(fill)
-            }
-        }
-        .shadow(color: KBTheme.capShadowNear(dark), radius: 1, x: 0, y: 1)
-        .shadow(color: KBTheme.capShadowFar(dark), radius: 3, x: 0, y: 2)
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(fill)
+            .shadow(color: .black.opacity(dark ? 0 : 0.28), radius: 0, x: 0, y: 1)
     }
 
     private var fill: Color {
@@ -109,16 +79,13 @@ struct ControlDisc: View {
 }
 
 /// A button that reports its own pressed state, so keys and the mic control can
-/// darken and shrink under the finger the way system keys do.
-/// `.buttonStyle(.plain)` alone gives no feedback at all, which is what made the
-/// keys feel dead.
-///
-/// `onPressDown` fires the moment the finger lands, which `action` — a button's
-/// touch-*up* — cannot: the record button's haptic has to arrive with the press,
-/// not after it. It never changes when a character is typed; only `action` does
-/// that.
+/// darken under the finger the way system keys do. `.buttonStyle(.plain)` alone
+/// gives no feedback at all, which is what made the keys feel dead.
 struct PressableButton<Content: View>: View {
     let action: () -> Void
+    /// Fired as the finger lands, before `action`, for the one caller that
+    /// needs the press itself rather than the tap: the record button's haptic.
+    /// A confirmation that arrives on the release confirms nothing.
     var onPressDown: (() -> Void)?
     @ViewBuilder var content: (Bool) -> Content
 
@@ -132,16 +99,8 @@ struct PressableButton<Content: View>: View {
         var onPressDown: (() -> Void)?
 
         func makeBody(configuration: Configuration) -> some View {
-            // Two animation scopes, not one: the inner keeps the fill swap on
-            // exactly the ease it always had, the outer gives the scale its
-            // spring on the way back up.
             content(configuration.isPressed)
-                .animation(KBMetrics.pressDown, value: configuration.isPressed)
-                .scaleEffect(configuration.isPressed ? KBMetrics.pressScale : 1)
-                .animation(
-                    configuration.isPressed ? KBMetrics.pressDown : KBMetrics.pressUp,
-                    value: configuration.isPressed
-                )
+                .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
                 .onChange(of: configuration.isPressed) { _, isPressed in
                     if isPressed { onPressDown?() }
                 }
@@ -197,12 +156,7 @@ struct RepeatingKey<Content: View>: View {
     var body: some View {
         content(pressed)
             .contentShape(Rectangle())
-            // The same two scopes as `PressableButton`: these keys never go
-            // through the button style, so the press feedback has to be spelled
-            // out here too or delete would be the one dead key on the board.
-            .animation(KBMetrics.pressDown, value: pressed)
-            .scaleEffect(pressed ? KBMetrics.pressScale : 1)
-            .animation(pressed ? KBMetrics.pressDown : KBMetrics.pressUp, value: pressed)
+            .animation(.easeOut(duration: 0.08), value: pressed)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
@@ -229,8 +183,6 @@ struct RepeatingKey<Content: View>: View {
 struct KeyButton<Label: View>: View {
     let dark: Bool
     var tint: KeyTint = .letter
-    /// Characters keep the rounded cap; every function key is a pill.
-    var shape: KeyShape = .cap
     var width: CGFloat?
     var height: CGFloat = KBMetrics.keyHeight
     var ink: Color?
@@ -240,7 +192,7 @@ struct KeyButton<Label: View>: View {
     var body: some View {
         PressableButton(action: action) { pressed in
             ZStack {
-                KeyCap(dark: dark, tint: tint, shape: shape, pressed: pressed)
+                KeyCap(dark: dark, tint: tint, pressed: pressed)
                 label().foregroundStyle(ink ?? KBTheme.ink(dark))
             }
             .frame(width: width, height: height)
@@ -260,7 +212,7 @@ struct DeleteKey: View {
     var body: some View {
         RepeatingKey(action: action) { pressed in
             ZStack {
-                KeyCap(dark: dark, tint: .alt, shape: .pill, pressed: pressed)
+                KeyCap(dark: dark, tint: .alt, pressed: pressed)
                 Image(systemName: "delete.left")
                     .font(.system(size: 19, weight: .regular))
                     .foregroundStyle(KBTheme.ink(dark))
@@ -302,7 +254,7 @@ struct GlobeKey: View {
             if round {
                 ControlDisc(dark: dark, pressed: pressed)
             } else {
-                KeyCap(dark: dark, tint: .alt, shape: .pill, pressed: pressed)
+                KeyCap(dark: dark, tint: .alt, pressed: pressed)
             }
             Image(systemName: "globe")
                 .font(.system(size: round ? 16 : 17, weight: .regular))
@@ -310,12 +262,7 @@ struct GlobeKey: View {
                 .accessibilityHidden(true)
             InputModeSwitchButton(controller: controller, pressed: $pressed)
         }
-        // Its own press feedback, for the same reason `RepeatingKey` has one:
-        // the touches belong to a UIKit button, so the cap would otherwise be
-        // the only key on the row that doesn't move.
-        .animation(KBMetrics.pressDown, value: pressed)
-        .scaleEffect(pressed ? KBMetrics.pressScale : 1)
-        .animation(pressed ? KBMetrics.pressDown : KBMetrics.pressUp, value: pressed)
+        .animation(.easeOut(duration: 0.08), value: pressed)
     }
 }
 
@@ -368,116 +315,5 @@ private struct InputModeSwitchButton: UIViewRepresentable {
         var report: (Bool) -> Void = { _ in }
         @objc func down() { report(true) }
         @objc func up() { report(false) }
-    }
-}
-
-/// What a pane is called, in one place: the strip names the pane you are on,
-/// the mode key names the one you are going to, and the menu names all of them.
-///
-/// 注音 keeps its own name in both localizations — the keys on that pane *are*
-/// 注音, and nothing an English word could say would identify it faster.
-extension KeyboardPane {
-    /// The short name, as it goes on a key cap.
-    var name: Text {
-        switch self {
-        case .voice: return Text("Voice")
-        case .english: return Text("English")
-        case .zhuyin: return Text(verbatim: "注音")
-        }
-    }
-
-    /// The long name, for VoiceOver and for the mode key's menu, where there is
-    /// room to say which of the three kinds of thing this is.
-    var label: Text {
-        switch self {
-        case .voice: return Text("Voice dictation")
-        case .english: return Text("English keyboard")
-        case .zhuyin: return Text("Bopomofo keyboard")
-        }
-    }
-}
-
-/// The key that changes pane — the headline of the bottom row.
-///
-/// Before it, the only way across was a full-width swipe nobody found and a row
-/// of 5pt dots far under the 44pt minimum target. This is the ordinary answer:
-/// a key that says where it goes, in the same corner of every pane so the hand
-/// can learn it.
-///
-/// **Tap advances, hold picks.** `primaryAction` is the tap — one pane along,
-/// wrapping at the end so the key is never a dead one — and the menu is the long
-/// press, listing every pane with the current one ticked, for jumping straight
-/// across a three-pane track. It is the same pairing the system's own globe has,
-/// which is why it needs no explaining.
-///
-/// It is labelled with the pane it will take you to, like the system's
-/// `123`/`ABC` key: a key captioned with what you are already looking at is the
-/// one caption that tells you nothing.
-struct ModeKey: View {
-    @ObservedObject var bridge: KeyboardBridge
-    let dark: Bool
-    var width: CGFloat?
-    var height: CGFloat = KBMetrics.keyHeight
-    /// The voice pane draws its controls as discs, the typing panes as caps.
-    var round = false
-
-    /// A `Menu` reports no pressed state of its own, so the one genuinely new
-    /// key would have been the only dead key on a keyboard whose point is that
-    /// pressing things feels like something. A zero-distance drag alongside the
-    /// menu's own recognizer supplies it.
-    ///
-    /// `@GestureState` rather than `@State` because it resets itself when the
-    /// gesture ends *or is cancelled* — and the menu opening under the finger is
-    /// exactly the cancellation that would otherwise leave the cap stuck down.
-    @GestureState private var pressed = false
-
-    var body: some View {
-        Menu {
-            ForEach(bridge.panes, id: \.self) { pane in
-                Button(action: { bridge.setPane(pane) }) {
-                    if pane == bridge.pane {
-                        Label { pane.label } icon: { Image(systemName: "checkmark") }
-                    } else {
-                        pane.label
-                    }
-                }
-            }
-        } label: {
-            ZStack {
-                if round {
-                    ControlDisc(dark: dark, pressed: pressed)
-                } else {
-                    KeyCap(dark: dark, tint: .alt, shape: .pill, pressed: pressed)
-                }
-                bridge.nextPane.name
-                    .font(.system(size: round ? 13 : 15))
-                    // "English" is wider than a 44pt key on a 320pt SE. It
-                    // shrinks rather than truncating: half a pane name is worse
-                    // than a small one.
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .padding(.horizontal, 4)
-                    .foregroundStyle(round ? KBTheme.inkSoft(dark) : KBTheme.ink(dark))
-            }
-            .frame(width: width, height: height)
-            .frame(maxWidth: width == nil ? .infinity : nil)
-            .contentShape(Rectangle())
-            // The same two scopes every other key uses: the fill on the ease it
-            // has always had, the scale springing back on release.
-            .animation(KBMetrics.pressDown, value: pressed)
-            .scaleEffect(pressed ? KBMetrics.pressScale : 1)
-            .animation(pressed ? KBMetrics.pressDown : KBMetrics.pressUp, value: pressed)
-            // Simultaneous, so it only *observes* the touch: the tap still
-            // reaches `primaryAction` and the hold still opens the menu.
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0)
-                    .updating($pressed) { _, state, _ in state = true }
-            )
-        } primaryAction: {
-            bridge.advancePane()
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text("Switch input mode"))
-        .accessibilityValue(bridge.nextPane.name)
     }
 }
