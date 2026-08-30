@@ -83,6 +83,38 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.6
+
+Dictation now arrives written, not transcribed. When a session ends, Parley makes
+one cleanup pass over the text before the keyboard inserts it: filler words go,
+punctuation lands where you meant it, and a long stretch breaks into paragraphs.
+What you said in a hurry reads like something you typed.
+
+It stays in your language. Traditional Chinese comes back Traditional — a result
+that drifted into Simplified is discarded rather than pasted — and the words you
+have taught the personal dictionary are protected through the pass and reapplied
+after it, so a correction you made by hand always wins.
+
+The pass costs a moment at the end of a dictation, and it can only help: on a
+timeout, with no network, signed out, or if the result comes back wrong in any
+way, the keyboard pastes the raw transcript exactly as it did before. Turn it off
+in Settings → Voice keyboard → Polish with AI.
+
+## What's New — 1.5
+
+The keyboard grew up in this release:
+
+- New Bopomofo (Zhuyin) keyboard — swipe between the voice, English, and
+  Traditional Chinese panes, and choose which keyboards you carry in Settings.
+- The voice pane now says exactly what a tap will do: when the microphone window
+  is open you dictate right where you are; when Parley still needs setting up,
+  the button honestly opens the app instead of pretending to listen.
+- Dictation now lands in your document in one piece when the session ends,
+  instead of streaming in word by word — cleaner to read, easier to edit.
+- Personal dictionary: fix a word right after dictating and Parley learns your
+  spelling for next time. Review, add, or remove entries in Settings → Personal
+  dictionary.
+
 ## What's New — 1.4.2
 
 Dictation can stop leaving the app you are typing in. Turn on a microphone
