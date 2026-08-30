@@ -64,11 +64,26 @@ struct KeyboardRootView: View {
                             state = rubberBanded(value.translation.width, width: width)
                         }
                         .onEnded { value in
-                            let dx = value.translation.width
-                            guard abs(dx) > KBMetrics.swipeThreshold,
-                                abs(dx) > abs(value.translation.height) * 1.5
-                            else { return }
-                            bridge.stepPane(by: dx < 0 ? 1 : -1)
+                            // Either measure may commit it: how far the finger
+                            // actually went, or where its velocity says it was
+                            // going. Reading only the first is what made a fast
+                            // flick — the gesture everybody actually uses — do
+                            // nothing, because the finger leaves the glass long
+                            // before it has travelled 56pt.
+                            let move: CGSize
+                            if abs(value.translation.width) > KBMetrics.swipeThreshold {
+                                move = value.translation
+                            } else if abs(value.predictedEndTranslation.width)
+                                > KBMetrics.swipeThreshold
+                            {
+                                move = value.predictedEndTranslation
+                            } else {
+                                return
+                            }
+                            // Still has to be a sideways gesture, judged on
+                            // whichever measure committed it.
+                            guard abs(move.width) > abs(move.height) * 1.5 else { return }
+                            bridge.stepPane(by: move.width < 0 ? 1 : -1)
                         }
                 )
             }
@@ -102,6 +117,10 @@ struct KeyboardRootView: View {
     /// and hid the fact that the pane swipes at all. Dots say "there is another
     /// one of these, sideways" — and they stay tappable, so nothing is lost.
     ///
+    /// They are a signpost and nothing more now: the bottom row of every pane
+    /// carries a real mode key (`ModeKey`), so nothing the user needs depends on
+    /// hitting a 5pt mark.
+    ///
     /// While a 注音 syllable is being typed the whole row is given over to the
     /// composition and its candidates. It is the one row the keyboard has to
     /// spare, and the alternative — a bar of its own above the keys — would make
@@ -117,7 +136,7 @@ struct KeyboardRootView: View {
                     windowChip
                     Spacer(minLength: 8)
                 }
-                paneName(bridge.pane)
+                bridge.pane.name
                     .font(.caption.weight(.medium))
                     .foregroundStyle(KBTheme.inkSoft(dark))
                     .padding(.trailing, 8)
@@ -132,26 +151,6 @@ struct KeyboardRootView: View {
         }
         .frame(height: KBMetrics.strip)
         .padding(.horizontal, 12)
-    }
-
-    /// The pane's short name. 注音 keeps its own name in both localizations: the
-    /// keys on that pane *are* 注音, and nothing an English word could say
-    /// would identify it faster.
-    @ViewBuilder
-    private func paneName(_ pane: KeyboardPane) -> some View {
-        switch pane {
-        case .voice: Text("Voice")
-        case .english: Text("English")
-        case .zhuyin: Text(verbatim: "注音")
-        }
-    }
-
-    private func paneLabel(_ pane: KeyboardPane) -> Text {
-        switch pane {
-        case .voice: return Text("Voice dictation")
-        case .english: return Text("English keyboard")
-        case .zhuyin: return Text("Bopomofo keyboard")
-        }
     }
 
     // MARK: 注音 composition
@@ -252,7 +251,7 @@ struct KeyboardRootView: View {
                 .animation(.easeInOut(duration: 0.2), value: selected)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(paneLabel(pane))
+        .accessibilityLabel(pane.label)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
@@ -270,25 +269,29 @@ struct KeyboardRootView: View {
     }
 
     /// The controls, arranged around the record button rather than in a row:
-    /// delete top-right, return under it, `@` bottom-left. Top-left is left
-    /// empty on purpose — it is where the pane breathes, and it is the slot the
-    /// globe takes on the devices that still need one.
+    /// delete top-right, return under it, and the mode key bottom-left with the
+    /// globe or `@` above it.
+    ///
+    /// Bottom-left is the mode key's corner on every pane, which is the whole
+    /// point of it — a key that moves between panes is only learnable if it is
+    /// in the same place on all of them — so the slot that used to be left empty
+    /// for the pane to breathe is now what the other two keys share. On the
+    /// devices where the system still asks us to draw a globe there are three
+    /// keys wanting two slots, and `@` is the one that gives: it is a
+    /// convenience here and a real key one swipe away on the letters pane,
+    /// whereas the globe is App Review 4.4.1's way out of the keyboard.
     private var deck: some View {
         HStack(spacing: 0) {
             VStack(spacing: KBMetrics.deckRowGap) {
                 if bridge.showsGlobe {
-                    atKey
-                } else {
-                    Color.clear.frame(width: KBMetrics.roundKey, height: KBMetrics.roundKey)
-                }
-                if bridge.showsGlobe {
-                    // Bottom-left, where the system's own globe sits, so the
-                    // muscle memory carries over on the devices that show it.
                     GlobeKey(controller: bridge.controller, dark: dark, round: true)
                         .frame(width: KBMetrics.roundKey, height: KBMetrics.roundKey)
                 } else {
                     atKey
                 }
+                ModeKey(
+                    bridge: bridge, dark: dark, width: KBMetrics.roundKey,
+                    height: KBMetrics.roundKey, round: true)
             }
             Spacer(minLength: 0)
             recordButton
@@ -360,7 +363,7 @@ struct KeyboardRootView: View {
     /// otherwise the tap goes to Parley, and the button says so. The colour
     /// stays either way — the button is still the thing to press.
     private var recordButton: some View {
-        PressableButton(action: toggle) { pressed in
+        PressableButton(action: toggle, onPressDown: startHaptic) { pressed in
             ZStack {
                 if bridge.listening && !reduceMotion {
                     PulseRing(color: KBTheme.recording)
@@ -406,6 +409,20 @@ struct KeyboardRootView: View {
 
     private var recordInk: Color {
         bridge.hasFullAccess ? .white : KBTheme.inkSoft(dark)
+    }
+
+    /// One solid thump as the finger lands on the record button, not when it
+    /// lifts: the press is the moment the user commits to speaking, and a
+    /// confirmation that arrives after the release confirms nothing.
+    ///
+    /// Only on the press that *starts* something — ⏹ ends with the success
+    /// pattern instead (`Haptics.dictationDelivered`), and the two are
+    /// deliberately different beats. A keyboard extension only gets haptics at
+    /// all with Full Access; without it the button is disabled anyway, and the
+    /// guard says so rather than leaving it to be inferred.
+    private func startHaptic() {
+        guard bridge.hasFullAccess, !bridge.listening else { return }
+        Haptics.dictationStarted()
     }
 
     private func toggle() {

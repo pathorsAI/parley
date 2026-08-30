@@ -145,6 +145,11 @@ final class KeyboardViewController: UIInputViewController {
         readReadiness()
         readWindow()
         drainDownlink()
+        // Warm the Taptic Engine while the keyboard is coming up, so the thump
+        // lands with the first press on the record button rather than a beat
+        // after it. Pointless without Full Access, where a keyboard gets no
+        // haptics at all — and where the record button is disabled anyway.
+        if hasFullAccess { Haptics.prepareForDictation() }
     }
 
     /// The keyboard is going away, which is the end of the user's chance to fix
@@ -418,6 +423,26 @@ final class KeyboardViewController: UIInputViewController {
             var up = DictationChannel.readUplink() ?? .init(session: session)
             up.insertedCount = insertedCount
             DictationChannel.writeUplink(up)
+            // The words just landed in the user's field, and this process is
+            // the only one that can say so: **the keyboard is the only thing
+            // that ever delivers a transcript**. The app publishes `done` and
+            // stops there — its own dictation screen shows no transcript and
+            // the Action Button intent is inserted by "whatever Parley keyboard
+            // is frontmost" as well — so there is no second buzz to race, and
+            // the app is usually backgrounded by now anyway, where iOS drops
+            // haptics entirely. That is why the pattern moved here.
+            //
+            // Once per session for free: the whole branch is behind the
+            // `insertedCount` high-water mark, so the `done` state
+            // republishing (and this method running on every appearance)
+            // inserts nothing the second time and therefore buzzes nothing.
+            // `.error` never reaches it, which is the failure path staying
+            // silent.
+            //
+            // Full Access is the guard at the top of this method: without it
+            // there is no App Group to read a transcript from and no haptics to
+            // play, and the drain returns before it gets here.
+            Haptics.dictationDelivered()
         }
 
         bridge.partial = d.partial
@@ -439,6 +464,10 @@ final class KeyboardViewController: UIInputViewController {
         case .finishing:
             bridge.listening = true
             bridge.reconnecting = false
+            // The transcript is one AI-polish round trip away from landing;
+            // warm the engine now so the pattern is not a beat late. Cheap to
+            // repeat on the drains that follow.
+            Haptics.prepareForDelivery()
         case .done:
             bridge.listening = false
             bridge.reconnecting = false
@@ -479,13 +508,22 @@ final class KeyboardViewController: UIInputViewController {
     // MARK: 注音 (called from SwiftUI)
 
     /// A bopomofo key.
-    func zhuyinSymbol(_ symbol: Character) { apply(zhuyin.symbol(symbol)) }
+    func zhuyinSymbol(_ symbol: Character) {
+        click()
+        apply(zhuyin.symbol(symbol))
+    }
 
     /// A tone key: finalize the syllable and show its candidates.
-    func zhuyinTone(_ tone: ZhuyinTone) { apply(zhuyin.tone(tone)) }
+    func zhuyinTone(_ tone: ZhuyinTone) {
+        click()
+        apply(zhuyin.tone(tone))
+    }
 
     /// The user picked a character out of the candidate bar.
-    func zhuyinPick(_ candidate: String) { apply(zhuyin.pick(candidate)) }
+    func zhuyinPick(_ candidate: String) {
+        click()
+        apply(zhuyin.pick(candidate))
+    }
 
     /// Do whatever the composer asked for, then republish what it is holding.
     ///
@@ -510,14 +548,29 @@ final class KeyboardViewController: UIInputViewController {
 
     // MARK: keys (called from SwiftUI)
 
+    /// The system keyboard click.
+    ///
+    /// Every key the user can press comes through this class, so the click is
+    /// played here rather than in the views — one call per key action, in the
+    /// same place the key's actual effect happens.
+    ///
+    /// It needs no Full Access and no setting of its own: `playInputClick` is
+    /// silent unless the user has Keyboard Clicks switched on in Settings, which
+    /// is exactly the preference a second toggle here would be duplicating.
+    private func click() { UIDevice.current.playInputClick() }
+
     /// Delete edits the 注音 buffer before it edits the document — the candidate
     /// bar first, then the syllable slot by slot — and only reaches the field
     /// once there is nothing pending. See `ZhuyinComposer.delete()`.
     func deleteBackward() {
+        click()
         apply(zhuyin.delete()) { textDocumentProxy.deleteBackward() }
     }
 
-    func insert(_ text: String) { textDocumentProxy.insertText(text) }
+    func insert(_ text: String) {
+        click()
+        textDocumentProxy.insertText(text)
+    }
 
     /// Return always types a line break. A keyboard extension cannot submit a
     /// form — there is no public way to fire the host's return action — so a
@@ -528,6 +581,7 @@ final class KeyboardViewController: UIInputViewController {
     /// keyboard does: the first return closes the composition, the next one
     /// breaks the line.
     func insertReturn() {
+        click()
         apply(zhuyin.confirm()) { textDocumentProxy.insertText("\n") }
     }
 
@@ -544,6 +598,7 @@ final class KeyboardViewController: UIInputViewController {
     /// On the 注音 pane space is the first tone and then the confirm key, so a
     /// pending syllable claims it first.
     func insertSpace() {
+        click()
         switch zhuyin.space() {
         case .handled:
             publishComposition()
@@ -572,6 +627,17 @@ final class KeyboardViewController: UIInputViewController {
         textDocumentProxy.insertText(" ")
         lastSpaceAt = now
     }
+}
+
+/// Opt this keyboard into the system key click.
+///
+/// `UIDevice.playInputClick()` does nothing unless the input view that is on
+/// screen says it wants clicks, which is what this protocol is for; the
+/// controller answers for its own input view. The user's Settings switch still
+/// has the last word, in both directions — that is the point of routing through
+/// UIKit rather than playing a sound of our own.
+extension KeyboardViewController: UIInputViewAudioFeedback {
+    var enableInputClicksWhenVisible: Bool { true }
 }
 
 /// One pane on the track. Dictation and typing are different enough — different
@@ -696,6 +762,21 @@ final class KeyboardBridge: ObservableObject {
         guard panes.indices.contains(target) else { return }
         setPane(panes[target])
     }
+
+    /// Where the mode key goes next, and what it is therefore captioned with.
+    ///
+    /// Wrapping, where the swipe clamps. The two are answering different
+    /// questions: a drag has a direction and an edge to bump into, while a key
+    /// that did nothing on the last pane would just be broken — which is also
+    /// how the system's `123`/`ABC` key behaves.
+    var nextPane: KeyboardPane {
+        guard !panes.isEmpty else { return pane }
+        return panes[(paneIndex + 1) % panes.count]
+    }
+
+    /// The mode key's tap. The long press picks a pane outright, through
+    /// `setPane`.
+    func advancePane() { setPane(nextPane) }
 
     var returnKeyLabel: LocalizedStringKey {
         switch returnKeyType {

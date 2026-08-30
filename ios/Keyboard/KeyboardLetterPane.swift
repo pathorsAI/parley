@@ -61,13 +61,22 @@ struct LetterPane: View {
         }
     }
 
-    /// `123`, the globe when the system asks for one, `@`, the space bar, and
-    /// return. Space takes whatever the fixed keys leave, which lands it at
-    /// roughly the five-key width iOS gives it — and a little wider on the
-    /// devices that draw their own globe below the keyboard.
+    /// The mode key, `123`, the globe when the system asks for one, `@`, the
+    /// space bar, and return. Space takes whatever the fixed keys leave, which
+    /// lands it at roughly the five-key width iOS gives it — and a little wider
+    /// on the devices that draw their own globe below the keyboard.
+    ///
+    /// The mode key holds the bottom-left corner on every pane, which is what
+    /// pushes `123` one key along. That corner is the price of the swipe no
+    /// longer being the only way across: a key that moves between panes has to
+    /// be in the same place on all of them, and this is the only slot the voice
+    /// pane can also offer.
     private func bottomRow(_ m: KeyRowMetrics) -> some View {
         row {
-            KeyButton(dark: dark, tint: .alt, width: m.wide, action: openSymbols) {
+            ModeKey(bridge: bridge, dark: dark, width: m.mode)
+            KeyButton(
+                dark: dark, tint: .alt, shape: .pill, width: m.wide, action: openSymbols
+            ) {
                 Text(verbatim: "123").font(.system(size: 16, weight: .regular))
             }
             .accessibilityLabel(Text(verbatim: "123"))
@@ -79,7 +88,7 @@ struct LetterPane: View {
                 Text(verbatim: "@").font(.system(size: 22))
             }
             .accessibilityLabel(Text("At sign"))
-            KeyButton(dark: dark, width: nil, action: tapSpace) {
+            KeyButton(dark: dark, shape: .pill, width: nil, action: tapSpace) {
                 Text("Space").font(.system(size: 15))
             }
             .accessibilityLabel(Text("Space"))
@@ -107,7 +116,8 @@ struct LetterPane: View {
         KeyButton(
             // An engaged shift borrows the light letter cap, which is how iOS
             // shows that it is armed without adding a second colour.
-            dark: dark, tint: shift.isOn ? .letter : .alt, width: width, action: tapShift
+            dark: dark, tint: shift.isOn ? .letter : .alt, shape: .pill, width: width,
+            action: tapShift
         ) {
             Image(systemName: shiftGlyph).font(.system(size: 19, weight: .regular))
         }
