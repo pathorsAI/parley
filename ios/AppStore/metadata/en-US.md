@@ -83,7 +83,7 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
-## What's New — 1.6
+## What's New — 1.6.1
 
 Dictation now arrives written, not transcribed. When a session ends, Parley makes
 one cleanup pass over the text before the keyboard inserts it: filler words go,
@@ -99,6 +99,12 @@ The pass costs a moment at the end of a dictation, and it can only help: on a
 timeout, with no network, signed out, or if the result comes back wrong in any
 way, the keyboard pastes the raw transcript exactly as it did before. Turn it off
 in Settings → Voice keyboard → Polish with AI.
+
+The keyboard now answers you. Starting a dictation gives one solid tap, and the
+words landing in your field give the two-beat pattern iOS uses for anything that
+finished — so you can start speaking and know it took, and look up only when you
+feel it arrive. Both need Full Access, which is the only way iOS lets a keyboard
+play haptics at all; without it nothing else changes.
 
 ## What's New — 1.5
 
