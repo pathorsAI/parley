@@ -112,6 +112,15 @@ export const zhTW = {
   "study.link.menu": "更多動作",
   "study.link.context": "會議背景",
 
+  // ── 轉錄完成後的命名與歸檔建議 ──
+  "study.filing.heading": "轉錄完成，建議這樣命名與歸檔",
+  "study.filing.titleLabel": "標題",
+  "study.filing.apply": "採用",
+  "study.filing.titleApplied": "已改名",
+  "study.filing.folderLabel": "歸到",
+  "study.filing.newFolder": "新增「{name}」",
+  "study.filing.dismiss": "不用了",
+
   // ── 會議類型：決定這場錄音用哪一套分析 ──
   "meetingKind.internal": "內部會議",
   "meetingKind.sales": "銷售通話",
@@ -1078,6 +1087,15 @@ export const en = {
   "study.link.change": "Change",
   "study.link.menu": "More actions",
   "study.link.context": "Meeting context",
+
+  // ── Post-transcription naming and filing suggestion ──
+  "study.filing.heading": "Suggested name and folder",
+  "study.filing.titleLabel": "Name",
+  "study.filing.apply": "Use it",
+  "study.filing.titleApplied": "Renamed",
+  "study.filing.folderLabel": "File under",
+  "study.filing.newFolder": "New folder “{name}”",
+  "study.filing.dismiss": "Dismiss",
 
   // ── Meeting kind: which analysis this recording gets ──
   "meetingKind.internal": "Internal meeting",
