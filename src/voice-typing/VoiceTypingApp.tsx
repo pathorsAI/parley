@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { listen, emit } from "@tauri-apps/api/event";
-import { Check, Loader2, Mic } from "lucide-react";
+import { Check, Loader2, Mic, Sparkles } from "lucide-react";
 import { preloadZhConverter } from "../lib/zhConvert";
 import { normalizeTranscriptText } from "../lib/textNormalize";
 import { useI18n, type TranslationKey } from "../i18n";
@@ -45,7 +45,7 @@ interface LevelPayload {
   level: number;
 }
 interface SessionPayload {
-  phase: "start" | "stop" | "done" | "error" | "limit";
+  phase: "start" | "stop" | "polishing" | "done" | "error" | "limit";
   message?: string;
 }
 
@@ -61,7 +61,12 @@ const ERROR_KEYS: Record<string, TranslationKey> = {
 
 /** listening = recording; finalizing = waiting for the STT final flush; done =
  *  copied. */
-type Phase = "listening" | "finalizing" | "done";
+/** `polishing` is a second, longer wait after `finalizing`: the transcript has
+ *  settled and is being cleaned up by the model before it is pasted. It gets
+ *  its own phase rather than reusing `finalizing` because it is the only part
+ *  of the pipeline the user waits a noticeable beat for, and a spinner that
+ *  does not say why reads as a hang. */
+type Phase = "listening" | "finalizing" | "polishing" | "done";
 
 /** Numeric index from a "voice-typing-{n}" segment id (tail sorts last). */
 function idIndex(id: string): number {
@@ -239,6 +244,8 @@ export const VoiceTypingApp = () => {
           setPhase("listening");
         } else if (p === "stop") {
           setPhase("finalizing");
+        } else if (p === "polishing") {
+          setPhase("polishing");
         } else if (p === "limit") {
           // Cap hit while the key was held: the transcript still flushes and
           // pastes; flag the note and fall through the normal finalize path.
@@ -310,7 +317,9 @@ export const VoiceTypingApp = () => {
   const bubble = error ? t(errorKey) : text;
 
   let phaseIcon = <Mic className="size-2.5" />;
-  if (phase === "finalizing") {
+  if (phase === "polishing") {
+    phaseIcon = <Sparkles className="size-2.5 animate-pulse" />;
+  } else if (phase === "finalizing") {
     phaseIcon = <Loader2 className="size-2.5 animate-spin" />;
   } else if (phase === "done") {
     phaseIcon = <Check className="size-2.5" strokeWidth={3} />;
@@ -341,6 +350,16 @@ export const VoiceTypingApp = () => {
               long dictation scrolls older lines off the top, so the preview
               never outgrows the fixed overlay window. */}
           <span>{bubble}</span>
+        </div>
+      )}
+
+      {/* Polishing note. The one beat in the pipeline the user actually waits
+          for, so it says what it is waiting on rather than spinning silently.
+          Same pill language as the "copied" confirmation below. */}
+      {phase === "polishing" && !error && (
+        <div className="flex items-center gap-1 rounded-full bg-sky-500 px-2.5 py-0.5 text-[11px] font-medium text-white shadow-md">
+          <Sparkles className="size-2.5 animate-pulse" />
+          {t("voiceTyping.polishing")}
         </div>
       )}
 

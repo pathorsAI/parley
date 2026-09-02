@@ -19,6 +19,7 @@ import { HOSTED_VOICE_TYPING_MAX_SECONDS } from "../limits";
 import { log } from "../log";
 import { showOverlay, hideOverlay, prewarmOverlay } from "./overlay";
 import { appendVoiceEntry } from "./history";
+import { canPolish, polishTranscript, shouldPolish } from "./polish";
 import {
   addEntry,
   isIgnoredTwice,
@@ -428,8 +429,27 @@ async function finalize() {
   const myGen = gen;
   busy = false;
   clearTimeout(capTimer);
-  const text = latestText.trim();
-  if (text) {
+  const raw = latestText.trim();
+  let text = raw;
+  if (raw) {
+    // The cleanup pass goes here and nowhere later. ⌘V into somebody else's app
+    // is one-way — no undo, no re-selection — so this is the last moment the
+    // text is still ours to change. Bounded and total: anything that goes wrong
+    // returns null and the raw transcript goes out exactly as it did before
+    // this existed. See `polish.ts`.
+    const settings = useStore.getState().settings;
+    if (canPolish(settings) && shouldPolish(raw)) {
+      // Only claim the overlay while it is still ours to claim; a press during
+      // the round trip owns it from here (the gen check below is the same
+      // guard for the "done" tail).
+      if (gen === myGen) await emit("voicetyping://session", { phase: "polishing" });
+      const polished = await polishTranscript({
+        raw,
+        settings,
+        protectedTerms: vocabularyTerms(),
+      });
+      if (polished) text = polished;
+    }
     let appBundleId: string | null = null;
     try {
       await invoke("copy_to_clipboard", { text });
