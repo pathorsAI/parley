@@ -9,12 +9,16 @@ import SwiftUI
 /// one job is to send them back. Showing a live transcript here taught people
 /// the wrong model ("I talk on this screen, then paste"), so it doesn't.
 ///
-/// Two shapes, decided by `HostReturn.canReturn`:
-///   - Older iOS: the app has already bounced the user back automatically, so
-///     this is only glimpsed in passing.
-///   - iOS 26.4+: the automatic jump-back is gone; the headline is the swipe
-///     gesture, and the guide sits at the very bottom, pointing at the real
-///     home indicator it wants swiped.
+/// Two shapes, decided by `coordinator.returnableHost`:
+///   - The jump landed (or is in flight): the app is bouncing the user back
+///     automatically, so this is only glimpsed in passing.
+///   - No jump: the headline is the swipe gesture, and the guide sits at the
+///     very bottom, pointing at the real home indicator it wants swiped.
+///
+/// Which one is *not* a decision about the iOS version any more. The app tries
+/// the jump and watches whether it worked, so this screen can start in the
+/// first shape and fall back to the second about a second later — see
+/// `HostReturnPolicy` for why that is the right way round.
 struct DictationView: View {
     @ObservedObject var coordinator = DictationCoordinator.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

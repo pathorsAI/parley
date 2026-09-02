@@ -205,6 +205,22 @@ public actor CloudClient {
         try await request(path, method: "POST", body: body, contentType: "application/json")
     }
 
+    /// The remote feature-flag document (`HostReturnPolicy` is its only reader
+    /// today). Returns `nil` for "the server has no opinion", which is a normal
+    /// state and not an error: until the endpoint is published every device
+    /// runs on `FeatureFlags()`, the compiled defaults.
+    ///
+    /// 404 is folded into that `nil` on purpose. Anything else — a 500, a
+    /// timeout, a 401 — throws, because the caller's answer to those is to keep
+    /// using the cache rather than to overwrite it with a shrug.
+    public func featureFlags() async throws -> FeatureFlags? {
+        do {
+            return try await get("v1/flags", as: FeatureFlags.self)
+        } catch let error as CloudError where error.status == 404 {
+            return nil
+        }
+    }
+
     // MARK: plumbing
 
     private func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {

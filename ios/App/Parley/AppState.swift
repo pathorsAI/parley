@@ -81,6 +81,21 @@ final class AppState: NSObject, ObservableObject {
 
     private var webAuth: ASWebAuthenticationSession?
 
+    /// Pull the remote feature flags into the App Group cache.
+    ///
+    /// Nothing waits on this and nothing fails because of it: a network error,
+    /// an expired session, or a server with no flag document all leave the last
+    /// good answer in place, and a device that has never succeeded here runs on
+    /// the compiled defaults. See `FeatureFlags`.
+    ///
+    /// Called at launch *and* on every foregrounding rather than on a timer.
+    /// The one flag it carries today is a kill switch for a private-API path,
+    /// and a kill switch that lands a day late is not a kill switch.
+    func refreshFeatureFlags() async {
+        guard let flags = try? await cloud.featureFlags() else { return }
+        FeatureFlagStore.shared.save(flags)
+    }
+
     /// Startup revalidation, same tolerance as the desktop `refreshSession()`:
     /// `user: null` → session is dead, clear it; a network error keeps the
     /// session so flaky connectivity never signs the user out.
