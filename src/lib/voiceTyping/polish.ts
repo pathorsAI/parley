@@ -44,10 +44,16 @@ export const MAX_PROTECTED_TERMS = 30;
  *
  *  This exists because the alternative is worse than an unpolished paste: the
  *  user has stopped talking, is looking at a spinner, and the words they said
- *  have not appeared anywhere yet. A model that is having a bad minute must not
- *  be able to hold their sentence hostage. Four seconds is well past a healthy
- *  realtime-lane response and well short of "did this thing crash". */
-export const POLISH_TIMEOUT_MS = 4000;
+ *  have not appeared anywhere yet. A model having a bad minute must not be able
+ *  to hold their sentence hostage.
+ *
+ *  Two seconds, and the number is deliberately tight. A realtime-lane model
+ *  answers a dictation-length prompt in well under a second, so this is already
+ *  several times the healthy case — and the thing being protected is not the
+ *  polish, it is the typing. Someone mid-sentence would rather have their raw
+ *  words now than their tidy words in a beat they can feel. Losing a polish to
+ *  the clock costs a few filler words; making people wait costs the feature. */
+export const POLISH_TIMEOUT_MS = 2000;
 
 export const POLISH_SYSTEM_PROMPT =
   "You clean up voice-dictation transcripts. Rewrite the user's transcript " +
