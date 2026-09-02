@@ -59,6 +59,23 @@ FOLDERS
 - reason is ONE short clause saying why the folder fits — it is shown as a tooltip, not read as prose.`;
 
 /**
+ * Index the folder registry by trimmed, lowercased name. Models re-type folder
+ * names rather than copying them, and "Acme Corp" vs "acme corp " is the model
+ * being sloppy about spelling, not the user wanting a second folder. First
+ * occurrence wins, so two folders sharing a name resolve to the older one.
+ */
+function indexByName(
+  folders: readonly { id: string; name: string }[]
+): Map<string, { id: string; name: string }> {
+  const byName = new Map<string, { id: string; name: string }>();
+  for (const folder of folders) {
+    const key = folder.name.trim().toLowerCase();
+    if (key && !byName.has(key)) byName.set(key, folder);
+  }
+  return byName;
+}
+
+/**
  * Turn the model's raw folder picks into the suggestions the UI can act on.
  *
  * Exported and pure because this is where the product's rules actually live:
@@ -70,15 +87,7 @@ export function resolveFilingFolders(
   raw: readonly { name: string; isNew: boolean; reason: string }[],
   folders: readonly { id: string; name: string }[]
 ): FilingFolderSuggestion[] {
-  // Match on the trimmed, lowercased name: models re-type folder names rather
-  // than copying them, and "Acme Corp" vs "acme corp " is the model being
-  // sloppy about spelling, not the user wanting a second folder.
-  const byName = new Map<string, { id: string; name: string }>();
-  for (const folder of folders) {
-    const key = folder.name.trim().toLowerCase();
-    if (key && !byName.has(key)) byName.set(key, folder);
-  }
-
+  const byName = indexByName(folders);
   const out: FilingFolderSuggestion[] = [];
   const seenIds = new Set<string>();
   let newTaken = false;
@@ -131,7 +140,8 @@ function folderMenu(folders: readonly { id: string; name: string }[]): string {
       "return exactly ONE folder, with isNew: true.\n\n"
     );
   }
-  return `The user's existing folders:\n${names.map((n) => `- ${n}`).join("\n")}\n\n`;
+  const list = names.map((n) => `- ${n}`).join("\n");
+  return `The user's existing folders:\n${list}\n\n`;
 }
 
 /**

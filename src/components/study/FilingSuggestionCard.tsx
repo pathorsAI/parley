@@ -89,20 +89,24 @@ export function FilingSuggestionCard() {
   // The titlebar's rename path, reused verbatim — one write, one failure toast.
   // Deliberately does NOT dismiss: the title row retires itself once the name
   // matches, and the folder chips are still worth a click.
-  const applyTitle = useCallback(async () => {
+  const applyTitle = useCallback(() => {
     const clean = suggestedTitle;
     if (!clean || clean === replayName.trim() || !loadedHistoryId) return;
-    try {
+    const rename = async () => {
       const { renameHistoryEntry } = await import("../../lib/history/history");
       await renameHistoryEntry(loadedHistoryId, clean);
       renameReplay(clean);
       toast.success(t("study.filing.titleApplied"));
-    } catch (e) {
+    };
+    // Kept synchronous so the handler can be passed to onClick directly: an
+    // `async` callback would have to be discarded at the call site, and the
+    // rejection is already handled here.
+    rename().catch((e) => {
       log.error("filing: rename failed", { id: loadedHistoryId, error: String(e) });
       toast.error(
         t("replay.renameFailed", { error: e instanceof Error ? e.message : String(e) })
       );
-    }
+    });
   }, [suggestedTitle, replayName, loadedHistoryId, renameReplay, t]);
 
   // Filing shows up in the bar immediately below, so the card has said all it
@@ -164,7 +168,7 @@ export function FilingSuggestionCard() {
             size="sm"
             variant="outline"
             className="h-7 shrink-0 text-xs"
-            onClick={() => void applyTitle()}
+            onClick={applyTitle}
           >
             {t("study.filing.apply")}
           </Button>
