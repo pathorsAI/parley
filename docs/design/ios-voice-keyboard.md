@@ -398,12 +398,15 @@ and on iOS 26.4+ there never is: `HostBundleID` returns `nil` on every call, so
 every session is `.skip(.noHost)`, which is indistinguishable from a device that
 cannot do the jump at all.
 
-`HostFrontmost` (ParleyKit) is a second source, tried only when the first is
-empty. The premise was a sentence of Apple's own — DTS saying
+The obvious next idea is to stop asking the keyboard and ask the app. The
+premise was a sentence of Apple's own — DTS saying
 `LSApplicationWorkspace.frontmostApplication` is unavailable **from an
-extension**, and the container app not being an extension. Having gone looking
-for the rest of that sentence, the premise does not survive, and it is worth
-writing down what replaced it before anyone spends another week here.
+extension** — plus the observation that the container app is not an extension.
+
+It was investigated and **not shipped**. The premise does not survive contact
+with the rest of that sentence, and what replaced it is written down here so
+nobody spends another week on it. A probe was written and then dropped; it is in
+the history of `feature/host-return-frontmost` if the ground ever shifts.
 
 #### What the evidence actually says
 
@@ -437,23 +440,19 @@ writing down what replaced it before anyone spends another week here.
   on the bottom bar** to get back. That is the same instruction `SwipeBackGuide`
   gives.
 
-**So nothing about this is expected to work,** and it is shipped as a probe
-behind the switches that already exist rather than as a fix. Three outcomes are
-worth telling apart on hardware, and the code is arranged so they are
-distinguishable rather than all collapsing into "no host":
+**So nothing about this was expected to work, and the reason it was dropped is
+sharper than that.** Even granting the selector existed and LaunchServices
+answered it, the question is the wrong one. By the time `parley://dictate` is
+delivered, **Parley is what LaunchServices considers frontmost** — the honest
+answer to "who is in front" is us. What the jump needs is who was in front a
+moment *ago*, and nothing reachable from a sandboxed app records that. The probe
+could only ever have returned our own bundle id, which would have `HostReturn`
+relaunch Parley from Parley.
 
-- **nothing responds** — the selector is not there, which is the prediction.
-- **`nil`** — it is there and LaunchServices refuses the app the same way it
-  refuses the keyboard.
-- **our own bundle id** — it works and we asked too late. By the time the URL is
-  delivered, Parley is what LaunchServices considers frontmost, and the app that
-  was there a moment ago is not recorded anywhere we can reach.
-
-That third outcome is why `resolve(excluding:)` takes the set of ids that are
-ours rather than filtering as an afterthought: returning Parley's own id would
-have `HostReturn` relaunch Parley from Parley. Both sources are read *before*
-`launch()`, because the frontmost answer decays with every millisecond the app
-spends coming forward.
+Weighed against a payoff of roughly nothing: more private-API surface, in a
+keyboard that already asks for Full Access, on a code path App Review templates
+name explicitly. That is why the implementation was written, verified for
+crash-safety, and then left out of the build.
 
 #### The answer that is not a probe
 
@@ -467,29 +466,12 @@ what happens on the first tap and after a window closes; everything else about
 this section is about making those two taps less bad, not about making the
 feature work.
 
-The rules are `HostBundleID`'s rules, for `HostBundleID`'s reasons: symbols
-assembled from fragments so no literal is in the binary, `responds(to:)` before
-every `perform`, `class_getInstanceVariable` before the one KVC read, and `nil`
-rather than a guess on every failure path. The workspace is injected so the
-dangerous half — assembled selectors sent to an object of an unknown class — is
-exercisable on a machine with no LaunchServices at all.
-
-One rule is new here, because some of these selector names are guesses at names
-rather than reads of a header: `method_copyReturnType` is checked too.
-`responds(to:)` says only that *a* method exists, and `perform` treats every
-result as an object pointer — so a same-named method returning an integer would
-put a scalar through `takeUnretainedValue()` and crash the probe that was
-written not to. The runtime is asked what the method returns before the message
-is sent, which is the same shape of guard as asking whether the ivar exists
-before KVC touches it.
-
-SpringBoardServices (`SBSCopyFrontmostApplicationDisplayIdentifier`) is the
-other classic answer and is deliberately not attempted: it needs a `dlopen` of a
-private framework **by path**, which is the most legible thing a static scan can
-find, and its prototype differs between eras of the SDK — some headers return
-the string, others return an error code and write the string through an
-out-parameter. Calling a C function through the wrong prototype turns a probe
-that was designed to degrade to `nil` into a crash.
+If this is ever revisited, the rules are `HostBundleID`'s rules for
+`HostBundleID`'s reasons: symbols assembled from fragments so no literal is in
+the binary, `responds(to:)` and `class_getInstanceVariable` before anything is
+touched, and every failure path returning `nil` rather than a guess. A keyboard
+extension that crashes on appearance is far worse than one that never takes you
+back.
 
 ## Personal dictionary
 
