@@ -34,9 +34,15 @@ enum Haptics {
     /// what UIKit requires of feedback generators.
     nonisolated(unsafe) private static let start = UIImpactFeedbackGenerator(style: .medium)
     nonisolated(unsafe) private static let finish = UINotificationFeedbackGenerator()
+    nonisolated(unsafe) private static let discard = UIImpactFeedbackGenerator(style: .rigid)
 
-    /// Warm the engine up before the press that will need it.
-    static func prepareForDictation() { start.prepare() }
+    /// Warm the engine up before the press that will need it. Both presses: the
+    /// ✕ appears the moment a session starts, so the beat that answers it has
+    /// the same claim on being ready as the one that opened the microphone.
+    static func prepareForDictation() {
+        start.prepare()
+        discard.prepare()
+    }
 
     /// The microphone is opening: one solid thump, on the press rather than on
     /// the release.
@@ -50,4 +56,14 @@ enum Haptics {
     /// never on the failure path: a session that ended in an error delivered
     /// nothing, and saying "done" with the body would be the wrong news.
     static func dictationDelivered() { finish.notificationOccurred(.success) }
+
+    /// The session was thrown away: one short, hard tick, on the press.
+    ///
+    /// A third pattern rather than a reuse of either of the other two, because
+    /// it is a third outcome. The success pattern would be celebrating a
+    /// delivery that did not happen; the system's `.warning` would say
+    /// something went wrong, and nothing did — the user asked for this. What is
+    /// left is the feel of the thing itself: shorter and harder than the thump
+    /// that opened the microphone, so the two ends of a session never blur.
+    static func dictationDiscarded() { discard.impactOccurred() }
 }

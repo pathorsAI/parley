@@ -83,9 +83,9 @@ struct ControlDisc: View {
 /// gives no feedback at all, which is what made the keys feel dead.
 struct PressableButton<Content: View>: View {
     let action: () -> Void
-    /// Fired as the finger lands, before `action`, for the one caller that
-    /// needs the press itself rather than the tap: the record button's haptic.
-    /// A confirmation that arrives on the release confirms nothing.
+    /// Fired as the finger lands, before `action`, for the callers that need
+    /// the press itself rather than the tap: the haptics on the record button
+    /// and on ✕. A confirmation that arrives on the release confirms nothing.
     var onPressDown: (() -> Void)?
     @ViewBuilder var content: (Bool) -> Content
 

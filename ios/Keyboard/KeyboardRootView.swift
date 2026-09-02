@@ -4,7 +4,8 @@ import SwiftUI
 /// The Parley keyboard's face.
 ///
 /// N panes under one strip: the voice pane — a live-transcript slot, one round
-/// record button and the three controls a dictating user reaches for — followed
+/// record button, the three controls a dictating user reaches for and the ✕
+/// that only exists while a session does — followed
 /// by the typing keyboards the user has enabled, QWERTY and 注音. The panes sit
 /// side by side on a track that follows the finger, so a horizontal drag moves
 /// one pane either way and the strip's dots are a signpost rather than the only
@@ -270,17 +271,24 @@ struct KeyboardRootView: View {
     }
 
     /// The controls, arranged around the record button rather than in a row:
-    /// delete top-right, return under it, `@` bottom-left. Top-left is left
-    /// empty on purpose — it is where the pane breathes, and it is the slot the
-    /// globe takes on the devices that still need one.
+    /// delete top-right, return under it, `@` bottom-left, and — while a
+    /// session is live — ✕ top-left.
+    ///
+    /// Top-left is empty the rest of the time. It is where the pane breathes,
+    /// and keeping it that way is what lets ✕ arrive without the deck
+    /// reflowing: the two ways out of a dictation sit at the same height, one
+    /// disc apart, and nothing else on the pane moves when they appear.
+    ///
+    /// On the devices that draw their own globe the slot holds `@`, and a
+    /// session borrows it. That is the one thing this costs, and it is the
+    /// right thing to spend: `@` is a shortcut, and it is a shortcut for
+    /// something nobody is doing in the middle of speaking. The globe below it
+    /// is never touched — a keyboard that can't be switched away from is a
+    /// keyboard the user is trapped in.
     private var deck: some View {
         HStack(spacing: 0) {
             VStack(spacing: KBMetrics.deckRowGap) {
-                if bridge.showsGlobe {
-                    atKey
-                } else {
-                    Color.clear.frame(width: KBMetrics.roundKey, height: KBMetrics.roundKey)
-                }
+                leftTopKey
                 if bridge.showsGlobe {
                     // Bottom-left, where the system's own globe sits, so the
                     // muscle memory carries over on the devices that show it.
@@ -290,6 +298,7 @@ struct KeyboardRootView: View {
                     atKey
                 }
             }
+            .animation(.easeInOut(duration: 0.16), value: bridge.listening)
             Spacer(minLength: 0)
             recordButton
             Spacer(minLength: 0)
@@ -301,6 +310,17 @@ struct KeyboardRootView: View {
         .frame(height: KBMetrics.deckHeight)
     }
 
+    @ViewBuilder
+    private var leftTopKey: some View {
+        if bridge.listening {
+            cancelKey.transition(.opacity)
+        } else if bridge.showsGlobe {
+            atKey
+        } else {
+            Color.clear.frame(width: KBMetrics.roundKey, height: KBMetrics.roundKey)
+        }
+    }
+
     // MARK: the round controls
 
     private var atKey: some View {
@@ -310,6 +330,38 @@ struct KeyboardRootView: View {
             }
         }
         .accessibilityLabel(Text("At sign"))
+    }
+
+    /// ✕ — end the session and throw away what was said.
+    ///
+    /// It exists because ⏹ is not a way out. ⏹ means *deliver*: a sentence
+    /// nobody wanted still had to be transcribed into the field and then
+    /// deleted by hand, which on this pane means holding ⌫ through a paragraph.
+    /// The words are visible above the button while they are being spoken, so
+    /// until now the pane let the user watch a mistake happen and do nothing
+    /// about it.
+    ///
+    /// Drawn as an ordinary control disc rather than in the recording red. The
+    /// pane keeps its one colour on the record button — which is already red
+    /// while a session runs — and a second red thing beside it would compete
+    /// with the control the user actually reaches for most. It only exists
+    /// while there is a session to throw away, which is most of what it has to
+    /// say about itself.
+    private var cancelKey: some View {
+        PressableButton(action: { bridge.cancel() }, onPressDown: discardHaptic) { pressed in
+            disc(pressed: pressed) {
+                Image(systemName: "xmark").font(.system(size: 17, weight: .semibold))
+            }
+        }
+        .accessibilityLabel(Text("Discard dictation"))
+    }
+
+    /// The counterpart to `startHaptic`, and deliberately a different beat —
+    /// see `Haptics.dictationDiscarded`. On the press, like the start: the
+    /// press is where the decision is.
+    private func discardHaptic() {
+        guard bridge.hasFullAccess else { return }
+        Haptics.dictationDiscarded()
     }
 
     private var deleteKey: some View {
