@@ -715,6 +715,17 @@
         }
       }
     },
+    "Couldn't open the microphone. Open Parley and tap the mic again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't open the microphone. Open Parley and tap the mic again."
+          }
+        }
+      }
+    },
     "Couldn't start": {
       "extractionState": "manual",
       "localizations": {

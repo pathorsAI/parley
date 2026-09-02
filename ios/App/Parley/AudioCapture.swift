@@ -33,7 +33,10 @@ import ParleyKit
 ///
 /// `@unchecked Sendable` because every mutable field is confined to `queue`:
 /// start, stop, the four notification handlers, and the watchdog all run there,
-/// and nothing else reads them.
+/// and nothing else reads them. The single exception is the flag behind
+/// `isCapturing`, which is written on `queue` like everything else but has to
+/// be *readable* from off it — see there for why that read cannot simply hop
+/// onto the queue and wait.
 final class AudioCapture: @unchecked Sendable {
 
     /// Where the microphone stands. Anything other than `.running` is worth
@@ -76,11 +79,11 @@ final class AudioCapture: @unchecked Sendable {
 
     /// The user wants to be recording. Stays true across interruptions: it is
     /// what tells a route change to rebuild rather than stay silent.
-    private var wantsCapture = false
+    private var wantsCapture = false { didSet { publishCapturing() } }
     /// A tap is installed and the engine is running.
-    private var live = false
+    private var live = false { didSet { publishCapturing() } }
     /// The system holds the microphone; do not fight it for the hardware.
-    private var interrupted = false
+    private var interrupted = false { didSet { publishCapturing() } }
     /// The hardware format the current tap and converter were built for.
     private var tapFormat: AVAudioFormat?
     private var recoveryAttempts = 0
@@ -88,6 +91,17 @@ final class AudioCapture: @unchecked Sendable {
     /// the notifications arrive in clusters, so without this a slow recovery
     /// would end up with several chains racing each other for the same engine.
     private var rebuilding = false
+
+    /// What `isCapturing` reports, kept in step with the three flags above by
+    /// their `didSet`. Written on `queue` like they are, read from anywhere,
+    /// which is why this one field is guarded by a lock instead of by the
+    /// queue. `didSet` rather than assignments at the handful of sites that
+    /// move those flags, so that a mutation added later cannot forget to keep
+    /// this honest — and so that the order of two assignments in the same
+    /// function (`end()` clears `wantsCapture` before tearing the engine down)
+    /// can never publish a moment of "capturing" that was never true.
+    private var capturing = false
+    private let capturingLock = NSLock()
 
     /// `onChunk(samples, rmsLevel)` fires on an audio thread. `onStatus` fires
     /// on this object's private queue.
@@ -114,6 +128,56 @@ final class AudioCapture: @unchecked Sendable {
     /// fails as if the user had said no, without the user ever being asked.
     static var permission: AVAudioApplication.recordPermission {
         AVAudioApplication.shared.recordPermission
+    }
+
+    /// Whether the microphone is genuinely open right now: nobody has stopped
+    /// this capture, the engine is running with a tap installed, and the system
+    /// is not holding the hardware.
+    ///
+    /// ## Why holding the object is not knowing
+    ///
+    /// A caller that keeps a capture alive between uses — the dictation
+    /// coordinator's microphone window does exactly that — cannot tell a
+    /// running capture from a dead one by the fact that it still has a
+    /// reference to it. `onStatus` is a push, and a push has to be caught: the
+    /// coordinator only reacts to statuses it is awake and in the right shape
+    /// to hear, so a capture that gives up its rebuilds at an awkward moment
+    /// can end up torn down with its owner none the wiser. What the owner then
+    /// hands the next dictation is an object that will never produce another
+    /// sample, and the next dictation is usually served from the background,
+    /// where iOS will not let it open a microphone to recover. So this state
+    /// has to be *askable*, not only announced.
+    ///
+    /// ## Why a mirrored flag rather than `queue.sync`
+    ///
+    /// The three flags this reports on are confined to `queue`, so the obvious
+    /// read is `queue.sync { wantsCapture && live && !interrupted }`. The
+    /// obvious read is also a way to stall the main actor for the better part
+    /// of a second: every caller is `@MainActor`, and `queue` is where
+    /// `setActive(true)` and every engine rebuild run — which is precisely the
+    /// work in flight when a capture is sick, which is precisely when anyone
+    /// thinks to ask this. A `Bool` mirrored under a lock held for one
+    /// assignment answers immediately, cannot deadlock, and cannot be starved
+    /// by a rebuild.
+    ///
+    /// It is a snapshot, and deliberately strict. A rebuild in flight reads
+    /// `false` for the beat between the teardown and the engine coming back,
+    /// so a caller can be told "not capturing" about a capture that would have
+    /// recovered on its own. That trade is on purpose: the cost of the strict
+    /// answer is opening a microphone that did not strictly need opening, and
+    /// the cost of a generous one is a dictation spent listening to an engine
+    /// that is never coming back.
+    var isCapturing: Bool {
+        capturingLock.lock()
+        defer { capturingLock.unlock() }
+        return capturing
+    }
+
+    private func publishCapturing() {
+        let value = wantsCapture && live && !interrupted
+        capturingLock.lock()
+        capturing = value
+        capturingLock.unlock()
     }
 
     /// Configure the session and open the microphone.
