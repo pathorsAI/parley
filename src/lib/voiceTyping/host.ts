@@ -19,6 +19,7 @@ import { HOSTED_VOICE_TYPING_MAX_SECONDS } from "../limits";
 import { log } from "../log";
 import { showOverlay, hideOverlay, prewarmOverlay } from "./overlay";
 import { appendVoiceEntry } from "./history";
+import { canPolish, polishTranscript, shouldPolish } from "./polish";
 import {
   addEntry,
   isIgnoredTwice,
@@ -424,12 +425,39 @@ function waitForSettle() {
   }, delay);
 }
 
+/**
+ * The clean-up pass, run between the transcript settling and the clipboard.
+ *
+ * This is the last moment the text is still ours: ⌘V into somebody else's app
+ * is one-way — no undo, no re-selection — so polishing after the paste would
+ * mean typing over a window we do not own. Total by construction: it returns
+ * the text to paste, which is the polished version when everything went right
+ * and the raw transcript in every other case, so `finalize` has nothing to
+ * handle. See `polish.ts`.
+ */
+async function polishForPaste(raw: string, myGen: number): Promise<string> {
+  const settings = useStore.getState().settings;
+  if (!canPolish(settings) || !shouldPolish(raw)) return raw;
+  // Only claim the overlay while it is still ours to claim; a press during the
+  // round trip owns it from here (the gen check in `finalize` is the same guard
+  // for the "done" tail).
+  if (gen === myGen) await emit("voicetyping://session", { phase: "polishing" });
+  const polished = await polishTranscript({
+    raw,
+    settings,
+    protectedTerms: vocabularyTerms(),
+  });
+  return polished ?? raw;
+}
+
 async function finalize() {
   const myGen = gen;
   busy = false;
   clearTimeout(capTimer);
-  const text = latestText.trim();
-  if (text) {
+  const raw = latestText.trim();
+  let text = raw;
+  if (raw) {
+    text = await polishForPaste(raw, myGen);
     let appBundleId: string | null = null;
     try {
       await invoke("copy_to_clipboard", { text });

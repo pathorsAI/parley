@@ -340,6 +340,12 @@ export interface Settings {
   voiceTypingShortcut: VoiceTypingShortcut;
   /** Whether the trigger is hold-to-talk (default) or tap-to-toggle. */
   voiceTypingMode: VoiceTypingMode;
+  /** Voice typing: run the transcript through the `realtime` model lane before
+   *  pasting, to strip filler words and fix punctuation. Costs the round trip —
+   *  the paste waits for it, bounded by `POLISH_TIMEOUT_MS` — so it is a
+   *  setting rather than a given. Off unless the realtime lane has a usable
+   *  provider, whatever this says. Default on. */
+  voiceTypingPolish: boolean;
   /** The active evaluation set used in meetings (the runtime copy lives in the store). */
   evaluations: EvalDef[];
   /** Library of evaluation templates (built-in + custom) you can apply. */
