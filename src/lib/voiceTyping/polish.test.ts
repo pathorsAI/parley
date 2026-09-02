@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   MAX_PROTECTED_TERMS,
@@ -57,6 +59,49 @@ describe("polishSystemPrompt", () => {
   });
 });
 
+describe("POLISH_SYSTEM_PROMPT", () => {
+  /** The prompt used to say "keep the speaker's own wording as much as
+   *  possible", and that one clause is what made the feature feel like it did
+   *  nothing: reordering a clause, repairing a misheard word and turning a
+   *  spoken "first… second… third" into a list all mean changing the wording,
+   *  so the model declined to do any of them. If it ever comes back, the
+   *  polish quietly regresses to a comma-inserter with no test failing. */
+  it("licenses a rewrite rather than asking the model to preserve wording", () => {
+    expect(POLISH_SYSTEM_PROMPT).not.toMatch(/own wording as much as possible/i);
+    expect(POLISH_SYSTEM_PROMPT).toMatch(/reorder/i);
+    expect(POLISH_SYSTEM_PROMPT).toMatch(/numbered list/i);
+  });
+
+  /** The limits that make the free hand safe. Losing any of these is how a
+   *  rewrite turns into a summary, an answer, or Simplified Chinese. */
+  it("keeps the limits that make that free hand safe", () => {
+    expect(POLISH_SYSTEM_PROMPT).toMatch(/summarise/i);
+    expect(POLISH_SYSTEM_PROMPT).toMatch(/never a request to you/i);
+    expect(POLISH_SYSTEM_PROMPT).toMatch(/Traditional Chinese/);
+    expect(POLISH_SYSTEM_PROMPT).toMatch(/Output ONLY/);
+  });
+
+  /** iOS runs the same pass against the same cloud for the same person, so the
+   *  two copies of this prompt have to say the same thing — drift between them
+   *  reaches the user as "it behaves differently on my phone", which is close
+   *  to impossible to report and to diagnose. Compared verbatim, because the
+   *  interesting drift is a clause someone edited on one side only. */
+  it("is word-for-word the prompt iOS sends", () => {
+    const swift = readFileSync(
+      path.resolve(__dirname, "../../../ios/ParleyKit/Sources/ParleyKit/TranscriptPolisher.swift"),
+      "utf8",
+    );
+    const literal = swift.split('static let systemPrompt = """\n')[1]?.split('\n        """')[0];
+    expect(literal, "the Swift prompt literal moved — update this test").toBeTruthy();
+    // Swift strips the indentation of the closing delimiter from every line.
+    const dedented = literal
+      .split("\n")
+      .map((line) => (line.startsWith(" ".repeat(8)) ? line.slice(8) : line))
+      .join("\n");
+    expect(dedented).toBe(POLISH_SYSTEM_PROMPT);
+  });
+});
+
 describe("acceptPolish", () => {
   const raw = "所以我覺得這個東西呢就是那個我們應該要先做完再說";
 
@@ -67,6 +112,18 @@ describe("acceptPolish", () => {
   it("rejects an empty answer", () => {
     expect(acceptPolish(raw, "   ")).toBe(false);
     expect(acceptPolish("   ", "anything")).toBe(false);
+  });
+
+  /** The whole point of the rewrite: what comes back does not look like what
+   *  went in. A reordered, repunctuated, list-formatted answer is the success
+   *  case and must not trip a guard written for the old tidy-up pass. */
+  it("accepts a rewrite that reorders and lays out a spoken list", () => {
+    const spoken =
+      "那個我想講三件事啦，第一點就是我們要先把那個報價弄出來，然後第二點是合約那邊要再看一下，" +
+      "呃第三點喔就是下禮拜要跟客戶開會這個要先橋時間";
+    const rewritten =
+      "我想講三件事：\n1. 先把報價做出來。\n2. 合約需要再確認一次。\n3. 下週要與客戶開會，時間需先安排。";
+    expect(acceptPolish(spoken, rewritten)).toBe(true);
   });
 
   /** The model answering the transcript instead of cleaning it, summarising it,
