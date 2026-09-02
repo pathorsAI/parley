@@ -1014,8 +1014,18 @@ final class DictationCoordinator: ObservableObject {
     /// seconds. Idempotent: both `stop` and the relay signing off reach it.
     private func releaseMicrophone() async {
         guard !active else { return }
+        // `isCapturing`, not `capture != nil`: an open window is a promise to
+        // the keyboard that the next tap will be served where the user already
+        // is, and the keyboard renders that promise. Publishing one over a
+        // capture that is not capturing makes it a lie the user only discovers
+        // by tapping — the same "holding it is not having it" mistake `launch`
+        // and `endWindow` were both making, reached from the third side. A
+        // transient interruption landing exactly here costs the window, and a
+        // window nobody opened is a state the keyboard already knows how to
+        // describe.
         if !yieldedToMeeting,
-            let opened = MicWindowState.opened(length: windowLength, at: Date()), capture != nil
+            let opened = MicWindowState.opened(length: windowLength, at: Date()),
+            capture?.isCapturing == true
         {
             openWindow(opened)
             return

@@ -723,6 +723,12 @@
             "state": "translated",
             "value": "Couldn't open the microphone. Open Parley and tap the mic again."
           }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法開啟麥克風。請先開啟 Parley，再按一次麥克風。"
+          }
         }
       }
     },
