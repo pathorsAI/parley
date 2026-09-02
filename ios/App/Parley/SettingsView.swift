@@ -447,7 +447,7 @@ struct SettingsView: View {
             // the dictionary has the last word over what it did.
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Polish with AI", isOn: $polishEnabled)
-                Text("After dictation ends, AI tidies the wording and punctuation before the text is inserted. The original language is preserved.")
+                Text("After dictation ends, AI rewrites what you said into written text before it is inserted: filler and misheard words out, punctuation and clause order fixed, a spoken \"first, second, third\" laid out as a list. Nothing is added or summarised away, and the original language is preserved.")
                     .font(.parley.caption)
                     .foregroundStyle(Theme.mutedForeground)
                     .fixedSize(horizontal: false, vertical: true)

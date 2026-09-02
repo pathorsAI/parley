@@ -2,7 +2,7 @@ import XCTest
 
 @testable import ParleyKit
 
-/// The gates around the cleanup pass. Every one of them exists to make the same
+/// The gates around the rewrite pass. Every one of them exists to make the same
 /// promise keepable: a polish that is not obviously a polish must be dropped,
 /// because the raw transcript is already correct in the user's document.
 final class TranscriptPolisherTests: XCTestCase {
@@ -28,6 +28,18 @@ final class TranscriptPolisherTests: XCTestCase {
             TranscriptPolisher.accept(
                 raw: "um so I was thinking like we could maybe ship it tomorrow",
                 polished: "I was thinking we could ship it tomorrow."))
+    }
+
+    /// The whole point of the rewrite: what comes back does not look like what
+    /// went in. A reordered, repunctuated, list-formatted answer is the success
+    /// case and must not trip a guard written for the old tidy-up pass.
+    func testAcceptsARewriteThatReordersAndLaysOutASpokenList() {
+        let spoken =
+            "那個我想講三件事啦，第一點就是我們要先把那個報價弄出來，然後第二點是合約那邊要再看一下，"
+            + "呃第三點喔就是下禮拜要跟客戶開會這個要先橋時間"
+        let rewritten =
+            "我想講三件事：\n1. 先把報價做出來。\n2. 合約需要再確認一次。\n3. 下週要與客戶開會，時間需先安排。"
+        XCTAssertTrue(TranscriptPolisher.accept(raw: spoken, polished: rewritten))
     }
 
     func testRejectsEmptyPolish() {
@@ -142,6 +154,31 @@ final class TranscriptPolisherTests: XCTestCase {
         XCTAssertEqual(messages.count, 2)
         XCTAssertEqual(messages[0]["role"], "system")
         XCTAssertEqual(messages[1]["content"], "hello there")
+    }
+
+    // MARK: the standing prompt
+
+    /// The prompt used to say "keep the speaker's own wording as much as
+    /// possible", and that one clause is what made the feature feel like it did
+    /// nothing: reordering a clause, repairing a misheard word and turning a
+    /// spoken "first… second… third" into a list all mean changing the wording,
+    /// so the model declined to do any of them. If it comes back, the polish
+    /// quietly regresses to a comma-inserter with no test failing.
+    func testPromptLicensesARewriteRatherThanPreservingWording() {
+        let prompt = TranscriptPolisher.systemPrompt
+        XCTAssertFalse(prompt.contains("own wording as much as possible"))
+        XCTAssertTrue(prompt.contains("reorder"))
+        XCTAssertTrue(prompt.contains("numbered list"))
+    }
+
+    /// The limits that make the free hand safe. Losing any of these is how a
+    /// rewrite turns into a summary, an answer, or Simplified Chinese.
+    func testPromptKeepsTheLimitsThatMakeTheFreeHandSafe() {
+        let prompt = TranscriptPolisher.systemPrompt
+        XCTAssertTrue(prompt.contains("summarise"))
+        XCTAssertTrue(prompt.contains("never a request to you"))
+        XCTAssertTrue(prompt.contains("Traditional Chinese"))
+        XCTAssertTrue(prompt.contains("Output ONLY"))
     }
 
     // MARK: the personal dictionary rides along
