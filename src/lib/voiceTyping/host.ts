@@ -425,6 +425,31 @@ function waitForSettle() {
   }, delay);
 }
 
+/**
+ * The clean-up pass, run between the transcript settling and the clipboard.
+ *
+ * This is the last moment the text is still ours: ⌘V into somebody else's app
+ * is one-way — no undo, no re-selection — so polishing after the paste would
+ * mean typing over a window we do not own. Total by construction: it returns
+ * the text to paste, which is the polished version when everything went right
+ * and the raw transcript in every other case, so `finalize` has nothing to
+ * handle. See `polish.ts`.
+ */
+async function polishForPaste(raw: string, myGen: number): Promise<string> {
+  const settings = useStore.getState().settings;
+  if (!canPolish(settings) || !shouldPolish(raw)) return raw;
+  // Only claim the overlay while it is still ours to claim; a press during the
+  // round trip owns it from here (the gen check in `finalize` is the same guard
+  // for the "done" tail).
+  if (gen === myGen) await emit("voicetyping://session", { phase: "polishing" });
+  const polished = await polishTranscript({
+    raw,
+    settings,
+    protectedTerms: vocabularyTerms(),
+  });
+  return polished ?? raw;
+}
+
 async function finalize() {
   const myGen = gen;
   busy = false;
@@ -432,24 +457,7 @@ async function finalize() {
   const raw = latestText.trim();
   let text = raw;
   if (raw) {
-    // The cleanup pass goes here and nowhere later. ⌘V into somebody else's app
-    // is one-way — no undo, no re-selection — so this is the last moment the
-    // text is still ours to change. Bounded and total: anything that goes wrong
-    // returns null and the raw transcript goes out exactly as it did before
-    // this existed. See `polish.ts`.
-    const settings = useStore.getState().settings;
-    if (canPolish(settings) && shouldPolish(raw)) {
-      // Only claim the overlay while it is still ours to claim; a press during
-      // the round trip owns it from here (the gen check below is the same
-      // guard for the "done" tail).
-      if (gen === myGen) await emit("voicetyping://session", { phase: "polishing" });
-      const polished = await polishTranscript({
-        raw,
-        settings,
-        protectedTerms: vocabularyTerms(),
-      });
-      if (polished) text = polished;
-    }
+    text = await polishForPaste(raw, myGen);
     let appBundleId: string | null = null;
     try {
       await invoke("copy_to_clipboard", { text });

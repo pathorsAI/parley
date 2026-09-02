@@ -98,7 +98,7 @@ export function acceptPolish(raw: string, polished: string): boolean {
   // band is a different kind of output: an answer to a question in the
   // transcript, a summary, a translation, or a truncation.
   const ratio = trimmed.length / trimmedRaw.length;
-  if (ratio < 0.3 || ratio > 2.0) return false;
+  if (ratio < 0.3 || ratio > 2) return false;
 
   // Simplified drift is the one failure that looks like success. Only a NEWLY
   // introduced simplified character counts — someone who dictated simplified
