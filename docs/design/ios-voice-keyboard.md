@@ -320,7 +320,8 @@ Two things are worth writing down rather than repeating:
 
 - **There is no public way to do any of this, on any iOS.** Apple's DTS has
   answered that nothing identifies the host from an extension and nothing
-  returns the user to it (FB22247647 remains open). The destination does not
+  returns the user to it (FB22247647 remains open) — and, since June 2026, that
+  the *container app* cannot identify it either. The destination does not
   have to be *detected* though — it can be *chosen*, which is how KeyboardKit
   10.4 handles it, and is tracked separately.
 
@@ -329,7 +330,11 @@ Two things are worth writing down rather than repeating:
   `UIApplication.suspend()` does land on the Home Screen because the app was
   launched by an extension. But keyboards in this category are observably still
   returning users to their host app on iPadOS 26.5 — so "26.4 closed the door"
-  is at best not the whole story. It was nonetheless compiled into Parley as
+  is at best not the whole story. (The 2026 evidence has since narrowed this a
+  long way: the category *leader* gave up and now tells users to swipe, and the
+  keyboards that still round-trip do it by a mechanism nobody — including Apple
+  DTS — has explained. See "Asking from the app instead of from the keyboard".)
+  It was nonetheless compiled into Parley as
   `if #available(iOS 26.4, *) { return false }`, and that is the part that had
   to go: not because the number was wrong, but because **a number is the wrong
   shape of answer**. See below.
@@ -384,6 +389,107 @@ version check could never produce: **a device that finds out.**
 Until `GET /v1/flags` exists server-side every device runs on compiled defaults.
 A 404 is folded into "no opinion" rather than into an error, so publishing the
 endpoint is the only remaining step to gain the switch — no client release.
+
+### Asking from the app instead of from the keyboard
+
+The runtime decision does not help when there is no destination to decide about,
+and on iOS 26.4+ there never is: `HostBundleID` returns `nil` on every call, so
+`begin()` fails its `guard let host` and the ledger never even learns anything —
+every session is `.skip(.noHost)`, which is indistinguishable from a device that
+cannot do the jump at all.
+
+`HostFrontmost` (ParleyKit) is a second source, tried only when the first is
+empty. The premise was a sentence of Apple's own — DTS saying
+`LSApplicationWorkspace.frontmostApplication` is unavailable **from an
+extension**, and the container app not being an extension. Having gone looking
+for the rest of that sentence, the premise does not survive, and it is worth
+writing down what replaced it before anyone spends another week here.
+
+#### What the evidence actually says
+
+- **Apple DTS answered "No" twice, to two different questions.** Developer
+  forums thread 826851 (June 2026, tested against 26.4.2) asks both whether a
+  keyboard can identify its host and whether *the container app* can identify
+  which app hosted the extension that opened it. Both answers are "No".
+  FB22247647 is open and unscheduled. The same engineer called host identity
+  "an obvious privacy concern" and sketched a replacement that returns the user
+  **without naming the app** — which is the strongest signal available that no
+  future API hands over a bundle id at all.
+- **`frontmostApplication` is not an `LSApplicationWorkspace` method.** It does
+  not appear in any published header for the class; it is `NSWorkspace`'s
+  property, on macOS. The likeliest outcome of the probe is not a refusal but
+  `responds(to:)` returning false.
+- **`sourceApplication` is dead by design, not by regression.** Apple documents
+  that it is `nil` when the opening app's team identifier differs from ours —
+  so every host that matters is `nil` — and when the opener *is* ours, it
+  correctly reports our own keyboard's container. Both spellings, both
+  lifecycles.
+- **The rest of the family is unevidenced this decade.** SpringBoardServices and
+  FrontBoardServices frontmost queries are declared only in headers from
+  2010–2014, and the 26.4.2 probes that reached for neighbouring services got
+  `EPERM` and RunningBoard service errors. `openApplicationWithBundleID:` — the
+  half we already use — was still entitlement-free as recently as iOS 18.5, and
+  is useless without an id to pass it.
+- **The category has already given up in public.** KeyboardKit's
+  `hostApplicationBundleID` has returned `nil` since the 26.4 betas and still
+  does on iOS 27 betas; its fallback is a curated list of well-known apps plus
+  asking the user. Wispr Flow's own support docs now tell users to **swipe right
+  on the bottom bar** to get back. That is the same instruction `SwipeBackGuide`
+  gives.
+
+**So nothing about this is expected to work,** and it is shipped as a probe
+behind the switches that already exist rather than as a fix. Three outcomes are
+worth telling apart on hardware, and the code is arranged so they are
+distinguishable rather than all collapsing into "no host":
+
+- **nothing responds** — the selector is not there, which is the prediction.
+- **`nil`** — it is there and LaunchServices refuses the app the same way it
+  refuses the keyboard.
+- **our own bundle id** — it works and we asked too late. By the time the URL is
+  delivered, Parley is what LaunchServices considers frontmost, and the app that
+  was there a moment ago is not recorded anywhere we can reach.
+
+That third outcome is why `resolve(excluding:)` takes the set of ids that are
+ours rather than filtering as an afterthought: returning Parley's own id would
+have `HostReturn` relaunch Parley from Parley. Both sources are read *before*
+`launch()`, because the frontmost answer decays with every millisecond the app
+spends coming forward.
+
+#### The answer that is not a probe
+
+The one thing the category found that does work is to stop round-tripping.
+KeyboardKit's own pivot in early 2026 was to open the container app **once**,
+keep the dictation engine and its audio session alive, and serve every
+subsequent dictation from inside the keyboard. That is the microphone window,
+described above, which Parley already ships — and it is worth being explicit
+that it is not a workaround for the jump but the replacement for it. The jump is
+what happens on the first tap and after a window closes; everything else about
+this section is about making those two taps less bad, not about making the
+feature work.
+
+The rules are `HostBundleID`'s rules, for `HostBundleID`'s reasons: symbols
+assembled from fragments so no literal is in the binary, `responds(to:)` before
+every `perform`, `class_getInstanceVariable` before the one KVC read, and `nil`
+rather than a guess on every failure path. The workspace is injected so the
+dangerous half — assembled selectors sent to an object of an unknown class — is
+exercisable on a machine with no LaunchServices at all.
+
+One rule is new here, because some of these selector names are guesses at names
+rather than reads of a header: `method_copyReturnType` is checked too.
+`responds(to:)` says only that *a* method exists, and `perform` treats every
+result as an object pointer — so a same-named method returning an integer would
+put a scalar through `takeUnretainedValue()` and crash the probe that was
+written not to. The runtime is asked what the method returns before the message
+is sent, which is the same shape of guard as asking whether the ivar exists
+before KVC touches it.
+
+SpringBoardServices (`SBSCopyFrontmostApplicationDisplayIdentifier`) is the
+other classic answer and is deliberately not attempted: it needs a `dlopen` of a
+private framework **by path**, which is the most legible thing a static scan can
+find, and its prototype differs between eras of the SDK — some headers return
+the string, others return an error code and write the string through an
+out-parameter. Calling a C function through the wrong prototype turns a probe
+that was designed to degrade to `nil` into a crash.
 
 ## Personal dictionary
 

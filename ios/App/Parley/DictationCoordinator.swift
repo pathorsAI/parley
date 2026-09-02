@@ -68,6 +68,10 @@ final class DictationCoordinator: ObservableObject {
     @Published private(set) var windowProblem: String?
 
     private var session = ""
+    /// Bundle ids that are Parley's, for `HostFrontmost`. The app's id alone:
+    /// the keyboard is `…parley.ios.keyboard`, a child of it, and children are
+    /// excluded by the same rule without being listed.
+    private let ourBundleIDs = Set([Bundle.main.bundleIdentifier].compactMap { $0 })
     /// The microphone. Not a session's: once the user has chosen a window it
     /// outlives the dictation that opened it, and the *next* dictation borrows
     /// it rather than opening its own. That is the entire mechanism — see the
@@ -202,7 +206,24 @@ final class DictationCoordinator: ObservableObject {
         if active { await stop() }
         self.session = session
 
-        let host = DictationChannel.readUplink()?.hostBundleID
+        // The keyboard's own read comes first: it is the only source that is
+        // about *this session* rather than about the device at this instant.
+        // From iOS 26.4 on it is always nil — Apple emptied both of the values
+        // behind `HostBundleID` — so rather than give up there, ask the app's
+        // side of the App Group boundary the same question. See
+        // `HostFrontmost`: it is a probe, it is not known to work on any
+        // device, and it is `nil` on every one where the private call is
+        // refused.
+        //
+        // Both are read here, before `launch()`, because the second answer
+        // decays. Every millisecond Parley spends coming forward is one more
+        // in which LaunchServices is likelier to answer "Parley" — and Parley
+        // is not somewhere to send the user back to, which is why our own ids
+        // are excluded rather than trusted.
+        var host = DictationChannel.readUplink()?.hostBundleID
+        if host == nil || host?.isEmpty == true {
+            host = HostFrontmost.resolve(excluding: ourBundleIDs)
+        }
         await launch()
 
         // Only try the jump-back when the host resolved, the policy allows it
