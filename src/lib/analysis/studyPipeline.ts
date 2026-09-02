@@ -5,6 +5,7 @@
 //
 //   findings ──done──▶ action items ──settled──▶ brief
 //        └────done──▶ delivery
+//   filing   (no upstream — the transcript alone is its input)
 //
 // Scheduling is a plain store subscription (initStudyPipeline, mounted once in
 // App — the same pattern as initHistoryPersistSync), not a React hook: the
@@ -28,12 +29,25 @@ import { runAnalysis } from "./engine";
 import { runActionItems } from "./actionItems";
 import { runBriefGeneration } from "./briefRun";
 import { runDeliveryAnalysis } from "./deliveryRun";
+import { runFilingSuggestion } from "./filingRun";
 import { persistStudyOutputs, saveUploadToHistory } from "../history/history";
 import { log } from "../log";
 
 type StoreState = ReturnType<typeof useStore.getState>;
 
 export type StudyArtifactKey = "findings" | "actions" | "brief" | "delivery";
+
+/**
+ * Everything the SCHEDULER dispatches — the four report artifacts plus the
+ * stages that aren't ones. A stage is a model pass this module starts; an
+ * artifact is a piece of the report the titlebar chip counts. Filing is the
+ * first stage that is one but not the other: it proposes a title and a folder,
+ * which is a prompt to the user rather than a section of the report, so it must
+ * not move the chip's "3 of 4 ready". Keeping the two key types distinct means
+ * the distinction is checked by the compiler instead of by a filter someone has
+ * to remember to write.
+ */
+export type StudyStageKey = StudyArtifactKey | "filing";
 
 export type StudyArtifactDisplay = "idle" | "queued" | "running" | "done" | "error";
 
@@ -45,12 +59,19 @@ export interface StudyPipelineFacts {
    *  while it's open so no pass spends on an unconfirmed transcript. */
   wizardOpen: boolean;
   hasDeepKey: boolean;
+  /** The cheap lane. Only the filing pass rides it, which is why it can run for a
+   *  user who has no deep-lane key at all. */
+  hasRealtimeKey: boolean;
+  /** A read-only org recording can be neither renamed nor refiled — nothing for
+   *  the filing pass to act on. */
+  readOnly: boolean;
   /** Spoken content inside the keep-window — same predicate the runners guard on. */
   hasTranscript: boolean;
   analysisStatus: AsyncTaskStatus;
   actionItemsStatus: AsyncTaskStatus;
   briefStatus: AsyncTaskStatus;
   deliveryStatus: AsyncTaskStatus;
+  filingStatus: AsyncTaskStatus;
   /** May the pipeline spend on its own? `settings.autoStudyAnalysis` OR a manual
    *  regenerate pinned to THIS recording — folded into one fact here so the
    *  scheduler and the display derivation can't disagree, and so evaluateStages
@@ -67,11 +88,14 @@ export function factsOf(s: StoreState): StudyPipelineFacts {
     inReplay: s.appMode === "study" && s.replay != null,
     wizardOpen: s.ingestWizardOpen,
     hasDeepKey: hasProviderKey(s.settings, "deep"),
+    hasRealtimeKey: hasProviderKey(s.settings, "realtime"),
+    readOnly: s.replayReadOnly,
     hasTranscript: hasSpokenSegment(s.segments, trim),
     analysisStatus: s.analysisStatus,
     actionItemsStatus: s.actionItemsStatus,
     briefStatus: s.briefStatus,
     deliveryStatus: s.deliveryStatus,
+    filingStatus: s.filingStatus,
     autoAnalyze:
       s.settings.autoStudyAnalysis ||
       (replayId != null && s.studyManualForId === replayId),
@@ -83,14 +107,25 @@ function settled(status: AsyncTaskStatus): boolean {
 }
 
 /** Which stages should START now — the whole topology, in one place. */
-export function evaluateStages(f: StudyPipelineFacts): StudyArtifactKey[] {
-  if (!f.inReplay || !f.hasDeepKey || !f.hasTranscript) return [];
+export function evaluateStages(f: StudyPipelineFacts): StudyStageKey[] {
+  // Being in replay, having a transcript, the wizard being shut and auto-analysis
+  // being allowed gate EVERY stage. The deep-lane key does not: it only gates the
+  // four report artifacts, since filing rides the cheap realtime lane.
+  if (!f.inReplay || !f.hasTranscript) return [];
   if (f.wizardOpen) return [];
   // Auto-analysis off and no manual request for this recording: leave it
   // unanalyzed so an external AI can write the analysis back over MCP.
   if (!f.autoAnalyze) return [];
 
-  const out: StudyArtifactKey[] = [];
+  const out: StudyStageKey[] = [];
+  // Filing has NO upstream dependency — it reads the transcript alone, so it
+  // goes out in the same tick as the findings pass rather than queueing behind
+  // the expensive one. That IS the point: the suggested title and folder should
+  // land the moment the transcript does, while the user is still looking at the
+  // recording. It is also the one stage a realtime-only user ever gets.
+  if (!f.readOnly && f.hasRealtimeKey && f.filingStatus === "idle") out.push("filing");
+
+  if (!f.hasDeepKey) return out;
   const analysisDone = f.analysisStatus === "done";
   if (f.analysisStatus === "idle") out.push("findings");
   if (analysisDone && f.actionItemsStatus === "idle") out.push("actions");
@@ -107,7 +142,7 @@ export function evaluateStages(f: StudyPipelineFacts): StudyArtifactKey[] {
 let forceNextFindings = false;
 
 /** How each stage runs. A keyed table, so dispatch is data — not a switch. */
-const RUNNERS: Record<StudyArtifactKey, () => Promise<unknown> | void> = {
+const RUNNERS: Record<StudyStageKey, () => Promise<unknown> | void> = {
   findings: () => {
     const force = forceNextFindings;
     forceNextFindings = false;
@@ -116,6 +151,7 @@ const RUNNERS: Record<StudyArtifactKey, () => Promise<unknown> | void> = {
   actions: () => runActionItems(),
   brief: () => runBriefGeneration(),
   delivery: () => runDeliveryAnalysis(),
+  filing: () => runFilingSuggestion(),
 };
 
 const STATUS_FIELD = {
@@ -123,7 +159,8 @@ const STATUS_FIELD = {
   actions: "actionItemsStatus",
   brief: "briefStatus",
   delivery: "deliveryStatus",
-} as const satisfies Record<StudyArtifactKey, keyof StoreState>;
+  filing: "filingStatus",
+} as const satisfies Record<StudyStageKey, keyof StoreState>;
 
 /**
  * Manual regeneration = invalidation: reset the artifact's status to "idle"
@@ -135,7 +172,7 @@ const STATUS_FIELD = {
  * still works when auto-analysis is off (otherwise the reset to "idle" would
  * just sit there — the scheduler would never dispatch it).
  */
-export function regenerateArtifact(key: StudyArtifactKey): void {
+export function regenerateArtifact(key: StudyStageKey): void {
   const s = useStore.getState();
   if (s[STATUS_FIELD[key]] === "running") return;
   if (key === "findings") forceNextFindings = true;
@@ -184,6 +221,7 @@ const WATCHED = [
   "actionItemsStatus",
   "briefStatus",
   "deliveryStatus",
+  "filingStatus",
   "loadedHistoryId",
   "replayReadOnly",
   "studyManualForId",

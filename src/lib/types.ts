@@ -481,3 +481,31 @@ export interface DeliveryAssessment {
   /** One-line plain-language summary of how the user is coming across. */
   summary: string;
 }
+
+/**
+ * One suggested home for a finished recording. `folderId` null means the model
+ * proposed a folder that does NOT exist yet — accepting the chip creates it.
+ * At most one such new-folder suggestion is ever offered (see resolveFilingFolders).
+ */
+export interface FilingFolderSuggestion {
+  /** Existing personal folder this points at, or null for a not-yet-created one. */
+  folderId: string | null;
+  name: string;
+  /** One short clause saying why this folder fits — shown as the chip's tooltip. */
+  reason: string;
+}
+
+/**
+ * The post-transcription filing suggestion: what this recording should be CALLED
+ * and where it should LIVE. Generated once per recording off the transcript alone
+ * (it needs no findings), because both doors into a finished recording name it
+ * badly — a live meeting gets "即時會議 · <date>" and an upload gets its file
+ * name, and the ingest wizard asks for the folder BEFORE transcription, when
+ * nobody yet knows what the meeting was about.
+ */
+export interface FilingSuggestion {
+  /** Proposed display title. Empty string = the model had nothing better. */
+  title: string;
+  /** 1–3 candidate folders, best first. */
+  folders: FilingFolderSuggestion[];
+}

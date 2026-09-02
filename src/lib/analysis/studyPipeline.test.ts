@@ -6,16 +6,22 @@ import {
   type StudyPipelineFacts,
 } from "./studyPipeline";
 
+/** A ready deep-lane session. The realtime key is OFF by default so the
+ *  artifact-topology cases below stay about the four report artifacts; the
+ *  filing cases opt in with `hasRealtimeKey: true`. */
 function facts(patch: Partial<StudyPipelineFacts> = {}): StudyPipelineFacts {
   return {
     inReplay: true,
     wizardOpen: false,
     hasDeepKey: true,
+    hasRealtimeKey: false,
+    readOnly: false,
     hasTranscript: true,
     analysisStatus: "idle",
     actionItemsStatus: "idle",
     briefStatus: "idle",
     deliveryStatus: "idle",
+    filingStatus: "idle",
     autoAnalyze: true,
     ...patch,
   };
@@ -74,6 +80,43 @@ describe("evaluateStages (the scheduler's whole topology)", () => {
     expect(
       evaluateStages({ ...ready, autoAnalyze: false, analysisStatus: "done" })
     ).toEqual([]);
+  });
+});
+
+describe("evaluateStages: the filing pass (a stage, not a report artifact)", () => {
+  const filing = (patch: Partial<StudyPipelineFacts> = {}) =>
+    facts({ hasRealtimeKey: true, ...patch });
+
+  it("goes out in the SAME tick as findings — it waits on nothing upstream", () => {
+    const out = evaluateStages(filing());
+    expect(out).toContain("filing");
+    expect(out).toContain("findings");
+    // Not "after findings finish": the suggestion must land with the transcript.
+    expect(evaluateStages(filing({ analysisStatus: "running" }))).toEqual(["filing"]);
+  });
+
+  it("runs on a realtime-only key, where the four report artifacts cannot", () => {
+    const out = evaluateStages(filing({ hasDeepKey: false }));
+    expect(out).toEqual(["filing"]);
+    // ...and the deep lane alone still gets the artifacts but no suggestion.
+    expect(evaluateStages(facts({ hasRealtimeKey: false }))).toEqual(["findings"]);
+  });
+
+  it("declines on a READ-ONLY recording — nothing there to rename or refile", () => {
+    expect(evaluateStages(filing({ readOnly: true }))).toEqual(["findings"]);
+  });
+
+  it("runs once: any status but idle means it already ran or is running", () => {
+    for (const filingStatus of ["running", "done", "error"] as const) {
+      expect(evaluateStages(filing({ filingStatus }))).toEqual(["findings"]);
+    }
+  });
+
+  it("still defers to the wizard and to auto-analysis being off", () => {
+    expect(evaluateStages(filing({ wizardOpen: true }))).toEqual([]);
+    expect(evaluateStages(filing({ autoAnalyze: false }))).toEqual([]);
+    expect(evaluateStages(filing({ hasTranscript: false }))).toEqual([]);
+    expect(evaluateStages(filing({ inReplay: false }))).toEqual([]);
   });
 });
 
@@ -145,4 +188,14 @@ describe("deriveStudyPipeline (what the chip + sections say)", () => {
     expect(p.hasTranscript).toBe(true);
   });
 
+  it("the chip still counts FOUR artifacts — filing is a stage, not one of them", () => {
+    const p = deriveStudyPipeline(facts({ hasRealtimeKey: true, filingStatus: "running" }));
+    expect(p.total).toBe(4);
+    expect(p.artifacts.map((a) => a.key)).toEqual([
+      "findings",
+      "actions",
+      "brief",
+      "delivery",
+    ]);
+  });
 });

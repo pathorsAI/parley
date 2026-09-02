@@ -6,6 +6,7 @@ import type {
   DeliveryAssessment,
   DeliveryNudge,
   Evaluation,
+  FilingSuggestion,
   FindingSolutionEntry,
   LlmProvider,
   MeetingKind,
@@ -238,6 +239,8 @@ const CLEARED_STUDY_SLICE: Pick<
   | "deliveryStatus"
   | "brief"
   | "briefStatus"
+  | "filingSuggestion"
+  | "filingStatus"
   | "meetingKind"
 > = {
   findings: [],
@@ -254,6 +257,8 @@ const CLEARED_STUDY_SLICE: Pick<
   deliveryStatus: "idle",
   brief: null,
   briefStatus: "idle",
+  filingSuggestion: null,
+  filingStatus: "idle",
   meetingKind: null,
 };
 
@@ -399,6 +404,16 @@ interface ParleyState {
   /** Append a streamed chunk to the brief (streaming render). */
   appendBrief: (chunk: string) => void;
   setBriefStatus: (status: AsyncTaskStatus) => void;
+  /** The pending filing suggestion for the LOADED recording — a better title and
+   *  the folders it could move to. Per-recording, like the brief: it is cleared
+   *  with the rest of the study slice and restored from the entry on load. `null`
+   *  means nothing is pending, which covers both "never generated" and "the user
+   *  already accepted or dismissed it" — `filingStatus` is what tells those apart
+   *  (see HistoryEntry.filingSuggested). */
+  filingSuggestion: FilingSuggestion | null;
+  filingStatus: AsyncTaskStatus;
+  setFilingSuggestion: (suggestion: FilingSuggestion | null) => void;
+  setFilingStatus: (status: AsyncTaskStatus) => void;
   /** Insert one finding (MCP/external add) without replacing the list, keeping it
    *  ordered by atMs. A colliding id is reassigned so existing findings are safe. */
   addFinding: (event: TimelineEvent) => void;
@@ -759,6 +774,10 @@ export const useStore = create<ParleyState>()(
       deliveryStatus: entry.deliveryAssessment ? "done" : "idle",
       brief: entry.brief ?? null,
       briefStatus: entry.brief ? "done" : "idle",
+      // A read-only org recording can be neither renamed nor refiled, so it
+      // carries no suggestion — and the pass that would produce one declines too.
+      filingSuggestion: opts?.readOnly ? null : entry.filingSuggestion ?? null,
+      filingStatus: entry.filingSuggested || entry.filingSuggestion ? "done" : "idle",
       meetingKind: entry.meetingKind ?? null,
       // Restore the per-meeting context + negotiation setup.
       meetingContext: entry.meetingContext,
@@ -821,6 +840,10 @@ export const useStore = create<ParleyState>()(
   setMeetingKind: (meetingKind) => set({ meetingKind }),
   appendBrief: (chunk) => set((s) => ({ brief: (s.brief ?? "") + chunk })),
   setBriefStatus: (status) => set({ briefStatus: status }),
+  filingSuggestion: null,
+  filingStatus: "idle",
+  setFilingSuggestion: (filingSuggestion) => set({ filingSuggestion }),
+  setFilingStatus: (filingStatus) => set({ filingStatus }),
   // Replace the findings list, keeping the selection + cached solutions of any
   // finding that STILL EXISTS in the new list. During streaming, partials commit
   // a growing list with stable ids, so a finding the user opened mid-stream (and

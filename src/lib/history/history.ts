@@ -102,6 +102,12 @@ function snapshotAnalysis() {
     speechRateHz: s.replay?.speechRateHz ?? null,
     // Study outputs ride along so a plain save/overwrite never drops them.
     brief: s.brief,
+    // Same for the filing suggestion: the upload's FIRST save happens while the
+    // pass may already have landed, and a re-analysis overwrite must not drop a
+    // suggestion the user hasn't answered yet. The completion flag comes from the
+    // status for the same reason `analyzed` does — see HistoryEntry.filingSuggested.
+    filingSuggestion: s.filingSuggestion,
+    filingSuggested: s.filingStatus === "done",
     // The kind SHAPED those outputs, so it is part of them.
     meetingKind: s.meetingKind,
   };
@@ -535,6 +541,45 @@ export async function persistStudyOutputs(): Promise<void> {
   });
   pushToCloud(id);
   log.info("history: study outputs saved", { id, brief: !!updated.brief });
+}
+
+/**
+ * Persist the loaded entry's FILING SUGGESTION — the proposed title + folders,
+ * or its absence once the user has answered it.
+ *
+ * Deliberately NOT folded into {@link persistStudyOutputs}: that function writes
+ * `store ?? disk ?? null` so one output finishing can't clobber another that is
+ * still generating, and under that rule a null can only ever mean "I have
+ * nothing to say", never "write null". A dismissal is exactly the second thing,
+ * so the filing fields get their own writer — the one place that copies them
+ * from the store authoritatively.
+ *
+ * No-op for a read-only org recording (nothing to rename or refile, so it never
+ * had a suggestion) and for a not-yet-saved upload (there is no entry yet; its
+ * first save carries the fields via snapshotAnalysis).
+ */
+export async function persistFilingSuggestion(): Promise<void> {
+  const s = useStore.getState();
+  const id = s.loadedHistoryId;
+  if (!isTauri() || s.replayReadOnly || !id) return;
+  // An upload's initial save may still be compressing — wait so the entry exists.
+  await Promise.resolve(uploadSaveInFlight).catch(() => {});
+  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+  const updated: HistoryEntry = {
+    ...meta,
+    filingSuggestion: s.filingSuggestion,
+    // The pass ran, whatever it produced — so reopening never pays for it twice.
+    filingSuggested: true,
+  };
+  await invoke("save_history_entry", {
+    id,
+    summaryJson: JSON.stringify(buildSummary(updated)),
+    metaJson: JSON.stringify(updated),
+    audioSourcePath: null, // leave the recording untouched
+    compress: false,
+  });
+  pushToCloud(id);
+  log.info("history: filing suggestion saved", { id, pending: !!updated.filingSuggestion });
 }
 
 // ── List / read / delete ─────────────────────────────────────────────────────

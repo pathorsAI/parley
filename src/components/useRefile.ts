@@ -16,8 +16,19 @@ import type { LibraryDestination, OrgHandoffMode } from "../lib/library/destinat
  * the org copy is in. After a move there is no local entry left, so the replay
  * session drops its history pointer — the transcript on screen stays readable,
  * but a later re-analysis has nothing local to overwrite.
+ *
+ * It RESOLVES when the move has landed on disk, so a caller that also writes to
+ * the same entry can sequence behind it. Both `setEntryFolder` and the study
+ * persists are read-modify-write over one meta.json; started concurrently, the
+ * later write reads a pre-move copy and silently drops the folder change (the
+ * store already shows the new folder, so it only surfaces on the next load).
+ * Callers with no follow-up write can ignore the promise — failures are logged
+ * and toasted here either way.
  */
-export function useRefile(): (destination: LibraryDestination, mode: OrgHandoffMode | null) => void {
+export function useRefile(): (
+  destination: LibraryDestination,
+  mode: OrgHandoffMode | null
+) => Promise<void> {
   const { t } = useI18n();
   const loadedHistoryId = useStore((s) => s.loadedHistoryId);
   const setLoadedHistoryId = useStore((s) => s.setLoadedHistoryId);
@@ -25,15 +36,14 @@ export function useRefile(): (destination: LibraryDestination, mode: OrgHandoffM
   return useCallback(
     (destination: LibraryDestination, mode: OrgHandoffMode | null) => {
       const id = loadedHistoryId;
-      if (!id) return;
+      if (!id) return Promise.resolve();
       if (destination.scope === "personal") {
-        setEntryFolder(id, destination.folderId).catch((e) =>
+        return setEntryFolder(id, destination.folderId).catch((e) =>
           log.warn("refile: folder change failed", { id, error: String(e) })
         );
-        return;
       }
       const { orgId, folderId } = destination;
-      import("../lib/cloud/sync")
+      return import("../lib/cloud/sync")
         .then(async ({ moveRecordingToOrg, shareRecordingToOrg }) => {
           if (mode === "move") {
             await moveRecordingToOrg(id, orgId, folderId);

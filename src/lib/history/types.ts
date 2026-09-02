@@ -8,6 +8,7 @@
 import type {
   ActionItem,
   DeliveryAssessment,
+  FilingSuggestion,
   MeetingKind,
   TimelineEvent,
   TranscriptSegment,
@@ -65,6 +66,16 @@ export interface HistoryEntry {
    *  the outputs it shaped. Absent on entries predating the field (and on ones
    *  whose detection failed) → read as the decision lens. */
   meetingKind?: MeetingKind | null;
+  /** The filing suggestion still waiting on the user — a better title plus the
+   *  folders this recording could move to. Null once accepted or dismissed: the
+   *  suggestion is a prompt, not a property of the recording, so resolving it
+   *  clears it. */
+  filingSuggestion?: FilingSuggestion | null;
+  /** True once the filing pass COMPLETED for this recording. Exists for the same
+   *  reason {@link HistoryEntry.analyzed} does: a null `filingSuggestion` can't
+   *  distinguish "never ran" from "ran, and the user has since dealt with it",
+   *  so without this flag every reopen would re-spend the pass. */
+  filingSuggested?: boolean;
 }
 
 /** The card shown in the history grid — small, so listing stays cheap. */
