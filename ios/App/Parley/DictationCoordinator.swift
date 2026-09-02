@@ -418,7 +418,9 @@ final class DictationCoordinator: ObservableObject {
     }
 
     /// The uplink channel, listened to for the process's whole life:
-    ///   - stop: the keyboard's ⏹ for the running session.
+    ///   - stop: the keyboard's ⏹ for the running session, or its ✕ — the same
+    ///     request with `wantsCancel` set, which ends the session without
+    ///     delivering anything.
     ///   - start: a keyboard minted a new session while this process happens
     ///     to be awake (foreground, or lingering in the background right after
     ///     a session). Starting here means the user never leaves their app —
@@ -429,7 +431,15 @@ final class DictationCoordinator: ObservableObject {
             Task { @MainActor in
                 guard let self, let up = DictationChannel.readUplink() else { return }
                 if up.stopRequested {
-                    if self.active, up.session == self.session { await self.stop() }
+                    guard self.active, up.session == self.session else { return }
+                    // ✕ before ⏹: a cancel is written as both, so that an
+                    // uplink this app only half understands still ends the
+                    // session rather than leaving a microphone open.
+                    if up.wantsCancel {
+                        await self.cancel()
+                    } else {
+                        await self.stop()
+                    }
                 } else if !up.session.isEmpty, up.session != self.session {
                     // Only honor a start here if the mic can actually open.
                     // A background process cannot show the permission prompt —
@@ -537,6 +547,13 @@ final class DictationCoordinator: ObservableObject {
         guard eventLeg == leg else { return }
         switch event {
         case .segment(let seg):
+            // Same rule the two ending branches below already follow: a session
+            // that is over does not grow. It matters most for ✕ — a segment
+            // landing from a socket that is still dying would put the discarded
+            // words straight back into a `cancelled` downlink — and the drain
+            // after ⏹ is unaffected, because a session stays `active` until
+            // `finishUp` runs.
+            guard active else { return }
             if seg.id.hasSuffix("-tail") {
                 partial = seg.text
             } else if let i = runs.firstIndex(where: { $0.id == seg.id }) {
@@ -748,6 +765,55 @@ final class DictationCoordinator: ObservableObject {
             await relay.finish()  // drain: the relay flushes the last utterance
         }
         finishUp()  // which hands the microphone to the window, or closes it
+    }
+
+    /// The keyboard's ✕: end the session and throw away everything it heard.
+    ///
+    /// Deliberately not `stop()` with the transcript blanked afterwards. `stop`
+    /// is the *delivery* path — it drains the relay for the last utterance,
+    /// folds the partial in, and spends a cloud round trip polishing text that
+    /// is about to be inserted. None of that is work anyone wants done to words
+    /// they have just decided to throw away, and the drain in particular is a
+    /// network wait standing between the user's finger and a microphone going
+    /// quiet. So the relay is cut rather than finished, and the session ends
+    /// with `cancelled` — a terminal state the keyboard never inserts from.
+    ///
+    /// Not `fail()` either: nothing went wrong, so this keeps the microphone
+    /// window the user chose (`releaseMicrophone` decides) instead of closing
+    /// it the way an error does. The next tap is still served in place.
+    func cancel() async {
+        guard active else { return }
+        #if DEBUG
+            demoTask?.cancel()
+            demoTask = nil
+        #endif
+        // Same as `stop`: from here a closing socket is expected, and no redial
+        // already in flight should land.
+        finishRequested = true
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        capTimer?.cancel()
+        capTimer = nil
+        audio.discard()
+        reportsLevel.set(false)
+        micLevel = 0
+        let dying = relay
+        relay = nil
+        dying?.cancel()
+        // Cleared before publishing, so the file the keyboard reads never
+        // carries the discarded words at all — `cancelled` with a transcript
+        // still in it would be a downlink whose two halves disagree.
+        runs = []
+        committed = ""
+        partial = ""
+        errorMessage = nil
+        state = .cancelled
+        publish()
+        // In this order, and for the same reason `finishUp` uses it:
+        // `releaseMicrophone` declines to act while the session still looks
+        // live, and it is what arms either the window or the ~30 s linger.
+        active = false
+        Task { await releaseMicrophone() }
     }
 
     private func finishUp() {

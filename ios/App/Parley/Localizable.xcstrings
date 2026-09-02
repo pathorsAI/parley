@@ -868,6 +868,22 @@
         }
       }
     },
+    "Discarded": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discarded"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已捨棄"
+          }
+        }
+      }
+    },
     "Discovery call — Halcyon Labs": {
       "extractionState": "manual",
       "localizations": {
@@ -1744,6 +1760,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "還沒學到任何東西。"
+          }
+        }
+      }
+    },
+    "Nothing was typed. Tap the microphone again to start over.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing was typed. Tap the microphone again to start over."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒有輸入任何文字。要重來就再按一次麥克風。"
           }
         }
       }

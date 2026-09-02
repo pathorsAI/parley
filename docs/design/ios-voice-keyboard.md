@@ -60,6 +60,37 @@ hand-off, and the in-app dictation session are new.
    its high-water mark (`insertedCount`), so a keyboard killed mid-session and
    relaunched after the session ended still pastes exactly once. `error` inserts
    nothing at all.
+6. **Or ✕, and nothing at all.** The keyboard's ✕ writes the same
+   `stopRequested` with `cancelRequested` beside it. The app cuts the relay
+   instead of finishing it — no drain, no cloud polish — clears the transcript,
+   and marks the session `cancelled`, a third terminal state the keyboard never
+   inserts from. The microphone goes back to the window the user chose, exactly
+   as it does after ⏹, because nothing failed.
+
+#### Three ways a session ends
+
+`done` delivers, `error` explains, `cancelled` says nothing and leaves the
+field as it was. They are three states rather than two plus a special case,
+because the keyboard's rule for `done` is "insert what is here": an empty
+transcript from a session where nobody spoke and a transcript the user threw
+away have to be different events, or the rule needs an exception, and the
+exception is the bug.
+
+✕ is the only one of the three the user can reach on purpose, and it stays
+reachable through `finishing` — the polish round trip is up to six seconds
+during which the pane still reads as live. So ⏹ and ✕ can cross in flight. The
+app's side is safe because the polish result is dropped unless the session is
+still `finishing`; the keyboard's side is safe because it remembers the id it
+cancelled and refuses every later downlink for it. Both halves are needed: the
+app may answer slowly, or (killed) not at all.
+
+Why ✕ is not "⏹ and then delete": ⏹ *is* the delivery path. It drains the relay
+for one more utterance, folds in the partial, and spends a cloud request
+polishing text that is about to be thrown away — and then the user is holding
+⌫ through a paragraph they never wanted, on a pane whose delete key is a 44pt
+disc. The words are already visible above the record button while they are
+being spoken, so before this the pane let someone watch a mistake happen and
+do nothing about it.
 
 #### Why one insertion rather than a stream
 
@@ -88,7 +119,9 @@ processes never contend on a file:
 
 - `dictation-down.json` — app → keyboard: `{session, committed, partial, state}`.
 - `dictation-up.json` — keyboard → app: `{session, hostBundleID, stopRequested,
-  insertedCount}`.
+  cancelRequested?, insertedCount}`. `cancelRequested` is optional so an uplink
+  written by an older build still decodes — a mailbox that fails to decode
+  reads as "nothing there", which here would mean a stop the app never hears.
 - `dictation-window.json` — app → keyboard: `{length, openedAt, expiresAt,
   updatedAt}`, the microphone window and its heartbeat.
 - `dictation-window-control.json` — keyboard → app: `{closeRequestedAt}`, the
@@ -607,7 +640,7 @@ three ⌀44 translucent discs arranged around it:
 ```
         live transcript (74pt, three lines, bottom-aligned)
 
-                                              ⌫
+   ✕ (while listening)                        ⌫
    @                    ◉  record
                                               ⏎
 ```
@@ -616,7 +649,23 @@ three ⌀44 translucent discs arranged around it:
 edits a dictating user actually reaches for. `@` takes the bottom-left corner —
 low-frequency, and the corner the system's own globe occupies on the devices
 that ask us to draw one (in which case `@` moves up and the globe takes that
-corner). **The top-left is deliberately empty**: it is where the pane breathes.
+corner). **The top-left is empty except during a session**: it is where the
+pane breathes, and keeping it that way the rest of the time is what lets `✕`
+arrive without the deck reflowing. The two ways out of a dictation end up at
+the same height, one disc apart, and nothing else on the pane moves when `✕`
+appears or goes.
+
+On the devices that draw their own globe, `@` is in that slot and a session
+borrows it. That is the whole cost, and it is the right thing to spend: `@` is
+a shortcut for something nobody is doing in the middle of speaking. The globe
+below it is never touched — a keyboard you cannot switch away from is a
+keyboard you are trapped in.
+
+`✕` is drawn as an ordinary control disc, not in the recording red. The pane
+keeps its one colour on the record button, which is *already* red while a
+session runs; a second red disc beside it would compete with the control the
+user reaches for most, and would read as the more dangerous of the two rather
+than the smaller one.
 
 The pane used to be caps — a mic pill flanked by two 56pt caps over a
 full-width `return` — and that was the mistake. A cap's raised look says "there
@@ -631,7 +680,8 @@ like Parley rather than iOS: idle it carries Pathors' brand gradient (`#1469D4`
 outward, so "armed" is never something you have to read out of a gradient — and
 never needs a second element saying "Listening…" beside it. The other is the
 wordmark (`#1469D4` light, `#2DB6F3` dark). Nothing else on the pane carries a
-colour, including `⏎` when the host has asked for an action.
+colour, including `⏎` when the host has asked for an action and `✕` when a
+session is running.
 
 #### Four states, and only one of them is a microphone
 

@@ -89,6 +89,9 @@ struct DictationView: View {
         switch coordinator.state {
         case .error: return "exclamationmark.triangle"
         case .finishing, .done: return "checkmark"
+        // The session ended with nothing delivered, which is what the user
+        // asked for — so the mark says "gone", not "went wrong".
+        case .cancelled: return "xmark"
         // Deliberately not the warning triangle: the microphone is still open
         // and the words are being kept. This is a pause, not a failure.
         case .reconnecting: return "arrow.triangle.2.circlepath"
@@ -116,6 +119,7 @@ struct DictationView: View {
         case .finishing: return String(localized: "Wrapping up…")
         case .done: return String(localized: "Done")
         case .error: return String(localized: "Couldn't start")
+        case .cancelled: return String(localized: "Discarded")
         // Handled above, before the swipe guidance.
         case .reconnecting: return String(localized: "Reconnecting…")
         }
@@ -137,6 +141,9 @@ struct DictationView: View {
                     "Keep talking — the microphone is still on and what you say is kept until the connection is back."
             )
         }
+        if coordinator.state == .cancelled {
+            return String(localized: "Nothing was typed. Tap the microphone again to start over.")
+        }
         if needsManualReturn {
             return String(
                 localized:
@@ -148,9 +155,10 @@ struct DictationView: View {
 
     // MARK: footer — only the swipe guide, hugging the home indicator
 
-    /// No stop control here on purpose: stopping (like everything else about
-    /// dictation) belongs to the keyboard's red ⏹. This screen never competes
-    /// with the keyboard for the session — its whole vocabulary is "go back".
+    /// No stop control here on purpose: ending a session — ⏹ to keep the words,
+    /// ✕ to throw them away — belongs to the keyboard, like everything else
+    /// about dictation. This screen never competes with the keyboard for the
+    /// session; its whole vocabulary is "go back".
     private var footer: some View {
         VStack(spacing: 14) {
             // Last element on the screen, right above the real home indicator,

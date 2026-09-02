@@ -46,10 +46,7 @@ final class DictationChannelTests: XCTestCase {
     // MARK: session mailboxes
 
     func testDownlinkRoundTripsEveryState() throws {
-        for state in [
-            DictationChannel.Downlink.State.starting, .listening, .reconnecting, .finishing,
-            .done, .error,
-        ] {
+        for state in DictationChannel.Downlink.State.allCases {
             let back = try roundTrip(
                 DictationChannel.Downlink(
                     session: "s", committed: "hello ", partial: "world", state: state))
@@ -57,6 +54,16 @@ final class DictationChannelTests: XCTestCase {
             XCTAssertEqual(back.committed, "hello ")
             XCTAssertEqual(back.partial, "world")
         }
+    }
+
+    func testCancelledIsItsOwnEnding() throws {
+        // The keyboard inserts on `done` and only on `done`. If a discarded
+        // session ever encoded as anything the other side reads as `done`, the
+        // words the user threw away would land in their document — so this is
+        // the one state whose raw value is worth pinning down.
+        XCTAssertEqual(DictationChannel.Downlink.State.cancelled.rawValue, "cancelled")
+        XCTAssertNotEqual(DictationChannel.Downlink.State.cancelled, .done)
+        XCTAssertNotEqual(DictationChannel.Downlink.State.cancelled, .error)
     }
 
     func testUplinkCarriesTheInsertionHighWaterMark() throws {
@@ -67,6 +74,29 @@ final class DictationChannelTests: XCTestCase {
         XCTAssertEqual(back.insertedCount, 42)
         XCTAssertEqual(back.hostBundleID, "com.example.app")
         XCTAssertTrue(back.stopRequested)
+        XCTAssertFalse(back.wantsCancel)
+    }
+
+    func testUplinkCarriesTheCancelAlongsideTheStop() throws {
+        // ✕ is written as both flags: `stopRequested` is what makes it read as
+        // "end this session" to the whole existing path, and `cancelRequested`
+        // is the only thing that says the transcript is to be thrown away.
+        let back = try roundTrip(
+            DictationChannel.Uplink(session: "s", stopRequested: true, cancelRequested: true))
+        XCTAssertTrue(back.stopRequested)
+        XCTAssertTrue(back.wantsCancel)
+    }
+
+    func testUplinkFromAnOlderBuildStillDecodes() throws {
+        // `cancelRequested` is optional for this reason and no other. A
+        // mailbox that fails to decode reads as "nothing there", and the file
+        // this parses is how the app hears ⏹ at all — an uplink left behind by
+        // the build before this one must not silently swallow a stop.
+        let json = Data(#"{"session":"s","stopRequested":true,"insertedCount":7}"#.utf8)
+        let value = try JSONDecoder().decode(DictationChannel.Uplink.self, from: json)
+        XCTAssertTrue(value.stopRequested)
+        XCTAssertFalse(value.wantsCancel)
+        XCTAssertEqual(value.insertedCount, 7)
     }
 
     // MARK: URLs

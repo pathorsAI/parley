@@ -30,6 +30,16 @@ final class KeyboardViewController: UIInputViewController {
     /// session is a leftover from a previous dictation and is ignored.
     private var session = ""
     private var insertedCount = 0
+    /// A session the user threw away with ✕.
+    ///
+    /// The app answers a cancel by publishing `cancelled`, which inserts
+    /// nothing — but the two can cross in flight: ✕ is reachable through
+    /// `finishing`, which is where the transcript spends its polish round trip,
+    /// and a `done` published a beat before the tap would otherwise be drained
+    /// and pasted afterwards. Remembering the id makes that impossible here
+    /// rather than merely unlikely, and it survives the app answering slowly or
+    /// not at all.
+    private var cancelledSession = ""
     /// Learns the user's words from the edits they make right after dictating.
     /// Everything it does lives in `KeyboardLexiconWatch`; this class only tells
     /// it when the text landed and when the editing is over.
@@ -345,9 +355,40 @@ final class KeyboardViewController: UIInputViewController {
         var up = DictationChannel.readUplink() ?? .init(session: session)
         up.session = session
         up.stopRequested = true
+        up.cancelRequested = false
         up.insertedCount = insertedCount
         DictationChannel.writeUplink(up)
         bridge.listening = false
+    }
+
+    /// Ask the app to end the session and throw the words away — the ✕ next to
+    /// ⏹.
+    ///
+    /// The pane goes quiet under the finger rather than a round trip later. The
+    /// app has to be told (it is the one holding the microphone and the socket)
+    /// but nothing here waits for it to answer: the only thing its reply could
+    /// add is a transcript, and a transcript is exactly what the user just said
+    /// they did not want. So the echo is cleared now, and `cancelledSession`
+    /// makes sure no late downlink for this session can put it back.
+    func cancelDictation() {
+        guard !session.isEmpty else { return }
+        cancelledSession = session
+        var up = DictationChannel.readUplink() ?? .init(session: session)
+        up.session = session
+        // Both flags: `stopRequested` is what makes this read as "end the
+        // session" to the whole existing path, and `cancelRequested` is the
+        // only thing that says how.
+        up.stopRequested = true
+        up.cancelRequested = true
+        up.insertedCount = insertedCount
+        DictationChannel.writeUplink(up)
+        bridge.listening = false
+        bridge.reconnecting = false
+        bridge.partial = ""
+        bridge.tail = ""
+        // Not an error, so nothing is left on screen saying otherwise — the
+        // slot goes back to the idle invitation to speak.
+        bridge.errorText = nil
     }
 
     /// How old a downlink may be and still get adopted by a keyboard that
@@ -381,6 +422,12 @@ final class KeyboardViewController: UIInputViewController {
     private func drainDownlink() {
         guard hasFullAccess, let d = DictationChannel.readDownlink() else { return }
 
+        // A session the user threw away is finished here, whatever the app goes
+        // on to publish for it. `cancelDictation` already cleared the pane, so
+        // there is nothing left to read out of this file — and the one thing it
+        // could still carry is a transcript that must never reach the document.
+        if d.session == cancelledSession { return }
+
         // Adopt a session this process didn't mint. iOS kills the keyboard
         // almost every time the user bounces to the app, so on the way back the
         // downlink belongs to a session the (relaunched) keyboard has never
@@ -394,6 +441,11 @@ final class KeyboardViewController: UIInputViewController {
         // keyboard that just minted a new session (its uplink carries the new
         // id) can never resurrect the previous transcript. Errors are never
         // adopted; the message belongs on the app's screen, not in a field.
+        // A cancelled one *is* adopted, and safely: what makes `error` special
+        // is its message, not its finality, and `cancelled` carries neither a
+        // message nor anything to insert. Adopting it is how a keyboard that
+        // was killed between the ✕ and the app's answer comes back to an idle
+        // pane instead of a session it thinks is still running.
         if d.session != session {
             guard d.state != .error,
                 let at = d.updatedAt,
@@ -473,6 +525,18 @@ final class KeyboardViewController: UIInputViewController {
             lexicon.noteInserted(context: textDocumentProxy.documentContextBeforeInput)
             // The tail stays: the last thing said is worth still being able to
             // read once the button has gone quiet.
+        case .cancelled:
+            // The app confirming a ✕. For the keyboard that pressed it this is
+            // never reached — that process cleared the pane on the spot and
+            // returns at the top, on `cancelledSession`. This branch belongs to
+            // the one that did *not*: killed between the tap and the answer,
+            // relaunched, and reading the ending out of the file. It says the
+            // same nothing.
+            bridge.listening = false
+            bridge.reconnecting = false
+            bridge.partial = ""
+            bridge.tail = ""
+            bridge.errorText = nil
         case .error:
             bridge.listening = false
             bridge.reconnecting = false
@@ -771,6 +835,8 @@ final class KeyboardBridge: ObservableObject {
     /// and find the app.
     func endWindow() { controller?.endMicWindow() }
     func stop() { controller?.stopDictation() }
+    /// End the session and throw the words away — the ✕ beside ⏹.
+    func cancel() { controller?.cancelDictation() }
     func backspace() { controller?.deleteBackward() }
     func type(_ text: String) { controller?.insert(text) }
     func space() { controller?.insertSpace() }

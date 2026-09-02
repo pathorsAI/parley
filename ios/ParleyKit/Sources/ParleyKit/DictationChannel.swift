@@ -8,7 +8,8 @@ import Foundation
 /// Five single-writer mailboxes, each with its own Darwin notification, so the
 /// two processes never contend on the same file:
 ///   - `downlink` (app → keyboard): the growing transcript + session state.
-///   - `uplink`   (keyboard → app): the session request, host bundle id, stop.
+///   - `uplink`   (keyboard → app): the session request, host bundle id, and
+///     how it should end — ⏹ (deliver) or ✕ (throw away).
 ///   - `window`   (app → keyboard): the microphone window — whether the next
 ///     tap will be served where the user is, or has to open Parley.
 ///   - `window control` (keyboard → app): end the window now.
@@ -33,9 +34,10 @@ public enum DictationChannel {
 
     /// app → keyboard: the transcript grew or the state changed.
     public static let downNote = "com.pathors.parley.dictation.down"
-    /// keyboard → app: stop was requested (the app is running during dictation,
-    /// so a Darwin note reaches it; starting instead goes through the URL so it
-    /// can launch a suspended app).
+    /// keyboard → app: the session should end — ⏹ to deliver the transcript,
+    /// ✕ to throw it away (the app is running during dictation, so a Darwin
+    /// note reaches it; starting instead goes through the URL so it can launch
+    /// a suspended app).
     public static let upNote = "com.pathors.parley.dictation.up"
     /// app → keyboard: the microphone window opened, closed, or ticked. Its own
     /// note rather than `downNote` because the window outlives sessions — most
@@ -84,13 +86,27 @@ public enum DictationChannel {
         /// worth inserting after a relaunch (see `KeyboardViewController`).
         public var updatedAt: Date?
 
-        public enum State: String, Codable, Sendable {
+        /// `CaseIterable` so the wire-format test iterates the states rather
+        /// than listing them: a state that decodes to something the other
+        /// process does not expect is silent, and a test that has to be
+        /// remembered is exactly the one that will not be.
+        public enum State: String, Codable, Sendable, CaseIterable {
             case starting, listening, finishing, done, error
             /// The relay socket dropped and the app is redialling it. The
             /// microphone is still open and the audio is being held, so this
             /// is a pause in the words arriving — deliberately not `error`,
             /// which is where the session actually ends.
             case reconnecting
+            /// The user pressed ✕: the session ended and the words were thrown
+            /// away on purpose.
+            ///
+            /// A third terminal state rather than a flavour of `done` with an
+            /// empty transcript, because the keyboard's rule for `done` is
+            /// "insert what is here" and a rule that says "…unless it happens
+            /// to be empty" would make an empty result and a discarded one the
+            /// same event. It is not `error` either: nothing failed, and the
+            /// pane must not show red copy for something the user asked for.
+            case cancelled
         }
 
         public init(
@@ -127,6 +143,16 @@ public enum DictationChannel {
         /// the pre-iOS-26.4 auto-return. `nil` when it could not be resolved.
         public var hostBundleID: String?
         public var stopRequested: Bool
+        /// The stop is a ✕ rather than a ⏹: end the session and throw the
+        /// transcript away. Always written together with `stopRequested`, so
+        /// the request still reads as "end this" to anything that only knows
+        /// about ⏹ — this field only says *how* it should end.
+        ///
+        /// Optional so an uplink written by an older build still decodes: a
+        /// synthesized `init(from:)` requires every non-optional key, and a
+        /// mailbox that fails to decode reads as "nothing there", which here
+        /// would mean a stop request the app never hears.
+        public var cancelRequested: Bool?
         /// How much of `committed` the keyboard has already inserted. Persisted
         /// here so a keyboard that was killed mid-session does not double-insert
         /// when it relaunches.
@@ -134,13 +160,17 @@ public enum DictationChannel {
 
         public init(
             session: String, hostBundleID: String? = nil,
-            stopRequested: Bool = false, insertedCount: Int = 0
+            stopRequested: Bool = false, cancelRequested: Bool? = nil, insertedCount: Int = 0
         ) {
             self.session = session
             self.hostBundleID = hostBundleID
             self.stopRequested = stopRequested
+            self.cancelRequested = cancelRequested
             self.insertedCount = insertedCount
         }
+
+        /// The keyboard asked for this session to be thrown away.
+        public var wantsCancel: Bool { cancelRequested == true }
     }
 
     public static func writeUplink(_ value: Uplink) {
