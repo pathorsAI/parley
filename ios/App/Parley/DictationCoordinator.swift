@@ -348,6 +348,24 @@ final class DictationCoordinator: ObservableObject {
         // backgrounded process, so a session that had to open the microphone
         // here would have to bring the app forward first — which is the app
         // switch this whole feature exists to avoid.
+        //
+        // **Only if there is something running to borrow.** Holding an
+        // `AudioCapture` is not the same as having a microphone. The engine can
+        // be torn down behind this object's back — a rebuild that runs out of
+        // attempts, a media-server reset that never recovers — and the only
+        // announcement is a status push, which has paths that reach nobody in a
+        // position to act on it. What is left is a non-nil capture that will
+        // never produce another sample; borrowing it put the session into
+        // `.listening` over a dead microphone, and because the borrow happens
+        // in the background there was no way back short of force-quitting
+        // Parley. So the question is whether the capture *is capturing*, not
+        // whether it exists.
+        if let stale = capture, !stale.isCapturing {
+            capture = nil
+            // Stopped rather than dropped: it still holds an audio session that
+            // the fresh capture below is about to activate for itself.
+            await stale.stop()
+        }
         if capture == nil {
             let fresh = makeCapture()
             do {
@@ -357,7 +375,22 @@ final class DictationCoordinator: ObservableObject {
                 relay = nil
                 audio.discard()
                 client.cancel()
-                fail(String(localized: "Couldn't open the microphone."))
+                // The realistic cause is iOS refusing a backgrounded process
+                // the microphone — which is exactly where a capture that died
+                // in a window leaves us, and not something this process can
+                // argue its way out of. `fail` takes the window down with it
+                // (see there), so the keyboard's pane goes back to promising a
+                // trip through Parley, where the microphone can be opened from
+                // the foreground. Handing the user back to a path that works
+                // beats leaving them talking into a session that is listening
+                // to nothing.
+                fail(
+                    UIApplication.shared.applicationState == .active
+                        ? String(localized: "Couldn't open the microphone.")
+                        : String(
+                            localized:
+                                "Couldn't open the microphone. Open Parley and tap the mic again."
+                        ))
                 return
             }
         }
@@ -981,8 +1014,18 @@ final class DictationCoordinator: ObservableObject {
     /// seconds. Idempotent: both `stop` and the relay signing off reach it.
     private func releaseMicrophone() async {
         guard !active else { return }
+        // `isCapturing`, not `capture != nil`: an open window is a promise to
+        // the keyboard that the next tap will be served where the user already
+        // is, and the keyboard renders that promise. Publishing one over a
+        // capture that is not capturing makes it a lie the user only discovers
+        // by tapping — the same "holding it is not having it" mistake `launch`
+        // and `endWindow` were both making, reached from the third side. A
+        // transient interruption landing exactly here costs the window, and a
+        // window nobody opened is a state the keyboard already knows how to
+        // describe.
         if !yieldedToMeeting,
-            let opened = MicWindowState.opened(length: windowLength, at: Date()), capture != nil
+            let opened = MicWindowState.opened(length: windowLength, at: Date()),
+            capture?.isCapturing == true
         {
             openWindow(opened)
             return
@@ -1058,8 +1101,22 @@ final class DictationCoordinator: ObservableObject {
     /// the microphone not to be *held afterwards*, and taking their sentence
     /// away mid-word to honour that would be a strange reading of it. The
     /// session finishes and `releaseMicrophone` then finds no window to open.
+    ///
+    /// ## Why the guard is not "is a window open"
+    ///
+    /// It was, and that turned out to drop the call that mattered most. A
+    /// capture can outlive its window: the window expires, or is ended from the
+    /// keyboard, and the microphone is closed — but a capture that dies *first*
+    /// arrives here through `handle(capture:)` with the window already closed
+    /// behind it, and an `openedAt`-only guard sent it away with the dead
+    /// `AudioCapture` still held. The next dictation then borrowed a corpse.
+    ///
+    /// So the question is whether there is anything left to end, which is the
+    /// window *or* the microphone it was holding. The "one window ends once"
+    /// property survives: the first call closes both, and a second finds
+    /// neither and returns before touching anything.
     func endWindow() async {
-        guard window.openedAt != nil else { return }
+        guard window.openedAt != nil || capture != nil else { return }
         windowTask?.cancel()
         windowTask = nil
         closeWindowState()
@@ -1110,6 +1167,14 @@ final class DictationCoordinator: ObservableObject {
             window.length = length
             publishWindow()
             return
+        }
+        // A dead capture would make this window a promise about a microphone
+        // that is not there — the same trap `launch` avoids, reached from the
+        // other end. Foreground is the one place a replacement can actually be
+        // opened, so this is where it is worth replacing.
+        if let stale = capture, !stale.isCapturing {
+            capture = nil
+            await stale.stop()
         }
         if capture == nil {
             switch AudioCapture.permission {

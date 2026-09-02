@@ -209,12 +209,25 @@ tap 3   …
 tap 4   round trip again
 ```
 
-`AudioCapture` is unchanged. `DictationCoordinator` simply stopped treating the
-microphone as a session's property: `releaseMicrophone()` at the end of a
-dictation either hands it to the window or closes it, and `launch()` reuses
-whatever is already running. While no dictation is attached, chunks go into
-`RelayAudioBridge` with no leg and no hold, which counts them and drops them —
-**an open window records nothing, because there is nowhere for the audio to go.**
+`DictationCoordinator` stopped treating the microphone as a session's property:
+`releaseMicrophone()` at the end of a dictation either hands it to the window or
+closes it, and `launch()` reuses whatever is already running. While no dictation
+is attached, chunks go into `RelayAudioBridge` with no leg and no hold, which
+counts them and drops them — **an open window records nothing, because there is
+nowhere for the audio to go.**
+
+`AudioCapture` gained one thing for this: `isCapturing`. A borrow has to ask
+whether the capture is *running*, not whether the coordinator still happens to
+hold one. The engine can be torn down behind its owner's back — a rebuild that
+runs out of attempts, a status that arrives when there is no window left to end
+it — and a non-nil `AudioCapture` that will never produce another sample is the
+worst thing there is to hand a dictation: the session goes to `.listening`, the
+user talks, nothing is transcribed, and it happens in the background, where the
+microphone cannot be reopened to recover. So `launch()` stops a capture that says
+it is not capturing and opens a fresh one, and if that start is refused — the
+ordinary answer in the background — the session fails with the window closed
+behind it, which is what puts the keyboard back to honestly promising a trip
+through Parley.
 
 ### What it costs, and where that is said
 
