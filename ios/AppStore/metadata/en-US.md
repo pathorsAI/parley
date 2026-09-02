@@ -83,6 +83,19 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.6.2
+
+Dictation sends you back to the app you were typing in again. A version check,
+written when the newest iOS looked like it had closed that path, was switching
+the trip off on devices where it still works — so it never happened and you had
+to swipe back yourself.
+
+The app no longer guesses. It makes the trip once, watches whether it actually
+happened, and remembers the answer for that exact iOS build: a device that can
+get back keeps getting back, one that cannot stops trying after two attempts,
+and an iOS update lets it find out again. Nothing else about dictation changes —
+when the return does not happen, the same swipe-back guidance appears as before.
+
 ## What's New — 1.6.1
 
 Dictation now arrives written, not transcribed. When a session ends, Parley makes
