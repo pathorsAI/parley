@@ -285,13 +285,21 @@ There is still a first tap, and a tap after a window closes. Those still open
 Parley, and the dictation screen still teaches the swipe back (`SwipeBackGuide`).
 Two things are worth writing down rather than repeating:
 
-- **On iOS 26.4+ the host app cannot be detected at all.** The private
-  bundle-id path returns nil and `UIApplication.suspend()` lands on the Home
-  Screen because the app was launched by an extension. Apple's DTS has answered
-  that there is no public way to identify the host or to return to it
-  (FB22247647 remains open). The destination does not have to be *detected*
-  though — it can be *chosen*, which is how KeyboardKit 10.4 handles it, and is
-  tracked separately.
+- **There is no public way to do any of this, on any iOS.** Apple's DTS has
+  answered that nothing identifies the host from an extension and nothing
+  returns the user to it (FB22247647 remains open). The destination does not
+  have to be *detected* though — it can be *chosen*, which is how KeyboardKit
+  10.4 handles it, and is tracked separately.
+
+- **What 26.4 changed is less clear than the first reports made it sound.** The
+  private bundle-id sources were widely reported as emptied in 26.4, and
+  `UIApplication.suspend()` does land on the Home Screen because the app was
+  launched by an extension. But keyboards in this category are observably still
+  returning users to their host app on iPadOS 26.5 — so "26.4 closed the door"
+  is at best not the whole story. It was nonetheless compiled into Parley as
+  `if #available(iOS 26.4, *) { return false }`, and that is the part that had
+  to go: not because the number was wrong, but because **a number is the wrong
+  shape of answer**. See below.
 - **Our own pre-26.4 auto-return had never fired on any iOS version** — now
   fixed. `KeyboardHost.bundleID(of:)` probed `_hostBundleID` and
   `_hostApplicationBundleIdentifier` with `responds(to:)` **on the
@@ -307,11 +315,42 @@ Two things are worth writing down rather than repeating:
   on an undefined key raises an Objective-C exception Swift cannot catch, so the
   runtime is asked whether the class declares the ivar before KVC touches it. A
   keyboard extension that crashes on appearance would be far worse than one that
-  never takes you back. **Whether the returned id actually gets a pre-26.4 user
-  home is still unverified** — it needs a device below 26.4.
+  never takes you back.
 
 Neither is why the reported bug happens, which is worth being clear about: the
 report is that dictation *leaves*, and leaving is what the window fixes.
+
+### Deciding at runtime instead of guessing at build time
+
+`HostReturnPolicy` replaced the version gate. It answers "attempt the jump?"
+from three inputs, and the useful property of all three is that none of them is
+a prediction:
+
+1. **A remote flag** — `FeatureFlags.HostReturn`, cached in the App Group by
+   `FeatureFlagStore`. `enabled: false` is a kill switch that outranks
+   everything; shipping it in the same change as the private-API path is the
+   point, because it means a 2.5.1 objection can be answered in minutes rather
+   than in a release. `byOSVersion` turns a single iOS off, or back **on**,
+   which is the only way to re-arm devices that have given up locally.
+2. **Evidence this device collected about itself** — `attemptAndVerify` fires
+   the launch and then watches whether the app actually got backgrounded,
+   writing the outcome to `HostReturnLedger`. After `failureBudget` (2)
+   consecutive failures the device stops trying.
+3. **The OS version as a key, never as a threshold** — the ledger is stamped
+   with the full OS build string, so an update wipes the count and the device
+   tries again on its own. That is exactly the moment the answer might have
+   changed, in either direction.
+
+The screen is optimistic and then honest. `returnableHost` is set the moment the
+jump is attempted, so `DictationView` shows the hand-off shape; it is cleared
+again if the app is still foregrounded ~1.2 s later, and the swipe-back guidance
+takes over. That ~1.2 s is the whole cost of being wrong, it is only paid while
+the ledger has not yet made up its mind, and it buys the one thing a compiled-in
+version check could never produce: **a device that finds out.**
+
+Until `GET /v1/flags` exists server-side every device runs on compiled defaults.
+A 404 is folded into "no opinion" rather than into an error, so publishing the
+endpoint is the only remaining step to gain the switch — no client release.
 
 ## Personal dictionary
 

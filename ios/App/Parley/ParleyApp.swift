@@ -20,6 +20,7 @@ struct ParleyApp: App {
                 .environmentObject(app)
                 .preferredColorScheme(app.theme.colorScheme)
                 .task { await app.refreshSession() }
+                .task { await app.refreshFeatureFlags() }
                 // The keyboard extension can't record, so its mic button opens
                 // `parley://dictate`; the app records and hands the transcript
                 // back through the App Group. (Auth callbacks use the same
@@ -45,6 +46,7 @@ struct ParleyApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
                     AppState.publishKeyboardReadiness()
+                    Task { await app.refreshFeatureFlags() }
                 }
         }
     }

@@ -44,9 +44,13 @@ final class DictationCoordinator: ObservableObject {
     @Published private(set) var micLevel: Float = 0
     @Published private(set) var state: DictationChannel.Downlink.State = .starting
     @Published private(set) var errorMessage: String?
-    /// The host app to bounce back to, when the keyboard could resolve it and
-    /// this iOS still allows the jump (see `HostReturn`). `nil` → show the
-    /// manual "swipe to go back" guidance instead.
+    /// The host app we are bouncing back to. Set optimistically the moment the
+    /// jump is attempted and cleared again if it does not land, so this is the
+    /// single thing the dictation screen reads to choose between "taking you
+    /// back" and the manual "swipe to go back" guidance. `nil` covers all four
+    /// ways there is nothing to return to: no host id, the remote kill switch,
+    /// this device having given up on this OS build, and an attempt that
+    /// failed. See `HostReturnPolicy`.
     @Published private(set) var returnableHost: String?
     /// The system microphone prompt is up. The dictation screen must not say
     /// "swipe back to your app" while it shows: obeying that guidance
@@ -201,18 +205,29 @@ final class DictationCoordinator: ObservableObject {
         let host = DictationChannel.readUplink()?.hostBundleID
         await launch()
 
-        // Only offer the jump-back when the host resolved, this iOS still
-        // honors it, AND the app actually came forward (the URL path). A
-        // session started over the Darwin channel never left the host app, so
-        // there is nothing to return from. On success `HostReturn` sends us to
-        // the background; the audio session keeps the mic alive
-        // (UIBackgroundModes: audio).
-        if state == .listening, let host, HostReturn.canReturn,
-            UIApplication.shared.applicationState == .active
-        {
-            returnableHost = host
-            HostReturn.attempt(bundleID: host)
-        } else {
+        // Only try the jump-back when the host resolved, the policy allows it
+        // on this device today, AND the app actually came forward (the URL
+        // path). A session started over the Darwin channel never left the host
+        // app, so there is nothing to return from.
+        guard let host, state == .listening,
+            UIApplication.shared.applicationState == .active,
+            HostReturn.decide(host: host).isAttempt
+        else {
+            returnableHost = nil
+            return
+        }
+
+        // Optimistic, then honest. The screen says "taking you back" while the
+        // launch is in flight, and takes it back if the launch does not land —
+        // stranding someone on a promise is the one outcome worse than asking
+        // them to swipe. `attemptAndVerify` also writes the outcome to
+        // `HostReturnLedger`, which is what stops a device that genuinely
+        // cannot do this from paying the grace period on every dictation.
+        //
+        // On success we are in the background from here; the audio session
+        // keeps the mic alive (UIBackgroundModes: audio).
+        returnableHost = host
+        if await HostReturn.attemptAndVerify(bundleID: host) == false {
             returnableHost = nil
         }
     }
