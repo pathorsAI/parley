@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Dark half of the keyboard palette. See values/colors_keyboard.xml.
+
+  A keyboard follows the *phone's* dark mode (unlike iOS, where the keyboard
+  follows the appearance the focused text field asks for), so a resource
+  qualifier is the whole mechanism — no runtime branch needed.
+-->
+<resources>
+    <color name="keyboard_background">#FF191C1D</color>
+    <color name="keyboard_on_background">#FFE1E3E3</color>
+    <color name="keyboard_muted">#FFBFC8C9</color>
+    <color name="keyboard_accent">#FF4FD8DF</color>
+    <color name="keyboard_on_accent">#FF003739</color>
+    <color name="keyboard_key">#FF2B3133</color>
+    <color name="keyboard_on_key">#FFE1E3E3</color>
+    <color name="keyboard_error">#FFFFB4AB</color>
+</resources>

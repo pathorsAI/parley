@@ -114,6 +114,48 @@
     <string name="detail_speakers">%1$d 位說話者</string>
     <string name="detail_length">長度 %1$s</string>
 
+    <!-- Voice typing: the keyboard itself (voicetyping/ParleyInputMethodService) -->
+    <string name="voice_typing_ime_label">Parley 語音</string>
+    <string name="voice_typing_subtype">Parley 語音</string>
+    <string name="voice_typing_mic_start">開始聽寫</string>
+    <string name="voice_typing_mic_stop">停止聽寫</string>
+    <string name="voice_typing_switch_keyboard">切換鍵盤</string>
+    <string name="voice_typing_backspace">刪除</string>
+    <string name="voice_typing_enter">換行</string>
+    <string name="voice_typing_idle">點一下麥克風就可以開始說。</string>
+    <string name="voice_typing_connecting">正在連線…</string>
+    <string name="voice_typing_listening">正在聆聽…</string>
+    <string name="voice_typing_listening_countdown">正在聆聽…剩下 %1$d 秒</string>
+    <string name="voice_typing_transcribing">正在補上最後幾個字…</string>
+    <string name="voice_typing_limit_reached">單次聽寫已到上限。點一下麥克風可以繼續。</string>
+    <string name="voice_typing_needs_mic">聽寫需要麥克風權限，而鍵盤本身無法要求。請到 Parley 裡設定。</string>
+    <string name="voice_typing_needs_sign_in">請先登入 Parley 才能聽寫。</string>
+    <string name="voice_typing_open_app">到 Parley 設定</string>
+    <string name="voice_typing_open_sign_in">開啟 Parley 登入</string>
+    <string name="voice_typing_error_mic">目前無法使用麥克風 —— 可能正在通話，或被其他 App 佔用。</string>
+    <string name="voice_typing_error_connection">無法連上轉錄服務。請確認網路後再試一次。</string>
+    <string name="voice_typing_error_quota">這個帳號的雲端轉錄額度已用完。</string>
+    <string name="voice_typing_error_relay">轉錄意外中斷，請再試一次。</string>
+
+    <!-- Voice typing: in-app setup (ui/VoiceTypingSetupScreen) -->
+    <string name="voice_typing_setup_title">語音輸入</string>
+    <string name="voice_typing_setup_headline">在任何 App 裡用說話打字</string>
+    <string name="voice_typing_setup_body">在 Parley 鍵盤上點一下麥克風，說出來的話就會出現在游標的位置。</string>
+    <string name="voice_typing_setup_ready">都設定好了。切回原本正在打字的地方，點一下麥克風即可。</string>
+    <string name="voice_typing_setup_step_enable_title">啟用 Parley 鍵盤</string>
+    <string name="voice_typing_setup_step_enable_body">在系統的螢幕小鍵盤清單裡，把「Parley 語音」打開。</string>
+    <string name="voice_typing_setup_step_enable_action">開啟鍵盤設定</string>
+    <string name="voice_typing_setup_step_switch_title">切換到它</string>
+    <string name="voice_typing_setup_step_switch_body">點進任何輸入框，再從鍵盤選單裡選「Parley 語音」。</string>
+    <string name="voice_typing_setup_step_switch_action">選擇鍵盤</string>
+    <string name="voice_typing_setup_step_mic_title">允許使用麥克風</string>
+    <string name="voice_typing_setup_step_mic_body">鍵盤本身沒辦法要求這個權限，所以在這裡授權一次就好。</string>
+    <string name="voice_typing_setup_step_mic_action">允許麥克風</string>
+    <string name="voice_typing_setup_mic_denied">麥克風權限被拒絕了。請到系統設定裡開啟才能聽寫。</string>
+    <string name="voice_typing_setup_app_settings">開啟 App 設定</string>
+    <string name="voice_typing_setup_step_done">已完成</string>
+    <string name="account_voice_typing">設定語音輸入</string>
+
     <!-- Foreground service notification -->
     <string name="notification_channel_name">會議錄音</string>
     <string name="notification_channel_description">Parley 正在錄製會議時顯示。</string>

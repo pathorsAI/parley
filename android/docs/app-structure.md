@@ -4,6 +4,10 @@ What sits on top of the four documented layers (`api-parleykit.md`,
 `api-cloud.md`, `api-audio.md`): the Compose UI, the two capture *sessions*, and
 the foreground service that keeps a live meeting alive.
 
+The voice-typing keyboard is a third capture surface with its own document —
+`voice-typing.md` — because an `InputMethodService` answers to a different set of
+rules than an activity does.
+
 ```
 com.pathors.parley
   ParleyApplication.kt   AppContainer — the whole dependency graph, one per process
@@ -12,6 +16,10 @@ com.pathors.parley
     MeetingService.kt    foreground service (type=microphone) + its notification
     MeetingSession.kt    live capture: mic → encoder + relay → segments → upload
     ImportSession.kt     imported file: decoder → encoder + relay → … → upload
+  voicetyping/         the dictation keyboard — see voice-typing.md
+    ParleyInputMethodService.kt  the IME (classic Views, not Compose)
+    VoiceTypingSession.kt        mic → relay → text, minus the encoder/upload
+    TranscriptCommitter.kt       composing vs committed text (pure, tested)
   ui/
     ParleyRoot.kt        sign-in wall, NavHost, the SAF picker
     SignInScreen.kt      Custom Tab hand-off
@@ -21,6 +29,7 @@ com.pathors.parley
     MeetingScreen.kt     permission gate, live transcript, level meter, stop
     ImportScreen.kt      progress + phase label + cancel
     RecordingDetail*.kt  read-only transcript, findings, action items
+    VoiceTypingSetupScreen.kt  keyboard onboarding + the mic-permission hand-off
     Format.kt            duration/clock/date/speaker-label formatting
     theme/Theme.kt       Material 3, dynamic color on API 31+
 ```

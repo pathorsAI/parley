@@ -32,6 +32,10 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="parley" android:host="auth-callback" />
+                <!-- Voice-typing hand-off: the keyboard cannot request RECORD_AUDIO
+                     itself (no Activity), so its setup affordance opens this.
+                     See voicetyping/VoiceTypingSetup.kt. -->
+                <data android:scheme="parley" android:host="voice-typing" />
                 <!-- Store-screenshot demo mode (debug builds only, see DemoMode):
                      adb shell am start -a android.intent.action.VIEW \
                        -d "'parley://demo/library'" -->
@@ -43,5 +47,29 @@
             android:name=".meeting.MeetingService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!--
+          The voice-typing keyboard. `BIND_INPUT_METHOD` is what tells the system
+          only the input-method manager may bind this service; the <meta-data>
+          pointing at res/xml/method.xml is what makes it appear in the on-screen
+          keyboard list at all.
+
+          It needs no foregroundServiceType: an IME with a visible input view is
+          already a visible window, which is what Android's microphone policy
+          requires — unlike MeetingService, which has to keep recording with no UI
+          at all. See android/docs/voice-typing.md.
+        -->
+        <service
+            android:name=".voicetyping.ParleyInputMethodService"
+            android:exported="true"
+            android:label="@string/voice_typing_ime_label"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method" />
+        </service>
     </application>
 </manifest>
