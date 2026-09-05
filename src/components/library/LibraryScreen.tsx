@@ -310,15 +310,22 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         }
         await setEntryFolder(item.id, folderId);
         await emitHistoryUpdated(item.id);
-        // Drop it from the grid immediately: it now belongs to another node.
-        setEntries((prev) => prev?.filter((e) => e.id !== item.id) ?? null);
+        // A folder node shows one node's worth, so a re-filed recording leaves
+        // it. The all node shows every node's worth, so the same recording
+        // stays put and only its folder chip changes — dropping it there would
+        // make filing something look like deleting it.
+        setEntries((prev) => {
+          if (!prev) return null;
+          if (isAll) return prev.map((e) => (e.id === item.id ? { ...e, folderId } : e));
+          return prev.filter((e) => e.id !== item.id);
+        });
         tree.reloadSummaries();
       } catch (e) {
         log.error("library: move failed", { id: item.id, error: String(e) });
         toast.error(t("history.move.failed", { error: errText(e) }));
       }
     },
-    [t, tree]
+    [isAll, t, tree]
   );
 
   /** The org grid files into org folders, which are a different registry. */

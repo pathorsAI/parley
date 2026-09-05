@@ -136,7 +136,7 @@ function leadLabel(bucket: TimelineBucket, createdAt: number, locale: string): s
   const d = new Date(createdAt);
   if (bucket.kind === "month") return d.toLocaleDateString(locale, { month: "numeric", day: "numeric" });
   if (bucket.kind === "thisWeek") return d.toLocaleDateString(locale, { weekday: "short" });
-  return d.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 function TimelineRow({
@@ -276,7 +276,7 @@ function TimelineRow({
             isCloudOnly ? "opacity-70" : ""
           }`}
         >
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{entry.title}</span>
+          <span className="min-w-0 truncate text-sm font-medium">{entry.title}</span>
           <span
             className={`hidden shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground sm:inline-flex ${
               folderLabel ? "" : "border-dashed"
@@ -285,6 +285,8 @@ function TimelineRow({
             {folderLabel ? <Folder className="size-2.5" /> : <FolderClosed className="size-2.5" />}
             {folderLabel ?? t("library.unassigned")}
           </span>
+          {/* Eats the slack so the stats stay pinned to the right edge. */}
+          <span className="min-w-0 flex-1" />
         </button>
       )}
 
