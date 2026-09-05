@@ -13,6 +13,16 @@ import {
   Trash2,
   UsersRound,
 } from "lucide-react";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+  openMenuFromKeyboard,
+  preventFocusRestore,
+} from "../ui/context-menu";
 import { buildOwnershipIndex, countByNode, nodeKey, type LibraryNode } from "../../lib/library/scope";
 import { beginMeeting } from "../../lib/meeting/start";
 import { useStore, type LibrarySelection } from "../../lib/store";
@@ -65,7 +75,7 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
 
   const selectLibrary = (sel: LibrarySelection) => openLibrary(sel);
 
-  return (
+  const nav = (
     <nav className="flex h-full min-h-0 w-full flex-col overflow-y-auto border-r bg-background/60 px-2 py-2">
       <button
         type="button"
@@ -221,6 +231,22 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
 
     </nav>
   );
+
+  // The tree's own menu. Rows carry their own (see Row), and stop the event
+  // there, so this one only answers right-clicks on the section headers and the
+  // empty space below the tree — where "what can I even do here" has no answer
+  // other than the ＋ hiding in a header until you hover it.
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{nav}</ContextMenuTrigger>
+      <ContextMenuContent onCloseAutoFocus={preventFocusRestore}>
+        <ContextMenuItem onSelect={() => setNewFolderOpen(true)}>
+          <FolderPlus className="size-3.5" />
+          {t("sidebar.menu.newFolder")}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
 }
 
 /**
@@ -325,6 +351,12 @@ function Row({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(label);
   const inputRef = useRef<HTMLInputElement>(null);
+  const selectRef = useRef<HTMLButtonElement>(null);
+  // The menu's close handler runs from a listener Radix registered on an
+  // earlier render, so reading `editing` through the closure can report the
+  // stale value and steal focus back off the name input.
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
 
   function startEdit() {
     setDraft(label);
@@ -343,6 +375,9 @@ function Row({
       <div className="flex shrink-0 items-center gap-1 rounded-md py-1 pr-1" style={pad}>
         <input
           ref={inputRef}
+          // Right-clicking a text field has to reach the webview's own edit
+          // menu; without this the sidebar's menu swallows cut/copy/paste.
+          onContextMenu={(e) => e.stopPropagation()}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -361,7 +396,11 @@ function Row({
     );
   }
 
-  return (
+  // Same two actions the hover icons run — the menu is a second way to reach
+  // them, not a second implementation of them.
+  const actionable = !!(onRename ?? onDelete);
+
+  const row = (
     <div
       className={`group/row flex shrink-0 items-center rounded-md transition-colors ${
         active
@@ -388,9 +427,13 @@ function Row({
         </button>
       )}
       <button
+        ref={selectRef}
         type="button"
         onClick={onSelect}
         onDoubleClick={onRename ? startEdit : undefined}
+        // The row's only focusable element, so it is where a keyboard user is
+        // standing when they ask for the menu; the event bubbles to the trigger.
+        onKeyDown={actionable ? openMenuFromKeyboard : undefined}
         className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-1 pr-1 text-left text-sm"
       >
         <span className="shrink-0">{icon}</span>
@@ -434,6 +477,52 @@ function Row({
       )}
     </div>
   );
+
+  if (!actionable) return row;
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger
+        asChild
+        // The whole sidebar is a trigger too (for "New folder" on empty space).
+        // Without this the one right-click opens both menus stacked.
+        onContextMenu={(e) => e.stopPropagation()}
+      >
+        {row}
+      </ContextMenuTrigger>
+      <ContextMenuContent
+        onCloseAutoFocus={(event) => {
+          preventFocusRestore(event);
+          // Closing without renaming should leave the keyboard where it was,
+          // and Radix's own restore aims at the trigger — a plain <div>, which
+          // cannot take focus, so it would drop to the body instead.
+          if (!editingRef.current) selectRef.current?.focus();
+        }}
+      >
+        <ContextMenuLabel>{label}</ContextMenuLabel>
+        <ContextMenuSeparator />
+        {onRename && (
+          <ContextMenuItem onSelect={startEdit}>
+            <Pencil className="size-3.5" />
+            {t("sidebar.menu.rename")}
+          </ContextMenuItem>
+        )}
+        {onDelete && (
+          <ContextMenuItem
+            variant="destructive"
+            onSelect={() => {
+              // Delete confirms with a blocking confirm() (useLibraryTree), and
+              // blocking mid-close leaves the menu painted over the sheet.
+              requestAnimationFrame(() => onDelete());
+            }}
+          >
+            <Trash2 className="size-3.5" />
+            {t("sidebar.menu.delete")}
+          </ContextMenuItem>
+        )}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
 }
 
 /** Inline name composer, opened on demand from a section header's ＋. */
@@ -461,6 +550,9 @@ function NewNameInput({
     >
       <input
         ref={ref}
+        // See the rename input: the sidebar's menu would otherwise take the
+        // place of the webview's cut/copy/paste menu.
+        onContextMenu={(e) => e.stopPropagation()}
         value={value}
         placeholder={placeholder}
         onChange={(e) => setValue(e.target.value)}

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import {
+  AudioLines,
   Check,
   Clock,
   CloudCheck,
@@ -24,6 +25,19 @@ import {
 } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+  openMenuFromKeyboard,
+  preventFocusRestore,
+} from "@/components/ui/context-menu";
 import type { Folder as LocalFolder } from "../../lib/history/folders";
 import type { HistoryCardItem, HistorySyncState } from "../../lib/cloud/sync";
 import type { CloudOrg } from "../../lib/cloud/types";
@@ -91,6 +105,37 @@ export function SyncIcon({ sync, signedIn }: Readonly<{ sync: HistorySyncState; 
   );
 }
 
+/**
+ * Which of the four actions a given card can actually offer.
+ *
+ * Shared because a card now exposes them twice — the hover toolbar and the
+ * right-click menu — and a rule that lived in only one of them would let the
+ * menu offer a rename the toolbar already knows is impossible.
+ */
+function cardCapabilities(
+  o: Readonly<{ isOrgContext: boolean; isCloudOnly: boolean; folderCount: number }>
+): { canMove: boolean; canRename: boolean } {
+  return {
+    // An org card files into org folders (so it needs at least one); a personal
+    // one needs local meta to retag, which a cloud-only card does not have.
+    canMove: o.isOrgContext ? o.folderCount > 0 : !o.isCloudOnly,
+    canRename: !o.isCloudOnly && !o.isOrgContext,
+  };
+}
+
+/** Where a card can be filed: the scope's folders, plus taking it back out of
+ *  one. Shared so the toolbar popover and the right-click submenu can't drift
+ *  into naming the same destination two different things. */
+function moveTargets(
+  t: ReturnType<typeof useI18n>["t"],
+  folders: LocalFolder[]
+): { id: string | null; name: string }[] {
+  return [
+    { id: null, name: t("history.move.rootOption") },
+    ...folders.map((f) => ({ id: f.id, name: f.name })),
+  ];
+}
+
 /** Shared scrim + popover chrome for the two card menus. */
 function MenuShell({
   title,
@@ -148,10 +193,7 @@ function MoveMenu({
 }>) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
-  const options: { id: string | null; name: string }[] = [
-    { id: null, name: t("history.move.rootOption") },
-    ...folders.map((f) => ({ id: f.id, name: f.name })),
-  ];
+  const options = moveTargets(t, folders);
   return (
     <div className="relative">
       <button
@@ -378,10 +420,11 @@ export function CardActions({
   onMove: (folderId: string | null) => void;
 }>) {
   const { t } = useI18n();
-  // An org card files into org folders (so it needs at least one); a personal
-  // one needs local meta to retag, which a cloud-only card does not have.
-  const canMove = isOrgContext ? folders.length > 0 : !isCloudOnly;
-  const canRename = !isCloudOnly && !isOrgContext;
+  const { canMove, canRename } = cardCapabilities({
+    isOrgContext,
+    isCloudOnly,
+    folderCount: folders.length,
+  });
   const deleteLabel = isOrgContext ? t("history.org.remove") : t("history.delete");
   return (
     <div className={className}>
@@ -461,9 +504,20 @@ export function LibraryCard({
   const isLive = entry.source === "live";
   const isCloudOnly = !isOrgContext && entry.sync === "cloud";
   const canShare = !isOrgContext && signedIn && orgs.length > 0;
+  const { canMove, canRename } = cardCapabilities({
+    isOrgContext,
+    isCloudOnly,
+    folderCount: folders.length,
+  });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(entry.title);
   const inputRef = useRef<HTMLInputElement>(null);
+  const openRef = useRef<HTMLButtonElement>(null);
+  // The menu's close handler runs from a listener Radix registered on an earlier
+  // render, so reading `editing` through the closure can report the stale value
+  // and steal focus back off the name input.
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
 
   function startEdit() {
     setDraft(entry.title);
@@ -489,6 +543,9 @@ export function LibraryCard({
         <div className="flex items-center gap-1">
           <input
             ref={inputRef}
+            // Right-clicking a text field has to reach the webview's own edit
+            // menu; without this the card's menu swallows cut/copy/paste.
+            onContextMenu={(ev) => ev.stopPropagation()}
             value={draft}
             onChange={(ev) => setDraft(ev.target.value)}
             onKeyDown={(ev) => {
@@ -554,7 +611,7 @@ export function LibraryCard({
       </div>
     </>
   );
-  return (
+  const card = (
     <div
       className={`group relative flex flex-col gap-2 rounded-lg border bg-card p-3 text-left transition hover:border-foreground/25 hover:shadow-sm ${
         isCloudOnly ? "border-dashed" : ""
@@ -584,8 +641,12 @@ export function LibraryCard({
         </div>
       ) : (
         <button
+          ref={openRef}
           type="button"
           onClick={onOpen}
+          // The card's only focusable element, so it is where a keyboard user is
+          // standing when they ask for the menu; the event bubbles to the trigger.
+          onKeyDown={openMenuFromKeyboard}
           className={`flex flex-col gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring ${
             isCloudOnly ? "opacity-70" : ""
           }`}
@@ -603,5 +664,74 @@ export function LibraryCard({
         </div>
       )}
     </div>
+  );
+
+  // A second way to reach the toolbar's own actions, not a second set of them —
+  // one that does not depend on noticing icons that only appear on hover, and
+  // that a keyboard can summon at all. Share is the one omission: picking an org
+  // and then answering copy-or-move is a flow, not a menu item.
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
+      <ContextMenuContent
+        onCloseAutoFocus={(event) => {
+          preventFocusRestore(event);
+          // Closing without renaming should leave the keyboard where it was, and
+          // Radix's own restore aims at the trigger — a plain <div>, which
+          // cannot take focus, so it would drop to the body instead.
+          if (!editingRef.current) openRef.current?.focus();
+        }}
+      >
+        <ContextMenuLabel>{entry.title}</ContextMenuLabel>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={onOpen}>
+          <AudioLines className="size-3.5" />
+          {t("library.menu.open")}
+        </ContextMenuItem>
+        {canRename && (
+          <ContextMenuItem onSelect={startEdit}>
+            <Pencil className="size-3.5" />
+            {t("library.menu.rename")}
+          </ContextMenuItem>
+        )}
+        {canMove && (
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <FolderInput className="size-3.5" />
+              {t("library.menu.move")}
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              {moveTargets(t, folders).map((target) => {
+                const current = (entry.folderId ?? null) === target.id;
+                return (
+                  <ContextMenuItem
+                    key={target.id ?? "__root"}
+                    disabled={current}
+                    onSelect={() => onMove(target.id)}
+                  >
+                    {target.id === null ? (
+                      <FolderClosed className="size-3.5" />
+                    ) : (
+                      <Folder className="size-3.5" />
+                    )}
+                    <span className="truncate">{target.name}</span>
+                    {current && <Check className="ml-auto size-3.5" />}
+                  </ContextMenuItem>
+                );
+              })}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        )}
+        <ContextMenuSeparator />
+        {/* No confirmation, deliberately: deleting a recording never had one —
+            the toolbar's trash icon goes straight through — and inventing one
+            here would make the same action behave differently depending on
+            which way you reached it. */}
+        <ContextMenuItem variant="destructive" disabled={busy} onSelect={onDelete}>
+          <Trash2 className="size-3.5" />
+          {isOrgContext ? t("library.menu.removeFromOrg") : t("library.menu.delete")}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }

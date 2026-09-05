@@ -1,7 +1,7 @@
 import { toast } from "sonner";
 import { translate } from "../../i18n/messages";
 import { useStore } from "../store";
-import { openSettings } from "../nav";
+import { openSettings } from "../nav/settings";
 import { log } from "../log";
 import { AI_FAILURE_HINT_KEY, classifyAiFailure } from "./failure";
 import type { LlmWorkload } from "../types";
