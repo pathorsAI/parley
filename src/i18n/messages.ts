@@ -158,6 +158,12 @@ export const zhTW = {
   "shell.palette.hint.close": "關閉",
   "shell.palette.recordingIn": "在 {folder}",
   "shell.palette.openFailed": "開啟錄音失敗：{error}",
+
+  // ── 側邊欄的右鍵選單 ──
+  "sidebar.menu.rename": "重新命名",
+  "sidebar.menu.delete": "刪除",
+  "sidebar.menu.newFolder": "新增資料夾",
+
   "library.all": "所有錄音",
   "library.all.empty": "還沒有任何錄音",
   "library.all.emptyHint": "開一場會議或匯入一段錄音,之後每一場都會依日期排在這裡。",
@@ -1158,6 +1164,12 @@ export const en = {
   "shell.palette.hint.close": "Close",
   "shell.palette.recordingIn": "in {folder}",
   "shell.palette.openFailed": "Couldn’t open that recording: {error}",
+
+  // ── Sidebar right-click menu ──
+  "sidebar.menu.rename": "Rename",
+  "sidebar.menu.delete": "Delete",
+  "sidebar.menu.newFolder": "New folder",
+
   "library.all": "All recordings",
   "library.all.empty": "No recordings yet",
   "library.all.emptyHint":
