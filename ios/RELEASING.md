@@ -101,6 +101,27 @@ override all other settings, including settings passed individually on the
 command line"*), so CI overrides the developer default without the developer
 default being wrong.
 
+### When Apple will not issue a profile
+
+`POST /v1/profiles` began answering a bare `500` for this team on 2026-09-05 —
+five runs across a day, first for the keyboard's bundle id and then for both —
+while the developer portal issued the same two profiles by hand without a
+complaint. Apple's status page never acknowledged it. The certificate was
+valid, the API key authenticated, and both bundle ids were registered; the
+create call alone was broken.
+
+So `asc_signing.py install` now looks for a profile it can reuse before it
+tries to make one: `IOS_APP_STORE`, `ACTIVE`, bound to the bundle id, and
+naming the certificate the run just imported. Creation is still there as the
+fallback, so an account with no reusable profile behaves exactly as it did
+before and nothing has to be undone when Apple recovers.
+
+A reused profile is never recorded in the state file, which is what `cleanup`
+deletes from. That is deliberate: the profiles keeping releases moving are
+hand-made, and a cleanup that tidied them away would take the workaround with
+it. If you make one by hand, any name will do — the run reads the name back off
+the profile rather than assuming its own.
+
 ### "Created via API" certificates, and the cap
 
 Before that, the archive step ran with `-allowProvisioningUpdates` and the API

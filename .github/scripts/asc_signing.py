@@ -131,6 +131,49 @@ def run(*args: str, quiet: bool = False) -> None:
         print(proc.stdout, end="")
 
 
+def find_reusable_profile(bundle: str, certificate_id: str) -> dict | None:
+    """An existing App Store profile this run may sign `bundle` with, or None.
+
+    Only ACTIVE profiles count, and only ones that name the certificate the
+    keychain is about to hold: a profile bound to some other identity archives
+    fine and then fails at export with a message that mentions neither the
+    profile nor the certificate.
+
+    The listing is re-read per profile because `profileContent` — the bytes
+    that get written to disk — is not something a collection response can be
+    relied on to carry.
+    """
+    listing = api("GET", "/v1/profiles?limit=200&include=bundleId")
+    identifiers = {
+        inc["id"]: inc["attributes"]["identifier"]
+        for inc in listing.get("included", [])
+        if inc["type"] == "bundleIds"
+    }
+
+    for candidate in listing["data"]:
+        attributes = candidate["attributes"]
+        if attributes.get("profileType") != "IOS_APP_STORE":
+            continue
+        if attributes.get("profileState") != "ACTIVE":
+            continue
+
+        related = (candidate.get("relationships", {}).get("bundleId") or {}).get("data")
+        if not related or identifiers.get(related["id"]) != bundle:
+            continue
+
+        certificates = api("GET", f"/v1/profiles/{candidate['id']}/certificates")["data"]
+        if certificate_id not in {c["id"] for c in certificates}:
+            print(
+                f"  {attributes.get('name')} matches {bundle} but names a "
+                f"different certificate — skipping it"
+            )
+            continue
+
+        return api("GET", f"/v1/profiles/{candidate['id']}")["data"]
+
+    return None
+
+
 # --------------------------------------------------------------------------
 # install
 
@@ -252,32 +295,51 @@ def install() -> None:
         except SystemExit as e:
             print(f"  {bundle} capabilities: could not read ({e})")
 
-        # A profile of this name may survive a run that died before cleanup.
-        # Apple rejects a duplicate name, so clear the old one first.
-        for stale in api("GET", "/v1/profiles?limit=200")["data"]:
-            if stale["attributes"].get("name") == f"{TAG} {bundle}":
-                print(f"  removing a leftover profile from an earlier run")
-                api("DELETE", f"/v1/profiles/{stale['id']}")
+        # Prefer a profile that already exists. Since 2026-09-05 Apple has
+        # answered POST /v1/profiles with a bare 500 for this team while the
+        # developer portal issues the very same profile without complaint, so a
+        # release cannot depend on being able to mint one. A hand-made profile
+        # is exactly what this step would have produced; reusing it is the only
+        # thing standing between a broken endpoint and a stuck release.
+        #
+        # Creation stays as the fallback rather than being replaced, so nothing
+        # has to be undone when Apple recovers: with no reusable profile in the
+        # account this behaves exactly as it did before.
+        profile = find_reusable_profile(bundle, certificate_id)
 
-        name = f"{TAG} {bundle}"
-        profile = api(
-            "POST",
-            "/v1/profiles",
-            {
-                "data": {
-                    "type": "profiles",
-                    "attributes": {"name": name, "profileType": "IOS_APP_STORE"},
-                    "relationships": {
-                        "bundleId": {"data": {"type": "bundleIds", "id": bundle_id}},
-                        "certificates": {
-                            "data": [{"type": "certificates", "id": certificate_id}]
+        if profile is not None:
+            name = profile["attributes"]["name"]
+            print(f"  reusing {name} — not this run's to delete")
+        else:
+            # A profile of this name may survive a run that died before cleanup.
+            # Apple rejects a duplicate name, so clear the old one first.
+            for stale in api("GET", "/v1/profiles?limit=200")["data"]:
+                if stale["attributes"].get("name") == f"{TAG} {bundle}":
+                    print(f"  removing a leftover profile from an earlier run")
+                    api("DELETE", f"/v1/profiles/{stale['id']}")
+
+            name = f"{TAG} {bundle}"
+            profile = api(
+                "POST",
+                "/v1/profiles",
+                {
+                    "data": {
+                        "type": "profiles",
+                        "attributes": {"name": name, "profileType": "IOS_APP_STORE"},
+                        "relationships": {
+                            "bundleId": {"data": {"type": "bundleIds", "id": bundle_id}},
+                            "certificates": {
+                                "data": [{"type": "certificates", "id": certificate_id}]
+                            },
                         },
-                    },
-                }
-            },
-        )["data"]
-        state["profile_ids"].append(profile["id"])
-        STATE.write_text(json.dumps(state))
+                    }
+                },
+            )["data"]
+            # Only a profile this run created goes in the state file: cleanup
+            # deletes what is listed there, and deleting a profile a human made
+            # would quietly remove the workaround on the way out.
+            state["profile_ids"].append(profile["id"])
+            STATE.write_text(json.dumps(state))
 
         # Read back what was actually bound. A profile pointing at the wrong app
         # id is only reported by `exportArchive`, twenty minutes later, as an
