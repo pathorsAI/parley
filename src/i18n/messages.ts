@@ -167,6 +167,13 @@ export const zhTW = {
   "sidebar.menu.delete": "刪除",
   "sidebar.menu.newFolder": "新增資料夾",
 
+  // ── 錄音卡片的右鍵選單 ──
+  "library.menu.open": "開啟",
+  "library.menu.rename": "重新命名",
+  "library.menu.move": "移到資料夾",
+  "library.menu.delete": "刪除",
+  "library.menu.removeFromOrg": "從組織移除",
+
   "library.all": "所有錄音",
   "library.all.empty": "還沒有任何錄音",
   "library.all.emptyHint": "開一場會議或匯入一段錄音,之後每一場都會依日期排在這裡。",
@@ -1175,6 +1182,13 @@ export const en = {
   "sidebar.menu.rename": "Rename",
   "sidebar.menu.delete": "Delete",
   "sidebar.menu.newFolder": "New folder",
+
+  // ── Recording card right-click menu ──
+  "library.menu.open": "Open",
+  "library.menu.rename": "Rename",
+  "library.menu.move": "Move to folder",
+  "library.menu.delete": "Delete",
+  "library.menu.removeFromOrg": "Remove from org",
 
   "library.all": "All recordings",
   "library.all.empty": "No recordings yet",

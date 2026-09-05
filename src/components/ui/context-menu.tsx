@@ -1,4 +1,5 @@
 import * as React from "react";
+import { ChevronRight } from "lucide-react";
 import { ContextMenu as ContextMenuPrimitive } from "radix-ui";
 
 import { cn } from "@/lib/utils";
@@ -93,6 +94,94 @@ function ContextMenuSeparator({
   );
 }
 
+function ContextMenuSub({ ...props }: React.ComponentProps<typeof ContextMenuPrimitive.Sub>) {
+  return <ContextMenuPrimitive.Sub data-slot="context-menu-sub" {...props} />;
+}
+
+function ContextMenuSubTrigger({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof ContextMenuPrimitive.SubTrigger>) {
+  return (
+    <ContextMenuPrimitive.SubTrigger
+      data-slot="context-menu-sub-trigger"
+      className={cn(
+        // Item's classes with `cursor-default` in place of `cursor-pointer`:
+        // this row opens a submenu and commits nothing, so a click cursor would
+        // promise an action that clicking never performs.
+        "relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden transition-colors",
+        "focus:bg-accent focus:text-accent-foreground",
+        // Staying lit while the submenu is open is the only thing on screen
+        // tying the floating panel back to the row that opened it.
+        "data-[state=open]:bg-accent data-[state=open]:text-accent-foreground",
+        "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        "[&_svg]:pointer-events-none [&_svg]:shrink-0",
+        className
+      )}
+      {...props}
+    >
+      {children}
+      <ChevronRight className="ml-auto size-3.5" />
+    </ContextMenuPrimitive.SubTrigger>
+  );
+}
+
+function ContextMenuSubContent({
+  className,
+  ...props
+}: React.ComponentProps<typeof ContextMenuPrimitive.SubContent>) {
+  return (
+    <ContextMenuPrimitive.Portal>
+      <ContextMenuPrimitive.SubContent
+        data-slot="context-menu-sub-content"
+        className={cn(
+          // Scrolls where the parent content clips: a submenu lists as many rows
+          // as the user has folders, and thirty of them would otherwise run off
+          // the bottom of the screen with no way to reach the rest.
+          "z-50 max-h-64 min-w-[8rem] overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md",
+          "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
+          "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+          className
+        )}
+        {...props}
+      />
+    </ContextMenuPrimitive.Portal>
+  );
+}
+
+/**
+ * Radix restores focus to whatever was focused before the menu opened. An item
+ * that hands focus straight to a freshly mounted text input loses it to that
+ * restore, and the input's blur handler then commits the untouched draft — so
+ * Rename looks like it did nothing at all.
+ */
+function preventFocusRestore(event: Event) {
+  event.preventDefault();
+}
+
+/**
+ * macOS keyboards have no context-menu key and WebKit does not synthesise a
+ * `contextmenu` event from Shift+F10, so a menu reached only by right-click
+ * would be mouse-only. Radix opens on the DOM event and nothing else, so
+ * dispatching a real one at the element's own corner is all it takes.
+ *
+ * Hang it on whatever inside the trigger actually takes focus — that is where a
+ * keyboard user is standing, and the event bubbles from there to the trigger.
+ */
+function openMenuFromKeyboard(event: React.KeyboardEvent<HTMLElement>) {
+  if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
+  event.preventDefault();
+  const box = event.currentTarget.getBoundingClientRect();
+  event.currentTarget.dispatchEvent(
+    new MouseEvent("contextmenu", {
+      bubbles: true,
+      clientX: box.left + 12,
+      clientY: box.bottom - 4,
+    })
+  );
+}
+
 export {
   ContextMenu,
   ContextMenuTrigger,
@@ -100,4 +189,9 @@ export {
   ContextMenuItem,
   ContextMenuLabel,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
+  ContextMenuSubContent,
+  preventFocusRestore,
+  openMenuFromKeyboard,
 };

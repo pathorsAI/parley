@@ -1,11 +1,4 @@
-import {
-  Fragment,
-  useEffect,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type ReactNode,
-} from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AudioLines,
   Check,
@@ -27,6 +20,8 @@ import {
   ContextMenuLabel,
   ContextMenuSeparator,
   ContextMenuTrigger,
+  openMenuFromKeyboard,
+  preventFocusRestore,
 } from "../ui/context-menu";
 import { buildOwnershipIndex, countByNode, nodeKey, type LibraryNode } from "../../lib/library/scope";
 import { beginMeeting } from "../../lib/meeting/start";
@@ -251,35 +246,6 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
-  );
-}
-
-/**
- * Radix restores focus to whatever was focused before the menu opened. Every
- * item here hands focus straight to a freshly mounted text input, and that
- * restore yanks it back out — the input's blur handler then commits the
- * untouched name, so Rename and New folder both look like they did nothing.
- */
-function preventFocusRestore(event: Event) {
-  event.preventDefault();
-}
-
-/**
- * macOS keyboards have no context-menu key and WebKit does not synthesise a
- * `contextmenu` event from Shift+F10, so a row menu reached only by right-click
- * would be mouse-only. Radix opens on the DOM event and nothing else, so
- * dispatching a real one at the row's own corner is all it takes.
- */
-function openMenuFromKeyboard(event: KeyboardEvent<HTMLElement>) {
-  if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
-  event.preventDefault();
-  const box = event.currentTarget.getBoundingClientRect();
-  event.currentTarget.dispatchEvent(
-    new MouseEvent("contextmenu", {
-      bubbles: true,
-      clientX: box.left + 12,
-      clientY: box.bottom - 4,
-    })
   );
 }
 
