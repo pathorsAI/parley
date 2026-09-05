@@ -6,8 +6,13 @@ import { cn } from "@/lib/utils"
 function ScrollArea({
   className,
   children,
+  viewportRef,
   ...props
-}: React.ComponentProps<typeof ScrollAreaPrimitive.Root>) {
+}: React.ComponentProps<typeof ScrollAreaPrimitive.Root> & {
+  // The viewport is the element that actually scrolls, so panes that need to
+  // read or drive the scroll position (stick-to-bottom) need a handle on it.
+  viewportRef?: React.Ref<React.ComponentRef<typeof ScrollAreaPrimitive.Viewport>>
+}) {
   return (
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
@@ -15,6 +20,7 @@ function ScrollArea({
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
+        ref={viewportRef}
         data-slot="scroll-area-viewport"
         className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1"
       >

@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowUp, ChevronDown, Loader2, MessageCircle, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import { useStore, meetingBriefText } from "../../lib/store";
+import { useStickToBottom } from "../../lib/useStickToBottom";
 import { hasProviderKey } from "../../lib/ai/settings";
 import { runAnalysis } from "../../lib/analysis/engine";
 import { useI18n } from "../../i18n";
@@ -158,13 +159,12 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
   const [askCards, setAskCards] = useState<AskCard[]>([]);
   const [input, setInput] = useState("");
   const [suggestionIdx, setSuggestionIdx] = useState(0);
-  const bottomRef = useRef<HTMLDivElement>(null);
   const busy = askCards.some((c) => c.busy);
   const suggestion = t(SUGGESTIONS[suggestionIdx]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [findings.length, askCards]);
+  // Same follow-the-tail rule as the transcript: chase new cards only while
+  // the reader is already at the bottom. No pill here — the feed's own ask bar
+  // already sits under it, and a second floating control would crowd it.
+  const { viewportRef } = useStickToBottom([findings.length, askCards]);
 
   // Rotate the ghost suggestion while the input is empty.
   useEffect(() => {
@@ -248,7 +248,7 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
         </div>
       </div>
 
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
         <div className="flex flex-col gap-2 px-3 pb-2">
           {empty && (
             <div className="flex flex-col items-center gap-3 px-1 py-10">
@@ -289,7 +289,6 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
               )}
             </div>
           ))}
-          <div ref={bottomRef} />
         </div>
       </ScrollArea>
 
