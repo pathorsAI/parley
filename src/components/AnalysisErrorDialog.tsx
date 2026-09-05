@@ -2,7 +2,7 @@ import { AlertTriangle, RefreshCw, Settings, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { hasProviderKey } from "../lib/ai/settings";
 import { PROVIDER_BY_ID } from "../lib/ai/providers";
-import { openSettings } from "../lib/nav";
+import { openSettings } from "../lib/nav/settings";
 import { runAnalysis } from "../lib/analysis/engine";
 import { useI18n } from "../i18n";
 import { log } from "../lib/log";

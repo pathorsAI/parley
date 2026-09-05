@@ -158,6 +158,9 @@ export const zhTW = {
   "shell.palette.hint.close": "關閉",
   "shell.palette.recordingIn": "在 {folder}",
   "shell.palette.openFailed": "開啟錄音失敗：{error}",
+
+  // ── 上一頁／下一頁 ──
+  "nav.skippedMissing": "有錄音已經被刪除，已跳過。",
   "library.all": "所有錄音",
   "library.all.empty": "還沒有任何錄音",
   "library.all.emptyHint": "開一場會議或匯入一段錄音,之後每一場都會依日期排在這裡。",
@@ -1158,6 +1161,9 @@ export const en = {
   "shell.palette.hint.close": "Close",
   "shell.palette.recordingIn": "in {folder}",
   "shell.palette.openFailed": "Couldn’t open that recording: {error}",
+
+  // ── Back / forward ──
+  "nav.skippedMissing": "Skipped a recording that no longer exists.",
   "library.all": "All recordings",
   "library.all.empty": "No recordings yet",
   "library.all.emptyHint":

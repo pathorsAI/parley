@@ -11,10 +11,10 @@ import {
   type QuickSwitchLabels,
   type QuickTarget,
 } from "../../lib/library/quickSwitch";
-import { loadHistoryEntry } from "../../lib/history/history";
+import { navigateTo, type Location } from "../../lib/nav/navigate";
+import { useShortcut } from "../../lib/shortcuts";
 import { isMeetingActive, useStore } from "../../lib/store";
 import { useI18n, type TranslationKey } from "../../i18n";
-import { log } from "../../lib/log";
 import type { LibraryTree } from "./useLibraryTree";
 
 /**
@@ -48,18 +48,18 @@ export function CommandPalette({ tree }: Readonly<{ tree: LibraryTree }>) {
   const activeRef = useRef<HTMLButtonElement>(null);
 
   // ⌘K / Ctrl+K toggles. The guard reads the store directly rather than the
-  // subscribed value so the listener never has to be re-registered.
-  useEffect(() => {
-    const onKeyDown = (e: globalThis.KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        if (isMeetingActive(useStore.getState().meetingStatus)) return;
-        setOpen((o) => !o);
-      }
-    };
-    globalThis.addEventListener("keydown", onKeyDown);
-    return () => globalThis.removeEventListener("keydown", onKeyDown);
-  }, []);
+  // subscribed value, so the binding never has to be re-registered.
+  // `whileTyping`: the palette's own search field has focus whenever it is
+  // open, so a ⌘K that respected the typing guard could open this thing but
+  // never close it again.
+  useShortcut(
+    { mod: true, key: "k" },
+    () => {
+      if (isMeetingActive(useStore.getState().meetingStatus)) return;
+      setOpen((o) => !o);
+    },
+    { whileTyping: true }
+  );
 
   // A meeting starting while the palette is up takes the window back.
   useEffect(() => {
@@ -148,45 +148,20 @@ export function CommandPalette({ tree }: Readonly<{ tree: LibraryTree }>) {
     activeRef.current?.scrollIntoView({ block: "nearest" });
   }, [active, count]);
 
+  /** A row is a PLACE, so opening one is a plain navigation — the switch that
+   *  used to live here is now lib/nav/navigate.ts, shared with back/forward. */
   async function activate(target: QuickTarget) {
-    const { openHome, openLibrary } = useStore.getState();
     // Close first: the palette must never sit over the route it just opened.
     setOpen(false);
-    switch (target.kind) {
-      case "home":
-        openHome();
-        return;
-      case "all":
-        openLibrary({ kind: "personal", node: { kind: "all" } });
-        return;
-      case "folder":
-        openLibrary({ kind: "personal", node: { kind: "folder", folderId: target.id } });
-        return;
-      case "unassigned":
-        openLibrary({ kind: "personal", node: { kind: "unassigned" } });
-        return;
-      case "voice":
-        openLibrary({ kind: "voice" });
-        return;
-      case "org":
-        tree.ensureOrgFolders(target.orgId);
-        openLibrary({ kind: "org", id: target.orgId, name: target.orgName, folderId: null });
-        return;
-      case "orgFolder":
-        openLibrary({ kind: "org", id: target.orgId, name: target.orgName, folderId: target.id });
-        return;
-      case "recording":
-        try {
-          // Switches the app to the study route itself.
-          await loadHistoryEntry(target.id);
-        } catch (e) {
-          log.error("palette: open failed", { id: target.id, error: String(e) });
-          toast.error(
-            t("shell.palette.openFailed", {
-              error: e instanceof Error ? e.message : String(e),
-            })
-          );
-        }
+    // The org's folders are fetched lazily; opening the org is also the moment
+    // its children become worth having.
+    if (target.kind === "org") tree.ensureOrgFolders(target.orgId);
+    const outcome = await navigateTo(locationOf(target));
+    if (outcome.status === "unavailable") {
+      const e = outcome.error;
+      toast.error(
+        t("shell.palette.openFailed", { error: e instanceof Error ? e.message : String(e) })
+      );
     }
   }
 
@@ -279,6 +254,38 @@ export function CommandPalette({ tree }: Readonly<{ tree: LibraryTree }>) {
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
   );
+}
+
+/** The place a row stands for. Every row is one — that is the palette's whole
+ *  contract (see the header), so this mapping is total and can't fail. */
+function locationOf(target: QuickTarget): Location {
+  switch (target.kind) {
+    case "home":
+      return { kind: "home" };
+    case "all":
+      return { kind: "library", selection: { kind: "personal", node: { kind: "all" } } };
+    case "folder":
+      return {
+        kind: "library",
+        selection: { kind: "personal", node: { kind: "folder", folderId: target.id } },
+      };
+    case "unassigned":
+      return { kind: "library", selection: { kind: "personal", node: { kind: "unassigned" } } };
+    case "voice":
+      return { kind: "library", selection: { kind: "voice" } };
+    case "org":
+      return {
+        kind: "library",
+        selection: { kind: "org", id: target.orgId, name: target.orgName, folderId: null },
+      };
+    case "orgFolder":
+      return {
+        kind: "library",
+        selection: { kind: "org", id: target.orgId, name: target.orgName, folderId: target.id },
+      };
+    case "recording":
+      return { kind: "entry", id: target.id };
+  }
 }
 
 /** The icons match the sidebar's, so a row means the same thing in both. */

@@ -1,6 +1,6 @@
-import type { SettingsCategory } from "./store";
-import { openSettingsWindow } from "./settingsSync";
-import { log } from "./log";
+import type { SettingsCategory } from "../store";
+import { openSettingsWindow } from "../settingsSync";
+import { log } from "../log";
 
 /**
  * Where "go somewhere else in the app" is decided — one module, so a call site
