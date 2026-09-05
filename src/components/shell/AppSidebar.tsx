@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  AudioLines,
   Check,
   ChevronRight,
   Folder,
@@ -51,7 +52,10 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   // count of exactly the eight cards clicking it opens.
   const index = buildOwnershipIndex(tree.personalFolders);
   const counts = countByNode(tree.summaries, index);
-  const countAt = (node: LibraryNode) => counts.get(nodeKey(node)) ?? 0;
+  // `all` owns nothing, so it is not in the one-pass count — what it opens is
+  // simply every summary, which is what its number has to be.
+  const countAt = (node: LibraryNode) =>
+    node.kind === "all" ? tree.summaries.length : counts.get(nodeKey(node)) ?? 0;
 
   const libraryActive = appMode === "library";
   const personalSel = selection.kind === "personal" ? selection : null;
@@ -77,6 +81,17 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         label={t("home.title")}
         active={appMode === "home"}
         onSelect={openHome}
+      />
+
+      {/* Every recording, by date (#330). Above the folders on purpose: it is the
+          answer when you cannot remember which folder you filed something in,
+          which is most of the time. */}
+      <Row
+        icon={<AudioLines className="size-3.5" />}
+        label={t("library.all")}
+        count={countAt({ kind: "all" })}
+        active={nodeActive({ kind: "all" })}
+        onSelect={() => selectLibrary({ kind: "personal", node: { kind: "all" } })}
       />
 
       <GroupLabel

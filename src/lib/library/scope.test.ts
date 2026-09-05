@@ -23,6 +23,7 @@ const idx = buildOwnershipIndex(folders);
 const ACME: LibraryNode = { kind: "folder", folderId: "f-acme" };
 const GLOBEX: LibraryNode = { kind: "folder", folderId: "f-globex" };
 const NONE: LibraryNode = { kind: "unassigned" };
+const ALL: LibraryNode = { kind: "all" };
 
 const entries: FiledRecording[] = [
   { folderId: "f-acme" },
@@ -65,6 +66,27 @@ describe("countByNode", () => {
   it("sweeps orphans into unassigned", () => {
     // null + {} + deleted folder.
     expect(counts.get(nodeKey(NONE))).toBe(3);
+  });
+});
+
+describe("the all node (#330)", () => {
+  it("takes every recording, however it is filed", () => {
+    for (const e of entries) expect(inNode(e, ALL, idx)).toBe(true);
+  });
+
+  it("is never where a recording LIVES — ownerNode can only answer folder or unassigned", () => {
+    for (const e of entries) expect(ownerNode(e, idx).kind).not.toBe("all");
+  });
+
+  it("stays out of the owner counts so the tree total is not doubled", () => {
+    const counts = countByNode(entries, idx);
+    expect(counts.has(nodeKey(ALL))).toBe(false);
+    expect([...counts.values()].reduce((sum, n) => sum + n, 0)).toBe(entries.length);
+  });
+
+  it("keeps its own identity apart from the other nodes", () => {
+    expect(nodeKey(ALL)).not.toBe(nodeKey(NONE));
+    expect(nodeKey(ALL)).not.toBe(nodeKey(ACME));
   });
 });
 

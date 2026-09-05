@@ -61,8 +61,9 @@ export function formatDate(ts: number, locale: string): string {
   });
 }
 
-/** Per-card cloud-sync indicator. Hidden when signed out (sync not in use). */
-function SyncIcon({ sync, signedIn }: Readonly<{ sync: HistorySyncState; signedIn: boolean }>) {
+/** Per-recording cloud-sync indicator. Hidden when signed out (sync not in use).
+ *  Shared with the all-recordings timeline so a row and a card say the same thing. */
+export function SyncIcon({ sync, signedIn }: Readonly<{ sync: HistorySyncState; signedIn: boolean }>) {
   const { t } = useI18n();
   if (!signedIn) return null;
   if (sync === "synced")
@@ -335,9 +336,18 @@ export function MoveDialog({
   );
 }
 
-/** The hover toolbar in a card's top-right corner: move, share, rename, delete. */
-function CardActions({
+/**
+ * The hover toolbar: move, share, rename, delete.
+ *
+ * Exported because the all-recordings timeline (#330) offers exactly the same
+ * four actions on a row — filing something you just found is the whole point of
+ * a view that spans every folder. Only the placement differs, which is what
+ * `className` is for: a card pins it to the top-right corner, a row sits it in
+ * the flow at the end of the line.
+ */
+export function CardActions({
   entry,
+  className = "absolute right-2 top-2 z-10 flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100",
   isOrgContext,
   isCloudOnly,
   canShare,
@@ -352,6 +362,8 @@ function CardActions({
   onMove,
 }: Readonly<{
   entry: HistoryCardItem;
+  /** Where the toolbar sits. Defaults to a card's top-right corner. */
+  className?: string;
   isOrgContext: boolean;
   isCloudOnly: boolean;
   canShare: boolean;
@@ -372,7 +384,7 @@ function CardActions({
   const canRename = !isCloudOnly && !isOrgContext;
   const deleteLabel = isOrgContext ? t("history.org.remove") : t("history.delete");
   return (
-    <div className="absolute right-2 top-2 z-10 flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
+    <div className={className}>
       {canMove && (
         <MoveMenu folders={folders} currentFolderId={entry.folderId ?? null} onMove={onMove} />
       )}

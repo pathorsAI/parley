@@ -1,4 +1,4 @@
-import { ClipboardList, FileAudio, Import, Mic } from "lucide-react";
+import { ArrowRight, ClipboardList, FileAudio, Import, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { useStore } from "../../lib/store";
 import { loadHistoryEntry } from "../../lib/history/history";
@@ -19,6 +19,7 @@ import type { LibraryTree } from "../shell/useLibraryTree";
 export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const { t, language } = useI18n();
   const userName = useStore((s) => s.settings.userName);
+  const openLibrary = useStore((s) => s.openLibrary);
 
   const folderName = (id: string | null | undefined) =>
     id ? tree.personalFolders.find((f) => f.id === id)?.name : undefined;
@@ -72,12 +73,22 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
 
         {/* ── Recent recordings ───────────────────────────────────────────── */}
         <section className="flex flex-col gap-1.5">
-          <h2
-            className="animate-fade-up text-[11px] font-bold uppercase tracking-wider text-muted-foreground"
-            style={delay(180)}
-          >
-            {t("home.recent")}
-          </h2>
+          <div className="animate-fade-up flex items-center gap-2" style={delay(180)}>
+            <h2 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+              {t("home.recent")}
+            </h2>
+            {/* Six is a shortcut, not a browser (#330) — this is the way out of it. */}
+            {tree.summaries.length > recent.length && (
+              <button
+                type="button"
+                onClick={() => openLibrary({ kind: "personal", node: { kind: "all" } })}
+                className="ml-auto inline-flex cursor-pointer items-center gap-1 rounded px-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {t("home.viewAll")}
+                <ArrowRight className="size-3" />
+              </button>
+            )}
+          </div>
           {recent.length === 0 && (
             <p
               className="animate-fade-up rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground"

@@ -84,6 +84,7 @@ export function CommandPalette({ tree }: Readonly<{ tree: LibraryTree }>) {
 
   const labels: QuickSwitchLabels = {
     home: t("home.title"),
+    all: t("library.all"),
     unassigned: t("library.unassigned"),
     voice: t("history.sidebar.voiceTyping"),
   };
@@ -95,7 +96,12 @@ export function CommandPalette({ tree }: Readonly<{ tree: LibraryTree }>) {
   const countAt = (node: LibraryNode) => counts.get(nodeKey(node)) ?? 0;
   const folderNames = new Map(tree.personalFolders.map((f) => [f.id, f.name]));
 
-  const targets: QuickTarget[] = [{ kind: "home" }];
+  const targets: QuickTarget[] = [
+    { kind: "home" },
+    // `all` owns nothing, so it is absent from the one-pass count — what it
+    // opens is every summary (see lib/library/scope).
+    { kind: "all", count: tree.summaries.length },
+  ];
   for (const f of tree.personalFolders) {
     targets.push({
       kind: "folder",
@@ -149,6 +155,9 @@ export function CommandPalette({ tree }: Readonly<{ tree: LibraryTree }>) {
     switch (target.kind) {
       case "home":
         openHome();
+        return;
+      case "all":
+        openLibrary({ kind: "personal", node: { kind: "all" } });
         return;
       case "folder":
         openLibrary({ kind: "personal", node: { kind: "folder", folderId: target.id } });
@@ -277,6 +286,8 @@ function iconFor(target: QuickTarget): ReactNode {
   switch (target.kind) {
     case "home":
       return <House className="size-3.5" />;
+    case "all":
+      return <AudioLines className="size-3.5" />;
     case "folder":
     case "orgFolder":
       return <Folder className="size-3.5" />;
@@ -305,6 +316,7 @@ function metaFor(
     }
     case "orgFolder":
       return target.orgName;
+    case "all":
     case "folder":
       return target.count > 0 ? String(target.count) : "";
     default:

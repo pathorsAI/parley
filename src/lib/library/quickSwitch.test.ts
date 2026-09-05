@@ -15,6 +15,7 @@ import {
  */
 
 const labels: QuickSwitchLabels = {
+  all: "所有錄音",
   home: "首頁",
   unassigned: "還沒歸檔",
   voice: "語音輸入",
@@ -95,6 +96,7 @@ describe("targetKey", () => {
 describe("targetLabel", () => {
   it("takes the fixed nodes' names from the caller's dictionary", () => {
     expect(targetLabel({ kind: "home" }, labels)).toBe("首頁");
+    expect(targetLabel({ kind: "all", count: 18 }, labels)).toBe("所有錄音");
     expect(targetLabel({ kind: "unassigned", count: 3 }, labels)).toBe("還沒歸檔");
     expect(targetLabel({ kind: "voice" }, labels)).toBe("語音輸入");
   });

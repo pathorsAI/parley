@@ -29,6 +29,7 @@ import { log } from "../../lib/log";
 import { isTauri } from "../../lib/tauriEvents";
 import { VoiceTypingHistory } from "../../history/VoiceTypingHistory";
 import { LibraryCard, MoveDialog } from "./LibraryCards";
+import { RecordingTimeline } from "./RecordingTimeline";
 import type { LibraryTree } from "../shell/useLibraryTree";
 import type { Folder as LocalFolder } from "../../lib/history/folders";
 import type { CloudOrg, CloudRecordingSummary } from "../../lib/cloud/types";
@@ -85,7 +86,7 @@ function handoffTarget(
 /** Which "nothing here" copy fits the open scope. */
 function emptyStateCopy(
   t: Translate,
-  scope: Readonly<{ searching: boolean; hasFolder: boolean; isOrg: boolean }>
+  scope: Readonly<{ searching: boolean; hasFolder: boolean; isOrg: boolean; isAll: boolean }>
 ): { title: string; hint: string } {
   if (scope.searching) {
     return { title: t("history.searchEmpty"), hint: t("history.searchEmptyHint") };
@@ -94,6 +95,8 @@ function emptyStateCopy(
     return { title: t("history.folder.empty"), hint: t("history.folder.emptyHint") };
   }
   if (scope.isOrg) return { title: t("history.org.empty"), hint: t("history.org.emptyHint") };
+  // Empty here means empty everywhere — there is no folder left to go and look in.
+  if (scope.isAll) return { title: t("library.all.empty"), hint: t("library.all.emptyHint") };
   return { title: t("library.unassigned.empty"), hint: t("library.unassigned.emptyHint") };
 }
 
@@ -139,6 +142,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const isOrg = selection.kind === "org";
   const isVoice = selection.kind === "voice";
   const node = selection.kind === "personal" ? selection.node : null;
+  const isAll = node?.kind === "all";
 
   // ── Entries for the selected scope ────────────────────────────────────────
   const refresh = useCallback(() => {
@@ -306,15 +310,22 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         }
         await setEntryFolder(item.id, folderId);
         await emitHistoryUpdated(item.id);
-        // Drop it from the grid immediately: it now belongs to another node.
-        setEntries((prev) => prev?.filter((e) => e.id !== item.id) ?? null);
+        // A folder node shows one node's worth, so a re-filed recording leaves
+        // it. The all node shows every node's worth, so the same recording
+        // stays put and only its folder chip changes — dropping it there would
+        // make filing something look like deleting it.
+        setEntries((prev) => {
+          if (!prev) return null;
+          if (isAll) return prev.map((e) => (e.id === item.id ? { ...e, folderId } : e));
+          return prev.filter((e) => e.id !== item.id);
+        });
         tree.reloadSummaries();
       } catch (e) {
         log.error("library: move failed", { id: item.id, error: String(e) });
         toast.error(t("history.move.failed", { error: errText(e) }));
       }
     },
-    [t, tree]
+    [isAll, t, tree]
   );
 
   /** The org grid files into org folders, which are a different registry. */
@@ -380,7 +391,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const folderName = openFolderName(selection, scopeFolders);
   const searching = searchQuery.length > 0;
   const promptTarget = handoffTarget(t, movePrompt, tree.orgFolders);
-  const empty = emptyStateCopy(t, { searching, hasFolder: !!folderName, isOrg });
+  const empty = emptyStateCopy(t, { searching, hasFolder: !!folderName, isOrg, isAll });
 
   let body;
   if (entries === null) {
@@ -396,6 +407,36 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         <p className="text-sm text-muted-foreground">{empty.title}</p>
         <p className="max-w-80 text-xs text-muted-foreground/70">{empty.hint}</p>
       </div>
+    );
+  } else if (isAll) {
+    // A different question deserves a different shape — see RecordingTimeline.
+    body = (
+      <RecordingTimeline
+        entries={visible}
+        locale={locale}
+        signedIn={tree.signedIn}
+        orgs={tree.orgs}
+        orgFolders={tree.orgFolders}
+        busyId={busyId}
+        downloadingId={downloadingId}
+        sharingId={sharingId}
+        folders={scopeFolders}
+        onOpen={(entry) => {
+          openItem(entry).catch((error) =>
+            log.error("library: open failed", { id: entry.id, error: String(error) })
+          );
+        }}
+        onDelete={(entry) => {
+          remove(entry).catch(() => {});
+        }}
+        onRename={(id, title) => {
+          rename(id, title).catch(() => {});
+        }}
+        onShare={(entry, org, folderId) => setMovePrompt({ item: entry, org, folderId })}
+        onMove={(entry, folderId) => {
+          move(entry, folderId).catch(() => {});
+        }}
+      />
     );
   } else {
     body = (
@@ -442,7 +483,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           isOrg={isOrg}
           orgName={selection.kind === "org" ? selection.name : null}
           folderName={folderName}
-          rootLabel={t("library.unassigned")}
+          rootLabel={isAll ? t("library.all") : t("library.unassigned")}
         />
         <span className="text-xs text-muted-foreground">
           {t("history.count", { count: visible.length })}
@@ -489,7 +530,9 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       </header>
 
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">{body}</div>
+      {/* The timeline's date headers are sticky, so it owns its own top padding
+          — rows must slide under the header, not through a gap above it. */}
+      <div className={`min-h-0 flex-1 overflow-y-auto ${isAll ? "px-4 pb-4" : "p-4"}`}>{body}</div>
 
       {movePrompt && (
         <MoveDialog

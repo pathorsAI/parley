@@ -16,11 +16,23 @@ export interface FiledRecording {
   folderId?: string | null;
 }
 
-/** A node of the personal tree. Orgs keep their own folder-only rule below. */
-export type LibraryNode =
+/** The node a recording LIVES in. Every recording has exactly one. */
+export type OwnerNode =
   | { kind: "folder"; folderId: string }
   /** Not filed anywhere (or filed into a folder that has since been deleted). */
   | { kind: "unassigned" };
+
+/**
+ * A node of the personal tree — somewhere the sidebar can select into. Orgs keep
+ * their own folder-only rule below.
+ *
+ * `all` is a VIEW, not a home: it matches every recording instead of owning any,
+ * which is why {@link ownerNode} can never return it and why it stays out of the
+ * {@link countByNode} pass. It exists because filing is exactly the thing you
+ * forget — without it, the only way to reach a recording is to remember which
+ * folder you put it in (issue #330).
+ */
+export type LibraryNode = OwnerNode | { kind: "all" };
 
 /** The folder facts `ownerNode` needs, prepared once per render. */
 export interface OwnershipIndex {
@@ -38,7 +50,7 @@ export function buildOwnershipIndex(folders: readonly FolderRef[]): OwnershipInd
 
 /** The one node `entry` belongs to. Total by construction: a folder id nothing
  *  answers to lands on `unassigned` rather than falling out of the tree. */
-export function ownerNode(entry: FiledRecording, idx: OwnershipIndex): LibraryNode {
+export function ownerNode(entry: FiledRecording, idx: OwnershipIndex): OwnerNode {
   const folderId = entry.folderId ?? null;
   if (folderId && idx.folders.has(folderId)) return { kind: "folder", folderId };
   return { kind: "unassigned" };
@@ -46,7 +58,14 @@ export function ownerNode(entry: FiledRecording, idx: OwnershipIndex): LibraryNo
 
 /** Stable identity for a node — for map keys and selection comparison. */
 export function nodeKey(node: LibraryNode): string {
-  return node.kind === "folder" ? `f:${node.folderId}` : "unassigned";
+  switch (node.kind) {
+    case "all":
+      return "all";
+    case "folder":
+      return `f:${node.folderId}`;
+    case "unassigned":
+      return "unassigned";
+  }
 }
 
 export function sameNode(a: LibraryNode, b: LibraryNode): boolean {
@@ -55,12 +74,19 @@ export function sameNode(a: LibraryNode, b: LibraryNode): boolean {
 
 /** Is `entry` on `node`? The grid filter. */
 export function inNode(entry: FiledRecording, node: LibraryNode, idx: OwnershipIndex): boolean {
+  if (node.kind === "all") return true;
   return sameNode(ownerNode(entry, idx), node);
 }
 
-/** Every node's recording count in one pass, keyed by {@link nodeKey} — the
- *  sidebar draws hundreds of rows off one traversal, and each count is a count
- *  of exactly what clicking that row opens. */
+/**
+ * Every OWNER node's recording count in one pass, keyed by {@link nodeKey} — the
+ * sidebar draws hundreds of rows off one traversal, and each count is a count of
+ * exactly what clicking that row opens.
+ *
+ * `all` is deliberately absent: it owns nothing, so folding it in here would
+ * double every recording in the total. Its count is just `entries.length`, which
+ * is what the sidebar uses.
+ */
 export function countByNode(
   entries: readonly FiledRecording[],
   idx: OwnershipIndex
