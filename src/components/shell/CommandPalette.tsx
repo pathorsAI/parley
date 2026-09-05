@@ -104,8 +104,7 @@ export function CommandPalette({ tree }: Readonly<{ tree: LibraryTree }>) {
       count: countAt({ kind: "folder", folderId: f.id }),
     });
   }
-  targets.push({ kind: "unassigned", count: countAt({ kind: "unassigned" }) });
-  targets.push({ kind: "voice" });
+  targets.push({ kind: "unassigned", count: countAt({ kind: "unassigned" }) }, { kind: "voice" });
   if (tree.signedIn) {
     for (const org of tree.orgs) {
       targets.push({ kind: "org", orgId: org.id, orgName: org.name });
