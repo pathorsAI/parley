@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isAtBottom } from "./useStickToBottom";
+import { isAtBottom, isUserTakeover } from "./useStickToBottom";
 
 describe("isAtBottom", () => {
   it("is true when the viewport is parked exactly at the bottom", () => {
@@ -29,5 +29,26 @@ describe("isAtBottom", () => {
 
   it("tolerates the sub-pixel overshoot browsers report at the very bottom", () => {
     expect(isAtBottom({ scrollTop: 800.4, scrollHeight: 1200, clientHeight: 400 }, 0)).toBe(true);
+  });
+});
+
+describe("isUserTakeover", () => {
+  it("reads upward movement as the user — a scrollbar thumb dragged back up", () => {
+    expect(isUserTakeover({ scrollTop: 600, previousScrollTop: 800 }, 2)).toBe(true);
+  });
+
+  it("leaves our own tail-chasing scroll alone as it travels down", () => {
+    expect(isUserTakeover({ scrollTop: 800, previousScrollTop: 600 }, 2)).toBe(false);
+  });
+
+  it("ignores a viewport that has not moved", () => {
+    expect(isUserTakeover({ scrollTop: 800, previousScrollTop: 800 }, 2)).toBe(false);
+  });
+
+  it("absorbs sub-pixel jitter below the tolerance", () => {
+    expect(isUserTakeover({ scrollTop: 799.5, previousScrollTop: 800 }, 2)).toBe(false);
+    // Exactly on the tolerance is still jitter; one pixel more is a hand.
+    expect(isUserTakeover({ scrollTop: 798, previousScrollTop: 800 }, 2)).toBe(false);
+    expect(isUserTakeover({ scrollTop: 797.9, previousScrollTop: 800 }, 2)).toBe(true);
   });
 });

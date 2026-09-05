@@ -19,6 +19,9 @@ const BOTTOM_THRESHOLD_PX = 48;
  */
 const SETTLE_MS = 700;
 
+/** Upward movement below this many pixels is jitter, not a hand on the scrollbar. */
+const UPWARD_TOLERANCE_PX = 2;
+
 /**
  * Whether a scroll container is parked at (or within `threshold` of) its
  * bottom. A container whose content is shorter than its viewport never
@@ -29,6 +32,21 @@ export function isAtBottom(
   threshold: number
 ): boolean {
   return m.scrollHeight - m.scrollTop - m.clientHeight <= threshold;
+}
+
+/**
+ * Whether a scroll event that arrived while one of our own tail-chasing
+ * scrolls was in flight can only have come from the user. Those scrolls only
+ * ever travel toward the bottom, so any upward movement beyond sub-pixel
+ * jitter is someone else's hand — a drag of the Radix scrollbar thumb, in
+ * practice, which is a sibling of the viewport and fires no wheel, touch or
+ * key event for us to listen to.
+ */
+export function isUserTakeover(
+  m: { scrollTop: number; previousScrollTop: number },
+  tolerance: number
+): boolean {
+  return m.previousScrollTop - m.scrollTop > tolerance;
 }
 
 export interface StickToBottom<T extends HTMLElement> {
@@ -62,9 +80,12 @@ export function useStickToBottom<T extends HTMLElement = HTMLDivElement>(
   const [following, setFollowing] = useState(true);
   // Mirror of `following` readable from effects that must not re-run on it.
   const followingRef = useRef(true);
-  // Set while a scroll we started is still travelling.
-  const inFlight = useRef(false);
+  // Which scroll of ours is still travelling, if any: "tail" only ever heads
+  // down, "free" (jump-to-timestamp) may legitimately head up.
+  const inFlight = useRef<"tail" | "free" | null>(null);
   const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Where the viewport was on the previous scroll event, to read direction.
+  const previousTop = useRef(0);
 
   const arm = useCallback((next: boolean) => {
     followingRef.current = next;
@@ -81,20 +102,26 @@ export function useStickToBottom<T extends HTMLElement = HTMLDivElement>(
     (resync: boolean) => {
       if (settleTimer.current !== null) clearTimeout(settleTimer.current);
       settleTimer.current = null;
-      inFlight.current = false;
+      inFlight.current = null;
       if (resync) sync();
     },
     [sync]
   );
 
-  const programmaticScroll = useCallback(
-    (scroll: () => void) => {
+  const guard = useCallback(
+    (kind: "tail" | "free", scroll: () => void) => {
       if (settleTimer.current !== null) clearTimeout(settleTimer.current);
-      inFlight.current = true;
+      inFlight.current = kind;
+      previousTop.current = viewportRef.current?.scrollTop ?? 0;
       settleTimer.current = setTimeout(() => release(true), SETTLE_MS);
       scroll();
     },
     [release]
+  );
+
+  const programmaticScroll = useCallback(
+    (scroll: () => void) => guard("free", scroll),
+    [guard]
   );
 
   const scrollToBottom = useCallback(
@@ -102,9 +129,9 @@ export function useStickToBottom<T extends HTMLElement = HTMLDivElement>(
       const el = viewportRef.current;
       if (!el) return;
       arm(true); // the tail is where we are heading, so re-arm immediately
-      programmaticScroll(() => el.scrollTo({ top: el.scrollHeight, behavior }));
+      guard("tail", () => el.scrollTo({ top: el.scrollHeight, behavior }));
     },
-    [arm, programmaticScroll]
+    [arm, guard]
   );
 
   const attach = useCallback((el: T | null) => {
@@ -115,11 +142,28 @@ export function useStickToBottom<T extends HTMLElement = HTMLDivElement>(
   useEffect(() => {
     const el = viewport;
     if (!el) return;
+    previousTop.current = el.scrollTop;
     const onScroll = () => {
-      if (inFlight.current) {
-        // Positions passed through mid-flight say nothing about the user; only
-        // arriving at the tail ends the guard early.
-        if (isAtBottom(el, BOTTOM_THRESHOLD_PX)) release(true);
+      const top = el.scrollTop;
+      const before = previousTop.current;
+      previousTop.current = top;
+      const kind = inFlight.current;
+      if (kind) {
+        // Arriving at the tail ends the guard: we are where we were aiming.
+        // This also covers the content shrinking under us, which clamps
+        // scrollTop downward without anyone touching anything.
+        if (isAtBottom(el, BOTTOM_THRESHOLD_PX)) {
+          release(true);
+          return;
+        }
+        // A tail-chasing scroll never travels upward, so this is the user —
+        // and since the position has already moved, re-read the follow from it
+        // rather than waiting for another event that a short drag may not send.
+        if (kind === "tail" && isUserTakeover({ scrollTop: top, previousScrollTop: before }, UPWARD_TOLERANCE_PX)) {
+          release(true);
+          return;
+        }
+        // Anything else passed through mid-flight says nothing about the user.
         return;
       }
       sync();
