@@ -147,6 +147,17 @@ export const zhTW = {
   // ── App shell：一棵樹（#195）──
   "shell.folders": "資料夾",
   "shell.toggle": "展開／收合 {name}",
+
+  // ── ⌘K 快速切換（#332）──
+  "shell.palette.title": "快速跳到",
+  "shell.palette.placeholder": "搜尋資料夾或錄音…",
+  "shell.palette.empty": "沒有符合的項目",
+  "shell.palette.emptyHint": "換個關鍵字試試。",
+  "shell.palette.hint.move": "移動",
+  "shell.palette.hint.open": "開啟",
+  "shell.palette.hint.close": "關閉",
+  "shell.palette.recordingIn": "在 {folder}",
+  "shell.palette.openFailed": "開啟錄音失敗：{error}",
   "library.unassigned": "還沒歸檔",
   "library.unassigned.empty": "這裡沒有錄音",
   "library.unassigned.emptyHint": "還沒放進資料夾的錄音會落在這裡。用卡片上的資料夾圖示挑一個，它就會搬過去。",
@@ -1127,6 +1138,17 @@ export const en = {
   // ── App shell: the one tree (#195) ──
   "shell.folders": "Folders",
   "shell.toggle": "Expand or collapse {name}",
+
+  // ── ⌘K quick switcher (#332) ──
+  "shell.palette.title": "Jump to",
+  "shell.palette.placeholder": "Search folders and recordings…",
+  "shell.palette.empty": "Nothing matches",
+  "shell.palette.emptyHint": "Try another keyword.",
+  "shell.palette.hint.move": "Move",
+  "shell.palette.hint.open": "Open",
+  "shell.palette.hint.close": "Close",
+  "shell.palette.recordingIn": "in {folder}",
+  "shell.palette.openFailed": "Couldn’t open that recording: {error}",
   "library.unassigned": "Not filed yet",
   "library.unassigned.empty": "Nothing here",
   "library.unassigned.emptyHint":
