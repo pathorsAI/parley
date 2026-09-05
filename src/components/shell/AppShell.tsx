@@ -11,6 +11,7 @@ import { HomeScreen } from "../home/HomeScreen";
 import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
 import { useLibraryTree } from "./useLibraryTree";
+import { useNavShortcuts } from "../../lib/nav/useNavShortcuts";
 import { useStore, isMeetingActive, type AppMode } from "../../lib/store";
 
 const LibraryScreen = lazy(() =>
@@ -23,12 +24,18 @@ const LibraryScreen = lazy(() =>
  * something else: a RUNNING meeting, where the live coach owns the window.
  * Everything else — live idle, a loaded recording, the library — keeps the tree
  * on screen, so nothing is a mode you have to exit. (Settings is not a route
- * here: it opens as its own OS window, see lib/nav.ts.)
+ * here: it opens as its own OS window, see lib/nav/settings.ts.)
  */
 export function AppShell() {
   const appMode = useStore((s) => s.appMode);
   const meetingActive = useStore((s) => isMeetingActive(s.meetingStatus));
   const tree = useLibraryTree();
+
+  // Above the focused branch on purpose: back/forward stays bound during a
+  // running meeting so the keys don't die and revive with the tree. Pressing
+  // them there is harmless — navigateTo refuses to move while the coach owns
+  // the window, and a refusal leaves the stack alone.
+  useNavShortcuts();
 
   const focused = meetingActive;
 

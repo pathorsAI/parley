@@ -12,7 +12,7 @@ import { stopMockStream } from "../lib/mockStream";
 import { isMac } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
 import { beginMeeting } from "../lib/meeting/start";
-import { openSettings } from "../lib/nav";
+import { openSettings } from "../lib/nav/settings";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import {
