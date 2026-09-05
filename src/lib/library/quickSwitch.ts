@@ -16,6 +16,7 @@
 /** Somewhere the palette can jump to. */
 export type QuickTarget =
   | { kind: "home" }
+  | { kind: "all"; count: number }
   | { kind: "folder"; id: string; name: string; count: number }
   | { kind: "unassigned"; count: number }
   | { kind: "voice" }
@@ -24,12 +25,13 @@ export type QuickTarget =
   | { kind: "recording"; id: string; title: string; createdAt: number; folderId: string | null };
 
 /**
- * The three fixed nodes are named by the dictionary, not by the data, so the
+ * The fixed nodes are named by the dictionary, not by the data, so the
  * caller hands their translated labels in rather than this module importing
  * `i18n` (which would drag the store into a pure, node-tested module).
  */
 export interface QuickSwitchLabels {
   home: string;
+  all: string;
   unassigned: string;
   voice: string;
 }
@@ -39,6 +41,8 @@ export function targetKey(t: QuickTarget): string {
   switch (t.kind) {
     case "home":
       return "home";
+    case "all":
+      return "all";
     case "folder":
       return `folder:${t.id}`;
     case "unassigned":
@@ -59,6 +63,8 @@ export function targetLabel(t: QuickTarget, labels: QuickSwitchLabels): string {
   switch (t.kind) {
     case "home":
       return labels.home;
+    case "all":
+      return labels.all;
     case "unassigned":
       return labels.unassigned;
     case "voice":
