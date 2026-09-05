@@ -51,6 +51,10 @@ function argStr(v: unknown): string {
   return typeof v === "string" ? v : (JSON.stringify(v) ?? "");
 }
 
+/** Why the personal-cloud tools can't run — the same fix for both. */
+const CLOUD_SYNC_OFF =
+  "cloud sync is off — sign in to Parley Cloud and enable sync in Settings";
+
 /** Coerce a loosely-shaped severity into a valid {@link TimelineEvent} severity. */
 function normalizeSeverity(v: unknown): TimelineEvent["severity"] {
   if (v === "critical") return "critical";
@@ -534,6 +538,65 @@ async function rpcImportTranscript(a: RpcArgs): Promise<unknown> {
   return { imported, failed, folderId, folder: folderName || null };
 }
 
+/**
+ * The account's cloud mirror, each entry tagged with where it stands on THIS
+ * device: "cloud" = recorded elsewhere and not here yet, "stale" = the cloud copy
+ * is newer than the local one, "synced" = this device is current. Local-only
+ * entries are dropped — those are already list_recordings' job.
+ *
+ * This is how an agent on a secondary device sees what the primary one recorded.
+ */
+async function rpcListCloudRecordings(a: RpcArgs): Promise<unknown> {
+  if (!syncEnabled()) throw new Error(CLOUD_SYNC_OFF);
+  const { listCloudRecordings, listMergedHistory } = await import("./cloud/sync");
+  // Fetch the cloud list first purely so a failed fetch THROWS here.
+  // listMergedHistory falls back to local-only when the cloud is unreachable,
+  // which would read as "nothing to download" — the one wrong answer for a
+  // caller whose whole purpose is finding what to download.
+  await listCloudRecordings();
+
+  const query = (typeof a.query === "string" ? a.query : "").trim().toLowerCase();
+  const since = typeof a.since === "number" ? a.since : 0;
+  const limit = typeof a.limit === "number" ? Math.max(0, a.limit) : 50;
+  const pending = a.pending === true;
+
+  const matches = (await listMergedHistory()).filter(
+    (e) =>
+      e.sync !== "local" &&
+      (!pending || e.sync === "cloud" || e.sync === "stale") &&
+      e.createdAt >= since &&
+      (!query ||
+        e.title.toLowerCase().includes(query) ||
+        (e.snippet ?? "").toLowerCase().includes(query)),
+  );
+  return {
+    recordings: matches.slice(0, limit),
+    total: matches.length,
+    returned: Math.min(matches.length, limit),
+  };
+}
+
+/**
+ * Pull one of the account's cloud recordings onto this device — the MCP trigger
+ * for what the library grid does when you click a "cloud" card.
+ */
+async function rpcDownloadCloudRecording(a: RpcArgs): Promise<unknown> {
+  const id = argStr(a.id);
+  if (!id) throw new Error("id is required");
+  if (!syncEnabled()) throw new Error(CLOUD_SYNC_OFF);
+  const { listCloudRecordings, downloadCloudEntry } = await import("./cloud/sync");
+  // The summary carries hasAudio + updatedAt, which the download needs to fetch
+  // the blob and clear the stale flag afterwards.
+  const rec = (await listCloudRecordings()).find((r) => r.id === id);
+  if (!rec) {
+    throw new Error(`no cloud recording with id ${id} — get ids from list_cloud_recordings`);
+  }
+  await downloadCloudEntry({ id: rec.id, hasAudio: rec.hasAudio, cloudUpdatedAt: rec.updatedAt });
+  const { emitHistoryUpdated } = await import("./history/history");
+  await emitHistoryUpdated(id);
+  return { id, title: rec.title, hasAudio: rec.hasAudio, downloaded: true };
+}
+
 async function rpcCopyOrgRecordingToPersonal(a: RpcArgs): Promise<unknown> {
   const id = argStr(a.id);
   const { saveOrgRecordingToPersonal } = await import("./cloud/sync");
@@ -594,6 +657,8 @@ const RPC_HANDLERS = new Map<string, (a: RpcArgs) => Promise<unknown>>([
   ["share_recording_to_org", rpcShareRecordingToOrg],
   ["move_recording_to_org", rpcMoveRecordingToOrg],
   ["import_transcript", rpcImportTranscript],
+  ["list_cloud_recordings", rpcListCloudRecordings],
+  ["download_cloud_recording", rpcDownloadCloudRecording],
   ["copy_org_recording_to_personal", rpcCopyOrgRecordingToPersonal],
   ["delete_org_recording", rpcDeleteOrgRecording],
   ["delete_recording", rpcDeleteRecording],

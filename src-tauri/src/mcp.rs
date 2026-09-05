@@ -362,9 +362,9 @@ fn now_ms() -> u64 {
 
 /// Coarse read/write classification for the activity feed, by tool-name verb.
 fn tool_kind(name: &str) -> &'static str {
-    const WRITE_VERBS: [&str; 13] = [
+    const WRITE_VERBS: [&str; 14] = [
         "upsert_", "delete_", "add_", "remove_", "check_", "set_", "update_", "rename_", "move_",
-        "share_", "copy_", "create_", "import_",
+        "share_", "copy_", "create_", "import_", "download_",
     ];
     if WRITE_VERBS.iter().any(|v| name.starts_with(v)) {
         "write"
@@ -676,8 +676,10 @@ fn tools() -> Vec<Value> {
              cards saved before it existed = state unknown). Optional text query filters by \
              title + transcript snippet; `since` keeps only recordings created at/after that \
              epoch-ms timestamp — the cheap way for an external analyst to poll for new \
-             recordings. Org-shared recordings live in the cloud — list those with \
-             list_org_recordings.",
+             recordings. This is THIS DEVICE only: recordings made on the user's other \
+             devices sit in the cloud until pulled down — find those with \
+             list_cloud_recordings. Org-shared recordings live in the cloud too — list \
+             those with list_org_recordings.",
             json!({
                 "type": "object",
                 "properties": {
@@ -686,6 +688,47 @@ fn tools() -> Vec<Value> {
                     "since": { "type": "number", "description": "Only recordings with createdAt >= this epoch-ms timestamp." },
                     "limit": { "type": "number", "description": "Max results (default 50)." }
                 }
+            }),
+        ),
+        tool(
+            "list_cloud_recordings",
+            "List the account's recordings across all devices",
+            "List the signed-in account's PERSONAL cloud mirror — including recordings \
+             made on the user's other devices, which never appear in list_recordings \
+             until downloaded. Same summary cards as list_recordings plus `sync`: \
+             \"cloud\" (only on another device — not on this one yet), \"stale\" (a local \
+             copy exists but the cloud one is newer, e.g. another device re-analyzed \
+             it), or \"synced\" (this device is current). Pass pending: true for exactly \
+             the set this device is missing or behind on. Pull one down with \
+             download_cloud_recording. Requires the user to be signed in with sync \
+             enabled. This is the personal library — an org's shared space is \
+             list_org_recordings.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Case-insensitive text filter over title + snippet." },
+                    "since": { "type": "number", "description": "Only recordings with createdAt >= this epoch-ms timestamp." },
+                    "limit": { "type": "number", "description": "Max results (default 50)." },
+                    "pending": { "type": "boolean", "description": "Only what this device lacks: sync is \"cloud\" or \"stale\"." }
+                }
+            }),
+        ),
+        tool(
+            "download_cloud_recording",
+            "Download one of the account's cloud recordings to this device",
+            "Pull a recording from the account's personal cloud onto THIS device — the \
+             transcript, the saved analysis, and the audio when the cloud copy has it. \
+             Afterwards it is a normal local recording: it shows up in list_recordings, \
+             is readable with get_recording, searchable with search_meetings, and \
+             openable in replay. Re-downloading a \"stale\" entry refreshes the local \
+             copy from the cloud. Get ids from list_cloud_recordings. This is the \
+             personal library — the org equivalent is copy_org_recording_to_personal.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Cloud recording id (from list_cloud_recordings)." }
+                },
+                "required": ["id"]
             }),
         ),
         tool(
@@ -1286,6 +1329,29 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
                     "id": required_str(&args, "id")?,
                     "folderId": args.get("folderId").cloned().unwrap_or(Value::Null)
                 }),
+            )
+            .await?
+        }
+        // The personal cloud mirror lives behind the account's bearer token, which
+        // only the frontend holds — so both of these are RPCs into the app.
+        "list_cloud_recordings" => {
+            call_frontend(
+                state,
+                "list_cloud_recordings",
+                json!({
+                    "query": args.get("query").cloned().unwrap_or(Value::Null),
+                    "since": args.get("since").cloned().unwrap_or(Value::Null),
+                    "limit": args.get("limit").cloned().unwrap_or(Value::Null),
+                    "pending": args.get("pending").cloned().unwrap_or(Value::Null)
+                }),
+            )
+            .await?
+        }
+        "download_cloud_recording" => {
+            call_frontend(
+                state,
+                "download_cloud_recording",
+                json!({ "id": required_str(&args, "id")? }),
             )
             .await?
         }
@@ -1971,10 +2037,25 @@ fn speaker_label(names: &Value, source: &str, speaker: i64) -> String {
 
 // ── RPC bridge: enqueue a command, wait for the frontend's result ─────────────
 
+/// How long to wait for the frontend to answer. Most RPCs are local bookkeeping
+/// or a small JSON round trip and land in a couple of poll ticks. The two that
+/// pull a whole recording down from the cloud are bounded by the audio blob's
+/// size and the user's connection instead — and timing those out is worse than
+/// slow, because the download keeps running in the app and the caller is told it
+/// failed.
+fn rpc_timeout(action: &str) -> std::time::Duration {
+    match action {
+        "download_cloud_recording" | "copy_org_recording_to_personal" => {
+            std::time::Duration::from_secs(180)
+        }
+        _ => std::time::Duration::from_secs(20),
+    }
+}
+
 /// Enqueue a command carrying an id and wait for the frontend to execute it and
 /// append `{ id, ok, data|error }` to the results file. The frontend polls the
 /// queue every ~1.5s, so a round trip is typically 2–3s; cloud operations (org
-/// listing/moves) add their own network time. Times out after 20s.
+/// listing/moves) add their own network time. See {@link rpc_timeout}.
 async fn call_frontend(state: &HttpState, action: &str, args: Value) -> anyhow::Result<Value> {
     use std::io::Write;
     let id = new_id();
@@ -1993,7 +2074,7 @@ async fn call_frontend(state: &HttpState, action: &str, args: Value) -> anyhow::
     // timers suspended, so without this kick the poll loop may never run.
     let _ = state.app.emit(SESSION_COMMANDS_EVENT, ());
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + rpc_timeout(action);
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         if let Some(result) = find_result(&state.results_path, &id) {
@@ -2495,5 +2576,34 @@ mod tests {
         assert_eq!(tool_kind("add_dictionary_phrase"), "write");
         assert_eq!(tool_kind("update_dictionary_phrase"), "write");
         assert_eq!(tool_kind("delete_dictionary_phrase"), "write");
+    }
+
+    #[test]
+    fn pulling_a_cloud_recording_counts_as_a_write() {
+        // It puts a recording on this device's disk, so the activity log must not
+        // file it away as a harmless read.
+        assert_eq!(tool_kind("list_cloud_recordings"), "read");
+        assert_eq!(tool_kind("download_cloud_recording"), "write");
+    }
+
+    #[test]
+    fn recording_downloads_get_a_longer_deadline_than_bookkeeping() {
+        // A meeting's audio can take far longer than a folder rename; timing the
+        // download out would report failure while the app is still downloading.
+        let bookkeeping = rpc_timeout("rename_folder");
+        assert!(rpc_timeout("download_cloud_recording") > bookkeeping);
+        assert!(rpc_timeout("copy_org_recording_to_personal") > bookkeeping);
+    }
+
+    #[test]
+    fn every_tool_name_is_unique() {
+        let names: Vec<String> = tools()
+            .iter()
+            .filter_map(|t| t.get("name")?.as_str().map(str::to_string))
+            .collect();
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(names.len(), unique.len(), "duplicate tool name in tools()");
     }
 }

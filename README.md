@@ -89,12 +89,12 @@ Parley runs a local Model Context Protocol server. Point your MCP client at it �
 claude mcp add --transport http parley http://127.0.0.1:3011/mcp
 ```
 
-The exact endpoint, a ready-to-paste command, and a live view of what your client is doing are in **Settings → MCP Server**. 52 tools, in six groups:
+The exact endpoint, a ready-to-paste command, and a live view of what your client is doing are in **Settings → MCP Server**. 54 tools, in six groups:
 
 | Group | What it reaches | Tools |
 | --- | --- | --- |
 | **The meeting happening now** | What is on screen, what has been said, the checklist beside it | `get_app_context`, `get_focused_content`, `get_transcript`, `list_todos`, `add_todo`, `check_todo`, `list_evaluations` |
-| **Everything you have recorded** | Full-text search and full reads across history | `search_meetings`, `list_recordings`, `get_recording`, `rename_recording` |
+| **Everything you have recorded** | Full-text search and full reads across history, on this device and your others | `search_meetings`, `list_recordings`, `get_recording`, `rename_recording`, `list_cloud_recordings`, `download_cloud_recording` |
 | **The library, organized** | Personal folders, filing, bulk text import, deletion | `list_folders`, `create_folder`, `rename_folder`, `delete_folder`, `move_recording_to_folder`, `import_transcript`, `delete_recording` |
 | **Your team's shared space** | The org side, with the same permissions the app enforces | `list_orgs`, `list_org_recordings`, `list_org_folders`, `create_org_folder`, `share_recording_to_org`, `move_org_recording_to_folder`, `copy_org_recording_to_personal`, `delete_org_recording` |
 | **Hand over the analysis** | Writing findings, action items and the debrief back into the app | `set_recording_analysis`, `update_recording_meta`, `list_findings`, `set_findings`, `update_finding`, `upsert_eval_template`, `upsert_todo_template` |
