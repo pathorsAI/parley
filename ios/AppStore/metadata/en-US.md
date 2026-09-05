@@ -83,6 +83,28 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.7
+
+Dictation now lays your words out, not just tidies them up. The polish pass
+added in 1.6 was told to keep your own wording wherever it could, and that one
+instruction quietly forbade most of the repairs worth making. It may now
+reorder a sentence, merge two, split one that ran too long, repair a word the
+recogniser misheard, and turn a spoken "第一點… 第二點…" into an actual
+numbered list. What it still may not do is add anything you did not say, drop
+anything you did, or treat your dictation as a question to answer.
+
+A dictation you regret no longer has to be delivered before it can be deleted.
+While a session is live, ✕ now sits beside ⏹ on the voice pane: it cuts the
+session, throws the transcript away, and pastes nothing — so a false start
+stops having to land in your document first, for you to then hold ⌫ through.
+⏹ still means deliver.
+
+And dictation no longer goes deaf. If the microphone had been torn down behind
+the app's back, the next session would attach to it anyway and listen to
+silence, with no way out but force-quitting Parley. The app now checks that the
+microphone is genuinely running rather than merely present, and opens a fresh
+one when it is not.
+
 ## What's New — 1.6.2
 
 Dictation sends you back to the app you were typing in again. A version check,
