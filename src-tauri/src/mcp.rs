@@ -1971,10 +1971,25 @@ fn speaker_label(names: &Value, source: &str, speaker: i64) -> String {
 
 // ── RPC bridge: enqueue a command, wait for the frontend's result ─────────────
 
+/// How long to wait for the frontend to answer. Most RPCs are local bookkeeping
+/// or a small JSON round trip and land in a couple of poll ticks. The two that
+/// pull a whole recording down from the cloud are bounded by the audio blob's
+/// size and the user's connection instead — and timing those out is worse than
+/// slow, because the download keeps running in the app and the caller is told it
+/// failed.
+fn rpc_timeout(action: &str) -> std::time::Duration {
+    match action {
+        "download_cloud_recording" | "copy_org_recording_to_personal" => {
+            std::time::Duration::from_secs(180)
+        }
+        _ => std::time::Duration::from_secs(20),
+    }
+}
+
 /// Enqueue a command carrying an id and wait for the frontend to execute it and
 /// append `{ id, ok, data|error }` to the results file. The frontend polls the
 /// queue every ~1.5s, so a round trip is typically 2–3s; cloud operations (org
-/// listing/moves) add their own network time. Times out after 20s.
+/// listing/moves) add their own network time. See {@link rpc_timeout}.
 async fn call_frontend(state: &HttpState, action: &str, args: Value) -> anyhow::Result<Value> {
     use std::io::Write;
     let id = new_id();
@@ -1993,7 +2008,7 @@ async fn call_frontend(state: &HttpState, action: &str, args: Value) -> anyhow::
     // timers suspended, so without this kick the poll loop may never run.
     let _ = state.app.emit(SESSION_COMMANDS_EVENT, ());
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + rpc_timeout(action);
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         if let Some(result) = find_result(&state.results_path, &id) {
@@ -2495,5 +2510,14 @@ mod tests {
         assert_eq!(tool_kind("add_dictionary_phrase"), "write");
         assert_eq!(tool_kind("update_dictionary_phrase"), "write");
         assert_eq!(tool_kind("delete_dictionary_phrase"), "write");
+    }
+
+    #[test]
+    fn recording_downloads_get_a_longer_deadline_than_bookkeeping() {
+        // A meeting's audio can take far longer than a folder rename; timing the
+        // download out would report failure while the app is still downloading.
+        let bookkeeping = rpc_timeout("rename_folder");
+        assert!(rpc_timeout("download_cloud_recording") > bookkeeping);
+        assert!(rpc_timeout("copy_org_recording_to_personal") > bookkeeping);
     }
 }
