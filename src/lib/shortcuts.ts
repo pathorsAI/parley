@@ -124,8 +124,12 @@ let listening = false;
 
 function onKeyDown(e: KeyboardEvent): void {
   const mac = isMac();
-  // Copy: a handler is allowed to mount or unmount another shortcut's owner.
-  for (const b of [...bindings]) {
+  // A snapshot, not a convenience: a handler may mount or unmount another
+  // shortcut's owner, and iterating the live Set would then visit a binding
+  // that registered during this very dispatch. `bindings.has` below covers the
+  // other direction — one that unregistered after the snapshot was taken.
+  const firing = [...bindings];
+  for (const b of firing) {
     if (!bindings.has(b)) continue;
     if (!shortcutFires(e, b.spec, b, mac)) continue;
     if (b.preventDefault) e.preventDefault();
