@@ -15,12 +15,20 @@ struct LiveView: View {
     /// notices that dot opens Parley and lands *here*, and a record screen that
     /// says "not recording" while the indicator is on reads as a lie.
     @ObservedObject private var dictation = DictationCoordinator.shared
+    /// The name-and-folder suggestion for the recording that just finished. It
+    /// owns the pass and its own accepted state, so this view only has to say
+    /// where the card goes and when a new recording retires it.
+    @StateObject private var filing = FilingSuggestionModel()
     @State private var showRecordingConsent = false
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 transcript
+                // Above the controls, not in the transcript: it is about the
+                // recording that just ended, and it must not scroll away with
+                // the words.
+                FilingSuggestionCard(model: filing)
                 if dictation.window.isOpen() && !recorder.isRecording {
                     micWindowBar
                 }
@@ -76,6 +84,18 @@ struct LiveView: View {
             // to the failure is on disk and worth keeping.
             .onChange(of: recorder.lostMicrophone) {
                 if recorder.lostMicrophone { Task { await recorder.stop(app: app) } }
+            }
+            // Keyed on the settled recording rather than on the meeting ending:
+            // the suggestion is a write against a recording the cloud already
+            // holds, so it cannot be offered before the upload lands. The
+            // recorder clears `settled` when the next meeting starts, which is
+            // what takes the previous card down.
+            .onChange(of: recorder.settled?.id) {
+                if let settled = recorder.settled {
+                    filing.consider(settled, app: app)
+                } else {
+                    filing.forget()
+                }
             }
             #if DEBUG
                 .task { ScreenshotDemo.seedLive(recorder) }

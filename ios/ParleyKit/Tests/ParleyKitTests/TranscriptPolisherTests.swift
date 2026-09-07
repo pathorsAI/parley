@@ -139,7 +139,7 @@ final class TranscriptPolisherTests: XCTestCase {
 
     func testRequestBodyUsesTheFastModelAndOpenAIKeys() throws {
         let body = try JSONEncoder().encode(
-            TranscriptPolisher.ChatRequest(
+            CloudChat.Request(
                 model: TranscriptPolisher.model, temperature: 0.2, maxTokens: 2048,
                 messages: [
                     .init(role: "system", content: TranscriptPolisher.systemPrompt),

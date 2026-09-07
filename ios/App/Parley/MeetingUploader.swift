@@ -35,7 +35,18 @@ final class MeetingUploader {
         Double(samplesFed) / Double(OggOpusEncoder.sampleRate) * 1000
     }
 
+    /// What a finished upload left in the cloud.
+    ///
+    /// More than the org name it started as: the filing suggestion runs against
+    /// the recording that just landed, so it needs the id to write back to and
+    /// the name and folder the recording actually carries — which is the state
+    /// its suggestion is accepted against.
     struct Outcome {
+        let recordingId: String
+        /// The clock name the recording landed under (`title(for:)`).
+        let title: String
+        /// The personal folder it landed in; nil = the personal root.
+        let folderId: String?
         var sharedToOrgName: String?
     }
 
@@ -115,7 +126,11 @@ final class MeetingUploader {
         try await cloud.uploadAudio(id: pending.id, ogg: audio)
         try await cloud.pushRecording(id: pending.id, summary: summary, meta: meta)
 
-        var outcome = Outcome()
+        var outcome = Outcome(
+            recordingId: pending.id,
+            title: title(for: pending.startedAt),
+            folderId: personalFolderId,
+            sharedToOrgName: nil)
         if pending.defaultSave.isOrg, let orgId = pending.defaultSave.orgId {
             try await cloud.shareRecording(id: pending.id, orgId: orgId, folderId: pending.defaultSave.folderId)
             outcome.sharedToOrgName =

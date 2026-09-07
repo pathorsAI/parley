@@ -159,6 +159,35 @@ public actor CloudClient {
         return try await get("folders", as: F.self).folders
     }
 
+    /// Create a personal folder (`POST /folders`).
+    ///
+    /// The id is minted here rather than by the server, matching the desktop's
+    /// `createCloudFolder` (`src/lib/cloud/folders.ts`): personal folders are a
+    /// local registry mirrored to the cloud, so the id a device already wrote
+    /// into a recording's meta has to be the id the row gets. That also makes
+    /// the call idempotent — a retry after a timeout re-syncs the same folder
+    /// instead of leaving a duplicate behind.
+    ///
+    /// The desktop ignores the response body; the phone needs the folder back to
+    /// file the recording it was just created for. So a `{ folder }` envelope is
+    /// used when the server sends one, and otherwise what we asked for is
+    /// returned — the request succeeded, and that row is what now exists.
+    public func createFolder(name: String) async throws -> CloudFolder {
+        // Lowercased to match every other id this app mints for the cloud (see
+        // MeetingUploader's recording ids) — one convention, so an id is never
+        // the same folder written two ways.
+        let id = UUID().uuidString.lowercased()
+        let createdAt = Date().timeIntervalSince1970 * 1000
+        let body = try JSONSerialization.data(
+            withJSONObject: ["id": id, "name": name, "createdAt": createdAt])
+        let data = try await request(
+            "folders", method: "POST", body: body, contentType: "application/json")
+        struct F: Decodable { let folder: CloudFolder }
+        if let decoded = try? JSONDecoder().decode(F.self, from: data) { return decoded.folder }
+        return CloudFolder(
+            id: id, name: name, orgId: nil, createdAt: createdAt, updatedAt: createdAt)
+    }
+
     // MARK: orgs
 
     public func myOrgs() async throws -> [CloudOrg] {
