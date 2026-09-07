@@ -113,7 +113,7 @@ alive at the right moments.
 
 ### App Group channel
 
-`DictationChannel` (in ParleyKit, so both targets share it) is five
+`DictationChannel` (in ParleyKit, so both targets share it) is six
 single-writer mailboxes, each with its own Darwin notification, so the two
 processes never contend on a file:
 
@@ -128,9 +128,17 @@ processes never contend on a file:
   keyboard's "end the window now".
 - `dictation-ready.json` — app → keyboard: `{signedIn, micGranted, updatedAt}`,
   whether a tap could dictate at all.
+- `dictation-presence.json` — app → keyboard: `{awake, servesInPlace,
+  updatedAt}`, the app's heartbeat: the process is there, and whether a start
+  request would be served without opening Parley. See *Knowing whether the app
+  is there* below.
 
 The window pair is separate from the session pair because a window outlives any
 one dictation, and most of what it has to say happens when no session exists.
+Presence is separate from the window because "is the process there" underlies
+and outlives "is it holding a microphone", and separate from the downlink
+because the downlink is stamped only when the transcript moves — and a user
+pausing to think is not a dead app.
 
 **Readiness is the one mailbox with no staleness rule**, and that is a
 difference in kind rather than an omission. A window is a claim about a live
@@ -324,6 +332,78 @@ what it means, and each of them ends it. The window is bounded in every case, it
 holds no audio, and nothing leaves the device until the mic is tapped. No private
 API is involved anywhere in it — audio session, App Group, Darwin notifications,
 `insertText`.
+
+### Knowing whether the app is there
+
+Two things the keyboard has to say depend on a fact only the app process can
+supply, and until `AppPresence` (`ParleyKit/DictationChannel.swift`) neither
+had a source for it.
+
+**What the next tap will do.** `startDictation` always tries the no-jump path
+first — publish the request, wait 700 ms for the app to acknowledge — and only
+opens `parley://dictate` when nobody does. The record button has to promise one
+or the other *before* the tap. It used to promise the jump whenever no window
+was open, which was wrong in one direction the user notices immediately: with
+Parley itself in the foreground hosting the keyboard (typing into the personal
+dictionary, say), the tap has always stayed put, and the button said it would
+leave. It was also wrong in the other direction, silently: a Parley lingering in
+the background after a dictation *would* answer the note, then fail to open a
+microphone — iOS refuses to let a backgrounded process start recording — and
+publish "Couldn't open the microphone. Open Parley and tap the mic again", every
+time, for as long as the linger lasted.
+
+The app now writes its own answer every ten seconds while it runs:
+`servesInPlace` is true in the foreground, or in the background while a running
+capture (a window) is there to borrow, and false otherwise. The keyboard draws
+the microphone glyph and *Tap to speak* when the window is open **or** a fresh
+presence says the app can answer in place (`KeyboardBridge.staysPut`), and the
+jump glyph otherwise. And `armRequestObserver` applies the same condition
+before honoring a start, so the glyph is not merely accurate but causal: a
+backgrounded app with no microphone declines the note, the keyboard's 700 ms
+fallback opens the app, and the microphone is opened in the foreground where it
+can be. The linger still matters — a ⏹ or ✕ has to reach a process that is
+awake — but it no longer buys an in-place *start*, which it never really could.
+
+**Whether the session on screen is still being served.** The downlink says
+`listening` and keeps saying it whatever happens to the app. A backgrounded
+Parley is suspended without a hook when the host app takes the audio session
+(an interruption), killed by jetsam, or swiped out of the app switcher — and in
+every one of those the keyboard kept drawing a stop button that nothing answered
+over a transcript slot that nothing filled. That is the "came back and it says
+it's listening but nothing happens and I can't stop it" report.
+
+`Downlink.looksDead(presence:)` is the rule: a live state (`starting`,
+`listening`, `reconnecting`, `finishing`) whose own stamp *and* the presence
+heartbeat are both older than `AppPresence.staleAfter` (25 s, against a 10 s
+heartbeat) is presumed dead. Terminal states never look dead — a `done` still
+lands after a keyboard relaunch exactly as before. `checkLiveness` in the
+keyboard watches the earliest of three deadlines and gives up at it:
+
+- the live downlink's presumed death, as above;
+- 10 s from minting, for a session the app never answered (the URL was refused,
+  or the app is gone — on the usual path the app switch kills the keyboard first
+  and none of this runs);
+- 3 s from ⏹, for a session the app has not started ending. The app publishes
+  `finishing` synchronously on hearing the note, so a session still `listening`
+  three seconds later is one nobody heard the stop for.
+
+Giving up is `abandonSession`: the pane is cleared as ✕ would clear it, the app
+is sent the same cancel (a Darwin note it receives the moment it is resumed, if
+it ever is), and the slot says *Parley stopped listening. Tap the mic to try
+again.* The ⏹ itself no longer takes the pane out of `listening` on the press —
+that only meant the next drain put the button back — the app's `finishing` is
+what changes the pane, and the watchdog is what covers a `finishing` that never
+comes.
+
+One hole the heartbeat alone would leave: a process that crashed and relaunched
+is very much present, and its fresh heartbeat would vouch for the `listening`
+file the dead process left behind. So `DictationCoordinator.init` reaps first —
+any live-state downlink at that point belongs to a process that is no longer
+running, and it is rewritten as an `error` (which inserts nothing) with a
+message that says what happened. The app also writes `awake: false` at the two
+moments it can see its own suspension coming — the linger's expiry handler and
+`willTerminate` — so the keyboard need not wait out the stale period in the
+common case.
 
 ### The jump that is left, and what is actually known about it
 
@@ -708,8 +788,13 @@ but a **microphone is only drawn when speaking here would actually work.**
 |---|---|---|
 | no Full Access | dimmed, mic | *Voice typing needs Full Access* + the Settings path |
 | not set up (`!ready`) | gradient, `arrow.up.forward.app` | *Set up voice typing in Parley* / *Tap to open the app* |
-| set up, no open window | gradient, `arrow.up.forward.app` | *Dictation starts in Parley* |
-| microphone window open | gradient, `mic.fill` | *Tap to speak* |
+| set up, tap would open Parley | gradient, `arrow.up.forward.app` | *Dictation starts in Parley* |
+| set up, tap stays put | gradient, `mic.fill` | *Tap to speak* |
+
+"Stays put" (`KeyboardBridge.staysPut`) is a microphone window being open **or**
+the app's presence heartbeat saying it can answer in place — Parley in the
+foreground hosting this keyboard, or holding a running microphone. See *Knowing
+whether the app is there*.
 
 These are the *idle* states. A live session takes the slot ahead of all four
 (the transcript, or the reconnecting line), and so does an error from the last

@@ -24,6 +24,22 @@ final class KeyboardViewController: UIInputViewController {
     /// The app announcing that the answer to "could a tap dictate at all"
     /// changed — a sign-in, a sign-out, or the microphone prompt being answered.
     private var readyNote: DarwinObserver?
+    /// The app's heartbeat: it is alive, and whether a tap would be served
+    /// without opening it. Also the goodbye it writes on its way out. See
+    /// `AppPresence`.
+    private var presenceNote: DarwinObserver?
+
+    /// Watches the session this keyboard is showing for signs that nobody is
+    /// serving it any more — see `checkLiveness`. One at a time; re-armed on
+    /// every sign of life.
+    private var liveness: Task<Void, Never>?
+    /// When this keyboard minted or adopted the session it is showing. Before
+    /// the app has published anything for it, this is the only clock there is.
+    private var sessionStartedAt = Date.distantPast
+    /// When ⏹ was pressed for the current session, if it has been. The app
+    /// answers a stop by publishing `finishing` within milliseconds; a session
+    /// still `listening` seconds later is one nobody heard the stop for.
+    private var stopRequestedAt: Date?
 
     /// The keyboard's view of the current session. It mints the id, so it owns
     /// the truth about which downlink is "ours"; a downlink for any other
@@ -130,6 +146,13 @@ final class KeyboardViewController: UIInputViewController {
             readyNote = DarwinObserver(DictationChannel.readyNote) { [weak self] in
                 DispatchQueue.main.async { self?.readReadiness() }
             }
+            // Every ten seconds while the app is awake, and once more on its
+            // way out. It is what flips the record button between "speak
+            // here" and "this opens Parley", and what keeps a live session's
+            // watchdog from firing while the user is merely pausing.
+            presenceNote = DarwinObserver(DictationChannel.presenceNote) { [weak self] in
+                DispatchQueue.main.async { self?.readPresence() }
+            }
         }
     }
 
@@ -153,6 +176,7 @@ final class KeyboardViewController: UIInputViewController {
         refreshAppearance()
         refreshReturnKey()
         readReadiness()
+        readPresence()
         readWindow()
         drainDownlink()
         // Warm the Taptic Engine while the keyboard is coming up, so the thump
@@ -265,6 +289,8 @@ final class KeyboardViewController: UIInputViewController {
         lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
         session = UUID().uuidString
         insertedCount = 0
+        sessionStartedAt = Date()
+        stopRequestedAt = nil
         DictationChannel.writeUplink(
             .init(
                 session: session,
@@ -275,6 +301,9 @@ final class KeyboardViewController: UIInputViewController {
         bridge.partial = ""
         bridge.tail = ""
         bridge.errorText = nil
+        // The pane went live before the app has said a word; the watchdog is
+        // what takes it back if the app never does (see `checkLiveness`).
+        checkLiveness()
 
         let target = session
         Task { @MainActor [weak self] in
@@ -289,6 +318,100 @@ final class KeyboardViewController: UIInputViewController {
             guard let self, self.session == target else { return }
             completion(DictationChannel.startURL(session: target))
         }
+    }
+
+    // MARK: presence & liveness
+
+    /// Read the app's heartbeat: whether a tap would be served where the user
+    /// is, and — while a session is showing — whether anyone is still serving
+    /// it. See `AppPresence` for why the downlink alone cannot answer the
+    /// second question.
+    private func readPresence() {
+        guard hasFullAccess else {
+            bridge.servesInPlace = false
+            return
+        }
+        bridge.servesInPlace = DictationChannel.readPresence()?.canServeInPlace() ?? false
+        checkLiveness()
+    }
+
+    /// How long a freshly minted session may go without the app publishing
+    /// anything for it before the pane gives up on it. The no-jump path answers
+    /// within `startAckWindow`; the URL path answers once the app has come
+    /// forward and opened the microphone, which is a couple of seconds at
+    /// most — and usually kills this keyboard on the way, in which case none of
+    /// this runs. It matters on the path where the switch never happens: the
+    /// URL was refused, or the app is gone, and without this the pane would
+    /// show a stop button for a session that never existed.
+    private static let startGrace: TimeInterval = 10
+    /// How long after ⏹ the session may still read `listening` before the
+    /// stop is presumed unheard. The app publishes `finishing` synchronously
+    /// on receiving the note, before it waits on anything.
+    private static let stopGrace: TimeInterval = 3
+
+    /// Decide whether the session on screen is still being served, and if it
+    /// cannot be decided yet, come back at the first moment it could be.
+    ///
+    /// This is the keyboard's half of a problem the channel used to have no
+    /// answer to. The downlink says `listening` and stays saying it whatever
+    /// happens to the app: an audio interruption from the host app suspends a
+    /// backgrounded Parley without a hook, jetsam kills it, the user swipes it
+    /// out of the app switcher — and in every case the keyboard kept drawing a
+    /// stop button that nothing answered and a transcript slot nothing filled.
+    /// Three clocks bound that now, and the earliest one wins:
+    ///
+    /// - a live downlink's `presumedDeadAt` — its own stamp or the app's
+    ///   presence heartbeat, whichever is newer, plus the stale period;
+    /// - `startGrace` from minting, for a session the app has not answered;
+    /// - `stopGrace` from ⏹, for a session the app has not started ending.
+    ///
+    /// Giving up is `abandonSession`: the pane is cleared as if ✕ had been
+    /// pressed, the app is told the same (a Darwin note it will get the moment
+    /// it is resumed, if it ever is), and the slot says what happened.
+    private func checkLiveness() {
+        liveness?.cancel()
+        liveness = nil
+        guard hasFullAccess, !session.isEmpty, bridge.listening else { return }
+
+        let now = Date()
+        let presence = DictationChannel.readPresence()
+        var deadline: Date
+        if let d = DictationChannel.readDownlink(), d.session == session {
+            // A terminal state has nothing left to watch; `drainDownlink` has
+            // already taken the pane out of `listening` for it.
+            guard let dead = d.presumedDeadAt(presence: presence) else { return }
+            deadline = dead
+            if let stopRequestedAt, d.state != .finishing {
+                deadline = min(deadline, stopRequestedAt.addingTimeInterval(Self.stopGrace))
+            }
+        } else {
+            deadline = sessionStartedAt.addingTimeInterval(Self.startGrace)
+            if let stopRequestedAt {
+                deadline = min(deadline, stopRequestedAt.addingTimeInterval(Self.stopGrace))
+            }
+        }
+
+        if now >= deadline {
+            abandonSession()
+            return
+        }
+        let target = session
+        let wait = deadline.timeIntervalSince(now) + 0.3
+        liveness = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled, let self, self.session == target else { return }
+            // Re-read everything first: a segment or a heartbeat may have
+            // landed without its note reaching a suspended keyboard.
+            self.drainDownlink()
+            self.checkLiveness()
+        }
+    }
+
+    /// Nobody is serving the session on screen. End it here, the way ✕ would,
+    /// and say so in the slot — the user has been talking to a stop button.
+    private func abandonSession() {
+        cancelDictation()
+        bridge.errorText = String(localized: "Parley stopped listening. Tap the mic to try again.")
     }
 
     // MARK: readiness
@@ -358,7 +481,12 @@ final class KeyboardViewController: UIInputViewController {
         up.cancelRequested = false
         up.insertedCount = insertedCount
         DictationChannel.writeUplink(up)
-        bridge.listening = false
+        // The pane keeps its live shape until the app answers: `finishing`
+        // keeps ⏹ and ✕ on screen while the transcript is polished, and a
+        // stop nobody answers is what the watchdog is for. Going quiet here,
+        // as this used to, only meant the next drain put the button back.
+        stopRequestedAt = Date()
+        checkLiveness()
     }
 
     /// Ask the app to end the session and throw the words away — the ✕ next to
@@ -382,6 +510,9 @@ final class KeyboardViewController: UIInputViewController {
         up.cancelRequested = true
         up.insertedCount = insertedCount
         DictationChannel.writeUplink(up)
+        liveness?.cancel()
+        liveness = nil
+        stopRequestedAt = nil
         bridge.listening = false
         bridge.reconnecting = false
         bridge.partial = ""
@@ -428,6 +559,19 @@ final class KeyboardViewController: UIInputViewController {
         // could still carry is a transcript that must never reach the document.
         if d.session == cancelledSession { return }
 
+        // A live state nobody has vouched for lately is a session whose
+        // process is gone — suspended by an audio interruption, jetsammed,
+        // swiped away — and the file it left behind would otherwise keep this
+        // pane listening forever. Ours is ended here and now; a stranger's is
+        // simply not adopted (the app reaps it on its next launch). Terminal
+        // states never look dead, so a `done` still lands after a relaunch
+        // exactly as before.
+        let presence = DictationChannel.readPresence()
+        if d.looksDead(presence: presence) {
+            if d.session == session, bridge.listening { abandonSession() }
+            return
+        }
+
         // Adopt a session this process didn't mint. iOS kills the keyboard
         // almost every time the user bounces to the app, so on the way back the
         // downlink belongs to a session the (relaunched) keyboard has never
@@ -454,6 +598,8 @@ final class KeyboardViewController: UIInputViewController {
             else { return }
             session = d.session
             insertedCount = 0
+            sessionStartedAt = Date()
+            stopRequestedAt = nil
         }
 
         // A relaunched keyboard restores its position from the uplink it wrote.
@@ -546,6 +692,9 @@ final class KeyboardViewController: UIInputViewController {
             // it (the old behavior) read as "the mic button does nothing".
             bridge.errorText = d.errorMessage ?? String(localized: "Couldn't start. Try again.")
         }
+        // Every drain is a sign of life or the end of one; either way the
+        // watchdog's deadline moved.
+        checkLiveness()
     }
 
     /// Open the container app from the extension. The classic responder-chain
@@ -731,17 +880,33 @@ final class KeyboardBridge: ObservableObject {
     /// Roughly how long the open window has left, in whole minutes. Refreshed
     /// by the app's heartbeat rather than by a timer in this process.
     @Published var windowMinutesLeft: Int?
+    /// The app itself says a tap would be served without opening it: it is in
+    /// the foreground (this keyboard is typing into Parley), or it is holding a
+    /// running microphone. From its presence heartbeat, so it goes false on its
+    /// own once the app stops stamping. See `AppPresence`.
+    @Published var servesInPlace = false
+
+    /// The next tap records here, with no trip through Parley: the app is set
+    /// up, and either a microphone window is open or the app says it is in a
+    /// position to answer in place.
+    ///
+    /// Two sources rather than one because they fail differently. The window
+    /// is a promise the app made about a microphone it is holding; presence is
+    /// the app's own reading of its situation, which also covers the case the
+    /// window cannot — Parley in the foreground hosting this very keyboard,
+    /// where a tap has always stayed put and the button used to say it would
+    /// leave.
+    var staysPut: Bool { hasFullAccess && ready && (windowIsOpen || servesInPlace) }
 
     /// This tap leaves for Parley rather than recording here: the app is not set
-    /// up, or there is no open microphone window to borrow.
+    /// up, or nothing says it could answer where the user is.
     ///
     /// It is what the record button draws instead of a microphone. A mic glyph
-    /// that cannot open a mic is the whole bug — and even in the merely
-    /// windowless case the honest promise is "this opens Parley", because
-    /// staying put depends on a process that may already be gone. When it
-    /// happens to still be there, the pane flips to listening in place and the
-    /// button becomes ⏹ before the user has read the glyph.
-    var opensApp: Bool { hasFullAccess && (!ready || !windowIsOpen) }
+    /// that cannot open a mic is the whole bug: a backgrounded Parley with no
+    /// microphone open cannot start one (iOS refuses), so the honest promise
+    /// there is "this opens Parley" — and the app declines the no-jump start
+    /// in that state so that the promise is also what happens.
+    var opensApp: Bool { hasFullAccess && !staysPut }
 
     /// The track, in order: the voice pane, then the typing keyboards the user
     /// has enabled in Parley's Settings. Never empty of typing panes — see

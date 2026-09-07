@@ -182,9 +182,13 @@ final class DictationCoordinator: ObservableObject {
     private init() {
         window = .closed(length: MicWindowLength(
             rawValue: UserDefaults.standard.string(forKey: Self.windowLengthKey) ?? "") ?? .off)
+        // Before anything else can start a session: a live-state downlink at
+        // this point belongs to a process that is no longer running.
+        reapOrphanedSession()
         armRequestObserver()
         armWindowControlObserver()
         armLifecycleLinger()
+        armPresence()
         // Publish once at launch so a keyboard that comes up before anything
         // else has happened already knows whether the feature is on — that is
         // what it needs to say "this tap will open Parley" rather than nothing.
@@ -484,6 +488,20 @@ final class DictationCoordinator: ObservableObject {
                     guard AudioCapture.permission == .granted
                         || UIApplication.shared.applicationState == .active
                     else { return }
+                    // And only if there is a microphone to serve it with. A
+                    // backgrounded process cannot *start* recording — iOS
+                    // refuses the activation — so a start honored here with
+                    // no running capture to borrow could only end in
+                    // "Couldn't open the microphone. Open Parley…", which is a
+                    // round trip through the app with an error in front of
+                    // it. Declining makes the keyboard take the round trip
+                    // directly, and is what its record button promised: it
+                    // draws the microphone only while `AppPresence` says a
+                    // start would be served in place, which is this same
+                    // condition read from the other side.
+                    guard UIApplication.shared.applicationState == .active
+                        || self.capture?.isCapturing == true
+                    else { return }
                     await self.begin(session: up.session)
                 }
             }
@@ -506,18 +524,31 @@ final class DictationCoordinator: ObservableObject {
                 forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
             ) { [weak self] _ in
                 Task { @MainActor in
+                    guard let self else { return }
+                    // What a tap would get just changed: the foreground is
+                    // gone, and only a running microphone can now answer in
+                    // place. Say so before the next heartbeat would.
+                    self.publishPresence()
                     // A live session's audio keeps the process awake already,
                     // and so does an open microphone window — `beginLinger`
                     // declines in both cases; this is only about not asking.
-                    guard let self, !self.active, self.window.openedAt == nil else { return }
+                    guard !self.active, self.window.openedAt == nil else { return }
                     self.beginLinger()
                 }
             },
             center.addObserver(
                 forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
             ) { [weak self] _ in
-                // Foreground needs no assertion; the next backgrounding re-arms.
-                Task { @MainActor in self?.endLinger() }
+                Task { @MainActor in
+                    // Foreground needs no assertion; the next backgrounding
+                    // re-arms.
+                    self?.endLinger()
+                    // The heartbeat loop may have been frozen mid-sleep for
+                    // however long the process was suspended; a keyboard that
+                    // is up right now (this app's own, say) should not wait
+                    // out the remainder to learn the app is back.
+                    self?.publishPresence()
+                }
             },
             center.addObserver(
                 forName: UIApplication.willTerminateNotification, object: nil, queue: .main
@@ -525,13 +556,15 @@ final class DictationCoordinator: ObservableObject {
                 // The microphone goes with the process. Say so on the way out
                 // rather than leaving a file claiming an open window: the
                 // keyboard's staleness check would get there eventually, but
-                // the truth is available right now.
+                // the truth is available right now. The same goes for the
+                // process itself.
                 MainActor.assumeIsolated {
                     DictationChannel.writeWindow(
                         .closed(
                             length: MicWindowLength(
                                 rawValue: UserDefaults.standard.string(
                                     forKey: DictationCoordinator.windowLengthKey) ?? "") ?? .off))
+                    DictationChannel.writePresence(.gone)
                 }
             },
         ]
@@ -1055,6 +1088,9 @@ final class DictationCoordinator: ObservableObject {
         reportsLevel.set(false)
         micLevel = 0
         await cap?.stop()
+        // No microphone to borrow any more: a backgrounded tap now has to open
+        // Parley, and the keyboard's button should say so at once.
+        publishPresence()
     }
 
     /// Start (or restart) the window and the loop that heartbeats and expires
@@ -1067,6 +1103,7 @@ final class DictationCoordinator: ObservableObject {
         windowProblem = nil
         window = opened
         publishWindow()
+        publishPresence()
         windowTask?.cancel()
         windowTask = Task { [weak self] in await self?.runWindow() }
     }
@@ -1250,7 +1287,19 @@ final class DictationCoordinator: ObservableObject {
         guard window.openedAt == nil else { return }
         endLinger()
         lingerTask = UIApplication.shared.beginBackgroundTask(withName: "dictation-relaunch") {
-            [weak self] in self?.endLinger()
+            [weak self] in
+            guard let self else { return }
+            self.endLinger()
+            // The assertion ran out, and with nothing else holding the
+            // process up iOS suspends it from here — which is the one moment
+            // this process gets to tell the keyboard it is going, instead of
+            // leaving it to notice the heartbeat stopping. Only when nothing
+            // else is in fact holding it: a session or a window that began in
+            // the meantime already ended this task, and the handler is not
+            // called then, but the check is cheap and the wrong goodbye is not.
+            if !self.active, self.window.openedAt == nil {
+                DictationChannel.writePresence(.gone)
+            }
         }
     }
 
@@ -1258,6 +1307,75 @@ final class DictationCoordinator: ObservableObject {
         guard lingerTask != .invalid else { return }
         UIApplication.shared.endBackgroundTask(lingerTask)
         lingerTask = .invalid
+    }
+
+    // MARK: presence
+
+    /// The heartbeat behind `AppPresence`, for the process's whole life.
+    ///
+    /// A loop rather than a timer keyed to any particular state, because the
+    /// fact it reports is the process itself: while the app runs it stamps,
+    /// and while it is suspended it cannot — the sleep simply does not return
+    /// until the process does. That silence is the signal the keyboard reads,
+    /// so nothing here has to know *why* the process went quiet. The two
+    /// goodbyes (`beginLinger`'s expiry and `willTerminate`) are the cases
+    /// where the app can see the silence coming and says so early.
+    ///
+    /// The cost is one small file write every ten seconds while awake. During
+    /// an hour-long microphone window that is on top of the window's own
+    /// twenty-second stamp; both are far below what the running microphone
+    /// itself costs, which is the thing a window has already agreed to pay.
+    private func armPresence() {
+        presenceTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.publishPresence()
+                try? await Task.sleep(for: .seconds(AppPresence.heartbeat))
+            }
+        }
+    }
+
+    private var presenceTask: Task<Void, Never>?
+
+    /// Stamp the presence file with what a tap would get right now. Also
+    /// called at the transitions that change the answer — backgrounding,
+    /// foregrounding, the microphone opening or closing — so the keyboard
+    /// never waits out a heartbeat to learn something the app knew at once.
+    ///
+    /// `servesInPlace` is the same condition `armRequestObserver` applies
+    /// before honoring a start, read from this side: the foreground can open a
+    /// microphone, and a running capture can be borrowed; a backgrounded
+    /// process with neither has to bring the app forward.
+    private func publishPresence() {
+        DictationChannel.writePresence(
+            .init(
+                awake: true,
+                servesInPlace: UIApplication.shared.applicationState == .active
+                    || capture?.isCapturing == true))
+    }
+
+    /// A session that outlived its process.
+    ///
+    /// The downlink is the keyboard's picture of the session, and a process
+    /// that was killed mid-dictation — jetsam, a crash, the user swiping it
+    /// away — leaves that picture frozen on `listening`. The keyboard now
+    /// stops believing it once the presence heartbeat goes quiet, but *this*
+    /// process's heartbeat starts the moment it launches, and a fresh
+    /// heartbeat would vouch for a session it never had. So the leftover is
+    /// closed here, first thing, as an error: nothing is inserted from an
+    /// error, which is right for a transcript whose tail was lost with the
+    /// process, and the message says what happened where the user will read
+    /// it. Safe by construction — no session can be active before `init`
+    /// finishes.
+    private func reapOrphanedSession() {
+        guard let stale = DictationChannel.readDownlink(), stale.state.isLive else { return }
+        DictationChannel.writeDownlink(
+            .init(
+                session: stale.session, committed: stale.committed, state: .error,
+                errorMessage: String(
+                    localized:
+                        "Parley was closed before the dictation finished. Tap the mic to try again."
+                )))
     }
 
     /// Mirror the live state into the downlink the keyboard reads.

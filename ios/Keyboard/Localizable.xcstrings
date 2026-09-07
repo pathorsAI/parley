@@ -304,6 +304,22 @@
         }
       }
     },
+    "Parley stopped listening. Tap the mic to try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley stopped listening. Tap the mic to try again."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley 停止聆聽了，再點一下麥克風重試。"
+          }
+        }
+      }
+    },
     "Reconnecting… keep talking": {
       "extractionState": "manual",
       "localizations": {
