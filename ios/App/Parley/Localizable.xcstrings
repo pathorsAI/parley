@@ -749,6 +749,23 @@
         }
       }
     },
+    "Create and file here": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Create and file here"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "建立並移到這裡"
+          }
+        }
+      }
+    },
     "Dark": {
       "extractionState": "manual",
       "localizations": {
@@ -918,6 +935,23 @@
         }
       }
     },
+    "Dismiss": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dismiss"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不用了"
+          }
+        }
+      }
+    },
     "Done": {
       "extractionState": "manual",
       "localizations": {
@@ -1050,6 +1084,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "所有錄音都已同步"
+          }
+        }
+      }
+    },
+    "File here": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "File here"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移到這裡"
           }
         }
       }
@@ -1658,6 +1709,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "名字、行話，還有任何你常講的詞。Parley 會留著，好照你的寫法來寫——即使目前還無法讓辨識偏向這份清單，它仍然是你的。"
+          }
+        }
+      }
+    },
+    "New folder “%@”": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New folder “%@”"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新增資料夾「%@」"
           }
         }
       }
@@ -2611,6 +2679,57 @@
         }
       }
     },
+    "Suggested folder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suggested folder"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "建議資料夾"
+          }
+        }
+      }
+    },
+    "Suggested name": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suggested name"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "建議名稱"
+          }
+        }
+      }
+    },
+    "Suggested name and folder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suggested name and folder"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "建議的名稱與資料夾"
+          }
+        }
+      }
+    },
     "Support & feedback": {
       "extractionState": "manual",
       "localizations": {
@@ -2774,6 +2893,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "在 Parley 鍵盤上點麥克風，說的話就會打進游標處。"
+          }
+        }
+      }
+    },
+    "That didn't save. Try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That didn't save. Try again."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒有存成功，請再試一次。"
           }
         }
       }
@@ -3096,6 +3232,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "用量（本期）"
+          }
+        }
+      }
+    },
+    "Use this name": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use this name"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用這個名稱"
           }
         }
       }

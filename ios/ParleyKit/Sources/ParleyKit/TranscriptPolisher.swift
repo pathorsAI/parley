@@ -13,8 +13,8 @@ import Foundation
 /// an optional rather than throwing something the caller has to interpret, and
 /// why `accept` is deliberately suspicious of what comes back.
 public enum TranscriptPolisher {
-    /// The cloud's OpenAI-compatible chat endpoint.
-    static let path = "v1/chat/completions"
+    /// The cloud's OpenAI-compatible chat endpoint (see `CloudChat`).
+    static let path = CloudChat.path
     /// The cloud's alias for the small, fast, Groq-hosted model. Dictation is
     /// capped at 120 s, so the transcripts are short and latency is the only
     /// thing that matters here.
@@ -102,7 +102,7 @@ public enum TranscriptPolisher {
         raw: String, cloud: CloudClient, protectedTerms: [String] = []
     ) async throws -> String? {
         let body = try JSONEncoder().encode(
-            ChatRequest(
+            CloudChat.Request(
                 model: model,
                 temperature: 0.2,
                 maxTokens: 2048,
@@ -118,10 +118,7 @@ public enum TranscriptPolisher {
     }
 
     static func content(fromChatCompletion data: Data) -> String? {
-        guard let response = try? JSONDecoder().decode(ChatResponse.self, from: data) else {
-            return nil
-        }
-        return response.choices.first?.message.content
+        CloudChat.content(from: data)
     }
 
     // MARK: what we are willing to swap in
@@ -174,30 +171,4 @@ public enum TranscriptPolisher {
         应该脑头们几个从来没错误导师长辈坛贴质价钱财产业习惯题标号码现场适当选择优点败义愤骂\
         汉简传输车电话张欢乐学觉视观见亲让认识请谢谁边铁银钟页顺须顾预领频颜类显
         """)
-
-    // MARK: wire shapes (OpenAI chat completions)
-
-    struct ChatRequest: Encodable {
-        struct Message: Encodable {
-            let role: String
-            let content: String
-        }
-        let model: String
-        let temperature: Double
-        let maxTokens: Int
-        let messages: [Message]
-
-        enum CodingKeys: String, CodingKey {
-            case model, temperature, messages
-            case maxTokens = "max_tokens"
-        }
-    }
-
-    struct ChatResponse: Decodable {
-        struct Choice: Decodable {
-            struct Message: Decodable { let content: String }
-            let message: Message
-        }
-        let choices: [Choice]
-    }
 }

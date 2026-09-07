@@ -56,6 +56,25 @@ final class MeetingRecorder: ObservableObject {
     /// can draw "reconnecting" as the temporary state it is instead of styling
     /// it like the sentence that says the transcript is over.
     @Published private(set) var transcription: TranscriptionHealth = .idle
+    /// The recording that has landed in the cloud, and what it landed as. Nil
+    /// until an upload settles, and nil again the moment the next meeting
+    /// starts.
+    ///
+    /// This is the beat the filing suggestion hangs off, rather than the
+    /// microphone stopping: renaming or re-filing a recording is a write
+    /// against something the server has to already hold, so the earliest
+    /// honest moment to offer one is here. See `FilingSuggestionModel`.
+    @Published private(set) var settled: Settled?
+
+    /// A recording the cloud has accepted. Carries the transcript too: the pass
+    /// reads it, and reading it off `segments` instead would be reading a
+    /// property the next meeting is free to clear.
+    struct Settled {
+        let id: String
+        let title: String
+        let folderId: String?
+        let segments: [TranscriptSegment]
+    }
 
     /// The live transcript's side of the meeting. None of these ends the
     /// recording: the audio file is written from the tap and uploaded either
@@ -117,6 +136,8 @@ final class MeetingRecorder: ObservableObject {
         phase = .starting
         status = String(localized: "Starting…")
         segments = []
+        // Whatever the last meeting left on screen belongs to the last meeting.
+        settled = nil
         finishRequested = false
         lostMicrophone = false
         leg = 0
@@ -412,6 +433,9 @@ final class MeetingRecorder: ObservableObject {
                 status =
                     outcome.sharedToOrgName.map { String(localized: "Synced, and shared to “\($0)”") }
                     ?? String(localized: "Synced to the cloud")
+                settled = Settled(
+                    id: outcome.recordingId, title: outcome.title,
+                    folderId: outcome.folderId, segments: segments)
             } else {
                 status = String(localized: "That recording was too short to keep")
             }

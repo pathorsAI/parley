@@ -119,13 +119,31 @@ public struct RecordingMeta: @unchecked Sendable {
     public init(raw: [String: Any]) { self.raw = raw }
 
     public var id: String { raw["id"] as? String ?? "" }
-    public var title: String { raw["title"] as? String ?? "" }
+    public var title: String {
+        get { raw["title"] as? String ?? "" }
+        set { raw["title"] = newValue }
+    }
     public var createdAt: Double { raw["createdAt"] as? Double ?? 0 }
     public var durationMs: Double { raw["durationMs"] as? Double ?? 0 }
     public var speakerNames: [String: String] { raw["speakerNames"] as? [String: String] ?? [:] }
     public var folderId: String? {
         get { raw["folderId"] as? String }
         set { raw["folderId"] = newValue as Any? ?? NSNull() }
+    }
+
+    /// True once the filing pass has COMPLETED for this recording, whichever
+    /// device ran it.
+    ///
+    /// This is not bookkeeping for the phone's own benefit: the desktop reads
+    /// the same flag off the same synced meta to decide whether to spend its
+    /// filing pass on a recording (`HistoryEntry.filingSuggested`,
+    /// `src/lib/history/types.ts`). A `null` suggestion cannot tell "never ran"
+    /// apart from "ran, and the user has already dealt with it", so without this
+    /// the Mac would ask again about a recording the user renamed and filed on
+    /// their phone — and would spend a second pass to do it.
+    public var filingSuggested: Bool {
+        get { raw["filingSuggested"] as? Bool ?? false }
+        set { raw["filingSuggested"] = newValue }
     }
 
     public var segments: [TranscriptSegment] {
@@ -153,8 +171,17 @@ public struct RecordingMeta: @unchecked Sendable {
     /// interpolated into the lookup key: `"Speaker \(n)"` as a key would be a
     /// different, untranslatable key for every speaker index.
     public func speakerLabel(for seg: TranscriptSegment) -> String {
+        Self.speakerLabel(for: seg, names: speakerNames)
+    }
+
+    /// The same rules for a caller that holds the name map without the rest of
+    /// the meta — the filing pass renders a transcript for the model out of
+    /// segments alone. Kept as the one implementation so a label the user reads
+    /// on screen and a label the model reads in the prompt can never disagree
+    /// about who was speaking.
+    static func speakerLabel(for seg: TranscriptSegment, names: [String: String]) -> String {
         let key = "\(seg.source)-\(seg.speaker)"
-        if let name = speakerNames[key], !name.isEmpty { return name }
+        if let name = names[key], !name.isEmpty { return name }
         switch seg.source {
         case "me":
             return seg.speaker <= 1
@@ -169,7 +196,7 @@ public struct RecordingMeta: @unchecked Sendable {
         }
     }
 
-    private func numbered(_ key: String.LocalizationValue, _ n: Int) -> String {
+    private static func numbered(_ key: String.LocalizationValue, _ n: Int) -> String {
         String(format: String(localized: key, bundle: .module), n)
     }
 }
