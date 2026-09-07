@@ -5,7 +5,7 @@ import Foundation
 /// iOS 8, Full Access included), so dictation runs in the app and the transcript
 /// is handed back through the App Group container.
 ///
-/// Five single-writer mailboxes, each with its own Darwin notification, so the
+/// Six single-writer mailboxes, each with its own Darwin notification, so the
 /// two processes never contend on the same file:
 ///   - `downlink` (app → keyboard): the growing transcript + session state.
 ///   - `uplink`   (keyboard → app): the session request, host bundle id, and
@@ -15,12 +15,20 @@ import Foundation
 ///   - `window control` (keyboard → app): end the window now.
 ///   - `readiness` (app → keyboard): whether dictation could work at all —
 ///     an account on this device, and microphone permission.
+///   - `presence` (app → keyboard): the app process is alive, and whether a
+///     start request would be served without opening Parley. A heartbeat,
+///     like the window's — see `AppPresence`.
 ///
 /// The window pair is separate from the session pair on purpose: a window
 /// outlives any one dictation and most of what it has to say happens when no
 /// session exists at all. Readiness is separate from both for the opposite
 /// reason: it is not about a moment but about the installation, and it is the
 /// one thing here that has to be readable before anything has ever happened.
+/// Presence is separate from the window because the two answer different
+/// questions — "is the process there" outlives and underlies "is it holding a
+/// microphone" — and separate from the downlink because a downlink is stamped
+/// only when the transcript moves, and a user pausing to think is not a dead
+/// app.
 ///
 /// Darwin notifications carry no payload — they are pure "go re-read" signals.
 /// The files are the source of truth, which is what makes this robust to the
@@ -48,6 +56,9 @@ public enum DictationChannel {
     /// app → keyboard: the answer to "could a tap dictate at all" changed —
     /// someone signed in or out, or the microphone prompt was answered.
     public static let readyNote = "com.pathors.parley.dictation.ready"
+    /// app → keyboard: the app re-stamped its presence, or announced that it
+    /// is about to be suspended. See `AppPresence`.
+    public static let presenceNote = "com.pathors.parley.dictation.presence"
 
     /// The URL the keyboard opens to start a session. The app routes this in
     /// `onOpenURL`. The session id round-trips so a stale downlink from a prior
@@ -107,6 +118,48 @@ public enum DictationChannel {
             /// same event. It is not `error` either: nothing failed, and the
             /// pane must not show red copy for something the user asked for.
             case cancelled
+
+            /// The session is still being served: a process somewhere is
+            /// holding a microphone (or draining a relay) on its behalf. The
+            /// three terminal states are claims about the past and stay true
+            /// when that process is gone; these four are claims about *now*,
+            /// and are the only ones a reader has to doubt.
+            public var isLive: Bool {
+                switch self {
+                case .starting, .listening, .reconnecting, .finishing: return true
+                case .done, .error, .cancelled: return false
+                }
+            }
+        }
+
+        /// When this live session should be presumed dead unless something
+        /// newer arrives: `AppPresence.staleAfter` past the last sign of life,
+        /// which is the newer of this file's own stamp and the app's presence
+        /// heartbeat. `nil` for a terminal state — there is nothing left to
+        /// presume about.
+        ///
+        /// Two stamps rather than one because they go quiet for different
+        /// reasons. The downlink is re-stamped only when the transcript moves,
+        /// so a user pausing mid-sentence looks exactly like a dead app from
+        /// this file alone; the presence heartbeat keeps going through the
+        /// pause. The presence file alone would not do either: it is written by
+        /// the *process*, and a process that has crashed and relaunched is very
+        /// much present while the session it left behind is not — which is why
+        /// the app also reaps such a session on launch (see
+        /// `DictationCoordinator`).
+        public func presumedDeadAt(presence: AppPresence?) -> Date? {
+            guard state.isLive else { return nil }
+            var last = updatedAt ?? .distantPast
+            if let presence, presence.awake, let at = presence.updatedAt {
+                last = max(last, at)
+            }
+            return last.addingTimeInterval(AppPresence.staleAfter)
+        }
+
+        /// A live state nobody has vouched for lately — see `presumedDeadAt`.
+        public func looksDead(presence: AppPresence?, at now: Date = Date()) -> Bool {
+            guard let deadline = presumedDeadAt(presence: presence) else { return false }
+            return now >= deadline
         }
 
         public init(
@@ -254,11 +307,27 @@ public enum DictationChannel {
         read("dictation-ready.json")
     }
 
+    // MARK: presence (app writes, keyboard reads)
+
+    /// Publish that the app process is here. Stamped on every write, like the
+    /// window: the stamp is the whole point, since a process that is gone
+    /// cannot say so.
+    public static func writePresence(_ value: AppPresence) {
+        var stamped = value
+        stamped.updatedAt = Date()
+        write(stamped, to: "dictation-presence.json")
+        post(presenceNote)
+    }
+
+    public static func readPresence() -> AppPresence? {
+        read("dictation-presence.json")
+    }
+
     public static func clear() {
         for name in [
             "dictation-down.json", "dictation-up.json",
             "dictation-window.json", "dictation-window-control.json",
-            "dictation-ready.json",
+            "dictation-ready.json", "dictation-presence.json",
         ] {
             if let url = container?.appendingPathComponent(name) {
                 try? FileManager.default.removeItem(at: url)
@@ -292,6 +361,76 @@ public enum DictationChannel {
         CFNotificationCenterPostNotification(
             CFNotificationCenterGetDarwinNotifyCenter(),
             CFNotificationName(name as CFString), nil, nil, true)
+    }
+}
+
+/// The app saying "I am here", and what a keyboard tap would get from it.
+///
+/// The keyboard has two questions only the app process can answer, and both
+/// are about *now* rather than about the installation:
+///
+/// 1. **Will a tap stay put?** `KeyboardViewController.startDictation` always
+///    tries the no-jump path first — publish the request, wait 700 ms for the
+///    app to acknowledge — and only opens `parley://dictate` when nobody does.
+///    The record button has to promise one or the other *before* the tap, and
+///    it used to promise the jump whenever no microphone window was open, even
+///    with Parley in the foreground hosting the keyboard. `servesInPlace` is
+///    the app's own answer: it is in the foreground, or it is backgrounded but
+///    holding a running microphone (a window) that the next session can borrow.
+///    A backgrounded app with no microphone says no, because iOS refuses to let
+///    it *start* one — so the keyboard's tap opens Parley, where it can.
+///
+/// 2. **Is the session I am showing still being served?** A `listening`
+///    downlink is re-stamped only when the transcript moves. If the app is
+///    suspended or killed mid-session — an audio interruption from the host
+///    app, jetsam, the user swiping Parley away — the file keeps saying
+///    `listening` forever, and the keyboard kept showing a stop button that
+///    nothing answered. This heartbeat is what the keyboard reads instead: a
+///    live session whose downlink *and* presence have both gone quiet for
+///    `staleAfter` is presumed dead (`Downlink.looksDead`).
+///
+/// Same staleness rule as `MicWindowState`, for the same reason: the app can
+/// stop writing without ever getting to say goodbye. `awake: false` is the
+/// goodbye when it does get to — the ~30 s background linger expiring, or the
+/// process terminating — so the keyboard need not wait out the stale period in
+/// the common case.
+public struct AppPresence: Codable, Sendable, Equatable {
+    /// The process is running. `false` is written on the way out; a stamp too
+    /// old to trust means the same thing.
+    public var awake: Bool
+    /// A start request published right now would be answered without Parley
+    /// coming forward: the app is in the foreground, or it is holding a running
+    /// microphone the session can borrow. Meaningless unless `isAwake(at:)`.
+    public var servesInPlace: Bool
+    /// Last heartbeat (stamped by `DictationChannel.writePresence`).
+    public var updatedAt: Date?
+
+    /// How often the app re-stamps while it is awake. Tighter than the
+    /// window's 20 s because the thing it bounds — a keyboard showing a stop
+    /// button for a session nobody is serving — is on screen and being tapped.
+    public static let heartbeat: TimeInterval = 10
+    /// How old a stamp may be before a reader stops believing it. Two missed
+    /// heartbeats with room to spare, so an app that is merely busy is never
+    /// mistaken for one that is gone.
+    public static let staleAfter: TimeInterval = 25
+
+    public init(awake: Bool = false, servesInPlace: Bool = false, updatedAt: Date? = nil) {
+        self.awake = awake
+        self.servesInPlace = servesInPlace
+        self.updatedAt = updatedAt
+    }
+
+    /// The process is about to be suspended, or is terminating.
+    public static let gone = AppPresence(awake: false, servesInPlace: false)
+
+    public func isAwake(at now: Date = Date()) -> Bool {
+        guard awake, let updatedAt else { return false }
+        return now.timeIntervalSince(updatedAt) < Self.staleAfter
+    }
+
+    /// The next tap will be served where the user already is.
+    public func canServeInPlace(at now: Date = Date()) -> Bool {
+        isAwake(at: now) && servesInPlace
     }
 }
 

@@ -2069,6 +2069,23 @@
         }
       }
     },
+    "Parley was closed before the dictation finished. Tap the mic to try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley was closed before the dictation finished. Tap the mic to try again."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley 在語音輸入結束前被關掉了，再點一下麥克風重試。"
+          }
+        }
+      }
+    },
     "Personal": {
       "extractionState": "manual",
       "localizations": {

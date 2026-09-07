@@ -444,7 +444,7 @@ struct KeyboardRootView: View {
         // the label stays what it was so nothing about that state changes.
         guard bridge.hasFullAccess else { return Text("Start dictation") }
         if !bridge.ready { return Text("Open Parley to set up voice typing") }
-        if !bridge.windowIsOpen { return Text("Start dictation, which opens Parley first") }
+        if !bridge.staysPut { return Text("Start dictation, which opens Parley first") }
         return Text("Start dictation")
     }
 
@@ -589,16 +589,18 @@ struct KeyboardRootView: View {
 
     /// Idle and set up: what this particular tap is going to do.
     ///
-    /// "Tap to speak" is only true while a microphone window is open. It used to
-    /// be the headline in both cases, with a caption underneath — *This tap
-    /// opens Parley first* — for the people who had turned a window on. That was
-    /// backwards: the common case is the one that leaves, and the caption said
-    /// exactly what this line now says. So the promise moved into the headline,
-    /// where it matches the glyph on the button.
+    /// "Tap to speak" is only true while the tap will stay put — a microphone
+    /// window is open, or the app says it can answer where the user is (see
+    /// `KeyboardBridge.staysPut`). It used to be the headline in both cases,
+    /// with a caption underneath — *This tap opens Parley first* — for the
+    /// people who had turned a window on. That was backwards: the common case
+    /// is the one that leaves, and the caption said exactly what this line now
+    /// says. So the promise moved into the headline, where it matches the
+    /// glyph on the button.
     private var idleText: some View {
         centered {
             Group {
-                if bridge.windowIsOpen {
+                if bridge.staysPut {
                     Text("Tap to speak")
                 } else {
                     Text("Dictation starts in Parley")
