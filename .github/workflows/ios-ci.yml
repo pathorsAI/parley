@@ -1,0 +1,122 @@
+name: iOS CI
+
+# Pre-merge gate for the iPhone app, and the reason it exists: `ci.yml` skips
+# `ios/**` entirely, so until this file landed the Swift sources were first
+# compiled by `ios-release.yml` — on a pushed `ios-v*` tag, twenty minutes into
+# an archive, with a TestFlight upload waiting behind it. A syntax error cost a
+# tag. Now it costs a red check.
+#
+# Deliberately NOT the release workflow: no signing, no archive, no App Store
+# Connect API key. This job proves the code compiles and the transcript core's
+# tests pass, which is everything a reviewer needs and nothing that needs a
+# secret — so it is safe on pull requests from forks.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-ci.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-ci.yml"
+
+# macOS runners are the expensive ones. A force-push mid-review should not leave
+# the superseded run burning minutes.
+concurrency:
+  group: ios-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build app + test ParleyKit
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # Same selection rule as ios-release.yml: pick the newest Xcode installed
+      # rather than pinning a path Apple and GitHub both move. String Catalogs
+      # need 15 and the keyboard's App Intents need an 18 SDK, so a runner
+      # image that has regressed should fail here loudly rather than silently
+      # building an app with dictation missing.
+      - name: Select Xcode
+        run: |
+          newest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "Using $newest"
+          sudo xcode-select -s "$newest"
+          xcodebuild -version
+          major="$(xcodebuild -version | head -1 | sed -E 's/Xcode ([0-9]+).*/\1/')"
+          if [ "$major" -lt 16 ]; then
+            echo "::error::Xcode $major is too old for this project (need 16+)"
+            exit 1
+          fi
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # The transcript core is plain SwiftPM and runs on macOS with no
+      # simulator, so it is the cheapest signal available — run it before the
+      # app build rather than after.
+      - name: Test ParleyKit
+        run: swift test --package-path ios/ParleyKit
+
+      - name: Generate project
+        run: cd ios/App && xcodegen generate
+
+      # `generic/platform=iOS` builds for a device without needing one, and
+      # without booting a simulator. Signing is off because nothing here is
+      # installed or shipped: this step answers "does it compile", and a runner
+      # keychain has no identity to answer anything else with.
+      - name: Build app and keyboard extension
+        run: |
+          cd ios/App
+          xcodebuild -project Parley.xcodeproj -scheme Parley \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+
+  # Every user-facing string has to exist in both shipping languages
+  # (CLAUDE.md). A missing zh-Hant entry compiles perfectly and ships English to
+  # a Chinese phone, so the compiler will never catch this one — hence a check
+  # of its own, on Linux, where it costs nothing.
+  catalogs:
+    name: String catalogs are bilingual
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Every key has a zh-Hant translation
+        run: |
+          python3 - <<'PY'
+          import glob, json, sys
+
+          # Only zh-Hant is checked. English needs no entry to be correct: the
+          # catalog key IS the English source string, and Xcode legitimately
+          # leaves `en` implicit — several shipping keys already do. A missing
+          # zh-Hant, by contrast, silently ships English to a Chinese phone.
+          failures = []
+          checked = 0
+          for path in sorted(glob.glob("ios/**/*.xcstrings", recursive=True)):
+              with open(path, encoding="utf-8") as handle:
+                  catalog = json.load(handle)
+              for key, entry in catalog.get("strings", {}).items():
+                  checked += 1
+                  if "zh-Hant" not in entry.get("localizations", {}):
+                      failures.append(f"{path}: {key!r} has no zh-Hant translation")
+
+          for line in failures:
+              print(f"::error::{line}")
+          print(f"checked {checked} keys, {len(failures)} missing zh-Hant")
+          sys.exit(1 if failures else 0)
+          PY

@@ -1,7 +1,7 @@
 # App Review information
 
-Current target: **1.3 (build 9)** — the Parley Voice keyboard gains a full
-English typing layout, and the app is restyled.
+Current target: **1.9 (build 20)** — the app can import an audio file the user
+already has and transcribe it, alongside recording live.
 
 ## Contact
 
@@ -48,12 +48,26 @@ Google or Apple identity.
 > to the signed-in account’s hosted transcription relay for live transcription,
 > then syncs the completed recording and transcript to that account.
 >
+> It can also transcribe an audio file the user already has. That file reaches
+> the app only through the system document picker, one at a time, chosen by the
+> user: the app has no other access to the file system and never scans, browses,
+> or indexes anything. Once picked, the file is converted on device and follows
+> exactly the same path as a recorded meeting.
+>
 > **To test recording:** the app opens on a welcome screen with a single "Sign in
 > or create an account" button. Tap it, sign in with the supplied email/password
 > account on the page that opens, and the app goes to the Record tab. Tap "Start
 > recording", confirm the consent message, and allow microphone access. Speak
 > near the device, then tap "End meeting". Open Library to see the saved
 > recording and tap it for the transcript.
+>
+> **To test importing a file:** open the Library tab and tap the import button
+> in the top-right toolbar (an empty library also offers "Import an audio file"
+> in the middle of the screen). Pick any audio file — the reviewer's own voice
+> memo works, and Files › On My iPhone can supply one. The app converts it on
+> device, transcribes it through the same account's hosted service, and the
+> result appears in Library like a recorded meeting. A long file takes
+> proportionally longer; progress is shown throughout.
 >
 > **To test the voice keyboard:** Settings › General › Keyboard › Keyboards ›
 > Add New Keyboard › Parley Voice, then tap it and enable "Allow Full Access".

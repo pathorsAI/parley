@@ -1156,6 +1156,74 @@
         }
       }
     },
+    "Import an audio file": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import an audio file"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匯入音訊檔"
+          }
+        }
+      }
+    },
+    "Import audio": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import audio"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匯入音訊"
+          }
+        }
+      }
+    },
+    "Imported “%@”": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Imported “%@”"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已匯入「%@」"
+          }
+        }
+      }
+    },
+    "Imported “%@” and shared to “%@”": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Imported “%@” and shared to “%@”"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已匯入「%@」，並分享到「%@」"
+          }
+        }
+      }
+    },
     "In Keyboards → Add New Keyboard, pick Parley Voice.": {
       "localizations": {
         "en": {
@@ -1967,6 +2035,40 @@
         }
       }
     },
+    "Parley couldn't open that file.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley couldn't open that file."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley 打不開這個檔案。"
+          }
+        }
+      }
+    },
+    "Parley couldn't read that audio file. Try converting it to m4a or wav first.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley couldn't read that audio file. Try converting it to m4a or wav first."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley 讀不了這個音訊檔，可以先轉成 m4a 或 wav 再試一次。"
+          }
+        }
+      }
+    },
     "Parley for Mac": {
       "extractionState": "manual",
       "localizations": {
@@ -2239,6 +2341,23 @@
         }
       }
     },
+    "Reading the audio file…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading the audio file…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在讀取音訊檔…"
+          }
+        }
+      }
+    },
     "Reconnecting…": {
       "extractionState": "manual",
       "localizations": {
@@ -2337,6 +2456,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "立即重試同步"
+          }
+        }
+      }
+    },
+    "Saving it to your library…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saving it to your library…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在存進錄音庫…"
           }
         }
       }
@@ -2539,6 +2675,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "到「設定 → 帳號」登入後，這裡會列出你在雲端的錄音。"
+          }
+        }
+      }
+    },
+    "Sign in under Settings → Account to transcribe an imported recording.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in under Settings → Account to transcribe an imported recording."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "到「設定 → 帳號」登入後，才能轉錄匯入的錄音。"
           }
         }
       }
@@ -2931,6 +3084,40 @@
         }
       }
     },
+    "That file has no audio in it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That file has no audio in it."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這個檔案裡沒有聲音。"
+          }
+        }
+      }
+    },
+    "That file is too short to keep — a recording needs at least 2 seconds.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That file is too short to keep — a recording needs at least 2 seconds."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這個檔案太短了，錄音至少要 2 秒。"
+          }
+        }
+      }
+    },
     "That recording was too short to keep": {
       "extractionState": "manual",
       "localizations": {
@@ -3097,6 +3284,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "即時轉錄中"
+          }
+        }
+      }
+    },
+    "Transcribing — a long recording can take a few minutes.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transcribing — a long recording can take a few minutes."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轉錄中，較長的錄音可能需要幾分鐘。"
+          }
+        }
+      }
+    },
+    "Transcription didn't finish. Check your network and try the import again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transcription didn't finish. Check your network and try the import again."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轉錄沒有完成。請檢查網路後再匯入一次。"
           }
         }
       }

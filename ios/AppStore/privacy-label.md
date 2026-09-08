@@ -8,7 +8,7 @@ data as used for tracking.
 | --- | --- | --- | --- | --- |
 | Contact Info → Name | Yes | Yes | App Functionality | Account display name from registration or social sign-in. |
 | Contact Info → Email Address | Yes | Yes | App Functionality | Account login and support contact. |
-| User Content → Audio Data | Yes | Yes | App Functionality | User-initiated meeting recordings, retained for synced history. |
+| User Content → Audio Data | Yes | Yes | App Functionality | User-initiated meeting recordings, and audio files the user chooses to import for transcription; retained for synced history. |
 | User Content → Other User Content | Yes | Yes | App Functionality | Transcripts, titles, folders, meeting metadata, and organization placement. |
 | Identifiers → User ID | Yes | Yes | App Functionality | Account and session association for cloud sync and authorization. |
 | Usage Data → Product Interaction | Yes | Yes | App Functionality | Hosted STT/LLM usage counters used to enforce included quotas. |

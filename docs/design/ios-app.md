@@ -35,7 +35,8 @@ iOS 版不是「把桌機塞進手機」。它是補上另一半的會議形態�
 | D8 | 音檔格式 | 提案 維持 **Ogg/Opus 16k mono**，與桌機 [`replay_audio.rs`](../../src-tauri/src/replay_audio.rs) 及 `PUT /recordings/:id/audio` 的 `audio/ogg` 契約一致，避免雲端多一條轉檔路徑 |
 | D9 | 落檔策略 | 提案 **邊錄邊寫檔**，不學桌機把整場 PCM 常駐記憶體（`RecorderBuf`，16kHz×2B = 115MB/hr）——手機會被 jetsam 殺掉 |
 | D10 | 商業模式 | 待拍板（§9.2）建議 v1 **不在 app 內販售**，只讓已有帳號登入使用免費/既有額度，避開 IAP 抽成與審核風險 |
-| D11 | Anti-goals | 不做：錄電話（iOS 根本禁止）、線上會議的系統音訊（技術不可能，§3.1）、情報板/客戶戰情層（等 accounts 上雲，Phase 3）、虛擬麥克風/即時翻譯、手機端批次上傳轉檔 |
+| D11 | Anti-goals | 不做：錄電話（iOS 根本禁止）、線上會議的系統音訊（技術不可能，§3.1）、情報板/客戶戰情層（等 accounts 上雲，Phase 3）、虛擬麥克風/即時翻譯 |
+| D12 | 匯入既有音檔 | ✅拍板 **手機可以匯入既有音檔並批次轉錄**（§6.1）——這一條推翻了 D11 原先列的「手機端批次上傳轉檔」。當初把它列為 anti-goal，是假設手機得自己養一條轉檔＋批次管線；事實不是這樣：`POST /stt/batch` 早就在 production 服役，桌機的 hosted replay ingest（[`ingest.ts`](../../src/lib/replay/ingest.ts)、[`replay.rs`](../../src-tauri/src/replay.rs)）今天就靠它，手機只是同一個已驗證端點的**第二個呼叫者**，不是新的一條管線。而且手機本來就得把檔案解成 16k mono Ogg/Opus——那是正典的儲存格式（D8）——所以同一份產物同時當儲存體與轉錄輸入：**解一次、傳一次**，音訊不會在網路上出現第二份複本。原本這條禁令真正在防的成本是**記憶體**，而那靠分塊串流解碼解掉，不把整段全寬 PCM 抱在手上（與 D9 邊錄邊寫檔同一套理由）。**仍然不做**：批次／多檔匯入（一次一個檔）、app 中途被殺掉後的背景續跑；**D2 也不變**——匯入的錄音一樣帶著 `needsAnalysis` 語意落地，五個桌機分析節點仍舊只有桌機那一份 |
 
 ## 3. iOS 平台硬限制（先講清楚不可能的事）
 
@@ -131,6 +132,39 @@ live findings 需要 eval templates 才有判準；scenario/stage bundles 決定
 | `SyncClient` | delta pull、presigned 上傳、離線重試佇列 | 中 |
 | `Library`（書房） | 列表 / 逐字稿 / 報告 / 行動項唯讀 | 低 |
 | `Consent` | 麥克風權限文案、**錄音同意提示**（雙方同意法規）、隱私政策 | 低但不可略 |
+| `AudioFileDecoder` + 匯入流程 | 挑既有音檔 → 分塊解成 16k mono Ogg/Opus → `/stt/batch` 批次轉錄 → 走既有上傳佇列落地（D12，§6.1） | 中——來源格式雜，且長檔的記憶體上限沒有第二次機會 |
+
+### 6.1 匯入既有音檔（D12）
+
+錄音不再是手機端唯一的入口：使用者可以挑一個**既有**音檔（別的 app 錄的、別人寄來的 m4a），讓它走完與現場錄音同一條收尾路徑。六個步驟：
+
+1. **挑檔**：系統檔案選擇器，一次一個檔（D12 明列的範圍）
+2. **security-scoped 複製**：`startAccessingSecurityScopedResource()` 之後**立刻**複製進 app 容器再放掉。iCloud Drive／第三方 provider 給的 URL 隨時可能失效，不能整段轉檔期間都握著它
+3. **解成 Ogg/Opus**：AVAudioFile 讀、AVAudioConverter 降到 16k mono，分塊串流編碼成 Ogg/Opus（D8 的儲存格式、D9 的記憶體紀律）。整段全寬 PCM 一次都不常駐
+4. **批次轉錄**：同一份 Ogg 送 `POST /stt/batch`，輪詢到完成後取回 token
+5. **組 segment**：token 依 `"mix"` 分組成 segment，與 live 路徑（`SegmentBuilder`）產出的形狀相同，逐字稿 UI 不需要分辨來源
+6. **落地**：交給現場錄音已經在用的 pending-upload 佇列，`source: "upload"`；R2 音檔、D1 metadata、離線重試全部共用同一份實作
+
+**端點契約**（與桌機 [`replay.rs`](../../src-tauri/src/replay.rs) 的 `parley_batch` 逐項對齊——兩端漂移就是 bug）：
+
+| 步驟 | 呼叫 |
+|---|---|
+| 建立 | `POST /stt/batch?diarization=1`，`Content-Type: application/octet-stream`，body 是 Ogg bytes，Bearer session token；回傳 job id |
+| 輪詢 | `GET /stt/batch/{id}`，每 **1500 ms** 一次、最多 **800 次**（≈20 分鐘）；`completed` / `error` 以外的狀態一律當成「還在跑」，不是硬失敗 |
+| 取回 | `GET /stt/batch/{id}/transcript` |
+| 清理 | `DELETE /stt/batch/{id}`，best-effort——逐字稿已經到手，刪不掉不能算轉錄失敗 |
+
+**會被攤開給使用者看的失敗**（建立階段的狀態碼，語意與桌機 `parley_batch_error` 一致；每一個都要講出「下一步做什麼」，而不是只報 HTTP 幾）：
+
+| 狀態 | 意思 | 使用者要做的事 |
+|---|---|---|
+| 401 | session 過期／未登入 | 重新登入再匯入 |
+| 402 | hosted 轉錄額度用完 | 升級方案，或等額度重置 |
+| 413 | 這個檔對 hosted 轉錄太大 | 切成較短的檔分次匯入 |
+| 429 | 同時進行的轉錄太多（**現場錄音也算一件**） | 等一件跑完再試——這是等待，不是失敗 |
+| 502 | 雲端接不到上游 provider | 過幾分鐘再試 |
+
+桌機那一份雙胞胎在 [`ingest.ts`](../../src/lib/replay/ingest.ts)（挑檔、provider gate、計費歸因）與 [`replay.rs`](../../src-tauri/src/replay.rs)（上傳、輪詢、token 分組）。手機端沒有 provider gate——它只有 hosted 這一條路。
 
 ## 7. 桌機端要改的
 
