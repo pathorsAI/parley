@@ -356,8 +356,14 @@ async function rpcMoveRecordingToFolder(a: RpcArgs): Promise<unknown> {
 async function rpcListFolders(): Promise<unknown> {
   // Fresh read: another INSTANCE (packaged vs dev) may have changed the shared
   // registry — MCP answers must reflect the file, not this window's cache.
-  const { listFoldersFresh } = await import("./history/folders");
-  return (await listFoldersFresh()).map((f) => ({ id: f.id, name: f.name }));
+  const { listFoldersFresh, isArchived } = await import("./history/folders");
+  // `archived` rides along so an agent filing a recording can tell a folder that
+  // is in use from one the user has put away (see Folder.archivedAt).
+  return (await listFoldersFresh()).map((f) => ({
+    id: f.id,
+    name: f.name,
+    archived: isArchived(f),
+  }));
 }
 
 async function rpcCreateFolder(a: RpcArgs): Promise<unknown> {
@@ -368,13 +374,17 @@ async function rpcCreateFolder(a: RpcArgs): Promise<unknown> {
   );
   // Adopt a same-name folder when one exists (the import_transcript rule), so
   // repeated calls stay idempotent. Fresh read first: another instance may have
-  // created it since this window loaded.
+  // created it since this window loaded. An ARCHIVED match counts as existing
+  // AND comes back out of the archive (createLocalFolder revives it): the caller
+  // is about to file into it, which is the opposite of putting it away.
   const existing = (await listFoldersFresh()).find((f) => f.name === name);
-  if (existing) return { id: existing.id, name: existing.name, existed: true };
+  if (existing && !existing.archivedAt) {
+    return { id: existing.id, name: existing.name, existed: true };
+  }
   const folder = createLocalFolder(name);
   await mirrorFolderToCloud("create", folder.id, folder.name, folder.createdAt);
   await emitFoldersUpdated().catch(() => {});
-  return { id: folder.id, name: folder.name, existed: false };
+  return { id: folder.id, name: folder.name, existed: !!existing };
 }
 
 async function rpcRenameFolder(a: RpcArgs): Promise<unknown> {
@@ -492,8 +502,10 @@ async function resolveImportFolder(folderName: string): Promise<string | null> {
     "./history/folders"
   );
   // Adopt a same-name folder if there is one, else create it. Fresh read first:
-  // another instance may have added it since this window loaded.
-  const existing = (await listFoldersFresh()).find((f) => f.name === folderName);
+  // another instance may have added it since this window loaded. An archived
+  // match falls through to createLocalFolder, which revives that same folder
+  // rather than creating a second one wearing its name.
+  const existing = (await listFoldersFresh()).find((f) => f.name === folderName && !f.archivedAt);
   if (existing) return existing.id;
   const created = createLocalFolder(folderName);
   await emitFoldersUpdated().catch(() => {});

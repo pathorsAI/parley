@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   createLocalFolder,
   emitFoldersUpdated,
+  filingChoices,
   listLocalFolders,
   listenForFoldersUpdated,
   type Folder,
@@ -119,6 +120,10 @@ export function DestinationPicker({
   }, [orgsAvailable, orgEpoch]);
 
   const orgRoot = t("history.move.rootLabel");
+  // The archived folder (if any) this recording is already in — the one archived
+  // folder the list still has to be able to name. Pulled out of `value` so the
+  // groups memo doesn't re-run on every re-render of a fresh destination object.
+  const keepFolderId = value.scope === "personal" ? value.folderId : null;
   const groups: ComboGroup[] = useMemo(() => {
     const personal = {
       // Unlabelled while there is nothing to tell it apart from — a local-only
@@ -126,7 +131,14 @@ export function DestinationPicker({
       label: orgs.length ? t("destination.personal") : undefined,
       options: [
         { value: "p", label: t("library.unassigned") },
-        ...folders.map((f) => ({ value: `p:${f.id}`, label: f.name })),
+        // An archived folder is not a filing destination — except the one this
+        // recording is ALREADY in, which the control still has to be able to
+        // name (filingChoices). Typing an archived folder's name back in brings
+        // it out of the archive rather than making a second folder called that.
+        ...filingChoices(folders, keepFolderId).map((f) => ({
+          value: `p:${f.id}`,
+          label: f.name,
+        })),
       ],
     };
     return [
@@ -139,7 +151,7 @@ export function DestinationPicker({
         ],
       })),
     ];
-  }, [folders, orgs, orgFolders, orgRoot, t]);
+  }, [folders, keepFolderId, orgs, orgFolders, orgRoot, t]);
 
   /** An org pick waiting on the copy-or-move answer. */
   const [pending, setPending] = useState<LibraryDestination | null>(null);

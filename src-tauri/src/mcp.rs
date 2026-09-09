@@ -855,8 +855,11 @@ fn tools() -> Vec<Value> {
         tool(
             "list_folders",
             "List personal folders",
-            "List the personal history folders as { id, name }. Recordings whose folderId \
-             is null (or unknown) live at the personal root.",
+            "List the personal history folders as { id, name, archived }. Recordings \
+             whose folderId is null (or unknown) live at the personal root. An \
+             archived folder is one the user has put away: it still holds the \
+             recordings already filed in it, but do not file anything new there \
+             unless the user names it.",
             json!({ "type": "object", "properties": {} }),
         ),
         tool(

@@ -1,7 +1,7 @@
 import { useStore, isTrimmed, hasSpokenSegment, meetingBriefText } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { suggestFiling } from "../ai/filing";
-import { listLocalFolders } from "../history/folders";
+import { filingChoices, listLocalFolders } from "../history/folders";
 import { makeRunGuard } from "./runGuard";
 import { log } from "../log";
 
@@ -38,7 +38,9 @@ export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<v
       names: state.speakerNames,
       meetingContext: meetingBriefText(state),
       meetingKind: state.meetingKind,
-      folders: listLocalFolders().map((f) => ({ id: f.id, name: f.name })),
+      // Never propose an archived folder: the user put it away, and a suggestion
+      // to file today's call into it would undo that decision for them.
+      folders: filingChoices(listLocalFolders()).map((f) => ({ id: f.id, name: f.name })),
       currentTitle: state.replay?.name ?? "",
     });
     if (!alive()) return;
