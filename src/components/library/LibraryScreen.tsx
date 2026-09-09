@@ -115,6 +115,22 @@ async function importRecording(folderId: string | null): Promise<void> {
 }
 
 /**
+ * Where a card in this scope can be MOVED, which is not the same list as what
+ * exists: an archived personal folder is still a home for what is already in it,
+ * but nothing new gets filed into one. The folder currently OPEN stays offered
+ * even when archived, so a card sitting in it still shows the check beside its
+ * own home. Org folders carry no archive state and pass straight through.
+ */
+function moveTargetFolders(
+  selection: LibrarySelection,
+  scopeFolders: LocalFolder[]
+): LocalFolder[] {
+  if (selection.kind !== "personal") return scopeFolders;
+  const open = selection.node.kind === "folder" ? selection.node.folderId : null;
+  return filingChoices(scopeFolders, open);
+}
+
+/**
  * The recordings library — what used to be the standalone History window's
  * right-hand pane (issue #195). The tree that selects into it lives in the app
  * shell, so "這家公司的錄音" and "這個資料夾" are one node instead of two trees
@@ -216,19 +232,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   // ── Node visibility ───────────────────────────────────────────────────────
   const scopeFolders =
     selection.kind === "org" ? tree.orgFolders[selection.id] ?? [] : tree.personalFolders;
-  // Where a card can be MOVED, which is not the same list as what exists: an
-  // archived folder is still a home for what is in it, but nothing new gets
-  // filed into one. The open node stays offered so a card sitting in an archived
-  // folder you are currently looking at still shows the check beside it.
-  const moveFolders =
-    selection.kind === "org"
-      ? scopeFolders
-      : filingChoices(
-          scopeFolders,
-          selection.kind === "personal" && selection.node.kind === "folder"
-            ? selection.node.folderId
-            : null
-        );
+  const moveFolders = moveTargetFolders(selection, scopeFolders);
   const liveFolderIds = new Set(scopeFolders.map((f) => f.id));
   const index = buildOwnershipIndex(tree.personalFolders);
   const searchQuery = query.trim().toLowerCase();
