@@ -41,7 +41,11 @@ fn system_audio_str() -> &'static str {
 }
 
 /// Called from the meeting's system-audio capture when tapped frames actually
-/// arrive — the strongest possible "granted" signal.
+/// arrive — the strongest possible "granted" signal. macOS-only because the
+/// permission is: Windows system audio needs no consent and reports
+/// `unsupported` until the loopback capture ships, so no capture there has a
+/// grant to confirm.
+#[cfg(target_os = "macos")]
 pub fn note_system_audio_granted() {
     SYSTEM_AUDIO.store(SA_GRANTED, Ordering::SeqCst);
 }

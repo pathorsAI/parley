@@ -310,6 +310,49 @@ interface AppIdentity {
   likelyDevBinary: boolean;
 }
 
+/** Whether the trigger the user picked can actually fire, and what stands in
+ *  its way. */
+interface TriggerState {
+  /** A hold-a-modifier trigger is selected but the HID tap has no Input
+   *  Monitoring grant, so nothing is watching the key. */
+  needsPermission: boolean;
+  /** A combo is selected but the OS refused to register it — something else
+   *  already owns that chord. */
+  comboConflict: boolean;
+  /** Some listener is armed for the current trigger. */
+  active: boolean;
+  /** The tap can observe fn but not swallow it, so macOS still runs the 🌐
+   *  action (emoji picker/dictation) on every press — worth a heads-up. */
+  fnListenOnly: boolean;
+}
+
+/**
+ * Read the backend's verdict on the selected trigger. One decision, four
+ * answers: they all turn on the same pair of facts (which kind of trigger is
+ * selected, and what the last `HotkeyStatus` said), so deriving them together
+ * keeps them from drifting apart.
+ *
+ * `mac` gates three of the four because they are macOS-only permission
+ * stories: Input Monitoring, the HID tap behind the hold-a-modifier triggers
+ * and the fn 🌐 override all describe grants and machinery Windows does not
+ * have, so raising them there would ask the user to fix something that isn't
+ * broken. `status` is null until the first backend answer arrives — nothing is
+ * known to be wrong yet, so every warning stays quiet.
+ */
+function describeTrigger(
+  mac: boolean,
+  selected: string,
+  status: HotkeyStatus | null,
+): TriggerState {
+  const selectedIsModifier = isModifierId(selected);
+  return {
+    needsPermission: mac && selectedIsModifier && status != null && !status.authorized,
+    comboConflict: !selectedIsModifier && status != null && !status.active,
+    active: !!status?.active,
+    fnListenOnly: mac && selected === "fn" && status?.mode === "tap-listen",
+  };
+}
+
 /**
  * Voice-typing options. The push-to-talk trigger is picked one of two ways —
  * exactly one trigger is live at a time (the backend unregisters everything
@@ -443,17 +486,11 @@ export const VoiceTypingSettings = () => {
   // this panel is the recorder, the mode switch and the polish toggle there.
   const mac = isMac();
   const selected = settings.voiceTypingShortcut;
-  const selectedIsModifier = isModifierId(selected);
-  // Every `mac &&` below guards a macOS-only permission story, not a cosmetic
-  // difference: Input Monitoring, Accessibility and the fn 🌐 override all
-  // describe grants Windows does not have, so on Windows these lines would ask
-  // the user to fix something that isn't broken.
-  const needsPermission = mac && selectedIsModifier && status != null && !status.authorized;
-  const comboConflict = !selectedIsModifier && status != null && !status.active;
-  const active = !!status?.active;
-  // The tap can observe fn but not swallow it, so macOS still runs the 🌐
-  // action (emoji picker/dictation) on every press — worth a heads-up.
-  const fnListenOnly = mac && selected === "fn" && status?.mode === "tap-listen";
+  const { needsPermission, comboConflict, active, fnListenOnly } = describeTrigger(
+    mac,
+    selected,
+    status,
+  );
 
   const setVoiceTypingEnabled = (enabled: boolean) => {
     updateSettings({ voiceTypingEnabled: enabled });
@@ -494,6 +531,12 @@ export const VoiceTypingSettings = () => {
   // actionable — the default state is just the recorder, the chips and one
   // caption.
   const icon = recorderIcon(saving, recording);
+  // The caption under the recorder names the ways a trigger can be picked, so
+  // it differs by platform: only macOS has the hold-a-modifier chips to point
+  // at. (While capture is armed the caption says how to back out instead.)
+  const recorderHelpKey: TranslationKey = mac
+    ? "settings.voiceTyping.recorder.help"
+    : "settings.voiceTyping.recorder.helpWindows";
 
   return (
     <div className="flex max-w-md flex-col gap-6">
@@ -671,13 +714,7 @@ export const VoiceTypingSettings = () => {
         )}
 
         <p className="text-[11px] text-muted-foreground">
-          {recording
-            ? t("settings.voiceTyping.recorder.cancelHint")
-            : t(
-                mac
-                  ? "settings.voiceTyping.recorder.help"
-                  : "settings.voiceTyping.recorder.helpWindows",
-              )}
+          {recording ? t("settings.voiceTyping.recorder.cancelHint") : t(recorderHelpKey)}
         </p>
         {recordHint && (
           <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400">

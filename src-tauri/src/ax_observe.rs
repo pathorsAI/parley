@@ -21,7 +21,10 @@ use tauri::AppHandle;
 
 /// Event carrying a possible correction to the frontend. Emitted at most once
 /// per [`observe_pasted_field`] call, to every window (the voice-typing overlay
-/// is the one that listens).
+/// is the one that listens). Only the macOS observer below emits it — where
+/// there is no Accessibility API to read the field back, no correction is ever
+/// noticed and no window is ever told about one.
+#[cfg(target_os = "macos")]
 pub const CORRECTION_CANDIDATE_EVENT: &str = "voicetyping://correction-candidate";
 
 /// Start watching the field voice typing just pasted `inserted_text` into.

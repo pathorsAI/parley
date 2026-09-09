@@ -11,7 +11,9 @@
 //! diarization on we still analyze raw mic, not the mixed/diarized stream. The
 //! system-audio stream IS analyzed too ([`FarEndAnalyzer`]) — but only as a
 //! reference for rejecting the far voice bleeding through the speakers into the
-//! mic; it feeds no user-facing stat of its own.
+//! mic; it feeds no user-facing stat of its own. That half is compiled on macOS
+//! alone, because it is fed by the system-audio capture and Windows has none
+//! until WASAPI loopback lands; the mic half below runs on every platform.
 //!
 //! F0 is estimated with a self-contained YIN detector (no extra crates, in keeping
 //! with the project's no-native-deps posture). Monotony is the spread of F0 *in
@@ -75,7 +77,9 @@ const SEMITONE_REF_HZ: f32 = 100.0;
 /// carries the user's own pitch.
 ///
 /// How long a far-end frame stays queryable. Covers capture/chunking skew between
-/// the two streams plus the match window below.
+/// the two streams plus the match window below. Only the writer prunes by it, so
+/// it lives with the writer — see the impl split on [`FarEndState`].
+#[cfg(any(target_os = "macos", test))]
 const FAR_RETAIN_MS: u64 = 600;
 /// A mic frame is compared against far-end frames at most this much older. Wide
 /// enough to absorb the ~100 ms chunk cadence + speaker→mic acoustic delay.
@@ -617,6 +621,12 @@ pub struct FarEndState {
     frames: Mutex<VecDeque<FarFrame>>,
 }
 
+/// The writing half. Frames come from the system-audio capture and nowhere
+/// else, so off macOS there is no far end to record and nothing constructs this
+/// at all — `commands.rs` hands the mic analyzer a bare `None`. Test builds keep
+/// it everywhere, because the reading half below is compiled everywhere and its
+/// tests need frames to read.
+#[cfg(any(target_os = "macos", test))]
 impl FarEndState {
     pub fn new() -> Self {
         Self {
@@ -634,7 +644,13 @@ impl FarEndState {
             frames.pop_front();
         }
     }
+}
 
+/// The reading half, compiled everywhere: [`ProsodyAnalyzer`] carries an
+/// `Option<Arc<FarEndState>>` on every platform and consults it per frame. Off
+/// macOS that option is always `None`, so these answer for a far end that never
+/// materializes rather than being absent.
+impl FarEndState {
     /// Whether a VOICED mic frame is the far voice leaking through the speakers:
     /// a recent far-end frame is pitch-matched (octave-tolerant) and the mic
     /// level is plausibly bleed rather than direct speech. Unvoiced mic frames
@@ -681,11 +697,16 @@ impl FarEndState {
 /// Streaming analyzer for the SYSTEM-AUDIO ("them") stream: same FRAME/HOP
 /// framing and YIN pitch as the mic analyzer, but it only feeds the shared
 /// [`FarEndState`] — it emits no events and keeps no windows of its own.
+///
+/// macOS-only, like the capture that feeds it: the Core Audio process tap is
+/// the sole source of a counterpart stream today.
+#[cfg(target_os = "macos")]
 pub struct FarEndAnalyzer {
     buf: Vec<f32>,
     state: Arc<FarEndState>,
 }
 
+#[cfg(target_os = "macos")]
 impl FarEndAnalyzer {
     pub fn new(state: Arc<FarEndState>) -> Self {
         Self {

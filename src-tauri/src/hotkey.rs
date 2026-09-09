@@ -249,6 +249,11 @@ pub fn install_wake_observer(app: AppHandle) {
 }
 
 /// Re-apply the currently selected trigger (see [`install_wake_observer`]).
+/// macOS-only: it runs from the NSWorkspace wake block, and the failure modes
+/// it repairs — an inert Carbon registration, a silently disabled CGEventTap —
+/// are macOS's. The stub `imp` installs no observer, so nothing off macOS ever
+/// asks for a re-assert.
+#[cfg(target_os = "macos")]
 fn reassert(app: &AppHandle) {
     let id = CURRENT
         .lock()
@@ -629,10 +634,10 @@ mod imp {
 /// is listening" and the modifier ids can never go live (see `modifier_status`).
 ///
 /// This carries ONLY the functions the shared code actually calls off macOS.
-/// The tap-introspection ones (`is_started`, `tap_mode`, `shortcut_id`) used to
-/// be stubbed here too, but nothing outside the macOS tap asks about a tap that
-/// cannot exist — and an unused stub is not free, because the Windows CI job
-/// compiles this file with `-D warnings`.
+/// The tap-only ones (`is_started`, `tap_mode`, `shortcut_id`, `reenable_tap`)
+/// used to be stubbed here too, but nothing outside the macOS tap asks about —
+/// or revives — a tap that cannot exist, and an unused stub is not free,
+/// because the Windows CI job compiles this file with `-D warnings`.
 #[cfg(not(target_os = "macos"))]
 mod imp {
     use tauri::AppHandle;
@@ -646,6 +651,5 @@ mod imp {
     pub fn ensure_started(_app: AppHandle, _force: bool) -> bool {
         false
     }
-    pub fn reenable_tap() {}
     pub fn install_wake_observer(_app: AppHandle) {}
 }

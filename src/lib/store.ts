@@ -132,13 +132,13 @@ export const DEFAULT_VOICE_TYPING_SHORTCUT: Settings["voiceTypingShortcut"] = is
 /** The trigger ids that only macOS can deliver: `alt-space` (the old universal
  *  default) plus the four modifier keys, which ride a CGEventTap that has no
  *  Windows counterpart. */
-const MAC_ONLY_SHORTCUTS: readonly string[] = [
+const MAC_ONLY_SHORTCUTS: ReadonlySet<string> = new Set([
   "alt-space",
   "fn",
   "right-option",
   "right-command",
   "right-control",
-];
+]);
 
 /**
  * Move a Windows install off a trigger it can never fire.
@@ -160,7 +160,7 @@ export function migrateVoiceTypingShortcut(
 ): Settings["voiceTypingShortcut"] {
   if (saved === undefined) return DEFAULT_VOICE_TYPING_SHORTCUT;
   if (isMac()) return saved;
-  return MAC_ONLY_SHORTCUTS.includes(saved) ? DEFAULT_VOICE_TYPING_SHORTCUT : saved;
+  return MAC_ONLY_SHORTCUTS.has(saved) ? DEFAULT_VOICE_TYPING_SHORTCUT : saved;
 }
 
 const DEFAULT_SETTINGS: Settings = {
