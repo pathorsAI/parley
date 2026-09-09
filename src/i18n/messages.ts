@@ -164,6 +164,8 @@ export const zhTW = {
 
   // ── 側邊欄的右鍵選單 ──
   "sidebar.menu.rename": "重新命名",
+  "sidebar.menu.archive": "封存",
+  "sidebar.menu.unarchive": "取消封存",
   "sidebar.menu.delete": "刪除",
   "sidebar.menu.newFolder": "新增資料夾",
 
@@ -406,6 +408,7 @@ export const zhTW = {
   "history.folder.createFailed": "建立資料夾失敗：{error}",
   "history.folder.renameFailed": "重新命名資料夾失敗：{error}",
   "history.folder.deleteFailed": "刪除資料夾失敗：{error}",
+  "history.folder.archived": "已封存",
   "history.folder.empty": "這個資料夾還沒有錄音",
   "history.folder.emptyHint": "把錄音卡片拖進這個資料夾來整理。",
   "history.move.title": "移到 {org}",
@@ -1180,6 +1183,8 @@ export const en = {
 
   // ── Sidebar right-click menu ──
   "sidebar.menu.rename": "Rename",
+  "sidebar.menu.archive": "Archive",
+  "sidebar.menu.unarchive": "Restore",
   "sidebar.menu.delete": "Delete",
   "sidebar.menu.newFolder": "New folder",
 
@@ -1425,6 +1430,7 @@ export const en = {
   "history.folder.createFailed": "Couldn’t create folder: {error}",
   "history.folder.renameFailed": "Couldn’t rename folder: {error}",
   "history.folder.deleteFailed": "Couldn’t delete folder: {error}",
+  "history.folder.archived": "Archived",
   "history.folder.empty": "No recordings in this folder yet",
   "history.folder.emptyHint": "Drag recording cards into this folder to organize them.",
   "history.move.title": "Move to {org}",

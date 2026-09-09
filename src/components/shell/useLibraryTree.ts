@@ -7,6 +7,7 @@ import {
   listLocalFolders,
   listenForFoldersUpdated,
   renameLocalFolder,
+  setLocalFolderArchived,
   writeLocalFolders,
   type Folder as LocalFolder,
 } from "../../lib/history/folders";
@@ -55,6 +56,9 @@ export interface LibraryTree {
   /** Create a personal folder and return its id (empty string on a blank name). */
   createPersonalFolder: (name: string) => string;
   renamePersonalFolder: (id: string, name: string) => void;
+  /** Put a personal folder away (or bring it back) — nothing moves, nothing is
+   *  deleted; it just leaves the tree and the filing pickers. */
+  archivePersonalFolder: (id: string, archived: boolean) => void;
   deletePersonalFolder: (folder: LocalFolder) => void;
   createOrgFolder: (orgId: string, name: string) => Promise<void>;
   renameOrgFolder: (orgId: string, id: string, name: string) => Promise<void>;
@@ -200,6 +204,15 @@ export function useLibraryTree(): LibraryTree {
     [t]
   );
 
+  // Archive state is local-only (the cloud folder table has no column for it),
+  // so there is no cloud call here — see Folder.archivedAt. It still broadcasts,
+  // because every window in THIS instance reads the same registry file.
+  const archivePersonalFolder = useCallback((id: string, archived: boolean) => {
+    setLocalFolderArchived(id, archived);
+    setPersonalFolders(listLocalFolders());
+    emitFoldersUpdated().catch(() => {});
+  }, []);
+
   const deletePersonalFolder = useCallback(
     (folder: LocalFolder) => {
       if (!globalThis.confirm(t("history.folder.deleteConfirm", { name: folder.name }))) return;
@@ -272,6 +285,7 @@ export function useLibraryTree(): LibraryTree {
     reloadSummaries,
     createPersonalFolder,
     renamePersonalFolder,
+    archivePersonalFolder,
     deletePersonalFolder,
     createOrgFolder: createOrgFolderUI,
     renameOrgFolder: renameOrgFolderUI,
