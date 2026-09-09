@@ -7,6 +7,13 @@ import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
 import { log } from "../lib/log";
 import { hasProviderKey } from "../lib/ai/settings";
+import {
+  isModifierId,
+  shortcutCaps,
+  MODIFIER_IDS,
+  MODIFIER_LABEL_KEYS,
+  type ModifierId,
+} from "../lib/voiceTyping/caps";
 import type { VoiceTypingMode, VoiceTypingShortcut } from "../lib/types";
 import { Button } from "@/components/ui/button";
 
@@ -19,21 +26,6 @@ interface HotkeyStatus {
    *  the key — matters for fn, whose native 🌐 action still fires) | "none". */
   mode: string;
 }
-
-/** The hold-friendly single modifier keys watched by the HID tap (need Input
- *  Monitoring). Everything else is an OS global shortcut (no permission). */
-const MODIFIER_IDS = ["fn", "right-option", "right-command", "right-control"] as const;
-type ModifierId = (typeof MODIFIER_IDS)[number];
-
-const MODIFIER_LABEL_KEYS: Record<ModifierId, TranslationKey> = {
-  fn: "settings.voiceTyping.shortcut.fn",
-  "right-option": "settings.voiceTyping.shortcut.right-option",
-  "right-command": "settings.voiceTyping.shortcut.right-command",
-  "right-control": "settings.voiceTyping.shortcut.right-control",
-};
-
-const isModifierId = (s: string): s is ModifierId =>
-  (MODIFIER_IDS as readonly string[]).includes(s);
 
 /** Keys that never end a recording on their own — we wait for the main key. */
 const MODIFIER_CODES = new Set([
@@ -69,61 +61,6 @@ const LEFT_MODIFIER_CODES = new Set([
   "ShiftLeft",
   "ShiftRight",
 ]);
-
-const MOD_SYMBOL: Record<string, string> = {
-  super: "⌘",
-  control: "⌃",
-  alt: "⌥",
-  shift: "⇧",
-};
-
-/** Human label for a W3C KeyboardEvent.code token. */
-function keyLabel(code: string): string {
-  if (code.startsWith("Key")) return code.slice(3);
-  if (code.startsWith("Digit")) return code.slice(5);
-  if (code.startsWith("Numpad")) return `Num ${code.slice(6)}`;
-  const MAP: Record<string, string> = {
-    Space: "Space",
-    Minus: "-",
-    Equal: "=",
-    BracketLeft: "[",
-    BracketRight: "]",
-    Backslash: "\\",
-    Semicolon: ";",
-    Quote: "'",
-    Comma: ",",
-    Period: ".",
-    Slash: "/",
-    Backquote: "`",
-    ArrowUp: "↑",
-    ArrowDown: "↓",
-    ArrowLeft: "←",
-    ArrowRight: "→",
-    Enter: "↩",
-    Tab: "⇥",
-    Backspace: "⌫",
-    Delete: "⌦",
-    Home: "↖",
-    End: "↘",
-    PageUp: "⇞",
-    PageDown: "⇟",
-  };
-  return MAP[code] ?? code;
-}
-
-/** Render the stored shortcut id as mac-style key caps, e.g. "⌃ ⇧ D". */
-export function shortcutCaps(shortcut: string, t: (k: TranslationKey) => string): string {
-  if (shortcut === "alt-space") return "⌥ Space";
-  if (isModifierId(shortcut)) return t(MODIFIER_LABEL_KEYS[shortcut]);
-  if (shortcut.startsWith("combo:")) {
-    return shortcut
-      .slice("combo:".length)
-      .split("+")
-      .map((part) => MOD_SYMBOL[part] ?? keyLabel(part))
-      .join(" ");
-  }
-  return shortcut;
-}
 
 /** The combo id a recorded keydown selects, or null when the press needs a
  *  modifier (a bare letter would swallow ordinary typing system-wide). */

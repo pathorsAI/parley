@@ -12,6 +12,8 @@ import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
 import { useLibraryTree } from "./useLibraryTree";
 import { useNavShortcuts } from "../../lib/nav/useNavShortcuts";
+import { useCommandScope } from "../../lib/commands/bind";
+import { useSidebarCollapsed } from "../../lib/shell/sidebar";
 import { useStore, isMeetingActive, type AppMode } from "../../lib/store";
 
 const LibraryScreen = lazy(() =>
@@ -20,21 +22,26 @@ const LibraryScreen = lazy(() =>
 /**
  * The app shell (issue #195): one persistent left tree, and the route beside it.
  *
- * The tree is hidden in exactly one state, because there the screen belongs to
- * something else: a RUNNING meeting, where the live coach owns the window.
- * Everything else — live idle, a loaded recording, the library — keeps the tree
- * on screen, so nothing is a mode you have to exit. (Settings is not a route
- * here: it opens as its own OS window, see lib/nav/settings.ts.)
+ * The tree goes away for two unrelated reasons. A RUNNING meeting takes it,
+ * because there the screen belongs to something else — the live coach owns the
+ * window. ⌘B takes it because the user asked for the room back. Everything else
+ * — live idle, a loaded recording, the library — keeps the tree on screen, so
+ * nothing is a mode you have to exit. (Settings is not a route here: it opens as
+ * its own OS window, see lib/nav/settings.ts.)
  */
 export function AppShell() {
   const appMode = useStore((s) => s.appMode);
   const meetingActive = useStore((s) => isMeetingActive(s.meetingStatus));
+  const collapsed = useSidebarCollapsed();
   const tree = useLibraryTree();
 
-  // Above the focused branch on purpose: back/forward stays bound during a
-  // running meeting so the keys don't die and revive with the tree. Pressing
-  // them there is harmless — navigateTo refuses to move while the coach owns
-  // the window, and a refusal leaves the stack alone.
+  // Above the focused branch on purpose, both of them: the main window's keys
+  // must not die and revive with the tree. Pressing back/forward during a
+  // running meeting is harmless — navigateTo refuses to move while the coach
+  // owns the window, and a refusal leaves the stack alone — and the same holds
+  // for the rest of the `main` scope, which is guarded where it acts rather than
+  // by being unbound here.
+  useCommandScope("main");
   useNavShortcuts();
 
   const focused = meetingActive;
@@ -45,11 +52,21 @@ export function AppShell() {
     storage: globalThis.localStorage,
   });
 
-  if (focused) {
+  // No tree means no panel group at all, rather than a panel squeezed to
+  // nothing: a collapsed-to-32px tree is a target you have to aim at to dismiss,
+  // and leaving the group unmounted leaves the saved split (`parley:shell`)
+  // exactly as the user dragged it, so re-expanding returns the width they had.
+  if (focused || collapsed) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col">
-        <RouteContent mode={appMode} tree={tree} />
-      </div>
+      <>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <RouteContent mode={appMode} tree={tree} />
+        </div>
+        {/* ⌘K outlives a collapsed tree, and matters more there: with no rows
+            left to aim at, naming the place is the only way to reach it. It
+            stays absent while a meeting is focused — see below. */}
+        {!focused && <CommandPalette tree={tree} />}
+      </>
     );
   }
 
@@ -74,8 +91,8 @@ export function AppShell() {
         </ResizablePanel>
       </ResizablePanelGroup>
       {/* ⌘K (#332): the other way to reach a node — by name instead of by aim.
-          Deliberately absent from the focused branch above, where a running
-          meeting owns the window. */}
+          Deliberately absent from a FOCUSED meeting above, where the live coach
+          owns the window; a merely collapsed tree still gets it. */}
       <CommandPalette tree={tree} />
     </>
   );

@@ -12,7 +12,7 @@ import {
   type QuickTarget,
 } from "../../lib/library/quickSwitch";
 import { navigateTo, type Location } from "../../lib/nav/navigate";
-import { useShortcut } from "../../lib/shortcuts";
+import { useCommandShortcut } from "../../lib/commands/bind";
 import { isMeetingActive, useStore } from "../../lib/store";
 import { useI18n, type TranslationKey } from "../../i18n";
 import type { LibraryTree } from "./useLibraryTree";
@@ -47,19 +47,18 @@ export function CommandPalette({ tree }: Readonly<{ tree: LibraryTree }>) {
   const inputRef = useRef<HTMLInputElement>(null);
   const activeRef = useRef<HTMLButtonElement>(null);
 
-  // ⌘K / Ctrl+K toggles. The guard reads the store directly rather than the
+  // `nav.jumpTo` toggles. The guard reads the store directly rather than the
   // subscribed value, so the binding never has to be re-registered.
-  // `whileTyping`: the palette's own search field has focus whenever it is
-  // open, so a ⌘K that respected the typing guard could open this thing but
-  // never close it again.
-  useShortcut(
-    { mod: true, key: "k" },
-    () => {
-      if (isMeetingActive(useStore.getState().meetingStatus)) return;
-      setOpen((o) => !o);
-    },
-    { whileTyping: true }
-  );
+  //
+  // That command is one of the few marked `whileTyping` in the registry, and
+  // this is the reason: the palette's own search field has focus whenever it is
+  // open, so a chord that respected the typing guard could open this thing but
+  // never close it again. The flag is set on the row, not passed here — the
+  // table decides what a command may interrupt.
+  useCommandShortcut("nav.jumpTo", () => {
+    if (isMeetingActive(useStore.getState().meetingStatus)) return;
+    setOpen((o) => !o);
+  });
 
   // A meeting starting while the palette is up takes the window back.
   useEffect(() => {

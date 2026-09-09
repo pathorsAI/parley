@@ -6,13 +6,27 @@ import { attachConsoleOnce, log } from "./lib/log";
 import { initFolderRegistry } from "./lib/history/folders";
 import { initDictionary } from "./lib/dictionary";
 import { desktopPlatform } from "./lib/platform";
-import { initZoomShortcuts } from "./lib/zoom";
+import { restoreZoom } from "./lib/zoom";
+import { installGlobalCommands } from "./lib/commands/bind";
+import { initMenuCommands } from "./lib/commands/menuBridge";
+import { ShortcutSheet } from "./components/shell/ShortcutSheet";
 
 // Mirror webview console.* into the rotating log file (no-op outside Tauri).
 void attachConsoleOnce();
 
-// ⌘/Ctrl + / − / 0 page zoom, per window, persisted across launches.
-initZoomShortcuts();
+// Re-apply this window's saved page zoom (the KEYS are commands now — below).
+restoreZoom();
+
+// The window-wide chords — ⌘, ⇧? and page zoom — from lib/commands/registry.ts.
+// Installed here rather than from a component because the secondary windows
+// (Settings, Field Log, the voice-typing overlay) render no shell to hang a
+// hook on, and a Settings window where ⌘, does nothing reads as broken.
+installGlobalCommands();
+
+// …and the other end of the same table: on macOS the menu bar owns some of
+// those chords outright (AppKit matches them before the webview sees them), so
+// the menu item has to be able to run the command. See commands/menuBridge.ts.
+initMenuCommands();
 
 // Hydrate the shared folder registry (disk-backed; see history/folders.ts).
 // Every window needs it: History (grid + sidebar), Settings + main titlebar
@@ -82,6 +96,10 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <Suspense fallback={null}>
       <Root />
+      {/* ⇧? in every window that is big enough to read it. The voice-typing
+          overlay is a transient always-on-top strip — a cheat sheet there would
+          have nowhere to go. */}
+      {window_ !== "voice-typing" && <ShortcutSheet />}
     </Suspense>
   </React.StrictMode>,
 );

@@ -17,8 +17,21 @@ import { selectAndSeek } from "../analysis/useAnalysis";
 import { ReplayPlayerBar } from "./ReplayPlayerBar";
 import { ReplayTranscript } from "./ReplayTranscript";
 import { ReplaySpeakerTags } from "./ReplaySpeakerTags";
-import { useReplayPlayer } from "./useReplayPlayer";
+import { useReplayPlayer, type ReplayPlayer } from "./useReplayPlayer";
 import { useReplayPlayheadMs, useReplaySession, useReplayTrim } from "./spine";
+import { useCommandScope, useCommandShortcut } from "../../lib/commands/bind";
+import { seekTarget, type SeekCommandId } from "../../lib/replay/seek";
+
+/**
+ * One of the six seek commands, wired to this screen's player. A hook rather
+ * than six copies of the same body — the command id is the only thing that
+ * varies, and it is what decides both the chord (registry) and the arithmetic
+ * (lib/replay/seek). Called unconditionally, once per id, from a list that is a
+ * module constant, so the hook order never moves.
+ */
+function useSeekCommand(id: SeekCommandId, player: ReplayPlayer, durationMs: number): void {
+  useCommandShortcut(id, () => player.seek(seekTarget(id, player.playheadMs, durationMs)));
+}
 
 /**
  * The REPLAY workbench: play a recording and check the evidence — transcript on
@@ -33,9 +46,26 @@ export function ReplayScreen() {
 
   const session = useReplaySession();
   const playheadMs = useReplayPlayheadMs();
-  const player = useReplayPlayer(session?.durationMs ?? 0, session?.audioOffsetMs ?? 0);
+  const durationMs = session?.durationMs ?? 0;
+  const player = useReplayPlayer(durationMs, session?.audioOffsetMs ?? 0);
   // (The analysis pipeline runs from StudyScreen — landing on the report page
   // starts it too, not just this workbench.)
+
+  // The replay keymap is live exactly while this workbench is mounted: bare ←
+  // rewinds here and moves a list selection everywhere else, which is the whole
+  // reason scopes exist. Holding the scope is also what tells the cheat sheet to
+  // show the replay group.
+  useCommandScope("replay");
+  // Space is bound here rather than on the play button because the button is not
+  // always where focus is — and when it IS, the browser already activates it,
+  // which `activatesFocusedControl` in lib/shortcuts.ts keeps from doubling up.
+  useCommandShortcut("replay.togglePlay", () => player.toggle());
+  useSeekCommand("replay.back5", player, durationMs);
+  useSeekCommand("replay.forward5", player, durationMs);
+  useSeekCommand("replay.back10", player, durationMs);
+  useSeekCommand("replay.forward10", player, durationMs);
+  useSeekCommand("replay.toStart", player, durationMs);
+  useSeekCommand("replay.toEnd", player, durationMs);
 
   // Read the working transcript + speakerNames from the STORE (seeded on
   // enterReplay, then rewritten by voice diarization / edits) — not the static
