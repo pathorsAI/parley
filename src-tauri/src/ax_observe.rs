@@ -21,7 +21,10 @@ use tauri::AppHandle;
 
 /// Event carrying a possible correction to the frontend. Emitted at most once
 /// per [`observe_pasted_field`] call, to every window (the voice-typing overlay
-/// is the one that listens).
+/// is the one that listens). Only the macOS observer below emits it — where
+/// there is no Accessibility API to read the field back, no correction is ever
+/// noticed and no window is ever told about one.
+#[cfg(target_os = "macos")]
 pub const CORRECTION_CANDIDATE_EVENT: &str = "voicetyping://correction-candidate";
 
 /// Start watching the field voice typing just pasted `inserted_text` into.
@@ -536,8 +539,12 @@ mod imp {
 mod imp {
     use tauri::AppHandle;
 
-    /// No Accessibility API outside macOS — voice typing itself is macOS-only,
-    /// so there is nothing to observe here.
+    /// No Accessibility API outside macOS. Voice typing itself now runs on
+    /// Windows, but this watcher does not: reading back the field we pasted
+    /// into needs UI Automation, which is a separate implementation nobody has
+    /// written. The cost is that a Windows user's corrections never become
+    /// dictionary suggestions — dictation itself is unaffected, and the
+    /// dictionary stays editable by hand.
     pub fn observe(_app: AppHandle, _inserted_text: String) -> bool {
         false
     }

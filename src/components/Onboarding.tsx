@@ -43,9 +43,11 @@ type StepId =
 // Ordered onboarding steps. The Parley sign-in step only exists in the official
 // (cloud) build — it offers the free hosted STT + LLM. CLOUD_ENABLED is a
 // compile-time constant, so the OSS build never ships the step at all.
-// The perms and voiceTyping steps are macOS-only: the TCC permission walk and
-// the global push-to-talk layer aren't wired on Windows yet (mic access there
-// is a system setting with no runtime prompt).
+// The perms step stays macOS-only: it walks the TCC prompts, and Windows has no
+// runtime permission prompt to walk — mic access there is a system setting the
+// user changes (or doesn't) outside the app, so a step that can only say "go
+// look in Settings" would be a dead page in the flow. Voice typing runs on both
+// platforms and gets its step on both.
 const STEPS: StepId[] = [
   "lang",
   "welcome",
@@ -55,7 +57,7 @@ const STEPS: StepId[] = [
   ...(isMac() ? (["perms"] as StepId[]) : []),
   "profile",
   "diarize",
-  ...(isMac() ? (["voiceTyping"] as StepId[]) : []),
+  "voiceTyping",
   "done",
 ];
 const STEP_COUNT = STEPS.length;
@@ -178,7 +180,10 @@ export function Onboarding() {
               <ul className="mt-1 flex flex-col gap-1.5 text-sm text-muted-foreground">
                 <li>• {t("onboarding.welcome.point1")}</li>
                 <li>• {t("onboarding.welcome.point2")}</li>
-                <li>• {t("onboarding.welcome.point3")}</li>
+                {/* Windows has no screen-recording consent and its mic consent
+                    is a privacy setting, not a macOS grant — naming the wrong
+                    OS here is the first thing a Windows user reads. */}
+                <li>• {t(isMac() ? "onboarding.welcome.point3" : "onboarding.welcome.point3.windows")}</li>
               </ul>
             </div>
           )}
@@ -387,9 +392,10 @@ export function Onboarding() {
                     broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
                       log.warn("settings: broadcast failed", { error: String(error) }),
                     );
-                    // Auto-paste needs Accessibility — enabling is the moment to
-                    // ask (same as the Settings toggle).
-                    if (enabled) {
+                    // Auto-paste needs Accessibility on macOS — enabling is the
+                    // moment to ask (same as the Settings toggle). Windows has
+                    // no equivalent grant, so there is nothing to ask for.
+                    if (enabled && isMac()) {
                       invoke("accessibility_status", { prompt: true }).catch((error) =>
                         log.warn("permissions: accessibility prompt failed", { error: String(error) }),
                       );

@@ -1,6 +1,6 @@
 # Parley — repository conventions
 
-Parley is a public, Apache-2.0 macOS app (Tauri 2 + React 19 + TypeScript). Anyone should be able to read the history and contribute, so the repository is kept in one language regardless of who — or what — is writing.
+Parley is a public, Apache-2.0 desktop app for macOS and Windows (Tauri 2 + React 19 + TypeScript). Anyone should be able to read the history and contribute, so the repository is kept in one language regardless of who — or what — is writing.
 
 ## Write English in the repository
 

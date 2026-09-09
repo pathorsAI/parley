@@ -102,6 +102,20 @@ export function shortcutFires(
   return matchShortcut(e, spec, mac);
 }
 
+/**
+ * How the host OS spells a mod-chord, for labels that TELL the user which keys
+ * to press: macOS writes "⌘F", Windows writes "Ctrl+F". The chords themselves
+ * already work on both (matchShortcut above, and ReplayTranscript's find bar) —
+ * it was only the labels that were written mac-first, so a Windows user was
+ * shown a glyph that is not on their keyboard.
+ *
+ * `mac` is a parameter, like the matchers above, so both spellings can be
+ * exercised in a test without stubbing the OS.
+ */
+export function modChordCap(key: string, mac: boolean = isMac()): string {
+  return mac ? `⌘${key}` : `Ctrl+${key}`;
+}
+
 export interface ShortcutOptions {
   /** Unregister without unmounting — e.g. a route that suspends its bindings. */
   enabled?: boolean;

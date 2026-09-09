@@ -101,6 +101,7 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: x86_64-pc-windows-msvc
+          components: clippy
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -116,5 +117,13 @@ jobs:
           touch src-tauri/onnxruntime/onnxruntime_providers_shared.dll
         shell: bash
 
-      - name: Check
-        run: cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+      # Was `cargo check` while Windows carried almost no platform-specific
+      # code. Now that voice typing has a real Win32 implementation (clipboard,
+      # SendInput, window styles), this job is the ONLY gate that ever compiles
+      # it — nobody on the team runs Windows, so a `#[cfg(target_os =
+      # "windows")]` block is invisible until CI looks at it. `--all-targets`
+      # so `#[cfg(test)]` code compiles too, and `-D warnings` to match macOS:
+      # an unused-unsafe or a dangling handle warning in that code is exactly
+      # the kind of thing nobody would otherwise see.
+      - name: Clippy (deny warnings)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --target x86_64-pc-windows-msvc -- -D warnings

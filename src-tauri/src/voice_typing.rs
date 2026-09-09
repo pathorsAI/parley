@@ -4,10 +4,11 @@
 //!
 //! It emits the same `transcript://segment` and `audio://level` events as a
 //! meeting, tagged `source: "voice-typing"`, which the floating overlay window
-//! renders. On release, the host copies the final text to the clipboard via the
-//! native pasteboard (the webview can't, because Parley isn't the focused app)
-//! and — when the user enabled it — simulates Cmd+V to paste into the frontmost
-//! app (needs Accessibility).
+//! renders. On release, the host copies the final text to the clipboard through
+//! the OS (the webview can't, because Parley isn't the focused app) and — when
+//! the user enabled it — synthesizes the paste chord into the frontmost app:
+//! ⌘V on macOS, which needs Accessibility, or Ctrl+V on Windows, which needs no
+//! permission but is refused by UIPI when the target window runs elevated.
 
 // The `objc` 0.2 macros emit `cfg(cargo-clippy)` checks newer compilers warn on.
 #![allow(unexpected_cfgs)]
@@ -333,12 +334,19 @@ pub fn copy_to_clipboard(text: String) -> Result<(), String> {
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PasteResult {
-    /// False when Accessibility isn't granted — nothing was posted.
+    /// False when the keystroke could not be posted: on macOS because
+    /// Accessibility isn't granted, on Windows because UIPI refused the
+    /// injection (the target window belongs to an elevated process).
     pasted: bool,
-    /// Bundle identifier of the app that was frontmost at paste time (e.g.
-    /// "com.apple.Notes"), sampled BEFORE the ⌘V so it names the app that
-    /// actually received the text. `None` when there is no frontmost app, when
-    /// it has no bundle id (some helper processes), or off macOS.
+    /// Identifier of the app that was frontmost at paste time, sampled BEFORE
+    /// the paste chord so it names the app that actually received the text.
+    /// The name is macOS's: there it is the bundle identifier (e.g.
+    /// "com.apple.Notes"). Windows has no such thing, so it carries the
+    /// foreground process's executable file name instead (e.g. "notepad.exe"),
+    /// which is the closest stable per-app key available without permissions.
+    /// `None` when there is no frontmost app, when it has no bundle id (some
+    /// helper processes), when the process can't be opened (Windows: a target
+    /// at a higher integrity level), or on a platform with neither.
     app_bundle_id: Option<String>,
 }
 
@@ -367,7 +375,15 @@ pub fn accessibility_status(prompt: bool) -> bool {
 
 /// Crate-internal Accessibility check (never prompts), used by hotkey.rs: an
 /// ACTIVE CGEventTap runs under Accessibility even when Input Monitoring is
-/// missing, so the push-to-talk tap consults both permissions.
+/// missing, so the push-to-talk tap consults both permissions. ax_observe reads
+/// it for the same permission.
+///
+/// macOS-only, and deliberately so: both callers are the macOS event tap and
+/// the macOS AX tree. It must NOT be reused as a general "may we auto-paste"
+/// test, because off macOS `accessibility_trusted` answers a different question
+/// — on Windows it returns true meaning "no permission is required", which says
+/// nothing about whether a CGEventTap-shaped trigger could work.
+#[cfg(target_os = "macos")]
 pub(crate) fn is_accessibility_trusted() -> bool {
     imp::accessibility_trusted(false)
 }
@@ -375,20 +391,23 @@ pub(crate) fn is_accessibility_trusted() -> bool {
 /// Pid of the frontmost app (the one voice typing pastes into), used by
 /// ax_observe to scope its queries to that app. NSWorkspace, not AX — works
 /// even when the target's accessibility tree is still switched off.
+///
+/// macOS-only, like its one caller: correction watching is built on the macOS
+/// AX tree and has no counterpart elsewhere. There used to be an `Option::None`
+/// stub for other platforms, but with nothing off macOS calling it, it was only
+/// a dead-code warning waiting for the Windows CI job to deny warnings.
 #[cfg(target_os = "macos")]
 pub(crate) fn frontmost_app_pid() -> Option<i32> {
     imp::frontmost_pid()
 }
 
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn frontmost_app_pid() -> Option<i32> {
-    None
-}
-
-/// Show the overlay above ALL apps without activating Parley or stealing focus
-/// (`orderFrontRegardless` + a floating level + all-spaces / full-screen
-/// collection behaviour). Driving visibility natively avoids Tauri's `show()`,
-/// which can bring Parley to the front.
+/// Show the overlay above ALL apps without activating Parley or stealing focus.
+/// Driving visibility natively avoids Tauri's `show()`, which can bring Parley
+/// to the front — and the front is exactly where it must not go, because the
+/// user is dictating into another app's text field and the caret has to stay
+/// there. macOS gets `orderFrontRegardless` + a floating level + all-spaces /
+/// full-screen collection behaviour; Windows gets a non-activating topmost
+/// `SetWindowPos` (see each platform's `imp::present_overlay`).
 #[tauri::command]
 pub fn present_voice_overlay(app: AppHandle) {
     #[cfg(target_os = "macos")]
@@ -400,11 +419,20 @@ pub fn present_voice_overlay(app: AppHandle) {
             }
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(win) = app.get_webview_window("voice-typing") {
+            if let Ok(hwnd) = win.hwnd() {
+                imp::present_overlay(hwnd);
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let _ = app;
 }
 
-/// Hide the overlay (`orderOut:`), the counterpart to `present_voice_overlay`.
+/// Hide the overlay (`orderOut:` on macOS, `SW_HIDE` on Windows), the
+/// counterpart to `present_voice_overlay`.
 #[tauri::command]
 pub fn dismiss_voice_overlay(app: AppHandle) {
     #[cfg(target_os = "macos")]
@@ -416,7 +444,15 @@ pub fn dismiss_voice_overlay(app: AppHandle) {
             }
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(win) = app.get_webview_window("voice-typing") {
+            if let Ok(hwnd) = win.hwnd() {
+                imp::dismiss_overlay(hwnd);
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let _ = app;
 }
 
@@ -614,10 +650,351 @@ mod imp {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+mod imp {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::{CloseHandle, GlobalFree, HANDLE, HWND};
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+        KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN,
+        VK_SHIFT,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowLongPtrW, GetWindowThreadProcessId, SetWindowLongPtrW,
+        SetWindowPos, ShowWindow, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
+        SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNA, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    };
+
+    /// `CF_UNICODETEXT`, spelled out rather than imported from
+    /// `Win32::System::Ole` so one 16-bit constant doesn't drag the whole OLE
+    /// feature (and its compile time) into the build.
+    const CF_UNICODETEXT: u32 = 13;
+
+    /// `OpenClipboard` does not queue: it fails outright while another process
+    /// holds the clipboard, and something briefly does all the time (the app
+    /// the user just copied from, a clipboard manager sampling the change).
+    /// A dictation ends with a copy that MUST land — the clipboard is the only
+    /// copy of what the user just said — so a lost race is retried rather than
+    /// reported.
+    const CLIPBOARD_OPEN_ATTEMPTS: u32 = 5;
+    const CLIPBOARD_OPEN_RETRY: std::time::Duration = std::time::Duration::from_millis(20);
+
+    /// Virtual key for "V". Win32 declares no `VK_V`: the letter keys' virtual
+    /// codes are just their ASCII uppercase values.
+    const VK_V: VIRTUAL_KEY = VIRTUAL_KEY(0x56);
+
+    /// The high bit of `GetAsyncKeyState`'s result means "physically down right
+    /// now". The low bit is the unrelated "was pressed since the last call"
+    /// flag, which we must not confuse for a held key.
+    const KEY_DOWN_MASK: u16 = 0x8000;
+
+    /// Publish `text` on the clipboard as `CF_UNICODETEXT`.
+    ///
+    /// The Win32 clipboard is a process-wide lock, not an object: between the
+    /// `OpenClipboard` and the `CloseClipboard` below, no other process on the
+    /// desktop can copy or paste. Every exit path therefore has to close it.
+    pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
+        // CF_UNICODETEXT is a NUL-terminated wide string: consumers read up to
+        // the terminator, not to the allocation's length, so the terminator is
+        // part of the payload rather than an afterthought.
+        let mut utf16: Vec<u16> = text.encode_utf16().collect();
+        utf16.push(0);
+
+        open_clipboard()?;
+        let result = write_unicode_text(&utf16);
+        // SAFETY: `open_clipboard` returned Ok, so this thread owns the
+        // clipboard, and this is the single matching close on every path out.
+        unsafe {
+            let _ = CloseClipboard();
+        }
+        result
+    }
+
+    /// Take the clipboard, retrying briefly while another process holds it (see
+    /// [`CLIPBOARD_OPEN_ATTEMPTS`]). Passing no owner window is deliberate: we
+    /// have no HWND worth associating and want no clipboard notifications.
+    fn open_clipboard() -> Result<(), String> {
+        let mut last = String::new();
+        for attempt in 0..CLIPBOARD_OPEN_ATTEMPTS {
+            // SAFETY: takes nothing from us and owns nothing of ours; the only
+            // state it changes is the global clipboard lock, released by the
+            // `CloseClipboard` in `copy_to_clipboard`.
+            match unsafe { OpenClipboard(None) } {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    last = e.to_string();
+                    if attempt + 1 < CLIPBOARD_OPEN_ATTEMPTS {
+                        std::thread::sleep(CLIPBOARD_OPEN_RETRY);
+                    }
+                }
+            }
+        }
+        Err(format!("clipboard is held by another process: {last}"))
+    }
+
+    /// Write an already NUL-terminated UTF-16 string to the open clipboard.
+    ///
+    /// The ownership rule this function exists to get right: on SUCCESS
+    /// `SetClipboardData` takes the memory block and the OS frees it later, so
+    /// freeing it here would leave every subsequent paste reading freed memory.
+    /// On FAILURE the transfer never happened and the block is still ours, so
+    /// NOT freeing it leaks a global allocation on every dictation.
+    fn write_unicode_text(utf16: &[u16]) -> Result<(), String> {
+        // SAFETY: the clipboard is open on this thread. `EmptyClipboard` frees
+        // only handles the clipboard already owns; ours isn't published yet.
+        unsafe { EmptyClipboard() }.map_err(|e| format!("EmptyClipboard failed: {e}"))?;
+
+        let bytes = std::mem::size_of_val(utf16);
+        // GMEM_MOVEABLE is required, not preferred: `SetClipboardData` rejects
+        // fixed memory, because the OS takes ownership and may relocate it.
+        // SAFETY: a plain allocation request; the returned handle is either
+        // handed to the OS below or freed on each failure path.
+        let hglobal =
+            unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes) }.map_err(|e| format!("GlobalAlloc failed: {e}"))?;
+
+        // SAFETY: `hglobal` is a live moveable block of exactly `bytes` bytes
+        // that we just allocated and to which nobody else holds a pointer, so
+        // locking it and writing `utf16` into it cannot overlap another object
+        // or overrun the allocation.
+        unsafe {
+            let dst = GlobalLock(hglobal);
+            if dst.is_null() {
+                let _ = GlobalFree(Some(hglobal));
+                return Err("GlobalLock failed".into());
+            }
+            std::ptr::copy_nonoverlapping(utf16.as_ptr(), dst.cast::<u16>(), utf16.len());
+            // `GlobalUnlock` returns FALSE *on success* when the lock count
+            // reaches zero (with a last-error of NO_ERROR), so the `windows`
+            // wrapper hands back an Err on the normal path. Nothing to check.
+            let _ = GlobalUnlock(hglobal);
+        }
+
+        // SAFETY: the clipboard is open on this thread and `hglobal` is a valid
+        // moveable block holding a NUL-terminated UTF-16 string, which is what
+        // CF_UNICODETEXT promises its readers.
+        match unsafe { SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hglobal.0))) } {
+            // Ownership has moved to the OS — do NOT free.
+            Ok(_) => Ok(()),
+            Err(e) => {
+                // The transfer did not happen, so the block is still ours.
+                // SAFETY: `SetClipboardData` failed, so the OS did not take
+                // `hglobal`, and nothing else holds it. (`GlobalFree` reports
+                // success by returning NULL, which the `windows` wrapper maps
+                // to Err, so its result is not worth inspecting either.)
+                unsafe {
+                    let _ = GlobalFree(Some(hglobal));
+                }
+                Err(format!("SetClipboardData failed: {e}"))
+            }
+        }
+    }
+
+    /// One keyboard `INPUT` record for `SendInput`.
+    fn key_event(vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: 0,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
+    /// Paste into the foreground window by synthesizing Ctrl+V. Needs no
+    /// permission (see [`accessibility_trusted`]); returns false only when the
+    /// OS refused the injection.
+    pub fn paste_to_frontmost() -> bool {
+        let mut events: Vec<INPUT> = Vec::new();
+
+        // Push-to-talk normally ends with the trigger's own modifiers STILL
+        // physically held: the user lets go of Ctrl+Alt+Space a beat after the
+        // release that starts this paste. Modifier state is global, so a Ctrl+V
+        // injected underneath a held Alt or Shift is not delivered as Ctrl+V at
+        // all — the target sees Ctrl+Alt+V or Ctrl+Shift+V, which pastes
+        // nothing and may fire some unrelated command in that app. Injecting a
+        // key-UP for each modifier that is actually down clears the state
+        // first; the user's own physical release afterwards is then a harmless
+        // second key-up. Ctrl is deliberately absent from this list: it is part
+        // of the chord we are about to send.
+        for vk in [VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN] {
+            // SAFETY: `GetAsyncKeyState` only reads global keyboard state.
+            let state = unsafe { GetAsyncKeyState(vk.0 as i32) };
+            if (state as u16) & KEY_DOWN_MASK != 0 {
+                events.push(key_event(vk, KEYEVENTF_KEYUP));
+            }
+        }
+
+        events.push(key_event(VK_CONTROL, KEYBD_EVENT_FLAGS(0)));
+        events.push(key_event(VK_V, KEYBD_EVENT_FLAGS(0)));
+        events.push(key_event(VK_V, KEYEVENTF_KEYUP));
+        events.push(key_event(VK_CONTROL, KEYEVENTF_KEYUP));
+
+        // SAFETY: `events` is a live slice of fully-initialised INPUT values and
+        // the size we pass is the matching element size, which is the whole of
+        // SendInput's contract (a wrong size is how this call gets misused).
+        let sent = unsafe { SendInput(&events, std::mem::size_of::<INPUT>() as i32) };
+        if sent as usize != events.len() {
+            // `SendInput` reports how many events it actually injected and stops
+            // at the first one that is blocked. In practice "blocked" means
+            // UIPI: the foreground window belongs to a process running at a
+            // higher integrity level (anything started with "Run as
+            // administrator"), and a non-elevated Parley is simply not allowed
+            // to send it input. UIPI refuses the whole call rather than part of
+            // it, so the usual reading of this branch is `sent == 0` and the
+            // target is not left holding a half-pressed chord. A partial count
+            // would mean something else ate the tail (a filter driver, a
+            // low-level hook), and re-injecting a Ctrl key-up to tidy up would
+            // travel the same blocked path — so we log what we saw rather than
+            // pretend to repair it. Either way the caller falls back to
+            // clipboard-only: the text is already on the clipboard, the user
+            // just presses Ctrl+V.
+            log::warn!(
+                "voice-typing: SendInput injected {sent}/{} events; the foreground window is probably elevated (UIPI)",
+                events.len()
+            );
+            return false;
+        }
+        true
+    }
+
+    /// File name of the foreground window's executable, e.g. "notepad.exe".
+    ///
+    /// Windows has no bundle identifier, so this fills the `app_bundle_id` slot
+    /// with the closest stable per-app key that costs no permission. `None`
+    /// when nothing is foreground (a locked desktop, or a switch in flight) or
+    /// when the process can't be opened — for a target at a higher integrity
+    /// level that refusal is the normal answer, not a malfunction.
+    pub fn frontmost_bundle_id() -> Option<String> {
+        // SAFETY: reads global window-manager state; returns a null HWND rather
+        // than failing when no window is foreground.
+        let hwnd = unsafe { GetForegroundWindow() };
+        if hwnd.is_invalid() {
+            return None;
+        }
+        let mut pid: u32 = 0;
+        // SAFETY: `pid` is a live local and the call writes exactly one u32 to
+        // it. We want the process, not the thread id it returns.
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32)) };
+        if pid == 0 {
+            return None;
+        }
+        // PROCESS_QUERY_LIMITED_INFORMATION is the weakest right that answers
+        // this question, and the only one granted across integrity levels.
+        // SAFETY: opens a process by pid; the handle is closed on every path
+        // below, because one leaked per dictation would pin another process's
+        // kernel object for as long as Parley runs.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+
+        // MAX_PATH is NOT the bound here: `QueryFullProcessImageNameW` can
+        // return an extended-length path of up to ~32k wide characters, and a
+        // short buffer fails the call outright rather than truncating.
+        let mut buf = vec![0u16; 32768];
+        let mut len = buf.len() as u32;
+        // SAFETY: `handle` is a live process handle, and `buf` / `len` describe
+        // the same buffer — the call fills it and writes back the length used.
+        let queried = unsafe {
+            QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len)
+        };
+        // SAFETY: `handle` came from `OpenProcess` above and is closed once,
+        // before the result is interpreted so no early return can skip it.
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
+        queried.ok()?;
+
+        let path = String::from_utf16_lossy(&buf[..len as usize]);
+        // Only the file name: the full path is noise for the caller and would
+        // put the user's directory layout into the dictation history.
+        path.rsplit(['\\', '/'])
+            .next()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    }
+
+    /// Windows has no permission gate for synthesizing input: any process may
+    /// `SendInput` to a window at its own or a lower integrity level, so the
+    /// honest answer to "may we auto-paste" is yes, and the settings UI has no
+    /// permission to send the user chasing.
+    ///
+    /// The one case that IS refused — an elevated foreground window, blocked by
+    /// UIPI — is not a permission anyone can grant and can't be known before
+    /// the attempt, so [`paste_to_frontmost`] reports it per paste instead.
+    pub fn accessibility_trusted(_prompt: bool) -> bool {
+        true
+    }
+
+    /// Show the overlay above everything else WITHOUT taking focus.
+    ///
+    /// Not stealing focus is the entire requirement: the user is dictating into
+    /// another app's text field, and a window that activates on show moves the
+    /// caret out of it — the Ctrl+V that follows would then paste into Parley's
+    /// own overlay instead of the document. Three things enforce that, and all
+    /// three are applied here rather than at creation because Tauri's window
+    /// builder exposes none of them:
+    ///
+    ///   - `WS_EX_NOACTIVATE` — the window cannot become the active window.
+    ///   - `WS_EX_TOOLWINDOW` — it stays out of Alt+Tab and the taskbar.
+    ///   - `SetWindowPos(HWND_TOPMOST, …, SWP_NOACTIVATE)` — floats it above
+    ///     other windows. Tauri's `alwaysOnTop` is deliberately NOT used for
+    ///     this: its implementation activates the window, which is the one
+    ///     thing we are avoiding.
+    pub fn present_overlay(hwnd: HWND) {
+        // SAFETY: `hwnd` is the live overlay window and these commands run on
+        // the thread that owns it (Tauri dispatches synchronous commands on the
+        // main thread), so the style read-modify-write below cannot race
+        // another thread's write, and every call touches only this window.
+        unsafe {
+            // Read-modify-write, never a bare assignment: wry sets its own
+            // extended styles on this window and clobbering them breaks the
+            // webview.
+            let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+            let wanted = current | WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0;
+            if wanted != current {
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, wanted as _);
+            }
+            // SW_SHOWNA is "show, no activate" — SW_SHOW would activate.
+            let _ = ShowWindow(hwnd, SW_SHOWNA);
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+            );
+        }
+        log::info!("voice-typing: overlay presented (topmost, non-activating)");
+    }
+
+    /// Hide the overlay. `SW_HIDE` never changes activation, so the app the
+    /// user was dictating into keeps focus on the way out too.
+    pub fn dismiss_overlay(hwnd: HWND) {
+        // SAFETY: `hwnd` is the live overlay window, owned by this thread;
+        // ShowWindow only changes that one window's visibility.
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod imp {
     pub fn copy_to_clipboard(_text: &str) -> Result<(), String> {
-        Err("clipboard only implemented on macOS".into())
+        Err("clipboard only implemented on macOS and Windows".into())
     }
     pub fn paste_to_frontmost() -> bool {
         false
