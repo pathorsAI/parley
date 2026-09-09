@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RefreshCw } from "lucide-react";
 import { useI18n } from "../i18n";
+import { isMac } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
 import { log } from "../lib/log";
 import { Button } from "@/components/ui/button";
@@ -30,13 +31,20 @@ function toneFor(status: Status): string {
 }
 
 /**
- * The two meeting-critical macOS permissions (microphone + System Audio
- * Recording) with live grant status. Feature-scoped permissions are NOT listed
- * here — Input Monitoring is requested by the voice-typing key picker and
- * Accessibility by enabling voice typing (auto-paste), each at the moment the
- * feature needs it. Each row's button triggers the native prompt on first
- * click and opens the right System Settings pane afterwards. System Audio has
- * no passive status API, so its state is last-observed and "Grant" runs a real
+ * The meeting-critical permissions, with live grant status.
+ *
+ * macOS shows two: microphone and System Audio Recording. Windows shows only
+ * the microphone — its consent is a real setting the backend reads out of the
+ * registry and can deep-link to (ms-settings:privacy-microphone), whereas
+ * loopback capture of system audio needs no consent at all, so a "System audio"
+ * row there would be a permission the user cannot grant and does not need.
+ *
+ * Feature-scoped permissions are NOT listed here — Input Monitoring is
+ * requested by the voice-typing key picker and Accessibility by enabling voice
+ * typing (auto-paste), each at the moment the feature needs it, and neither
+ * exists on Windows. Each row's button triggers the native prompt on first
+ * click and opens the right settings pane afterwards. System Audio has no
+ * passive status API, so its state is last-observed and "Grant" runs a real
  * one-off capture probe.
  */
 export function PermissionsPanel() {
@@ -62,8 +70,8 @@ export function PermissionsPanel() {
       const p = await invoke<Perms>("check_permissions");
       setMicrophone(micStatus(p.microphone));
       applySystemAudio(p.systemAudio);
-    } catch {
-      /* non-macOS */
+    } catch (error) {
+      log.warn("permissions: status check failed", { error: String(error) });
     }
   }
   useEffect(() => {
@@ -92,7 +100,9 @@ export function PermissionsPanel() {
   return (
     <div className="flex max-w-xl flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] text-muted-foreground">{t("settings.permissions.subtitle")}</p>
+        <p className="text-[11px] text-muted-foreground">
+          {t(isMac() ? "settings.permissions.subtitle" : "settings.permissions.subtitle.windows")}
+        </p>
         <Button
           variant="ghost"
           size="sm"
@@ -114,7 +124,7 @@ export function PermissionsPanel() {
         status={microphone}
         onGrant={() => grant("mic", "microphone", () => invoke("request_microphone"))}
       />
-      {systemAudioSupported && (
+      {isMac() && systemAudioSupported && (
         <Row
           label={t("settings.permissions.systemAudio")}
           desc={t("settings.permissions.systemAudioDesc")}

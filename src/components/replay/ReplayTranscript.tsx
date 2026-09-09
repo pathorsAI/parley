@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useI18n } from "../../i18n";
 import { speakerBadgeClass } from "../../lib/speakerColors";
+import { modChordCap } from "../../lib/shortcuts";
 import { speakerLabel, speakerKey, defaultSpeakerLabel, formatClock, isTrimmed, useStore, type ReplayTrim } from "../../lib/store";
 import { cn } from "@/lib/utils";
 import type { TranscriptSegment } from "../../lib/types";
@@ -230,8 +231,10 @@ export function ReplayTranscript({
         ) : (
           <button
             type="button"
-            aria-label={t("replay.searchOpen")}
-            title={t("replay.searchOpen")}
+            // The handler above takes ⌘F or Ctrl+F; only this label used to
+            // claim ⌘F on every platform.
+            aria-label={t("replay.searchOpen", { key: modChordCap("F") })}
+            title={t("replay.searchOpen", { key: modChordCap("F") })}
             onClick={openSearch}
             className="absolute right-3 top-2 z-10 grid size-7 place-items-center rounded-md border bg-background/90 text-muted-foreground shadow-sm backdrop-blur hover:text-foreground"
           >

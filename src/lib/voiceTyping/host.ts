@@ -118,11 +118,20 @@ let lastAdd: AddResult | null = null;
 /** Wire up the host. Returns a cleanup function. No-op outside Tauri. */
 export function initVoiceTyping(): () => void {
   if (!isTauri()) return () => {};
-  // macOS-only for now: the Alt+Space global shortcut would fire on Windows
-  // too, but the delivery layer (clipboard + synthetic paste) isn't wired
-  // there yet — a session that transcribes and then drops the text is worse
-  // than no session.
-  if (!isMac()) return () => {};
+  // Runs on macOS AND Windows. The whole dictation path — global shortcut,
+  // overlay, STT, polish, clipboard, synthetic paste — is wired on both.
+  //
+  // Two macOS-only pieces stay dark on Windows, and both degrade to nothing
+  // rather than to a broken feature:
+  //   • The modifier-key trigger (fn / right ⌥⌘⌃) rides an HID event tap that
+  //     has no Windows equivalent, so `input_monitoring_status` and
+  //     `ensure_fn_listener` answer false there and Settings hides the chips.
+  //     Every trigger on Windows is an OS global shortcut (a recorded combo).
+  //   • The correction-learning loop below (observe the field we pasted into,
+  //     diff it, offer to remember the fix) needs the Accessibility API;
+  //     `observe_pasted_field` returns false on Windows, so no observation is
+  //     ever armed and no bubble is ever offered. The dictionary still biases
+  //     recognition on both platforms — it just isn't taught this way there.
   // listen() resolves asynchronously — a cleanup that runs before it resolves
   // (StrictMode's dev double-mount of App) must still unlisten the late
   // arrival, or the second init's handlers double up for the app's lifetime.
@@ -201,17 +210,24 @@ export function initVoiceTyping(): () => void {
   }).catch((error) =>
     log.warn("voice-typing: startup shortcut apply failed", { error: String(error) }),
   );
-  // Voice typing always auto-pastes on release, which needs Accessibility —
-  // while the feature is enabled (it defaults on), ask for that grant on the
-  // FIRST launch instead of failing quietly on the first dictation. At most
-  // once per install: an untrusted result here does not mean "never asked" —
-  // the user may have declined, or the grant went stale because the TCC
-  // identity changed (every dev rebuild, a moved or re-signed app) — and
-  // re-prompting on every launch nags exactly those users forever. Later
+  // Voice typing always auto-pastes on release, which on macOS needs
+  // Accessibility — while the feature is enabled (it defaults on), ask for that
+  // grant on the FIRST launch instead of failing quietly on the first
+  // dictation. At most once per install: an untrusted result here does not mean
+  // "never asked" — the user may have declined, or the grant went stale because
+  // the TCC identity changed (every dev rebuild, a moved or re-signed app) —
+  // and re-prompting on every launch nags exactly those users forever. Later
   // launches only log; Settings keeps the explicit re-grant paths (the enable
   // toggle and the grant button), and auto-paste degrades to clipboard-only
   // meanwhile.
-  if (useStore.getState().settings.voiceTypingEnabled) {
+  //
+  // Explicitly macOS-only rather than relying on `accessibility_status`
+  // answering true on Windows: there is no Windows permission to ask for, so
+  // running this block there would be a request that can neither fail nor
+  // succeed — and a reader would have to know the Rust stub to see that. When
+  // a Windows paste IS refused it is UIPI blocking injection into an elevated
+  // window, which no prompt can fix; the overlay says so at finalize instead.
+  if (isMac() && useStore.getState().settings.voiceTypingEnabled) {
     invoke<boolean>("accessibility_status", { prompt: false })
       .then((trusted) => {
         if (trusted) return;
@@ -456,6 +472,10 @@ async function finalize() {
   clearTimeout(capTimer);
   const raw = latestText.trim();
   let text = raw;
+  /** Did the synthetic paste actually land? Stays true when the copy/paste
+   *  round trip threw, because then we don't know what reached the clipboard
+   *  and must not tell the user to paste something that isn't there. */
+  let pasted = true;
   if (raw) {
     text = await polishForPaste(raw, myGen);
     let appBundleId: string | null = null;
@@ -467,7 +487,16 @@ async function finalize() {
         "paste_to_frontmost",
       );
       appBundleId = paste.appBundleId;
-      if (!paste.pasted) log.warn("voice-typing: auto-paste skipped (Accessibility not granted)");
+      pasted = paste.pasted;
+      // Two different refusals, one outcome: on macOS the Accessibility grant
+      // is missing or stale; on Windows UIPI blocks injection into a window
+      // running at a higher integrity level (anything launched as
+      // administrator). Neither is recoverable from here and both leave the
+      // text on the clipboard, so the overlay stops claiming the paste
+      // happened and names the manual key instead.
+      if (!paste.pasted) {
+        log.warn("voice-typing: auto-paste refused; text left on the clipboard", { appBundleId });
+      }
       log.info("voice-typing: copied", {
         chars: text.length,
         pasted: paste.pasted,
@@ -491,7 +520,9 @@ async function finalize() {
   // "done" or hide it. The text above was still delivered (it predates the
   // new session).
   if (gen !== myGen) return;
-  await emit("voicetyping://session", { phase: "done", message: text ? "ok" : "empty" });
+  let done = "empty";
+  if (text) done = pasted ? "ok" : "clipboard-only";
+  await emit("voicetyping://session", { phase: "done", message: done });
   scheduleHide();
 }
 

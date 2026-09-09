@@ -6,9 +6,9 @@
     <title>Parley — Record every meeting, and open it to your own AI</title>
     <meta
       name="description"
-      content="Parley is an open-source meeting recorder for macOS and iPhone: record the call, transcribe both sides live, search everything you have ever said. Then a built-in MCP server hands the whole library to Claude — or any MCP client — so the AI you already pay for does the thinking. Local-first, bring your own providers."
+      content="Parley is an open-source meeting recorder for macOS, Windows and iPhone: record the call, transcribe it live, search everything you have ever said. On macOS it captures both sides of the conversation. Then a built-in MCP server hands the whole library to Claude — or any MCP client — so the AI you already pay for does the thinking. Local-first, bring your own providers."
     />
-    <meta name="keywords" content="meeting recorder, MCP server, Model Context Protocol, meeting transcription, transcript search, meeting notes, Claude MCP, sales call analysis, negotiation, voice typing, push to talk dictation, open source, macOS, iPhone" />
+    <meta name="keywords" content="meeting recorder, MCP server, Model Context Protocol, meeting transcription, transcript search, meeting notes, Claude MCP, sales call analysis, negotiation, voice typing, push to talk dictation, open source, macOS, Windows, iPhone" />
     <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://parley.tw/" />
 
@@ -17,7 +17,7 @@
     <meta property="og:title" content="Parley — Record every meeting, and open it to your own AI" />
     <meta
       property="og:description"
-      content="Record, transcribe, analyze, search — and 48 MCP tools that let your AI client read, search, file and re-analyze the entire library. Open source, local-first, native macOS."
+      content="Record, transcribe, analyze, search — and 48 MCP tools that let your AI client read, search, file and re-analyze the entire library. Open source, local-first, native on macOS and Windows."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://parley.tw/" />
@@ -37,9 +37,9 @@
         "@type": "SoftwareApplication",
         "name": "Parley",
         "applicationCategory": "BusinessApplication",
-        "operatingSystem": "macOS, iOS",
+        "operatingSystem": "macOS, Windows, iOS",
         "url": "https://parley.tw/",
-        "description": "An open-source meeting recorder: record the call, transcribe both sides live, analyze it afterwards, and search across everything. A built-in Model Context Protocol server exposes the whole library to any MCP client, so an external AI can read, search, organize and re-analyze it. Local-first, with your own transcription and model providers.",
+        "description": "An open-source meeting recorder: record the call, transcribe it live — both sides of the conversation on macOS, your microphone on Windows — analyze it afterwards, and search across everything. A built-in Model Context Protocol server exposes the whole library to any MCP client, so an external AI can read, search, organize and re-analyze it. Local-first, with your own transcription and model providers.",
         "license": "https://www.apache.org/licenses/LICENSE-2.0",
         "isAccessibleForFree": true,
         "author": { "@type": "Organization", "name": "Pathors AI", "url": "https://pathors.com" },
@@ -91,8 +91,10 @@
           <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5Z"/></svg>
           <span>GitHub</span>
         </a>
-        <a class="btn btn--primary" href="https://api.parley.tw/download" target="_blank" rel="noopener">
-          <svg class="apple" viewBox="0 0 384 512" width="13" height="16" aria-hidden="true" fill="currentColor"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+        <!-- Points at the download section rather than straight at the redirect: the
+             section is where both platforms are named, so no visitor is handed the
+             wrong installer. -->
+        <a class="btn btn--primary" href="#download">
           <span>Get Parley</span>
         </a>
       </div>
@@ -117,12 +119,17 @@
             Parley does four things: record, transcribe, analyze, search. Everything it captures — every transcript line, finding, action item and folder — is exposed over a local MCP server, so Claude or any MCP client can work your entire meeting history without a copy-paste in sight.
           </p>
           <div class="hero__cta">
-            <a class="btn btn--primary btn--lg" href="https://api.parley.tw/download" target="_blank" rel="noopener">
+            <a class="btn btn--primary btn--lg" href="https://api.parley.tw/download?platform=macos" target="_blank" rel="noopener">
               <svg class="apple" viewBox="0 0 384 512" width="15" height="18" aria-hidden="true" fill="currentColor"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
               <span>Get Parley for macOS</span>
             </a>
+            <a class="btn btn--ghost btn--lg" href="https://api.parley.tw/download?platform=windows" target="_blank" rel="noopener">
+              <svg class="win" viewBox="0 0 448 512" width="14" height="16" aria-hidden="true" fill="currentColor"><path d="M0 93.7l183.6-25.3v177.4H0V93.7zm0 324.6l183.6 25.3V268.4H0v149.9zm203.8 28L448 480V268.4H203.8v177.9zm0-380.6v180.1H448V32L203.8 65.7z"/></svg>
+              <span>Get Parley for Windows</span>
+            </a>
             <a class="btn btn--ghost btn--lg" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">Star on GitHub</a>
           </div>
+          <p class="cta__note">On Windows, Parley records your microphone — capturing the other side of the call is macOS-only for now. The Windows installer is not code-signed yet, so SmartScreen asks you to click More info → Run anyway.</p>
           <ul class="hero__meta">
             <li><span class="dot dot--me"></span> Both sides of the call, transcribed live and speaker-labelled</li>
             <li><span class="dot dot--live"></span> Full-text search across every meeting you have ever recorded</li>
@@ -558,7 +565,7 @@ claude mcp add --transport http parley \
           <div class="stack-card reveal"><span class="stack-card__k">Open source</span><span class="stack-card__v">Apache 2.0, inspectable and free to extend instead of another paid black box.</span></div>
           <div class="stack-card reveal"><span class="stack-card__k">Local-first</span><span class="stack-card__v">Recordings, transcripts and templates live in your own app directory. No telemetry.</span></div>
           <div class="stack-card reveal"><span class="stack-card__k">Any provider</span><span class="stack-card__v">Plug in any major transcription or model provider with your own keys — none baked in.</span></div>
-          <div class="stack-card reveal"><span class="stack-card__k">Native &amp; fast</span><span class="stack-card__v">Built in Rust and Tauri: a small, quick app that feels genuinely native on macOS.</span></div>
+          <div class="stack-card reveal"><span class="stack-card__k">Native &amp; fast</span><span class="stack-card__v">Built in Rust and Tauri: one small, quick app that feels genuinely native on both macOS and Windows.</span></div>
           <div class="stack-card reveal"><span class="stack-card__k">Cost control</span><span class="stack-card__v">Route fast questions to cheaper models and deeper analysis to stronger ones.</span></div>
           <div class="stack-card reveal"><span class="stack-card__k">Extensible</span><span class="stack-card__v">48 MCP tools mean the app does not have to ship the feature for you to build it.</span></div>
         </div>
@@ -570,14 +577,19 @@ claude mcp add --transport http parley \
           <div class="cta__glow" aria-hidden="true"></div>
           <span class="eyebrow">Get started</span>
           <h2>Start recording, then plug in your AI</h2>
-          <p>Download Parley for macOS, add the providers you want in Settings, and connect your MCP client. Free and open source.</p>
+          <p>Download Parley for macOS or Windows, add the providers you want in Settings, and connect your MCP client. Free and open source.</p>
           <div class="cta__actions">
-            <a class="btn btn--primary btn--lg" href="https://api.parley.tw/download" target="_blank" rel="noopener">
+            <a class="btn btn--primary btn--lg" href="https://api.parley.tw/download?platform=macos" target="_blank" rel="noopener">
               <svg class="apple" viewBox="0 0 384 512" width="15" height="18" aria-hidden="true" fill="currentColor"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
               <span>Download for macOS</span>
             </a>
+            <a class="btn btn--ghost btn--lg" href="https://api.parley.tw/download?platform=windows" target="_blank" rel="noopener">
+              <svg class="win" viewBox="0 0 448 512" width="14" height="16" aria-hidden="true" fill="currentColor"><path d="M0 93.7l183.6-25.3v177.4H0V93.7zm0 324.6l183.6 25.3V268.4H0v149.9zm203.8 28L448 480V268.4H203.8v177.9zm0-380.6v180.1H448V32L203.8 65.7z"/></svg>
+              <span>Download for Windows</span>
+            </a>
             <a class="btn btn--ghost btn--lg" href="https://apps.apple.com/app/id6795031201" target="_blank" rel="noopener">Get it for iPhone</a>
           </div>
+          <p class="cta__note">On Windows, Parley records your microphone — capturing the other side of the call is macOS-only for now. The Windows installer is not code-signed yet, so SmartScreen asks you to click More info → Run anyway.</p>
           <p class="cta__note">Bring your preferred transcription and AI provider keys, or sign in for hosted ones. Local model routes are supported where available.</p>
         </div>
       </section>
@@ -596,7 +608,7 @@ claude mcp add --transport http parley \
             <a href="#mcp">MCP server</a>
             <a href="#voice-typing">Voice typing</a>
             <a href="#phone">iPhone</a>
-            <a href="https://api.parley.tw/download" target="_blank" rel="noopener">Download</a>
+            <a href="#download">Download</a>
           </nav>
           <nav class="footer__col" aria-label="Project">
             <h4>Project</h4>

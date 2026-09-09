@@ -1,12 +1,13 @@
 //! Global push-to-talk key listener for voice typing.
 //!
 //! Two trigger mechanisms, picked by the user:
-//!   - Key combos — the default `alt-space` (Option+Space) or any user-recorded
-//!     `combo:<modifiers+Key>` (e.g. `combo:control+shift+KeyD`, `combo:F6`),
-//!     handled by the cross-platform `tauri-plugin-global-shortcut`
-//!     (Carbon `RegisterEventHotKey` on macOS). Needs NO extra permission —
-//!     this is the out-of-the-box path.
-//!   - `fn` / `right-option` / `right-command` / `right-control` — hold-friendly
+//!   - Key combos — the boot default (Option+Space on macOS, Ctrl+Alt+Space on
+//!     Windows) or any user-recorded `combo:<modifiers+Key>` (e.g.
+//!     `combo:control+shift+KeyD`, `combo:F6`), handled by the cross-platform
+//!     `tauri-plugin-global-shortcut` (Carbon `RegisterEventHotKey` on macOS).
+//!     Needs NO extra permission — this is the out-of-the-box path, and the
+//!     only one off macOS.
+//!   - `fn` / `right-option` / `right-command` / `right-control` — macOS only,
 //!     single modifier keys handled by a macOS event tap (`kCGSessionEventTap`),
 //!     which sees modifier transitions before AppKit monitors. The tap is
 //!     created ACTIVE first (on modern macOS that pairs with the Accessibility
@@ -24,7 +25,8 @@
 //! parks the HID tap (it matches nothing); selecting a modifier unregisters all
 //! combos and arms the HID tap on that key.
 //!
-//! Auto-paste separately needs Accessibility — see voice_typing.rs.
+//! Auto-paste is a separate concern with a separate gate: Accessibility on
+//! macOS, nothing at all on Windows (see voice_typing.rs).
 
 #![allow(unexpected_cfgs)]
 
@@ -36,6 +38,9 @@ use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 /// The modifier-key ids handled by the HID tap (everything else is a combo).
+/// macOS-only in practice: no other platform has an equivalent way to use a
+/// bare modifier as push-to-talk, so off macOS a selection from this list
+/// reports as inert rather than pretending — see `modifier_status`.
 const MODIFIER_IDS: [&str; 4] = ["fn", "right-option", "right-command", "right-control"];
 
 /// The Option+Space global shortcut handled by the global-shortcut plugin.
@@ -44,11 +49,28 @@ fn alt_space() -> Shortcut {
 }
 
 /// The current selection id. `None` until the frontend applies the saved
-/// setting at startup — the boot default (Alt+Space, registered in lib.rs)
-/// reports as "alt-space" via [`status`].
+/// setting at startup — until then [`status`] reports [`BOOT_DEFAULT_ID`].
 static CURRENT: Mutex<Option<String>> = Mutex::new(None);
+
+/// The trigger lib.rs registers at boot, and therefore what [`status`] must
+/// report before the frontend applies the saved selection. It differs per
+/// platform because Alt+Space is the native window system menu on Windows —
+/// see the registration in lib.rs for why we don't claim it there.
+#[cfg(target_os = "macos")]
+const BOOT_DEFAULT_ID: &str = "alt-space";
+#[cfg(target_os = "windows")]
+const BOOT_DEFAULT_ID: &str = "combo:control+alt+Space";
+/// Nothing is registered at boot on other platforms (voice typing has no
+/// implementation there), but [`status`] still needs an id to name.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const BOOT_DEFAULT_ID: &str = "alt-space";
+
 /// Whether the active combo actually registered with the OS (a combo can fail
-/// if another app owns it). Starts true: lib.rs registers Alt+Space at boot.
+/// if another app owns it). Starts true because lib.rs registers
+/// [`BOOT_DEFAULT_ID`] at boot on both shipping platforms. On a platform where
+/// it registers nothing this reads optimistically until the frontend applies
+/// the saved selection — which is also the first moment a trigger could exist
+/// there at all, so nobody is misled about a live one.
 static COMBO_OK: AtomicBool = AtomicBool::new(true);
 
 /// Parse a picker id into a plugin `Shortcut`. `alt-space` is the legacy id for
@@ -148,27 +170,9 @@ fn status() -> HotkeyStatus {
         .lock()
         .unwrap()
         .clone()
-        .unwrap_or_else(|| "alt-space".to_string());
+        .unwrap_or_else(|| BOOT_DEFAULT_ID.to_string());
     if MODIFIER_IDS.contains(&id.as_str()) {
-        // Either permission can back a tap: Accessibility → active tap,
-        // Input Monitoring → listen-only tap.
-        let authorized =
-            imp::listen_event_authorized() || crate::voice_typing::is_accessibility_trusted();
-        let mode = match imp::tap_mode() {
-            "active" => "tap-active",
-            "listen" => "tap-listen",
-            _ => "none",
-        };
-        HotkeyStatus {
-            authorized,
-            // STARTED alone can be optimistically true for a moment (the
-            // ensure_started guard sets it before the tap thread reports, and
-            // a recv timeout deliberately leaves it set); requiring a recorded
-            // tap mode makes `active` mean "a live tap exists right now".
-            active: imp::is_started() && imp::tap_mode() != "none",
-            mode: mode.to_string(),
-            shortcut: id,
-        }
+        modifier_status(id)
     } else {
         // Combos need no permission; "active" reflects OS registration (which
         // can fail when another app owns the combo).
@@ -178,6 +182,50 @@ fn status() -> HotkeyStatus {
             mode: "combo".to_string(),
             shortcut: id,
         }
+    }
+}
+
+/// Status for one of the [`MODIFIER_IDS`], which the HID event tap delivers.
+#[cfg(target_os = "macos")]
+fn modifier_status(id: String) -> HotkeyStatus {
+    // Either permission can back a tap: Accessibility → active tap,
+    // Input Monitoring → listen-only tap.
+    let authorized =
+        imp::listen_event_authorized() || crate::voice_typing::is_accessibility_trusted();
+    let mode = match imp::tap_mode() {
+        "active" => "tap-active",
+        "listen" => "tap-listen",
+        _ => "none",
+    };
+    HotkeyStatus {
+        authorized,
+        // STARTED alone can be optimistically true for a moment (the
+        // ensure_started guard sets it before the tap thread reports, and
+        // a recv timeout deliberately leaves it set); requiring a recorded
+        // tap mode makes `active` mean "a live tap exists right now".
+        active: imp::is_started() && imp::tap_mode() != "none",
+        mode: mode.to_string(),
+        shortcut: id,
+    }
+}
+
+/// The [`MODIFIER_IDS`] are a macOS HID-tap concept — `fn` and the right-hand
+/// modifiers pressed as push-to-talk keys in their own right — and nothing off
+/// macOS can deliver them, so the answer is a flat "not authorized, not live".
+///
+/// This has to say so explicitly instead of sharing the macOS branch, because
+/// that branch would LIE here: [`crate::voice_typing::is_accessibility_trusted`]
+/// returns true on Windows (input injection needs no permission there), so the
+/// authorization test would report a trigger that can never fire. A settings
+/// file written on a Mac and opened on Windows is enough to reach this, and
+/// Settings would then show a working shortcut that silently does nothing.
+#[cfg(not(target_os = "macos"))]
+fn modifier_status(id: String) -> HotkeyStatus {
+    HotkeyStatus {
+        authorized: false,
+        active: false,
+        mode: "none".to_string(),
+        shortcut: id,
     }
 }
 
@@ -206,7 +254,7 @@ fn reassert(app: &AppHandle) {
         .lock()
         .unwrap()
         .clone()
-        .unwrap_or_else(|| "alt-space".to_string());
+        .unwrap_or_else(|| BOOT_DEFAULT_ID.to_string());
     log::info!("voice-typing: re-asserting trigger {id:?} after wake");
     // Always revive the tap: in combo mode it's parked (matches nothing) but
     // must stay alive for the next switch back to a modifier key.
@@ -577,6 +625,14 @@ mod imp {
     }
 }
 
+/// There is no HID tap off macOS, so every entry point here reports "nothing
+/// is listening" and the modifier ids can never go live (see `modifier_status`).
+///
+/// This carries ONLY the functions the shared code actually calls off macOS.
+/// The tap-introspection ones (`is_started`, `tap_mode`, `shortcut_id`) used to
+/// be stubbed here too, but nothing outside the macOS tap asks about a tap that
+/// cannot exist — and an unused stub is not free, because the Windows CI job
+/// compiles this file with `-D warnings`.
 #[cfg(not(target_os = "macos"))]
 mod imp {
     use tauri::AppHandle;
@@ -586,16 +642,7 @@ mod imp {
     pub fn request_listen_event() -> bool {
         false
     }
-    pub fn is_started() -> bool {
-        false
-    }
     pub fn set_shortcut(_id: &str) {}
-    pub fn shortcut_id() -> &'static str {
-        "alt-space"
-    }
-    pub fn tap_mode() -> &'static str {
-        "none"
-    }
     pub fn ensure_started(_app: AppHandle, _force: bool) -> bool {
         false
     }

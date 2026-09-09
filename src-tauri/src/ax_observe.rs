@@ -536,8 +536,12 @@ mod imp {
 mod imp {
     use tauri::AppHandle;
 
-    /// No Accessibility API outside macOS — voice typing itself is macOS-only,
-    /// so there is nothing to observe here.
+    /// No Accessibility API outside macOS. Voice typing itself now runs on
+    /// Windows, but this watcher does not: reading back the field we pasted
+    /// into needs UI Automation, which is a separate implementation nobody has
+    /// written. The cost is that a Windows user's corrections never become
+    /// dictionary suggestions — dictation itself is unaffected, and the
+    /// dictionary stays editable by hand.
     pub fn observe(_app: AppHandle, _inserted_text: String) -> bool {
         false
     }

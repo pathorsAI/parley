@@ -3386,6 +3386,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "uuid",
+ "windows 0.61.3",
  "winreg",
 ]
 

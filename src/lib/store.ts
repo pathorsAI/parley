@@ -24,6 +24,7 @@ import type { CloudAuth } from "./cloud/types";
 import type { HistoryEntry } from "./history/types";
 import type { MeetingShare } from "./history/history";
 import type { LibraryNode } from "./library/scope";
+import { isMac } from "./platform";
 import {
   buildBuiltinEvalLabels,
   defaultEvalDefs,
@@ -112,6 +113,56 @@ export function migrateLlmSettings(
   return { llmProviders, models, reasoningEffort };
 }
 
+/**
+ * The push-to-talk trigger a fresh install starts on.
+ *
+ * macOS gets ⌥ Space, which is free there. On Windows Alt+Space is the native
+ * window system menu — registering it would either fail or steal a chord every
+ * Windows user already has muscle memory for — so the Windows default is
+ * Ctrl+Alt+Space, which nothing in the shell claims.
+ *
+ * Only the DEFAULT is platform-dependent. `voiceTypingShortcut` is persisted,
+ * and the persist `merge` below spreads the saved settings OVER these defaults,
+ * so a trigger the user picked themselves keeps winning after an update.
+ */
+export const DEFAULT_VOICE_TYPING_SHORTCUT: Settings["voiceTypingShortcut"] = isMac()
+  ? "alt-space"
+  : "combo:control+alt+Space";
+
+/** The trigger ids that only macOS can deliver: `alt-space` (the old universal
+ *  default) plus the four modifier keys, which ride a CGEventTap that has no
+ *  Windows counterpart. */
+const MAC_ONLY_SHORTCUTS: readonly string[] = [
+  "alt-space",
+  "fn",
+  "right-option",
+  "right-command",
+  "right-control",
+];
+
+/**
+ * Move a Windows install off a trigger it can never fire.
+ *
+ * Voice typing shipped macOS-only, but `voiceTypingShortcut` was persisted on
+ * every platform — so an existing Windows install already has `alt-space`
+ * saved, written by the old default. On Windows that chord is the native
+ * window system menu, so honouring it would leave upgraders with dictation
+ * that silently does nothing. This is safe precisely because it cannot
+ * overwrite a real choice: the Settings pane that edits this value was hidden
+ * on Windows until now, so no Windows user has ever picked any of these ids —
+ * they could only arrive from the old default or from settings synced off a
+ * Mac. A combo the user recorded themselves is left alone.
+ *
+ * Exported for tests.
+ */
+export function migrateVoiceTypingShortcut(
+  saved: Settings["voiceTypingShortcut"] | undefined,
+): Settings["voiceTypingShortcut"] {
+  if (saved === undefined) return DEFAULT_VOICE_TYPING_SHORTCUT;
+  if (isMac()) return saved;
+  return MAC_ONLY_SHORTCUTS.includes(saved) ? DEFAULT_VOICE_TYPING_SHORTCUT : saved;
+}
+
 const DEFAULT_SETTINGS: Settings = {
   language: "zh-TW",
   theme: "system",
@@ -144,7 +195,7 @@ const DEFAULT_SETTINGS: Settings = {
   // analysis to an external AI over MCP. See Settings.autoStudyAnalysis.
   autoStudyAnalysis: true,
   voiceTypingEnabled: true,
-  voiceTypingShortcut: "alt-space",
+  voiceTypingShortcut: DEFAULT_VOICE_TYPING_SHORTCUT,
   voiceTypingMode: "hold",
   voiceTypingPolish: true,
   evaluations: defaultEvalDefs(tDefault),
@@ -1170,6 +1221,10 @@ export const useStore = create<ParleyState>()(
             ...DEFAULT_SETTINGS,
             ...p,
             layout,
+            // Windows never had a way to choose this, so a mac-only trigger in
+            // persisted state is stale default, not intent — see
+            // migrateVoiceTypingShortcut.
+            voiceTypingShortcut: migrateVoiceTypingShortcut(p.voiceTypingShortcut),
             llmProviders,
             // Per-provider models, legacy {ask,eval} roles already remapped;
             // providers missing from persisted state keep their defaults.

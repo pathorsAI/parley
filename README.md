@@ -13,7 +13,7 @@
   <a href="https://github.com/pathorsAI/parley/actions/workflows/release.yml"><img src="https://github.com/pathorsAI/parley/actions/workflows/release.yml/badge.svg" alt="Release Status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
   <a href="https://tauri.app/"><img src="https://img.shields.io/badge/built%20with-Tauri-blue.svg?style=flat&logo=tauri" alt="Tauri"></a>
-  <img src="https://img.shields.io/badge/platform-macOS-lightgrey.svg" alt="Platform: macOS">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg" alt="Platform: macOS and Windows">
 </p>
 
 <p align="center">
@@ -31,14 +31,25 @@ Then it opens all of it over a local **MCP server** — 52 tools — so Claude, 
 
 **Local-first, bring your own keys.** Audio and transcripts go directly to the STT and LLM providers *you* configure (Claude, OpenAI, Gemini, Soniox, Deepgram, …). No Pathors proxy, no telemetry, everything stored on your machine.
 
-> [!NOTE]
-> **macOS only (for now).** Parley captures the other side of a call through a Core Audio process tap, which has no equivalent on other platforms. There are companion apps for [iPhone](https://apps.apple.com/app/id6795031201) and Android that record in-person meetings and sync to the same account.
+**macOS and Windows, from one codebase.** The difference is what the app can hear. macOS captures the other side of a call through a Core Audio process tap; the Windows equivalent (WASAPI loopback) is not written yet, so on Windows a meeting records your microphone only.
+
+| | macOS | Windows |
+| --- | --- | --- |
+| Records the other side of the call | Yes — Core Audio process tap | Not yet |
+| Records your microphone | Yes | Yes |
+| Voice typing | Yes (<kbd>Option+Space</kbd>) | Yes (<kbd>Ctrl+Alt+Space</kbd>) |
+| Transcription, diarization and analysis | Yes | Yes |
+| Sign-in and cloud sync | Yes | Yes |
+
+There are also companion apps for [iPhone](https://apps.apple.com/app/id6795031201) and Android that record in-person meetings and sync to the same account.
 
 ---
 
 ## 📥 Install
 
-Download the latest build from the [**Releases page**](https://github.com/pathorsAI/parley/releases/latest), open the `.dmg`, and drag **Parley** into Applications. Builds are signed and notarized — no Gatekeeper hoops.
+**macOS** — download the `.dmg` from the [**Releases page**](https://github.com/pathorsAI/parley/releases/latest) or [directly](https://api.parley.tw/download?platform=macos), open it, and drag **Parley** into Applications. Builds are signed and notarized — no Gatekeeper hoops.
+
+**Windows** — download [`Parley-setup.exe`](https://api.parley.tw/download?platform=windows) and run it. The installer is not code-signed, so SmartScreen shows an "unknown publisher" warning: click **More info**, then **Run anyway**.
 
 Then paste your API keys in **Settings**: one STT provider for transcription, one LLM for analysis and Ask. Or sign in and use the hosted providers with no key to manage.
 
@@ -116,7 +127,7 @@ Conversation content is sensitive, so Parley runs straight from your machine:
 
 ## 🎁 Also in the box
 
-- **Voice typing** — system-wide push-to-talk dictation in any app, using your configured STT provider. Hold a key (default <kbd>Option+Space</kbd>), speak, release — the text pastes into the frontmost app.
+- **Voice typing** — system-wide push-to-talk dictation in any app, using your configured STT provider. Hold a key (default <kbd>Option+Space</kbd> on macOS, <kbd>Ctrl+Alt+Space</kbd> on Windows), speak, release — the text pastes into the frontmost app.
 - **Import what you already have** — drag in an audio file, or import a pile of `.txt` transcripts (speaker labels and `[HH:MM:SS]` timestamps are auto-detected) straight into the right folder.
 - **Reusable playbooks** — evaluation and checklist templates: MEDDICC, negotiation terms, interview rubrics, diligence questions, or your own.
 - **Traditional Chinese** — full zh-TW UI and on-the-fly conversion of transcribed text.

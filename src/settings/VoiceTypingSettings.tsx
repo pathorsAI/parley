@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, Circle, Keyboard, Loader2, RotateCcw } from "lucide-react";
-import { useStore } from "../lib/store";
+import { DEFAULT_VOICE_TYPING_SHORTCUT, useStore } from "../lib/store";
 import { useI18n, type TranslationKey } from "../i18n";
+import { isMac } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
 import { log } from "../lib/log";
@@ -70,11 +71,20 @@ const LEFT_MODIFIER_CODES = new Set([
   "ShiftRight",
 ]);
 
-const MOD_SYMBOL: Record<string, string> = {
+/** Modifier caps, spelled the way each OS spells them. ⌘/⌥/⌃/⇧ are glyphs a
+ *  Windows user has never seen on a keyboard, so a combo shown that way reads
+ *  as a shortcut for some other machine. */
+const MOD_SYMBOL_MAC: Record<string, string> = {
   super: "⌘",
   control: "⌃",
   alt: "⌥",
   shift: "⇧",
+};
+const MOD_SYMBOL_WIN: Record<string, string> = {
+  super: "Win",
+  control: "Ctrl",
+  alt: "Alt",
+  shift: "Shift",
 };
 
 /** Human label for a W3C KeyboardEvent.code token. */
@@ -111,16 +121,33 @@ function keyLabel(code: string): string {
   return MAP[code] ?? code;
 }
 
-/** Render the stored shortcut id as mac-style key caps, e.g. "⌃ ⇧ D". */
-export function shortcutCaps(shortcut: string, t: (k: TranslationKey) => string): string {
-  if (shortcut === "alt-space") return "⌥ Space";
-  if (isModifierId(shortcut)) return t(MODIFIER_LABEL_KEYS[shortcut]);
+/**
+ * Render the stored shortcut id as key caps in the host OS's own notation:
+ * "⌃ ⇧ D" on macOS, "Ctrl + Shift + D" on Windows. Shown in Settings, in
+ * onboarding, and in the voice-typing history's empty state, so it is the one
+ * place that decides how a trigger is spelled to the user.
+ *
+ * `mac` is a parameter so both spellings stay exercisable without stubbing the
+ * OS; every caller passes the real platform.
+ */
+export function shortcutCaps(
+  shortcut: string,
+  t: (k: TranslationKey) => string,
+  mac: boolean = isMac(),
+): string {
+  const symbols = mac ? MOD_SYMBOL_MAC : MOD_SYMBOL_WIN;
+  const sep = mac ? " " : " + ";
+  if (shortcut === "alt-space") return mac ? "⌥ Space" : "Alt + Space";
+  // The HID-tap modifier triggers only exist on macOS, so their labels are only
+  // ever reachable there — a Windows store that still holds one (nothing can
+  // set it now) falls through to the raw id rather than promising a glyph.
+  if (isModifierId(shortcut)) return mac ? t(MODIFIER_LABEL_KEYS[shortcut]) : shortcut;
   if (shortcut.startsWith("combo:")) {
     return shortcut
       .slice("combo:".length)
       .split("+")
-      .map((part) => MOD_SYMBOL[part] ?? keyLabel(part))
-      .join(" ");
+      .map((part) => symbols[part] ?? keyLabel(part))
+      .join(sep);
   }
   return shortcut;
 }
@@ -203,7 +230,11 @@ function useShortcutRecorder(
       sawNonModifierRef.current = true; // a combo was attempted
       const combo = comboFromEvent(e);
       if (!combo) {
-        setRecordHint("settings.voiceTyping.recorder.needModifier");
+        setRecordHint(
+          isMac()
+            ? "settings.voiceTyping.recorder.needModifier"
+            : "settings.voiceTyping.recorder.needModifierWindows",
+        );
         return;
       }
       setRecording(false);
@@ -221,6 +252,17 @@ function useShortcutRecorder(
       e.preventDefault();
       e.stopPropagation();
       if (sawNonModifierRef.current) return;
+      // Holding a lone modifier is a macOS-only trigger: it rides an HID event
+      // tap that has no Windows counterpart, and `set_voice_typing_shortcut`
+      // would have nothing to register. So on Windows a lone release can only
+      // be explained, never selected — otherwise a stray ⌥ tap would silently
+      // store a trigger that never fires.
+      if (!isMac()) {
+        if (MODIFIER_CODES.has(e.code)) {
+          setRecordHint("settings.voiceTyping.recorder.modifierAloneWindows");
+        }
+        return;
+      }
       const rightId = RIGHT_MODIFIER_BY_CODE[e.code];
       if (rightId) {
         setRecording(false);
@@ -274,13 +316,22 @@ interface AppIdentity {
  * before applying a change):
  *   - Record any key combo (modifiers + key, or an F-key): registered as an OS
  *     global shortcut, works with NO extra permission. This is the default path
- *     (⌥ Space out of the box).
+ *     (⌥ Space on macOS, Ctrl+Alt+Space on Windows — Alt+Space there is the
+ *     native window system menu).
  *   - Hold a single modifier key (fn / right ⌥⌘⌃): needs Input Monitoring —
  *     requested HERE, at the moment of picking the key (permissions follow the
  *     feature; the Permissions tab only carries the meeting-critical ones).
- * Releasing the key always auto-pastes (no separate setting); the Accessibility
- * grant that needs is requested when voice typing is enabled (host.ts also asks
- * at launch while the feature is on).
+ *
+ * Only the first way exists on Windows. The hold-a-modifier chips, the Input
+ * Monitoring warning and the Accessibility warning all describe a macOS event
+ * tap or a macOS grant, so they are hidden there rather than shown dead —
+ * Windows users get the recorder, the mode switch and the polish toggle.
+ *
+ * Releasing the key always auto-pastes (no separate setting); on macOS the
+ * Accessibility grant that needs is requested when voice typing is enabled
+ * (host.ts also asks at launch while the feature is on). Windows needs no
+ * grant: the injection either lands or UIPI refuses it for an elevated target,
+ * and the overlay says so at that moment.
  */
 export const VoiceTypingSettings = () => {
   const { t } = useI18n();
@@ -303,6 +354,9 @@ export const VoiceTypingSettings = () => {
     // Auto-paste needs Accessibility; the boot-time prompt asks at most once
     // per install, so this panel is the visible surface for a missing/stale
     // grant (stale = the TCC identity changed: dev rebuilds, re-signing).
+    // macOS only — Windows has no such grant to be missing (the backend always
+    // answers true), so asking would just be a round trip to a constant.
+    if (!isMac()) return;
     invoke<boolean>("accessibility_status", { prompt: false })
       .then(setAxTrusted)
       .catch((error) =>
@@ -384,23 +438,32 @@ export const VoiceTypingSettings = () => {
   useShortcutRecorder(recording, chooseShortcut, setRecording, setRecordHint);
   if (!isTauri()) return null;
 
+  // Windows has neither the HID tap behind the hold-a-modifier triggers nor the
+  // Accessibility / Input Monitoring grants those and auto-paste ask for, so
+  // this panel is the recorder, the mode switch and the polish toggle there.
+  const mac = isMac();
   const selected = settings.voiceTypingShortcut;
   const selectedIsModifier = isModifierId(selected);
-  const needsPermission = selectedIsModifier && status != null && !status.authorized;
+  // Every `mac &&` below guards a macOS-only permission story, not a cosmetic
+  // difference: Input Monitoring, Accessibility and the fn 🌐 override all
+  // describe grants Windows does not have, so on Windows these lines would ask
+  // the user to fix something that isn't broken.
+  const needsPermission = mac && selectedIsModifier && status != null && !status.authorized;
   const comboConflict = !selectedIsModifier && status != null && !status.active;
   const active = !!status?.active;
   // The tap can observe fn but not swallow it, so macOS still runs the 🌐
   // action (emoji picker/dictation) on every press — worth a heads-up.
-  const fnListenOnly = selected === "fn" && status?.mode === "tap-listen";
+  const fnListenOnly = mac && selected === "fn" && status?.mode === "tap-listen";
 
   const setVoiceTypingEnabled = (enabled: boolean) => {
     updateSettings({ voiceTypingEnabled: enabled });
     broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
       log.warn("settings: broadcast failed", { error: String(error) }),
     );
-    // Voice typing always auto-pastes, which needs Accessibility — enabling the
-    // feature is the moment to ask for its permission.
-    if (enabled) {
+    // Voice typing always auto-pastes, which on macOS needs Accessibility —
+    // enabling the feature is the moment to ask for its permission. Windows
+    // has no equivalent grant, so there is nothing to ask for there.
+    if (enabled && isMac()) {
       invoke("accessibility_status", { prompt: true }).catch((error) =>
         log.warn("permissions: accessibility prompt failed", { error: String(error) }),
       );
@@ -555,52 +618,66 @@ export const VoiceTypingSettings = () => {
               <span className="font-mono tracking-wide">{shortcutCaps(selected, t)}</span>
             )}
           </button>
-          {selected !== "alt-space" && !recording && (
+          {/* Reset goes to the PLATFORM default, not to ⌥ Space: on Windows
+              that chord is the native window system menu, so offering it as
+              "the safe one to go back to" would hand the user a trigger that
+              collides with the OS. */}
+          {selected !== DEFAULT_VOICE_TYPING_SHORTCUT && !recording && (
             <Button
               variant="ghost"
               size="sm"
               className="h-10 shrink-0 gap-1 px-2 text-[11px] text-muted-foreground"
-              title={t("settings.voiceTyping.recorder.reset")}
+              title={t("settings.voiceTyping.recorder.reset", {
+                keys: shortcutCaps(DEFAULT_VOICE_TYPING_SHORTCUT, t),
+              })}
               onClick={() =>
-                chooseShortcut("alt-space").catch((error) =>
+                chooseShortcut(DEFAULT_VOICE_TYPING_SHORTCUT).catch((error) =>
                   log.error("voice-typing: reset shortcut failed", { error: String(error) }),
                 )
               }
             >
               <RotateCcw className="size-3.5" />
-              ⌥ Space
+              {shortcutCaps(DEFAULT_VOICE_TYPING_SHORTCUT, t)}
             </Button>
           )}
         </div>
 
-        {/* Hold-a-modifier alternative (HID tap; needs Input Monitoring). */}
-        <div className="flex items-center gap-2">
-          <span className="shrink-0 text-[11px] text-muted-foreground">
-            {t("settings.voiceTyping.modifierSection")}
-          </span>
-          <div className="grid flex-1 grid-cols-4 gap-1.5">
-            {MODIFIER_IDS.map((id) => (
-              <Button
-                key={id}
-                variant={selected === id ? "secondary" : "outline"}
-                size="sm"
-                className="h-7 justify-center px-1.5 text-[11px]"
-                onClick={() =>
-                  chooseShortcut(id).catch((error) =>
-                    log.error("voice-typing: choose modifier shortcut failed", { error: String(error), shortcut: id }),
-                  )
-                }
-              >
-                {t(MODIFIER_LABEL_KEYS[id])}
-              </Button>
-            ))}
+        {/* Hold-a-modifier alternative (HID tap; needs Input Monitoring).
+            macOS only: the tap has no Windows counterpart, and the four ids it
+            offers aren't shortcuts the backend can register there. */}
+        {mac && (
+          <div className="flex items-center gap-2">
+            <span className="shrink-0 text-[11px] text-muted-foreground">
+              {t("settings.voiceTyping.modifierSection")}
+            </span>
+            <div className="grid flex-1 grid-cols-4 gap-1.5">
+              {MODIFIER_IDS.map((id) => (
+                <Button
+                  key={id}
+                  variant={selected === id ? "secondary" : "outline"}
+                  size="sm"
+                  className="h-7 justify-center px-1.5 text-[11px]"
+                  onClick={() =>
+                    chooseShortcut(id).catch((error) =>
+                      log.error("voice-typing: choose modifier shortcut failed", { error: String(error), shortcut: id }),
+                    )
+                  }
+                >
+                  {t(MODIFIER_LABEL_KEYS[id])}
+                </Button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         <p className="text-[11px] text-muted-foreground">
           {recording
             ? t("settings.voiceTyping.recorder.cancelHint")
-            : t("settings.voiceTyping.recorder.help")}
+            : t(
+                mac
+                  ? "settings.voiceTyping.recorder.help"
+                  : "settings.voiceTyping.recorder.helpWindows",
+              )}
         </p>
         {recordHint && (
           <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
@@ -633,7 +710,7 @@ export const VoiceTypingSettings = () => {
             {t("settings.voiceTyping.devBinaryHint", { path: identity.executablePath })}
           </p>
         )}
-        {settings.voiceTypingEnabled && axTrusted === false && (
+        {mac && settings.voiceTypingEnabled && axTrusted === false && (
           <p className="text-[11px] text-amber-600 dark:text-amber-400">
             {t("settings.voiceTyping.needsAccessibility")}{" "}
             <button

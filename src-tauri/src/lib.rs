@@ -16,7 +16,7 @@ mod voice_typing;
 
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::ShortcutState;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
@@ -28,12 +28,25 @@ pub fn run() {
     let shortcut_builder = tauri_plugin_global_shortcut::Builder::new();
     // Boot default until the frontend applies the saved selection (see
     // hotkey::set_voice_typing_shortcut, called from the voice-typing host).
-    // macOS only: voice typing isn't wired on Windows yet, and Alt+Space there
-    // is the native window system menu — claiming it would swallow an OS
-    // shortcut for nothing.
+    // The two shipping platforms deliberately take a DIFFERENT key. Alt+Space
+    // is the conventional dictation trigger on macOS, but on Windows it is the
+    // native window system menu (the Move/Size/Close popup every window has),
+    // and claiming it globally would swallow that menu for the whole session.
+    // Windows therefore boots on Ctrl+Alt+Space, which is also what the
+    // frontend defaults the saved setting to, so applying the setting
+    // re-registers the same combo rather than moving the user's shortcut out
+    // from under them. Nowhere else registers anything: voice typing has no
+    // implementation to drive there (see voice_typing.rs).
     #[cfg(target_os = "macos")]
     let shortcut_builder = shortcut_builder
         .with_shortcut(Shortcut::new(Some(Modifiers::ALT), Code::Space))
+        .expect("register dictation shortcut");
+    #[cfg(target_os = "windows")]
+    let shortcut_builder = shortcut_builder
+        .with_shortcut(Shortcut::new(
+            Some(Modifiers::CONTROL | Modifiers::ALT),
+            Code::Space,
+        ))
         .expect("register dictation shortcut");
     let shortcut_plugin = shortcut_builder
         .with_handler(|app, _shortcut, event| {
