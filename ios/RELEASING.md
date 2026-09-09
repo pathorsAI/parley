@@ -3,8 +3,11 @@
 Parley iOS is the cloud companion for face-to-face meetings. It records the
 phone microphone, streams it through the hosted Parley relay, and syncs the
 Ogg recording plus transcript to the same account as the desktop app. Since 1.1
-it also ships a voice-typing keyboard extension. It does not capture phone calls
-or other apps' audio.
+it also ships a voice-typing keyboard extension, and since 1.9 it can import an
+audio file the user picks — decoding it on device and batch-transcribing it
+through the same hosted endpoint the desktop's upload path uses — so an
+imported meeting lands in the library like a recorded one. It does not capture
+phone calls or other apps' audio.
 
 Already configured for the Pathors Apple team (`SXHVCQXJHZ`):
 
@@ -286,6 +289,9 @@ unit tests.
       resumes cleanly.
 - [ ] Network dropped mid-recording → the finished recording queues, and
       Settings → Sync retries it successfully.
+- [ ] Import an audio file (Files, iCloud Drive, and a share from another app):
+      it decodes, transcribes, and appears in Library. Try one long enough to
+      matter — an hour — and confirm the app is not jetsam-killed mid-decode.
 - [ ] Personal folders, organization share/move, and account deletion.
 
 **Voice keyboard (new in 1.1)**

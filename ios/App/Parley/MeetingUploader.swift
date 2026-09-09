@@ -4,6 +4,12 @@ import ParleyKit
 /// Owns one live recording. Finished audio is first moved to Application
 /// Support, then synced with the desktop's audio-first contract. A failed or
 /// interrupted upload remains in the on-device queue until it succeeds.
+///
+/// The queue is not live-only: an imported audio file, once decoded and
+/// batch-transcribed, is filed through `fileImported` and rides the exact same
+/// persist → upload → push → share → delete-manifest path. Both sources are
+/// retried by the same `syncPending`, so an import that loses the network is no
+/// more lost than a meeting that does.
 final class MeetingUploader {
     let id = UUID().uuidString.lowercased()
     private let startedAt = Date()
@@ -35,6 +41,11 @@ final class MeetingUploader {
         Double(samplesFed) / Double(OggOpusEncoder.sampleRate) * 1000
     }
 
+    /// Shorter than this and there is no meeting to keep. Shared with the
+    /// import path so a picked file is judged by the same bar a live recording
+    /// is — and so the two can never drift apart.
+    static let minimumDurationMs: Double = 2_000
+
     /// What a finished upload left in the cloud.
     ///
     /// More than the org name it started as: the filing suggestion runs against
@@ -43,7 +54,8 @@ final class MeetingUploader {
     /// its suggestion is accepted against.
     struct Outcome {
         let recordingId: String
-        /// The clock name the recording landed under (`title(for:)`).
+        /// The name the recording landed under: the clock name for a live
+        /// meeting (`title(for:)`), the file's own name for an import.
         let title: String
         /// The personal folder it landed in; nil = the personal root.
         let folderId: String?
@@ -61,6 +73,56 @@ final class MeetingUploader {
         let durationMs: Double
         let segments: [TranscriptSegment]
         let defaultSave: SaveDestination
+        /// Desktop's `RecordingMeta.source`: `"live"` for a meeting recorded on
+        /// this phone, `"upload"` for an imported file. Drives the LIVE/UPLOAD
+        /// badge in the library, on both platforms.
+        let source: String
+        /// The name the user should recognise. nil means "no name of its own",
+        /// which is every live recording — those are named by the clock at
+        /// upload time so a queued recording is stamped when it was made.
+        let title: String?
+
+        /// Both new fields decode with a default, because this manifest is
+        /// written to disk and read back by a *later build of the app*. Someone
+        /// can update Parley with recordings still sitting in the queue, and a
+        /// manifest written before imports existed has neither key. Failing to
+        /// decode would drop that recording on the floor for good — so an old
+        /// manifest reads as exactly what it was: a clock-named live recording.
+        enum CodingKeys: String, CodingKey {
+            case id, startedAt, durationMs, segments, defaultSave, source, title
+        }
+
+        init(
+            id: String,
+            startedAt: Date,
+            durationMs: Double,
+            segments: [TranscriptSegment],
+            defaultSave: SaveDestination,
+            source: String,
+            title: String?
+        ) {
+            self.id = id
+            self.startedAt = startedAt
+            self.durationMs = durationMs
+            self.segments = segments
+            self.defaultSave = defaultSave
+            self.source = source
+            self.title = title
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(String.self, forKey: .id)
+            startedAt = try container.decode(Date.self, forKey: .startedAt)
+            durationMs = try container.decode(Double.self, forKey: .durationMs)
+            segments = try container.decode([TranscriptSegment].self, forKey: .segments)
+            defaultSave = try container.decode(SaveDestination.self, forKey: .defaultSave)
+            source = try container.decodeIfPresent(String.self, forKey: .source) ?? "live"
+            title = try container.decodeIfPresent(String.self, forKey: .title)
+        }
+
+        /// The name this recording lands under.
+        var displayTitle: String { title ?? MeetingUploader.title(for: startedAt) }
     }
 
     /// Finalize the Ogg stream, place it in the durable queue, then attempt an
@@ -79,7 +141,7 @@ final class MeetingUploader {
             }
         }
 
-        guard durationMs >= 2_000 else {
+        guard durationMs >= Self.minimumDurationMs else {
             try? FileManager.default.removeItem(at: fileURL)
             return nil
         }
@@ -89,9 +151,53 @@ final class MeetingUploader {
             startedAt: startedAt,
             durationMs: durationMs,
             segments: segments.filter { $0.isFinal && !$0.id.hasSuffix("-tail") },
-            defaultSave: defaultSave)
+            defaultSave: defaultSave,
+            source: "live",
+            title: nil)
         try Self.persist(pending, audioAt: fileURL)
         return try await Self.upload(pending, cloud: cloud, orgs: orgs)
+    }
+
+    /// File an imported recording — audio that was decoded and batch-transcribed
+    /// elsewhere (`RecordingImporter`) rather than captured live.
+    ///
+    /// Deliberately the same three moves as `finishAndUpload`: persist the
+    /// manifest and the Ogg into Application Support first, then upload. If any
+    /// cloud step fails the entry survives in the queue and `syncPending` picks
+    /// it up on the next foreground launch — an import is no more losable than a
+    /// meeting. `ogg` is *moved* out of its temp location, not copied.
+    ///
+    /// nil means the audio was too short to be worth keeping, matching
+    /// `finishAndUpload`; the file is discarded in that case.
+    static func fileImported(
+        oggAt ogg: URL,
+        durationMs: Double,
+        segments: [TranscriptSegment],
+        title: String,
+        cloud: CloudClient,
+        defaultSave: SaveDestination,
+        orgs: [CloudOrg]
+    ) async throws -> Outcome? {
+        guard durationMs >= minimumDurationMs else {
+            try? FileManager.default.removeItem(at: ogg)
+            return nil
+        }
+
+        // A file whose name is nothing but whitespace would land as a blank row
+        // in the library, which reads as a bug. Fall back to the clock name the
+        // live path uses — it is at least something the user can place.
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let pending = PendingUpload(
+            id: UUID().uuidString.lowercased(),
+            startedAt: Date(),
+            durationMs: durationMs,
+            segments: segments.filter { $0.isFinal && !$0.id.hasSuffix("-tail") },
+            defaultSave: defaultSave,
+            source: "upload",
+            title: trimmed.isEmpty ? nil : trimmed)
+        try persist(pending, audioAt: ogg)
+        return try await upload(pending, cloud: cloud, orgs: orgs)
     }
 
     static func syncPending(cloud: CloudClient, orgs: [CloudOrg]) async -> SyncResult {
@@ -128,7 +234,7 @@ final class MeetingUploader {
 
         var outcome = Outcome(
             recordingId: pending.id,
-            title: title(for: pending.startedAt),
+            title: pending.displayTitle,
             folderId: personalFolderId,
             sharedToOrgName: nil)
         if pending.defaultSave.isOrg, let orgId = pending.defaultSave.orgId {
@@ -148,8 +254,8 @@ final class MeetingUploader {
     ) -> RecordingMeta {
         var raw: [String: Any] = [
             "id": pending.id,
-            "title": title(for: pending.startedAt),
-            "source": "live",
+            "title": pending.displayTitle,
+            "source": pending.source,
             "createdAt": pending.startedAt.timeIntervalSince1970 * 1_000,
             "durationMs": pending.durationMs,
             "segments": finals.map { segment in
@@ -181,7 +287,7 @@ final class MeetingUploader {
         let speakers = Set(finals.map { "\($0.source)-\($0.speaker)" }).count
         let snippet = finals.prefix(3).map(\.text).joined(separator: " ").prefix(120)
         return CloudRecordingSummary(
-            id: pending.id, title: title(for: pending.startedAt), source: "live",
+            id: pending.id, title: pending.displayTitle, source: pending.source,
             createdAt: pending.startedAt.timeIntervalSince1970 * 1_000,
             durationMs: pending.durationMs,
             speakerCount: max(speakers, finals.isEmpty ? 0 : 1),
@@ -190,9 +296,10 @@ final class MeetingUploader {
             folderId: folderId, updatedAt: nil)
     }
 
-    /// The default title a recording carries into the library. Formatted in the
-    /// user's locale — a Chinese phone reads 8/9 下午3:20, an English one Aug 9,
-    /// 3:20 PM — rather than one hard-coded pattern for everybody.
+    /// The title a recording with no name of its own carries into the library:
+    /// every live meeting, and an import whose file name was blank. Formatted in
+    /// the user's locale — a Chinese phone reads 8/9 下午3:20, an English one
+    /// Aug 9, 3:20 PM — rather than one hard-coded pattern for everybody.
     private static func title(for date: Date) -> String {
         let stamp = date.formatted(
             .dateTime.month(.abbreviated).day().hour().minute())

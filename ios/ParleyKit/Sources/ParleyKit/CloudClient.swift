@@ -10,8 +10,15 @@ public struct CloudError: Error, Equatable {
 /// `src/lib/cloud/{client,sync,folders,orgs}.ts` call-for-call; the 401/403
 /// discipline is the same — 401 means the session is dead (caller should sign
 /// out), 403 is resource-level and must NOT clear auth.
-public actor CloudClient {
+public actor CloudClient: BatchTranscriptionService {
     public static let defaultBaseURL = URL(string: "https://api.parley.tw")!
+
+    /// Uploading an hour of compressed audio over a phone network is minutes of
+    /// work, and `URLSession`'s 60 s default would kill it well before the
+    /// server had a chance to answer. Only the batch-create request gets this;
+    /// every other call keeps the default, where a minute of silence really
+    /// does mean something is wrong.
+    static let batchUploadTimeout: TimeInterval = 300
 
     private let baseURL: URL
     private let tokenProvider: @Sendable () -> String?
@@ -250,6 +257,41 @@ public actor CloudClient {
         }
     }
 
+    // MARK: hosted batch transcription
+
+    /// Create a job from raw (already compressed) audio; the response is the id.
+    /// The hints param is omitted entirely when empty so the cloud auto-detects,
+    /// rather than being handed an empty list to interpret.
+    public func startBatchJob(audio: Data, diarization: Bool, languageHints: [String]) async throws
+        -> String
+    {
+        var query = [URLQueryItem(name: "diarization", value: diarization ? "1" : "0")]
+        if !languageHints.isEmpty {
+            query.append(
+                URLQueryItem(name: "language_hints", value: languageHints.joined(separator: ",")))
+        }
+        let data = try await request(
+            "stt/batch", method: "POST", body: audio, contentType: "application/octet-stream",
+            query: query, timeout: Self.batchUploadTimeout)
+        struct Created: Decodable { let id: String }
+        return try JSONDecoder().decode(Created.self, from: data).id
+    }
+
+    public func batchJobStatus(id: String) async throws -> BatchJobStatus {
+        try await get("stt/batch/\(id)", as: BatchJobStatus.self)
+    }
+
+    public func batchTranscript(id: String) async throws -> BatchTranscriptResponse {
+        try await get("stt/batch/\(id)/transcript", as: BatchTranscriptResponse.self)
+    }
+
+    /// Best-effort cleanup so the cloud isn't left holding the audio. The
+    /// transcript is already downloaded by the time this runs, so every failure
+    /// here — expired session, no network, job already gone — is swallowed.
+    public func deleteBatchJob(id: String) async {
+        _ = try? await request("stt/batch/\(id)", method: "DELETE")
+    }
+
     // MARK: plumbing
 
     private func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
@@ -258,15 +300,32 @@ public actor CloudClient {
     }
 
     private func request(
-        _ path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil
+        _ path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil,
+        query: [URLQueryItem] = [], timeout: TimeInterval? = nil
     ) async throws -> Data {
-        try await requestWithResponse(path, method: method, body: body, contentType: contentType).0
+        try await requestWithResponse(
+            path, method: method, body: body, contentType: contentType, query: query,
+            timeout: timeout
+        ).0
     }
 
+    /// `query` is applied with `URLComponents` rather than being appended to
+    /// `path`: `appendingPathComponent` percent-encodes `?` and `&`, so a query
+    /// string smuggled through the path arrives as one long, meaningless path
+    /// segment.
     private func requestWithResponse(
-        _ path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil
+        _ path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil,
+        query: [URLQueryItem] = [], timeout: TimeInterval? = nil
     ) async throws -> (Data, HTTPURLResponse) {
-        var req = URLRequest(url: baseURL.appendingPathComponent(path))
+        var url = baseURL.appendingPathComponent(path)
+        if !query.isEmpty,
+            var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        {
+            comps.queryItems = query
+            if let built = comps.url { url = built }
+        }
+        var req = URLRequest(url: url)
+        if let timeout { req.timeoutInterval = timeout }
         req.httpMethod = method
         req.httpBody = body
         if let contentType { req.setValue(contentType, forHTTPHeaderField: "Content-Type") }

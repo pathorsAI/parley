@@ -1,5 +1,6 @@
 import ParleyKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Library — phone mirror of the desktop History window: personal + org
 /// scopes, one-level folders, and the same move semantics:
@@ -20,6 +21,13 @@ struct LibraryView: View {
     @State private var error: String?
     @State private var busyId: String?
     @State private var search = ""
+    /// One importer for the whole screen, so every door — the toolbar button
+    /// and the empty state — drives the same single in-flight import.
+    @StateObject private var importer = RecordingImporter()
+    @State private var importing = false
+    /// What the last finished import landed, shown above the list until the
+    /// user moves on. Failures go to `error` instead, with everything else.
+    @State private var importNotice: String?
     #if DEBUG
         @ObservedObject private var demo = ScreenshotDemo.shared
     #endif
@@ -35,7 +43,21 @@ struct LibraryView: View {
             }
             .background(Theme.background)
             .navigationTitle("Library")
-            .toolbar { scopeMenu }
+            .toolbar {
+                importButton
+                scopeMenu
+            }
+            // `.audio` is the whole family — mp3, m4a, wav, aac, caf and the
+            // rest — which is what the desktop's extension list adds up to.
+            // Single selection: a transcription run takes one file, the same
+            // arbitration the desktop settled on.
+            .fileImporter(
+                isPresented: $importing,
+                allowedContentTypes: [.audio],
+                allowsMultipleSelection: false
+            ) { result in
+                Task { await runImport(result) }
+            }
             .searchable(text: $search, prompt: Text("Search titles and snippets"))
             .refreshable { await load() }
             .task(id: "\(scope ?? "personal")-\(app.signedIn)") { await load() }
@@ -66,6 +88,30 @@ struct LibraryView: View {
             title, systemImage: "icloud.slash", description: Text(detail))
     }
 
+    // MARK: import (desktop History "+ Import", phone-sized)
+
+    /// Personal scope only. An org library is a different container, and the
+    /// upload path files into the personal library first and shares from there
+    /// — offering the button under an org would promise a destination the flow
+    /// does not have.
+    ///
+    /// Icon-only, and declared before the scope menu so the scope switcher
+    /// stays where it has always been: last, at the trailing edge, with room
+    /// for an org name beside it on a small phone.
+    @ToolbarContentBuilder
+    private var importButton: some ToolbarContent {
+        if scope == nil {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    importing = true
+                } label: {
+                    Label("Import audio", systemImage: "square.and.arrow.down")
+                }
+                .disabled(importer.isRunning)
+            }
+        }
+    }
+
     // MARK: scope switcher (desktop sidebar, phone-sized)
 
     private var scopeMenu: some ToolbarContent {
@@ -74,6 +120,7 @@ struct LibraryView: View {
                 Button {
                     scope = nil
                     folderFilter = nil
+                    importNotice = nil
                 } label: {
                     Label("Personal", systemImage: scope == nil ? "checkmark" : "folder")
                 }
@@ -81,6 +128,7 @@ struct LibraryView: View {
                     Button {
                         scope = org.id
                         folderFilter = nil
+                        importNotice = nil
                     } label: {
                         Label(
                             org.name,
@@ -109,6 +157,12 @@ struct LibraryView: View {
         List {
             if !folders.isEmpty {
                 folderChips
+            }
+            if importer.isRunning || importNotice != nil {
+                importStatus
+                    .listRowInsets(EdgeInsets(top: 10, leading: 22, bottom: 10, trailing: 22))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
             }
             if let error {
                 Text(error)
@@ -144,9 +198,47 @@ struct LibraryView: View {
         .overlay { if loading && recordings.isEmpty { ProgressView() } }
     }
 
+    /// An import in flight, or the one that just landed.
+    ///
+    /// Decoding knows how far along it is, so it gets a real bar. Transcription
+    /// does not — the cloud is polled until the job finishes, and on an hour of
+    /// audio that is minutes — so it gets a spinner, which is the one thing on
+    /// screen that visibly keeps moving while nothing else changes.
+    @ViewBuilder
+    private var importStatus: some View {
+        switch importer.stage {
+        case .decoding(let fraction):
+            VStack(alignment: .leading, spacing: 8) {
+                Text(verbatim: importer.stage.label)
+                    .font(.parley.caption)
+                    .foregroundStyle(Theme.mutedForeground)
+                ProgressView(value: fraction)
+                    .tint(Theme.brand)
+            }
+        case .transcribing, .filing:
+            HStack(spacing: 10) {
+                ProgressView()
+                Text(verbatim: importer.stage.label)
+                    .font(.parley.caption)
+                    .foregroundStyle(Theme.mutedForeground)
+            }
+        case .idle:
+            if let importNotice {
+                Text(verbatim: importNotice)
+                    .font(.parley.caption)
+                    .foregroundStyle(Theme.success)
+            }
+        }
+    }
+
     /// Same shape as the live screen's empty state: a tinted disc, the glyph in
     /// brand blue, and enough room around it that "nothing here" reads as a
     /// deliberate state rather than a failed load.
+    ///
+    /// A library with nothing in it is also the second natural door into
+    /// import, so it opens the very same `.fileImporter` the toolbar button
+    /// does — one flow, two doors, the way the desktop routes every import
+    /// affordance through one function.
     private var emptyState: some View {
         VStack(spacing: 18) {
             Image(systemName: search.isEmpty ? "rectangle.stack" : "magnifyingglass")
@@ -159,6 +251,21 @@ struct LibraryView: View {
                 .font(.parley.subheadline)
                 .foregroundStyle(Theme.mutedForeground)
                 .multilineTextAlignment(.center)
+            if scope == nil && search.isEmpty {
+                Button {
+                    importing = true
+                } label: {
+                    Label("Import an audio file", systemImage: "square.and.arrow.down")
+                        .font(.parley.subheadlineEmphasized)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 11)
+                        .background(Theme.brandGradient, in: Capsule())
+                        .foregroundStyle(Theme.onBrand)
+                }
+                .buttonStyle(.plain)
+                .disabled(importer.isRunning)
+                .opacity(importer.isRunning ? 0.5 : 1)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 56)
@@ -257,6 +364,31 @@ struct LibraryView: View {
     }
 
     // MARK: data ops
+
+    /// THE import door. Both affordances call this and nothing else, so the
+    /// accepted formats, the one-at-a-time rule, and what happens afterwards
+    /// cannot drift between them.
+    ///
+    /// The list is reloaded rather than patched: the recording that landed
+    /// carries a server-side `updatedAt` and may have been auto-shared to an
+    /// org, and re-reading is the only way to show what is actually there.
+    private func runImport(_ result: Result<[URL], Error>) async {
+        importNotice = nil
+        error = nil
+        let completion = await importer.run(result, app: app)
+        switch completion {
+        case .cancelled:
+            break
+        case .failed(let message):
+            error = message
+        case .landed(let title, let sharedToOrgName):
+            await load()
+            importNotice =
+                sharedToOrgName.map { org in
+                    String(localized: "Imported “\(title)” and shared to “\(org)”")
+                } ?? String(localized: "Imported “\(title)”")
+        }
+    }
 
     private func load() async {
         guard app.signedIn else { return }

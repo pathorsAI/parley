@@ -1,6 +1,57 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Hosted transcription failed (HTTP %lld)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hosted transcription failed (HTTP %lld)"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "雲端轉錄失敗（HTTP %lld）"
+          }
+        }
+      }
+    },
+    "Hosted transcription failed (HTTP %lld): %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hosted transcription failed (HTTP %lld): %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "雲端轉錄失敗（HTTP %lld）：%@"
+          }
+        }
+      }
+    },
+    "Parley Cloud couldn't reach the transcription service — try again in a few minutes.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley Cloud couldn't reach the transcription service — try again in a few minutes."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley Cloud 目前連不上轉錄服務，請過幾分鐘再試一次。"
+          }
+        }
+      }
+    },
     "Remote %lld": {
       "extractionState": "manual",
       "localizations": {
@@ -14,6 +65,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "對方 %lld"
+          }
+        }
+      }
+    },
+    "Sign in to Parley Cloud to transcribe recordings.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in to Parley Cloud to transcribe recordings."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請先登入 Parley Cloud 才能轉錄錄音。"
           }
         }
       }
@@ -52,6 +120,74 @@
         }
       }
     },
+    "This recording is too large for hosted transcription — split it into shorter files and upload them separately.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This recording is too large for hosted transcription — split it into shorter files and upload them separately."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這段錄音超過雲端轉錄的大小上限，請切成幾段較短的檔案分別上傳。"
+          }
+        }
+      }
+    },
+    "Too many transcriptions running at once — wait for a meeting or an earlier upload to finish, then try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Too many transcriptions running at once — wait for a meeting or an earlier upload to finish, then try again."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同時進行的轉錄太多了，請等會議或前一個上傳跑完再試一次。"
+          }
+        }
+      }
+    },
+    "Transcription failed: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transcription failed: %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轉錄失敗：%@"
+          }
+        }
+      }
+    },
+    "Transcription timed out.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transcription timed out."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轉錄等待逾時。"
+          }
+        }
+      }
+    },
     "You": {
       "extractionState": "manual",
       "localizations": {
@@ -82,6 +218,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "我 %lld"
+          }
+        }
+      }
+    },
+    "Your monthly hosted transcription quota is used up — upgrade your plan or wait for it to reset.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your monthly hosted transcription quota is used up — upgrade your plan or wait for it to reset."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這個月的雲端轉錄額度已經用完，請升級方案或等額度重置。"
           }
         }
       }
