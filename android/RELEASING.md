@@ -365,6 +365,13 @@ are easy to get wrong:
 - **Broken deep link**: test `parley://auth-callback` on the *release* build —
   minification or a missing intent-filter change is the classic
   works-in-debug-only failure.
+- **Play's target API floor moves every year.** Since 2026-08-31 an upload
+  must target Android 16 (API 36); `android-v0.1.3` was accepted by the upload
+  step and then refused at commit with *Target SDK of artifact is too low*.
+  The deadline is always 31 August, one API level higher each year
+  (<https://support.google.com/googleplay/android-developer/answer/11926878>), so
+  bump `compileSdk`/`targetSdk` — and re-walk the review flows on a release
+  build — before the summer, not when the upload fails.
 - **R8 and reflection**: `0.1.1 (2)` was rejected under the *Broken
   functionality* policy ("Parley keeps stopping") because the release build
   crashed the moment sign-in completed. DataStore's shaded protobuf-lite looks

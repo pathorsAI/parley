@@ -33,7 +33,7 @@ Module API docs for each layer live in `docs/`.
 
 ## Build
 
-Requires JDK 17+ and the Android SDK (API 35).
+Requires JDK 17+ and the Android SDK (API 36).
 
 ```bash
 cd android

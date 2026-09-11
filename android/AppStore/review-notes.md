@@ -5,7 +5,7 @@ declarations that will otherwise bounce the release: **App access** (the app is
 behind a sign-in wall) and **foreground service permissions** (the `microphone`
 type needs a demonstration video).
 
-Target: `com.pathors.parley`, versionName `0.1.3` / versionCode `4`
+Target: `com.pathors.parley`, versionName `0.1.4` / versionCode `5`
 (`android/app/build.gradle.kts`). minSdk 29 — a reviewer on anything older than
 Android 10 will not be offered the app.
 

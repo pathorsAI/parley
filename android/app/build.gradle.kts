@@ -77,15 +77,15 @@ if (!uploadSigningReady) {
 
 android {
     namespace = "com.pathors.parley"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.pathors.parley"
         // minSdk 29: MediaMuxer OGG output + MediaCodec Opus encoder both require API 29.
         minSdk = 29
-        targetSdk = 35
-        versionCode = 4
-        versionName = "0.1.3"
+        targetSdk = 36
+        versionCode = 5
+        versionName = "0.1.4"
     }
 
     signingConfigs {
