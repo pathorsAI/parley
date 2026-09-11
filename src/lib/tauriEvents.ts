@@ -171,7 +171,8 @@ export async function listenForMeetingWarning(): Promise<UnlistenFn> {
   };
 }
 
-/** True when running inside the Tauri shell (vs a plain browser dev session). */
-export function isTauri(): boolean {
-  return "__TAURI_INTERNALS__" in globalThis;
-}
+/** True when running inside the Tauri shell (vs a plain browser dev session).
+ *  Defined in lib/platform.ts (which nothing else in the app imports, so it is
+ *  safe for modules that need it at import time) and re-exported here because
+ *  most of the app has always reached for it through this module. */
+export { isTauri } from "./platform";

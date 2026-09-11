@@ -16,9 +16,12 @@
 // CLOUD_ENABLED branches only).
 //
 // A recording's folder membership is NOT here — it rides on the entry's own
-// meta.json (HistoryEntry.folderId). This file is only the folder list (ids+names).
-// Folders are one level deep (no nesting). A folderId that no longer matches any
-// folder here renders at the personal root (the orphan→root rule in the library grid).
+// meta.json (HistoryEntry.folderId). This file is only the folder list (ids+names,
+// plus whether the folder has been archived). Folders are one level deep (no
+// nesting). A folderId that no longer matches any folder here renders at the
+// personal root (the orphan→root rule in the library grid) — which is why
+// ARCHIVING a folder keeps it in this registry: an archived folder is still a
+// home, so the recordings inside it stay where they are instead of falling out.
 
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -33,6 +36,39 @@ export interface Folder {
   id: string;
   name: string;
   createdAt: number;
+  /**
+   * When the folder was archived (epoch ms); absent while it is in use.
+   *
+   * Archiving is NOT deleting: nothing moves and nothing is lost. The folder
+   * drops out of the tree's folder list and out of every filing picker, and
+   * reappears under the sidebar's archived section, where it can be restored.
+   * A recording inside one keeps its `folderId` and still belongs to it — which
+   * is the whole difference from delete, where the recordings fall to the root.
+   *
+   * LOCAL ONLY: the cloud `folder` table has no column for it, so archiving on
+   * one device does not follow the folder to another. {@link writeLocalFolders}
+   * therefore carries the flag across the cloud mirror-down instead of letting
+   * the remote copy silently un-archive it.
+   */
+  archivedAt?: number;
+}
+
+/** Has this folder been put away? */
+export function isArchived(f: Folder): boolean {
+  return typeof f.archivedAt === "number";
+}
+
+/**
+ * The folders a recording can be filed INTO — every live one, plus `keep` when
+ * that folder is archived but is where the thing in hand already lives (so a
+ * picker can still name its own current answer).
+ *
+ * One rule for every filing door — the destination picker, the card's move
+ * menu, the AI filing suggestion — so "put this away" can't mean one thing in
+ * the sidebar and another in a menu three clicks later.
+ */
+export function filingChoices(folders: readonly Folder[], keep?: string | null): Folder[] {
+  return folders.filter((f) => !isArchived(f) || f.id === keep);
 }
 
 /** Hydrated registry (null until initFolderRegistry / the first refresh). */
@@ -160,16 +196,51 @@ export async function listFoldersFresh(): Promise<Folder[]> {
 }
 
 /** Replace the whole registry — used to mirror the cloud list down so a
- *  folder created on another device shows here (and one deleted there disappears). */
+ *  folder created on another device shows here (and one deleted there disappears).
+ *
+ *  `archivedAt` is local-only (see {@link Folder}), so the incoming list can't
+ *  speak to it: each folder keeps whatever archive state this machine already
+ *  had for that id. Without this, every cloud reload un-archives everything. */
 export function writeLocalFolders(folders: Folder[]): void {
-  persist(folders.map((f) => ({ id: f.id, name: f.name, createdAt: f.createdAt })));
+  const archived = new Map(read().map((f) => [f.id, f.archivedAt]));
+  persist(
+    folders.map((f) => {
+      const at = f.archivedAt ?? archived.get(f.id);
+      const base = { id: f.id, name: f.name, createdAt: f.createdAt };
+      return typeof at === "number" ? { ...base, archivedAt: at } : base;
+    })
+  );
 }
 
-/** Create a personal folder and return it. */
+/**
+ * Create a personal folder and return it — or REVIVE the archived folder that
+ * already carries this name. Typing a name back into a picker means you want
+ * that folder again, and a second folder with the same name would be
+ * indistinguishable from the one hidden in the archive. Live folders are left
+ * alone: duplicate names among them have always been allowed.
+ */
 export function createLocalFolder(name: string): Folder {
-  const f: Folder = { id: crypto.randomUUID(), name: name.trim(), createdAt: Date.now() };
+  const clean = name.trim();
+  const revived = read().find((f) => isArchived(f) && f.name === clean);
+  if (revived) {
+    setLocalFolderArchived(revived.id, false);
+    return { id: revived.id, name: revived.name, createdAt: revived.createdAt };
+  }
+  const f: Folder = { id: crypto.randomUUID(), name: clean, createdAt: Date.now() };
   persist([...read(), f]);
   return f;
+}
+
+/** Put a personal folder away, or bring it back (no-op if missing). Membership
+ *  is untouched — this only decides whether the folder is in your way. */
+export function setLocalFolderArchived(id: string, archived: boolean): void {
+  persist(
+    read().map((f) => {
+      if (f.id !== id) return f;
+      if (!archived) return { id: f.id, name: f.name, createdAt: f.createdAt };
+      return { ...f, archivedAt: f.archivedAt ?? Date.now() };
+    })
+  );
 }
 
 /** Rename a personal folder (no-op if missing). */

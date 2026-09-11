@@ -5,6 +5,7 @@ import { preloadZhConverter } from "../lib/zhConvert";
 import { normalizeTranscriptText } from "../lib/textNormalize";
 import { useI18n, type TranslationKey } from "../i18n";
 import { useThemePreference } from "../lib/theme";
+import { modChordCap } from "../lib/commands/format";
 import { log } from "../lib/log";
 import {
   SUGGEST_ACTION_EVENT,
@@ -119,6 +120,9 @@ export const VoiceTypingApp = () => {
   // Set when the hosted single-dictation cap ended the session: a note shown
   // alongside the (still delivered) transcript so the abrupt stop is explained.
   const [limited, setLimited] = useState(false);
+  // Set when the transcript reached the clipboard but the auto-paste did not
+  // land, so the confirmation can name the key the user has to press instead.
+  const [pasteBlocked, setPasteBlocked] = useState(false);
   // Drives the graceful fade-out of the whole overlay after the copied
   // confirmation has dwelled — reset whenever a new session starts.
   const [fading, setFading] = useState(false);
@@ -239,6 +243,7 @@ export const VoiceTypingApp = () => {
           setError(null);
           setLimited(false);
           setFading(false);
+          setPasteBlocked(false);
           setSuggest(null);
           setSuggestAdded(false);
           setPhase("listening");
@@ -252,6 +257,11 @@ export const VoiceTypingApp = () => {
           setLimited(true);
           setPhase("finalizing");
         } else if (p === "done") {
+          // "clipboard-only" = the transcript was copied but the synthetic
+          // paste was refused (no Accessibility on macOS, UIPI on Windows).
+          // The confirmation has to change, or the user watches "Copied" go by
+          // while nothing appears where they were typing.
+          setPasteBlocked(message === "clipboard-only");
           setPhase("done");
         } else if (p === "error") {
           setError(message || "error");
@@ -363,14 +373,22 @@ export const VoiceTypingApp = () => {
         </div>
       )}
 
-      {/* Copied-to-clipboard confirmation. The transcript is already on the
-          clipboard (and pasted at the cursor when Accessibility is granted), so
-          the "done" state announces it near the overlay — the user knows they
-          can paste it anywhere even if auto-paste was blocked. */}
+      {/* Copied-to-clipboard confirmation. The transcript is always on the
+          clipboard, so the "done" state announces it near the overlay. When the
+          auto-paste was refused as well (no Accessibility on macOS, UIPI
+          refusing an elevated window on Windows) it turns amber and names the
+          paste key — otherwise the user reads "Copied", sees nothing appear
+          where they were typing, and assumes the dictation was lost. */}
       {phase === "done" && !error && text && (
-        <div className="flex items-center gap-1 rounded-full bg-emerald-500 px-2.5 py-0.5 text-[11px] font-medium text-white shadow-md">
-          <Check className="size-2.5" strokeWidth={3} />
-          {t("voiceTyping.copied")}
+        <div
+          className={`flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium text-white shadow-md ${
+            pasteBlocked ? "bg-amber-500" : "bg-emerald-500"
+          }`}
+        >
+          {!pasteBlocked && <Check className="size-2.5" strokeWidth={3} />}
+          {pasteBlocked
+            ? t("voiceTyping.pasteBlocked", { paste: modChordCap("V") })
+            : t("voiceTyping.copied")}
         </div>
       )}
 

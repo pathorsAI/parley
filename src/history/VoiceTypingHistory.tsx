@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import { Copy, Mic, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { useI18n } from "../i18n";
 import { log } from "../lib/log";
+import { useStore } from "../lib/store";
+import { shortcutCaps } from "../lib/voiceTyping/caps";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -23,6 +25,7 @@ import { addEntry, isIgnoredTwice, whenDictionaryReady } from "../lib/dictionary
  */
 export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
   const { t } = useI18n();
+  const voiceTypingShortcut = useStore((s) => s.settings.voiceTypingShortcut);
   const [entries, setEntries] = useState<VoiceEntry[] | null>(null);
   const [query, setQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -103,7 +106,15 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
       <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
         <Mic className="size-8 opacity-40" />
         <p className="text-sm">{t("history.voiceTyping.empty")}</p>
-        <p className="max-w-xs text-xs opacity-70">{t("history.voiceTyping.emptyHint")}</p>
+        {/* Name the trigger this install actually has, not the macOS default:
+            the hint is the only place someone who has never dictated learns
+            which keys to press, and Option+Space is neither the Windows
+            default nor whatever combo the user recorded. */}
+        <p className="max-w-xs text-xs opacity-70">
+          {t("history.voiceTyping.emptyHint", {
+            shortcut: shortcutCaps(voiceTypingShortcut, t),
+          })}
+        </p>
       </div>
     );
   } else {

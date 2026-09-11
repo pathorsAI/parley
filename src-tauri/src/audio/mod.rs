@@ -1,4 +1,8 @@
 pub mod microphone;
+// Two streams to sum only exist where a second stream exists at all: the macOS
+// Core Audio process tap. Windows records the microphone alone until WASAPI
+// loopback lands, so there is nothing there for the mixer to mix.
+#[cfg(target_os = "macos")]
 pub mod mixer;
 pub mod prosody;
 pub mod resample;

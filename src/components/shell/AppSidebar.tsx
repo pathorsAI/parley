@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  Archive,
+  ArchiveRestore,
   AudioLines,
   Check,
   ChevronRight,
@@ -28,7 +30,7 @@ import { beginMeeting } from "../../lib/meeting/start";
 import { useStore, type LibrarySelection } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import type { LibraryTree } from "./useLibraryTree";
-import type { Folder as LocalFolder } from "../../lib/history/folders";
+import { isArchived, type Folder as LocalFolder } from "../../lib/history/folders";
 import type { CloudOrg } from "../../lib/cloud/types";
 
 /**
@@ -43,6 +45,7 @@ import type { CloudOrg } from "../../lib/cloud/types";
  *   還沒歸檔 · 7           ← filed nowhere yet
  *   語音輸入
  *   組織共享              ← never mixed into the personal tree
+ *   已封存 · 12            ← folders put away; still openable, just not in the way
  */
 export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   const { t } = useI18n();
@@ -67,6 +70,7 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   const countAt = (node: LibraryNode) =>
     node.kind === "all" ? tree.summaries.length : counts.get(nodeKey(node)) ?? 0;
 
+  const archiveOpen = !!expanded.archived;
   const libraryActive = appMode === "library";
   const personalSel = selection.kind === "personal" ? selection : null;
   const orgSel = selection.kind === "org" ? selection : null;
@@ -74,6 +78,25 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
     libraryActive && !!personalSel && nodeKey(personalSel.node) === nodeKey(node);
 
   const selectLibrary = (sel: LibrarySelection) => openLibrary(sel);
+
+  // Archived folders leave the folder list but stay in the tree data: they still
+  // OWN their recordings (buildOwnershipIndex above is fed the whole list), so
+  // putting one away can't dump what is inside it into 還沒歸檔.
+  const liveFolders = tree.personalFolders.filter((f) => !isArchived(f));
+  const archivedFolders = tree.personalFolders.filter(isArchived);
+  const archivedCount = archivedFolders.reduce(
+    (n, f) => n + countAt({ kind: "folder", folderId: f.id }),
+    0
+  );
+
+  /** Put a folder away / bring it back, moving the selection off it on the way
+   *  out — a hidden row can't stay the highlighted one. */
+  const setArchived = (f: LocalFolder, archived: boolean) => {
+    tree.archivePersonalFolder(f.id, archived);
+    if (archived && nodeActive({ kind: "folder", folderId: f.id })) {
+      selectLibrary({ kind: "personal", node: { kind: "all" } });
+    }
+  };
 
   const nav = (
     <nav className="flex h-full min-h-0 w-full flex-col overflow-y-auto border-r bg-background/60 px-2 py-2">
@@ -112,7 +135,7 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         {t("shell.folders")}
       </GroupLabel>
 
-      {tree.personalFolders.map((f) => {
+      {liveFolders.map((f) => {
         const node: LibraryNode = { kind: "folder", folderId: f.id };
         return (
           <Row
@@ -123,6 +146,7 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
             active={nodeActive(node)}
             onSelect={() => selectLibrary({ kind: "personal", node })}
             onRename={(name) => tree.renamePersonalFolder(f.id, name)}
+            onArchive={() => setArchived(f, true)}
             onDelete={() => {
               tree.deletePersonalFolder(f);
               if (nodeActive(node)) {
@@ -229,6 +253,47 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         </>
       )}
 
+      {/* The archive shelf. Last, collapsed, and absent entirely when nothing is
+          in it — a folder you put away should cost you no attention until you
+          come looking for it. The count says how many recordings are down here,
+          because "did I lose those?" is the question archiving raises. */}
+      {archivedFolders.length > 0 && (
+        <div className="mt-3 flex shrink-0 flex-col">
+          <Row
+            icon={<Archive className="size-3.5" />}
+            label={t("history.folder.archived")}
+            count={archivedCount}
+            expandable
+            expanded={archiveOpen}
+            onToggle={() => setExpanded((p) => ({ ...p, archived: !archiveOpen }))}
+            active={false}
+            onSelect={() => setExpanded((p) => ({ ...p, archived: !archiveOpen }))}
+          />
+          {archiveOpen &&
+            archivedFolders.map((f) => {
+              const node: LibraryNode = { kind: "folder", folderId: f.id };
+              return (
+                <Row
+                  key={f.id}
+                  depth={1}
+                  icon={<Folder className="size-3.5" />}
+                  label={f.name}
+                  count={countAt(node)}
+                  active={nodeActive(node)}
+                  onSelect={() => selectLibrary({ kind: "personal", node })}
+                  onRename={(name) => tree.renamePersonalFolder(f.id, name)}
+                  onUnarchive={() => setArchived(f, false)}
+                  onDelete={() => {
+                    tree.deletePersonalFolder(f);
+                    if (nodeActive(node)) {
+                      selectLibrary({ kind: "personal", node: { kind: "unassigned" } });
+                    }
+                  }}
+                />
+              );
+            })}
+        </div>
+      )}
     </nav>
   );
 
@@ -332,6 +397,8 @@ function Row({
   expanded,
   onToggle,
   onRename,
+  onArchive,
+  onUnarchive,
   onDelete,
 }: Readonly<{
   icon: ReactNode;
@@ -345,6 +412,9 @@ function Row({
   expanded?: boolean;
   onToggle?: () => void;
   onRename?: (name: string) => void;
+  /** Menu-only, on purpose — see the hover strip below. */
+  onArchive?: () => void;
+  onUnarchive?: () => void;
   onDelete?: () => void;
 }>) {
   const { t } = useI18n();
@@ -396,9 +466,11 @@ function Row({
     );
   }
 
-  // Same two actions the hover icons run — the menu is a second way to reach
-  // them, not a second implementation of them.
-  const actionable = !!(onRename ?? onDelete);
+  // Rename and delete are the two the hover icons run — the menu is a second way
+  // to reach them, not a second implementation of them. Archiving is menu-ONLY:
+  // a third icon in a row this narrow costs more than it is worth for something
+  // you do to a folder once, when you are done with it.
+  const actionable = !!(onRename ?? onArchive ?? onUnarchive ?? onDelete);
 
   const row = (
     <div
@@ -505,6 +577,18 @@ function Row({
           <ContextMenuItem onSelect={startEdit}>
             <Pencil className="size-3.5" />
             {t("sidebar.menu.rename")}
+          </ContextMenuItem>
+        )}
+        {onArchive && (
+          <ContextMenuItem onSelect={onArchive}>
+            <Archive className="size-3.5" />
+            {t("sidebar.menu.archive")}
+          </ContextMenuItem>
+        )}
+        {onUnarchive && (
+          <ContextMenuItem onSelect={onUnarchive}>
+            <ArchiveRestore className="size-3.5" />
+            {t("sidebar.menu.unarchive")}
           </ContextMenuItem>
         )}
         {onDelete && (

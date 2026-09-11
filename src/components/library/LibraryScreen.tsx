@@ -31,7 +31,7 @@ import { VoiceTypingHistory } from "../../history/VoiceTypingHistory";
 import { LibraryCard, MoveDialog } from "./LibraryCards";
 import { RecordingTimeline } from "./RecordingTimeline";
 import type { LibraryTree } from "../shell/useLibraryTree";
-import type { Folder as LocalFolder } from "../../lib/history/folders";
+import { filingChoices, type Folder as LocalFolder } from "../../lib/history/folders";
 import type { CloudOrg, CloudRecordingSummary } from "../../lib/cloud/types";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -112,6 +112,22 @@ async function importRecording(folderId: string | null): Promise<void> {
     log.error("library: import failed", { error: String(e) });
     toast.error(e instanceof Error ? e.message : String(e));
   }
+}
+
+/**
+ * Where a card in this scope can be MOVED, which is not the same list as what
+ * exists: an archived personal folder is still a home for what is already in it,
+ * but nothing new gets filed into one. The folder currently OPEN stays offered
+ * even when archived, so a card sitting in it still shows the check beside its
+ * own home. Org folders carry no archive state and pass straight through.
+ */
+function moveTargetFolders(
+  selection: LibrarySelection,
+  scopeFolders: LocalFolder[]
+): LocalFolder[] {
+  if (selection.kind !== "personal") return scopeFolders;
+  const open = selection.node.kind === "folder" ? selection.node.folderId : null;
+  return filingChoices(scopeFolders, open);
 }
 
 /**
@@ -216,6 +232,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   // ── Node visibility ───────────────────────────────────────────────────────
   const scopeFolders =
     selection.kind === "org" ? tree.orgFolders[selection.id] ?? [] : tree.personalFolders;
+  const moveFolders = moveTargetFolders(selection, scopeFolders);
   const liveFolderIds = new Set(scopeFolders.map((f) => f.id));
   const index = buildOwnershipIndex(tree.personalFolders);
   const searchQuery = query.trim().toLowerCase();
@@ -420,7 +437,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         busyId={busyId}
         downloadingId={downloadingId}
         sharingId={sharingId}
-        folders={scopeFolders}
+        folders={moveFolders}
         onOpen={(entry) => {
           openItem(entry).catch((error) =>
             log.error("library: open failed", { id: entry.id, error: String(error) })
@@ -453,7 +470,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
             busy={busyId === entry.id}
             downloading={downloadingId === entry.id}
             sharing={sharingId === entry.id}
-            folders={scopeFolders}
+            folders={moveFolders}
             onOpen={() => {
               openItem(entry).catch((error) =>
                 log.error("library: open failed", { id: entry.id, error: String(error) })

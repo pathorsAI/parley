@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatChord, formatKey } from "./format";
+import { formatChord, modChordCap, formatKey } from "./format";
 import type { Chord } from "./registry";
 
 /**
@@ -75,3 +75,13 @@ describe("formatChord", () => {
   });
 });
 
+describe("modChordCap", () => {
+  // The chords work on both platforms; it was only the LABELS that were
+  // written mac-first, which is how a Windows user ended up being told to
+  // press a glyph that is not on their keyboard.
+  it("spells a chord the way the host OS spells it", () => {
+    expect(modChordCap("F", true)).toBe("⌘F");
+    expect(modChordCap("F", false)).toBe("Ctrl+F");
+    expect(modChordCap("V", false)).toBe("Ctrl+V");
+  });
+});

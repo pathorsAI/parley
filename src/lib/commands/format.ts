@@ -1,3 +1,4 @@
+import { isMac } from "../platform";
 import type { Chord } from "./registry";
 
 /**
@@ -67,4 +68,29 @@ export function formatChord(chord: Chord, mac: boolean): string[] {
   if (chord.mod && mac) caps.push("⌘");
   caps.push(formatKey(chord.key));
   return caps;
+}
+
+/**
+ * A chord as ONE string, joined the way the platform writes it: macOS runs the
+ * caps together ("⌘F"), Windows separates them ("Ctrl+F").
+ *
+ * For prose — a tooltip or a sentence that tells you which keys to press.
+ * {@link formatChord}'s array is for the cheat sheet, which draws each cap as
+ * its own <kbd>.
+ */
+export function formatChordLabel(chord: Chord, mac: boolean = isMac()): string {
+  return formatChord(chord, mac).join(mac ? "" : "+");
+}
+
+/**
+ * The mod-chord for a single key, spelled for the host OS — "⌘F" or "Ctrl+F".
+ *
+ * Arrived from #352, which fixed labels that were written mac-first and so told
+ * a Windows user to press a glyph their keyboard does not have. It lives here
+ * rather than in shortcuts.ts because the ⌘-or-Ctrl decision is the one thing
+ * this module exists to make, and making it in two places is how the cheat
+ * sheet and a tooltip end up disagreeing.
+ */
+export function modChordCap(key: string, mac: boolean = isMac()): string {
+  return formatChordLabel({ mod: true, key }, mac);
 }
