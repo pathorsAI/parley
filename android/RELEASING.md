@@ -341,7 +341,15 @@ are easy to get wrong:
    (`0.1.0 (1)`, internal track), so the API can take over from `versionCode`
    2 onward. Play rejects a `versionCode` it has already seen, which is why
    `android-v0.1.0` could never have been published over the API.
-6. Keep the R8 `mapping.txt`. Every workflow run attaches it as an artifact and
+6. **The upload commits the edit but does not send it for review.** The
+   workflow passes `changesNotSentForReview: true`, because Play rejects an
+   auto-submitting edit whenever the app already has a rejected or unreviewed
+   change outstanding — `android-v0.1.2` failed at the upload step with exactly
+   that error. For the internal track nothing more is needed. For production,
+   open Play Console → **Publishing overview** and press *Send for review*
+   after the run is green; that is the only step in the release a human still
+   has to click.
+7. Keep the R8 `mapping.txt`. Every workflow run attaches it as an artifact and
    the Play upload step sends it along, so crash reports deobfuscate; a stack
    trace from a build whose mapping was lost is unreadable.
 

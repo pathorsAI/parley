@@ -6,6 +6,7 @@ import android.media.AudioRecordingConfiguration
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import com.pathors.parley.audio.MicCapture
 import com.pathors.parley.audio.MicCaptureException
 import com.pathors.parley.audio.OggOpusEncoder
@@ -19,6 +20,8 @@ import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.upload.EnqueueRequest
 import com.pathors.parley.upload.MeetingUploader
 import java.io.File
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -115,6 +118,24 @@ interface LiveMeeting {
     val micSilenced: StateFlow<Boolean>
 }
 
+private const val TAG = "MeetingSession"
+
+/**
+ * The scope a session runs on when the caller does not supply one.
+ *
+ * The [CoroutineExceptionHandler] is the point of it. A [SupervisorJob] only
+ * stops the session's jobs from cancelling *each other*; an exception none of
+ * them catches still reaches the thread's default handler, which on Android
+ * means the process dies. The ticker, the relay event collector and the
+ * reconnect job all run here, so without this a stray throw in any of them
+ * would crash the app in the middle of a recording instead of, at worst,
+ * losing a live transcript.
+ */
+private fun defaultSessionScope(): CoroutineScope = CoroutineScope(
+    SupervisorJob() + Dispatchers.IO +
+        CoroutineExceptionHandler { _, t -> Log.e(TAG, "unhandled in session scope", t) },
+)
+
 /**
  * One live meeting: microphone → Ogg/Opus file **and** microphone → STT relay,
  * from the same chunk stream, plus the upload that follows.
@@ -137,7 +158,7 @@ class MeetingSession(
     private val uploader: MeetingUploader,
     /** Display title for the finished recording; built by the UI layer. */
     private val title: String,
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val scope: CoroutineScope = defaultSessionScope(),
 ) : LiveMeeting {
     private val mic = MicCapture(context)
 
@@ -198,7 +219,26 @@ class MeetingSession(
         captureJob = scope.launch { runCapture() }
     }
 
+    /**
+     * The capture, with a floor under it. [capture] already maps the failures it
+     * knows about; this turns everything else into [MeetingFailure.UNKNOWN]
+     * instead of an uncaught exception. That distinction is the difference
+     * between an error screen the user can retry from and a process death
+     * mid-meeting.
+     */
     private suspend fun runCapture() {
+        try {
+            capture()
+        } catch (e: CancellationException) {
+            throw e // ordinary teardown (abandon/dispose), not a failure
+        } catch (t: Throwable) {
+            Log.e(TAG, "meeting capture failed", t)
+            abandon()
+            _state.value = MeetingState.Failed(MeetingFailure.UNKNOWN, t.message)
+        }
+    }
+
+    private suspend fun capture() {
         val token = auth.currentToken()
         if (token == null) {
             _state.value = MeetingState.Failed(MeetingFailure.NOT_SIGNED_IN)
@@ -223,6 +263,14 @@ class MeetingSession(
         // frame until the upgrade lands, so the recording begins when the user
         // asked for it instead of one network round trip later.
         client.open()
+
+        // stop() can win the race against everything above: the user tapped
+        // Stop while we were still connecting. It has already cancelled the
+        // (not yet existing) ticker and told the microphone to stay stopped, so
+        // there is nothing left to start here — and it is waiting on this very
+        // job before finishing the encoder we just published, which is what
+        // turns the race into an ordinary dropped recording.
+        if (finishRequested) return
 
         _state.value = MeetingState.Recording
         captureStartedAt = SystemClock.elapsedRealtime()
@@ -317,6 +365,7 @@ class MeetingSession(
      * "any silenced configuration" means ours.
      */
     private fun startMicMonitor() {
+        if (finishRequested) return
         val audio = context.getSystemService(AudioManager::class.java) ?: return
         val callback = object : AudioManager.AudioRecordingCallback() {
             override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
@@ -326,6 +375,10 @@ class MeetingSession(
         // A Handler is required: this runs on Dispatchers.IO, which has no Looper.
         audio.registerAudioRecordingCallback(callback, Handler(Looper.getMainLooper()))
         micMonitor = callback
+        // Same race as the ticker: a stop() that ran between the guard above and
+        // this line found `micMonitor` still null and had nothing to
+        // unregister, so unregister it here instead of leaking the callback.
+        if (finishRequested) stopMicMonitor()
     }
 
     private fun stopMicMonitor() {
@@ -347,13 +400,19 @@ class MeetingSession(
     }
 
     private fun startTicker() {
+        if (finishRequested) return
         val startedAt = captureStartedAt
-        tickerJob = scope.launch {
+        val job = scope.launch {
             while (true) {
                 _elapsedMs.value = SystemClock.elapsedRealtime() - startedAt
                 delay(TICK_MS)
             }
         }
+        tickerJob = job
+        // stop() cancels `tickerJob`; if it read it while it was still null we
+        // have just started a loop nobody will ever stop. Cheaper to re-check
+        // than to give the session a lock.
+        if (finishRequested) job.cancel()
     }
 
     /**
@@ -439,6 +498,12 @@ class MeetingSession(
         eventsJob?.cancel()
         reconnectJob?.cancel()
         reconnectJob = null
+        // Before the encoder, and before the microphone: the capture loop is the
+        // only thing that calls `encoder.append`, and a chunk that arrives after
+        // `encoder.cancel()` throws. `cancel()` does not wait, so the ordering
+        // is a strong hint rather than a guarantee — the catch-all in
+        // [runCapture] is what makes the remaining window harmless.
+        captureJob?.cancel()
         runCatching { stopMicMonitor() }
         runCatching { mic.stop() }
         runCatching { relay?.cancel() }

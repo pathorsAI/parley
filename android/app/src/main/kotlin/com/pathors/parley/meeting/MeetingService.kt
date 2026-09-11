@@ -19,6 +19,11 @@ import com.pathors.parley.parleyContainer
 import com.pathors.parley.screenshot.DemoMode
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,14 +40,51 @@ import kotlinx.coroutines.launch
  * after the service has stopped itself.
  *
  * Started with [start] once RECORD_AUDIO is granted; stopped with [requestStop].
+ *
+ * ## The startForeground contract
+ *
+ * Every path out of [onStartCommand] must have called `startForeground` at
+ * least once on this instance before the instance is allowed to stop.
+ * `startForegroundService()` promises the platform a notification within a few
+ * seconds, and an instance that stops without ever posting one is killed with
+ * `ForegroundServiceDidNotStartInTimeException` — a crash in the user's face,
+ * not a log line. The paths that only want to stop (the stop action landing on
+ * a fresh process, a start that finds nothing to do, the demo action in a
+ * release build) therefore go through [ensureForeground] first: the
+ * notification flashes up for an instant, which is cheap, and the process
+ * survives, which is not.
  */
 class MeetingService : Service() {
 
+    /**
+     * True once `startForeground` has been called on this instance. See the
+     * class docs — this is the flag the whole contract hangs off. `@Volatile`
+     * because [stopRecording] clears it from the application scope's thread
+     * once the upload tail has finished.
+     */
+    @Volatile
+    private var inForeground = false
+
+    /**
+     * Watches the session this instance started or adopted. Main-immediate so a
+     * terminal state is acted on in the same frame the session publishes it.
+     */
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var observerJob: Job? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                // The notification action survives the process: this can be the
+                // first thing a brand-new instance is asked to do.
+                ensureForeground()
                 stopRecording()
                 return START_NOT_STICKY
             }
@@ -50,7 +92,8 @@ class MeetingService : Service() {
             ACTION_DEMO_NOTIFICATION -> {
                 // The notification and nothing else — see [startDemoNotification].
                 if (!BuildConfig.DEBUG || !DemoMode.isActive) {
-                    stopSelf()
+                    ensureForeground()
+                    stopSelfAndForeground()
                     return START_NOT_STICKY
                 }
                 createChannel()
@@ -62,8 +105,58 @@ class MeetingService : Service() {
                 return START_NOT_STICKY
             }
         }
-        if (_activeSession.value == null) beginRecording()
+        val session = _activeSession.value
+        when {
+            // beginRecording() posts the notification itself, with the
+            // recording's own start time — don't ensureForeground() first or the
+            // chronometer gets posted twice.
+            session == null -> beginRecording()
+
+            session.state.value is MeetingState.Recording ||
+                session.state.value is MeetingState.Connecting -> {
+                ensureForeground()
+                observe(session)
+            }
+
+            // A session that has finished but has not been cleared yet (the
+            // ~1.2 s the UI takes to acknowledge it). There is nothing to
+            // record and nothing to adopt, so all that is left is to leave.
+            else -> {
+                ensureForeground()
+                stopSelfAndForeground()
+            }
+        }
         return START_NOT_STICKY
+    }
+
+    /**
+     * Post the ongoing notification if this instance has not already. The
+     * guard against stopping without ever having started foreground — see the
+     * class docs.
+     */
+    private fun ensureForeground() {
+        if (inForeground) return
+        createChannel()
+        startForegroundNotification(System.currentTimeMillis())
+    }
+
+    /**
+     * Stop the service when the session fails.
+     *
+     * A failed capture (microphone busy, expired token, no encoder) leaves the
+     * session in [MeetingState.Failed] and nothing else happens: nobody calls
+     * [requestStop], so without this the microphone foreground service and its
+     * "Recording a meeting" notification would sit there until the user killed
+     * the app. [MeetingState.Finished] needs no branch — that path runs through
+     * [stopRecording], which stops the service itself.
+     */
+    private fun observe(session: MeetingSession) {
+        observerJob?.cancel()
+        observerJob = serviceScope.launch {
+            session.state.collect { state ->
+                if (state is MeetingState.Failed) stopSelfAndForeground()
+            }
+        }
     }
 
     private fun beginRecording() {
@@ -75,6 +168,7 @@ class MeetingService : Service() {
             title = defaultTitle(this, startedAt),
         )
         _activeSession.value = session
+        observe(session)
         session.start()
     }
 
@@ -92,13 +186,17 @@ class MeetingService : Service() {
         }
     }
 
+    /** Safe to call twice, and safe to call from [clear] on another thread. */
     private fun stopSelfAndForeground() {
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        inForeground = false
         stopSelf()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        if (instance === this) instance = null
+        serviceScope.cancel()
         // A session still recording when the service dies (task swiped away, low
         // memory) has lost its permission to hold the mic — drop it rather than
         // leaving a silent recording running.
@@ -144,6 +242,7 @@ class MeetingService : Service() {
             notification,
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
         )
+        inForeground = true
     }
 
     private fun createChannel() {
@@ -165,6 +264,14 @@ class MeetingService : Service() {
         private const val EXTRA_DEMO_ELAPSED_MS = "com.pathors.parley.extra.DEMO_ELAPSED_MS"
         private const val CHANNEL_ID = "meeting-recording"
         private const val NOTIFICATION_ID = 1001
+
+        /**
+         * The live instance, so [clear] can stop a service the UI has finished
+         * with. `@Volatile` because it is written on the main thread and read
+         * from wherever [clear] is called.
+         */
+        @Volatile
+        private var instance: MeetingService? = null
 
         private val _activeSession = MutableStateFlow<MeetingSession?>(null)
 
@@ -222,11 +329,17 @@ class MeetingService : Service() {
             )
         }
 
-        /** The UI has read the final state; let the session go. */
+        /**
+         * The UI has read the final state; let the session go — and with it any
+         * service instance still standing. A failed capture stops the service
+         * through its own state observer, but a start command that raced the
+         * clear can leave one behind with nothing to do.
+         */
         fun clear() {
             val session = _activeSession.value
             _activeSession.value = null
             session?.dispose()
+            instance?.stopSelfAndForeground()
         }
 
         /** "Meeting 9 Aug 2025, 15:20" in the device's locale and format. */

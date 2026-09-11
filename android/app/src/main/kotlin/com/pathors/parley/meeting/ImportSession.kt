@@ -2,6 +2,7 @@ package com.pathors.parley.meeting
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import com.pathors.parley.audio.AudioDecodeException
 import com.pathors.parley.audio.AudioFileDecoder
 import com.pathors.parley.audio.DecodeEvent
@@ -16,6 +17,8 @@ import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.upload.EnqueueRequest
 import com.pathors.parley.upload.MeetingUploader
 import java.io.File
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -67,6 +70,19 @@ enum class ImportFailure {
     UNKNOWN,
 }
 
+private const val TAG = "ImportSession"
+
+/**
+ * The scope an import runs on when the caller does not supply one. The
+ * [CoroutineExceptionHandler] keeps an unhandled throw in the relay event
+ * collector off the process's default handler — a [SupervisorJob] alone does
+ * not do that. See `MeetingSession` for the long version.
+ */
+private fun defaultImportScope(): CoroutineScope = CoroutineScope(
+    SupervisorJob() + Dispatchers.IO +
+        CoroutineExceptionHandler { _, t -> Log.e(TAG, "unhandled in import scope", t) },
+)
+
 /**
  * Transcribe an audio file the user already has.
  *
@@ -95,7 +111,7 @@ class ImportSession(
     val uri: Uri,
     /** Display title — the picked file's name, chosen by the UI layer. */
     val title: String,
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val scope: CoroutineScope = defaultImportScope(),
 ) {
     private val _state = MutableStateFlow<ImportState>(ImportState.Idle)
     val state: StateFlow<ImportState> = _state.asStateFlow()
@@ -119,7 +135,24 @@ class ImportSession(
         runJob = scope.launch { run() }
     }
 
+    /**
+     * The import, with a floor under it. [runImport] maps the failures it knows
+     * about; anything else becomes [ImportFailure.UNKNOWN] rather than an
+     * uncaught exception that would take the process down with it.
+     */
     private suspend fun run() {
+        try {
+            runImport()
+        } catch (e: CancellationException) {
+            throw e // cancel() — the user backed out, not a failure
+        } catch (t: Throwable) {
+            Log.e(TAG, "import failed", t)
+            abandon()
+            _state.value = ImportState.Failed(ImportFailure.UNKNOWN, t.message)
+        }
+    }
+
+    private suspend fun runImport() {
         val token = auth.currentToken()
         if (token == null) {
             _state.value = ImportState.Failed(ImportFailure.NOT_SIGNED_IN)
