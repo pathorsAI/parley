@@ -357,3 +357,11 @@ are easy to get wrong:
 - **Broken deep link**: test `parley://auth-callback` on the *release* build —
   minification or a missing intent-filter change is the classic
   works-in-debug-only failure.
+- **R8 and reflection**: `0.1.1 (2)` was rejected under the *Broken
+  functionality* policy ("Parley keeps stopping") because the release build
+  crashed the moment sign-in completed. DataStore's shaded protobuf-lite looks
+  message fields up by name, R8 full mode had renamed them, and the debug build
+  — which every local walk-through used — never minifies. The keep rule lives in
+  `app/proguard-rules.pro`; the lesson is the checklist item above it: **every
+  flow in the review notes gets walked on `assembleRelease`, signed with any
+  key, before a bundle goes to Play.** A throwaway keystore is enough for that.
