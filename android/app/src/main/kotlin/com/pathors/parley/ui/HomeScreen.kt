@@ -151,7 +151,10 @@ fun HomeScreen(
                 onUpload = { viewModel.uploadNow() },
             )
             libraryPlaceholders(state)
-            items(state.recordings, key = { it.id }) { recording ->
+            // Namespaced keys: a recording drained from the pending queue can
+            // show up in both lists for one refresh, and two items sharing a key
+            // is an IllegalArgumentException out of LazyColumn, not a glitch.
+            items(state.recordings, key = { "recording-" + it.id }) { recording ->
                 RecordingRow(recording, onClick = { onOpenRecording(recording.id) })
             }
         }
@@ -191,7 +194,7 @@ private fun LazyListScope.libraryHeader(
                 onUpload = onUpload,
             )
         }
-        items(state.pending, key = { it.id }) { pending -> PendingRow(pending) }
+        items(state.pending, key = { "pending-" + it.id }) { pending -> PendingRow(pending) }
     }
 }
 

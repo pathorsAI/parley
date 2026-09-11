@@ -84,6 +84,13 @@ sealed class MicCaptureException(message: String, cause: Throwable? = null) :
  *   clean end of stream). Cancelling the collecting coroutine also works and is
  *   equally safe. Either way the `AudioRecord` is stopped and released before
  *   the flow finishes.
+ * * **One-shot.** A stopped instance stays stopped, and [stop] counts even when
+ *   it arrives *before* [start]: the flow then completes immediately without
+ *   ever opening the microphone. There is no restart — build a new
+ *   [MicCapture]. This is what makes "stop while still connecting" safe.
+ *   Clearing the flag when collection begins would let that race resurrect a
+ *   read loop whose owner has already finished its encoder, and the next chunk
+ *   would take the process down with it.
  * * **Audio source.** [MediaRecorder.AudioSource.VOICE_RECOGNITION] — the
  *   speech-to-text source, which on most devices bypasses the AGC/noise
  *   suppression tuned for phone calls. Falls back to
@@ -121,8 +128,9 @@ class MicCapture @JvmOverloads constructor(
     /** RMS of the most recent chunk, in [0, 1] — for a level meter. */
     val level: StateFlow<Float> = _level.asStateFlow()
 
+    /** Set by [stop] and never cleared — see "One-shot" in the class docs. */
     @Volatile
-    private var stopRequested = false
+    private var stopRequested: Boolean = false
 
     /** Sample rate actually opened on the device (16 000 unless it refused). */
     @Volatile
@@ -145,7 +153,6 @@ class MicCapture @JvmOverloads constructor(
      * See the class docs for the error policy.
      */
     fun start(): Flow<ByteArray> = callbackFlow {
-        stopRequested = false
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
             PackageManager.PERMISSION_GRANTED
         ) {
@@ -187,7 +194,8 @@ class MicCapture @JvmOverloads constructor(
 
     /**
      * Stop capturing and let the flow complete normally. Idempotent, safe from
-     * any thread, and a no-op when nothing is running.
+     * any thread, and a no-op when nothing is running — including before
+     * [start], which is never undone: see "One-shot" in the class docs.
      */
     fun stop() {
         stopRequested = true

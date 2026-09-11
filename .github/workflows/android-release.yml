@@ -268,6 +268,14 @@ jobs:
           track: ${{ steps.play.outputs.track }}
           status: ${{ steps.play.outputs.status }}
           userFraction: ${{ steps.play.outputs.user_fraction }}
+          # Commit the edit without asking Play to review it. While the app has
+          # a rejected or unreviewed change outstanding, Play refuses an edit
+          # that would auto-submit ("Changes cannot be sent for review
+          # automatically") and the whole upload fails — which is what took
+          # android-v0.1.2 down. The bundle still lands on the track; sending
+          # it for review is a click in Play Console, and for the internal
+          # track no review is needed at all.
+          changesNotSentForReview: true
 
       # Deliberately loud. The run is green, so the summary is the only place
       # that says this build is not on Play yet.

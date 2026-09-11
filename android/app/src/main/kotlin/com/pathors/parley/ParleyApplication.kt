@@ -3,6 +3,7 @@ package com.pathors.parley
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.meeting.ImportSession
@@ -10,6 +11,7 @@ import com.pathors.parley.meeting.MeetingSession
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.upload.MeetingUploader
 import com.pathors.parley.upload.PendingUploadQueue
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,6 +19,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+
+private const val TAG = "ParleyApplication"
 
 /**
  * The app's single Application instance. It owns [AppContainer]; everything else
@@ -50,7 +54,15 @@ class AppContainer(private val app: Application) {
      * keeps running while [com.pathors.parley.meeting.MeetingService] is shutting
      * itself down.
      */
-    val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val appScope: CoroutineScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default +
+            // A SupervisorJob keeps these jobs from cancelling each other, but an
+            // exception none of them handles still reaches the thread's default
+            // handler and kills the process. The "stop the meeting, then upload
+            // it" tail runs here, so that would be a crash at the worst possible
+            // moment — just as a recording is being saved.
+            CoroutineExceptionHandler { _, t -> Log.e(TAG, "unhandled in app scope", t) },
+    )
 
     val auth: AuthManager = AuthManager(app)
 
