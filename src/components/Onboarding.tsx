@@ -8,7 +8,7 @@ import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
 import { CLOUD_ENABLED } from "../lib/flags";
 import { log } from "../lib/log";
-import { shortcutCaps } from "../settings/VoiceTypingSettings";
+import { shortcutCaps } from "../lib/voiceTyping/caps";
 import { PROVIDERS, PROVIDER_BY_ID } from "../lib/ai/providers";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
 import { useI18n, LANGUAGE_OPTIONS } from "../i18n";

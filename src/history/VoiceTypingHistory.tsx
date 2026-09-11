@@ -4,7 +4,7 @@ import { Copy, Mic, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { useI18n } from "../i18n";
 import { log } from "../lib/log";
 import { useStore } from "../lib/store";
-import { shortcutCaps } from "../settings/VoiceTypingSettings";
+import { shortcutCaps } from "../lib/voiceTyping/caps";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {

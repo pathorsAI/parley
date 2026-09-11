@@ -8,6 +8,13 @@ import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
 import { log } from "../lib/log";
 import { hasProviderKey } from "../lib/ai/settings";
+import {
+  isModifierId,
+  shortcutCaps,
+  MODIFIER_IDS,
+  MODIFIER_LABEL_KEYS,
+  type ModifierId,
+} from "../lib/voiceTyping/caps";
 import type { VoiceTypingMode, VoiceTypingShortcut } from "../lib/types";
 import { Button } from "@/components/ui/button";
 
@@ -20,21 +27,6 @@ interface HotkeyStatus {
    *  the key — matters for fn, whose native 🌐 action still fires) | "none". */
   mode: string;
 }
-
-/** The hold-friendly single modifier keys watched by the HID tap (need Input
- *  Monitoring). Everything else is an OS global shortcut (no permission). */
-const MODIFIER_IDS = ["fn", "right-option", "right-command", "right-control"] as const;
-type ModifierId = (typeof MODIFIER_IDS)[number];
-
-const MODIFIER_LABEL_KEYS: Record<ModifierId, TranslationKey> = {
-  fn: "settings.voiceTyping.shortcut.fn",
-  "right-option": "settings.voiceTyping.shortcut.right-option",
-  "right-command": "settings.voiceTyping.shortcut.right-command",
-  "right-control": "settings.voiceTyping.shortcut.right-control",
-};
-
-const isModifierId = (s: string): s is ModifierId =>
-  (MODIFIER_IDS as readonly string[]).includes(s);
 
 /** Keys that never end a recording on their own — we wait for the main key. */
 const MODIFIER_CODES = new Set([
@@ -70,87 +62,6 @@ const LEFT_MODIFIER_CODES = new Set([
   "ShiftLeft",
   "ShiftRight",
 ]);
-
-/** Modifier caps, spelled the way each OS spells them. ⌘/⌥/⌃/⇧ are glyphs a
- *  Windows user has never seen on a keyboard, so a combo shown that way reads
- *  as a shortcut for some other machine. */
-const MOD_SYMBOL_MAC: Record<string, string> = {
-  super: "⌘",
-  control: "⌃",
-  alt: "⌥",
-  shift: "⇧",
-};
-const MOD_SYMBOL_WIN: Record<string, string> = {
-  super: "Win",
-  control: "Ctrl",
-  alt: "Alt",
-  shift: "Shift",
-};
-
-/** Human label for a W3C KeyboardEvent.code token. */
-function keyLabel(code: string): string {
-  if (code.startsWith("Key")) return code.slice(3);
-  if (code.startsWith("Digit")) return code.slice(5);
-  if (code.startsWith("Numpad")) return `Num ${code.slice(6)}`;
-  const MAP: Record<string, string> = {
-    Space: "Space",
-    Minus: "-",
-    Equal: "=",
-    BracketLeft: "[",
-    BracketRight: "]",
-    Backslash: "\\",
-    Semicolon: ";",
-    Quote: "'",
-    Comma: ",",
-    Period: ".",
-    Slash: "/",
-    Backquote: "`",
-    ArrowUp: "↑",
-    ArrowDown: "↓",
-    ArrowLeft: "←",
-    ArrowRight: "→",
-    Enter: "↩",
-    Tab: "⇥",
-    Backspace: "⌫",
-    Delete: "⌦",
-    Home: "↖",
-    End: "↘",
-    PageUp: "⇞",
-    PageDown: "⇟",
-  };
-  return MAP[code] ?? code;
-}
-
-/**
- * Render the stored shortcut id as key caps in the host OS's own notation:
- * "⌃ ⇧ D" on macOS, "Ctrl + Shift + D" on Windows. Shown in Settings, in
- * onboarding, and in the voice-typing history's empty state, so it is the one
- * place that decides how a trigger is spelled to the user.
- *
- * `mac` is a parameter so both spellings stay exercisable without stubbing the
- * OS; every caller passes the real platform.
- */
-export function shortcutCaps(
-  shortcut: string,
-  t: (k: TranslationKey) => string,
-  mac: boolean = isMac(),
-): string {
-  const symbols = mac ? MOD_SYMBOL_MAC : MOD_SYMBOL_WIN;
-  const sep = mac ? " " : " + ";
-  if (shortcut === "alt-space") return mac ? "⌥ Space" : "Alt + Space";
-  // The HID-tap modifier triggers only exist on macOS, so their labels are only
-  // ever reachable there — a Windows store that still holds one (nothing can
-  // set it now) falls through to the raw id rather than promising a glyph.
-  if (isModifierId(shortcut)) return mac ? t(MODIFIER_LABEL_KEYS[shortcut]) : shortcut;
-  if (shortcut.startsWith("combo:")) {
-    return shortcut
-      .slice("combo:".length)
-      .split("+")
-      .map((part) => symbols[part] ?? keyLabel(part))
-      .join(sep);
-  }
-  return shortcut;
-}
 
 /** The combo id a recorded keydown selects, or null when the press needs a
  *  modifier (a bare letter would swallow ordinary typing system-wide). */

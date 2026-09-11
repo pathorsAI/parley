@@ -1,12 +1,17 @@
 import { useCallback, useEffect } from "react";
 import { toast } from "sonner";
-import { useShortcut } from "../shortcuts";
+import { useCommandShortcut } from "../commands/bind";
 import { useI18n } from "../../i18n";
 import { navHistory } from "./navigate";
 
 /**
- * Browser back/forward for the main window: ⌘[ / ⌘← and ⌘] / ⌘→, plus the
- * mouse's two side buttons.
+ * Browser back/forward for the main window, plus the mouse's two side buttons.
+ *
+ * The chords are `nav.back` and `nav.forward` in lib/commands/registry.ts and
+ * are not restated here — a second copy is how the cheat sheet starts lying.
+ * This file owns the traversal, the registry owns the keys. The side buttons
+ * are ours alone: they are not a chord, so the table has nothing to say about
+ * them.
  *
  * Safe to keep live while a meeting is running: every replay goes through
  * navigateTo, which refuses to move the window out from under the live coach,
@@ -37,10 +42,8 @@ export function useNavShortcuts(): void {
   const goBack = useCallback(() => traverse("back"), [traverse]);
   const goForward = useCallback(() => traverse("forward"), [traverse]);
 
-  useShortcut({ mod: true, key: "[" }, goBack);
-  useShortcut({ mod: true, key: "ArrowLeft" }, goBack);
-  useShortcut({ mod: true, key: "]" }, goForward);
-  useShortcut({ mod: true, key: "ArrowRight" }, goForward);
+  useCommandShortcut("nav.back", goBack);
+  useCommandShortcut("nav.forward", goForward);
 
   useEffect(() => {
     const onMouseUp = (e: MouseEvent) => {

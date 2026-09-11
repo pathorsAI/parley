@@ -1,5 +1,6 @@
 import { useCallback, useRef } from "react";
 import { cn } from "@/lib/utils";
+import { seekTargetForKey } from "../../lib/replay/seek";
 
 interface ScrubberProps {
   /** Current position in ms. */
@@ -53,22 +54,17 @@ export function Scrubber({
     [onCommit, onScrubEnd]
   );
 
+  // The same seek keys the replay workbench binds window-wide, answered here
+  // too because a range input that has focus swallows the arrows before the
+  // shared listener ever sees them. Both routes go through `seekTargetForKey`,
+  // so the slider and the workbench can't disagree about where "back ten
+  // seconds" lands — and neither this file nor that one spells out a chord.
   const handleKey = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
-      const step = e.shiftKey ? 10_000 : 5_000;
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        onCommit(Math.max(0, valueMs - step));
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        onCommit(Math.min(durationMs, valueMs + step));
-      } else if (e.key === "Home") {
-        e.preventDefault();
-        onCommit(0);
-      } else if (e.key === "End") {
-        e.preventDefault();
-        onCommit(durationMs);
-      }
+      const target = seekTargetForKey(e, valueMs, durationMs);
+      if (target === null) return;
+      e.preventDefault();
+      onCommit(target);
     },
     [durationMs, onCommit, valueMs]
   );

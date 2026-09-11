@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  activatesFocusedControl,
   isTypingTarget,
   matchShortcut,
-  modChordCap,
   shortcutFires,
   type KeyStroke,
   type ShortcutSpec,
@@ -100,6 +100,62 @@ describe("isTypingTarget", () => {
   });
 });
 
+describe("activatesFocusedControl", () => {
+  const space: ShortcutSpec = { key: " " };
+
+  it("leaves Space to a button that already has focus", () => {
+    expect(activatesFocusedControl({ ...stroke({ key: " " }), target: { tagName: "BUTTON" } })).toBe(
+      true
+    );
+    expect(
+      activatesFocusedControl({ ...stroke({ key: "Enter" }), target: { tagName: "BUTTON" } })
+    ).toBe(true);
+    // Links and disclosure triangles answer to the same keys.
+    expect(activatesFocusedControl({ ...stroke({ key: "Enter" }), target: { tagName: "A" } })).toBe(
+      true
+    );
+    expect(
+      activatesFocusedControl({ ...stroke({ key: " " }), target: { tagName: "SUMMARY" } })
+    ).toBe(true);
+  });
+
+  it("keeps out of the way of everything else", () => {
+    // Not an activation key…
+    expect(activatesFocusedControl({ ...stroke({ key: "k" }), target: { tagName: "BUTTON" } })).toBe(
+      false
+    );
+    // …not an activatable element…
+    expect(activatesFocusedControl({ ...stroke({ key: " " }), target: { tagName: "DIV" } })).toBe(
+      false
+    );
+    expect(activatesFocusedControl({ ...stroke({ key: " " }) })).toBe(false);
+    // …and a modifier means the button is not being activated at all, so ⌘↩ on
+    // a focused button is still ours.
+    expect(
+      activatesFocusedControl({
+        ...stroke({ key: "Enter", metaKey: true }),
+        target: { tagName: "BUTTON" },
+      })
+    ).toBe(false);
+  });
+
+  it("stops Space from toggling a recording twice", () => {
+    // The bug: click play with the mouse, focus stays on the button, and the
+    // next Space both activates it and fires the shortcut.
+    const onButton = { ...stroke({ key: " " }), target: { tagName: "BUTTON" } };
+    const onPage = { ...stroke({ key: " " }), target: { tagName: "DIV" } };
+    expect(shortcutFires(onPage, space, {}, MAC)).toBe(true);
+    expect(shortcutFires(onButton, space, {}, MAC)).toBe(false);
+    // Not a typing question, so `whileTyping` does not opt back out of it.
+    expect(shortcutFires(onButton, space, { whileTyping: true }, MAC)).toBe(false);
+  });
+
+  it("counts ⇧Space, which activates a button just the same", () => {
+    const shifted = { ...stroke({ key: " ", shiftKey: true }), target: { tagName: "BUTTON" } };
+    expect(activatesFocusedControl(shifted)).toBe(true);
+  });
+});
+
 describe("shortcutFires", () => {
   const inField = { ...stroke({ key: "k", metaKey: true }), target: { tagName: "INPUT" } };
   const onPage = { ...stroke({ key: "k", metaKey: true }), target: { tagName: "DIV" } };
@@ -130,13 +186,50 @@ describe("shortcutFires", () => {
   });
 });
 
-describe("modChordCap", () => {
-  // The chords work on both platforms; it was only the LABELS that were
-  // written mac-first, which is how a Windows user ended up being told to
-  // press a glyph that is not on their keyboard.
-  it("spells a chord the way the host OS spells it", () => {
-    expect(modChordCap("F", true)).toBe("⌘F");
-    expect(modChordCap("F", false)).toBe("Ctrl+F");
-    expect(modChordCap("V", false)).toBe("Ctrl+V");
+describe("focus guards distinguish inputs by type", () => {
+  const range = { tagName: "INPUT", type: "range" };
+  const text = { tagName: "INPUT", type: "text" };
+  const untyped = { tagName: "INPUT" };
+  const checkbox = { tagName: "INPUT", type: "checkbox" };
+
+  it("does not treat a slider or a checkbox as somewhere you are typing", () => {
+    expect(isTypingTarget(range)).toBe(false);
+    expect(isTypingTarget(checkbox)).toBe(false);
+  });
+
+  it("still treats a text input — declared or defaulted — as typing", () => {
+    // An <input> with no type attribute is a text field per HTML, and losing
+    // that would let a global chord fire mid-word in half the app's forms.
+    expect(isTypingTarget(text)).toBe(true);
+    expect(isTypingTarget(untyped)).toBe(true);
+    expect(isTypingTarget({ tagName: "TEXTAREA" })).toBe(true);
+    expect(isTypingTarget({ isContentEditable: true })).toBe(true);
+  });
+
+  it("lets Space through to play/pause while the scrubber has focus", () => {
+    // The papercut this whole distinction exists for: click the scrubber with
+    // the mouse, press Space, and the recording must play. Before, the slider
+    // counted as a typing target and swallowed it — while doing nothing with
+    // Space itself, so the key was simply dead.
+    const stroke = { key: " ", target: range };
+    expect(activatesFocusedControl(stroke)).toBe(false);
+    expect(shortcutFires(stroke, { key: " " }, {}, true)).toBe(true);
+  });
+
+  it("leaves the arrows to the slider, shifted or not", () => {
+    // The other half: bare ← must NOT seek twice — once from the slider's own
+    // handler and once from the global replay binding.
+    expect(activatesFocusedControl({ key: "ArrowLeft", target: range })).toBe(true);
+    expect(activatesFocusedControl({ key: "ArrowLeft", shiftKey: true, target: range })).toBe(true);
+    expect(shortcutFires({ key: "ArrowLeft", target: range }, { key: "ArrowLeft" }, {}, true)).toBe(
+      false
+    );
+    // ⌘← is a different chord that the slider has no claim on, so it navigates.
+    expect(activatesFocusedControl({ key: "ArrowLeft", metaKey: true, target: range })).toBe(false);
+  });
+
+  it("keeps Space and Enter on a focused checkbox", () => {
+    expect(activatesFocusedControl({ key: " ", target: checkbox })).toBe(true);
+    expect(activatesFocusedControl({ key: " ", target: text })).toBe(false);
   });
 });

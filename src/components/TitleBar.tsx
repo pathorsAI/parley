@@ -12,6 +12,7 @@ import { stopMockStream } from "../lib/mockStream";
 import { isMac } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
 import { beginMeeting } from "../lib/meeting/start";
+import { useCommandShortcut } from "../lib/commands/bind";
 import { openSettings } from "../lib/nav/settings";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
@@ -669,6 +670,27 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
       );
     }
   }
+
+  // The keyboard reaches exactly the two recorder actions that are safe to
+  // reach blind. Both are gated with `enabled` rather than a bail-out inside
+  // the handler, so a chord that doesn't apply right now is genuinely unbound —
+  // it falls through to whoever else wants it instead of being swallowed by a
+  // preventDefault and a silent return.
+  //
+  // Start mirrors the Start button's own liveness EXACTLY — including the study
+  // screen, where PrimaryAction offers "exit replay" instead. Reviewing an old
+  // recording and hitting ⌘R would otherwise start a live meeting on top of it,
+  // and the one thing a shortcut must never do is an action the screen isn't
+  // offering. ⌘R is the most reflexively-pressed chord on the platform
+  // ("reload"), so every state where the button is absent or disabled has to be
+  // a genuine no-op rather than a second start racing the first.
+  useCommandShortcut("meeting.start", start, {
+    enabled: appMode !== "study" && !meetingActive && !isFinalizingMeeting && !toggleBusy,
+  });
+  // Deliberately no ⌘-anything for End. Ending is not undoable, and someone
+  // reaching for a refresh must not be able to stop a recording — so it stays a
+  // button you have to look at. Do not "complete the symmetry" here.
+  useCommandShortcut("meeting.togglePause", togglePause, { enabled: meetingActive });
 
   /** Cancel (from the confirm dialog): discard everything, back to idle. */
   async function cancel() {

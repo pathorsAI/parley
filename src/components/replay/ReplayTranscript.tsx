@@ -3,9 +3,10 @@ import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useI18n } from "../../i18n";
 import { speakerBadgeClass } from "../../lib/speakerColors";
-import { modChordCap } from "../../lib/shortcuts";
+import { modChordCap } from "../../lib/commands/format";
 import { speakerLabel, speakerKey, defaultSpeakerLabel, formatClock, isTrimmed, useStore, type ReplayTrim } from "../../lib/store";
 import { cn } from "@/lib/utils";
+import { useCommandShortcut } from "../../lib/commands/bind";
 import type { TranscriptSegment } from "../../lib/types";
 
 interface ReplayTranscriptProps {
@@ -102,23 +103,21 @@ export function ReplayTranscript({
     setMatchIdx((i) => (Math.min(i, matchIds.length - 1) + dir + matchIds.length) % matchIds.length);
   }
 
-  // ⌘F / Ctrl+F opens (or refocuses) the find bar. Not in the ingest-wizard
-  // preview, where the transcript is a secondary pane.
-  useEffect(() => {
-    if (preview) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        setSearchOpen(true);
-        requestAnimationFrame(() => {
-          searchInputRef.current?.focus();
-          searchInputRef.current?.select();
-        });
-      }
-    };
-    globalThis.addEventListener("keydown", onKeyDown);
-    return () => globalThis.removeEventListener("keydown", onKeyDown);
-  }, [preview]);
+  // Opens (or REFOCUSES) the find bar — it has to keep working once the field it
+  // opens already has focus, which is why the command carries `whileTyping` in
+  // the registry. Not bound in the ingest-wizard preview, where the transcript
+  // is a secondary pane and the find bar is not the thing you mean.
+  useCommandShortcut(
+    "replay.find",
+    () => {
+      setSearchOpen(true);
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      });
+    },
+    { enabled: !preview }
+  );
 
   // Typing a new query restarts at the first match.
   useEffect(() => {

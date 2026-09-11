@@ -5,7 +5,7 @@ import { preloadZhConverter } from "../lib/zhConvert";
 import { normalizeTranscriptText } from "../lib/textNormalize";
 import { useI18n, type TranslationKey } from "../i18n";
 import { useThemePreference } from "../lib/theme";
-import { modChordCap } from "../lib/shortcuts";
+import { modChordCap } from "../lib/commands/format";
 import { log } from "../lib/log";
 import {
   SUGGEST_ACTION_EVENT,
