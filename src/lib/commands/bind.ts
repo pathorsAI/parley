@@ -1,5 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import { bindShortcut, useShortcut, type ShortcutOptions } from "../shortcuts";
+import { bindShortcut, type ShortcutOptions } from "../shortcuts";
 import { isMac } from "../platform";
 import { log } from "../log";
 import { openSettings } from "../nav/settings";
@@ -261,7 +261,3 @@ function reportConflicts(): void {
     });
   }
 }
-
-/** Re-exported so a component can bind a chord the table owns without also
- *  importing the low-level registry. */
-export { useShortcut };

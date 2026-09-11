@@ -30,7 +30,7 @@ const KNOWN_IDS: ReadonlySet<string> = new Set(COMMANDS.map((c) => c.id));
  */
 export function initMenuCommands(): void {
   if (!isTauri()) return;
-  void listen<string>(MENU_COMMAND, (event) => {
+  listen<string>(MENU_COMMAND, (event) => {
     const id = event.payload;
     if (!KNOWN_IDS.has(id)) {
       log.warn("menu: unknown command", { id });

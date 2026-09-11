@@ -356,8 +356,20 @@ export function commandsInGroup(group: CommandGroup): CommandDef[] {
  *  ⌘K and ⇧⌘K are different keys — and `"any"` shift is folded to `*` because
  *  it collides with BOTH shifted and unshifted spellings of the same key. */
 export function chordKey(chord: Chord): string {
-  const shift = chord.shift === "any" ? "*" : chord.shift ? "1" : "0";
-  return [chord.mod ? "1" : "0", shift, chord.alt ? "1" : "0", chord.key.toLowerCase()].join("+");
+  return [
+    chord.mod ? "1" : "0",
+    shiftSlot(chord.shift),
+    chord.alt ? "1" : "0",
+    chord.key.toLowerCase(),
+  ].join("+");
+}
+
+/** The shift slot of a {@link chordKey}. `"any"` becomes a wildcard rather than
+ *  a value, so a shift-agnostic chord is seen to collide with BOTH the shifted
+ *  and the unshifted spelling of the same key. */
+function shiftSlot(shift: Chord["shift"]): string {
+  if (shift === "any") return "*";
+  return shift ? "1" : "0";
 }
 
 export interface Conflict {
