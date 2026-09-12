@@ -27,8 +27,17 @@ import SwiftUI
 ///
 /// Only the microphone is load-bearing. The relay is not: if it never connects,
 /// or dies mid-meeting, the audio file keeps being written and is uploaded at
-/// the end, where the cloud transcribes it in batch. So a relay failure is a
-/// line of status text and a reconnect, never the end of a recording.
+/// the end. `MeetingUploader` then measures the transcript against the audio
+/// (`TranscriptCoverage`) and, when it comes up short, transcribes the whole
+/// recording again from the file. So a relay failure is a line of status text
+/// and a reconnect, never the end of a recording — and never a transcript with
+/// a hole in it either.
+///
+/// That last step used to be missing, and the status copy promised it anyway:
+/// a meeting whose relay died quietly at minute five uploaded 49 minutes of
+/// audio with five minutes of transcript, and nothing ever went back for the
+/// rest. If the sentence above is ever true only in this comment again, that
+/// is the bug.
 @MainActor
 final class MeetingRecorder: ObservableObject {
 
@@ -284,7 +293,7 @@ final class MeetingRecorder: ObservableObject {
                 giveUpOnTranscription(
                     String(
                         localized:
-                            "You're out of transcription quota — live transcription stopped. The recording is still running and will be transcribed once the quota resets."
+                            "You're out of transcription quota — live transcription stopped. The recording keeps running, and the audio is transcribed in full after it syncs."
                     ))
                 return
             }
@@ -315,7 +324,7 @@ final class MeetingRecorder: ObservableObject {
             giveUpOnTranscription(
                 String(
                     localized:
-                        "Live transcription stopped, but the recording is still running and will be transcribed after it syncs."
+                        "Live transcription stopped. The recording keeps running, and the audio is transcribed in full after it syncs."
                 ))
             return
         }
