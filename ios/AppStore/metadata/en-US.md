@@ -83,6 +83,24 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.13
+
+A recording can be transcribed again. When the transcript came up thin or
+wrong — the relay dropped out, the room was loud — open the recording, tap ⋯
+and choose Re-transcribe. The whole audio goes through transcription once
+more and the words are swapped in when it comes back; the speaker names,
+highlights and folder you already had stay exactly as they were. It uses your
+account's transcription hours the same as a new meeting would, and each
+recording can be re-run three times.
+
+Tap the words to hear them. Tapping anywhere in a turn's text jumps the audio
+to that turn. The timecode still works; you just no longer have to aim for
+it. The turn you tapped flashes blue so you know it landed.
+
+The waveforms are calmer — thicker, rounder, half the height, and pale —
+both while recording and under a recording's title. The red marker at the
+edge of the live waveform is gone: the newest bar is where now is.
+
 ## What's New — 1.12
 
 Recordings can be played back on the phone. Meetings recorded here now stay
