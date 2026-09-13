@@ -49,8 +49,17 @@ final class AudioDownloadModel: ObservableObject {
         return store.has(id) ? .local : .absent
     }
 
+    /// The file to play, or nil if there is nothing to play yet.
+    ///
+    /// The fixture branch matters: `state(for:)` already reports the featured
+    /// demo recording as `.local`, and without the same hook here the player
+    /// would be asked for a file the simulator's empty store does not have — the
+    /// two answers have to agree.
     func url(for id: String) -> URL? {
-        store.has(id) ? store.url(for: id) : nil
+        #if DEBUG
+            if ScreenshotDemo.servesFixtures { return ScreenshotDemo.audioURL(for: id) }
+        #endif
+        return store.has(id) ? store.url(for: id) : nil
     }
 
     /// Fetch the audio and hand it to the store.

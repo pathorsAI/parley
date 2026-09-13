@@ -68,6 +68,14 @@ targets:
         CODE_SIGN_STYLE: Automatic
         # 科技派斯 (Pathors).
         DEVELOPMENT_TEAM: SXHVCQXJHZ
+      configs:
+        # Parley/DemoAudio/demo-renewal.ogg is the screenshot demo's recording
+        # (ScreenshotDemo.audioURL) and every line that reads it is behind
+        # `#if DEBUG`. It is excluded here rather than kept out of `sources`
+        # because xcodegen has no per-configuration source list, and a resource
+        # nothing in a shipped build can reach has no business being in one.
+        Release:
+          EXCLUDED_SOURCE_FILE_NAMES: demo-renewal.ogg
 
   ParleyKeyboard:
     type: app-extension

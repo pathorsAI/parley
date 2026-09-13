@@ -70,6 +70,32 @@ public final class LocalAudioStore: @unchecked Sendable {
         fileManager.fileExists(atPath: url(for: id).path)
     }
 
+    /// Where this recording's overview waveform is cached — `<id>.peaks`, beside
+    /// the audio it was computed from.
+    ///
+    /// Here rather than in a cache directory of its own precisely so it shares
+    /// the audio's lifetime: the file is derived from the Ogg and is worthless
+    /// without it, so `remove(_:)` takes both and nothing can leave a stale
+    /// waveform behind to be drawn over the next file that reuses the id.
+    public func peaksURL(for id: String) -> URL {
+        directory.appendingPathComponent("\(Self.fileName(for: id)).peaks")
+    }
+
+    /// Read back a cached overview, or nil if there is none or it is unreadable.
+    ///
+    /// A corrupt cache is a *nil*, not an error: the only thing a caller could
+    /// do with the error is recompute, which is what nil already asks for.
+    public func peaks(for id: String) -> AudioPeaks.Overview? {
+        guard let data = try? Data(contentsOf: peaksURL(for: id)) else { return nil }
+        return try? AudioPeaks.decode(data)
+    }
+
+    public func putPeaks(_ overview: AudioPeaks.Overview, for id: String) {
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        excludeFromBackup()
+        try? AudioPeaks.encode(overview).write(to: peaksURL(for: id), options: .atomic)
+    }
+
     /// Take ownership of an Ogg: a **move**, not a copy.
     ///
     /// The callers are the upload path, which is done with the file, and the
@@ -86,8 +112,10 @@ public final class LocalAudioStore: @unchecked Sendable {
         try fileManager.moveItem(at: source, to: destination)
     }
 
+    /// The audio and everything derived from it. See `peaksURL(for:)`.
     public func remove(_ id: String) {
         try? fileManager.removeItem(at: url(for: id))
+        try? fileManager.removeItem(at: peaksURL(for: id))
     }
 
     /// Everything, for the "Remove all" action in Settings. The directory
