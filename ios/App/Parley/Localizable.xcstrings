@@ -291,6 +291,23 @@
         }
       }
     },
+    "Adjust": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adjust"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "改一下"
+          }
+        }
+      }
+    },
     "Admin": {
       "extractionState": "manual",
       "localizations": {
@@ -507,6 +524,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "取消"
+          }
+        }
+      }
+    },
+    "Clear": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除"
           }
         }
       }
@@ -745,23 +779,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "沒能開始"
-          }
-        }
-      }
-    },
-    "Create and file here": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Create and file here"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "建立並移到這裡"
           }
         }
       }
@@ -1173,23 +1190,6 @@
         }
       }
     },
-    "File here": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "File here"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "移到這裡"
-          }
-        }
-      }
-    },
     "Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right.": {
       "extractionState": "manual",
       "localizations": {
@@ -1203,6 +1203,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "聽寫完馬上把字改對，Parley 就會記住你的說法。學到的東西都在個人詞庫裡，你也可以在那裡加上該念對的名字。"
+          }
+        }
+      }
+    },
+    "Folder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Folder"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "資料夾"
           }
         }
       }
@@ -1934,19 +1951,36 @@
         }
       }
     },
-    "New folder “%@”": {
+    "New": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "New folder “%@”"
+            "value": "New"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "新增資料夾「%@」"
+            "value": "新增"
+          }
+        }
+      }
+    },
+    "New folder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New folder"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新資料夾"
           }
         }
       }
@@ -1998,23 +2032,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "這裡還沒有錄音。"
-          }
-        }
-      }
-    },
-    "Not now": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Not now"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "暫時不要"
           }
         }
       }
@@ -2749,6 +2766,40 @@
         }
       }
     },
+    "Save": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "儲存"
+          }
+        }
+      }
+    },
+    "Save as suggested": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save as suggested"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "就這樣存"
+          }
+        }
+      }
+    },
     "Saving it to your library…": {
       "extractionState": "manual",
       "localizations": {
@@ -3070,6 +3121,23 @@
         }
       }
     },
+    "Skip suggestion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skip suggestion"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不用建議"
+          }
+        }
+      }
+    },
     "Something else is using the microphone. Tap the microphone on the Parley keyboard to start again.": {
       "extractionState": "manual",
       "localizations": {
@@ -3189,19 +3257,19 @@
         }
       }
     },
-    "Suggested name and folder": {
+    "Suggestion": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Suggested name and folder"
+            "value": "Suggestion"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "建議的名稱與資料夾"
+            "value": "建議"
           }
         }
       }
@@ -3611,6 +3679,23 @@
         }
       }
     },
+    "Title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Title"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "標題"
+          }
+        }
+      }
+    },
     "Transcribing live": {
       "extractionState": "manual",
       "localizations": {
@@ -3814,23 +3899,6 @@
         }
       }
     },
-    "Use this name": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Use this name"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "使用這個名稱"
-          }
-        }
-      }
-    },
     "Version": {
       "extractionState": "manual",
       "localizations": {
@@ -3878,6 +3946,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "語音鍵盤"
+          }
+        }
+      }
+    },
+    "Was: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Was: %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原本：%@"
           }
         }
       }

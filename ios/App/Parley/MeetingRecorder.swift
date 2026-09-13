@@ -526,6 +526,19 @@ final class MeetingRecorder: ObservableObject {
     }
 
     #if DEBUG
+        /// ScreenshotDemo: the beat after a meeting — the transcript complete,
+        /// the upload landed, nothing running. `settled` is deliberately left
+        /// nil: the filing suggestion is seeded straight into its own model
+        /// (`FilingSuggestionModel.seedDemo`) rather than through the pass,
+        /// which would need the network the demo exists to avoid.
+        func seedDemoSettled(segments: [TranscriptSegment], status: String) {
+            self.segments = segments
+            self.status = status
+            phase = .idle
+            transcription = .idle
+            startedAt = nil
+        }
+
         /// ScreenshotDemo: put the screen in the state worth capturing — a
         /// meeting already in progress — with no microphone and no network.
         func seedDemo(segments: [TranscriptSegment], status: String) {
