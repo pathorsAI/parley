@@ -1,7 +1,7 @@
 import { Loader2, Sparkles } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { runAnalysis } from "../../lib/analysis/engine";
-import { hasProviderKey } from "../../lib/ai/settings";
+import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { PROVIDER_BY_ID } from "../../lib/ai/providers";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
@@ -33,7 +33,10 @@ export function FindingsPanel({
   const selectedId = useStore((s) => s.selectedFindingId);
   const analysisStatus = useStore((s) => s.analysisStatus);
   const provider = useStore((s) => s.settings.llmProviders.realtime);
-  const keyMissing = useStore((s) => !hasProviderKey(s.settings, "realtime"));
+  // null = configured. Otherwise the i18n key naming what's still missing.
+  const gate = useStore((s) =>
+    providerGateKey(missingProviderRequirement(s.settings, "realtime"), "evaluations.missingKey")
+  );
   const autoAnalyze = useStore((s) => s.autoAnalyze);
   const autoAnalyzeSec = useStore((s) => s.autoAnalyzeSec);
   const setAutoAnalyze = useStore((s) => s.setAutoAnalyze);
@@ -82,9 +85,9 @@ export function FindingsPanel({
         )}
       </div>
 
-      {keyMissing && (
+      {gate && (
         <div className="mx-3 mb-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-300">
-          {t("evaluations.missingKey", { provider: PROVIDER_BY_ID[provider]?.label ?? provider })}
+          {t(gate, { provider: PROVIDER_BY_ID[provider]?.label ?? provider })}
         </div>
       )}
 

@@ -2,7 +2,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
 import type { LlmWorkload, Settings } from "../types";
-import { PROVIDER_BY_ID, isReasoningModel } from "./providers";
+import { PROVIDER_BY_ID, isReasoningModel, normalizeBaseUrl, type ProviderInfo } from "./providers";
 import { cloudToken, CLOUD_URL } from "../cloud/client";
 import { CLOUD_ENABLED } from "../flags";
 
@@ -89,14 +89,42 @@ export function getModel(
 
   const client = createOpenAICompatible({
     name: info.id,
-    baseURL: info.baseURL!,
-    // Local Ollama needs no key, but the SDK wants a non-empty string.
-    apiKey: apiKey || (info.requiresKey === false ? "ollama" : apiKey),
+    baseURL: baseUrlFor(settings, info),
+    // Keyless servers (local Ollama, a self-hosted custom endpoint) still need a
+    // non-empty string here — the SDK sends it as `Authorization: Bearer …` and
+    // such servers ignore it. Ollama keeps its historical filler value.
+    apiKey: apiKey || (info.requiresKey === false ? keylessFiller(info.id) : apiKey),
     // true → response_format json_schema (schema ENFORCED); false → json_object
     // (valid JSON only). Off for Ollama, whose /v1 ignores the json_schema shape.
     supportsStructuredOutputs: opts?.forceJsonObject ? false : info.supportsStructuredOutputs ?? false,
   });
   return client.chatModel(modelId);
+}
+
+/** Filler credential for a provider that takes no key (see call site). */
+function keylessFiller(id: string): string {
+  return id === "ollama" ? "ollama" : "no-key";
+}
+
+/**
+ * Where to send an openai-compatible request: the registry's fixed `baseURL`,
+ * or — for a provider whose URL the user supplies ("custom") — whatever they
+ * typed in Settings, minus trailing slashes.
+ *
+ * Throws rather than falling back when that URL is missing. Handing the SDK an
+ * empty baseURL produces a request to a relative path inside the Tauri webview,
+ * and its failure ("Unexpected token '<'", from an HTML 404 body) says nothing
+ * about the actual problem.
+ */
+export function baseUrlFor(settings: Settings, info: ProviderInfo): string {
+  if (!info.userSuppliedBaseUrl) return info.baseURL!;
+  const baseURL = normalizeBaseUrl(settings.customBaseUrl ?? "");
+  if (!baseURL) {
+    throw new Error(
+      "Custom provider has no server URL — set the base URL in Settings → LLM Provider",
+    );
+  }
+  return baseURL;
 }
 
 /**

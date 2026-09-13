@@ -51,6 +51,8 @@ import {
   isReasoningModel,
   type ProviderTagTone,
 } from "../lib/ai/providers";
+import { missingProviderRequirement } from "../lib/ai/settings";
+import { runConnectionTest, type ConnectionTestResult } from "../lib/ai/connectionTest";
 
 /** Tailwind classes for each provider tag tone (dark + light). */
 const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
@@ -627,6 +629,12 @@ export function SettingsApp() {
                     <p className="text-[11px] text-muted-foreground">
                       {t("settings.account.useParley.note", { email: cloudAuth?.user.email ?? "" })}
                     </p>
+                  ) : winfo.userSuppliedBaseUrl ? (
+                    // A self-hosted endpoint: URL first, then the optional key,
+                    // then a free-text model id — and a live connection test,
+                    // because three things can be wrong and none of them would
+                    // surface until the middle of a meeting otherwise.
+                    <CustomEndpointFields workload={wl} settings={settings} patch={patch} />
                   ) : (
                     <>
                       <Field label={t("settings.provider.apiKey", { provider: winfo.label })}>
@@ -1282,12 +1290,16 @@ function ModelSelect({
 }>) {
   const { t } = useI18n();
   const presets = PROVIDER_BY_ID[provider].models;
+  // A provider with no curated list (the self-hosted "custom" one) has nothing
+  // to pick from — only its operator knows what the server serves — so it is
+  // free text and stays free text.
+  const freeTextOnly = presets.length === 0;
   // Custom (free-text) mode: on by default when the saved id isn't a listed
   // preset (e.g. a brand-new model the user typed in before).
-  const [custom, setCustom] = useState(() => !!value && !presets.includes(value));
+  const [custom, setCustom] = useState(() => freeTextOnly || (!!value && !presets.includes(value)));
   // Re-infer when the provider changes (different presets + value).
   useEffect(() => {
-    setCustom(!!value && !presets.includes(value));
+    setCustom(freeTextOnly || (!!value && !presets.includes(value)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider]);
 
@@ -1297,19 +1309,27 @@ function ModelSelect({
         <Input
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder={t("settings.provider.customModelPlaceholder")}
+          placeholder={t(
+            freeTextOnly
+              ? "settings.provider.serverModelPlaceholder"
+              : "settings.provider.customModelPlaceholder"
+          )}
           className="font-mono text-xs"
+          spellCheck={false}
+          autoComplete="off"
         />
-        <button
-          type="button"
-          onClick={() => {
-            setCustom(false);
-            onChange(presets[0] ?? "");
-          }}
-          className="w-fit text-[11px] text-muted-foreground hover:text-foreground"
-        >
-          {t("settings.provider.usePreset")}
-        </button>
+        {!freeTextOnly && (
+          <button
+            type="button"
+            onClick={() => {
+              setCustom(false);
+              onChange(presets[0] ?? "");
+            }}
+            className="w-fit text-[11px] text-muted-foreground hover:text-foreground"
+          >
+            {t("settings.provider.usePreset")}
+          </button>
+        )}
       </div>
     );
   }
@@ -1337,6 +1357,126 @@ function ModelSelect({
         <SelectItem value={CUSTOM_MODEL}>{t("settings.provider.customModel")}</SelectItem>
       </SelectContent>
     </Select>
+  );
+}
+
+/**
+ * Settings for a provider whose endpoint the user supplies (the "custom"
+ * OpenAI-compatible provider): base URL, optional key, free-text model id, and
+ * a one-shot connection test.
+ *
+ * The test matters more than it looks. Pointing Parley at a self-hosted model
+ * means getting a URL, an optional key and a model id all right at once, and
+ * every one of them fails the same way at runtime (`AI_APICallError`) — during
+ * a meeting, which is the worst possible moment to debug a URL. One throwaway
+ * completion here answers "does this work" before the meeting starts.
+ *
+ * Base URL and key are shared by both lanes (one endpoint, one credential), so
+ * editing them in the realtime card also changes the deep card. The model id is
+ * per-lane, like every other provider.
+ */
+function CustomEndpointFields({
+  workload,
+  settings,
+  patch,
+}: Readonly<{
+  workload: LlmWorkload;
+  settings: Settings;
+  patch: (p: Partial<Settings>) => void;
+}>) {
+  const { t } = useI18n();
+  const provider = settings.llmProviders[workload];
+  const info = PROVIDER_BY_ID[provider];
+  const [probing, setProbing] = useState(false);
+  const [outcome, setOutcome] = useState<ConnectionTestResult | null>(null);
+  const missing = missingProviderRequirement(settings, workload);
+
+  async function probe() {
+    setProbing(true);
+    setOutcome(null);
+    try {
+      setOutcome(await runConnectionTest(settings, workload));
+    } finally {
+      setProbing(false);
+    }
+  }
+
+  return (
+    <>
+      <Field label={t("settings.provider.baseUrl")}>
+        <Input
+          value={settings.customBaseUrl}
+          onChange={(e) => {
+            setOutcome(null);
+            patch({ customBaseUrl: e.target.value });
+          }}
+          placeholder="http://localhost:8000/v1"
+          className="max-w-sm font-mono text-xs"
+          spellCheck={false}
+          autoComplete="off"
+        />
+        {/* No `/v1` is appended for the user: gateways disagree about the
+            prefix, and rewriting a URL they typed turns a 404 into a mystery. */}
+        <p className="text-[11px] text-muted-foreground">{t("settings.provider.baseUrlHint")}</p>
+      </Field>
+      <Field label={t("settings.provider.apiKey", { provider: info.label })}>
+        <PasswordInput
+          autoComplete="off"
+          placeholder={t("settings.provider.apiKeyOptional")}
+          className="max-w-sm"
+          value={settings.customApiKey}
+          onChange={(e) => {
+            setOutcome(null);
+            patch({ customApiKey: e.target.value });
+          }}
+        />
+      </Field>
+      <Field label={t("settings.provider.model")}>
+        <ModelSelect
+          provider={provider}
+          value={settings.models[provider][workload]}
+          onChange={(v) => {
+            setOutcome(null);
+            patchModel(patch, settings, provider, workload, v);
+          }}
+        />
+        {isReasoningModel(settings.models[provider][workload]) && (
+          <ReasoningEffortSelect
+            label={t("settings.provider.reasoning")}
+            value={settings.reasoningEffort[workload]}
+            onChange={(v) => patch({ reasoningEffort: { ...settings.reasoningEffort, [workload]: v } })}
+          />
+        )}
+      </Field>
+      <div className="flex flex-col gap-1.5">
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 w-fit text-xs"
+          disabled={probing || missing !== null}
+          onClick={probe}
+        >
+          {probing ? <Loader2 className="size-3.5 animate-spin" /> : <PlugZap className="size-3.5" />}
+          {probing ? t("settings.provider.test.running") : t("settings.provider.test.run")}
+        </Button>
+        {missing !== null && (
+          <p className="text-[11px] text-muted-foreground">{t("settings.provider.test.needsConfig")}</p>
+        )}
+        {outcome?.ok && (
+          <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
+            {t("settings.provider.test.ok", {
+              model: outcome.model,
+              ms: String(outcome.ms),
+            })}
+          </p>
+        )}
+        {outcome && !outcome.ok && (
+          <p className="max-w-md text-[11px] leading-relaxed text-destructive">
+            {t(outcome.error.key, outcome.error.vars)}
+          </p>
+        )}
+      </div>
+    </>
   );
 }
 

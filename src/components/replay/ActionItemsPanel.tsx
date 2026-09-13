@@ -1,6 +1,6 @@
 import { Loader2 } from "lucide-react";
 import { useStore, formatClock } from "../../lib/store";
-import { hasProviderKey } from "../../lib/ai/settings";
+import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { useI18n } from "../../i18n";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -33,26 +33,29 @@ export function ActionItemsPanel({
   const status = useStore((s) => s.actionItemsStatus);
   const error = useStore((s) => s.actionItemsError);
   const toggle = useStore((s) => s.toggleActionItem);
-  const keyMissing = useStore((s) => !hasProviderKey(s.settings, "deep"));
+  // null = configured. Otherwise the i18n key naming what's still missing.
+  const gate = useStore((s) =>
+    providerGateKey(missingProviderRequirement(s.settings, "deep"), "actionItems.noKey")
+  );
   const running = status === "running";
 
   const body = (
     <div className={`flex flex-col gap-2 ${embedded ? "" : "px-3 py-3"}`}>
-          {keyMissing && (
-            <p className="px-1 pt-4 text-center text-xs text-muted-foreground">{t("actionItems.noKey")}</p>
+          {gate && (
+            <p className="px-1 pt-4 text-center text-xs text-muted-foreground">{t(gate)}</p>
           )}
           {/* Centered spinner only until the first item streams in; after that the
               items render live and a slim footer hint shows it's still going. */}
-          {!keyMissing && running && items.length === 0 && (
+          {!gate && running && items.length === 0 && (
             <p className="flex items-center justify-center gap-1.5 px-1 pt-4 text-center text-xs text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" />
               {t("actionItems.generating")}
             </p>
           )}
-          {!keyMissing && status === "error" && (
+          {!gate && status === "error" && (
             <p className="px-1 text-xs text-orange-500">{t("actionItems.failed", { error: error ?? "—" })}</p>
           )}
-          {!keyMissing && status !== "error" && items.length === 0 && !running && (
+          {!gate && status !== "error" && items.length === 0 && !running && (
             <p className="px-1 pt-4 text-center text-xs text-muted-foreground">{t("actionItems.empty")}</p>
           )}
 
@@ -92,7 +95,7 @@ export function ActionItemsPanel({
           })}
 
       {/* Still streaming, but rows are already showing. */}
-      {!keyMissing && running && items.length > 0 && (
+      {!gate && running && items.length > 0 && (
         <p className="flex items-center gap-1.5 px-1 pt-1 text-[11px] text-muted-foreground">
           <Loader2 className="size-3 animate-spin" />
           {t("actionItems.generating")}

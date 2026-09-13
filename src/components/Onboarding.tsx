@@ -221,7 +221,46 @@ export function Onboarding() {
                   ))}
                 </SelectContent>
               </Select>
-              {llm.requiresKey === false ? (
+              {/* A self-hosted endpoint needs its URL and a model id, and its key
+                  is optional — so the keyless copy above ("Ollama needs no key")
+                  would be actively misleading here. Ask for the two things that
+                  are actually required instead. */}
+              {llm.userSuppliedBaseUrl ? (
+                <div className="flex flex-col gap-2">
+                  <Input
+                    value={settings.customBaseUrl}
+                    onChange={(e) => patch({ customBaseUrl: e.target.value })}
+                    placeholder="http://localhost:8000/v1"
+                    className="font-mono text-xs"
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                  <Input
+                    value={settings.models[llm.id].deep}
+                    onChange={(e) =>
+                      patch({
+                        models: {
+                          ...settings.models,
+                          [llm.id]: { realtime: e.target.value, deep: e.target.value },
+                        },
+                      })
+                    }
+                    placeholder={t("settings.provider.serverModelPlaceholder")}
+                    className="font-mono text-xs"
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                  <PasswordInput
+                    autoComplete="off"
+                    placeholder={t("settings.provider.apiKeyOptional")}
+                    value={settings.customApiKey}
+                    onChange={(e) => patch({ customApiKey: e.target.value })}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    {t("onboarding.llm.customHint")} {t("settings.provider.baseUrlHint")}
+                  </p>
+                </div>
+              ) : llm.requiresKey === false ? (
                 <p className="text-[11px] text-muted-foreground">
                   {llm.id === "parley" ? t("onboarding.login.signedIn") : t("onboarding.llm.noKey")}
                 </p>

@@ -1,6 +1,6 @@
 import { AlertTriangle, RefreshCw, Settings, X } from "lucide-react";
 import { useStore } from "../lib/store";
-import { hasProviderKey } from "../lib/ai/settings";
+import { missingProviderRequirement, type ProviderRequirement } from "../lib/ai/settings";
 import { PROVIDER_BY_ID } from "../lib/ai/providers";
 import { openSettings } from "../lib/nav/settings";
 import { runAnalysis } from "../lib/analysis/engine";
@@ -16,12 +16,32 @@ import { log } from "../lib/log";
  * component is self-contained.
  */
 
-type Kind = "missingKey" | "auth" | "model" | "rate" | "structured" | "generic";
+type Kind =
+  | "missingKey"
+  /** A self-hosted ("custom") endpoint with no base URL configured yet. */
+  | "missingBaseUrl"
+  /** A self-hosted endpoint with no model id configured yet. */
+  | "missingModel"
+  | "auth"
+  | "model"
+  | "rate"
+  | "structured"
+  | "generic";
 
-/** Classify the raw error message into an actionable kind. */
-function classify(message: string, keyConfigured: boolean): Kind {
+/**
+ * Classify the raw error message into an actionable kind.
+ *
+ * `missing` is what the provider config is still short of (null = nothing). It
+ * wins over the message, because a request made without it never had a chance —
+ * and it has to name the right field: a lawyer pointing Parley at their own
+ * model server has no API key to add, so "add an API key" would send them
+ * hunting for something that does not exist.
+ */
+function classify(message: string, missing: ProviderRequirement | null): Kind {
   const m = message.toLowerCase();
-  if (!keyConfigured) return "missingKey";
+  if (missing === "baseUrl") return "missingBaseUrl";
+  if (missing === "model") return "missingModel";
+  if (missing) return "missingKey";
   if (/(^|[^a-z])401|unauthorized|invalid.*api|api.*key|authentication|forbidden|403/.test(m))
     return "auth";
   if (/429|rate.?limit|quota|too many requests|overloaded|capacity|insufficient_quota/.test(m))
@@ -36,6 +56,8 @@ function classify(message: string, keyConfigured: boolean): Kind {
 const HINTS: Record<"zh-TW" | "en", Record<Kind, string>> = {
   "zh-TW": {
     missingKey: "目前這個供應商沒有 API 金鑰。請到設定填入金鑰後再試一次。",
+    missingBaseUrl: "這個自訂供應商還沒填伺服器網址。請到設定填入 base URL（通常結尾是 /v1），並按「測試連線」確認。",
+    missingModel: "這個自訂供應商還沒指定模型。請到設定填入伺服器上的模型 ID，並按「測試連線」確認。",
     auth: "API 金鑰無效或沒有權限（401/403）。請到設定確認金鑰是否正確、是否有這個模型的權限。",
     model: "這個模型不可用或不存在。請到設定把「評估模型」換成可用的模型。",
     rate: "達到速率或額度限制。稍等一下再試，或在設定換成別的模型／供應商。",
@@ -45,6 +67,10 @@ const HINTS: Record<"zh-TW" | "en", Record<Kind, string>> = {
   },
   en: {
     missingKey: "No API key for this provider. Add one in Settings and try again.",
+    missingBaseUrl:
+      "This custom provider has no server URL yet. Add the base URL in Settings — it usually ends in /v1 — then hit Test connection.",
+    missingModel:
+      "This custom provider has no model id yet. Enter the id your server uses in Settings, then hit Test connection.",
     auth: "API key is invalid or lacks access (401/403). Check the key and model access in Settings.",
     model: "This model is unavailable or doesn't exist. Switch the eval model in Settings.",
     rate: "Hit a rate or quota limit. Wait and retry, or switch model/provider in Settings.",
@@ -68,8 +94,12 @@ export function AnalysisErrorDialog() {
   // Analysis rides realtime live and deep in replay — show both when they differ.
   const providers = useStore((s) => s.settings.llmProviders);
   const models = useStore((s) => s.settings.models);
-  const keyConfigured = useStore(
-    (s) => hasProviderKey(s.settings, "realtime") && hasProviderKey(s.settings, "deep")
+  // Whatever either lane is still missing — the realtime lane first, since it
+  // is the one live analysis rides.
+  const missing = useStore(
+    (s) =>
+      missingProviderRequirement(s.settings, "realtime") ??
+      missingProviderRequirement(s.settings, "deep")
   );
   const providerLabelText =
     providers.realtime === providers.deep
@@ -84,7 +114,7 @@ export function AnalysisErrorDialog() {
   if (!message) return null;
 
   const L = LABELS[lang];
-  const kind = classify(message, keyConfigured);
+  const kind = classify(message, missing);
   const hint = HINTS[lang][kind];
 
   function dismiss() {

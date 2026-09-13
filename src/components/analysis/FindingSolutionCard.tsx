@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useStore } from "../../lib/store";
-import { hasProviderKey } from "../../lib/ai/settings";
+import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { runFindingSolution } from "../../lib/analysis/solution";
 import { FindingSolutionView } from "./FindingSolutionView";
 import type { TimelineEvent } from "../../lib/types";
@@ -14,12 +14,14 @@ import type { TimelineEvent } from "../../lib/types";
  */
 export function FindingSolutionCard({ finding }: Readonly<{ finding: TimelineEvent }>) {
   const entry = useStore((s) => s.findingSolutions[finding.id]);
-  const keyMissing = useStore((s) => !hasProviderKey(s.settings, "realtime"));
+  const gateKey = useStore((s) =>
+    providerGateKey(missingProviderRequirement(s.settings, "realtime"), "solution.noKey")
+  );
   const status = entry?.status ?? "idle";
 
   // Generate on first open and whenever the open finding changes.
   useEffect(() => {
-    if (keyMissing) return;
+    if (gateKey) return;
     if (!entry || entry.status === "idle") void runFindingSolution(finding.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finding.id]);
@@ -29,7 +31,7 @@ export function FindingSolutionCard({ finding }: Readonly<{ finding: TimelineEve
       status={status}
       solution={entry?.solution ?? null}
       error={entry?.error ?? null}
-      keyMissing={keyMissing}
+      gateKey={gateKey}
       onRetry={() => void runFindingSolution(finding.id)}
     />
   );
