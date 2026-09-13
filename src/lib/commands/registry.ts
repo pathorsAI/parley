@@ -123,10 +123,26 @@ const TABLE = [
     id: "shortcuts.show",
     group: "global",
     scope: "global",
-    // No `mod`, and shift deliberately unconstrained — see ShortcutSpec.shift.
-    // `whileTyping` is off: "?" is a character, and a cheat sheet that opens
-    // mid-sentence while you name a folder is worse than no cheat sheet.
-    keys: [{ key: "?", shift: "any", native: "Shift+Slash" }],
+    // Two chords, and the split is load-bearing.
+    //
+    // ⇧? is the web convention (Gmail, GitHub, Linear) and it is bound HERE, in
+    // the webview, because only a webview binding passes through the typing
+    // guard. It must never become a menu-bar accelerator: AppKit matches an
+    // NSMenu key equivalent in `sendEvent:`, before the event reaches the first
+    // responder, so a menu item claiming a bare "?" swallows the character
+    // before any text field can see it — you could not type a question mark
+    // anywhere in the app. That shipped in 0.30.0 and is what this pair fixes.
+    //
+    // ⌘? is the macOS convention for help, and it is safe as an accelerator
+    // precisely because it carries Command: no one types ⌘? into a sentence.
+    // It gives the Help menu item a shortcut to display.
+    //
+    // `whileTyping` stays off for both: "?" is a character, and a cheat sheet
+    // that opens mid-sentence while you name a folder is worse than none.
+    keys: [
+      { key: "?", shift: "any" },
+      { ...MOD, key: "?", shift: "any", native: "Shift+CmdOrCtrl+Slash" },
+    ],
     labelKey: "cmd.shortcuts.show",
   },
   {
