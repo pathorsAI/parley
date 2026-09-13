@@ -721,7 +721,7 @@ function LlmKeyField({
     <PasswordInput
       autoComplete="off"
       placeholder={llm.keyPlaceholder}
-      value={(settings[llm.apiKeyField] as string) ?? ""}
+      value={settings[llm.apiKeyField]}
       onChange={(e) => patch({ [llm.apiKeyField]: e.target.value } as Partial<Settings>)}
     />
   );
