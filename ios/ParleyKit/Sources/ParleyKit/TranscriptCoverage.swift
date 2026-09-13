@@ -73,12 +73,14 @@ public enum TranscriptCoverage {
         /// completed. A run that dies on a flat network costs nothing — the
         /// cap exists to bound cost and to stop someone re-rolling the same
         /// audio hoping for a different answer, not to punish bad reception.
+        /// Which recording has spent what is `ManualRetryBudget`; this is only
+        /// the number it compares against.
         public var maxManualRetries: Int
 
         public init(
             longestGap: Duration = .seconds(30),
             totalGapFraction: Double = 0.10,
-            maxManualRetries: Int = 2
+            maxManualRetries: Int = 3
         ) {
             self.longestGap = longestGap
             self.totalGapFraction = totalGapFraction

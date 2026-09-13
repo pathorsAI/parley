@@ -233,3 +233,81 @@ public struct RecordingMeta: @unchecked Sendable {
         .sorted { $0.atMs < $1.atMs }
     }
 }
+
+// MARK: replacing a transcript in place
+
+extension RecordingMeta {
+    /// The wire shape `segments` takes inside a `HistoryEntry` — the inverse of
+    /// the `segments` getter above, and the only place either queue writes it.
+    /// `isFinal` is always true: nothing tentative is ever persisted.
+    public static func encode(_ segments: [TranscriptSegment]) -> [[String: Any]] {
+        segments.map { segment in
+            [
+                "id": segment.id, "source": segment.source, "speaker": segment.speaker,
+                "text": segment.text, "isFinal": true,
+                "startMs": Double(segment.startMs), "endMs": Double(segment.endMs),
+            ] as [String: Any]
+        }
+    }
+
+    /// Swap in a transcript produced by a later, better pass over the same
+    /// audio, and change nothing else.
+    ///
+    /// Surgical on purpose. A re-transcription of a recording that has been
+    /// around for a while is not a fresh upload: the entry may carry speaker
+    /// names somebody typed, findings and action items from a desktop analysis,
+    /// a brief, meeting context, a filing decision. Rebuilding the meta from
+    /// the new transcript would be correct about the words and would silently
+    /// throw all of that away — a far worse outcome than the thin transcript
+    /// the person was trying to fix.
+    ///
+    /// `speakerNames` is the one field this arguably *should* clear, since a
+    /// second diarization pass can number the speakers differently. It is kept
+    /// anyway: a name attached to the wrong turn is visible and fixable in
+    /// seconds, and a name the user typed and then lost is neither.
+    ///
+    /// The duration is taken as whichever is longer, matching the queue's own
+    /// reconciliation — a batch job's reported length can undershoot what the
+    /// recording already knew about itself.
+    public mutating func replaceTranscript(segments: [TranscriptSegment], durationMs: Double) {
+        raw["segments"] = Self.encode(segments)
+        raw["durationMs"] = max(durationMs, self.durationMs)
+    }
+}
+
+extension CloudRecordingSummary {
+    /// How many people the transcript accounts for. A transcript with turns in
+    /// it always has at least one speaker, even when every turn came back
+    /// unattributed.
+    public static func speakerCount(of segments: [TranscriptSegment]) -> Int {
+        let distinct = Set(segments.map { "\($0.source)-\($0.speaker)" }).count
+        return max(distinct, segments.isEmpty ? 0 : 1)
+    }
+
+    /// The library row's preview line: the opening of the conversation, capped
+    /// so a list request does not carry whole meetings.
+    public static func snippet(of segments: [TranscriptSegment]) -> String {
+        String(segments.prefix(3).map(\.text).joined(separator: " ").prefix(120))
+    }
+
+    /// The same summary, re-derived for a transcript that replaced the one it
+    /// was built from.
+    ///
+    /// Only the three facts the transcript actually speaks for move: the
+    /// speaker count, the preview line, and the duration. The title, the
+    /// folder, and the analysis counts are somebody else's facts about this
+    /// recording and survive a re-transcription untouched; `hasAudio` stays as
+    /// it was because the audio in the cloud is the very file that was
+    /// re-transcribed.
+    public func replacingTranscript(segments: [TranscriptSegment], durationMs: Double)
+        -> CloudRecordingSummary
+    {
+        CloudRecordingSummary(
+            id: id, title: title, source: source, createdAt: createdAt,
+            durationMs: max(durationMs, self.durationMs),
+            speakerCount: Self.speakerCount(of: segments),
+            findingsCount: findingsCount, actionItemsCount: actionItemsCount,
+            hasAudio: hasAudio, snippet: Self.snippet(of: segments),
+            folderId: folderId, updatedAt: updatedAt)
+    }
+}

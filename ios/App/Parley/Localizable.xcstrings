@@ -409,6 +409,23 @@
         }
       }
     },
+    "Already re-transcribing this recording.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Already re-transcribing this recording."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這段錄音正在重新轉錄。"
+          }
+        }
+      }
+    },
     "Appearance": {
       "extractionState": "manual",
       "localizations": {
@@ -1968,6 +1985,23 @@
         }
       }
     },
+    "More": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "More"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更多"
+          }
+        }
+      }
+    },
     "Move failed: %@": {
       "extractionState": "manual",
       "localizations": {
@@ -2711,6 +2745,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "季度檢討 — 子午線"
+          }
+        }
+      }
+    },
+    "Re-transcribe": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Re-transcribe"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新轉錄"
+          }
+        }
+      }
+    },
+    "Re-transcribe this recording?": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Re-transcribe this recording?"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要重新轉錄這段錄音嗎？"
+          }
+        }
+      }
+    },
+    "Re-transcribing didn't finish. It stays queued and will be retried.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Re-transcribing didn't finish. It stays queued and will be retried."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新轉錄沒有完成，已留在佇列中稍後重試。"
+          }
+        }
+      }
+    },
+    "Re-transcribing… this can take a few minutes.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Re-transcribing… this can take a few minutes."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在重新轉錄……可能需要幾分鐘。"
           }
         }
       }
@@ -3781,6 +3883,23 @@
         }
       }
     },
+    "The whole recording is transcribed again from the start, and the transcript you have now is replaced when the new one comes back. It uses your account's transcription hours, the same as a new meeting would.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The whole recording is transcribed again from the start, and the transcript you have now is replaced when the new one comes back. It uses your account's transcription hours, the same as a new meeting would."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "整段錄音會從頭重新轉錄一次，新的逐字稿回來後會取代你現在看到的這一份。這會用掉帳戶的轉錄時數，和錄一場新會議一樣。"
+          }
+        }
+      }
+    },
     "Theme": {
       "extractionState": "manual",
       "localizations": {
@@ -3828,6 +3947,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "這會永久移除你的 Parley 帳號、個人錄音、逐字稿、資料夾與使用資料。你仍是擁有者的組織必須先移轉或刪除。"
+          }
+        }
+      }
+    },
+    "This recording has been re-transcribed as many times as allowed.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This recording has been re-transcribed as many times as allowed."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這段錄音重新轉錄的次數已達上限。"
           }
         }
       }
