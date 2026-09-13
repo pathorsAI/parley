@@ -132,7 +132,9 @@ struct WaveformView: View {
                     width: Self.barWidth, height: barHeight),
                 cornerSize: CGSize(width: Self.barWidth / 2, height: Self.barWidth / 2))
         }
-        context.fill(bars, with: .color(Color(.secondaryLabel)))
+        // Signal blue: the field is the one thing on this screen that is
+        // happening right now, which is what the blue is reserved for.
+        context.fill(bars, with: .color(Theme.primary))
 
         // The playhead: where "now" is. Recording red, because that is the one
         // thing on this screen the colour is reserved for.

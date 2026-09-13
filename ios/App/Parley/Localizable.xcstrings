@@ -902,6 +902,40 @@
         }
       }
     },
+    "Discard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discard"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "捨棄"
+          }
+        }
+      }
+    },
+    "Discard this recording?": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discard this recording?"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "捨棄這次錄音？"
+          }
+        }
+      }
+    },
     "Discarded": {
       "localizations": {
         "en": {
@@ -3182,6 +3216,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "錄音太短，已捨棄"
+          }
+        }
+      }
+    },
+    "The audio and transcript are thrown away. Nothing is saved or uploaded.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The audio and transcript are thrown away. Nothing is saved or uploaded."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "錄音與逐字稿會直接丟掉，不會儲存或上傳。"
           }
         }
       }

@@ -26,6 +26,7 @@ struct LiveView: View {
     /// where the block goes and when a new recording retires it.
     @StateObject private var filing = FilingSuggestionModel()
     @State private var showRecordingConsent = false
+    @State private var showDiscardConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -269,6 +270,9 @@ struct LiveView: View {
                 statusLine(status)
             }
             recordControl
+            if recorder.isRecording {
+                discardControl
+            }
             if !recorder.isRecording && !app.hasAccount {
                 Text("Your session expired. Sign in with the button above and recording works again.")
                     .font(.parley.caption)
@@ -294,6 +298,32 @@ struct LiveView: View {
                 .font(.parley.displayNumber)
                 .foregroundStyle(Color(.tertiaryLabel))
                 .accessibilityHidden(true)
+        }
+    }
+
+    /// The way out for a recording that should not have started. Stop is
+    /// "keep this"; without a second door every mis-tap became a two-second
+    /// recording in the library. Plain secondary text under the circle, and a
+    /// confirmation, because it throws the audio away.
+    private var discardControl: some View {
+        Button {
+            showDiscardConfirm = true
+        } label: {
+            Text("Discard")
+                .font(.parley.subheadline)
+                .foregroundStyle(Color(.secondaryLabel))
+        }
+        .buttonStyle(.plain)
+        .disabled(recorder.isBusy)
+        .confirmationDialog(
+            "Discard this recording?", isPresented: $showDiscardConfirm, titleVisibility: .visible
+        ) {
+            Button("Discard", role: .destructive) {
+                Task { await recorder.discard() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The audio and transcript are thrown away. Nothing is saved or uploaded.")
         }
     }
 

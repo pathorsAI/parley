@@ -251,6 +251,36 @@ final class MeetingRecorder: ObservableObject {
         await upload(app: app)
     }
 
+    /// Throw the meeting away: stop the microphone, drop the relay without
+    /// draining it, delete the audio file, and clear the transcript. Nothing is
+    /// saved and nothing is uploaded — this is the exit for a recording that
+    /// should never have started, which otherwise had no way out but `stop()`
+    /// and a zombie recording in the library.
+    func discard() async {
+        guard isRecording else { return }
+        finishRequested = true
+        phase = .finishing
+        reconnectTask?.cancel()
+        reconnectTask = nil
+
+        let cap = capture
+        capture = nil
+        await cap?.stop()
+        audio.discard()
+        micLevel = 0
+
+        relay?.cancel()
+        relay = nil
+        uploader?.abandon()
+        uploader = nil
+
+        segments = []
+        settled = nil
+        startedAt = nil
+        status = nil
+        phase = .idle
+    }
+
     // MARK: relay
 
     private func makeRelay(token: String, leg: Int, timeOffsetMs: UInt64) -> SttRelayClient {
