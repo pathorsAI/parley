@@ -145,6 +145,55 @@ public actor CloudClient: BatchTranscriptionService {
         _ = try await request("recordings/\(id)/audio", method: "PUT", body: ogg, contentType: "audio/ogg")
     }
 
+    /// The Ogg back again — the same path `uploadAudio` writes to, which is also
+    /// the path the desktop reads (`src/lib/cloud/sync.ts`).
+    ///
+    /// Streamed rather than fetched in one piece, so `onProgress` can be real.
+    /// The alternative was a fraction the UI invents while a single `await`
+    /// sits there, and a progress bar that is making its numbers up is worse
+    /// than a spinner. Fractions are only reported when the server sent a
+    /// length; without one the caller hears nothing until the data arrives.
+    ///
+    /// An hour of Opus is a few tens of megabytes, which is the same order as
+    /// the upload this mirrors — so it keeps the upload's timeout rather than
+    /// the default minute.
+    public func downloadAudio(
+        id: String, onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> Data {
+        let request = makeRequest(
+            "recordings/\(id)/audio", method: "GET", timeout: Self.batchUploadTimeout)
+        let (stream, response) = try await session.bytes(for: request)
+        let http = (response as? HTTPURLResponse) ?? HTTPURLResponse()
+        guard (200..<300).contains(http.statusCode) else {
+            // The body is the error message, and it is small. Draining it is
+            // also what releases the connection.
+            var body = Data()
+            for try await byte in stream { body.append(byte) }
+            throw CloudError(
+                status: http.statusCode, message: String(data: body, encoding: .utf8) ?? "")
+        }
+
+        let expected = response.expectedContentLength
+        var data = Data()
+        if expected > 0 { data.reserveCapacity(Int(expected)) }
+        // 32 KB at a time: a per-byte progress call would spend more time
+        // publishing than downloading.
+        let step = 32 * 1_024
+        var sinceReport = 0
+        for try await byte in stream {
+            data.append(byte)
+            sinceReport += 1
+            if sinceReport >= step {
+                sinceReport = 0
+                if expected > 0 {
+                    onProgress?(min(1, Double(data.count) / Double(expected)))
+                }
+            }
+        }
+        onProgress?(1)
+        return data
+    }
+
     public func deleteRecording(id: String) async throws {
         _ = try await request("recordings/\(id)", method: "DELETE")
     }
@@ -309,14 +358,18 @@ public actor CloudClient: BatchTranscriptionService {
         ).0
     }
 
+    /// One place every call's URL and headers are assembled, so a streamed
+    /// response (`downloadAudio`) carries exactly the auth and the timeout a
+    /// buffered one does.
+    ///
     /// `query` is applied with `URLComponents` rather than being appended to
     /// `path`: `appendingPathComponent` percent-encodes `?` and `&`, so a query
     /// string smuggled through the path arrives as one long, meaningless path
     /// segment.
-    private func requestWithResponse(
+    private func makeRequest(
         _ path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil,
         query: [URLQueryItem] = [], timeout: TimeInterval? = nil
-    ) async throws -> (Data, HTTPURLResponse) {
+    ) -> URLRequest {
         var url = baseURL.appendingPathComponent(path)
         if !query.isEmpty,
             var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -332,6 +385,16 @@ public actor CloudClient: BatchTranscriptionService {
         if let token = tokenProvider() {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
+        return req
+    }
+
+    private func requestWithResponse(
+        _ path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil,
+        query: [URLQueryItem] = [], timeout: TimeInterval? = nil
+    ) async throws -> (Data, HTTPURLResponse) {
+        let req = makeRequest(
+            path, method: method, body: body, contentType: contentType, query: query,
+            timeout: timeout)
         let (data, resp) = try await session.data(for: req)
         let http = (resp as? HTTPURLResponse) ?? HTTPURLResponse()
         guard (200..<300).contains(http.statusCode) else {

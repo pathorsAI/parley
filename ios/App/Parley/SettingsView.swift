@@ -7,6 +7,9 @@ import SwiftUI
 /// phone rides the hosted providers with the account token (design doc D6).
 struct SettingsView: View {
     @EnvironmentObject private var app: AppState
+    /// What the phone is holding. Read here for the size row; written by the
+    /// library's download actions.
+    @EnvironmentObject private var downloads: AudioDownloadModel
     /// Only for the microphone-window rows: how long the keyboard's mic stays
     /// ready is settings, but *whether it is open right now* is live state that
     /// belongs to the thing holding it.
@@ -19,6 +22,12 @@ struct SettingsView: View {
     /// coordinator: both sides are `UserDefaults.standard`, and the coordinator
     /// has to be able to answer this in the background with no view alive.
     @AppStorage(DictationCoordinator.polishKey) private var polishEnabled = true
+    /// Whether a recording made here keeps its audio after uploading. Read raw
+    /// out of the same defaults by `MeetingUploader`, which has no view alive
+    /// when it has to decide — see `LocalAudioStore.keepsAudioOnPhone`, which is
+    /// where the `true` default is stated for both readers.
+    @AppStorage(LocalAudioStore.keepAudioKey) private var keepAudioOnPhone = true
+    @State private var showRemoveAudioConfirmation = false
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
     @State private var showDeleteConfirmation = false
@@ -92,6 +101,19 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .task { await loadFolders() }
+            // The store is a directory, so its size is only ever as fresh as the
+            // last time someone asked. Arriving on this screen is that moment.
+            .task { downloads.refreshSize() }
+            .confirmationDialog(
+                "Remove the audio kept on this phone?",
+                isPresented: $showRemoveAudioConfirmation, titleVisibility: .visible
+            ) {
+                Button("Remove all", role: .destructive) {
+                    downloads.removeAllDownloads()
+                }
+            } message: {
+                Text("The recordings themselves stay in the cloud. You can download the audio again whenever you need it.")
+            }
             .confirmationDialog(
                 "Delete your account permanently?", isPresented: $showDeleteConfirmation,
                 titleVisibility: .visible
@@ -267,8 +289,41 @@ struct SettingsView: View {
                     }
                 }
             }
+            keepAudioRows
         } footer: {
             sectionFooter("Picking an organization still saves the recording to your personal space and shares a copy there — same as the desktop app.")
+        }
+    }
+
+    /// Where the audio goes, under where the recording goes.
+    ///
+    /// In this section rather than one of its own because it answers the same
+    /// question the picker above it does — where a finished recording ends up —
+    /// and the honest answer since the phone started keeping audio is "the cloud,
+    /// and here". The explanation is a caption under the toggle rather than the
+    /// section footer: the footer is already spoken for by the picker, and a
+    /// section can only have one.
+    ///
+    /// The size row is hidden at zero, so a phone that keeps nothing never shows
+    /// a "0 bytes" row with a Remove all button under it that does nothing.
+    @ViewBuilder
+    private var keepAudioRows: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Keep audio on this phone", isOn: $keepAudioOnPhone)
+            Text("Recordings made here stay on the phone so you can play them back. Recordings from other devices are downloaded when you ask.")
+                .font(.parley.caption)
+                .foregroundStyle(Color(.secondaryLabel))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 2)
+        if downloads.storedBytes > 0 {
+            // One string rather than a `LabeledContent`: the size is part of
+            // what the row says, not a value on the far side of the row, and at
+            // "0 bytes" the row does not exist at all.
+            Text("Downloaded audio · \(downloads.storedSizeLabel)")
+            Button("Remove all", role: .destructive) {
+                showRemoveAudioConfirmation = true
+            }
         }
     }
 

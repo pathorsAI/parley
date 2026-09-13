@@ -986,6 +986,91 @@
         }
       }
     },
+    "Download": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下載"
+          }
+        }
+      }
+    },
+    "Download failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download failed"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下載失敗"
+          }
+        }
+      }
+    },
+    "Download failed · Retry": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download failed · Retry"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下載失敗 · 重試"
+          }
+        }
+      }
+    },
+    "Downloaded audio · %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloaded audio · %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已下載的音檔 · %@"
+          }
+        }
+      }
+    },
+    "Downloading": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在下載"
+          }
+        }
+      }
+    },
     "Email and password, Google, and Apple all work. Before any recording starts, Parley asks you to confirm everyone in the room has agreed to it.": {
       "extractionState": "manual",
       "localizations": {
@@ -1270,6 +1355,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "收整個房間的聲音，並自動分辨不同說話者。"
+          }
+        }
+      }
+    },
+    "Keep audio on this phone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep audio on this phone"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留音檔在手機上"
           }
         }
       }
@@ -1849,6 +1951,23 @@
         }
       }
     },
+    "No audio stored for this recording": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No audio stored for this recording"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這筆錄音沒有音檔"
+          }
+        }
+      }
+    },
     "No matches.": {
       "extractionState": "manual",
       "localizations": {
@@ -2014,6 +2133,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "關閉"
+          }
+        }
+      }
+    },
+    "On this phone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "On this phone"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在這支手機上"
           }
         }
       }
@@ -2477,6 +2613,23 @@
         }
       }
     },
+    "Recordings made here stay on the phone so you can play them back. Recordings from other devices are downloaded when you ask.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recordings made here stay on the phone so you can play them back. Recordings from other devices are downloaded when you ask."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在這支手機錄的音檔會留在手機上，方便回放。其他裝置的錄音需要時再下載。"
+          }
+        }
+      }
+    },
     "Recordings sync to your account": {
       "extractionState": "manual",
       "localizations": {
@@ -2507,6 +2660,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "重新整理"
+          }
+        }
+      }
+    },
+    "Remove all": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove all"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部移除"
+          }
+        }
+      }
+    },
+    "Remove download": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove download"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除下載"
+          }
+        }
+      }
+    },
+    "Remove the audio kept on this phone?": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove the audio kept on this phone?"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要移除手機上保留的音檔嗎？"
           }
         }
       }
@@ -2658,6 +2862,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "分享到組織（複製）"
+          }
+        }
+      }
+    },
+    "Sign in again to download": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in again to download"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請重新登入才能下載"
           }
         }
       }
@@ -3301,6 +3522,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "目前無法使用麥克風。"
+          }
+        }
+      }
+    },
+    "The recordings themselves stay in the cloud. You can download the audio again whenever you need it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The recordings themselves stay in the cloud. You can download the audio again whenever you need it."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "錄音本身仍在雲端，音檔隨時可以再下載。"
           }
         }
       }

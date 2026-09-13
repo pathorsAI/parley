@@ -6,6 +6,9 @@ import SwiftUI
 /// at once, scrollable, with the desktop's speaker-label rules.
 struct RecordingDetailView: View {
     @EnvironmentObject private var app: AppState
+    /// The same model the library row drives, so a download started from either
+    /// place is visible in both.
+    @EnvironmentObject private var downloads: AudioDownloadModel
     let summary: CloudRecordingSummary
     /// nil = personal scope; set = org scope.
     let orgId: String?
@@ -30,6 +33,9 @@ struct RecordingDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .background(Theme.background)
         .toolbar {
+            // Declared first so copy keeps the outermost trailing position it
+            // has always had.
+            ToolbarItem(placement: .topBarTrailing) { downloadControl }
             ToolbarItem(placement: .topBarTrailing) {
                 CopyTranscriptButton(
                     text: plainTranscript,
@@ -37,6 +43,33 @@ struct RecordingDetailView: View {
             }
         }
         .task { await load() }
+    }
+
+    /// Fetch this recording's audio, or show how far that has got.
+    ///
+    /// Nothing at all once the audio is here: the toolbar's job is to *get* the
+    /// file, and a recording whose audio is on the phone has a player coming
+    /// where a permanent "downloaded" badge would only take up the slot.
+    ///
+    /// Personal scope only, for the same reason as the library row — see
+    /// `LibraryView.downloadAction`. A failed attempt falls back to the button,
+    /// which is the retry.
+    @ViewBuilder
+    private var downloadControl: some View {
+        if orgId == nil {
+            switch downloads.state(for: summary.id) {
+            case .absent, .failed:
+                Button {
+                    Task { await downloads.download(summary.id, cloud: app.cloud) }
+                } label: {
+                    Label("Download", systemImage: "arrow.down.circle")
+                }
+            case .downloading(let fraction):
+                DownloadRing(fraction: fraction, size: 20)
+            case .local:
+                EmptyView()
+            }
+        }
     }
 
     /// What the view renders, and therefore what "copy the transcript" means

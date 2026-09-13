@@ -209,6 +209,25 @@
 
         static var featured: CloudRecordingSummary { recordings[0] }
 
+        /// Which fixtures count as "audio is on this phone".
+        ///
+        /// Only the featured one, which is the state worth showing: a library
+        /// where one row was recorded here and the others came from the desktop
+        /// says what the `iphone` glyph means far better than a set where every
+        /// row carries it. A simulator has no store to put a file in, so the
+        /// download model reads this instead of `LocalAudioStore` while the
+        /// fixtures are being served.
+        static let localAudioIds: Set<String> = ["demo-renewal"]
+
+        static func audioState(for id: String) -> AudioDownloadState {
+            localAudioIds.contains(id) ? .local : .absent
+        }
+
+        /// What the Settings size row reads while the fixtures are being served:
+        /// 134 MB, which is about an hour of Opus — a plausible amount for a phone
+        /// that has kept a few meetings, and enough to make the row worth having.
+        static let storedAudioBytes: Int64 = 134_000_000
+
         // MARK: transcript fixtures
 
         /// The renewal conversation, written the way a real B2B negotiation
