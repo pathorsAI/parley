@@ -26,7 +26,11 @@ export interface ProviderInfo {
   icon: string;
   /** How to talk to it: native Anthropic SDK vs an OpenAI-compatible endpoint. */
   kind: "anthropic" | "openai-compatible";
-  /** Base URL for openai-compatible providers. */
+  /**
+   * Base URL for openai-compatible providers. Absent for "custom", whose URL the
+   * user types in Settings (`Settings.customBaseUrl`) — see
+   * {@link userSuppliedBaseUrl}.
+   */
   baseURL?: string;
   /** Which Settings field holds this provider's API key. */
   apiKeyField:
@@ -38,10 +42,17 @@ export interface ProviderInfo {
     | "kimiApiKey"
     | "ollamaApiKey"
     | "openrouterApiKey"
-    | "parleyApiKey";
+    | "parleyApiKey"
+    | "customApiKey";
   keyPlaceholder: string;
-  /** False for providers that run locally without an API key (Ollama). */
+  /** False for providers that run locally without an API key (Ollama, custom). */
   requiresKey?: boolean;
+  /**
+   * True when `baseURL` is NOT fixed by this registry and must be read from
+   * Settings instead (the "custom" provider). Such a provider is only usable
+   * once the user has supplied both a URL and a model id.
+   */
+  userSuppliedBaseUrl?: boolean;
   /**
    * Send `response_format: { type: "json_schema", strict }` (OpenAI structured
    * outputs — the schema is ENFORCED) instead of `json_object` (valid JSON only,
@@ -191,6 +202,35 @@ export const PROVIDERS: ProviderInfo[] = [
     models: ["parley-fast", "parley-smart"],
     defaults: { realtime: "parley-fast", deep: "parley-smart" },
   },
+  {
+    id: "custom",
+    label: "Custom",
+    note: "provider.note.custom",
+    // Neutral glyph — this is not a vendor, so it must not look like one.
+    icon: "/providers/custom.svg",
+    kind: "openai-compatible",
+    // Deliberately no baseURL: the user supplies it (Settings.customBaseUrl),
+    // and provider.ts reads it from there. `userSuppliedBaseUrl` is the flag the
+    // rest of the app checks instead of hard-coding the id.
+    userSuppliedBaseUrl: true,
+    apiKeyField: "customApiKey",
+    keyPlaceholder: "",
+    // Plenty of self-hosted servers (vLLM, LM Studio, a plain llama.cpp server)
+    // accept no key at all, so a missing key must not block the provider. The
+    // base URL + model id are the real requirements — see
+    // `missingProviderRequirement`.
+    requiresKey: false,
+    // json_object is the safe default: an unknown gateway may accept
+    // `response_format: json_schema` in the request and then ignore it, which
+    // looks like a schema failure rather than an unsupported feature. There is
+    // deliberately no toggle — a wrong setting here fails in a confusing way.
+    supportsStructuredOutputs: false,
+    // No curated list: only the operator knows what their server serves. The
+    // model field is free text (ModelSelect falls back to it when models is
+    // empty).
+    models: [],
+    defaults: { realtime: "", deep: "" },
+  },
 ];
 
 export const PROVIDER_BY_ID = Object.fromEntries(PROVIDERS.map((p) => [p.id, p])) as Record<
@@ -206,4 +246,35 @@ export const DEFAULT_MODELS = Object.fromEntries(
 /** Heuristic: does this model id support a `reasoning_effort` control? */
 export function isReasoningModel(modelId: string): boolean {
   return /gpt-oss|(^|\/)o[1-4]\b|o3|o4-mini|deepseek-r|reason|qwq/i.test(modelId);
+}
+
+/**
+ * A base URL as it should be handed to the OpenAI-compatible client: trimmed,
+ * without trailing slashes. Deliberately does NOT append `/v1` — vLLM, LM
+ * Studio and LiteLLM all serve it, but private gateways routinely mount the
+ * OpenAI surface somewhere else, and silently rewriting the URL a user typed
+ * turns a 404 into a mystery. The Settings hint tells them about `/v1` instead.
+ */
+export function normalizeBaseUrl(raw: string): string {
+  // A loop rather than `/\/+$/`: a quantifier anchored at the end is the
+  // textbook super-linear regex, and this runs on user-typed input.
+  let out = raw.trim();
+  while (out.endsWith("/")) out = out.slice(0, -1);
+  return out;
+}
+
+/**
+ * Parse a user-typed base URL, accepting only http(s). Returns null for blank,
+ * malformed, or non-HTTP input — which is what the readiness gate treats as
+ * "not configured yet".
+ */
+export function parseHttpUrl(raw: string): URL | null {
+  const normalized = normalizeBaseUrl(raw);
+  if (!normalized) return null;
+  try {
+    const url = new URL(normalized);
+    return url.protocol === "http:" || url.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
 }

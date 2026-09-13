@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Clock, Loader2, MessageCircleQuestion, X } from "lucide-react";
 import { useStore } from "../../lib/store";
-import { hasProviderKey } from "../../lib/ai/settings";
+import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { useBriefQueued } from "../../lib/analysis/studyPipeline";
 import { useI18n } from "../../i18n";
 import { ReplayScreen } from "../replay/ReplayScreen";
@@ -192,7 +192,10 @@ function BriefSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
   const brief = useStore((s) => s.brief);
   const status = useStore((s) => s.briefStatus);
   const saved = useStore((s) => !!s.loadedHistoryId);
-  const keyMissing = useStore((s) => !hasProviderKey(s.settings, "deep"));
+  // null = configured. Otherwise the i18n key naming what's still missing.
+  const gate = useStore((s) =>
+    providerGateKey(missingProviderRequirement(s.settings, "deep"), "study.brief.missingKey")
+  );
   const queued = useBriefQueued();
 
   return (
@@ -200,7 +203,7 @@ function BriefSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
       {status === "done" && saved && !!brief && (
         <p className="mb-2 text-[11px] text-muted-foreground/70">{t("study.brief.saved")}</p>
       )}
-      {keyMissing && <p className="text-sm text-muted-foreground">{t("study.brief.missingKey")}</p>}
+      {gate && <p className="text-sm text-muted-foreground">{t(gate)}</p>}
       {queued && !brief && (
         <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
           <Clock className="size-3.5" />

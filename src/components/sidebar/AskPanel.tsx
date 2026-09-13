@@ -3,7 +3,7 @@ import { ArrowUp, ChevronDown, ChevronUp } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useStore, meetingBriefText } from "../../lib/store";
-import { hasProviderKey } from "../../lib/ai/settings";
+import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { useI18n, type TranslationKey } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
@@ -59,10 +59,13 @@ export function AskPanel() {
     const state = useStore.getState();
     const { settings, speakerNames, segments } = state;
     const meetingContext = meetingBriefText(state);
-    if (!hasProviderKey(settings, "realtime")) {
+    // Name what is actually missing: a self-hosted endpoint has no key to add,
+    // so "configure an API key" would send the user looking for nothing.
+    const gate = providerGateKey(missingProviderRequirement(settings, "realtime"), "ask.missingKey");
+    if (gate) {
       setMessages((m) => [
         ...m,
-        { id: crypto.randomUUID(), role: "assistant", content: t("ask.missingKey") },
+        { id: crypto.randomUUID(), role: "assistant", content: t(gate) },
       ]);
       return;
     }

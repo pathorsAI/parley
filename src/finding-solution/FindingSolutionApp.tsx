@@ -6,7 +6,7 @@ import { log } from "../lib/log";
 import { useThemePreference } from "../lib/theme";
 import { listenForSettings } from "../lib/settingsSync";
 import { useI18n } from "../i18n";
-import { hasProviderKey } from "../lib/ai/settings";
+import { missingProviderRequirement, providerGateKey } from "../lib/ai/settings";
 import { FindingSolutionView } from "../components/analysis/FindingSolutionView";
 import { findingTitleClass } from "../components/analysis/FindingRow";
 import {
@@ -56,7 +56,9 @@ async function dismiss() {
 export function FindingSolutionApp() {
   useThemePreference();
   const { t } = useI18n();
-  const keyMissing = useStore((s) => !hasProviderKey(s.settings, "realtime"));
+  const gateKey = useStore((s) =>
+    providerGateKey(missingProviderRequirement(s.settings, "realtime"), "solution.noKey")
+  );
   const [state, setState] = useState<FindingSolutionState>({ finding: null, entry: null });
   const { finding, entry } = state;
 
@@ -107,14 +109,14 @@ export function FindingSolutionApp() {
 
   // Ask the main window to generate once we have a finding but no solution yet.
   useEffect(() => {
-    if (!finding || keyMissing) return;
+    if (!finding || gateKey) return;
     if (!entry || entry.status === "idle") {
       requestFindingSolutionGenerate(finding.id).catch((error) =>
         log.error("finding-solution: generation request failed", { error: String(error), findingId: finding.id }),
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [finding?.id, entry?.status, keyMissing]);
+  }, [finding?.id, entry?.status, gateKey]);
 
   if (!finding) {
     return (
@@ -164,7 +166,7 @@ export function FindingSolutionApp() {
           status={entry?.status ?? "idle"}
           solution={entry?.solution ?? null}
           error={entry?.error ?? null}
-          keyMissing={keyMissing}
+          gateKey={gateKey}
           onRetry={() =>
             requestFindingSolutionGenerate(finding.id).catch((error) =>
               log.error("finding-solution: retry request failed", { error: String(error), findingId: finding.id }),

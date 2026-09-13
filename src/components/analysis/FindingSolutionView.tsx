@@ -1,5 +1,5 @@
 import { RefreshCw } from "lucide-react";
-import { useI18n } from "../../i18n";
+import { useI18n, type TranslationKey } from "../../i18n";
 import type { FindingSolution, FindingSolutionEntry, WargameStrategyKind } from "../../lib/types";
 
 /** Reply angle → accent color (mirrors the old war-game card grammar). */
@@ -21,19 +21,21 @@ export function FindingSolutionView({
   status,
   solution,
   error,
-  keyMissing,
+  gateKey,
   onRetry,
 }: Readonly<{
   status: FindingSolutionEntry["status"];
   solution: FindingSolution | null;
   error: string | null;
-  keyMissing: boolean;
+  /** i18n key for "the provider isn't set up yet", or null when it is. Passed in
+   *  rather than derived so this stays store-free; see `providerGateKey`. */
+  gateKey: TranslationKey | null;
   onRetry: () => void;
 }>) {
   const { t } = useI18n();
 
-  if (keyMissing) {
-    return <div className="mt-2 text-[11px] text-muted-foreground">{t("solution.noKey")}</div>;
+  if (gateKey) {
+    return <div className="mt-2 text-[11px] text-muted-foreground">{t(gateKey)}</div>;
   }
   if (status === "idle" || status === "running") {
     return <div className="mt-2 text-[11px] text-muted-foreground">{t("solution.generating")}</div>;

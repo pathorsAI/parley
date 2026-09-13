@@ -221,7 +221,11 @@ export type LlmProvider =
   | "kimi"
   | "ollama"
   | "openrouter"
-  | "parley";
+  | "parley"
+  // Any OpenAI-compatible endpoint the user hosts themselves (vLLM, LM Studio,
+  // LiteLLM, a private gateway). Unlike every other entry its base URL is not
+  // fixed by the registry — it comes from `Settings.customBaseUrl`.
+  | "custom";
 
 /** Reasoning depth for reasoning-capable models (e.g. Groq gpt-oss). */
 export type ReasoningEffort = "low" | "medium" | "high";
@@ -312,6 +316,14 @@ export interface Settings {
    *  session token, not an API key. Present so it satisfies the closed
    *  apiKeyField union (every provider has a key field). */
   parleyApiKey: string;
+  /** Base URL of the "custom" (self-hosted, OpenAI-compatible) endpoint, e.g.
+   *  `http://localhost:8000/v1`. Empty until the user fills it in; the provider
+   *  is not considered ready without it. No `/v1` is appended automatically —
+   *  gateways disagree about the prefix, so the user's URL is used verbatim
+   *  (minus trailing slashes). */
+  customBaseUrl: string;
+  /** Optional — many self-hosted OpenAI-compatible servers accept no key. */
+  customApiKey: string;
   /** Reasoning depth per model role for reasoning-capable models. */
   reasoningEffort: ModelReasoningEfforts;
   /** Per-provider model ids (ids differ between Anthropic and OpenRouter). */

@@ -184,6 +184,8 @@ const DEFAULT_SETTINGS: Settings = {
   kimiApiKey: "",
   ollamaApiKey: "",
   parleyApiKey: "",
+  customBaseUrl: "",
+  customApiKey: "",
   reasoningEffort: { realtime: "low", deep: "medium" },
   models: DEFAULT_MODELS,
   transcriptionProvider: "soniox",
