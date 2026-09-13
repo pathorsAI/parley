@@ -169,7 +169,7 @@ final class TranscriptCoverageTests: XCTestCase {
         XCTAssertTrue(report.needsBackfill(policy: strict))
     }
 
-    func testTheManualRetryBudgetIsTwo() {
-        XCTAssertEqual(TranscriptCoverage.BackfillPolicy.standard.maxManualRetries, 2)
+    func testTheManualRetryBudgetIsThree() {
+        XCTAssertEqual(TranscriptCoverage.BackfillPolicy.standard.maxManualRetries, 3)
     }
 }

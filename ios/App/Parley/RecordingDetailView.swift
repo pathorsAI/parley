@@ -36,6 +36,23 @@ struct RecordingDetailView: View {
     /// reader was going to take anyway rather than a pill asking them to take one.
     @State private var followsAudio = true
 
+    /// The re-transcription confirmation, and whether one is in flight.
+    ///
+    /// `isReTranscribing` covers "queued" as well as "running": the queue is on
+    /// disk, so a request that outlived the app is still this recording's
+    /// pending re-transcription when the screen opens again.
+    @State private var confirmingReTranscribe = false
+    @State private var isReTranscribing = false
+    /// How many hand-triggered re-runs this recording has left. Read from the
+    /// ledger when the screen loads rather than on every render — the answer
+    /// lives in a file, and the body is not a place to touch the disk.
+    @State private var retriesRemaining = TranscriptCoverage.BackfillPolicy.standard
+        .maxManualRetries
+    /// Shown inline above the transcript. A re-transcription that failed must
+    /// not take the transcript off the screen — the old one is still the best
+    /// thing the reader has.
+    @State private var reTranscribeError: String?
+
     init(summary: CloudRecordingSummary, orgId: String?) {
         self.summary = summary
         self.orgId = orgId
@@ -59,14 +76,28 @@ struct RecordingDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .background(Theme.background)
         .toolbar {
-            // Declared first so copy keeps the outermost trailing position it
-            // has always had.
+            // The overflow menu goes innermost, ahead of the two controls that
+            // were here first: download and copy are the actions on this screen
+            // and copy keeps the outermost trailing position it has always had.
+            ToolbarItem(placement: .topBarTrailing) { overflowMenu }
             ToolbarItem(placement: .topBarTrailing) { downloadControl }
             ToolbarItem(placement: .topBarTrailing) {
                 CopyTranscriptButton(
                     text: plainTranscript,
                     isEmpty: readable.isEmpty)
             }
+        }
+        .confirmationDialog(
+            "Re-transcribe this recording?",
+            isPresented: $confirmingReTranscribe,
+            titleVisibility: .visible
+        ) {
+            Button("Re-transcribe") { Task { await reTranscribe() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "The whole recording is transcribed again from the start, and the transcript you have now is replaced when the new one comes back. It uses your account's transcription hours, the same as a new meeting would."
+            )
         }
         .task { await load() }
         // Keyed on the URL, so the download landing is what opens the player:
@@ -113,6 +144,117 @@ struct RecordingDetailView: View {
         }
     }
 
+    /// Everything that is not download and not copy — which today is one thing.
+    ///
+    /// A menu rather than a third toolbar button because of what the thing is:
+    /// re-transcribing spends transcription hours and rewrites the document on
+    /// screen, and an action like that should not sit one mis-tap away from
+    /// "copy". The ellipsis costs a tap and buys a confirmation the user chose
+    /// to walk towards.
+    ///
+    /// Personal scope only, the same rule as `downloadControl`: the re-push
+    /// goes through the personal recording endpoints, so an org recording read
+    /// on this phone has nothing here to offer and the menu is absent rather
+    /// than present and dead.
+    @ViewBuilder
+    private var overflowMenu: some View {
+        if orgId == nil {
+            Menu {
+                Section {
+                    Button("Re-transcribe", systemImage: "arrow.clockwise") {
+                        confirmingReTranscribe = true
+                    }
+                    .disabled(!canReTranscribe)
+                } header: {
+                    // Localized on the way in by `reTranscribeNote`, so
+                    // `verbatim` — a key lookup here would look up a sentence
+                    // that is already the answer.
+                    if let note = reTranscribeNote { Text(verbatim: note) }
+                }
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
+            }
+        }
+    }
+
+    /// The transcript has to be loaded — it is what the queued request carries
+    /// as its fallback and what the re-push preserves the rest of — and the
+    /// budget has to have something left in it.
+    private var canReTranscribe: Bool {
+        meta != nil && !isReTranscribing && retriesRemaining > 0
+    }
+
+    /// Why the item above is disabled, when it is. nil when it is not: a menu
+    /// that explains an action you can simply take is noise.
+    private var reTranscribeNote: String? {
+        if isReTranscribing {
+            return String(localized: "Already re-transcribing this recording.")
+        }
+        if retriesRemaining <= 0 {
+            return String(
+                localized: "This recording has been re-transcribed as many times as allowed.")
+        }
+        return nil
+    }
+
+    /// Send the audio for transcription again and replace the transcript with
+    /// what comes back.
+    ///
+    /// The audio has to be on the phone first, because the queue transcribes a
+    /// local file — so a recording that was never downloaded is downloaded
+    /// here, through the same model the toolbar's own button drives. That is
+    /// also why there is no progress indicator of its own for this step: the
+    /// download ring is already in the toolbar and is already showing it.
+    private func reTranscribe() async {
+        guard orgId == nil, let meta else { return }
+        reTranscribeError = nil
+
+        var source = audioURL
+        if source == nil {
+            await downloads.download(summary.id, cloud: app.cloud)
+            source = audioURL
+        }
+        guard let source else {
+            // `download` records the reason as the row's state; it is a better
+            // message than anything this screen could invent.
+            if case .failed(let message) = downloads.state(for: summary.id) {
+                reTranscribeError = message
+            } else {
+                reTranscribeError = String(localized: "Download failed")
+            }
+            return
+        }
+
+        do {
+            try MeetingUploader.enqueueManualBackfill(
+                summary: summary, meta: meta, audioAt: source)
+        } catch {
+            reTranscribeError = error.localizedDescription
+            return
+        }
+
+        isReTranscribing = true
+        // Straight into the queue rather than waiting for the next foreground
+        // pass: the person is looking at the screen they asked from.
+        await app.syncPendingBackfills()
+
+        if MeetingUploader.hasQueuedBackfill(for: summary.id) {
+            // Still queued means the run did not land. Say so and leave it
+            // there — the queue retries it, and nothing has been lost.
+            reTranscribeError = String(
+                localized: "Re-transcribing didn't finish. It stays queued and will be retried.")
+            refreshReTranscribeState()
+        } else {
+            await load()
+        }
+    }
+
+    private func refreshReTranscribeState() {
+        guard orgId == nil else { return }
+        isReTranscribing = MeetingUploader.hasQueuedBackfill(for: summary.id)
+        retriesRemaining = MeetingUploader.manualRetriesRemaining(for: summary.id)
+    }
+
     /// What the view renders, and therefore what "copy the transcript" means
     /// here: the tentative tail a live session leaves behind never reaches this
     /// screen, so it must not reach the pasteboard either.
@@ -139,6 +281,7 @@ struct RecordingDetailView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 22) {
+                    reTranscribeStatus
                     header
                     findings(meta)
                     if segments.isEmpty {
@@ -298,6 +441,38 @@ struct RecordingDetailView: View {
         }
     }
 
+    /// One line at the top of the transcript while a re-transcription is
+    /// queued or running, and one line if the last one failed.
+    ///
+    /// Deliberately not a spinner over the screen and deliberately not a
+    /// disabled state on the text. The job takes minutes, the transcript that
+    /// is already here is readable and playable throughout, and the only thing
+    /// that changes when the new one lands is the words — so the honest UI is a
+    /// sentence saying so, above a document that still works.
+    @ViewBuilder
+    private var reTranscribeStatus: some View {
+        if isReTranscribing || reTranscribeError != nil {
+            VStack(alignment: .leading, spacing: 6) {
+                if isReTranscribing {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.mini)
+                        Text("Re-transcribing… this can take a few minutes.")
+                    }
+                    .font(.parley.footnote)
+                    .foregroundStyle(Color(.secondaryLabel))
+                }
+                if let reTranscribeError {
+                    Text(verbatim: reTranscribeError)
+                        .font(.parley.footnote)
+                        .foregroundStyle(Theme.destructive)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
     /// The recording's facts, as one plain secondary line. It used to sit in a
     /// pale-blue band, which made the least important thing on the page the only
     /// thing with a shape.
@@ -367,6 +542,9 @@ struct RecordingDetailView: View {
                 return
             }
         #endif
+        // Before the fetch, not after: this is local state, and a fetch that
+        // fails still has to stop claiming a re-transcription is running.
+        refreshReTranscribeState()
         do {
             meta =
                 orgId == nil
