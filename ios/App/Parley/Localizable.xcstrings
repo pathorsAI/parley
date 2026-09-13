@@ -1511,19 +1511,19 @@
         }
       }
     },
-    "Live transcription stopped, but the recording is still running and will be transcribed after it syncs.": {
+    "Live transcription stopped. The recording keeps running, and the audio is transcribed in full after it syncs.": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Live transcription stopped, but the recording is still running and will be transcribed after it syncs."
+            "value": "Live transcription stopped. The recording keeps running, and the audio is transcribed in full after it syncs."
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "即時轉錄已停止，但錄音仍在繼續，同步後會在雲端完成轉錄。"
+            "value": "即時轉錄已停止。錄音仍在繼續，同步後會用完整音檔補上逐字稿。"
           }
         }
       }
@@ -3763,19 +3763,19 @@
         }
       }
     },
-    "You're out of transcription quota — live transcription stopped. The recording is still running and will be transcribed once the quota resets.": {
+    "You're out of transcription quota — live transcription stopped. The recording keeps running, and the audio is transcribed in full after it syncs.": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "You're out of transcription quota — live transcription stopped. The recording is still running and will be transcribed once the quota resets."
+            "value": "You're out of transcription quota — live transcription stopped. The recording keeps running, and the audio is transcribed in full after it syncs."
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "轉錄額度已用完，即時字幕停止了。錄音仍在繼續，額度重置後會自動轉錄。"
+            "value": "轉錄額度已用完，即時轉錄停止了。錄音仍在繼續，同步後會用完整音檔補上逐字稿。"
           }
         }
       }

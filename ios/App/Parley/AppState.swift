@@ -100,6 +100,11 @@ final class AppState: NSObject, ObservableObject {
     /// `user: null` → session is dead, clear it; a network error keeps the
     /// session so flaky connectivity never signs the user out.
     func refreshSession() async {
+        // Before anything reads the queue: a meeting that ended in a crash or a
+        // force-quit left its audio in the temporary directory with nobody
+        // holding it. Launch is the only safe moment to claim those — no
+        // recording can be writing to one yet.
+        _ = MeetingUploader.adoptOrphanedRecordings(defaultSave: defaultSave)
         pendingUploadCount = MeetingUploader.pendingCount
 
         #if DEBUG
@@ -244,6 +249,20 @@ final class AppState: NSObject, ObservableObject {
         }
         let result = await MeetingUploader.syncPending(cloud: cloud, orgs: orgs)
         pendingUploadCount = result.remaining
+        // Strictly after the uploads, and never in their place: a recording
+        // that is not in the cloud yet has a more urgent debt than one whose
+        // transcript came up short. Backfills also run for minutes at a time,
+        // so putting them first would park a queued meeting behind them.
+        await syncPendingBackfills()
+    }
+
+    /// Re-transcribe recordings whose live transcript did not account for their
+    /// audio. Silent by design — the recording is already in the library and
+    /// readable, so this improves it rather than unblocking it, and there is
+    /// nothing here for a person to do or decide.
+    func syncPendingBackfills() async {
+        guard signedIn else { return }
+        _ = await MeetingUploader.syncPendingBackfills(cloud: cloud)
     }
 
     func deleteAccount() async throws {
