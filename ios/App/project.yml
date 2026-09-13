@@ -34,8 +34,8 @@ targets:
       path: Parley/Info.plist
       properties:
         CFBundleDisplayName: Parley
-        CFBundleShortVersionString: "1.10"
-        CFBundleVersion: "21"
+        CFBundleShortVersionString: "1.11"
+        CFBundleVersion: "22"
         UILaunchScreen: {}
         # Localized in Parley/InfoPlist.xcstrings; this is the fallback value.
         NSMicrophoneUsageDescription: Parley records the meeting in the room so it can transcribe it live. Audio goes only to the transcription provider tied to your account.
@@ -84,8 +84,8 @@ targets:
       properties:
         # Localized in ../Keyboard/InfoPlist.xcstrings; this is the fallback.
         CFBundleDisplayName: Parley Voice
-        CFBundleShortVersionString: "1.10"
-        CFBundleVersion: "21"
+        CFBundleShortVersionString: "1.11"
+        CFBundleVersion: "22"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.keyboard-service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
