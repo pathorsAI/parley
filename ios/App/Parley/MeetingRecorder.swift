@@ -579,14 +579,14 @@ final class MeetingRecorder: ObservableObject {
             // real chunk rate instead: bursts and pauses, the same every run, so
             // the captured frame is reproducible and shows what the view is for.
             demoLevelTimer?.invalidate()
-            var tick = 0
             demoLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.085, repeats: true) {
                 [weak self] _ in
-                guard let self else { return }
-                let pattern = Self.demoLevelPattern
-                self.micLevel = pattern[tick % pattern.count]
-                self.micSample &+= 1
-                tick += 1
+                Task { @MainActor in
+                    guard let self else { return }
+                    let pattern = Self.demoLevelPattern
+                    self.micLevel = pattern[self.micSample % pattern.count]
+                    self.micSample &+= 1
+                }
             }
         }
 
