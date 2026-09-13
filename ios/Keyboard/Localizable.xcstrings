@@ -237,6 +237,23 @@
         }
       }
     },
+    "Microphone taken by the system. Tap to restart.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Microphone taken by the system. Tap to restart."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "麥克風被系統佔用，點一下重新開始"
+          }
+        }
+      }
+    },
     "Neutral tone": {
       "extractionState": "manual",
       "localizations": {

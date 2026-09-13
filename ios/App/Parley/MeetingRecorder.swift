@@ -370,11 +370,21 @@ final class MeetingRecorder: ObservableObject {
             status = String(localized: "Microphone paused by the system — waiting to resume")
         case .resumed:
             status = String(localized: "Microphone is back — still recording")
-        case .failed(let message):
-            // The mic is genuinely gone. Everything captured so far is still
-            // good, so hand the view the cue to end the meeting properly
-            // rather than leave a recording that records nothing.
-            status = String(localized: "Lost the microphone: \(message)")
+        case .lost(let loss):
+            // The mic is gone and the capture has run out of ways to take it
+            // back. Everything captured so far is still good, so hand the view
+            // the cue to end the meeting properly rather than leave a recording
+            // that records nothing. A meeting is recorded from the foreground,
+            // so the two reasons are worth telling apart: another app holding
+            // the input is something the person in the room can act on, and an
+            // audio stack that refused is not.
+            switch loss {
+            case .takenBySystem:
+                status = String(
+                    localized: "Lost the microphone — something else is using it")
+            case .broken(let message):
+                status = String(localized: "Lost the microphone: \(message)")
+            }
             micLevel = 0
             lostMicrophone = true
         }

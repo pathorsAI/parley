@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import ParleyKit
+import UIKit
 
 /// Microphone capture → 16 kHz mono Int16 chunks, the pipeline's universal
 /// format (desktop `TARGET_SAMPLE_RATE`; the relay meters 32 000 bytes/s).
@@ -31,6 +32,21 @@ import ParleyKit
 /// notification at all, and reports each transition through `onStatus` so the
 /// UI can say what is going on instead of going quietly silent.
 ///
+/// ## The row that was hiding inside the first
+///
+/// The first row has a case in it that the rebuild loop could not answer, and it
+/// is the one behind the "the system's own dictation kills the Parley keyboard"
+/// report: an interruption that the app cannot recover from *where it stands*.
+/// iOS refuses `setActive(true)` to a backgrounded app that another client
+/// interrupted, and an interruption raised by a system service does not reliably
+/// post its `.ended`. The old loop answered both by burning six attempts in
+/// under twelve seconds and then going inert — nothing watched for the
+/// foreground, which is the one state where the activation would have been
+/// allowed. `CaptureRecovery` (ParleyKit) is where that sequence now lives:
+/// probe even while interrupted, a ladder long enough to outlast a dictation
+/// rather than a route change, and a give-up that stays armed for the foreground
+/// and says so through `onStatus(.lost)` instead of going quiet.
+///
 /// `@unchecked Sendable` because every mutable field is confined to `queue`:
 /// start, stop, the four notification handlers, and the watchdog all run there,
 /// and nothing else reads them. The single exception is the flag behind
@@ -51,14 +67,16 @@ final class AudioCapture: @unchecked Sendable {
         /// Rebuilt and capturing again after an interruption, a route change,
         /// or a media-server reset.
         case resumed
-        /// Could not get the microphone back. Audio is over for this session.
-        case failed(String)
+        /// Could not get the microphone back, and the owner has to say so.
+        ///
+        /// Not the end of this object: the capture stays armed and answers a
+        /// foreground trip or a media-services reset with one more rebuild (see
+        /// `CaptureRecovery.Phase.lost`). It does report `isCapturing == false`
+        /// from here, so nothing borrows it in the meantime — a capture that
+        /// might recover is still not a microphone.
+        case lost(CaptureRecovery.Loss)
     }
 
-    /// Attempts before giving up on a rebuild. With the backoff below that is
-    /// roughly eight seconds of trying, which covers a route settling down
-    /// without leaving a dead recording running for minutes.
-    private static let maxRecoveryAttempts = 6
     /// How often to check that the engine is still actually running. Route
     /// changes the system cannot restore, and interruptions that never post
     /// their `.ended`, both show up here and nowhere else.
@@ -82,15 +100,40 @@ final class AudioCapture: @unchecked Sendable {
     private var wantsCapture = false { didSet { publishCapturing() } }
     /// A tap is installed and the engine is running.
     private var live = false { didSet { publishCapturing() } }
-    /// The system holds the microphone; do not fight it for the hardware.
+    /// The system holds the microphone. The ladder still probes — that is the
+    /// only way to notice an interruption that never posts its `.ended` — but
+    /// nothing else (route change, configuration change, watchdog) touches the
+    /// engine while this is true.
     private var interrupted = false { didSet { publishCapturing() } }
+    /// The recovery ran out of attempts and the owner has been told. Kept
+    /// separate from `wantsCapture`, which used to be cleared here: a capture
+    /// whose `wantsCapture` is false cannot be revived by anything, cannot even
+    /// be `stop()`ped properly (`end()` returns at its own guard, so the audio
+    /// session was never handed back and whatever we interrupted never
+    /// resumed), and is exactly the corpse this file's `isCapturing` doc warns
+    /// about. `lost` says the same thing to every reader while leaving the
+    /// object able to come back.
+    private var lost = false { didSet { publishCapturing() } }
     /// The hardware format the current tap and converter were built for.
     private var tapFormat: AVAudioFormat?
-    private var recoveryAttempts = 0
+    /// When to try again, how long to keep trying, and when to say so.
+    private var recovery = CaptureRecovery()
     /// A rebuild chain is in flight. The watchdog fires every two seconds and
     /// the notifications arrive in clusters, so without this a slow recovery
     /// would end up with several chains racing each other for the same engine.
+    ///
+    /// It is also what keeps the ladder monotonic. The watchdog's "the engine is
+    /// not running" is *true* for the whole of a recovery, and the event it feeds
+    /// the policy resets the attempt count — so a watchdog allowed to speak
+    /// during a chain would reset the ladder every two seconds and the recovery
+    /// could never reach the end of it. A ladder that never ends is a keyboard
+    /// that is never told, which is the bug wearing a different hat.
     private var rebuilding = false
+    /// Bumped for every rebuild chain. A chain that has been superseded — a probe
+    /// outlived by the `.ended` it was waiting for, a ladder overtaken by the app
+    /// coming to the foreground — dies at its next step instead of racing the
+    /// chain that replaced it.
+    private var rebuildEpoch = 0
 
     /// What `isCapturing` reports, kept in step with the three flags above by
     /// their `didSet`. Written on `queue` like they are, read from anywhere,
@@ -174,7 +217,7 @@ final class AudioCapture: @unchecked Sendable {
     }
 
     private func publishCapturing() {
-        let value = wantsCapture && live && !interrupted
+        let value = wantsCapture && live && !interrupted && !lost
         capturingLock.lock()
         capturing = value
         capturingLock.unlock()
@@ -215,6 +258,8 @@ final class AudioCapture: @unchecked Sendable {
     private func begin() throws {
         guard !wantsCapture else { return }
         wantsCapture = true
+        lost = false
+        _ = recovery.apply(.restarted)
         do {
             try activateSession()
             try startEngine()
@@ -228,11 +273,21 @@ final class AudioCapture: @unchecked Sendable {
     }
 
     private func end() {
-        guard wantsCapture else { return }
+        // Deliberately not `guard wantsCapture`, which is what it used to be: a
+        // capture that had run out of rebuild attempts cleared that flag itself,
+        // so `stop()` on the one object that most needed tearing down returned
+        // here having done nothing — observers left registered, the watchdog
+        // still firing every two seconds, and `setActive(false)` never sent, so
+        // the music the interruption paused stayed paused. `lost` is what the
+        // give-up sets now, and this is idempotent without the flag.
+        guard wantsCapture || lost else { return }
         wantsCapture = false
         interrupted = false
+        lost = false
         rebuilding = false
-        recoveryAttempts = 0
+        // Any chain still pending belongs to a capture that is over.
+        rebuildEpoch += 1
+        _ = recovery.apply(.restarted)
         watchdog?.cancel()
         watchdog = nil
         removeObservers()
@@ -288,47 +343,129 @@ final class AudioCapture: @unchecked Sendable {
         live = false
     }
 
-    /// Rebuild the engine after the system took the microphone away. Retries
-    /// with backoff; gives up loudly rather than leaving a silent recording.
-    private func rebuild(afterMilliseconds delay: Int) {
-        guard !rebuilding else { return }
-        rebuilding = true
-        attemptRebuild(afterMilliseconds: delay)
+    /// Do what the recovery policy decided. The single door between
+    /// `CaptureRecovery` and the engine, so every event — the four
+    /// notifications, the watchdog, a foreground trip — reaches the ladder the
+    /// same way and none of them can invent a retry of its own. Queue only.
+    private func perform(_ action: CaptureRecovery.Action) {
+        switch action {
+        case .wait:
+            break
+        case .rebuild(let delay):
+            rebuild(afterMilliseconds: delay)
+        case .giveUp(let loss):
+            rebuilding = false
+            // Armed, not dead: `lost` stops anything borrowing this capture and
+            // stops the watchdog spinning on an engine nobody can open, while
+            // `wantsCapture` stays true so a foreground trip, a media-services
+            // reset, or a late `.ended` can still start a fresh chain — and so
+            // `stop()` can still hand the audio session back.
+            lost = true
+            teardownEngine()
+            onStatus(.lost(loss))
+        }
     }
 
-    private func attemptRebuild(afterMilliseconds delay: Int) {
+    /// Rebuild the engine after the system took the microphone away. Retries on
+    /// the policy's ladder; tells the owner rather than leaving a silent
+    /// recording.
+    ///
+    /// Every call supersedes whatever chain was in flight rather than being
+    /// dropped in favour of it, and the dedupe that used to live here now lives
+    /// at the three call sites that must not interrupt a chain (see
+    /// `rebuilding`). The difference matters for the commonest interruption there
+    /// is: a call ending posts `.ended` while the probe scheduled by `.began` is
+    /// still pending, and waiting the probe out would turn a 250 ms resume into a
+    /// two-and-a-half second one.
+    private func rebuild(afterMilliseconds delay: Int) {
+        rebuildEpoch += 1
+        rebuilding = true
+        attemptRebuild(afterMilliseconds: delay, epoch: rebuildEpoch)
+    }
+
+    private func attemptRebuild(afterMilliseconds delay: Int, epoch: Int) {
         queue.asyncAfter(deadline: .now() + .milliseconds(delay)) { [self] in
-            guard wantsCapture, !interrupted else {
+            // Superseded. `rebuilding` belongs to the chain that replaced this
+            // one, so it is deliberately left alone.
+            guard epoch == rebuildEpoch else { return }
+            guard wantsCapture else {
                 rebuilding = false
                 return
             }
+            // No `!interrupted` guard any more, and that is the point: while the
+            // system holds the input this is the only thing still asking for it
+            // back, and an interruption raised by a system service does not
+            // always post the `.ended` the old code waited for. Being refused
+            // costs one throw and feeds the ladder; succeeding means the other
+            // client let go without saying so.
             do {
                 teardownEngine()
                 try activateSession()
                 try startEngine()
-                let wasBroken = recoveryAttempts > 0
-                recoveryAttempts = 0
+                // "Was broken" as it always meant: this chain had to work for
+                // it, or the system had taken the input. A route change that
+                // rebuilt first time is not news.
+                let wasBroken = recovery.attempts > 0 || interrupted
+                // The system evidently let go, whether or not it said so.
+                interrupted = false
+                lost = false
+                _ = recovery.apply(.rebuildSucceeded)
                 rebuilding = false
                 onStatus(wasBroken ? .resumed : .running)
             } catch {
-                recoveryAttempts += 1
-                guard recoveryAttempts <= Self.maxRecoveryAttempts else {
-                    rebuilding = false
-                    wantsCapture = false
-                    teardownEngine()
-                    onStatus(.failed(error.localizedDescription))
-                    return
-                }
-                attemptRebuild(afterMilliseconds: min(4_000, 250 << recoveryAttempts))
+                let next = recovery.apply(
+                    .rebuildFailed(
+                        systemHoldsInput: Self.systemHoldsInput(error),
+                        description: error.localizedDescription))
+                // The chain continues inside `perform` → `rebuild`, which is a
+                // no-op while `rebuilding` is set — so it is cleared first.
+                rebuilding = false
+                perform(next)
             }
         }
     }
+
+    /// Whether a failed activation means "somebody else has the input" rather
+    /// than "this device's audio is broken".
+    ///
+    /// It decides what the user is told, and the two answers are different
+    /// pieces of advice: the first is fixed by bringing Parley forward, and the
+    /// second is not fixed by anything the user can do from a keyboard. Every
+    /// code here is the system saying the input is not ours to take right now —
+    /// including the one a backgrounded app gets for being backgrounded
+    /// (`insufficientPriority`, `'!pri'`, 561017449) and the one it gets for
+    /// trying to interrupt a client with a stronger claim (`cannotInterruptOthers`,
+    /// `'!int'`). `inputUnavailable` is ours: a 0 Hz input node is the hardware
+    /// not being back yet, which is the same situation seen one layer up.
+    private static func systemHoldsInput(_ error: Error) -> Bool {
+        if let capture = error as? CaptureError {
+            switch capture {
+            case .inputUnavailable: return true
+            case .noConverter: return false
+            }
+        }
+        let code = (error as NSError).code
+        return Self.systemHoldsInputCodes.contains(code)
+    }
+
+    private static let systemHoldsInputCodes: Set<Int> = Set(
+        [
+            AVAudioSession.ErrorCode.insufficientPriority,
+            .cannotInterruptOthers,
+            .cannotStartRecording,
+            .isBusy,
+            .siriIsRecording,
+            .sessionNotActive,
+            .resourceNotAvailable,
+            .mediaServicesFailed,
+        ].map { Int($0.rawValue) })
 
     /// True when the tap can no longer be trusted: the engine stopped, or the
     /// hardware format moved out from under the converter. A route change that
     /// leaves both intact (plugging in a charger, say) needs no rebuild, and
     /// rebuilding anyway would punch a hole in the audio for no reason.
     private func needsRebuild() -> Bool {
+        guard !lost else { return false }
         guard live, engine.isRunning, let tapFormat else { return true }
         // Sample rate and channel count on purpose, rather than `!=` on the
         // whole format: those are what the converter was built against, and a
@@ -365,6 +502,25 @@ final class AudioCapture: @unchecked Sendable {
             center.addObserver(
                 forName: .AVAudioEngineConfigurationChange, object: nil, queue: nil
             ) { [weak self] _ in self?.handleConfigurationChange() },
+
+            // The two ways the app can come forward. This is not an audio
+            // notification at all, and that is exactly why it was missing: the
+            // refusal that burns the recovery ladder is
+            // "backgrounded app, another client running", and the only thing
+            // that changes it is the app being on screen. Without this, the one
+            // moment `setActive(true)` would have succeeded went by unnoticed
+            // and a capture that had given up stayed given up.
+            center.addObserver(
+                forName: UIApplication.didBecomeActiveNotification, object: nil, queue: nil
+            ) { [weak self] _ in self?.handleAppActive() },
+            // Scene activation as well as app activation: a scene coming
+            // forward without the application-level note (a second window, a
+            // scene restored into an already-active app) is the same fact for
+            // our purposes, and the recovery ignores the event unless it is
+            // waiting for something.
+            center.addObserver(
+                forName: UIScene.didActivateNotification, object: nil, queue: nil
+            ) { [weak self] _ in self?.handleAppActive() },
         ]
     }
 
@@ -387,17 +543,29 @@ final class AudioCapture: @unchecked Sendable {
                 // rebuild starts from whatever format we get back.
                 teardownEngine()
                 onStatus(.interrupted)
+                // A probe is scheduled from here, not only from `.ended`. Some
+                // interruptions — system dictation among them — never post one.
+                perform(recovery.apply(.interrupted))
             case .ended:
                 interrupted = false
                 // `.shouldResume` is advisory and is simply absent for some
                 // interruptions (a call the other side ended). A recording the
                 // user never stopped always wants the microphone back, so the
                 // option is deliberately not consulted.
-                recoveryAttempts = 0
-                rebuild(afterMilliseconds: 250)
+                perform(recovery.apply(.interruptionEnded))
             @unknown default:
                 break
             }
+        }
+    }
+
+    /// Parley came forward. The one event that turns the refusal a backgrounded
+    /// app gets from `setActive(true)` into an activation that can succeed, so a
+    /// recovery that had run out of attempts gets one more chain from here.
+    private func handleAppActive() {
+        queue.async { [self] in
+            guard wantsCapture else { return }
+            perform(recovery.apply(.appBecameActive))
         }
     }
 
@@ -410,9 +578,12 @@ final class AudioCapture: @unchecked Sendable {
         case .oldDeviceUnavailable, .newDeviceAvailable, .override, .categoryChange,
             .routeConfigurationChange, .wakeFromSleep:
             queue.async { [self] in
-                guard wantsCapture, !interrupted, needsRebuild() else { return }
-                recoveryAttempts = 0
-                rebuild(afterMilliseconds: 0)
+                // Still `!interrupted`, and now `!rebuilding` as well: while a
+                // recovery is climbing the ladder it owns the engine, and a route
+                // change arriving in the middle of one must neither start a
+                // second chain nor reset the first one's attempt count.
+                guard wantsCapture, !interrupted, !rebuilding, needsRebuild() else { return }
+                perform(recovery.apply(.engineStopped))
             }
         default:
             break
@@ -423,9 +594,8 @@ final class AudioCapture: @unchecked Sendable {
         queue.async { [self] in
             // AVAudioEngine removes taps itself on a configuration change, so
             // there is no "still fine" case to check for here.
-            guard wantsCapture, !interrupted else { return }
-            recoveryAttempts = 0
-            rebuild(afterMilliseconds: 0)
+            guard wantsCapture, !interrupted, !lost, !rebuilding else { return }
+            perform(recovery.apply(.engineStopped))
         }
     }
 
@@ -437,9 +607,12 @@ final class AudioCapture: @unchecked Sendable {
             teardownEngine()
             engine = AVAudioEngine()
             interrupted = false
-            recoveryAttempts = 0
+            // Reached even from `lost`, on purpose: a restarted media server
+            // took the other client's session down with ours, so this is one of
+            // the two events worth trying again after having given up.
+            lost = false
             onStatus(.interrupted)
-            rebuild(afterMilliseconds: 250)
+            perform(recovery.apply(.mediaServicesReset))
         }
     }
 
@@ -450,8 +623,16 @@ final class AudioCapture: @unchecked Sendable {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + Self.watchdogInterval, repeating: Self.watchdogInterval)
         timer.setEventHandler { [weak self] in
-            guard let self, wantsCapture, !interrupted, needsRebuild() else { return }
-            rebuild(afterMilliseconds: 0)
+            // `!lost` lives in `needsRebuild()`: a capture that has given up
+            // must not be probed every two seconds forever — the ladder had its
+            // turn, and what revives it now is the foreground or a media-services
+            // reset, both of which announce themselves. `!rebuilding` is the
+            // other half: this fires every two seconds and "the engine is not
+            // running" is true for the whole of a recovery, so a watchdog allowed
+            // to speak during one would reset the ladder forever.
+            guard let self, wantsCapture, !interrupted, !rebuilding, needsRebuild()
+            else { return }
+            perform(recovery.apply(.engineStopped))
         }
         watchdog?.cancel()
         watchdog = timer

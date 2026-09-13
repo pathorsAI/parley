@@ -70,7 +70,9 @@ hand-off, and the in-app dictation session are new.
 #### Three ways a session ends
 
 `done` delivers, `error` explains, `cancelled` says nothing and leaves the
-field as it was. They are three states rather than two plus a special case,
+field as it was. (There is a fourth, `micTaken`, which is not really an ending —
+the app may still resume the same session. See *When the system takes the
+microphone*.) They are three states rather than two plus a special case,
 because the keyboard's rule for `done` is "insert what is here": an empty
 transcript from a session where nobody spoke and a transcript the user threw
 away have to be different events, or the rule needs an exception, and the
@@ -323,6 +325,111 @@ because the user can see the second and cannot see the first.**
 A background task is never held while a window is open. `beginBackgroundTask` is
 worth nothing next to an active audio session, and ending an assertion in the
 background is a documented way to get suspended anyway.
+
+### When the system takes the microphone: iOS's own dictation
+
+The report this section exists for: *"If I turn on voice typing and then press the
+iPhone's built-in dictation, my voice stops going in — the Parley keyboard can't
+be used any more."* Not for that one dictation. From then on.
+
+It is the microphone window's failure mode taken to its conclusion, and the whole
+sequence is worth writing down because five separate mechanisms each did the
+locally reasonable thing and the sum was a dead keyboard.
+
+**What happens, step by step.** Parley is in the background holding the
+microphone; a Parley dictation is running; the user taps the system keyboard's
+mic (or the host app's dictation button), which opens a recording session in
+another process with a stronger claim on the input.
+
+1. iOS posts `interruptionNotification` `.began`. `AudioCapture` tears the engine
+   down and reports `.interrupted`.
+2. **The pane went on claiming to listen.** `handle(capture:)` treated
+   `.interrupted` during a session as cosmetic — it zeroed the level meter and
+   published nothing — so the downlink still said `listening`. The keyboard's
+   liveness watchdog could not save it either: the presence heartbeat keeps
+   stamping while the process is awake, and `Downlink.presumedDeadAt` takes the
+   *newer* of the downlink's stamp and that heartbeat. So ⏹ stayed on screen over
+   a microphone iOS had taken away, for as long as two minutes, until the
+   session's own cap ended it as a success with nothing to insert.
+3. **`.ended` does not reliably arrive.** System services raise interruptions
+   that never announce their end. Recovery hung entirely off `.ended`, and the
+   watchdog that exists precisely as the backstop for "iOS announced nothing" was
+   skipped while `interrupted` was set — the one flag the case sets.
+4. **When it did arrive, twelve seconds of being refused.** `rebuild` called
+   `AVAudioSession.setActive(true)`, which iOS refuses to a backgrounded app that
+   another client interrupted (`!pri` / 561017449, `!int`, `!rec`). Six attempts
+   on a 250 ms → 4 s ladder is under twelve seconds — the right length for a
+   route change settling, and nothing like long enough for a person dictating a
+   sentence into iOS.
+5. **Giving up was permanent by construction.** The give-up cleared
+   `wantsCapture`, which every recovery path guards on — the watchdog, the route
+   change, the configuration change, even a media-services reset. Nothing watched
+   for the app coming to the foreground, which is the one state where the
+   activation would have been allowed. `stop()` was a no-op for the same reason
+   (`end()` guards on that flag), so the audio session was never deactivated and
+   whatever the interruption had paused stayed paused.
+6. **And then the corpse killed the next session.** `onStatus` hops to the main
+   actor, and a backgrounded process runs no main-actor work until it is resumed.
+   So the `.failed` published while giving up in the background could be delivered
+   *after* the user's next tap had brought Parley forward and opened a fresh
+   microphone — and `handle(capture:)` had no way to tell one capture's status
+   from another's, so it failed the new session and closed the new window on the
+   strength of the old one's obituary. Tap, get thrown into Parley, "lost the
+   microphone", repeat. That is the "can't be used any more" part.
+
+**What it does now.** The retry logic is a state machine of its own,
+`CaptureRecovery` (ParleyKit), driven by `AudioCapture`: inputs are began /
+ended / rebuild-failed / app-became-active / media-services-reset / restarted,
+outputs are rebuild-now, rebuild-after(ms), and give-up. Four changes follow from
+it.
+
+- **Probe while interrupted.** `.began` schedules a rebuild attempt 2.5 s later
+  rather than waiting for an `.ended` that may not come. Being refused while the
+  other client still holds the input costs one throw and feeds the ladder;
+  succeeding means it let go without saying so.
+- **A ladder that outlasts a dictation.** Twelve attempts, 250 ms doubling to a
+  4 s cap — about half a minute — and it is *bounded*, because a capture that
+  claims to be recovering for minutes is the silent failure this whole file is
+  about.
+- **Giving up stays armed.** `lost` is a state, not the end of the object:
+  `UIApplication.didBecomeActive` / `UIScene.didActivate` and
+  `mediaServicesWereReset` each start one more chain, and a late `.ended` does
+  too. `wantsCapture` stays true, so `stop()` really stops — the session is
+  handed back and the interrupted music resumes.
+- **Statuses carry their capture.** `DictationCoordinator` numbers every
+  `AudioCapture` it opens and ignores statuses from one it has replaced, exactly
+  as relay events carry their leg.
+
+**And the pane stops lying.** A new downlink state, `micTaken`, is published the
+moment the microphone is gone — not when the recovery gives up — and the keyboard
+renders it as *Microphone taken by the system. Tap to restart.* (麥克風被系統佔用，
+點一下重新開始) in the ordinary slot ink. No toast, no alert, nothing new on the
+deck, and no red: being interrupted by the phone's own dictation is not a fault,
+it is the user having used their phone.
+
+`micTaken` is deliberately **not live** (`Downlink.State.isLive`). The question
+`isLive` answers is "should a reader keep waiting on this", and while the
+microphone is gone the answer is no whatever the app is doing about it — a live
+`micTaken` would put ⏹ back over a microphone nobody has, and would hand the
+session to the liveness watchdog, which would cancel something the app may still
+resume. Not-live gets both halves right, because **recovery is republishing, not
+resurrection**: if the capture wins the microphone back, the app publishes
+`listening` for the same session id and the keyboard picks the transcript up
+exactly where it stopped. The words already spoken were never thrown away.
+
+The window is closed at the interruption rather than at the give-up, for the
+reason the section above gives: it is a promise that the *next* tap stays put,
+and the keyboard draws that promise as a ready-microphone chip and as *Tap to
+speak*. Both are false the moment the microphone is gone.
+
+A tap in the `micTaken` state — and any tap after a lost microphone — goes
+through the ordinary start path and can only end in a brand-new capture. Three
+guards make that true rather than likely: `launch()` stops and drops any capture
+that is not `isCapturing` (a lost or interrupted one reports false), the app
+declines the no-jump start unless it is in the foreground or holding a running
+microphone, and the generation number means the old capture cannot speak for the
+new one. So the tap either opens the microphone in place (Parley foreground) or
+opens Parley, which is where iOS allows a recording session to start at all.
 
 ### App Review
 
@@ -799,7 +906,10 @@ whether the app is there*.
 These are the *idle* states. A live session takes the slot ahead of all four
 (the transcript, or the reconnecting line), and so does an error from the last
 one — an error names the actual problem, where this table can only name a
-destination.
+destination. So does the one non-error interruption the slot describes for
+itself: *Microphone taken by the system. Tap to restart.*, which sits between the
+error and the live transcript in the same fixed-height slot. See *When the system
+takes the microphone*.
 
 `ready` is the readiness mailbox saying both `signedIn` and `micGranted`; a
 missing file counts as not ready. The not-set-up tap **mints no session** — it

@@ -301,6 +301,7 @@ final class KeyboardViewController: UIInputViewController {
         bridge.partial = ""
         bridge.tail = ""
         bridge.errorText = nil
+        bridge.micTaken = false
         // The pane went live before the app has said a word; the watchdog is
         // what takes it back if the app never does (see `checkLiveness`).
         checkLiveness()
@@ -520,6 +521,7 @@ final class KeyboardViewController: UIInputViewController {
         // Not an error, so nothing is left on screen saying otherwise — the
         // slot goes back to the idle invitation to speak.
         bridge.errorText = nil
+        bridge.micTaken = false
     }
 
     /// How old a downlink may be and still get adopted by a keyboard that
@@ -644,6 +646,10 @@ final class KeyboardViewController: UIInputViewController {
         // happened to insert: a keyboard that was killed mid-session and came
         // back still shows the sentence in progress.
         bridge.tail = String(d.committed.suffix(Self.tailLimit))
+        // Cleared before the switch below sets it again, so every state that is
+        // not "the microphone is gone" takes the notice down — a resumed session
+        // included, which is the whole point of it being recoverable.
+        bridge.micTaken = false
         switch d.state {
         case .starting, .listening: 
             bridge.listening = true
@@ -683,6 +689,17 @@ final class KeyboardViewController: UIInputViewController {
             bridge.partial = ""
             bridge.tail = ""
             bridge.errorText = nil
+        case .micTaken:
+            // The pane stops claiming to listen — that claim is the bug. The
+            // notice takes the slot from the echo while it is up, but `tail` is
+            // kept rather than cleared, and so is the session id: if the app wins
+            // the microphone back it publishes `listening` for this same session
+            // and the pane comes back with the sentence still in it.
+            bridge.listening = false
+            bridge.reconnecting = false
+            bridge.partial = ""
+            bridge.errorText = nil
+            bridge.micTaken = true
         case .error:
             bridge.listening = false
             bridge.reconnecting = false
@@ -863,6 +880,15 @@ final class KeyboardBridge: ObservableObject {
     /// The app's failure for the last session (sign-in, mic permission,
     /// connection), shown in the caption slot until the next start.
     @Published var errorText: String?
+    /// The system took the microphone away from the app — its own dictation,
+    /// Siri, a call — and Parley could not get it back.
+    ///
+    /// Its own flag rather than an `errorText`, because it is neither an error
+    /// nor a caption: the pane has to stop claiming to listen, and what it shows
+    /// instead is a state the user leaves with one tap. Cleared by the next start
+    /// and by any other downlink state, including the app publishing `listening`
+    /// again for the same session when the microphone comes back.
+    @Published var micTaken = false
 
     /// Parley is set up far enough for a tap to actually transcribe: an account
     /// on this device, and microphone permission granted. False when the
