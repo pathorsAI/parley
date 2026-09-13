@@ -74,6 +74,26 @@ final class DictationCoordinator: ObservableObject {
     /// microphone-window section below.
     private var capture: AudioCapture?
     private var relay: SttRelayClient?
+    /// Bumped for every `AudioCapture` this object opens. Statuses carry the
+    /// capture they came from, for exactly the reason relay events carry their
+    /// leg (see `handle(_:from:)`): a status is a hop to the main actor, and a
+    /// backgrounded process does not run main-actor work until it is resumed. So
+    /// the `.lost` a capture published while giving up in the background can be
+    /// delivered *after* the user's next tap has brought the app forward and
+    /// opened a fresh microphone — and `handle(capture:)` had no way to tell, so
+    /// it killed the new session and closed the new window on the strength of the
+    /// old one's obituary. That is the shape the founder's report takes once the
+    /// microphone is gone: tap, get thrown into Parley, "lost the microphone",
+    /// repeat.
+    private var captureGeneration = 0
+    /// The system holds the microphone for the session that is running — its own
+    /// dictation, Siri, a call — and `AudioCapture` is trying to take it back.
+    ///
+    /// While it is set the session publishes `micTaken` whatever else happens. A
+    /// relay redial in particular must not win: its copy asks the user to keep
+    /// talking, which is the one instruction that cannot be true when the
+    /// microphone is the thing that is gone.
+    private var micTaken = false
     /// The microphone's only counterparty. It forwards to the current relay
     /// leg and *holds* what is spoken while there is none, so a dropped socket
     /// costs a pause in the words appearing rather than the sentence said
@@ -258,6 +278,7 @@ final class DictationCoordinator: ObservableObject {
         committed = ""
         partial = ""
         state = .starting
+        micTaken = false
         active = true
         leg = 0
         reconnectAttempts = 0
@@ -411,8 +432,7 @@ final class DictationCoordinator: ObservableObject {
             return
         }
 
-        state = .listening
-        publish()
+        publishLive(.listening)
         armCap()
     }
 
@@ -425,14 +445,16 @@ final class DictationCoordinator: ObservableObject {
     /// between dictations safe — an open window records nothing, because there
     /// is nowhere for the audio to go.
     private func makeCapture() -> AudioCapture {
-        AudioCapture(
+        captureGeneration += 1
+        let generation = captureGeneration
+        return AudioCapture(
             onChunk: { [weak self, audio, reportsLevel] samples, level in
                 audio.send(samples)
                 guard reportsLevel.isOpen else { return }
                 Task { @MainActor in self?.micLevel = level }
             },
             onStatus: { [weak self] status in
-                Task { @MainActor in self?.handle(capture: status) }
+                Task { @MainActor in self?.handle(capture: status, from: generation) }
             })
     }
 
@@ -579,9 +601,16 @@ final class DictationCoordinator: ObservableObject {
         }
     }
 
-    /// The microphone's own state. `AudioCapture` recovers from interruptions
-    /// and route changes on its own, so only the give-up case ends the session.
-    private func handle(capture status: AudioCapture.Status) {
+    /// The microphone's own state. `AudioCapture` recovers from interruptions and
+    /// route changes on its own, so the interesting cases are the two the user
+    /// has to be told about: the microphone being gone, and it coming back.
+    ///
+    /// `generation` is which capture is speaking — see `captureGeneration`. A
+    /// status from a capture this object has already replaced says nothing about
+    /// the microphone it is holding now, and acting on one is how a fresh session
+    /// used to be killed by its predecessor's obituary.
+    private func handle(capture status: AudioCapture.Status, from generation: Int) {
+        guard generation == captureGeneration else { return }
         guard active else {
             // No session: the microphone is only up because a window is
             // holding it, and a window that cannot be honoured is worse than
@@ -592,19 +621,128 @@ final class DictationCoordinator: ObservableObject {
             switch status {
             case .running, .resumed:
                 break
-            case .interrupted, .failed:
+            case .interrupted, .lost:
                 Task { await endWindow() }
             }
             return
         }
         switch status {
-        case .running, .resumed:
+        case .running:
             break
+        case .resumed:
+            // The microphone is back and the transcript picks up where it
+            // stopped: `runs` and `committed` were never touched, the relay leg
+            // is whatever it was, and the state goes back to what it would have
+            // been. This is the whole point of not ending the session on an
+            // interruption — a system dictation the user cancelled after two
+            // seconds costs two seconds of a pane that said so.
+            micTaken = false
+            // Only back to a state this handler took away. A session that has
+            // moved on to `finishing` is draining a relay the user asked to
+            // drain, and a microphone coming back is no reason to reopen it.
+            guard state == .micTaken else { break }
+            if relay == nil, !finishRequested {
+                // The socket died while the microphone was gone and the redial
+                // was deliberately not spent then (see `scheduleReconnect`).
+                // Now there is something to send again, so it is worth a leg.
+                reconnectAttempts = 0
+                scheduleReconnect()
+            } else {
+                publishLive(.listening)
+            }
         case .interrupted:
             micLevel = 0
-        case .failed(let message):
-            fail(String(localized: "Lost the microphone: \(message)"))
+            micTaken = true
+            // The window goes now rather than when the recovery gives up. It is
+            // a promise that the *next* tap will be served in place, and the
+            // moment the microphone is gone that promise is false — the keyboard
+            // renders it as a ready-microphone chip and as "Tap to speak", and
+            // both would be inviting the user to talk into nothing.
+            closeWindowState()
+            publishPresence()
+            guard state.isLive, state != .finishing else { break }
+            publishLive(.listening)
+        case .lost(let loss):
+            // The drain owns an ending it has already started: it publishes
+            // `done` with whatever the relay flushed, and `releaseMicrophone`
+            // then finds a capture that is not capturing and closes it. Stepping
+            // in here would replace a transcript about to be typed with a notice
+            // about the microphone.
+            guard state != .finishing else { break }
+            switch loss {
+            case .takenBySystem:
+                // Deliberately not `fail`: nothing is broken, so the copy is not
+                // red, and what the user needs is not an explanation but a way
+                // back in. `micTaken` is the state that says so, and the tap that
+                // leaves it goes through the ordinary start path — which opens a
+                // brand-new capture in the foreground, where iOS allows one.
+                endSessionWithMicTaken()
+            case .broken(let message):
+                // The audio stack itself refused, rather than somebody else
+                // holding the input. Name it: "tap to restart" would be advice
+                // that cannot work.
+                fail(String(localized: "Lost the microphone: \(message)"))
+            }
         }
+    }
+
+    /// The microphone is gone and the recovery has run out of ways to get it
+    /// back. End the session, keep every word it heard visible in the keyboard's
+    /// echo, and leave the pane in the one state that is both honest and
+    /// tappable.
+    ///
+    /// Close kin to `fail`, and separate on purpose: `fail` is red copy about
+    /// something that went wrong, and it is the path that sets `errorMessage`,
+    /// which the keyboard renders in the recording red. Being interrupted by the
+    /// system is not a fault — it is the user having used their phone — so it
+    /// gets a state of its own instead of a paragraph of apology.
+    private func endSessionWithMicTaken() {
+        capTimer?.cancel()
+        capTimer = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        let dying = relay
+        relay = nil
+        audio.discard()
+        dying?.cancel()
+        // The tail the relay will never settle is still the best record of what
+        // was said before the microphone went — the same reason `finishUp` folds
+        // it in. Nothing is inserted from this state, so it only ever shows up
+        // in the keyboard's echo.
+        foldPartialIn()
+        let cap = capture
+        capture = nil
+        reportsLevel.set(false)
+        micLevel = 0
+        // Detached for the same reason `fail` does it: closing an audio session
+        // is slow and nothing below depends on it. It really does close now — a
+        // capture that had given up used to make `stop()` a no-op, which left
+        // the session un-deactivated and the music it interrupted paused.
+        Task { await cap?.stop() }
+        closeWindowState()
+        errorMessage = nil
+        micTaken = false
+        state = .micTaken
+        publish()
+        active = false
+        // The answer to "will the next tap stay put" just became no, and the
+        // keyboard draws that answer on the record button. Said now rather than
+        // at the next heartbeat, so the glyph and the notice agree from the
+        // moment the notice appears.
+        publishPresence()
+        beginLinger()
+    }
+
+    /// Publish a live state, with the microphone having the last word.
+    ///
+    /// Every `listening` / `reconnecting` transition goes through here so that
+    /// none of them can quietly contradict a microphone that is not there. The
+    /// relay's ladder is the one that would: a socket dying during an
+    /// interruption is ordinary, and `reconnecting` tells the user to keep
+    /// talking.
+    private func publishLive(_ candidate: DictationChannel.Downlink.State) {
+        state = micTaken ? .micTaken : candidate
+        publish()
     }
 
     private func handle(_ event: SttRelayEvent, from eventLeg: Int) {
@@ -687,6 +825,14 @@ final class DictationCoordinator: ObservableObject {
         foldPartialIn()
         publish()
 
+        // Nothing to redial *into* while the system holds the microphone. A leg
+        // costs a handshake and a billing session, the bridge has nothing to hand
+        // it, and spending the four-rung ladder here would end the session in
+        // seconds with "lost the connection" copy over what is really a
+        // microphone somebody else is using. The capture's own recovery owns this
+        // stretch and redials on `.resumed` — see `handle(capture:from:)`.
+        guard !micTaken else { return }
+
         guard let token = KeychainStore.get(AppState.tokenKey) else {
             // The session expired mid-dictation. Redialling would only be
             // refused, and the user needs to be told the actual reason.
@@ -703,8 +849,7 @@ final class DictationCoordinator: ObservableObject {
         reconnectAttempts += 1
         leg += 1
         let nextLeg = leg
-        state = .reconnecting
-        publish()
+        publishLive(.reconnecting)
 
         reconnectTask = Task { [weak self] in
             try? await Task.sleep(for: backoff)
@@ -728,8 +873,7 @@ final class DictationCoordinator: ObservableObject {
             try await client.start()
             guard leg == targetLeg, active, !finishRequested else { return }
             reconnectAttempts = 0
-            state = .listening
-            publish()
+            publishLive(.listening)
         } catch {
             guard leg == targetLeg else { return }
             audio.hold()
@@ -873,6 +1017,7 @@ final class DictationCoordinator: ObservableObject {
         committed = ""
         partial = ""
         errorMessage = nil
+        micTaken = false
         state = .cancelled
         publish()
         // In this order, and for the same reason `finishUp` uses it:
@@ -893,6 +1038,7 @@ final class DictationCoordinator: ObservableObject {
         reconnectTask?.cancel()
         reconnectTask = nil
         audio.discard()
+        micTaken = false
         reportsLevel.set(false)
         // Fold the last partial into the committed text so nothing said right
         // before the endpoint is dropped from what the keyboard inserts.
@@ -1009,6 +1155,7 @@ final class DictationCoordinator: ObservableObject {
 
     private func fail(_ message: String) {
         errorMessage = message
+        micTaken = false
         state = .error
         capTimer?.cancel()
         capTimer = nil

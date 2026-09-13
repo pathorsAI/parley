@@ -118,16 +118,43 @@ public enum DictationChannel {
             /// same event. It is not `error` either: nothing failed, and the
             /// pane must not show red copy for something the user asked for.
             case cancelled
+            /// The system took the microphone — its own dictation, Siri, a
+            /// call — and the app is trying to take it back, or has run out of
+            /// ways to.
+            ///
+            /// Deliberately **not** `reconnecting`, which is the socket
+            /// dropping under a microphone that is still open and still being
+            /// held for. Here the microphone is the thing that is gone, so
+            /// "keep talking" would be the one instruction that cannot help:
+            /// nothing said while this state is up is captured by anybody. The
+            /// pane has to stop claiming to listen the moment it arrives.
+            ///
+            /// Also not `error`. An error is red copy about a session that is
+            /// over; this is a state the user can leave with one tap, it is
+            /// what the copy says, and the app may still resume the very same
+            /// session in place — a recovery republishes `listening` for the
+            /// same id and the transcript carries on where it stopped.
+            case micTaken
 
             /// The session is still being served: a process somewhere is
             /// holding a microphone (or draining a relay) on its behalf. The
             /// three terminal states are claims about the past and stay true
             /// when that process is gone; these four are claims about *now*,
             /// and are the only ones a reader has to doubt.
+            ///
+            /// `micTaken` is not among them, and that is not an oversight: the
+            /// question `isLive` answers is "should a reader keep waiting on
+            /// this", and the answer while the microphone is gone is no
+            /// whatever the app is doing about it. A live `micTaken` would put
+            /// the keyboard back to drawing ⏹ over a microphone nobody has —
+            /// which is the bug — and would hand it to the liveness watchdog,
+            /// which would eventually cancel a session the app might still
+            /// resume. Not-live gets both right: the pane goes honest at once,
+            /// and a resume simply publishes `listening` again.
             public var isLive: Bool {
                 switch self {
                 case .starting, .listening, .reconnecting, .finishing: return true
-                case .done, .error, .cancelled: return false
+                case .done, .error, .cancelled, .micTaken: return false
                 }
             }
         }

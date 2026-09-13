@@ -95,6 +95,9 @@ struct DictationView: View {
         // Deliberately not the warning triangle: the microphone is still open
         // and the words are being kept. This is a pause, not a failure.
         case .reconnecting: return "arrow.triangle.2.circlepath"
+        // The microphone is the thing that is gone, and the mark says exactly
+        // that rather than a generic warning.
+        case .micTaken: return "mic.slash"
         default: return "waveform"
         }
     }
@@ -120,6 +123,7 @@ struct DictationView: View {
         case .done: return String(localized: "Done")
         case .error: return String(localized: "Couldn't start")
         case .cancelled: return String(localized: "Discarded")
+        case .micTaken: return String(localized: "Microphone taken by the system")
         // Handled above, before the swipe guidance.
         case .reconnecting: return String(localized: "Reconnecting…")
         }
@@ -143,6 +147,14 @@ struct DictationView: View {
         }
         if coordinator.state == .cancelled {
             return String(localized: "Nothing was typed. Tap the microphone again to start over.")
+        }
+        // No control here to offer, as everywhere else on this screen: ending and
+        // starting a dictation belong to the keyboard, so the copy points at it.
+        if coordinator.state == .micTaken {
+            return String(
+                localized:
+                    "Something else is using the microphone. Tap the microphone on the Parley keyboard to start again."
+            )
         }
         if needsManualReturn {
             return String(

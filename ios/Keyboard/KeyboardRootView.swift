@@ -529,6 +529,8 @@ struct KeyboardRootView: View {
                         .foregroundStyle(KBTheme.recording)
                         .multilineTextAlignment(.center)
                 }
+            } else if bridge.micTaken {
+                micTakenNotice
             } else if bridge.reconnecting {
                 reconnectingText
             } else if bridge.listening || !bridge.tail.isEmpty {
@@ -564,6 +566,28 @@ struct KeyboardRootView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The system took the microphone — its own dictation, Siri, a call — and
+    /// Parley could not get it back.
+    ///
+    /// One line in the ordinary slot ink, in the same shape as every other
+    /// non-live state on this pane: no red, no toast, no alert, and nothing new
+    /// on the deck. The pane is already out of its listening shape by the time
+    /// this shows, so the record button is back to the tap that starts one —
+    /// which is what the second half of the sentence is pointing at.
+    ///
+    /// It takes the slot rather than sharing it with the echoed transcript, and
+    /// that is the trade being made on purpose: nothing is ever inserted from
+    /// this state, so the words on screen would be words the user has to retype
+    /// either way, and the only thing worth the three lines is the way forward.
+    private var micTakenNotice: some View {
+        centered {
+            Text("Microphone taken by the system. Tap to restart.")
+                .font(.footnote)
+                .foregroundStyle(KBTheme.inkSoft(dark))
+                .multilineTextAlignment(.center)
+        }
     }
 
     /// Parley has never been set up far enough to dictate: no account on this

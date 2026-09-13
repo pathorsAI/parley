@@ -1561,6 +1561,23 @@
         }
       }
     },
+    "Lost the microphone — something else is using it": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lost the microphone — something else is using it"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "失去麥克風 — 其他功能正在使用它"
+          }
+        }
+      }
+    },
     "Lost the microphone: %@": {
       "extractionState": "manual",
       "localizations": {
@@ -1709,6 +1726,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "系統暫停了麥克風——正在等待恢復"
+          }
+        }
+      }
+    },
+    "Microphone taken by the system": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Microphone taken by the system"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "麥克風被系統佔用"
           }
         }
       }
@@ -2760,6 +2794,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "登入中…"
+          }
+        }
+      }
+    },
+    "Something else is using the microphone. Tap the microphone on the Parley keyboard to start again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Something else is using the microphone. Tap the microphone on the Parley keyboard to start again."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其他功能正在使用麥克風。請點一下 Parley 鍵盤上的麥克風重新開始。"
           }
         }
       }

@@ -66,6 +66,42 @@ final class DictationChannelTests: XCTestCase {
         XCTAssertNotEqual(DictationChannel.Downlink.State.cancelled, .error)
     }
 
+    func testMicTakenIsNeitherAnEndingNorSomethingToWaitOn() throws {
+        let taken = DictationChannel.Downlink.State.micTaken
+
+        // Pinned like `cancelled`, and for a neighbouring reason: nothing may be
+        // inserted from this state, so it must never be read as `done`. It is
+        // also not `error` — the pane shows no red copy for the user having used
+        // their own phone's dictation.
+        XCTAssertEqual(taken.rawValue, "micTaken")
+        XCTAssertNotEqual(taken, .done)
+        XCTAssertNotEqual(taken, .error)
+
+        // Not live: the question `isLive` answers is "should a reader keep
+        // waiting on this", and while the microphone is gone the answer is no
+        // whatever the app is doing about it. A live `micTaken` would leave the
+        // keyboard drawing ⏹ over a microphone nobody has — which is the bug —
+        // and would hand it to the liveness watchdog, which would cancel a
+        // session the app may still resume.
+        XCTAssertFalse(taken.isLive)
+        let down = DictationChannel.Downlink(session: "s", state: taken, updatedAt: .distantPast)
+        XCTAssertNil(down.presumedDeadAt(presence: nil))
+        XCTAssertFalse(down.looksDead(presence: nil))
+    }
+
+    func testMicTakenKeepsTheWordsAlreadySpoken() throws {
+        // The transcript rides along so the app can publish `listening` again for
+        // the same session and have it carry on where it stopped — recovery is
+        // the point, and a state that dropped the words could only start over.
+        let back = try roundTrip(
+            DictationChannel.Downlink(
+                session: "s", committed: "the first half ", partial: "of a sen",
+                state: .micTaken))
+        XCTAssertEqual(back.state, .micTaken)
+        XCTAssertEqual(back.committed, "the first half ")
+        XCTAssertNil(back.errorMessage)
+    }
+
     func testUplinkCarriesTheInsertionHighWaterMark() throws {
         let back = try roundTrip(
             DictationChannel.Uplink(
