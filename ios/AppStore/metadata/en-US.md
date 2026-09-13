@@ -83,6 +83,39 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.12
+
+Recordings can be played back on the phone. Meetings recorded here now stay
+on the phone (Settings → Keep audio on this phone, on by default), and a
+recording made elsewhere can be downloaded from its row, its long-press menu,
+or the transcript screen. Open a recording and a player sits under the title:
+the whole meeting as a waveform, drag it to scrub — lift your finger higher
+while dragging for finer control — a speed control from 0.75× to 2×, and
+hold the edge of the transcript to play at 2× while you hold. The transcript
+follows the audio, marks who is talking, and tapping any timecode jumps
+there.
+
+The app looks different. The page is white, the text is ink, and blue is
+reserved for what is happening right now: the person speaking, the live
+waveform, the thing you can tap. Speakers are 講者 A, B and C instead of
+numbers. While recording there is a real waveform, and a Discard action for a
+recording that should not have started, so a mis-tap no longer leaves a
+two-second file in the library.
+
+After a recording, the suggested name and folder are one card and one
+decision: save as suggested, adjust, or skip.
+
+In the library, swipe across the header to move between folders, and the
+import button no longer wears a download arrow.
+
+The keyboard admits when the microphone is gone. If iOS's own dictation takes
+the microphone mid-session, the voice pane now says so and a tap starts a
+fresh session, instead of showing ⏹ over silence until Parley was force-quit.
+
+Since 1.7, also: the phone names and files its own recordings; an audio file
+from anywhere can be imported and transcribed here; and a meeting whose live
+transcript came up short is transcribed again from the audio.
+
 ## What's New — 1.7
 
 Dictation now lays your words out, not just tidies them up. The polish pass
