@@ -29,30 +29,28 @@ import SwiftUI
 /// name and folder the recording currently carries, and each retires itself
 /// once it has nothing left to offer. An "applied" flag would be a second copy
 /// of that same fact, free to drift — a title accepted here and then changed
-/// elsewhere would leave a row still claiming there is something to accept.
-/// Deriving it means every route to the same outcome retires the same row.
+/// elsewhere would leave the block still claiming there is something to accept.
+/// Deriving it means every route to the same outcome retires the same offer.
 @MainActor
 final class FilingSuggestionModel: ObservableObject {
-
-    /// Which row is mid-push. One at a time, and not a `Bool` per row: both
-    /// rows read-modify-write the same meta, so two in flight together let the
-    /// slower one push a copy it read before the faster one landed — silently
-    /// undoing it.
-    enum Writing: Equatable {
-        case nothing
-        case title
-        /// Keyed by `key(for:)` rather than by the value, so the row knows
-        /// which of its own chips is busy.
-        case folder(String)
-    }
 
     @Published private(set) var suggestion: FilingSuggestion?
     /// What the recording carries in the cloud right now. Written by the pass
     /// from the upload's own outcome, then by each accepted push — this is the
-    /// live state the rows are derived against.
+    /// live state the block is derived against.
     @Published private(set) var currentTitle = ""
     @Published private(set) var currentFolderId: String?
-    @Published private(set) var writing: Writing = .nothing
+    /// The folders the user already has, as the pass listed them. Kept so the
+    /// Adjust sheet can offer them without a second `listFolders()` — the pass
+    /// has to fetch the registry anyway to give the model a menu to choose
+    /// from, and a sheet that fetched it again would show a different list on a
+    /// flaky network than the one the suggestion was made against.
+    @Published private(set) var existingFolders: [CloudFolder] = []
+    /// A push is in flight. One at a time, and not one flag per action: every
+    /// accept read-modify-writes the same meta, so two together let the slower
+    /// one push a copy it read before the faster one landed — silently undoing
+    /// it.
+    @Published private(set) var isWriting = false
     /// A push the user asked for did not land. Deliberately not raised for the
     /// pass itself: nobody asked for that one, so its failure is silence.
     @Published private(set) var writeFailed = false
@@ -93,18 +91,15 @@ final class FilingSuggestionModel: ObservableObject {
         return Array(live.prefix(3))
     }
 
-    /// The card draws nothing once both rows are spent.
+    /// The block draws nothing once there is neither a name nor a home left to
+    /// offer.
     var hasSomethingToOffer: Bool {
         suggestion != nil && (proposedTitle != nil || !proposedFolders.isEmpty)
     }
 
-    var isWriting: Bool { writing != .nothing }
-
-    var isWritingTitle: Bool { writing == .title }
-
-    func isWritingFolder(_ folder: FilingFolderSuggestion) -> Bool {
-        writing == .folder(Self.key(for: folder))
-    }
+    /// The folder the one-tap accept files into: the model's best answer, which
+    /// is the only one the block shows. The rest are in the Adjust sheet.
+    var proposedFolder: FilingFolderSuggestion? { proposedFolders.first }
 
     /// Identity for a candidate folder. A folder that does not exist yet has no
     /// id, so it is keyed by the name it would be created under.
@@ -140,7 +135,8 @@ final class FilingSuggestionModel: ObservableObject {
         recordingId = nil
         currentTitle = ""
         currentFolderId = nil
-        writing = .nothing
+        existingFolders = []
+        isWriting = false
         writeFailed = false
     }
 
@@ -186,6 +182,7 @@ final class FilingSuggestionModel: ObservableObject {
             recordingId = settled.id
             currentTitle = settled.title
             currentFolderId = settled.folderId
+            existingFolders = folders
             writeFailed = false
             suggestion = proposal
         } catch {
@@ -197,48 +194,52 @@ final class FilingSuggestionModel: ObservableObject {
 
     // MARK: accepting
 
-    /// Rename the recording to the proposed name. The card is not dismissed:
-    /// the title row retires itself once the name matches, and the folder rows
-    /// are still worth a tap.
-    func acceptTitle(app: AppState) async {
-        guard !isWriting, let id = recordingId, let proposed = proposedTitle else { return }
-        writing = .title
-        writeFailed = false
-        defer { writing = .nothing }
-        do {
-            try await Self.write(id: id, cloud: app.cloud) { meta in
-                meta.title = proposed
-            }
-            currentTitle = proposed
-        } catch {
-            writeFailed = true
-        }
+    /// Take the suggestion as offered: the proposed name and the best proposed
+    /// folder, in one go. Whichever of the two the pass had nothing to say
+    /// about is simply left alone.
+    func acceptSuggested(app: AppState) async {
+        await apply(title: proposedTitle, folder: proposedFolder, app: app)
     }
 
-    /// File the recording into a candidate folder, creating that folder first
-    /// when it does not exist yet.
+    /// Rename the recording and file it, either or both. `nil` means "leave
+    /// that one as it is"; a title that matches what the recording is already
+    /// called, or a folder it is already in, is dropped the same way.
     ///
-    /// The creation happens HERE and nowhere earlier. Merely showing a chip for
-    /// a folder that does not exist must not bring it into being — the user
+    /// ONE read-modify-write for both, rather than a rename followed by a move:
+    /// the two would each read the meta and push it back, and the second push
+    /// would carry a copy read before the first landed — undoing it. That is
+    /// also why this is the only accept path, and why the Adjust sheet hands
+    /// its two edits over together instead of applying them one at a time.
+    ///
+    /// A folder that does not exist yet is created HERE and nowhere earlier.
+    /// Merely offering a candidate must not bring it into being — the user
     /// would end up with an empty folder for every candidate the pass ever
     /// proposed and never accepted.
-    func acceptFolder(_ folder: FilingFolderSuggestion, app: AppState) async {
+    func apply(title: String?, folder: FilingFolderSuggestion?, app: AppState) async {
         guard !isWriting, let id = recordingId else { return }
-        writing = .folder(Self.key(for: folder))
+        var newTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if newTitle?.isEmpty == true || newTitle == currentTitle { newTitle = nil }
+        var newFolder = folder
+        if let alreadyThere = folder?.folderId, alreadyThere == currentFolderId { newFolder = nil }
+        guard newTitle != nil || newFolder != nil else { return }
+        isWriting = true
         writeFailed = false
-        defer { writing = .nothing }
+        defer { isWriting = false }
         do {
-            let targetId: String
-            if let existing = folder.folderId {
-                targetId = existing
-            } else {
-                let created = try await app.cloud.createFolder(name: folder.name)
-                targetId = created.id
+            var targetId: String?
+            if let newFolder {
+                if let existing = newFolder.folderId {
+                    targetId = existing
+                } else {
+                    targetId = try await app.cloud.createFolder(name: newFolder.name).id
+                }
             }
             try await Self.write(id: id, cloud: app.cloud) { meta in
-                meta.folderId = targetId
+                if let newTitle { meta.title = newTitle }
+                if let targetId { meta.folderId = targetId }
             }
-            currentFolderId = targetId
+            if let newTitle { currentTitle = newTitle }
+            if let targetId { currentFolderId = targetId }
         } catch {
             writeFailed = true
         }
@@ -308,4 +309,20 @@ final class FilingSuggestionModel: ObservableObject {
             // leaves it.
             updatedAt: nil)
     }
+
+    #if DEBUG
+        /// ScreenshotDemo: the state the block is worth capturing in — a
+        /// recording that has landed under its clock name, with a better name
+        /// and a home on offer. `recordingId` is deliberately left nil, so a
+        /// tap on the demo build's own buttons writes nothing: there is no
+        /// account behind the fixtures to write to.
+        func seedDemo(
+            suggestion: FilingSuggestion, currentTitle: String, folders: [CloudFolder]
+        ) {
+            self.suggestion = suggestion
+            self.currentTitle = currentTitle
+            currentFolderId = nil
+            existingFolders = folders
+        }
+    #endif
 }

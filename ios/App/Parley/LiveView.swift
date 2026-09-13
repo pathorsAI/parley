@@ -99,7 +99,7 @@ struct LiveView: View {
                 }
             }
             #if DEBUG
-                .task { ScreenshotDemo.seedLive(recorder) }
+                .task { ScreenshotDemo.seedRecordScreen(recorder, filing: filing) }
             #endif
         }
     }

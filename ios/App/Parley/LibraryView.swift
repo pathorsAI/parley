@@ -11,9 +11,15 @@ import UniformTypeIdentifiers
 /// - org folder move      = dedicated PATCH …/folder
 struct LibraryView: View {
     @EnvironmentObject private var app: AppState
+    /// Shared with the recording screen, so a download started from a row is the
+    /// same download the detail toolbar is showing.
+    @EnvironmentObject private var downloads: AudioDownloadModel
 
     /// nil = personal scope; else an org id.
     @State private var scope: String?
+    /// nil = every folder; `Self.unfiledPage` = the personal root; else a folder
+    /// id. Written by a chip tap and by the folder swipe, which move through
+    /// `folderPages` in order.
     @State private var folderFilter: String?
     @State private var recordings: [CloudRecordingSummary] = []
     @State private var folders: [CloudFolder] = []
@@ -98,6 +104,12 @@ struct LibraryView: View {
     /// Icon-only, and declared before the scope menu so the scope switcher
     /// stays where it has always been: last, at the trailing edge, with room
     /// for an org name beside it on a small phone.
+    ///
+    /// `doc.badge.plus`, not `square.and.arrow.down`. The arrow into a tray is
+    /// the platform's download mark, and this action brings a file *in* — it was
+    /// pointing the wrong way even before the library had a real download to
+    /// offer, and now that it does (see `downloadAction`) the two would have been
+    /// the same glyph for opposite directions.
     @ToolbarContentBuilder
     private var importButton: some ToolbarContent {
         if scope == nil {
@@ -105,7 +117,7 @@ struct LibraryView: View {
                 Button {
                     importing = true
                 } label: {
-                    Label("Import audio", systemImage: "square.and.arrow.down")
+                    Label("Import audio", systemImage: "doc.badge.plus")
                 }
                 .disabled(importer.isRunning)
             }
@@ -152,11 +164,35 @@ struct LibraryView: View {
 
     // MARK: list
 
+    /// Chip row above, one folder's worth of recordings below, and a horizontal
+    /// swipe on the chip row moves between them.
+    ///
+    /// **A `TabView(selection:)` in `.page` style was tried first and it does not
+    /// work here.** It pages beautifully, and it takes the rows' swipe actions
+    /// with it: the paging scroll view wins the horizontal pan, so neither the
+    /// leading download nor the trailing delete can be opened by a drag that
+    /// starts on a row. Measured, not guessed — an XCUITest drove a measured drag
+    /// on a row with the pager in place (both actions failed to open) and again
+    /// with the pager bypassed (both opened). Losing delete to gain paging is not
+    /// a trade worth making, so the drag lives on the chip row instead, where
+    /// nothing else wants it.
+    ///
+    /// The chip row therefore stays put instead of scrolling away with the list —
+    /// a swipe target that scrolls off screen is a swipe target that mostly is
+    /// not there.
     private var list: some View {
-        List {
+        VStack(spacing: 0) {
             if !folders.isEmpty {
                 folderChips
             }
+            folderList(folderFilter)
+        }
+    }
+
+    /// One folder's worth of the library.
+    private func folderList(_ folder: String?) -> some View {
+        let items = filtered(folder)
+        return List {
             if importer.isRunning || importNotice != nil {
                 importStatus
                     .listRowInsets(EdgeInsets(top: 10, leading: 20, bottom: 10, trailing: 20))
@@ -170,11 +206,12 @@ struct LibraryView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             }
-            ForEach(filtered) { rec in
+            ForEach(items) { rec in
                 NavigationLink {
                     RecordingDetailView(summary: rec, orgId: scope)
                 } label: {
-                    RecordingCard(summary: rec, folders: folders)
+                    RecordingCard(
+                        summary: rec, folders: folders, audio: downloads.state(for: rec.id))
                 }
                 .modifier(RecordingRow())
                 .swipeActions(edge: .trailing) {
@@ -182,11 +219,15 @@ struct LibraryView: View {
                         Task { await remove(rec) }
                     }
                 }
+                // Leading, so the destructive edge stays the one it has always
+                // been. Nothing on this edge deletes anything: both actions here
+                // are about the copy on the phone, and the cloud keeps its own.
+                .swipeActions(edge: .leading) { downloadAction(for: rec) }
                 .contextMenu { actions(for: rec) }
                 .disabled(busyId == rec.id)
                 .opacity(busyId == rec.id ? 0.5 : 1)
             }
-            if !loading && filtered.isEmpty && error == nil {
+            if !loading && items.isEmpty && error == nil {
                 emptyState
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -257,7 +298,9 @@ struct LibraryView: View {
                 Button {
                     importing = true
                 } label: {
-                    Label("Import an audio file", systemImage: "square.and.arrow.down")
+                    // Same glyph as the toolbar button it duplicates — see
+                    // `importButton` for why it is not the download arrow.
+                    Label("Import an audio file", systemImage: "doc.badge.plus")
                         .font(.parley.subheadlineEmphasized)
                 }
                 .disabled(importer.isRunning)
@@ -266,25 +309,105 @@ struct LibraryView: View {
         .frame(maxWidth: .infinity)
         .padding(.top, 56)
         .padding(.bottom, 24)
+        // The other place a folder swipe is safe: an empty folder has no rows to
+        // take the drag away from, and it is exactly where someone lands when
+        // they switch to a folder they have not filed anything into yet.
+        .contentShape(Rectangle())
+        .simultaneousGesture(folderSwipe)
     }
 
+    /// The pages, in the order the chips and the swipe both run: everything,
+    /// then the personal root, then the folders as the server ordered them.
+    private var folderPages: [String] {
+        [Self.allPage, Self.unfiledPage] + folders.map(\.id)
+    }
+
+    /// Swipe left for the next folder, right for the previous one.
+    ///
+    /// `simultaneousGesture`, so the chip row can still be scrolled and its chips
+    /// still tapped — this reads the drag, it does not claim it. The two
+    /// conditions are what keep it from firing on gestures that were meant for
+    /// something else: 60pt so a thumb resting and moving slightly does nothing,
+    /// and more horizontal than vertical so a diagonal flick towards the list
+    /// scrolls rather than switching folder.
+    ///
+    /// The ends are ends: at `All` a rightward swipe has nowhere to go and the
+    /// selection stays where it is, which is what the chip row already shows.
+    private var folderSwipe: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onEnded { drag in
+                let horizontal = drag.translation.width
+                guard abs(horizontal) >= 60,
+                    abs(horizontal) > abs(drag.translation.height)
+                else { return }
+                step(horizontal < 0 ? 1 : -1)
+            }
+    }
+
+    private func step(_ delta: Int) {
+        // No folders, no chip row, nothing to switch between: `Unfiled` and `All`
+        // are the same list, and moving between them invisibly would read as the
+        // library having lost something.
+        guard !folders.isEmpty else { return }
+        let pages = folderPages
+        let current = pages.firstIndex(of: folderFilter ?? Self.allPage) ?? 0
+        let next = current + delta
+        guard pages.indices.contains(next) else { return }
+        select(pages[next] == Self.allPage ? nil : pages[next])
+    }
+
+    static let allPage = "all"
+    /// Recordings with no folder — the same value the desktop's root filter uses.
+    static let unfiledPage = "root"
+
+    /// Tap or swipe, the selection is the same state, so the underline follows
+    /// either one. The chip row scrolls itself so the selected chip is on screen:
+    /// paging past the fourth folder would otherwise move the underline to a chip
+    /// that had scrolled out of the row.
     private var folderChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                chip(String(localized: "All"), selected: folderFilter == nil) { folderFilter = nil }
-                chip(String(localized: "Unfiled"), selected: folderFilter == "root") {
-                    folderFilter = "root"
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    chip(String(localized: "All"), selected: folderFilter == nil) {
+                        select(nil)
+                    }
+                    .id(Self.allPage)
+                    chip(
+                        String(localized: "Unfiled"), selected: folderFilter == Self.unfiledPage
+                    ) {
+                        select(Self.unfiledPage)
+                    }
+                    .id(Self.unfiledPage)
+                    ForEach(folders) { f in
+                        chip(f.name, selected: folderFilter == f.id) { select(f.id) }
+                            .id(f.id)
+                    }
                 }
-                ForEach(folders) { f in
-                    chip(f.name, selected: folderFilter == f.id) { folderFilter = f.id }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 2)
+            }
+            .onChange(of: folderFilter) { _, _ in
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(folderFilter ?? Self.allPage, anchor: .center)
                 }
             }
-            .padding(.vertical, 4)
-            .padding(.horizontal, 2)
         }
-        .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 4, trailing: 20))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        // The whole strip is the swipe target, padding included, so the gesture
+        // does not require hitting a chip.
+        .contentShape(Rectangle())
+        .simultaneousGesture(folderSwipe)
+        // Carries the underline and the semibold to the new chip instead of
+        // snapping them across.
+        .animation(.easeInOut(duration: 0.2), value: folderFilter)
+    }
+
+    /// A tap on a chip is the same move as a swipe, animated the same way, so
+    /// the two cannot look like different features.
+    private func select(_ page: String?) {
+        withAnimation(.easeInOut(duration: 0.25)) { folderFilter = page }
     }
 
     /// `label` is either an already-localized chip name or a user-created folder
@@ -311,7 +434,14 @@ struct LibraryView: View {
         .buttonStyle(.plain)
     }
 
-    private var filtered: [CloudRecordingSummary] {
+    /// The rows one page shows. Takes the folder rather than reading
+    /// `folderFilter`, because every page of the pager is built at once and each
+    /// one has to filter by *its* folder, not by the selected one.
+    ///
+    /// The search text is deliberately not a parameter: it is one query across
+    /// the whole library, so a search with the folder filter on "All" and the
+    /// same search two chips over are the same search, narrowed.
+    private func filtered(_ folderFilter: String?) -> [CloudRecordingSummary] {
         var items = recordings
         if let folderFilter {
             // Desktop orphan→root rule: an id not in the live folder list
@@ -319,7 +449,7 @@ struct LibraryView: View {
             let live = Set(folders.map(\.id))
             items = items.filter { rec in
                 let fid = rec.folderId.flatMap { live.contains($0) ? $0 : nil }
-                return folderFilter == "root" ? fid == nil : fid == folderFilter
+                return folderFilter == Self.unfiledPage ? fid == nil : fid == folderFilter
             }
         }
         if !search.isEmpty {
@@ -331,10 +461,50 @@ struct LibraryView: View {
         return items.sorted { $0.createdAt > $1.createdAt }
     }
 
+    // MARK: audio on this phone
+
+    /// The leading-swipe action, and the same two buttons the context menu
+    /// carries — one function, so the edge and the long-press cannot offer
+    /// different words for the same thing.
+    ///
+    /// Personal scope only. `downloadAudio` reads `recordings/<id>/audio`, which
+    /// is the personal endpoint; an org recording's audio lives behind an org
+    /// path this client does not speak yet, and an action that would 404 is worse
+    /// than no action at all. The `iphone` indicator is not gated the same way —
+    /// it states a fact about the file, whatever scope the row is read in.
+    ///
+    /// Blue on the download because it is a tap, grey on the removal because it
+    /// is not destructive: the cloud copy is untouched, and the red that
+    /// `.destructive` would paint it says a recording is about to be lost.
+    @ViewBuilder
+    private func downloadAction(for rec: CloudRecordingSummary) -> some View {
+        if scope == nil {
+            switch downloads.state(for: rec.id) {
+            case .local:
+                Button {
+                    downloads.removeDownload(rec.id)
+                } label: {
+                    Label("Remove download", systemImage: "xmark.circle")
+                }
+                .tint(Color(.secondaryLabel))
+            case .downloading:
+                EmptyView()
+            case .absent, .failed:
+                Button {
+                    Task { await downloads.download(rec.id, cloud: app.cloud) }
+                } label: {
+                    Label("Download", systemImage: "arrow.down.circle")
+                }
+                .tint(Theme.primary)
+            }
+        }
+    }
+
     // MARK: actions (mirror of the desktop MoveMenu / ShareMenu / MoveDialog)
 
     @ViewBuilder
     private func actions(for rec: CloudRecordingSummary) -> some View {
+        downloadAction(for: rec)
         if !folders.isEmpty {
             Menu("Move to folder") {
                 Button("Unfiled (top level)") { Task { await moveToFolder(rec, folderId: nil) } }
@@ -512,11 +682,53 @@ private struct MetaLabelStyle: LabelStyle {
     }
 }
 
+/// How far a download has got, in the width of a glyph.
+///
+/// Hand-drawn rather than a `ProgressView` because `.circular` on iOS is an
+/// indeterminate spinner — it says "something is happening" where the whole
+/// point here is *how much* has happened — and the linear style is a bar that
+/// cannot sit in a row of glyphs without pushing the date around. Two circles
+/// and a trim is the whole thing.
+///
+/// Shared with the recording screen's toolbar, so a download watched from the
+/// library and the same download watched from inside the recording are the same
+/// mark at two sizes.
+///
+/// Blue, unlike its neighbours, because this is the one state on the row that is
+/// happening right now.
+struct DownloadRing: View {
+    let fraction: Double
+    var size: CGFloat = 12
+
+    var body: some View {
+        Circle()
+            .stroke(Color(.quaternaryLabel), lineWidth: 2)
+            .overlay {
+                Circle()
+                    // Never quite zero: a ring with nothing drawn on it reads as
+                    // a placeholder rather than as a download that has just
+                    // started.
+                    .trim(from: 0, to: max(0.02, min(1, fraction)))
+                    .stroke(Theme.primary, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    // 12 o'clock, filling clockwise, the way every other
+                    // progress ring on the phone reads.
+                    .rotationEffect(.degrees(-90))
+            }
+            .frame(width: size, height: size)
+            .accessibilityLabel("Downloading")
+            .accessibilityValue(Text(fraction.formatted(.percent.precision(.fractionLength(0)))))
+    }
+}
+
 /// Desktop HistoryCard, phone-sized: type badge, title, date, snippet,
 /// duration/speakers/findings meta row.
 private struct RecordingCard: View {
     let summary: CloudRecordingSummary
     let folders: [CloudFolder]
+    /// Where this recording's audio is. The row is the only place in the app
+    /// that answers this without being asked, which is the point: "can I play
+    /// this on the train" is a property of the library, not of one recording.
+    var audio: AudioDownloadState = .absent
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -575,6 +787,7 @@ private struct RecordingCard: View {
                 if summary.hasAudio {
                     Image(systemName: "speaker.wave.2")
                 }
+                audioIndicator
             }
             // Durations, counts and a clock time: tabular figures so the row
             // doesn't reflow a digit at a time as a meeting ticks over.
@@ -588,6 +801,35 @@ private struct RecordingCard: View {
             // caption2 ate more of the row than the folder name did.
             .labelStyle(MetaLabelStyle())
             .foregroundStyle(Color(.secondaryLabel))
+        }
+    }
+
+    /// The last thing on the meta line: a phone glyph when the audio is here, a
+    /// progress ring while it is arriving, and nothing at all otherwise.
+    ///
+    /// `tertiaryLabel`, the same weight as the clock beside it. It is a fact
+    /// worth having on the row and never worth reading first — blue would claim
+    /// it can be tapped, and this cannot.
+    ///
+    /// The failure is words rather than a glyph, because a red glyph in a
+    /// four-glyph row is unreadable. The retry itself is the leading swipe or the
+    /// context menu: a button inside a `NavigationLink`'s label cannot be tapped
+    /// on its own, so a tappable "Retry" here would be a lie.
+    @ViewBuilder
+    private var audioIndicator: some View {
+        switch audio {
+        case .local:
+            Image(systemName: "iphone")
+                .foregroundStyle(Color(.tertiaryLabel))
+                .accessibilityLabel("On this phone")
+        case .downloading(let fraction):
+            DownloadRing(fraction: fraction)
+        case .failed:
+            Text("Download failed · Retry")
+                .foregroundStyle(Color(.secondaryLabel))
+                .fixedSize()
+        case .absent:
+            EmptyView()
         }
     }
 
@@ -611,6 +853,17 @@ private struct RecordingCard: View {
 }
 
 #if DEBUG
+    /// One of each audio state across the three fixtures, for the card previews.
+    /// The running app reads this from `AudioDownloadModel`, which needs a store
+    /// and a session — neither of which a preview has.
+    private func previewAudioState(_ id: String) -> AudioDownloadState {
+        switch id {
+        case ScreenshotDemo.recordings[0].id: return .local
+        case ScreenshotDemo.recordings[1].id: return .downloading(0.45)
+        default: return .absent
+        }
+    }
+
     /// The list the fixtures would produce. `LibraryView` itself only answers
     /// from `ScreenshotDemo` when the app is launched with `-ParleyDemo`, which
     /// a preview can't do, so the cards are rendered here through the same
@@ -622,7 +875,13 @@ private struct RecordingCard: View {
                     NavigationLink {
                         EmptyView()
                     } label: {
-                        RecordingCard(summary: rec, folders: ScreenshotDemo.folders)
+                        // The three audio states side by side, which is the one
+                        // thing a preview can show that a screenshot can't: the
+                        // first row is on the phone, the second is arriving, the
+                        // third is cloud-only.
+                        RecordingCard(
+                            summary: rec, folders: ScreenshotDemo.folders,
+                            audio: previewAudioState(rec.id))
                     }
                     .modifier(RecordingRow())
                 }
@@ -638,7 +897,9 @@ private struct RecordingCard: View {
         NavigationStack {
             List {
                 ForEach(ScreenshotDemo.recordings) { rec in
-                    RecordingCard(summary: rec, folders: ScreenshotDemo.folders)
+                    RecordingCard(
+                        summary: rec, folders: ScreenshotDemo.folders,
+                        audio: previewAudioState(rec.id))
                         .modifier(RecordingRow())
                 }
             }
@@ -652,6 +913,8 @@ private struct RecordingCard: View {
     /// Signed out, which is where a bare `AppState()` lands: the unavailable
     /// state and the toolbar, live.
     #Preview("Library — signed out") {
-        LibraryView().environmentObject(AppState())
+        LibraryView()
+            .environmentObject(AppState())
+            .environmentObject(AudioDownloadModel())
     }
 #endif

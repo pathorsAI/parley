@@ -34,8 +34,8 @@
     /// routed frame came out as the launch tab behind a modal. A launch
     /// argument never leaves the process.
     ///
-    /// Routes: `record`, `library`, `transcript`, `keyboard`, `settings`,
-    /// `dictation`.
+    /// Routes: `record`, `settled`, `adjust`, `library`, `transcript`,
+    /// `keyboard`, `settings`, `dictation`.
     @MainActor
     final class ScreenshotDemo: ObservableObject {
         static let shared = ScreenshotDemo()
@@ -47,6 +47,16 @@
         @Published var showTranscript = false
         /// Settings scrolls the voice-keyboard section into view.
         @Published var focusKeyboardSection = false
+        /// The record screen seeds a finished, uploaded recording with a filing
+        /// suggestion on it instead of a meeting in progress.
+        @Published var showSettledFiling = false
+        /// The filing suggestion's Adjust sheet, open. Flipped by `seedSettled`
+        /// rather than by the route, because the card watches this and cannot
+        /// know which of the two `task`s SwiftUI ran first — set from the route
+        /// it can open onto a model that has not been seeded yet.
+        @Published var openFilingAdjust = false
+        /// `adjust` asks for the sheet; `seedSettled` is what grants it.
+        private var wantsFilingAdjust = false
 
         /// `-ParleyDemo signedIn` seeds an account; `-ParleyDemo signedOut` runs
         /// the demo with the sign-in wall up (the welcome frame). Absent, the app
@@ -86,8 +96,18 @@
         func route(_ route: String) -> Bool {
             showTranscript = false
             focusKeyboardSection = false
+            showSettledFiling = false
+            openFilingAdjust = false
+            wantsFilingAdjust = false
             switch route {
             case "record": tab = .record
+            case "settled":
+                tab = .record
+                showSettledFiling = true
+            case "adjust":
+                tab = .record
+                showSettledFiling = true
+                wantsFilingAdjust = true
             case "library": tab = .library
             case "transcript":
                 tab = .library
@@ -209,6 +229,44 @@
 
         static var featured: CloudRecordingSummary { recordings[0] }
 
+        /// Which fixtures count as "audio is on this phone".
+        ///
+        /// Only the featured one, which is the state worth showing: a library
+        /// where one row was recorded here and the others came from the desktop
+        /// says what the `iphone` glyph means far better than a set where every
+        /// row carries it. A simulator has no store to put a file in, so the
+        /// download model reads this instead of `LocalAudioStore` while the
+        /// fixtures are being served.
+        static let localAudioIds: Set<String> = ["demo-renewal"]
+
+        static func audioState(for id: String) -> AudioDownloadState {
+            localAudioIds.contains(id) ? .local : .absent
+        }
+
+        /// The bundled Ogg the featured recording plays.
+        ///
+        /// A real 16 kHz mono Ogg/Opus, written by the app's own encoder, with
+        /// the six turns of the transcript below spoken at the timecodes they
+        /// claim — see `ios/AppStore/make-demo-audio.sh`. So the player in the
+        /// transcript screenshot has a waveform with speech and silence in the
+        /// right places, and in the simulator it actually plays, scrubs, and
+        /// lights the turn the playhead is inside.
+        ///
+        /// Its duration (1:45) is not the 18:42 the fixture *summary* claims.
+        /// The summary's number is what makes a plausible library screenshot and
+        /// the audio's is what makes a demo somebody can press play on, and no
+        /// single number does both — so the player tells the truth about the file
+        /// it has, and only the two numbers being side by side is odd.
+        static func audioURL(for id: String) -> URL? {
+            guard servesFixtures, localAudioIds.contains(id) else { return nil }
+            return Bundle.main.url(forResource: "demo-renewal", withExtension: "ogg")
+        }
+
+        /// What the Settings size row reads while the fixtures are being served:
+        /// 134 MB, which is about an hour of Opus — a plausible amount for a phone
+        /// that has kept a few meetings, and enough to make the row worth having.
+        static let storedAudioBytes: Int64 = 134_000_000
+
         // MARK: transcript fixtures
 
         /// The renewal conversation, written the way a real B2B negotiation
@@ -295,12 +353,78 @@
             ])
         }
 
+        // MARK: filing suggestion fixture
+
+        /// What a live meeting is called the moment it lands: the clock, in the
+        /// user's locale, exactly as `MeetingUploader` names it. This is the
+        /// title the suggestion exists to replace, and the block shows it — so
+        /// it has to be the real thing rather than a plausible-looking string.
+        static var clockTitle: String {
+            let stamp = Date(timeIntervalSince1970: epoch / 1_000).formatted(
+                .dateTime.month(.abbreviated).day().hour().minute())
+            return String(localized: "Meeting \(stamp)")
+        }
+
+        /// The pass's answer for the featured recording: the title the library
+        /// fixtures already carry, the folder it belongs in, and one folder that
+        /// does not exist yet — which is the case worth showing, because
+        /// accepting it is what brings the folder into being.
+        static var filingSuggestion: FilingSuggestion {
+            FilingSuggestion(
+                title: featured.title,
+                folders: [
+                    FilingFolderSuggestion(
+                        folderId: "f-renewals", name: t("Renewals", "續約"),
+                        reason: t(
+                            "The renewal terms for an account you already have — seat count and a price hold.",
+                            "既有客戶的續約條件討論——席次與鎖價。")),
+                    FilingFolderSuggestion(
+                        folderId: nil, name: t("Northwind", "北風工業"),
+                        reason: t(
+                            "Northwind comes up in three recordings and has no folder of its own yet.",
+                            "北風工業出現在三場錄音裡，但還沒有自己的資料夾。")),
+                ])
+        }
+
         // MARK: live screen
+
+        /// The record screen, in whichever of its two states the route asked
+        /// for: a meeting in progress, or one that has just landed with a filing
+        /// suggestion on it. One entry point so `LiveView` does not have to know
+        /// the routes.
+        static func seedRecordScreen(_ recorder: MeetingRecorder, filing: FilingSuggestionModel) {
+            guard servesFixtures else { return }
+            if shared.showSettledFiling {
+                seedSettled(recorder, filing: filing)
+            } else {
+                seedLive(recorder)
+            }
+        }
+
+        /// The beat after a meeting: every turn final, the upload landed, and the
+        /// suggestion offering a name and a home. The recorder is idle — this is
+        /// a recording that is over, not one being made.
+        private static func seedSettled(
+            _ recorder: MeetingRecorder, filing: FilingSuggestionModel
+        ) {
+            guard recorder.segments.isEmpty else { return }
+            recorder.seedDemoSettled(
+                segments: lines.map { line in
+                    TranscriptSegment(
+                        id: "mix-\(line.ms)", source: "mix", speaker: line.speaker,
+                        text: line.text, isFinal: true,
+                        startMs: line.ms, endMs: line.ms + 12_000)
+                },
+                status: String(localized: "Synced to the cloud"))
+            filing.seedDemo(
+                suggestion: filingSuggestion, currentTitle: clockTitle, folders: folders)
+            if shared.wantsFilingAdjust { shared.openFilingAdjust = true }
+        }
 
         /// Fills the live screen with a recording already in progress: settled
         /// runs plus an unfinished tail, which is the state worth showing.
-        static func seedLive(_ recorder: MeetingRecorder) {
-            guard servesFixtures, recorder.segments.isEmpty else { return }
+        private static func seedLive(_ recorder: MeetingRecorder) {
+            guard recorder.segments.isEmpty else { return }
             var seeded: [TranscriptSegment] = lines.prefix(3).map { line in
                 TranscriptSegment(
                     id: "mix-\(line.ms)", source: "mix", speaker: line.speaker,

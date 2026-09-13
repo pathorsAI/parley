@@ -255,18 +255,46 @@ final class MeetingUploader {
                 orgs.first { $0.id == orgId }?.name ?? String(localized: "Organization")
         }
 
-        // The cloud now holds everything, so the local copy has done its job —
-        // unless the transcript that went up does not account for the audio
+        // The cloud now holds everything, so the *queue's* copy has done its job
+        // — unless the transcript that went up does not account for the audio
         // that went with it, in which case the Ogg is the only thing that can
-        // still fix it and is handed to the backfill queue instead of deleted.
+        // still fix it and is handed to the backfill queue instead.
+        //
+        // What happens to the file after that is `retireAudio`'s decision, not
+        // this one's: a phone that keeps its audio moves it into the local
+        // store so the meeting can be played back here, and only a phone that
+        // does not deletes it.
         let coverage = TranscriptCoverage.report(
             segments: finals, totalMs: UInt64(max(0, pending.durationMs)))
         if coverage.needsBackfill() {
             enqueueBackfill(for: pending, folderId: personalFolderId)
         } else {
+            retireAudio(id: pending.id, at: try? audioURL(for: pending.id))
             removePending(id: pending.id)
         }
         return outcome
+    }
+
+    /// The end of an Ogg's life on this phone, for every path that reaches it:
+    /// a live meeting, an import, a queued upload that finally synced, and a
+    /// backfill that has been transcribed.
+    ///
+    /// One function because the setting has to mean the same thing down all
+    /// four — "keep audio on this phone" that only held live recordings would be
+    /// a setting nobody could predict.
+    ///
+    /// A failed move deletes instead. The cloud already has the file, so the
+    /// cost is a recording that has to be downloaded to play back; leaving it
+    /// in a queue directory that nothing reads any more would cost the same
+    /// bytes forever with no way to see or clear them.
+    private static func retireAudio(id: String, at url: URL?) {
+        guard let url, FileManager.default.fileExists(atPath: url.path) else { return }
+        if LocalAudioStore.keepsAudioOnPhone,
+            (try? LocalAudioStore.shared.put(id, from: url)) != nil
+        {
+            return
+        }
+        try? FileManager.default.removeItem(at: url)
     }
 
     private static func buildMeta(
@@ -542,6 +570,15 @@ final class MeetingUploader {
             .forEach { try? FileManager.default.removeItem(at: $0) }
     }
 
+    /// A backfill that is over, whichever way it ended. The Ogg has been paid
+    /// for twice by now — once live, once in the batch job — so this is the last
+    /// chance to keep it, and it is taken on exactly the same terms as a plain
+    /// upload's.
+    private static func finishBackfill(id: String) {
+        retireAudio(id: id, at: try? backfillAudioURL(for: id))
+        removeBackfill(id: id)
+    }
+
     static var pendingBackfillCount: Int { loadBackfills().count }
 
     /// Transcribe the queued audio in full and replace the transcript that
@@ -579,7 +616,7 @@ final class MeetingUploader {
         // transcript — keep what the meeting already had rather than blanking
         // it, and stop retrying audio that has now been paid for once.
         guard !transcript.segments.isEmpty else {
-            removeBackfill(id: id)
+            finishBackfill(id: id)
             return
         }
 
@@ -598,6 +635,6 @@ final class MeetingUploader {
         // Audio is already in the cloud and unchanged, so this is a metadata
         // push only — the recording keeps its id, its folder and its sharing.
         try await cloud.pushRecording(id: id, summary: summary, meta: meta)
-        removeBackfill(id: id)
+        finishBackfill(id: id)
     }
 }

@@ -52,7 +52,31 @@ final class MeetingRecorder: ObservableObject {
         case uploading
     }
 
-    @Published private(set) var phase: Phase = .idle
+    @Published private(set) var phase: Phase = .idle {
+        didSet { Self.holdsTheMicrophone = Self.holdsMic(phase) }
+    }
+
+    /// Whether *any* meeting anywhere in the app currently has the microphone.
+    ///
+    /// A static because the recorder is a `@StateObject` inside `LiveView`, and
+    /// the thing that needs the answer is on another tab: `PlaybackController`
+    /// refuses to start while a recording is running, and there is no path from
+    /// a pushed detail screen to the live screen's object. Derived from `phase`
+    /// rather than set by hand at each of the twelve transitions, so it cannot
+    /// drift from the state machine it describes.
+    ///
+    /// `.uploading` is excluded on purpose: the microphone is already closed by
+    /// then and a person who has stopped recording should be able to play
+    /// something back while the upload finishes.
+    private(set) static var holdsTheMicrophone = false
+
+    private static func holdsMic(_ phase: Phase) -> Bool {
+        switch phase {
+        case .starting, .recording, .finishing: return true
+        case .idle, .uploading: return false
+        }
+    }
+
     @Published private(set) var segments: [TranscriptSegment] = []
     @Published private(set) var micLevel: Float = 0
     /// Bumped once per audio chunk. `micLevel` alone cannot drive a scrolling
@@ -526,6 +550,19 @@ final class MeetingRecorder: ObservableObject {
     }
 
     #if DEBUG
+        /// ScreenshotDemo: the beat after a meeting — the transcript complete,
+        /// the upload landed, nothing running. `settled` is deliberately left
+        /// nil: the filing suggestion is seeded straight into its own model
+        /// (`FilingSuggestionModel.seedDemo`) rather than through the pass,
+        /// which would need the network the demo exists to avoid.
+        func seedDemoSettled(segments: [TranscriptSegment], status: String) {
+            self.segments = segments
+            self.status = status
+            phase = .idle
+            transcription = .idle
+            startedAt = nil
+        }
+
         /// ScreenshotDemo: put the screen in the state worth capturing — a
         /// meeting already in progress — with no microphone and no network.
         func seedDemo(segments: [TranscriptSegment], status: String) {
@@ -542,14 +579,14 @@ final class MeetingRecorder: ObservableObject {
             // real chunk rate instead: bursts and pauses, the same every run, so
             // the captured frame is reproducible and shows what the view is for.
             demoLevelTimer?.invalidate()
-            var tick = 0
             demoLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.085, repeats: true) {
                 [weak self] _ in
-                guard let self else { return }
-                let pattern = Self.demoLevelPattern
-                self.micLevel = pattern[tick % pattern.count]
-                self.micSample &+= 1
-                tick += 1
+                Task { @MainActor in
+                    guard let self else { return }
+                    let pattern = Self.demoLevelPattern
+                    self.micLevel = pattern[self.micSample % pattern.count]
+                    self.micSample &+= 1
+                }
             }
         }
 

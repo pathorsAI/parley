@@ -5,6 +5,10 @@ import SwiftUI
 struct ParleyApp: App {
     @StateObject private var app = AppState()
     @StateObject private var dictation = DictationCoordinator.shared
+    /// One per app, so the library row, its context menu and the recording's own
+    /// toolbar are three doors onto the same download rather than three
+    /// downloads. See `AudioDownloadModel`.
+    @StateObject private var downloads = AudioDownloadModel()
     @Environment(\.scenePhase) private var scenePhase
 
     /// The navigation and tab bars are drawn by UIKit and never see a SwiftUI
@@ -18,6 +22,7 @@ struct ParleyApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(app)
+                .environmentObject(downloads)
                 // Blue is a signal, and this is the one place it is declared:
                 // every link, button, selected tab and control inherits it from
                 // here, so a view only names `Theme.primary` when it is
