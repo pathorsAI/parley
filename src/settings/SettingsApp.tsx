@@ -623,53 +623,19 @@ export function SettingsApp() {
                       </SelectContent>
                     </Select>
                   </Field>
-                  {prov === "parley" ? (
-                    // Hosted provider: no key, no model picker — the server forces
-                    // the real model. Just confirm who the usage bills to.
-                    <p className="text-[11px] text-muted-foreground">
-                      {t("settings.account.useParley.note", { email: cloudAuth?.user.email ?? "" })}
-                    </p>
-                  ) : winfo.userSuppliedBaseUrl ? (
+                  {winfo.userSuppliedBaseUrl ? (
                     // A self-hosted endpoint: URL first, then the optional key,
                     // then a free-text model id — and a live connection test,
                     // because three things can be wrong and none of them would
                     // surface until the middle of a meeting otherwise.
                     <CustomEndpointFields workload={wl} settings={settings} patch={patch} />
                   ) : (
-                    <>
-                      <Field label={t("settings.provider.apiKey", { provider: winfo.label })}>
-                        <PasswordInput
-                          autoComplete="off"
-                          placeholder={winfo.requiresKey === false ? t("settings.provider.noKeyNeeded") : winfo.keyPlaceholder}
-                          className="max-w-sm"
-                          disabled={winfo.requiresKey === false}
-                          value={settings[winfo.apiKeyField]}
-                          onChange={(e) => patch({ [winfo.apiKeyField]: e.target.value } as Partial<Settings>)}
-                        />
-                      </Field>
-                      <Field label={t("settings.provider.model")}>
-                        <ModelSelect
-                          provider={prov}
-                          value={settings.models[prov][wl]}
-                          onChange={(v) => patchModel(patch, settings, prov, wl, v)}
-                        />
-                        {winfo.kind === "openai-compatible" && isReasoningModel(settings.models[prov][wl]) && (
-                          <ReasoningEffortSelect
-                            label={t("settings.provider.reasoning")}
-                            value={settings.reasoningEffort[wl]}
-                            onChange={(v) =>
-                              patch({ reasoningEffort: { ...settings.reasoningEffort, [wl]: v } })
-                            }
-                          />
-                        )}
-                        <p className="text-[11px] text-muted-foreground">
-                          {t("settings.provider.models", {
-                            provider: winfo.label,
-                            suffix: winfo.kind === "anthropic" ? "" : t("settings.provider.slugSuffix"),
-                          })}
-                        </p>
-                      </Field>
-                    </>
+                    <FixedEndpointFields
+                      workload={wl}
+                      settings={settings}
+                      patch={patch}
+                      cloudEmail={cloudAuth?.user.email ?? ""}
+                    />
                   )}
                 </div>
               );
@@ -1357,6 +1323,70 @@ function ModelSelect({
         <SelectItem value={CUSTOM_MODEL}>{t("settings.provider.customModel")}</SelectItem>
       </SelectContent>
     </Select>
+  );
+}
+
+/**
+ * Key + model fields for a provider whose endpoint is fixed by the registry —
+ * every provider except the self-hosted one. The hosted "parley" provider is
+ * the degenerate case: no key, no model picker, just who the usage bills to.
+ */
+function FixedEndpointFields({
+  workload: wl,
+  settings,
+  patch,
+  cloudEmail,
+}: Readonly<{
+  workload: LlmWorkload;
+  settings: Settings;
+  patch: (p: Partial<Settings>) => void;
+  cloudEmail: string;
+}>) {
+  const { t } = useI18n();
+  const prov = settings.llmProviders[wl];
+  const winfo = PROVIDER_BY_ID[prov];
+  if (prov === "parley") {
+    // Hosted provider: no key, no model picker — the server forces the real
+    // model. Just confirm who the usage bills to.
+    return (
+      <p className="text-[11px] text-muted-foreground">
+        {t("settings.account.useParley.note", { email: cloudEmail })}
+      </p>
+    );
+  }
+  return (
+    <>
+      <Field label={t("settings.provider.apiKey", { provider: winfo.label })}>
+        <PasswordInput
+          autoComplete="off"
+          placeholder={winfo.requiresKey === false ? t("settings.provider.noKeyNeeded") : winfo.keyPlaceholder}
+          className="max-w-sm"
+          disabled={winfo.requiresKey === false}
+          value={settings[winfo.apiKeyField]}
+          onChange={(e) => patch({ [winfo.apiKeyField]: e.target.value } as Partial<Settings>)}
+        />
+      </Field>
+      <Field label={t("settings.provider.model")}>
+        <ModelSelect
+          provider={prov}
+          value={settings.models[prov][wl]}
+          onChange={(v) => patchModel(patch, settings, prov, wl, v)}
+        />
+        {winfo.kind === "openai-compatible" && isReasoningModel(settings.models[prov][wl]) && (
+          <ReasoningEffortSelect
+            label={t("settings.provider.reasoning")}
+            value={settings.reasoningEffort[wl]}
+            onChange={(v) => patch({ reasoningEffort: { ...settings.reasoningEffort, [wl]: v } })}
+          />
+        )}
+        <p className="text-[11px] text-muted-foreground">
+          {t("settings.provider.models", {
+            provider: winfo.label,
+            suffix: winfo.kind === "anthropic" ? "" : t("settings.provider.slugSuffix"),
+          })}
+        </p>
+      </Field>
+    </>
   );
 }
 

@@ -9,7 +9,7 @@ import { broadcastSettings } from "../lib/settingsSync";
 import { CLOUD_ENABLED } from "../lib/flags";
 import { log } from "../lib/log";
 import { shortcutCaps } from "../lib/voiceTyping/caps";
-import { PROVIDERS, PROVIDER_BY_ID } from "../lib/ai/providers";
+import { PROVIDERS, PROVIDER_BY_ID, type ProviderInfo } from "../lib/ai/providers";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
 import { useI18n, LANGUAGE_OPTIONS } from "../i18n";
 import { Flag } from "./ui/flag";
@@ -260,17 +260,8 @@ export function Onboarding() {
                     {t("onboarding.llm.customHint")} {t("settings.provider.baseUrlHint")}
                   </p>
                 </div>
-              ) : llm.requiresKey === false ? (
-                <p className="text-[11px] text-muted-foreground">
-                  {llm.id === "parley" ? t("onboarding.login.signedIn") : t("onboarding.llm.noKey")}
-                </p>
               ) : (
-                <PasswordInput
-                  autoComplete="off"
-                  placeholder={llm.keyPlaceholder}
-                  value={(settings[llm.apiKeyField] as string) ?? ""}
-                  onChange={(e) => patch({ [llm.apiKeyField]: e.target.value } as Partial<Settings>)}
-                />
+                <LlmKeyField llm={llm} settings={settings} patch={patch} />
               )}
             </StepKey>
           )}
@@ -700,5 +691,38 @@ function DiarizeModelStep() {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * The credential half of the LLM step for a provider with a fixed endpoint:
+ * the "no key needed" note for keyless providers, otherwise the key field.
+ * (The self-hosted provider has its own block — it needs a URL and a model,
+ * and its key is optional.)
+ */
+function LlmKeyField({
+  llm,
+  settings,
+  patch,
+}: Readonly<{
+  llm: ProviderInfo;
+  settings: Settings;
+  patch: (p: Partial<Settings>) => void;
+}>) {
+  const { t } = useI18n();
+  if (llm.requiresKey === false) {
+    return (
+      <p className="text-[11px] text-muted-foreground">
+        {llm.id === "parley" ? t("onboarding.login.signedIn") : t("onboarding.llm.noKey")}
+      </p>
+    );
+  }
+  return (
+    <PasswordInput
+      autoComplete="off"
+      placeholder={llm.keyPlaceholder}
+      value={(settings[llm.apiKeyField] as string) ?? ""}
+      onChange={(e) => patch({ [llm.apiKeyField]: e.target.value } as Partial<Settings>)}
+    />
   );
 }

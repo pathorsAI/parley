@@ -27,7 +27,7 @@ export function missingProviderRequirement(
   const info = PROVIDER_BY_ID[provider];
   // Hosted "parley" provider: signed-in (a session token) IS the gate — there's
   // no API key; auth rides as the bearer token.
-  if (info.id === "parley") return cloudToken() != null ? null : "signIn";
+  if (info.id === "parley") return cloudToken() == null ? "signIn" : null;
   // A user-supplied endpoint ("custom"): the URL must parse as http(s) and the
   // lane must name a model. The key stays optional — plenty of self-hosted
   // servers don't check one.

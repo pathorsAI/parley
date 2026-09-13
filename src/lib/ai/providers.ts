@@ -256,7 +256,11 @@ export function isReasoningModel(modelId: string): boolean {
  * turns a 404 into a mystery. The Settings hint tells them about `/v1` instead.
  */
 export function normalizeBaseUrl(raw: string): string {
-  return raw.trim().replace(/\/+$/, "");
+  // A loop rather than `/\/+$/`: a quantifier anchored at the end is the
+  // textbook super-linear regex, and this runs on user-typed input.
+  let out = raw.trim();
+  while (out.endsWith("/")) out = out.slice(0, -1);
+  return out;
 }
 
 /**
