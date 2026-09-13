@@ -11,7 +11,8 @@ import SwiftUI
 /// player that scrolled away would have to be chased back.
 ///
 /// The two halves are wired together in both directions: the audio lights the
-/// turn it is inside, and a turn's timecode seeks the audio.
+/// turn it is inside, and tapping a turn — its timecode or the words themselves
+/// — seeks the audio to where that turn starts.
 struct RecordingDetailView: View {
     @EnvironmentObject private var app: AppState
     /// The same model the library row drives, so a download started from either
@@ -35,6 +36,15 @@ struct RecordingDetailView: View {
     /// seek, or timecode tap turns it back on, so the return is an action the
     /// reader was going to take anyway rather than a pill asking them to take one.
     @State private var followsAudio = true
+    /// The turn whose text is mid-flash, if any.
+    ///
+    /// A tap on a turn's words seeks the audio, and seeking is not something the
+    /// transcript itself shows: the player moves, but the player is at the top
+    /// of the screen and the thumb is halfway down it. So the tapped turn tints
+    /// `Theme.primary` for a moment and goes back — the acknowledgement a button
+    /// would get from its own pressed state, for a target that has no pressed
+    /// state because it is a paragraph.
+    @State private var flashedTurn: String?
 
     init(summary: CloudRecordingSummary, orgId: String?) {
         self.summary = summary
@@ -207,8 +217,21 @@ struct RecordingDetailView: View {
             }
             Text(verbatim: seg.text)
                 .font(.parley.body)
-                .foregroundStyle(Color(.label))
+                .foregroundStyle(flashedTurn == seg.id ? Theme.primary : Color(.label))
                 .textSelection(.enabled)
+                // The words are the target people actually reach for — the
+                // timecode is a caption-sized numeral nobody finds. A tap
+                // anywhere in the paragraph seeks to where the paragraph starts.
+                //
+                // `onTapGesture` and not `simultaneousGesture(TapGesture())`:
+                // the shared version never fires here at all, because the
+                // selectable `Text` has recognizers of its own and a
+                // simultaneous tap loses to them. Ordering matters too — this
+                // has to come *after* `textSelection`. Nothing is given up by
+                // taking the tap outright: the long press belongs to the row's
+                // `contextMenu` below, which is where "Copy" has always lived
+                // on this screen, and a drag still belongs to the scroll view.
+                .onTapGesture { seekToTurn(seg) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .id(seg.id)
@@ -221,6 +244,28 @@ struct RecordingDetailView: View {
                     TranscriptClipboard.plainText(
                         seg, label: meta.speakerLabel(for: seg)))
             }
+        }
+    }
+
+    /// Send the audio to the start of a turn, and say so.
+    ///
+    /// A no-op with no visual answer when the audio is not on the phone: the
+    /// timecode next to it is `.disabled` for the same reason, and a paragraph
+    /// that flashed blue without the player moving would be a lie about what
+    /// just happened. Seeking also re-enables following, via `seekGeneration` —
+    /// somebody who taps a paragraph to hear it wants the transcript to keep up
+    /// with the audio again.
+    private func seekToTurn(_ seg: TranscriptSegment) {
+        guard playback.isSeekable else { return }
+        playback.seek(to: Double(seg.startMs) / 1000)
+        withAnimation(.easeOut(duration: 0.1)) { flashedTurn = seg.id }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            // Guarded on the id so a second tap elsewhere, landing inside this
+            // one's 250 ms, does not have its own flash cancelled by the first
+            // tap's timer coming due.
+            guard flashedTurn == seg.id else { return }
+            withAnimation(.easeOut(duration: 0.2)) { flashedTurn = nil }
         }
     }
 
