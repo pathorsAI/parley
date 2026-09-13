@@ -1,15 +1,35 @@
 import SwiftUI
 
-/// The live level history, drawn the way Voice Memos draws it: thin vertical
-/// bars symmetric about a centreline, newest at the right edge, the whole field
-/// scrolling left as the recording runs, with a red playhead pinned at the right.
+/// The live level history: thick, capsule-ended bars symmetric about a
+/// centreline, newest at the right edge, the whole field scrolling left as the
+/// recording runs.
 ///
 /// It replaced a 70×5 capsule meter. The capsule only ever answered "is sound
 /// arriving", which the recording dot already answers; a scrolling waveform
 /// answers "did it hear the last thing I said", which is the question someone
 /// actually has while a phone is sitting on a table in the middle of a meeting.
-/// It is also the shape every voice recorder on the platform uses, so it needs
-/// no explaining.
+///
+/// ## Why it no longer looks like Voice Memos
+///
+/// It first shipped as Voice Memos draws it — 2pt bars, 1pt apart, filling a
+/// 56pt band in full-strength blue, with a red playhead pinned at the right
+/// edge — on the argument that copying the platform's recorder meant it needed
+/// no explaining. On a phone's width that turned out to read as oppressive and
+/// busy: a tall wall of thin ticks at full saturation, on a screen whose whole
+/// job is to sit quietly on a table for an hour.
+///
+/// So the drawing follows the tone of Pathors' own recording UI instead —
+/// thicker bars, fewer of them, capsule ends, pale colour, and half the height.
+/// The shape is unchanged: still symmetric about a centreline, because that is
+/// what a level meter looks like and a single-sided variant was tried and
+/// rejected. What changed is the weight. The bars are pale enough to recede,
+/// only the freshest few are drawn near full strength so "it heard me just now"
+/// stays legible, and the red pinned playhead is gone — the newest bar at the
+/// right edge already says where "now" is, and one fewer element on a screen
+/// this quiet is worth more than the line was.
+///
+/// The bar geometry is deliberately the same as `PlaybackBar`'s overview
+/// waveform, so a recording and its playback are not two visual languages.
 ///
 /// ## Where the data comes from, and what it costs
 ///
@@ -20,7 +40,7 @@ import SwiftUI
 /// never asks for more, so the cost on the main actor is exactly what the old
 /// meter cost.
 ///
-/// Drawing is one `Canvas` and one `Path` per frame inside a
+/// Drawing is one `Canvas` and a handful of `Path`s per frame inside a
 /// `TimelineView(.animation)`, and the timeline exists **only while recording**.
 /// Idle, it is a single static draw of the silence line rather than a 60 Hz
 /// redraw of a thing that isn't moving.
@@ -39,25 +59,36 @@ struct WaveformView: View {
     /// clears the history, so the next meeting starts from an empty field.
     let isActive: Bool
 
-    /// 2pt bar, 1pt gap — dense enough to read as a waveform rather than a bar
-    /// chart, wide enough to survive a non-integral scale factor.
-    private static let barWidth: CGFloat = 2
-    private static let gap: CGFloat = 1
-    /// Silence is still a mark. At 4pt a quiet passage reads as a dotted
-    /// centreline instead of a gap the eye mistakes for "it stopped recording".
-    private static let minBar: CGFloat = 4
-    private static let height: CGFloat = 56
+    /// 3pt bar, 2pt gap, ends rounded by half the width. The same geometry as
+    /// the playback overview and as Pathors' web player, and wide enough to
+    /// survive a non-integral scale factor.
+    private static let barWidth: CGFloat = 3
+    private static let gap: CGFloat = 2
+    /// Silence is still a mark. At one bar width the floor draws as a dot, so a
+    /// quiet passage reads as a soft dotted centreline instead of a gap the eye
+    /// mistakes for "it stopped recording".
+    private static let minBar: CGFloat = 3
+    /// Half what it was. The field's job is to be glanceable, not to fill the
+    /// screen; at 28pt loud speech still has somewhere to go and the block no
+    /// longer dominates the space between the timer and the record button.
+    private static let height: CGFloat = 28
     /// How long `AudioCapture` takes to produce one value: a 4096-frame tap at
     /// 48 kHz. Only used to interpolate the scroll between samples, so being a
     /// few milliseconds out costs smoothness, never correctness.
     private static let interval: TimeInterval = 0.085
-    /// Enough history for the widest phone (a 430pt-wide field holds ~144 bars)
+    /// Enough history for the widest phone (a 430pt-wide field holds ~86 bars)
     /// with room to spare, and small enough that the buffer never matters.
     private static let capacity = 256
     /// The same curve the old capsule meter used: speech RMS lives around
     /// 0.05–0.3, so ×6 puts normal talking near the top of the field without
     /// clipping every syllable.
     private static let gain: Float = 6
+    /// History sits at this much of the blue: present, not shouting.
+    private static let historyOpacity: Double = 0.35
+    /// The newest bar, and how many bars it takes to fade back down to history.
+    /// Half a second of speech is what "just now" means here.
+    private static let freshOpacity: Double = 0.9
+    private static let freshCount = 6
 
     @State private var levels: [Float] = []
     /// When the newest value landed, for the between-samples glide.
@@ -118,7 +149,10 @@ struct WaveformView: View {
         let progress = isActive ? min(1, max(0, elapsed / Self.interval)) : 0
         let shift = CGFloat(progress) * step
 
-        var bars = Path()
+        // One path for the pale history, and the newest few bars filled one at a
+        // time because each carries its own opacity on the way up to `fresh`.
+        var history = Path()
+        var fresh: [(Path, Double)] = []
         for (index, value) in frames.enumerated() {
             // Newest last, pinned to the right edge.
             let fromRight = frames.count - 1 - index
@@ -126,23 +160,41 @@ struct WaveformView: View {
             guard x + Self.barWidth > 0, x < size.width else { continue }
             let scaled = CGFloat(min(1, max(0, value * Self.gain)))
             let barHeight = Self.minBar + (size.height - Self.minBar) * scaled
-            bars.addRoundedRect(
-                in: CGRect(
-                    x: x, y: midY - barHeight / 2,
-                    width: Self.barWidth, height: barHeight),
-                cornerSize: CGSize(width: Self.barWidth / 2, height: Self.barWidth / 2))
+            // Symmetric about the centreline, which is what a level meter looks
+            // like everywhere anyone has already seen one.
+            let rect = CGRect(
+                x: x, y: midY - barHeight / 2,
+                width: Self.barWidth, height: barHeight)
+            let rounded = CGSize(width: Self.barWidth / 2, height: Self.barWidth / 2)
+            if isActive, fromRight < Self.freshCount {
+                var bar = Path()
+                bar.addRoundedRect(in: rect, cornerSize: rounded)
+                fresh.append((bar, Self.opacity(fromRight: fromRight)))
+            } else {
+                history.addRoundedRect(in: rect, cornerSize: rounded)
+            }
         }
-        // Signal blue: the field is the one thing on this screen that is
-        // happening right now, which is what the blue is reserved for.
-        context.fill(bars, with: .color(Theme.primary))
 
-        // The playhead: where "now" is. Recording red, because that is the one
-        // thing on this screen the colour is reserved for.
         if isActive {
-            context.fill(
-                Path(CGRect(x: size.width - 1, y: 0, width: 1, height: size.height)),
-                with: .color(Theme.recording))
+            // Pale blue: the field is the one thing on this screen that is
+            // happening right now, which is what the blue is reserved for — but
+            // it is happening in the background, so it is stated quietly.
+            context.fill(history, with: .color(Theme.primary.opacity(Self.historyOpacity)))
+            for (bar, opacity) in fresh {
+                context.fill(bar, with: .color(Theme.primary.opacity(opacity)))
+            }
+        } else {
+            // Idle there is no signal, so there is no blue: a dotted grey
+            // centreline that says the field is here and waiting, nothing more.
+            context.fill(history, with: .color(Color(.tertiaryLabel).opacity(0.5)))
         }
+    }
+
+    /// Full strength at the right edge, easing back to the history's opacity
+    /// over `freshCount` bars.
+    private static func opacity(fromRight: Int) -> Double {
+        let t = Double(fromRight) / Double(freshCount)
+        return freshOpacity - (freshOpacity - historyOpacity) * t
     }
 }
 
