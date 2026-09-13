@@ -766,6 +766,23 @@
         }
       }
     },
+    "Couldn't play this recording": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't play this recording"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這段錄音無法播放"
+          }
+        }
+      }
+    },
     "Couldn't start": {
       "extractionState": "manual",
       "localizations": {
@@ -1054,6 +1071,23 @@
         }
       }
     },
+    "Download to play back": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download to play back"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下載以回放"
+          }
+        }
+      }
+    },
     "Downloaded audio · %@": {
       "extractionState": "manual",
       "localizations": {
@@ -1190,6 +1224,40 @@
         }
       }
     },
+    "Fine": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fine"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "精細調整"
+          }
+        }
+      }
+    },
+    "Finer": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finer"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "超精細"
+          }
+        }
+      }
+    },
     "Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right.": {
       "extractionState": "manual",
       "localizations": {
@@ -1271,6 +1339,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "按下錄音，把手機放在桌上收整個房間。"
+          }
+        }
+      }
+    },
+    "Hold for 2×": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hold for 2×"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按住以 2 倍速播放"
           }
         }
       }
@@ -2409,6 +2494,23 @@
         }
       }
     },
+    "Pause": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pause"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暫停"
+          }
+        }
+      }
+    },
     "Personal": {
       "extractionState": "manual",
       "localizations": {
@@ -2477,6 +2579,40 @@
         }
       }
     },
+    "Play": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "播放"
+          }
+        }
+      }
+    },
+    "Playback speed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Playback speed"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "播放速度"
+          }
+        }
+      }
+    },
     "Please try again.": {
       "extractionState": "manual",
       "localizations": {
@@ -2507,6 +2643,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "AI 潤飾"
+          }
+        }
+      }
+    },
+    "Preparing…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "準備中…"
           }
         }
       }
@@ -2813,6 +2966,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在存進錄音庫…"
+          }
+        }
+      }
+    },
+    "Scrub": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scrub"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拖曳時間軸"
           }
         }
       }

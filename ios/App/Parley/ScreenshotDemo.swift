@@ -243,6 +243,25 @@
             localAudioIds.contains(id) ? .local : .absent
         }
 
+        /// The bundled Ogg the featured recording plays.
+        ///
+        /// A real 16 kHz mono Ogg/Opus, written by the app's own encoder, with
+        /// the six turns of the transcript below spoken at the timecodes they
+        /// claim — see `ios/AppStore/make-demo-audio.sh`. So the player in the
+        /// transcript screenshot has a waveform with speech and silence in the
+        /// right places, and in the simulator it actually plays, scrubs, and
+        /// lights the turn the playhead is inside.
+        ///
+        /// Its duration (1:45) is not the 18:42 the fixture *summary* claims.
+        /// The summary's number is what makes a plausible library screenshot and
+        /// the audio's is what makes a demo somebody can press play on, and no
+        /// single number does both — so the player tells the truth about the file
+        /// it has, and only the two numbers being side by side is odd.
+        static func audioURL(for id: String) -> URL? {
+            guard servesFixtures, localAudioIds.contains(id) else { return nil }
+            return Bundle.main.url(forResource: "demo-renewal", withExtension: "ogg")
+        }
+
         /// What the Settings size row reads while the fixtures are being served:
         /// 134 MB, which is about an hour of Opus — a plausible amount for a phone
         /// that has kept a few meetings, and enough to make the row worth having.

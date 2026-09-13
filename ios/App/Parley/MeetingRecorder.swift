@@ -52,7 +52,31 @@ final class MeetingRecorder: ObservableObject {
         case uploading
     }
 
-    @Published private(set) var phase: Phase = .idle
+    @Published private(set) var phase: Phase = .idle {
+        didSet { Self.holdsTheMicrophone = Self.holdsMic(phase) }
+    }
+
+    /// Whether *any* meeting anywhere in the app currently has the microphone.
+    ///
+    /// A static because the recorder is a `@StateObject` inside `LiveView`, and
+    /// the thing that needs the answer is on another tab: `PlaybackController`
+    /// refuses to start while a recording is running, and there is no path from
+    /// a pushed detail screen to the live screen's object. Derived from `phase`
+    /// rather than set by hand at each of the twelve transitions, so it cannot
+    /// drift from the state machine it describes.
+    ///
+    /// `.uploading` is excluded on purpose: the microphone is already closed by
+    /// then and a person who has stopped recording should be able to play
+    /// something back while the upload finishes.
+    private(set) static var holdsTheMicrophone = false
+
+    private static func holdsMic(_ phase: Phase) -> Bool {
+        switch phase {
+        case .starting, .recording, .finishing: return true
+        case .idle, .uploading: return false
+        }
+    }
+
     @Published private(set) var segments: [TranscriptSegment] = []
     @Published private(set) var micLevel: Float = 0
     /// Bumped once per audio chunk. `micLevel` alone cannot drive a scrolling
