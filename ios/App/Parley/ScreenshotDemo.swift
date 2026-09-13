@@ -238,6 +238,40 @@
             ]
         }
 
+        /// The three findings `featured.findingsCount` has always claimed.
+        /// Written as an analyst would: what happened, and why it matters to the
+        /// next conversation. The transcript frame renders them above the turns,
+        /// so the store listing shows what a recording is worth *after* the
+        /// meeting rather than only during it.
+        private static var findings: [[String: Any]] {
+            [
+                [
+                    "id": "f-seats", "atMs": 27_000.0,
+                    "severity": "info", "source": "extra",
+                    "title": t("Forty seats is the floor", "四十席是底線"),
+                    "detail": t(
+                        "The enterprise tier can't go below forty, so the seat count is not the lever — the price hold is.",
+                        "企業版不能低於四十席，所以席次不是可以談的項目，鎖價才是。"),
+                ],
+                [
+                    "id": "f-hold", "atMs": 44_000.0,
+                    "severity": "info", "source": "extra",
+                    "title": t("Price held to the next renewal", "價格鎖到下一次續約"),
+                    "detail": t(
+                        "Offered in place of a discount, and accepted — it has to be in the revised quote in writing.",
+                        "以鎖價取代折扣，對方接受了，修訂報價要把這條寫進去。"),
+                ],
+                [
+                    "id": "f-sso", "atMs": 58_000.0,
+                    "severity": "warn", "source": "extra",
+                    "title": t("Two weeks assumes Okta", "兩週的前提是 Okta"),
+                    "detail": t(
+                        "Identity mapping adds a week if SSO isn't already on Okta. Confirmed it is.",
+                        "如果 SSO 不在 Okta 上，身分對應要再加一週。已確認是在 Okta 上。"),
+                ],
+            ]
+        }
+
         static var meta: RecordingMeta {
             RecordingMeta(raw: [
                 "id": featured.id,
@@ -256,7 +290,7 @@
                     "mix-1": t("Client lead", "客戶窗口"),
                     "mix-2": t("You", "我"),
                 ],
-                "findings": [Any](), "actionItems": [Any](),
+                "findings": findings, "actionItems": [Any](),
                 "audio": "audio.ogg", "analyzed": true,
             ])
         }

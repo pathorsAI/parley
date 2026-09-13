@@ -51,35 +51,38 @@ struct RecordingDetailView: View {
         return TranscriptClipboard.plainText(readable) { meta.speakerLabel(for: $0) }
     }
 
+    /// One continuous column, the way the desktop reads a transcript: the meta
+    /// line, the highlights, then turn after turn separated by whitespace. No
+    /// rows, no rules, no cards — the speaker label is what marks a turn's start,
+    /// so nothing else has to.
     private func transcript(_ meta: RecordingMeta) -> some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
+            LazyVStack(alignment: .leading, spacing: 22) {
                 header
+                findings(meta)
                 let segs = meta.segments.filter { $0.isFinal }
                 if segs.isEmpty {
                     Text("This recording has no transcript.")
                         .font(.parley.subheadline)
-                        .foregroundStyle(Theme.mutedForeground)
+                        .foregroundStyle(Color(.secondaryLabel))
                 }
                 ForEach(segs, id: \.id) { seg in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
+                            // Plain secondary text, not blue and not a badge.
+                            // Blue on this screen would claim something is
+                            // happening now, and nothing on a finished recording
+                            // is: every turn here is equally over.
                             Text(verbatim: meta.speakerLabel(for: seg))
-                                // `primary`, not `brand`: this is 12pt text on
-                                // the page, and brand blue is the colour the
-                                // dark palette replaces with sky precisely
-                                // because it can't be read on a navy-black
-                                // page. `brand` stays for the mark and the
-                                // gradient, which are fills, not text.
-                                .font(.parley.caption.weight(.semibold))
-                                .foregroundStyle(Theme.primary)
+                                .font(.parley.footnote.weight(.semibold))
+                                .foregroundStyle(Color(.secondaryLabel))
                             Text(verbatim: TranscriptClipboard.clock(seg.startMs))
                                 .font(.parley.caption2.monospacedDigit())
-                                .foregroundStyle(Theme.mutedForeground.opacity(0.7))
+                                .foregroundStyle(Color(.tertiaryLabel))
                         }
                         Text(verbatim: seg.text)
                             .font(.parley.body)
-                            .foregroundStyle(Theme.foreground)
+                            .foregroundStyle(Color(.label))
                             .textSelection(.enabled)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -99,9 +102,9 @@ struct RecordingDetailView: View {
         }
     }
 
-    /// The recording's facts, in a pale-blue band rather than above a hairline:
-    /// the landing site separates a section by filling it, not by ruling it off,
-    /// and this is the one piece of chrome on an otherwise plain document.
+    /// The recording's facts, as one plain secondary line. It used to sit in a
+    /// pale-blue band, which made the least important thing on the page the only
+    /// thing with a shape.
     private var header: some View {
         HStack(spacing: 14) {
             Label(Self.duration(summary.durationMs), systemImage: "clock")
@@ -112,11 +115,53 @@ struct RecordingDetailView: View {
             Spacer(minLength: 0)
         }
         .font(.parley.caption.monospacedDigit())
-        .foregroundStyle(Theme.mutedForeground)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .foregroundStyle(Color(.secondaryLabel))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.tintedSurface, in: RoundedRectangle(cornerRadius: Theme.radius))
+    }
+
+    /// What the analysis found, above the transcript it was found in.
+    ///
+    /// A 2pt rule down the left edge in `label`, and nothing else: no violet, no
+    /// glyph, no fill. The rule is the whole of the treatment because it is the
+    /// only thing needed — it says "these lines are a different kind of thing
+    /// from the transcript below" without claiming they are more important than
+    /// what was actually said.
+    @ViewBuilder
+    private func findings(_ meta: RecordingMeta) -> some View {
+        let found = meta.findings
+        if !found.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Highlights")
+                    .font(.parley.footnote.weight(.semibold))
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .accessibilityAddTraits(.isHeader)
+                ForEach(found) { finding in
+                    HStack(alignment: .top, spacing: 12) {
+                        Rectangle()
+                            .fill(Color(.label))
+                            .frame(width: 2)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(verbatim: finding.title)
+                                .font(.parley.subheadlineEmphasized)
+                                .foregroundStyle(Color(.label))
+                            if !finding.detail.isEmpty {
+                                Text(verbatim: finding.detail)
+                                    .font(.parley.footnote)
+                                    .foregroundStyle(Color(.secondaryLabel))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Text(verbatim: TranscriptClipboard.clock(finding.atMs))
+                                .font(.parley.caption2.monospacedDigit())
+                                .foregroundStyle(Color(.tertiaryLabel))
+                        }
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityElement(children: .combine)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func load() async {

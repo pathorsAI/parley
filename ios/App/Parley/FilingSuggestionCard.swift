@@ -1,14 +1,20 @@
 import ParleyKit
 import SwiftUI
 
-/// The card that carries the filing suggestion on the record screen: the name
-/// this recording could have, and the folders it could live in.
+/// The filing suggestion on the record screen: the name this recording could
+/// have, and the folders it could live in.
 ///
-/// It is a SUGGESTION, not a control. Soft study-violet on a tinted surface,
-/// one action per row, and a dismiss — nothing here happens on its own, and
-/// nothing here is destructive. A row disappears the moment it has nothing left
-/// to offer (see `FilingSuggestionModel`, which derives that rather than
-/// remembering it), and the card goes with the last row.
+/// It is a SUGGESTION, not a control, and it is drawn like one: a small
+/// secondary heading, the suggestion in plain ink, and the actions as blue text.
+/// No card, no border, no glyph. It used to be a violet-bordered panel carrying
+/// the AI stars — the loudest block on a screen whose job is to stay out of the
+/// way, coloured to advertise that a model wrote it rather than to say what it
+/// was offering. Nothing here happens on its own and nothing here is
+/// destructive, so nothing here needs to shout.
+///
+/// A row disappears the moment it has nothing left to offer (see
+/// `FilingSuggestionModel`, which derives that rather than remembering it), and
+/// the block goes with the last row.
 ///
 /// The desktop lays the folder candidates out as chips across one line. Here
 /// they are stacked rows instead: three chips carrying a reason do not fit
@@ -23,14 +29,17 @@ struct FilingSuggestionCard: View {
     var body: some View {
         Group {
             if model.hasSomethingToOffer {
-                card
+                block
             }
         }
     }
 
-    private var card: some View {
+    private var block: some View {
         VStack(alignment: .leading, spacing: 12) {
-            header
+            Text("Suggested name and folder")
+                .font(.parley.footnote.weight(.semibold))
+                .foregroundStyle(Color(.secondaryLabel))
+                .accessibilityAddTraits(.isHeader)
             if let proposed = model.proposedTitle {
                 titleRow(proposed)
             }
@@ -42,84 +51,46 @@ struct FilingSuggestionCard: View {
                     .font(.parley.caption2)
                     .foregroundStyle(Theme.destructive)
             }
+            // "Not now" rather than an ✕ in the corner: the dismiss is one of the
+            // two things you can do with a suggestion, so it reads as the pair to
+            // accepting it instead of as a way to close a window.
+            Button("Not now") {
+                model.dismiss(app: app)
+            }
+            .font(.parley.footnote.weight(.semibold))
+            .disabled(model.isWriting)
         }
-        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Theme.study.opacity(0.07), in: RoundedRectangle(cornerRadius: Theme.radius)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: Theme.radius)
-                .strokeBorder(Theme.study.opacity(0.3), lineWidth: 1)
-        }
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "sparkles")
-                .font(.parley.caption)
-                .foregroundStyle(Theme.study)
-                .accessibilityHidden(true)
-            Text("Suggested name and folder")
-                .font(.parley.caption.weight(.semibold))
-                .foregroundStyle(Theme.study)
-                .accessibilityAddTraits(.isHeader)
+    private func titleRow(_ proposed: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            // The proposed name is the model's words, never a lookup key.
+            Text(verbatim: proposed)
+                .font(.parley.subheadlineEmphasized)
+                .foregroundStyle(Color(.label))
+                .lineLimit(2)
             Spacer(minLength: 8)
             Button {
-                model.dismiss(app: app)
+                Task { await model.acceptTitle(app: app) }
             } label: {
-                Image(systemName: "xmark")
-                    .font(.parley.caption2.weight(.semibold))
-                    .foregroundStyle(Theme.mutedForeground)
-                    // A 24pt target rather than the glyph's own few points:
-                    // the dismiss sits beside the accept actions and must not
-                    // be the one that is hard to hit.
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text("Dismiss"))
-        }
-    }
-
-    private func titleRow(_ proposed: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Suggested name")
-                .font(.parley.caption2)
-                .foregroundStyle(Theme.mutedForeground)
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                // The proposed name is the model's words, never a lookup key.
-                Text(verbatim: proposed)
-                    .font(.parley.subheadlineEmphasized)
-                    .foregroundStyle(Theme.foreground)
-                    .lineLimit(2)
-                Spacer(minLength: 8)
-                Button {
-                    Task { await model.acceptTitle(app: app) }
-                } label: {
-                    if model.isWritingTitle {
-                        ProgressView().controlSize(.mini)
-                    } else {
-                        Text("Use this name")
-                            .font(.parley.caption.weight(.semibold))
-                            .foregroundStyle(Theme.primary)
-                    }
+                if model.isWritingTitle {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Text("Use this name")
+                        .font(.parley.footnote.weight(.semibold))
                 }
-                .buttonStyle(.plain)
-                // Every row is inert while any push is in flight: two writes
-                // against the same meta race, and the loser wins.
-                .disabled(model.isWriting)
             }
+            // Every row is inert while any push is in flight: two writes
+            // against the same meta race, and the loser wins.
+            .disabled(model.isWriting)
         }
     }
 
     private var folderRows: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Suggested folder")
-                .font(.parley.caption2)
-                .foregroundStyle(Theme.mutedForeground)
+        VStack(alignment: .leading, spacing: 10) {
             // Indexed rather than keyed by name: two candidates could carry the
             // same name — one existing folder and one to be created — and two
             // rows sharing one identity is a list SwiftUI cannot draw.
@@ -132,61 +103,47 @@ struct FilingSuggestionCard: View {
     private func folderRow(_ folder: FilingFolderSuggestion) -> some View {
         let isNew = folder.folderId == nil
         let busy = model.isWritingFolder(folder)
-        return Button {
-            Task { await model.acceptFolder(folder, app: app) }
-        } label: {
-            HStack(spacing: 8) {
-                if busy {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .frame(width: 16)
+        return HStack(alignment: .firstTextBaseline, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                // A folder that does not exist yet has to read as one being
+                // created, not as one to move into — the tap is what brings
+                // it into being.
+                if isNew {
+                    Text("New folder “\(folder.name)”")
+                        .font(.parley.footnote.weight(.semibold))
+                        .foregroundStyle(Color(.label))
+                        .lineLimit(1)
                 } else {
-                    Image(systemName: isNew ? "folder.badge.plus" : "folder")
-                        .font(.parley.caption)
-                        .foregroundStyle(isNew ? Theme.mutedForeground : Theme.study)
-                        .frame(width: 16)
+                    Text(verbatim: folder.name)
+                        .font(.parley.footnote.weight(.semibold))
+                        .foregroundStyle(Color(.label))
+                        .lineLimit(1)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    // A folder that does not exist yet has to read as one being
-                    // created, not as one to move into — the tap is what brings
-                    // it into being.
-                    if isNew {
-                        Text("New folder “\(folder.name)”")
-                            .font(.parley.caption.weight(.semibold))
-                            .foregroundStyle(Theme.foreground)
-                            .lineLimit(1)
-                    } else {
-                        Text(verbatim: folder.name)
-                            .font(.parley.caption.weight(.semibold))
-                            .foregroundStyle(Theme.foreground)
-                            .lineLimit(1)
-                    }
-                    // The reason is there to make the folder pickable at a
-                    // glance, so it gets one line and no more. It is the
-                    // model's prose, not a lookup key.
-                    if !folder.reason.isEmpty {
-                        Text(verbatim: folder.reason)
-                            .font(.parley.caption2)
-                            .foregroundStyle(Theme.mutedForeground)
-                            .lineLimit(1)
-                    }
+                // The reason is there to make the folder pickable at a
+                // glance, so it gets one line and no more. It is the
+                // model's prose, not a lookup key.
+                if !folder.reason.isEmpty {
+                    Text(verbatim: folder.reason)
+                        .font(.parley.caption2)
+                        .foregroundStyle(Color(.secondaryLabel))
+                        .lineLimit(1)
                 }
-                Spacer(minLength: 8)
-                actionLabel(isNew: isNew)
-                    .font(.parley.caption.weight(.semibold))
-                    .foregroundStyle(Theme.primary)
-                    .lineLimit(1)
-                    .fixedSize()
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.tintedSurface, in: RoundedRectangle(cornerRadius: 10))
-            .contentShape(RoundedRectangle(cornerRadius: 10))
+            Spacer(minLength: 8)
+            Button {
+                Task { await model.acceptFolder(folder, app: app) }
+            } label: {
+                if busy {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    actionLabel(isNew: isNew)
+                        .font(.parley.footnote.weight(.semibold))
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+            .disabled(model.isWriting)
         }
-        .buttonStyle(.plain)
-        .disabled(model.isWriting)
-        .accessibilityElement(children: .combine)
     }
 
     /// What the tap will do, spelled out rather than assembled from a ternary:

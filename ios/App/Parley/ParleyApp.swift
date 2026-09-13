@@ -18,6 +18,11 @@ struct ParleyApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(app)
+                // Blue is a signal, and this is the one place it is declared:
+                // every link, button, selected tab and control inherits it from
+                // here, so a view only names `Theme.primary` when it is
+                // colouring something that is not already a tinted control.
+                .tint(Theme.primary)
                 .preferredColorScheme(app.theme.colorScheme)
                 .task { await app.refreshSession() }
                 .task { await app.refreshFeatureFlags() }

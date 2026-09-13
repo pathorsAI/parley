@@ -1,25 +1,31 @@
 import UIKit
 
-/// The UIKit-drawn chrome, brought onto the Pathors palette and DM Sans.
+/// The UIKit-drawn chrome, brought onto DM Sans.
 ///
-/// SwiftUI's `.font()` and `.foregroundStyle()` never reach a navigation bar
-/// title or a tab bar item label: both are drawn by UIKit from
-/// `UINavigationBarAppearance` / `UITabBarAppearance`. A re-skin that only
-/// touches views therefore leaves the two most prominent pieces of text in the
-/// app — "Library", "Settings", and the three tab labels — in SF Pro on system
-/// greys, which is what makes an otherwise rebranded app read as half done.
+/// SwiftUI's `.font()` never reaches a navigation bar title or a tab bar item
+/// label: both are drawn by UIKit from `UINavigationBarAppearance` /
+/// `UITabBarAppearance`. A re-skin that only touches views therefore leaves the
+/// two most prominent pieces of text in the app — "Library", "Settings", and the
+/// three tab labels — in SF Pro, which is what makes an otherwise rebranded app
+/// read as half done.
 ///
-/// This is the one place that fixes them. `ParleyApp` calls `apply()` once at
-/// launch; nothing else should touch a UIKit appearance proxy.
+/// **Fonts are the whole job here now.** The colours are the system's own
+/// semantic ones (`label`, `secondaryLabel`, `separator`) and the selected tab
+/// item is the app's tint — the same values SwiftUI would pick if this file did
+/// not exist. They are still named rather than left out, because a
+/// `configureWith…Background()` call resets the text attributes along with the
+/// fill and the font has to be re-stated anyway.
+///
+/// `ParleyApp` calls `apply()` once at launch; nothing else should touch a UIKit
+/// appearance proxy.
 ///
 /// Two rules the rest of the file follows:
 ///
-/// - **Colours are built from `ParleyDesignTokens` directly**, as
-///   `UIColor { traits in ... }` dynamic providers. Round-tripping a SwiftUI
-///   `Color` back through `UIColor(_:)` resolves it against whatever trait
-///   collection happens to be current and the result stops switching with the
-///   appearance — an appearance proxy is read once, so it would freeze
-///   whichever mode the app launched in.
+/// - **Colours are UIKit semantic colours, or dynamic providers built from
+///   `ParleyDesignTokens`** — never a SwiftUI `Color` round-tripped through
+///   `UIColor(_:)`, which resolves against whatever trait collection happens to
+///   be current and then stops switching with the appearance. An appearance
+///   proxy is read once, so it would freeze whichever mode the app launched in.
 /// - **Every font goes through `UIFontMetrics`.** `UIFont(name:size:)` is a
 ///   fixed point size and does not scale, so chrome set this way would sit at
 ///   34pt while the rest of the app grows with the user's text size. Ignoring
@@ -83,10 +89,11 @@ enum ParleyAppearance {
         // something behind the title. The system material, which on iOS 26 is
         // glass that samples the page beneath it — over a #FFFFFF page it reads
         // white and over #0C1620 it reads navy, so it never settles on the grey
-        // a fixed fill would. The hairline is `Theme.border`'s blue-tinted line
-        // rather than UIKit's neutral grey.
+        // a fixed fill would. The hairline is the system separator; a
+        // blue-tinted one used to live here and was the last decorative line in
+        // the chrome.
         let standard = appearance { $0.configureWithDefaultBackground() }
-        standard.shadowColor = separator
+        standard.shadowColor = .separator
 
         UINavigationBar.appearance().standardAppearance = standard
         UINavigationBar.appearance().compactAppearance = standard
@@ -109,14 +116,20 @@ enum ParleyAppearance {
         // capsule to be, and the shape would stop looking like iOS 26.
         appearance.configureWithDefaultBackground()
 
+        // The selected item is the signal blue; the rest are `secondaryLabel`.
+        // Both are what the system would already do — the tint comes from
+        // `ParleyApp`'s `.tint` and unselected items are secondary by default —
+        // so nothing here fights the platform. They are named only because
+        // `configureWithDefaultBackground()` above wipes the attributes and the
+        // font has to be re-applied regardless.
         let title = scaledFont(ParleyTypography.Face.medium, 10, .caption2, fallback: .medium)
         for item in [
             appearance.stackedLayoutAppearance,
             appearance.inlineLayoutAppearance,
             appearance.compactInlineLayoutAppearance,
         ] {
-            item.normal.titleTextAttributes = [.font: title, .foregroundColor: mutedForeground]
-            item.normal.iconColor = mutedForeground
+            item.normal.titleTextAttributes = [.font: title, .foregroundColor: UIColor.secondaryLabel]
+            item.normal.iconColor = .secondaryLabel
             item.selected.titleTextAttributes = [.font: title, .foregroundColor: accent]
             item.selected.iconColor = accent
         }
@@ -126,27 +139,18 @@ enum ParleyAppearance {
     }
 
     // MARK: - Colours
-    //
-    // Read from ParleyDesignTokens, never re-declared here.
 
-    private static let foreground = dynamic(
-        ParleyDesignTokens.Light.foreground, ParleyDesignTokens.Dark.foreground)
-    private static let mutedForeground = dynamic(
-        ParleyDesignTokens.Light.mutedForeground, ParleyDesignTokens.Dark.mutedForeground)
-    /// `Theme.brand` in light, `Theme.sky` in dark: #1469D4 is too dark to read
-    /// as a selected state on the navy-black page.
-    private static let accent = dynamic(ParleyDesignTokens.brand, ParleyDesignTokens.sky)
-    /// `Theme.border`, alpha included — the dark token is plain white and only
-    /// becomes a border once it is knocked back.
-    private static let separator = dynamic(
-        ParleyDesignTokens.Light.border, ParleyDesignTokens.Dark.border, darkAlpha: 0.10)
+    /// Title and large-title ink.
+    private static let foreground = UIColor.label
+    /// `Theme.primary`, rebuilt as a dynamic provider: the signal blue, brand in
+    /// light and sky in dark, because #1469D4 cannot be read as a selected state
+    /// on the navy-black page.
+    private static let accent = dynamic(
+        ParleyDesignTokens.Light.primary, ParleyDesignTokens.Dark.primary)
 
-    private static func dynamic(_ light: UInt32, _ dark: UInt32, darkAlpha: CGFloat = 1) -> UIColor
-    {
+    private static func dynamic(_ light: UInt32, _ dark: UInt32) -> UIColor {
         UIColor { traits in
-            let isDark = traits.userInterfaceStyle == .dark
-            return UIColor(hex: isDark ? dark : light)
-                .withAlphaComponent(isDark ? darkAlpha : 1)
+            UIColor(hex: traits.userInterfaceStyle == .dark ? dark : light)
         }
     }
 

@@ -1,17 +1,58 @@
 # iOS visual language
 
-The iOS app is a Pathors product and should look like one. Its colour and type
-come from the Pathors landing site, not from a neutral iOS default.
+The iOS app's look has a name: **blue is a signal**. A white page, ink text, and
+brand blue used only for the two things it can honestly mean — *this is happening
+now* and *this can be tapped*. Nothing else is coloured, nothing is filled, and
+nothing is decorated.
 
-**Source of truth:** the `.v2-root` block at the top of `components/v2/v2.css`
-in the `landing` repository, plus the font declarations in `landing`'s
-`app/layout.js`. When the brand moves, re-sync from there and update this file.
+That is a deliberate turn away from where this file started. The app used to
+mirror the Pathors landing site directly: pale blue section fills behind every
+group of rows, a brand gradient on the wordmark, the timer, the level meter, the
+chips and every CTA, a violet "study" accent, and six hues handed out to
+diarized speakers. A marketing page has to catch someone who is not looking at
+it. Parley is held in one hand *while a meeting is going on*, and on that screen
+every fill and every extra hue competes with the one fact that matters, which is
+whether the room is being recorded and heard. So the fills are gone and the blue
+is rationed.
 
-Three files carry it in the app:
+The brand is still here. It is the wordmark's face (Alexandria), the UI face (DM
+Sans) and the blue — `#1469D4`, the landing site's `--v2-brand`. What changed is
+how much of the page it is allowed to cover.
+
+## The rules
+
+1. **White page, ink text.** The page is `Theme.background`; text is
+   `Color(.label)` / `Color(.secondaryLabel)` / `Color(.tertiaryLabel)` and
+   hairlines are `Color(.separator)`. No hand-tuned greys — the system's adapt to
+   appearance, contrast settings and Increase Contrast, and a hex does not.
+2. **Blue is a signal, never a background.** `Theme.primary` marks what is
+   happening now (the speaker currently talking, the selected tab, the selected
+   folder chip) and what can be tapped. It is applied once as the app's `.tint`
+   in `ParleyApp`, so most views never name it. It is never a fill behind
+   content. The one filled blue surface in the app is the onboarding sign-in
+   button, which is not *behind* content — it is the content.
+3. **No cards, no tinted blocks, no gradients.** Rows are separated by
+   whitespace: `.listRowSeparator(.hidden)` plus vertical padding, and no
+   hairline between them. A section is a small `secondaryLabel` label above its
+   content. There is no gradient token to reach for.
+4. **Recording red outranks the blue.** `Theme.recording` is the running
+   recording, the waveform playhead, and the `LIVE` badge. Nothing else.
+5. **Settings keeps the platform's surfaces.** The inset-grouped `Form` keeps its
+   system background, its system row fill and its system section headers, with
+   only the face overridden. A grouped list *is* the iOS grammar for settings,
+   and this is the one screen a phone owner arrives at with expectations. It is
+   therefore also the one screen whose page is not `Theme.background` — in dark
+   mode a grouped list's page is the system black, not Parley's navy-black.
+6. **Speakers are letters, in plain text.** 「講者 A」/ "Speaker A" —
+   `speakerLetter` in ParleyKit — as `secondaryLabel` semibold footnote. No
+   circles, no badges, no per-speaker colours. An undecided speaker (index 0) is
+   `…`.
+
+Three files carry the language in the app:
 
 | file | what it holds |
 | --- | --- |
-| `ios/App/Parley/ParleyDesignTokens.swift` | raw hex values, light and dark |
+| `ios/App/Parley/ParleyDesignTokens.swift` | the three custom hex values, light and dark |
 | `ios/App/Parley/Theme.swift` | the adaptive `Color`s views actually use |
 | `ios/App/Parley/ParleyTypography.swift` | the type scale, as `Font.parley.*` |
 
@@ -23,73 +64,73 @@ by anything here.
 
 ## Palette
 
-### Light
+### Almost all of it is the system's
 
-Pathors runs light-first: white page, pale blue section fills, brand blue
-accents.
+There is no Parley grey, no Parley hairline and no Parley surface. Reach for the
+semantic colour at the call site:
 
-| token | value | comes from |
-| --- | --- | --- |
-| `background` | `#FFFFFF` | the landing page's white body |
-| `foreground` | `#1A1A1A` | `--v2-ink` |
-| `card` | `#FAFAFA` | `--v2-card` |
-| `muted` | `#EEF9FF` | `--v2-bg`, the pale blue section fill |
-| `mutedForeground` | `#535353` | `--v2-body` |
-| `primary` | `#1469D4` | `--v2-brand` |
-| `primaryForeground` | `#FFFFFF` | |
-| `border` | `#D7E9F5` | blue-tinted, derived from `--v2-tint` (`#BBE6FC`) |
-| `destructive` | `#DC2626` | unchanged |
-| `study` | `#7C3AED` | unchanged |
-| `org` | `#1469D4` | retuned from `#0284C7` to `--v2-brand` |
-| `warning` | `#D97706` | unchanged |
-| `success` | `#059669` | unchanged |
-| `tintedSurface` | `#EEF9FF` | `--v2-bg`, named for the grouped-background role |
+| role | use |
+| --- | --- |
+| primary text, the wordmark, the timer | `Color(.label)` |
+| secondary text, speaker labels, section labels, waveform bars | `Color(.secondaryLabel)` |
+| clocks, placeholder glyphs, an unsettled transcript tail | `Color(.tertiaryLabel)` |
+| hairlines, dividers, the nav bar's shadow | `Color(.separator)` / `UIColor.separator` |
+| an avatar disc, a stand-in control | `Color(.tertiarySystemFill)` |
+| the Settings page's background and rows | whatever `Form` draws — do not override |
 
-`mutedForeground` deliberately uses `--v2-body` (`#535353`) and **not**
-`--v2-muted` (`#98A0A5`). The landing site can afford `--v2-muted` on large
-type; at 13pt on white it fails contrast.
+### The three custom tokens
 
-### Dark
+Everything the platform has no answer for, and nothing else.
 
-Derived from `--v2-navy` (`#1B3A66`) so dark mode is a navy-black rather than a
-neutral black — the landing site has no dark mode to copy, so these are tuned
-rather than lifted.
+| token | light | dark | why it can't be a system colour |
+| --- | --- | --- | --- |
+| `background` | `#FFFFFF` | `#0C1620` | dark mode is a navy-black derived from `--v2-navy` (`#1B3A66`), not the system's neutral one |
+| `primary` | `#1469D4` | `#2DB6F3` | the brand blue (`--v2-brand`); dark uses `--v2-sky`, because `#1469D4` cannot be read on the navy-black page |
+| `recording` | `#E5322D` | `#FF453A` | a recording indicator is a fixed convention, and it must not drift with a system red |
 
-| token | value | note |
-| --- | --- | --- |
-| `background` | `#0C1620` | |
-| `foreground` | `#F2F7FB` | |
-| `card` | `#13212E` | |
-| `muted` | `#1B2C3C` | |
-| `mutedForeground` | `#9BB0C2` | |
-| `primary` | `#2DB6F3` | `--v2-sky`; `--v2-brand` is too dark to read here |
-| `primaryForeground` | `#08131C` | |
-| `border` | `#FFFFFF` | `Theme.border` applies `darkAlpha: 0.10` on top |
-| `destructive` | `#F87171` | |
-| `study` | `#A78BFA` | |
-| `org` | `#38BDF8` | |
-| `warning` | `#FBBF24` | |
-| `success` | `#34D399` | |
-| `tintedSurface` | `#13212E` | |
+The system text colours resolve correctly on top of the custom `background`:
+they key off the trait collection's interface style, not off the pixel behind
+them.
 
-### Shared
+### Status colours
 
-| token | value | note |
-| --- | --- | --- |
-| `brand` | `#1469D4` | `--v2-brand` |
-| `sky` | `#2DB6F3` | `--v2-sky` |
-| `recording` | `#EF4444` | recording red is a universal signal, and the Pathors palette has no red to replace it with |
-| `radius` | `12` | up from `10`; Pathors' cards are softer |
+`Theme.destructive`, `Theme.warning` and `Theme.success` are thin aliases for
+`Color(.systemRed)` / `.systemOrange` / `.systemGreen`. They exist so a call site
+can say *what it means* rather than name a hue, but there is no Parley value
+behind them — "this failed" and "this is fine" are the platform's words, not the
+brand's.
 
-`Theme.brand` and `Theme.sky` are fixed, not appearance-adaptive: they are the
-mark's colours and a logo that changes hue with the system theme is not a logo.
-`Theme.brandGradient` runs `brand → sky` from `.topLeading` to
-`.bottomTrailing`, which is what the landing site puts on headlines, stat
-numbers and primary CTAs.
+`Theme.micWindow` is the one genuinely fixed colour: iOS's own orange privacy
+indicator, matched on purpose. While the keyboard's microphone window is open the
+system is showing that exact dot in the status bar, and the app's mark for the
+same fact should be recognisably the same mark.
 
-Use `Theme.tintedSurface` for "this is a section" and `Theme.muted` for "this
-text is secondary". They happen to be the same blue in light mode; they are
-named separately so retuning one doesn't silently drag the other.
+### What was removed, and where it went
+
+| gone | replaced by |
+| --- | --- |
+| `foreground`, `mutedForeground` | `Color(.label)`, `Color(.secondaryLabel)` at the call site |
+| `card`, `muted`, `tintedSurface` | nothing — rows and sections are separated by whitespace |
+| `border` | `Color(.separator)` |
+| `brand`, `sky`, `brandGradient`, `onBrand` | `Theme.primary`, flat; `.white` on the one filled button |
+| `study` (the violet) | nothing — the filing suggestion is plain text with blue actions |
+| `org` | nothing — an org name is ordinary text; the scope menu is tinted because it is a button |
+| `Speaker` (six hues) | letters in `secondaryLabel`; blue only on the speaker talking right now |
+
+## The waveform
+
+`WaveformView` is the one piece of custom drawing in the app: 2pt bars with a 1pt
+gap, symmetric about a centreline, newest at the right edge, scrolling left, with
+a 1pt recording-red playhead. It replaced a 70×5 capsule level meter, which only
+ever answered "is sound arriving" — a question the recording dot already answers.
+
+The data is the RMS values `AudioCapture` already computes on the audio thread
+and `MeetingRecorder` publishes as `micLevel`: a 4096-frame tap, so about twelve
+values a second. The view appends what it is handed and asks for nothing more, so
+it costs what the capsule cost. Drawing is one `Canvas` and one `Path` per frame
+inside a `TimelineView(.animation)` that exists **only while recording**; idle, it
+is a single static draw of the silence line. A bar never falls below 4pt, so a
+quiet passage reads as a dotted centreline rather than as a gap.
 
 ## Typography
 

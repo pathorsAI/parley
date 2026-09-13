@@ -10,10 +10,10 @@ import UIKit
 /// same whether it was copied mid-meeting or from a recording opened a week
 /// later:
 ///
-///     Speaker 1  0:12
+///     Speaker A  0:12
 ///     Let's start with the renewal.
 ///
-///     Speaker 2  0:19
+///     Speaker B  0:19
 ///     Sure — the term is the part we want to revisit.
 ///
 /// The screens disagree on only one thing, how a speaker is named: the live
@@ -21,18 +21,20 @@ import UIKit
 /// carry names the desktop app assigned. So the caller supplies the label.
 enum TranscriptClipboard {
     /// The live screen's naming rule, kept here so the copied text can't drift
-    /// from what `SegmentRow` renders. Index 0 means the provider hasn't
-    /// decided who is talking yet, and an ellipsis admits that where
-    /// "Speaker 0" would quietly invent a person.
+    /// from what `SegmentRow` renders. Speakers are letters — 「講者 A」/
+    /// "Speaker A", see `speakerLetter` — and index 0 means the provider hasn't
+    /// decided who is talking yet, where an ellipsis admits it rather than
+    /// naming someone.
     ///
-    /// `Speaker %lld` is deliberately the same key ParleyKit's catalog uses for
+    /// `Speaker %@` is deliberately the same key ParleyKit's catalog uses for
     /// `RecordingMeta.speakerLabel`, so the live screen and a recording opened
     /// later can never name the same speaker two different ways. It is a format
     /// string filled in afterwards rather than an interpolated key: the latter
     /// would be a separate, untranslatable key per speaker index.
     static func liveLabel(for segment: TranscriptSegment) -> String {
-        guard segment.speaker != 0 else { return "…" }
-        return String(format: String(localized: "Speaker %lld"), segment.speaker)
+        let letter = speakerLetter(segment.speaker)
+        guard !letter.isEmpty else { return "…" }
+        return String(format: String(localized: "Speaker %@"), letter)
     }
 
     /// Elapsed time as m:ss, matching the timestamps on screen.

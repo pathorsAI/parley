@@ -86,19 +86,19 @@
         }
       }
     },
-    "Speaker %lld": {
+    "Speaker %@": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Speaker %lld"
+            "value": "Speaker %@"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "說話者 %lld"
+            "value": "講者 %@"
           }
         }
       }

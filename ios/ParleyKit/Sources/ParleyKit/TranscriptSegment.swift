@@ -35,3 +35,26 @@ public struct TranscriptSegment: Equatable, Sendable, Codable {
         self.endMs = endMs
     }
 }
+
+/// A diarized speaker index as a letter: 1 → A, 26 → Z, 27 → AA, 28 → AB …
+///
+/// Speakers are named 「講者 A」/ "Speaker A" rather than "Speaker 1", because a
+/// number reads as a count and invites arithmetic — people asked what happened
+/// to speakers 1 and 2 when a two-person meeting came back diarized as 3 and 4.
+/// A letter is plainly a label.
+///
+/// Bijective base-26, the spreadsheet-column scheme, so it never runs out and
+/// never produces an empty string for a real speaker. `n <= 0` is not a speaker
+/// at all — the provider has not decided yet — and returns "", which callers
+/// render as an ellipsis rather than naming someone who may not exist.
+public func speakerLetter(_ n: Int) -> String {
+    guard n > 0 else { return "" }
+    var remaining = n
+    var letters = ""
+    while remaining > 0 {
+        let digit = (remaining - 1) % 26
+        letters = String(UnicodeScalar(UInt8(65 + digit))) + letters
+        remaining = (remaining - 1) / 26
+    }
+    return letters
+}

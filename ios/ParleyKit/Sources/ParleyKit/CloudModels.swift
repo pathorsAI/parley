@@ -162,14 +162,14 @@ public struct RecordingMeta: @unchecked Sendable {
     }
 
     /// The desktop's speaker label rules (`defaultSpeakerLabel`, store.ts):
-    /// user names override; `mix` falls back to "Speaker N".
+    /// user names override; `mix` falls back to 「講者 A」/ "Speaker A".
     ///
     /// The fallbacks are display text, so they come out of this package's own
     /// catalog (`Resources/Localizable.xcstrings`) rather than as literals —
     /// a Chinese phone was reading "Speaker 1" over Chinese transcript lines.
-    /// The numbered forms are `%lld` format strings filled in afterwards, not
-    /// interpolated into the lookup key: `"Speaker \(n)"` as a key would be a
-    /// different, untranslatable key for every speaker index.
+    /// The filled-in forms are `%@` / `%lld` format strings applied afterwards,
+    /// not interpolated into the lookup key: `"Speaker \(n)"` as a key would be
+    /// a different, untranslatable key for every speaker index.
     public func speakerLabel(for seg: TranscriptSegment) -> String {
         Self.speakerLabel(for: seg, names: speakerNames)
     }
@@ -192,11 +192,44 @@ public struct RecordingMeta: @unchecked Sendable {
                 ? String(localized: "Them", bundle: .module)
                 : numbered("Remote %lld", seg.speaker)
         default:
-            return numbered("Speaker %lld", seg.speaker)
+            // Letters, not indices — see `speakerLetter`. An index of 0 means
+            // the provider has not decided who is talking, and an ellipsis
+            // admits that where 「講者 A」 would quietly invent a person. The
+            // live screen has always shown exactly this.
+            let letter = speakerLetter(seg.speaker)
+            guard !letter.isEmpty else { return "…" }
+            return String(
+                format: String(localized: "Speaker %@", bundle: .module), letter)
         }
     }
 
     private static func numbered(_ key: String.LocalizationValue, _ n: Int) -> String {
         String(format: String(localized: key, bundle: .module), n)
+    }
+
+    /// One line of the whole-recording analysis (`TimelineEvent`, types.ts). The
+    /// phone reads a recording rather than analysing one, so only the three
+    /// fields it can show are lifted out of `raw`.
+    public struct Finding: Identifiable, Sendable {
+        public let id: String
+        /// Moment on the recording timeline.
+        public let atMs: UInt64
+        public let title: String
+        public let detail: String
+    }
+
+    /// The findings the desktop's analysis left on this recording, in timeline
+    /// order. Empty when the recording has not been analysed.
+    public var findings: [Finding] {
+        guard let arr = raw["findings"] as? [[String: Any]] else { return [] }
+        return arr.enumerated().compactMap { index, f in
+            guard let title = f["title"] as? String, !title.isEmpty else { return nil }
+            return Finding(
+                id: f["id"] as? String ?? "finding-\(index)",
+                atMs: UInt64(max(0, f["atMs"] as? Double ?? 0)),
+                title: title,
+                detail: f["detail"] as? String ?? "")
+        }
+        .sorted { $0.atMs < $1.atMs }
     }
 }

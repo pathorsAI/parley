@@ -1,27 +1,39 @@
 import SwiftUI
 import UIKit
 
-/// Parley's semantic SwiftUI surface. The primitive values live in
-/// `ParleyDesignTokens.swift`, mirrored from the Pathors landing site's
-/// `--v2-*` properties; this adapter is intentionally the only place product
-/// views turn them into adaptive colors. Typography is `Font.parley`
-/// (`ParleyTypography.swift`).
+/// Parley's semantic SwiftUI surface — what is left of it.
+///
+/// The visual language is **white page, ink text, blue as a signal**: the page
+/// is `Theme.background`, every piece of text is a system semantic colour
+/// (`Color(.label)`, `Color(.secondaryLabel)`, `Color(.tertiaryLabel)`), every
+/// hairline is `Color(.separator)`, and nothing is filled to mark it out. So
+/// this enum holds only the values the platform has no answer for; reach for
+/// `Color(.label)` and friends directly at the call site for everything else.
+///
+/// `primary` is the one blue, and it is a *signal*: it marks what is happening
+/// now (the speaker currently talking, the selected tab, the selected folder
+/// chip) and what can be tapped. It is applied once as the app's `.tint` in
+/// `ParleyApp`, so most call sites do not have to name it at all. It is never a
+/// fill behind content.
+///
+/// Primitive values live in `ParleyDesignTokens.swift`; typography is
+/// `Font.parley` (`ParleyTypography.swift`). See
+/// `docs/design/ios-visual-language.md`.
 enum Theme {
     static let background = adaptive(ParleyDesignTokens.Light.background, ParleyDesignTokens.Dark.background)
-    static let foreground = adaptive(ParleyDesignTokens.Light.foreground, ParleyDesignTokens.Dark.foreground)
-    static let card = adaptive(ParleyDesignTokens.Light.card, ParleyDesignTokens.Dark.card)
-    static let muted = adaptive(ParleyDesignTokens.Light.muted, ParleyDesignTokens.Dark.muted)
-    static let mutedForeground = adaptive(ParleyDesignTokens.Light.mutedForeground, ParleyDesignTokens.Dark.mutedForeground)
+    /// The signal blue. Also the app's `.tint`.
     static let primary = adaptive(ParleyDesignTokens.Light.primary, ParleyDesignTokens.Dark.primary)
-    static let primaryForeground = adaptive(ParleyDesignTokens.Light.primaryForeground, ParleyDesignTokens.Dark.primaryForeground)
-    static let border = adaptive(ParleyDesignTokens.Light.border, ParleyDesignTokens.Dark.border, darkAlpha: 0.10)
-    static let destructive = adaptive(ParleyDesignTokens.Light.destructive, ParleyDesignTokens.Dark.destructive)
-    static let recording = Color(UIColor(hex: ParleyDesignTokens.recording))
-    static let study = adaptive(ParleyDesignTokens.Light.study, ParleyDesignTokens.Dark.study)
-    static let org = adaptive(ParleyDesignTokens.Light.org, ParleyDesignTokens.Dark.org)
-    static let warning = adaptive(ParleyDesignTokens.Light.warning, ParleyDesignTokens.Dark.warning)
-    static let success = adaptive(ParleyDesignTokens.Light.success, ParleyDesignTokens.Dark.success)
+    /// A recording is running. The one colour that outranks the blue.
+    static let recording = adaptive(ParleyDesignTokens.Light.recording, ParleyDesignTokens.Dark.recording)
     static let radius = ParleyDesignTokens.radius
+
+    // Status colours, taken from the system rather than tuned here: a red that
+    // means "this failed" and a green that means "this is fine" are the
+    // platform's words, not the brand's, and the system ones already follow
+    // Increase Contrast and the appearance.
+    static let destructive = Color(.systemRed)
+    static let warning = Color(.systemOrange)
+    static let success = Color(.systemGreen)
 
     /// The microphone window (see `MicWindow`). Deliberately **iOS's own orange
     /// privacy indicator** rather than a Parley token: while a window is open
@@ -30,37 +42,10 @@ enum Theme {
     /// both appearances, because the system's is.
     static let micWindow = Color(red: 0.99, green: 0.62, blue: 0.05)
 
-    /// The pale blue section fill the landing site uses behind grouped
-    /// content. Reach for this instead of `muted` when the intent is "this is a
-    /// section", not "this text is secondary".
-    static let tintedSurface = adaptive(
-        ParleyDesignTokens.Light.tintedSurface, ParleyDesignTokens.Dark.tintedSurface)
-
-    // The mark's colours. Fixed rather than appearance-adaptive: these are the
-    // logo's blues and they are the same blues in dark mode.
-    static let brand = Color(UIColor(hex: ParleyDesignTokens.brand))
-    static let sky = Color(UIColor(hex: ParleyDesignTokens.sky))
-
-    /// brand → sky, the gradient the landing site puts on headlines, stat
-    /// numbers and primary CTAs.
-    static let brandGradient = LinearGradient(
-        colors: [brand, sky], startPoint: .topLeading, endPoint: .bottomTrailing)
-
-    /// What to draw *on* `brandGradient`. Fixed, like the gradient.
-    static let onBrand = Color(UIColor(hex: ParleyDesignTokens.onBrand))
-
-    /// Per-speaker colours for a diarized transcript, in hand-out order. Index
-    /// with `(speaker - 1) % count`; speaker 0 means the provider hasn't
-    /// decided yet and belongs in `mutedForeground`, not here.
-    static let speakers: [Color] = zip(
-        ParleyDesignTokens.Speaker.light, ParleyDesignTokens.Speaker.dark
-    ).map { adaptive($0, $1) }
-
-    private static func adaptive(_ light: UInt32, _ dark: UInt32, darkAlpha: CGFloat = 1) -> Color {
+    private static func adaptive(_ light: UInt32, _ dark: UInt32) -> Color {
         Color(
             UIColor { traits in
                 UIColor(hex: traits.userInterfaceStyle == .dark ? dark : light)
-                    .withAlphaComponent(traits.userInterfaceStyle == .dark ? darkAlpha : 1)
             })
     }
 }

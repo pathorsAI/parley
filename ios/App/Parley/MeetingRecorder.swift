@@ -46,6 +46,22 @@ final class MeetingRecorder: ObservableObject {
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var segments: [TranscriptSegment] = []
     @Published private(set) var micLevel: Float = 0
+    /// Bumped once per audio chunk. `micLevel` alone cannot drive a scrolling
+    /// waveform: two silent chunks publish the same value and `onChange` never
+    /// fires, so the field would stop moving exactly when it should show silence.
+    @Published private(set) var micSample: Int = 0
+    #if DEBUG
+        private var demoLevelTimer: Timer?
+    #endif
+    /// When this meeting started, for the live screen's timer. Set on the tap
+    /// rather than when the microphone finally opens — the timer and the record
+    /// control have to agree about when the recording began, and the control
+    /// flips on the tap (see the type doc). Nil between meetings.
+    ///
+    /// A `Date` rather than a ticking count: the view hands it to
+    /// `Text(_:style:.timer)` and the system redraws the digits, so nothing here
+    /// publishes once a second.
+    @Published private(set) var startedAt: Date?
     /// One line under the transcript. `nil` when there is nothing to say.
     @Published private(set) var status: String?
     /// The microphone could not be recovered. The view watches this and ends
@@ -135,6 +151,7 @@ final class MeetingRecorder: ObservableObject {
         await DictationCoordinator.shared.yieldMicrophone()
         phase = .starting
         status = String(localized: "Starting…")
+        startedAt = Date()
         segments = []
         // Whatever the last meeting left on screen belongs to the last meeting.
         settled = nil
@@ -147,6 +164,7 @@ final class MeetingRecorder: ObservableObject {
 
         guard await AudioCapture.requestPermission() else {
             phase = .idle
+            startedAt = nil
             status = String(localized: "Microphone access is required")
             return
         }
@@ -167,7 +185,10 @@ final class MeetingRecorder: ObservableObject {
             onChunk: { [weak self, audio] samples, level in
                 recorder?.append(samples)
                 audio.send(samples)
-                Task { @MainActor in self?.micLevel = level }
+                Task { @MainActor in
+                    self?.micLevel = level
+                    self?.micSample &+= 1
+                }
             },
             onStatus: { [weak self] captureStatus in
                 Task { @MainActor in self?.handle(captureStatus) }
@@ -181,6 +202,7 @@ final class MeetingRecorder: ObservableObject {
             audio.discard()
             client?.cancel()
             phase = .idle
+            startedAt = nil
             status = String(localized: "Audio error: \(error.localizedDescription)")
             return
         }
@@ -472,7 +494,37 @@ final class MeetingRecorder: ObservableObject {
             self.status = status
             phase = .recording
             transcription = .live
-            micLevel = 0.11
+            // 18:42 on the clock, matching the featured recording's duration, so
+            // the captured frame shows a meeting well under way rather than one
+            // that started the instant the screenshot was taken.
+            startedAt = Date(timeIntervalSinceNow: -1_122)
+            // A simulator has no microphone, so the waveform would sit on its
+            // silence line. Feed it a fixed speech-shaped level pattern at the
+            // real chunk rate instead: bursts and pauses, the same every run, so
+            // the captured frame is reproducible and shows what the view is for.
+            demoLevelTimer?.invalidate()
+            var tick = 0
+            demoLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.085, repeats: true) {
+                [weak self] _ in
+                guard let self else { return }
+                let pattern = Self.demoLevelPattern
+                self.micLevel = pattern[tick % pattern.count]
+                self.micSample &+= 1
+                tick += 1
+            }
         }
+
+        private static let demoLevelPattern: [Float] = {
+            // ~6 s loop: three phrases of varying energy with pauses between.
+            func phrase(_ n: Int, _ peak: Float) -> [Float] {
+                (0..<n).map { i in
+                    let t = Float(i) / Float(n)
+                    let syllable = abs(sin(t * 3.14159 * Float(n) / 3.2))
+                    return max(0.02, peak * (0.35 + 0.65 * syllable) * (0.6 + 0.4 * sin(t * 3.14159)))
+                }
+            }
+            let pause = [Float](repeating: 0.006, count: 9)
+            return pause + phrase(22, 0.22) + pause + phrase(14, 0.16) + pause + phrase(26, 0.2) + pause
+        }()
     #endif
 }
