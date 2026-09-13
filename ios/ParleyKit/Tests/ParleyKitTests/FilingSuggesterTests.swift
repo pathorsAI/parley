@@ -262,10 +262,12 @@ final class FilingSuggesterTests: XCTestCase {
                 segment("blank", "   ", startMs: 95_000),
             ],
             speakerNames: ["mix-2": "Mei"])
+        // Unnamed speakers are letters, the same label the transcript screens
+        // render (`speakerLetter`); a name still wins over the letter.
         XCTAssertEqual(
             rendered,
             """
-            [0:05] [Speaker 1] First thing.
+            [0:05] [Speaker A] First thing.
             [1:12] [Mei] Second thing.
             """)
     }

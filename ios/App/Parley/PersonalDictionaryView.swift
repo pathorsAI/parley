@@ -25,9 +25,10 @@ struct PersonalDictionaryView: View {
                 clearSection
             }
         }
+        // Pushed from Settings, so it keeps Settings' surfaces: the system
+        // grouped background and row fill, with only the face overridden. See
+        // `SettingsSection`.
         .font(.parley.body)
-        .scrollContentBackground(.hidden)
-        .background(Theme.background)
         .environment(\.defaultMinListRowHeight, 48)
         .navigationTitle("Personal dictionary")
         .onAppear { lexicon = LexiconStore.load() }
@@ -51,7 +52,7 @@ struct PersonalDictionaryView: View {
             if lexicon.pairs.isEmpty {
                 Text("Nothing learned yet.")
                     .font(.parley.subheadline)
-                    .foregroundStyle(Theme.mutedForeground)
+                    .foregroundStyle(Color(.secondaryLabel))
             } else {
                 // Newest first, so a correction just learned sits where the
                 // person who made it will look for it.
@@ -65,7 +66,6 @@ struct PersonalDictionaryView: View {
         } footer: {
             SettingsSection.footer("When you fix a word straight after dictating it, Parley notices. It waits until it has seen the same fix twice before using it, so one change of mind doesn't become a rule. Swipe a row away to unlearn it.")
         }
-        .listRowBackground(Theme.tintedSurface)
     }
 
     /// What was heard, an arrow, what the user meant — and how many times they
@@ -74,10 +74,10 @@ struct PersonalDictionaryView: View {
     private func correctionRow(_ pair: LexiconPair) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(verbatim: pair.original)
-                .foregroundStyle(Theme.mutedForeground)
+                .foregroundStyle(Color(.secondaryLabel))
             Image(systemName: "arrow.right")
                 .font(.parley.caption)
-                .foregroundStyle(Theme.mutedForeground)
+                .foregroundStyle(Color(.secondaryLabel))
             Text(verbatim: pair.replacement)
                 .font(.parley.bodyEmphasized)
             Spacer(minLength: 8)
@@ -87,7 +87,7 @@ struct PersonalDictionaryView: View {
                 // noise.
                 Text(verbatim: "\(pair.count)×")
                     .font(.parley.caption.monospacedDigit())
-                    .foregroundStyle(Theme.mutedForeground)
+                    .foregroundStyle(Color(.secondaryLabel))
             } else {
                 // Seen once, so it is not being applied. Saying "learning" is
                 // the difference between a list of rules and a list of guesses.
@@ -121,7 +121,6 @@ struct PersonalDictionaryView: View {
         } footer: {
             SettingsSection.footer("Names, jargon, and anything else you say often. Parley keeps them so it can prefer your spelling — this list is yours to keep even where transcription can't yet be biased toward it.")
         }
-        .listRowBackground(Theme.tintedSurface)
     }
 
     private var clearSection: some View {
@@ -130,7 +129,6 @@ struct PersonalDictionaryView: View {
                 showClearConfirmation = true
             }
         }
-        .listRowBackground(Theme.tintedSurface)
     }
 
     // MARK: editing

@@ -41,6 +41,18 @@ final class MeetingUploader {
         Double(samplesFed) / Double(OggOpusEncoder.sampleRate) * 1000
     }
 
+    /// The user threw the meeting away: close the encoder and delete the audio
+    /// file so nothing is left to upload. Not persisted to the pending queue,
+    /// so `syncPending` never resurrects it.
+    func abandon() {
+        queue.sync { [self] in
+            encoder = nil
+            try? fileHandle?.close()
+            fileHandle = nil
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+    }
+
     /// Shorter than this and there is no meeting to keep. Shared with the
     /// import path so a picked file is judged by the same bar a live recording
     /// is — and so the two can never drift apart.

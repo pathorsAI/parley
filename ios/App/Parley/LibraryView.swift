@@ -141,7 +141,6 @@ struct LibraryView: View {
                     Text(verbatim: scopeName)
                 }
                 .font(.parley.subheadlineEmphasized)
-                .foregroundStyle(scope == nil ? Theme.foreground : Theme.org)
             }
         }
     }
@@ -160,7 +159,7 @@ struct LibraryView: View {
             }
             if importer.isRunning || importNotice != nil {
                 importStatus
-                    .listRowInsets(EdgeInsets(top: 10, leading: 22, bottom: 10, trailing: 22))
+                    .listRowInsets(EdgeInsets(top: 10, leading: 20, bottom: 10, trailing: 20))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             }
@@ -211,16 +210,17 @@ struct LibraryView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(verbatim: importer.stage.label)
                     .font(.parley.caption)
-                    .foregroundStyle(Theme.mutedForeground)
+                    .foregroundStyle(Color(.secondaryLabel))
+                // No tint named: the bar inherits the app's, which is the
+                // signal blue, and this is a thing happening right now.
                 ProgressView(value: fraction)
-                    .tint(Theme.brand)
             }
         case .transcribing, .filing:
             HStack(spacing: 10) {
                 ProgressView()
                 Text(verbatim: importer.stage.label)
                     .font(.parley.caption)
-                    .foregroundStyle(Theme.mutedForeground)
+                    .foregroundStyle(Color(.secondaryLabel))
             }
         case .idle:
             if let importNotice {
@@ -231,9 +231,11 @@ struct LibraryView: View {
         }
     }
 
-    /// Same shape as the live screen's empty state: a tinted disc, the glyph in
-    /// brand blue, and enough room around it that "nothing here" reads as a
-    /// deliberate state rather than a failed load.
+    /// Same shape as the live screen's empty state: the glyph, the sentence, and
+    /// enough room around it that "nothing here" reads as a deliberate state
+    /// rather than a failed load. The glyph is a quiet mark on the page — it used
+    /// to be brand blue on a tinted disc, which made the emptiest screen in the
+    /// app the most decorated one.
     ///
     /// A library with nothing in it is also the second natural door into
     /// import, so it opens the very same `.fileImporter` the toolbar button
@@ -243,28 +245,22 @@ struct LibraryView: View {
         VStack(spacing: 18) {
             Image(systemName: search.isEmpty ? "rectangle.stack" : "magnifyingglass")
                 .font(.parley.title)
-                .foregroundStyle(Theme.brand)
-                .frame(width: 88, height: 88)
-                .background(Theme.tintedSurface, in: Circle())
+                .foregroundStyle(Color(.tertiaryLabel))
                 .accessibilityHidden(true)
             Text(search.isEmpty ? "No recordings here yet." : "No matches.")
                 .font(.parley.subheadline)
-                .foregroundStyle(Theme.mutedForeground)
+                .foregroundStyle(Color(.secondaryLabel))
                 .multilineTextAlignment(.center)
             if scope == nil && search.isEmpty {
+                // A tappable thing, so it is blue — and nothing more than that:
+                // it inherits the app's tint rather than carrying a fill.
                 Button {
                     importing = true
                 } label: {
                     Label("Import an audio file", systemImage: "square.and.arrow.down")
                         .font(.parley.subheadlineEmphasized)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 11)
-                        .background(Theme.brandGradient, in: Capsule())
-                        .foregroundStyle(Theme.onBrand)
                 }
-                .buttonStyle(.plain)
                 .disabled(importer.isRunning)
-                .opacity(importer.isRunning ? 0.5 : 1)
             }
         }
         .frame(maxWidth: .infinity)
@@ -294,22 +290,23 @@ struct LibraryView: View {
     /// `label` is either an already-localized chip name or a user-created folder
     /// name, so it renders verbatim either way.
     ///
-    /// The selected chip is the one place in the list that carries the brand
-    /// gradient — it is the closest thing here to the landing site's pill CTA,
-    /// and giving it to only one chip at a time keeps the row legible.
+    /// Selection is a blue label over a 1pt blue rule, not a filled pill. The
+    /// pill was a fill behind content and it made the folder row the loudest
+    /// thing above the list; an underline says "this one" using the same signal
+    /// colour and no area at all. The rule is always laid out, transparent when
+    /// unselected, so a chip does not change height on tap.
     private func chip(_ label: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(verbatim: label)
-                .font(.parley.caption.weight(selected ? .semibold : .regular))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    selected
-                        ? AnyShapeStyle(Theme.brandGradient)
-                        : AnyShapeStyle(Theme.tintedSurface),
-                    in: Capsule()
-                )
-                .foregroundStyle(selected ? Theme.onBrand : Theme.foreground)
+            VStack(spacing: 5) {
+                Text(verbatim: label)
+                    .font(.parley.caption.weight(selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? Theme.primary : Color(.secondaryLabel))
+                Rectangle()
+                    .fill(selected ? Theme.primary : Color.clear)
+                    .frame(height: 1)
+            }
+            .padding(.horizontal, 4)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -481,26 +478,21 @@ struct LibraryView: View {
     }
 }
 
-/// A recording reads as a card on the landing site's terms — its own
-/// soft-cornered pale-blue surface floating on a white page — rather than a
-/// slab between two hairlines. The row *background* carries the shape, so the
-/// disclosure chevron sits inside the card with everything else; the row insets
-/// are the card's inner gutter, and the background's own padding is the gap
-/// between cards.
+/// A recording is separated from the next one by **whitespace and nothing else**
+/// — no hairline, no card, no fill. Both of the things that used to be here were
+/// a way of drawing a boundary the eye does not need: a row is already a title
+/// over a snippet over a meta line, and the gap between two of them says where
+/// one stops.
 ///
-/// `tintedSurface` and not `Theme.card`: #FAFAFA on a #FFFFFF page is a 2% step,
-/// which cannot carry a card boundary now that the separators are gone.
+/// So all this modifier does is set the gutter and take the system furniture
+/// away. The vertical inset is the gap; the horizontal one lines the row up with
+/// the folder chips and the navigation title above it.
 private struct RecordingRow: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .listRowInsets(EdgeInsets(top: 12, leading: 22, bottom: 12, trailing: 22))
+            .listRowInsets(EdgeInsets(top: 14, leading: 20, bottom: 14, trailing: 20))
             .listRowSeparator(.hidden)
-            .listRowBackground(
-                RoundedRectangle(cornerRadius: Theme.radius)
-                    .fill(Theme.tintedSurface)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-            )
+            .listRowBackground(Color.clear)
     }
 }
 
@@ -539,7 +531,7 @@ private struct RecordingCard: View {
             if let snippet = summary.snippet, !snippet.isEmpty {
                 Text(verbatim: snippet)
                     .font(.parley.caption)
-                    .foregroundStyle(Theme.mutedForeground)
+                    .foregroundStyle(Color(.secondaryLabel))
                     .lineLimit(2)
             }
             // Everything here is short and fixed except the folder name, so the
@@ -564,7 +556,11 @@ private struct RecordingCard: View {
                     Label("\(n)", systemImage: "person.2").fixedSize()
                 }
                 if let n = summary.findingsCount, n > 0 {
-                    Label("\(n)", systemImage: "sparkles").fixedSize()
+                    // `lightbulb`, the same glyph the detail screen puts on the
+                    // findings section. The glyph here used to be the AI stars,
+                    // which said "a model wrote this" rather than "findings" —
+                    // and the count is only ever about the latter.
+                    Label("\(n)", systemImage: "lightbulb").fixedSize()
                 }
                 if let fid = summary.folderId, let f = folders.first(where: { $0.id == fid }) {
                     Label(f.name, systemImage: "folder")
@@ -591,20 +587,19 @@ private struct RecordingCard: View {
             // the built-in one is sized for body text, and four of them at
             // caption2 ate more of the row than the folder name did.
             .labelStyle(MetaLabelStyle())
-            .foregroundStyle(Theme.mutedForeground)
+            .foregroundStyle(Color(.secondaryLabel))
         }
     }
 
+    /// Where the recording came from, as small caps text rather than a tinted
+    /// chip. `LIVE` keeps the recording red — it is the one word on this screen
+    /// that says "a microphone was open" — and `UPLOAD` is secondary, because a
+    /// file someone imported is the unremarkable case.
     private var badge: some View {
         let live = summary.source == "live"
         return Text(live ? "LIVE" : "UPLOAD")
             .font(.parley.caption2.weight(.semibold))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(
-                (live ? Theme.recording : Theme.org).opacity(0.14),
-                in: RoundedRectangle(cornerRadius: 6))
-            .foregroundStyle(live ? Theme.recording : Theme.org)
+            .foregroundStyle(live ? Theme.recording : Color(.secondaryLabel))
     }
 
     /// Locale-formatted rather than one hard-coded `M/d HH:mm`: an English phone

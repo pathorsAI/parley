@@ -69,12 +69,12 @@ struct DictationView: View {
 
             Text(statusTitle)
                 .font(.parley.title3)
-                .foregroundStyle(Theme.foreground)
+                .foregroundStyle(Color(.label))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
             Text(statusSubtitle)
                 .font(.parley.subheadline)
-                .foregroundStyle(Theme.mutedForeground)
+                .foregroundStyle(Color(.secondaryLabel))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 32)
@@ -197,13 +197,13 @@ private struct SwipeBackGuide: View {
         VStack(spacing: 12) {
             Text("Swipe right on the bar below")
                 .font(.parley.subheadlineEmphasized)
-                .foregroundStyle(Theme.foreground)
+                .foregroundStyle(Color(.label))
             ZStack(alignment: .leading) {
-                // `border`, not `muted`: the card underneath is now
-                // `tintedSurface`, and in light mode the two are the same pale
-                // blue — the stand-in home indicator would vanish into it.
+                // A stand-in for the real home indicator, in the system's own
+                // fill: it has to read as a piece of chrome the phone drew, not
+                // as something Parley put there.
                 Capsule()
-                    .fill(Theme.border)
+                    .fill(Color(.tertiaryLabel))
                     .frame(height: 5)
                     .frame(maxWidth: .infinity)
                 Image(systemName: "arrow.right")
@@ -223,9 +223,6 @@ private struct SwipeBackGuide: View {
         .padding(.vertical, 14)
         .padding(.horizontal, 18)
         .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: Theme.radius)
-                .fill(Theme.tintedSurface))
         .onAppear { if animated { go = true } }
     }
 }

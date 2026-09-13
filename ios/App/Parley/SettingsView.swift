@@ -55,19 +55,29 @@ struct SettingsView: View {
                         debugSection
                     #endif
                 }
-                // One surface rule across the app: white page, pale-blue
-                // grouped surfaces on it — the landing site's white body with
-                // `--v2-bg` blocks. Not `Theme.card`, which is #FAFAFA against
-                // a #FFFFFF page: a 2% step can't carry a card boundary once
-                // the hairline separators are gone.
+                // **This screen keeps the platform's own surfaces.** Everywhere
+                // else in the app a fill behind content is gone; here the
+                // inset-grouped `Form` keeps its system background and its
+                // system row fill, because a grouped list *is* the iOS grammar
+                // for settings and a phone owner already knows how to read one.
+                // A pale-blue row fill and brand-blue section headers used to
+                // sit on top of it, which made the one screen people arrive at
+                // with expectations the one screen that broke them.
                 //
-                // The face has to be set on the whole Form: a settings page is
-                // mostly rows nobody styles individually (pickers, links,
-                // `LabeledContent`), and each one would otherwise quietly draw
-                // in the system font next to a heading that doesn't.
+                // The cost is that this is the one screen whose page is *not*
+                // `Theme.background`: in dark mode a grouped list's own page is
+                // the system black rather than Parley's navy-black. Taken
+                // knowingly — a settings page that reads as the platform's is
+                // worth more here than one that reads as the brand's, and
+                // repainting the page while keeping the system row fill would
+                // land white rows on a white page in light mode.
+                //
+                // The face is the only thing overridden, and it has to be set on
+                // the whole Form: a settings page is mostly rows nobody styles
+                // individually (pickers, links, `LabeledContent`), and each one
+                // would otherwise quietly draw in the system font next to a
+                // heading that doesn't.
                 .font(.parley.body)
-                .scrollContentBackground(.hidden)
-                .background(Theme.background)
                 // Settings is a page of short rows; the default height packs
                 // them tighter than anything else in the app.
                 .environment(\.defaultMinListRowHeight, 48)
@@ -115,7 +125,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(verbatim: user.name ?? user.email).font(.parley.bodyEmphasized)
                         Text(verbatim: user.email).font(.parley.caption)
-                            .foregroundStyle(Theme.mutedForeground)
+                            .foregroundStyle(Color(.secondaryLabel))
                     }
                 }
                 .padding(.vertical, 4)
@@ -123,11 +133,10 @@ struct SettingsView: View {
                     ForEach(app.orgs) { org in
                         HStack {
                             Label(org.name, systemImage: "person.2")
-                                .foregroundStyle(Theme.org)
                             Spacer()
                             Text(verbatim: roleLabel(org.role))
                                 .font(.parley.caption)
-                                .foregroundStyle(Theme.mutedForeground)
+                                .foregroundStyle(Color(.secondaryLabel))
                         }
                     }
                 }
@@ -155,7 +164,6 @@ struct SettingsView: View {
         } header: {
             sectionHeader("Account")
         }
-        .listRowBackground(Theme.tintedSurface)
     }
 
     private var syncSection: some View {
@@ -178,7 +186,6 @@ struct SettingsView: View {
         } footer: {
             sectionFooter("When the network drops, the server goes quiet, or you run out of quota, the phone holds on to finished recordings until they sync.")
         }
-        .listRowBackground(Theme.tintedSurface)
     }
 
     @ViewBuilder
@@ -199,42 +206,41 @@ struct SettingsView: View {
 
     /// One button → the hosted `/sign-in` page (email+password / Google /
     /// Apple, all on our origin). The app never renders credential fields.
+    ///
+    /// A plain row button, which in a grouped `Form` draws as tinted text — the
+    /// platform's own shape for an action in a settings list. The filled
+    /// gradient slab this used to be belonged on the onboarding screen, where the
+    /// same action really is the only thing on the page; in here it was a banner.
     @ViewBuilder
     private var signInForm: some View {
         Button {
             app.signIn()
         } label: {
-            HStack {
-                if app.signingIn { ProgressView().tint(Theme.onBrand).padding(.trailing, 6) }
+            HStack(spacing: 8) {
+                if app.signingIn { ProgressView().controlSize(.mini) }
                 Text("Sign in or create an account")
                     .font(.parley.bodyEmphasized)
-                    .frame(maxWidth: .infinity)
             }
-            .padding(.vertical, 12)
-            .foregroundStyle(Theme.onBrand)
-            .background(Theme.brandGradient, in: RoundedRectangle(cornerRadius: Theme.radius))
         }
-        .buttonStyle(.plain)
-        .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
         .disabled(app.signingIn)
         if let err = app.signInError {
             Text(verbatim: err).font(.parley.caption).foregroundStyle(Theme.destructive)
         }
         Text("Opens Parley's sign-in page — email and password, Google, and Apple. Once you're in you get live transcription with no API key, plus recording and transcript sync.")
             .font(.parley.caption)
-            .foregroundStyle(Theme.mutedForeground)
+            .foregroundStyle(Color(.secondaryLabel))
     }
 
-    /// The disc reverses the page rule: the row it sits on is already the pale
-    /// blue, so the avatar is the page colour punched back out of it.
+    /// The initial on a system fill — a grouped list's own way of standing an
+    /// avatar in for a photo, rather than a punched-out hole in a tinted row.
     private func avatar(_ user: CloudUser) -> some View {
         Circle()
-            .fill(Theme.background)
+            .fill(Color(.tertiarySystemFill))
             .frame(width: 40, height: 40)
             .overlay(
                 Text(String((user.name ?? user.email).prefix(1)).uppercased())
                     .font(.parley.callout.weight(.semibold))
-                    .foregroundStyle(Theme.primary))
+                    .foregroundStyle(Color(.label)))
     }
 
     private func roleLabel(_ role: String?) -> String {
@@ -264,7 +270,6 @@ struct SettingsView: View {
         } footer: {
             sectionFooter("Picking an organization still saves the recording to your personal space and shares a copy there — same as the desktop app.")
         }
-        .listRowBackground(Theme.tintedSurface)
     }
 
     /// Same serialization the desktop picker uses internally:
@@ -311,7 +316,6 @@ struct SettingsView: View {
             } header: {
                 sectionHeader("Usage (this period)")
             }
-            .listRowBackground(Theme.tintedSurface)
         }
     }
 
@@ -322,7 +326,7 @@ struct SettingsView: View {
                 Spacer()
                 Text(verbatim: String(format: "%.1f / %.0f %@", used, limit, unit))
                     .font(.parley.caption.monospacedDigit())
-                    .foregroundStyle(Theme.mutedForeground)
+                    .foregroundStyle(Color(.secondaryLabel))
             }
             let over = limit > 0 && used >= limit
             ProgressView(value: limit > 0 ? min(used / limit, 1) : 0)
@@ -344,7 +348,6 @@ struct SettingsView: View {
         } header: {
             sectionHeader("Appearance")
         }
-        .listRowBackground(Theme.tintedSurface)
     }
 
     // MARK: language
@@ -365,13 +368,12 @@ struct SettingsView: View {
                     Label("Language", systemImage: "globe")
                     Spacer()
                     Text(verbatim: Self.currentLanguageName)
-                        .foregroundStyle(Theme.mutedForeground)
+                        .foregroundStyle(Color(.secondaryLabel))
                 }
             }
         } footer: {
             sectionFooter("Parley speaks English and Traditional Chinese, and follows your iPhone's language by default. Change it for Parley alone in Settings › Parley › Language.")
         }
-        .listRowBackground(Theme.tintedSurface)
     }
 
     /// The active localization, named in itself — 繁體中文 rather than
@@ -395,36 +397,24 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 14) {
                     Image(systemName: "mic.fill")
-                        .font(.parley.headline)
-                        .foregroundStyle(Theme.primary)
-                        .frame(width: 44, height: 44)
-                        .background(
-                            RoundedRectangle(cornerRadius: Theme.radius)
-                                .fill(Theme.background))
+                        .font(.parley.title3)
+                        .foregroundStyle(Color(.secondaryLabel))
+                        .frame(width: 32)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Type by voice in any app")
                             .font(.parley.headline)
                         Text("Tap the mic on the Parley keyboard and your words land at the cursor.")
                             .font(.parley.caption)
-                            .foregroundStyle(Theme.mutedForeground)
+                            .foregroundStyle(Color(.secondaryLabel))
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                Button {
+                Button("Set up in Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) {
                         UIApplication.shared.open(url)
                     }
-                } label: {
-                    Text("Set up in Settings")
-                        .font(.parley.bodyEmphasized)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 13)
-                        .foregroundStyle(Theme.onBrand)
-                        .background(
-                            Theme.brandGradient,
-                            in: RoundedRectangle(cornerRadius: Theme.radius))
                 }
-                .buttonStyle(.plain)
+                .font(.parley.bodyEmphasized)
             }
             .padding(.vertical, 8)
 
@@ -449,7 +439,7 @@ struct SettingsView: View {
                 Toggle("Polish with AI", isOn: $polishEnabled)
                 Text("After dictation ends, AI rewrites what you said into written text before it is inserted: filler and misheard words out, punctuation and clause order fixed, a spoken \"first, second, third\" laid out as a list. Nothing is added or summarised away, and the original language is preserved.")
                     .font(.parley.caption)
-                    .foregroundStyle(Theme.mutedForeground)
+                    .foregroundStyle(Color(.secondaryLabel))
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.vertical, 2)
@@ -466,7 +456,6 @@ struct SettingsView: View {
         } footer: {
             sectionFooter("Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right.")
         }
-        .listRowBackground(Theme.tintedSurface)
     }
 
     // MARK: which keyboards the swipe track carries
@@ -493,7 +482,6 @@ struct SettingsView: View {
         } footer: {
             sectionFooter("Swipe sideways on the Parley keyboard to move between the mic and the keyboards you have turned on here. At least one keyboard stays on.")
         }
-        .listRowBackground(Theme.tintedSurface)
     }
 
     private func keyboardBinding(_ keyboard: TypingKeyboard) -> Binding<Bool> {
@@ -545,7 +533,6 @@ struct SettingsView: View {
         } footer: {
             sectionFooter("After you dictate, Parley can hold the microphone open for a while, so the next tap on the keyboard's mic types where you already are instead of opening Parley.\n\niOS shows the orange microphone dot for the whole time, because Parley really is holding the microphone. It is not listening through it: nothing is recorded, transcribed, or sent until you tap the mic, and sound that arrives before then is thrown away as it comes in. The window ends on its own, and you can end it early here or from the keyboard.")
         }
-        .listRowBackground(Theme.tintedSurface)
     }
 
     /// What is true right now, with the way out next to it. The countdown is a
@@ -564,7 +551,7 @@ struct SettingsView: View {
             if let expiresAt = dictation.window.expiresAt {
                 Text(expiresAt, style: .timer)
                     .font(.parley.caption.monospacedDigit())
-                    .foregroundStyle(Theme.mutedForeground)
+                    .foregroundStyle(Color(.secondaryLabel))
             }
         }
         .padding(.vertical, 2)
@@ -595,14 +582,15 @@ struct SettingsView: View {
         -> some View
     {
         HStack(alignment: .top, spacing: 12) {
+            // Just the number. The blue disc it used to sit in made three
+            // set-up steps look like three things to press.
             Text(number, format: .number)
-                .font(.parley.caption.weight(.bold).monospacedDigit())
-                .foregroundStyle(Theme.onBrand)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(Theme.brandGradient))
+                .font(.parley.subheadlineEmphasized.monospacedDigit())
+                .foregroundStyle(Color(.secondaryLabel))
+                .frame(width: 16, alignment: .trailing)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.parley.subheadlineEmphasized)
-                Text(detail).font(.parley.caption).foregroundStyle(Theme.mutedForeground)
+                Text(detail).font(.parley.caption).foregroundStyle(Color(.secondaryLabel))
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -618,7 +606,6 @@ struct SettingsView: View {
         } footer: {
             sectionFooter("Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings.")
         }
-        .listRowBackground(Theme.tintedSurface)
     }
 
     #if DEBUG
@@ -637,7 +624,6 @@ struct SettingsView: View {
             } header: {
                 sectionHeader("Developer")
             }
-            .listRowBackground(Theme.tintedSurface)
         }
     #endif
 
@@ -674,28 +660,20 @@ struct SettingsView: View {
 }
 
 /// The settings page's section grammar, shared by `SettingsView` and the screens
-/// it pushes so a pushed screen doesn't quietly fall back to the system's look.
+/// it pushes so a pushed screen doesn't quietly fall back to a different face.
+///
+/// Both of these are now **only** a font. The colour and the casing come from
+/// the system, because a grouped list's header is one of the few pieces of
+/// chrome a phone owner reads without looking at it, and a brand-blue one — which
+/// is what used to be here — reads as a link. The face stays DM Sans so a header
+/// doesn't sit in SF Pro above rows that don't.
 enum SettingsSection {
-    /// Section headers as the landing site's eyebrow — brand blue and in the
-    /// sentence case they were written in, rather than the system's grey
-    /// all-caps. It is the one place a `Form` lets a brand speak.
-    ///
-    /// `primary` rather than `brand`, because this is small text: brand blue is
-    /// exactly what the dark palette swaps for sky, on the grounds that it
-    /// cannot be read on a navy-black page.
     static func header(_ title: LocalizedStringKey) -> some View {
-        Text(title)
-            .font(.parley.footnote.weight(.semibold))
-            .foregroundStyle(Theme.primary)
-            .textCase(nil)
+        Text(title).font(.parley.footnote)
     }
 
-    /// Footers are the quiet half of a settings page: same DM Sans, one step
-    /// down, muted.
     static func footer(_ text: LocalizedStringKey) -> some View {
-        Text(text)
-            .font(.parley.footnote)
-            .foregroundStyle(Theme.mutedForeground)
+        Text(text).font(.parley.footnote)
     }
 }
 

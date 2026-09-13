@@ -135,18 +135,18 @@ extension Font {
                     row("caption", .parley.caption)
                     row("caption2", .parley.caption2)
 
-                    Divider().overlay(Theme.border)
+                    Divider()
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Parley")
                             .font(.parley.wordmark)
-                            .foregroundStyle(Theme.brandGradient)
+                            .foregroundStyle(Color(.label))
                         Text("12:34")
                             .font(.parley.displayNumber)
-                            .foregroundStyle(Theme.brandGradient)
+                            .foregroundStyle(Color(.label))
                         Text("Alexandria — wordmark and display numerals only")
                             .font(.parley.caption)
-                            .foregroundStyle(Theme.mutedForeground)
+                            .foregroundStyle(Color(.secondaryLabel))
                     }
 
                     // A paragraph that mixes the two scripts on every line: the
@@ -156,9 +156,7 @@ extension Font {
                             + "然後把重點寫回 Parley。Latin and 中文 share the line."
                     )
                     .font(.parley.body)
-                    .foregroundStyle(Theme.foreground)
-                    .padding(12)
-                    .background(Theme.tintedSurface, in: RoundedRectangle(cornerRadius: Theme.radius))
+                    .foregroundStyle(Color(.label))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
@@ -181,10 +179,10 @@ extension Font {
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
                     .font(.caption2)
-                    .foregroundStyle(Theme.mutedForeground)
+                    .foregroundStyle(Color(.secondaryLabel))
                 Text(mixed)
                     .font(font)
-                    .foregroundStyle(Theme.foreground)
+                    .foregroundStyle(Color(.label))
             }
         }
     }

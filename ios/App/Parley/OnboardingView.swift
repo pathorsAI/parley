@@ -49,23 +49,21 @@ struct OnboardingView: View {
     // MARK: header
 
     /// The first thing anyone sees of the product, so it is the wordmark rather
-    /// than a heading that happens to say "Parley": Alexandria in the brand
-    /// gradient, over a tinted disc carrying the glyph — the landing site's hero
-    /// shape, at phone scale.
+    /// than a heading that happens to say "Parley": Alexandria, at 40pt, in ink.
+    /// The gradient and the tinted disc behind the glyph are both gone — the mark
+    /// is the name, set large, and it does not need a badge to be a hero.
     private var header: some View {
         VStack(spacing: 14) {
             Image(systemName: "waveform")
                 .font(.system(size: 34, weight: .regular))
-                .foregroundStyle(Theme.brand)
-                .frame(width: 96, height: 96)
-                .background(Theme.tintedSurface, in: Circle())
+                .foregroundStyle(Color(.secondaryLabel))
                 .accessibilityHidden(true)
             Text(verbatim: "Parley")
                 .font(.parley.wordmark(size: 40))
-                .foregroundStyle(Theme.brandGradient)
+                .foregroundStyle(Color(.label))
             Text("A pocket recorder for the meetings you have in person — live transcript while you talk, in the cloud by the time you stand up.")
                 .font(.parley.subheadline)
-                .foregroundStyle(Theme.mutedForeground)
+                .foregroundStyle(Color(.secondaryLabel))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -99,17 +97,18 @@ struct OnboardingView: View {
             Image(systemName: point.icon)
                 .font(.parley.title3)
                 .frame(width: 28)
-                // `primary`, so the glyph stays legible on the navy-black page
-                // in dark mode; `brand` is reserved for fills and the mark.
-                .foregroundStyle(Theme.primary)
+                // Secondary, not blue: these three glyphs mark the list, they
+                // are not happening now and there is nothing to tap. The only
+                // blue on this screen is the button at the bottom.
+                .foregroundStyle(Color(.secondaryLabel))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text(point.title)
                     .font(.parley.bodyEmphasized)
-                    .foregroundStyle(Theme.foreground)
+                    .foregroundStyle(Color(.label))
                 Text(point.detail)
                     .font(.parley.footnote)
-                    .foregroundStyle(Theme.mutedForeground)
+                    .foregroundStyle(Color(.secondaryLabel))
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -118,23 +117,29 @@ struct OnboardingView: View {
 
     // MARK: sign in
 
+    /// The one filled blue surface left in the app.
+    ///
+    /// Blue is a signal, and a fill behind content is out — but this is not
+    /// behind content, it *is* the content: the single action on the only screen
+    /// that has one, and the distance between opening Parley and being able to
+    /// record. Flat `primary`, not a gradient.
     private var callToAction: some View {
         VStack(spacing: 12) {
             Button {
                 app.signIn()
             } label: {
                 HStack(spacing: 8) {
-                    if app.signingIn { ProgressView().tint(Theme.onBrand) }
+                    if app.signingIn { ProgressView().tint(.white) }
                     Text(app.signingIn ? "Signing in…" : "Sign in or create an account")
                         .font(.parley.headline)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 15)
-                // Fixed white, like every other label on the gradient: the
-                // gradient does not follow the system appearance, so neither
-                // can the text sitting on it.
-                .foregroundStyle(Theme.onBrand)
-                .background(Theme.brandGradient, in: RoundedRectangle(cornerRadius: Theme.radius))
+                // Fixed white, not a semantic colour: the fill under it is the
+                // signal blue in both appearances, so its label must not invert
+                // with the system's.
+                .foregroundStyle(.white)
+                .background(Theme.primary, in: RoundedRectangle(cornerRadius: Theme.radius))
             }
             .buttonStyle(.plain)
             .disabled(app.signingIn)
@@ -149,7 +154,7 @@ struct OnboardingView: View {
 
             Text("Email and password, Google, and Apple all work. Before any recording starts, Parley asks you to confirm everyone in the room has agreed to it.")
                 .font(.parley.caption)
-                .foregroundStyle(Theme.mutedForeground)
+                .foregroundStyle(Color(.secondaryLabel))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -168,9 +173,9 @@ struct LaunchView: View {
         VStack(spacing: 18) {
             Text(verbatim: "Parley")
                 .font(.parley.wordmark(size: 32))
-                .foregroundStyle(Theme.brandGradient)
+                .foregroundStyle(Color(.label))
                 .accessibilityHidden(true)
-            ProgressView().tint(Theme.primary)
+            ProgressView()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background)
