@@ -25,14 +25,16 @@ Three caveats, stated rather than guessed:
 - **The password is deliberately not in this repository** and is not in the iOS
   packet either — it lives in the team secret manager. Nothing in the repo can
   supply it, so it must be pasted into Play Console by hand.
-- **`[TODO: confirm with Jack]` that the account is still live and still
-  non-expiring.** The iOS note was written for the 1.1 submission; this repo
-  cannot verify the account's current state. An expired demo account is the
-  single most avoidable rejection (`android/RELEASING.md`).
-- **`[TODO: confirm with Jack]` what its sample meetings look like now.** The
-  iOS packet carries an unresolved warning that they were still titled in
-  Chinese (`示範會議…`) from the 1.0 pass. For Play, seed at least one English
-  and one Chinese sample recording so the library and transcript screens have
+- **The account is live and non-expiring** — confirmed 2026-09-13 by signing
+  in on the hosted page (`POST /sign-in/email` → 302 to
+  `parley://auth-callback?token=…`; on desktop Chrome that redirect shows as
+  *canceled*, which is the success case, not a failure — nothing on the desktop
+  handles the `parley://` scheme). The password in Play Console → App content →
+  App access was re-entered the same day; the one filed on 2026-08-21 did not
+  match the account.
+- **Seed sample meetings before every submission.** The library of this account
+  is empty unless someone puts recordings in it. Seed at least one English and
+  one Chinese sample recording so the library and transcript screens have
   something in them whichever locale the reviewer's device is in — and so the
   reviewer never has to record anything to see the product.
 
@@ -77,9 +79,9 @@ depend on a personal identity.
 > transcribes it faster than real time with a progress indicator, and the
 > result lands in the same library as a recording marked "Imported". Any common
 > format the device can decode works (m4a, mp3, wav, ogg).
-> `[TODO: confirm with Jack]` — if the review device has no audio file on it,
-> this step cannot be performed; consider hosting a short sample clip and
-> linking it here so the reviewer can download one.
+> If the review device has no audio file on it, this step cannot be performed;
+> a short sample clip can be hosted and linked here so the reviewer can
+> download one.
 >
 > **If the network drops**, a finished recording is kept on the device and
 > listed under "Waiting to upload" in the library, with an "Upload now" action;
@@ -141,8 +143,8 @@ a real account on screen), and the video is **silent**, because
   questions: **the Android app shows no consent prompt** — iOS does, and the
   iOS listing advertises it, but there is no such string in either
   `values/strings.xml` or `values-zh-rTW/strings.xml`. Do not tell a reviewer
-  there is one. `[TODO: confirm with Jack]` whether to port the iOS consent
-  confirmation to Android before the first production rollout.
+  there is one. Porting the iOS consent confirmation to Android is an open
+  product decision (issue #244).
 - **Ads:** none. **In-app purchases:** none in this build. **Target audience:**
   general/adult, not child-directed. **Content rating:** the IARC
   questionnaire has nothing to declare beyond user-generated content that is
