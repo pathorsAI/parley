@@ -100,15 +100,23 @@ public actor SttRelayClient {
     /// end of a meeting.
     private static let drainTimeout: Duration = .seconds(3)
 
+    /// When to stop believing a socket that has gone quiet. See `RelayLiveness`
+    /// for why this is measured on ping/pong rather than on transcript traffic.
+    private static let liveness = RelayLiveness.standard
+
     private let options: Options
     private let onEvent: @Sendable (SttRelayEvent) -> Void
     private var task: URLSessionWebSocketTask?
     private var parser: SonioxStreamParser?
     private var keepaliveTask: Task<Void, Never>?
+    private var livenessTask: Task<Void, Never>?
     private var readTask: Task<Void, Never>?
     private var writerTask: Task<Void, Never>?
     private var finalizeSent = false
     private var terminated = false
+    /// The last moment the peer proved it was still there — a frame, or a pong.
+    /// `RelayLiveness` measures the silence that follows it.
+    private var lastProof = Date()
 
     private let outbound: AsyncStream<[Int16]>
     /// `nonisolated` on purpose: `enqueue(pcm:)` is called from the audio
@@ -148,7 +156,9 @@ public actor SttRelayClient {
         let frame = String(data: try encoder.encode(config), encoding: .utf8)!
         try await task.send(.string(frame))
 
+        lastProof = Date()
         startKeepalive()
+        startLiveness()
         startReadLoop()
         startWriter()
     }
@@ -168,6 +178,7 @@ public actor SttRelayClient {
         sink.finish()
         await drainWriter()
         keepaliveTask?.cancel()
+        livenessTask?.cancel()
         try? await task.send(.string(SonioxProtocol.finalizeFrame))
         // Deliberately no task.cancel() here — see the type doc.
     }
@@ -184,6 +195,7 @@ public actor SttRelayClient {
     private func tearDown() {
         terminated = true
         keepaliveTask?.cancel()
+        livenessTask?.cancel()
         readTask?.cancel()
         writerTask?.cancel()
         task?.cancel(with: .normalClosure, reason: nil)
@@ -246,6 +258,7 @@ public actor SttRelayClient {
         while !Task.isCancelled {
             do {
                 let message = try await task.receive()
+                proveAlive()
                 let payload: String
                 switch message {
                 case .string(let s): payload = s
@@ -273,6 +286,54 @@ public actor SttRelayClient {
         // Nothing will ever read from this socket again; let the writer stop
         // rather than pile chunks into a dead connection.
         markTerminated()
+    }
+
+    /// Ping on a cadence, and give up on a socket that stops answering.
+    ///
+    /// The ping is not the detector — see `RelayLiveness`. On a half-open
+    /// socket the completion handler never fires at all, which is why the
+    /// verdict is a deadline on `lastProof` rather than anything this closure
+    /// reports. What the ping buys is the *refresh*: a healthy relay answers
+    /// one even when the room is silent and no tokens are flowing, so a quiet
+    /// meeting cannot be mistaken for a dead socket.
+    private func startLiveness() {
+        let policy = Self.liveness
+        livenessTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: policy.checkInterval)
+                if Task.isCancelled { break }
+                guard let self else { return }
+                if await self.checkLiveness(policy) { break }
+            }
+        }
+    }
+
+    /// Returns true when the socket has been declared dead and the loop is over.
+    private func checkLiveness(_ policy: RelayLiveness) -> Bool {
+        guard let task, !terminated else { return true }
+        // A finalize is in flight: the relay is draining Soniox's tail and may
+        // legitimately say nothing for a beat. `finish()` owns the deadline
+        // from here, and killing the socket now would truncate the last
+        // utterance — the thing the finalize path exists to protect.
+        guard !finalizeSent else { return false }
+
+        if policy.isDead(now: Date(), lastProof: lastProof) {
+            let silence = Int(policy.deadlineSeconds)
+            onEvent(.closed(reason: "no response for \(silence)s"))
+            task.cancel(with: .goingAway, reason: nil)
+            markTerminated()
+            return true
+        }
+
+        task.sendPing { [weak self] error in
+            guard error == nil else { return }
+            Task { await self?.proveAlive() }
+        }
+        return false
+    }
+
+    private func proveAlive() {
+        lastProof = Date()
     }
 
     private func markTerminated() {
