@@ -152,6 +152,14 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             val failure = result.exceptionOrNull()
             val gone = failure == null || (failure as? CloudException)?.isNotFound == true
             _state.value = if (gone) {
+                // Everything this phone still holds for a recording that no
+                // longer exists: the audio it kept for playback, a queued
+                // re-transcription of it, and the retry ledger that would
+                // otherwise keep charging a deleted recording's budget.
+                withContext(Dispatchers.IO) {
+                    container.localAudio.remove(id)
+                    container.backfiller.forget(id)
+                }
                 _state.value.copy(
                     recordings = _state.value.recordings.filterNot { it.id == id },
                     deleting = _state.value.deleting - id,
