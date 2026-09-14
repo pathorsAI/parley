@@ -15,6 +15,7 @@
     <string name="action_stop">停止</string>
     <string name="action_copy">複製</string>
     <string name="action_share">分享</string>
+    <string name="action_clear">清除</string>
 
     <!-- Sign in -->
     <string name="sign_in_tagline">錄下會議、讀懂逐字稿，走到哪都能用。</string>
@@ -143,6 +144,12 @@
     <string name="transcript_segment_actions">複製或分享這一段</string>
     <string name="transcript_copy_segment">複製這一段</string>
     <string name="transcript_seek_here">從這裡開始播放</string>
+    <string name="transcript_search">搜尋逐字稿</string>
+    <string name="transcript_search_hint">在這份逐字稿裡搜尋</string>
+    <string name="transcript_search_empty">沒有符合的內容</string>
+    <string name="transcript_search_position">第 %1$d 筆，共 %2$d 筆</string>
+    <string name="transcript_search_previous">上一個符合</string>
+    <string name="transcript_search_next">下一個符合</string>
     <!-- Playback -->
     <string name="playback_download">下載後播放</string>
     <string name="playback_downloading">下載中…</string>

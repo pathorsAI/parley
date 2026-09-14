@@ -16,6 +16,7 @@
     <string name="action_stop">Stop</string>
     <string name="action_copy">Copy</string>
     <string name="action_share">Share</string>
+    <string name="action_clear">Clear</string>
 
     <!-- Sign in -->
     <string name="sign_in_tagline">Record a meeting. Read the transcript. Everywhere you work.</string>
@@ -144,6 +145,12 @@
     <string name="transcript_segment_actions">Copy or share this part</string>
     <string name="transcript_copy_segment">Copy this part</string>
     <string name="transcript_seek_here">Play from here</string>
+    <string name="transcript_search">Search transcript</string>
+    <string name="transcript_search_hint">Search this transcript</string>
+    <string name="transcript_search_empty">No matches</string>
+    <string name="transcript_search_position">%1$d of %2$d</string>
+    <string name="transcript_search_previous">Previous match</string>
+    <string name="transcript_search_next">Next match</string>
     <!-- Playback -->
     <string name="playback_download">Download to play back</string>
     <string name="playback_downloading">Downloading…</string>

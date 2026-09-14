@@ -19,10 +19,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -41,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -51,6 +56,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -58,6 +66,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pathors.parley.R
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.TranscriptSegmentDto
+import com.pathors.parley.kit.TranscriptSearch
+import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.playback.PlaybackBar
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -88,6 +98,11 @@ fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
     val state by viewModel.state.collectAsState()
     val playback by viewModel.playbackState.collectAsState()
     val untitled = stringResource(R.string.recording_untitled)
+
+    // Whether the search field is up. Held here rather than in [DetailBody]
+    // because the toolbar is what summons it and the toolbar lives up here; what
+    // is typed into it belongs to the body, which is the only part that cares.
+    var searching by remember { mutableStateOf(false) }
 
     // What the screen renders, and therefore what "copy the transcript" means
     // here: the tentative tail a live session leaves behind never reaches this
@@ -124,6 +139,19 @@ fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    // Its own button rather than a row in an overflow menu, and
+                    // absent rather than inert when there is no transcript: the
+                    // same rule the copy button follows. Finding a phrase is
+                    // something you do *while reading*, over and over, which is
+                    // not a thing to put two taps away.
+                    if (readable.isNotEmpty()) {
+                        IconButton(onClick = { searching = !searching }) {
+                            Icon(
+                                Icons.Default.Search,
+                                stringResource(R.string.transcript_search),
+                            )
+                        }
+                    }
                     ShareTranscriptButton(
                         text = plainTranscript,
                         isEmpty = readable.isEmpty(),
@@ -180,6 +208,8 @@ fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
                     seekGeneration = playback.seekGeneration,
                     isSeekable = playback.isSeekable,
                     onSeek = viewModel::seekTo,
+                    searching = searching,
+                    onCloseSearch = { searching = false },
                 )
             }
         }
@@ -204,6 +234,19 @@ fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
  * The distinction that has to be right is *user* scroll versus programmatic
  * scroll, and `interactionSource` is exactly that line — `animateScrollToItem`
  * emits no drag interaction, so the follow cannot switch itself off.
+ *
+ * **Searching.** Walking matches is the third thing that moves this list, and it
+ * takes precedence over the playhead while it is happening: every jump to a hit
+ * turns following off, because somebody stepping through matches is reading, not
+ * listening along, and the next turn change would otherwise scroll the page off
+ * the hit they just asked to be taken to.
+ *
+ * What a jump deliberately does *not* do is seek. The audio stays exactly where
+ * it was. Search is how you find something with your eyes — often while the
+ * recording plays on in the background — and a player that leapt to a different
+ * minute every time a chevron was pressed would make reading ahead and listening
+ * mutually exclusive. The turn's own tap is still there for anyone who wants to
+ * hear the part they found, and it is one tap away.
  */
 @Composable
 private fun DetailBody(
@@ -215,6 +258,8 @@ private fun DetailBody(
     seekGeneration: Int,
     isSeekable: Boolean,
     onSeek: (Long) -> Unit,
+    searching: Boolean,
+    onCloseSearch: () -> Unit,
 ) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
@@ -223,6 +268,43 @@ private fun DetailBody(
 
     var followsAudio by remember { mutableStateOf(true) }
     var flashedId by remember { mutableStateOf<String?>(null) }
+
+    // What is being searched for. Empty is the whole of the "not searching"
+    // state: no highlights, no counter bar.
+    var query by remember { mutableStateOf("") }
+    // Which hit the counter is pointing at, as an index into the hit list. An
+    // index rather than the `Hit` itself because the list is rebuilt from
+    // scratch on every keystroke, and "the third match" survives that where a
+    // value naming a range in a string does not. Clamped at the point of use —
+    // the list can shrink under it between renders.
+    var currentHit by remember { mutableIntStateOf(0) }
+
+    // The transcript in the shape the search engine reads, mapped once per
+    // recording rather than once per keystroke: `hits` runs on every character
+    // typed, and re-copying the whole transcript each time would be the only
+    // expensive thing on this screen.
+    val searchable = remember(segments) {
+        segments.map { segment ->
+            TranscriptSegment(
+                id = segment.id,
+                source = segment.source,
+                speaker = segment.speaker,
+                text = segment.text,
+                isFinal = segment.isFinal,
+                startMs = segment.startMs,
+                endMs = segment.endMs,
+            )
+        }
+    }
+    val hits = remember(searchable, query) { TranscriptSearch.hits(searchable, query) }
+    // Handed to each turn so it can tint its own words without re-scanning the
+    // whole transcript, while the flat list above stays the thing the counter
+    // counts and the chevrons walk.
+    val hitsByTurn = remember(hits) { hits.groupBy { it.segmentId } }
+    val activeHit = hits.getOrNull(currentHit) ?: hits.firstOrNull()
+    val turnIndexById = remember(segments) {
+        segments.withIndex().associate { (index, segment) -> segment.id to index }
+    }
 
     val firstSegmentItem = remember(state.findings.size, state.actionItems.size, segments.size) {
         firstSegmentItemIndex(
@@ -245,6 +327,19 @@ private fun DetailBody(
         if (isPlaying || seekGeneration > 0) followsAudio = true
     }
 
+    // Closing the field clears the query, because a search that is out of sight
+    // must not leave the transcript highlighted — the reader has no bar left to
+    // explain the tint, or to clear it with.
+    LaunchedEffect(searching) { if (!searching) query = "" }
+
+    // A new query starts again from the top hit and takes the reader there.
+    LaunchedEffect(query) {
+        currentHit = 0
+        val first = hits.firstOrNull() ?: return@LaunchedEffect
+        followsAudio = false
+        listState.scrollToHit(first, turnIndexById, firstSegmentItem)
+    }
+
     LaunchedEffect(currentIndex, followsAudio, isPlaying) {
         if (!followsAudio || !isPlaying || currentIndex < 0) return@LaunchedEffect
         val viewport = listState.layoutInfo.viewportSize.height
@@ -256,61 +351,179 @@ private fun DetailBody(
         )
     }
 
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item { Header(meta, untitled) }
-
-        if (state.findings.isNotEmpty()) {
-            item { SectionTitle(stringResource(R.string.detail_findings)) }
-            items(state.findings.size) { index ->
-                FindingCard(state.findings[index])
-            }
+    Column(Modifier.fillMaxSize()) {
+        // Under the player rather than over it: the player is what this screen
+        // is for, and searching is a thing you do *to the transcript*, so it
+        // belongs next to the transcript.
+        if (searching) {
+            SearchField(
+                query = query,
+                onQueryChange = { query = it },
+                hint = stringResource(R.string.transcript_search_hint),
+                onClose = onCloseSearch,
+            )
         }
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item { Header(meta, untitled) }
 
-        if (state.actionItems.isNotEmpty()) {
-            item { SectionTitle(stringResource(R.string.detail_action_items)) }
-            items(state.actionItems.size) { index ->
-                ActionItemCard(state.actionItems[index])
+            if (state.findings.isNotEmpty()) {
+                item { SectionTitle(stringResource(R.string.detail_findings)) }
+                items(state.findings.size) { index ->
+                    FindingCard(state.findings[index])
+                }
             }
-        }
 
-        item { SectionTitle(stringResource(R.string.detail_transcript)) }
+            if (state.actionItems.isNotEmpty()) {
+                item { SectionTitle(stringResource(R.string.detail_action_items)) }
+                items(state.actionItems.size) { index ->
+                    ActionItemCard(state.actionItems[index])
+                }
+            }
 
-        if (segments.isEmpty()) {
-            item {
-                Text(
-                    text = stringResource(R.string.detail_no_transcript),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            item { SectionTitle(stringResource(R.string.detail_transcript)) }
+
+            if (segments.isEmpty()) {
+                item {
+                    Text(
+                        text = stringResource(R.string.detail_no_transcript),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            items(segments.size) { index ->
+                val segment = segments[index]
+                TranscriptTurn(
+                    label = speakerLabel(context, segment, meta.speakerName(segment)),
+                    segment = segment,
+                    isCurrent = index == currentIndex,
+                    isFlashing = flashedId == segment.id,
+                    enabled = isSeekable,
+                    hits = hitsByTurn[segment.id].orEmpty(),
+                    activeHit = activeHit,
+                    onTap = {
+                        onSeek(segment.startMs)
+                        flashedId = segment.id
+                        scope.launch {
+                            delay(FLASH_HOLD_MS)
+                            // Guarded on the id so a second tap elsewhere, landing
+                            // inside this one's hold, does not have its own flash
+                            // cancelled by the first tap's timer coming due.
+                            if (flashedId == segment.id) flashedId = null
+                        }
+                    },
                 )
             }
         }
-        items(segments.size) { index ->
-            val segment = segments[index]
-            TranscriptTurn(
-                label = speakerLabel(context, segment, meta.speakerName(segment)),
-                segment = segment,
-                isCurrent = index == currentIndex,
-                isFlashing = flashedId == segment.id,
-                enabled = isSeekable,
-                onTap = {
-                    onSeek(segment.startMs)
-                    flashedId = segment.id
-                    scope.launch {
-                        delay(FLASH_HOLD_MS)
-                        // Guarded on the id so a second tap elsewhere, landing
-                        // inside this one's hold, does not have its own flash
-                        // cancelled by the first tap's timer coming due.
-                        if (flashedId == segment.id) flashedId = null
+        if (query.isNotBlank()) {
+            MatchBar(
+                hits = hits,
+                currentHit = currentHit,
+                onStep = { delta ->
+                    if (hits.isNotEmpty()) {
+                        val from = currentHit.coerceAtMost(hits.size - 1)
+                        val next = (from + delta + hits.size) % hits.size
+                        currentHit = next
+                        // The playhead gives way — see this function's doc.
+                        followsAudio = false
+                        scope.launch {
+                            listState.scrollToHit(hits[next], turnIndexById, firstSegmentItem)
+                        }
                     }
                 },
             )
         }
     }
+}
+
+/**
+ * `n of N` and the two chevrons, pinned under the transcript while a query is
+ * live and gone the moment it is cleared.
+ *
+ * Pinned rather than scrolled for the same reason the player above it is:
+ * walking hits is the one activity on this screen where the control and the
+ * thing it moves cannot be the same piece of paper. The transcript scrolls under
+ * it; the counter stays where the thumb left it.
+ *
+ * Up and down, not left and right — the transcript is one column, and the
+ * previous match is above the thumb rather than behind it.
+ *
+ * The chevrons stay in place, disabled, when nothing matched. Taking them away
+ * would move the "No matches" text sideways on the keystroke that lost the last
+ * hit, and a control that leaves the screen as you are reaching for it is worse
+ * than one that is plainly unavailable.
+ */
+@Composable
+private fun MatchBar(
+    hits: List<TranscriptSearch.Hit>,
+    currentHit: Int,
+    onStep: (Int) -> Unit,
+) {
+    HorizontalDivider()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = if (hits.isEmpty()) {
+                stringResource(R.string.transcript_search_empty)
+            } else {
+                stringResource(
+                    R.string.transcript_search_position,
+                    currentHit.coerceAtMost(hits.size - 1) + 1,
+                    hits.size,
+                )
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.weight(1f))
+        IconButton(onClick = { onStep(-1) }, enabled = hits.isNotEmpty()) {
+            Icon(
+                Icons.Default.KeyboardArrowUp,
+                stringResource(R.string.transcript_search_previous),
+            )
+        }
+        IconButton(onClick = { onStep(1) }, enabled = hits.isNotEmpty()) {
+            Icon(
+                Icons.Default.KeyboardArrowDown,
+                stringResource(R.string.transcript_search_next),
+            )
+        }
+    }
+}
+
+/**
+ * Put a hit on screen: the turn it is in, a third of the way down, animated.
+ *
+ * By turn rather than by character — a `LazyListState` addresses items, and a
+ * turn is the smallest thing it can be asked for. That is the right grain
+ * anyway: the reader needs the sentence around the word, not the word alone.
+ *
+ * Silently does nothing for a hit whose segment is not in the list, which cannot
+ * happen today (the same filtered list feeds both) but would otherwise be an
+ * index arithmetic bug rendered as a scroll to a findings card.
+ */
+private suspend fun LazyListState.scrollToHit(
+    hit: TranscriptSearch.Hit,
+    turnIndexById: Map<String, Int>,
+    firstSegmentItem: Int,
+) {
+    val turn = turnIndexById[hit.segmentId] ?: return
+    val viewport = layoutInfo.viewportSize.height
+    animateScrollToItem(
+        index = firstSegmentItem + turn,
+        scrollOffset = -(viewport * FOLLOW_ANCHOR).toInt(),
+    )
 }
 
 /**
@@ -332,6 +545,16 @@ private fun DetailBody(
  * they are separate `Text`s — which is why the turn-level action exists at all.
  * `onLongClickLabel` is what tells TalkBack the gesture is there, since nobody
  * discovers a long press on their own.
+ *
+ * Search hits are a wash of colour behind the glyphs rather than bold or a
+ * colour change in the words. The transcript is a page of prose in one weight,
+ * and re-weighting words inside it makes the paragraph look mis-set — a tint
+ * leaves the text reading exactly as it does unsearched, which matters because
+ * every other hit stays on screen while the reader works through them.
+ *
+ * Two strengths. Every hit gets the pale one, so the reader can see how the
+ * matches are spread down the page; the current one gets twice that, so `n of N`
+ * is pointing at something findable without needing a second kind of mark.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -341,6 +564,8 @@ private fun TranscriptTurn(
     isCurrent: Boolean,
     isFlashing: Boolean,
     enabled: Boolean,
+    hits: List<TranscriptSearch.Hit>,
+    activeHit: TranscriptSearch.Hit?,
     onTap: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -391,8 +616,33 @@ private fun TranscriptTurn(
                 fontWeight = if (isCurrent) FontWeight.SemiBold else null,
             )
         }
+        val highlight = MaterialTheme.colorScheme.primary
+        val text = remember(segment.text, hits, activeHit, highlight) {
+            if (hits.isEmpty()) {
+                AnnotatedString(segment.text)
+            } else {
+                buildAnnotatedString {
+                    append(segment.text)
+                    for (hit in hits) {
+                        addStyle(
+                            SpanStyle(
+                                background = highlight.copy(
+                                    alpha = if (hit == activeHit) {
+                                        HIT_ACTIVE_ALPHA
+                                    } else {
+                                        HIT_ALPHA
+                                    },
+                                ),
+                            ),
+                            start = hit.start,
+                            end = hit.endExclusive,
+                        )
+                    }
+                }
+            }
+        }
         SelectionContainer {
-            Text(text = segment.text, style = MaterialTheme.typography.bodyLarge)
+            Text(text = text, style = MaterialTheme.typography.bodyLarge)
         }
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             DropdownMenuItem(
@@ -550,6 +800,10 @@ private fun ActionItemCard(item: ActionItemRow) {
 
 /** Where a followed turn lands in the viewport: a third of the way down. */
 private const val FOLLOW_ANCHOR = 0.3f
+
+/** Every hit, and then the one `n of N` is pointing at, at twice the strength. */
+private const val HIT_ALPHA = 0.25f
+private const val HIT_ACTIVE_ALPHA = 0.50f
 
 private const val FLASH_ALPHA = 0.20f
 private const val FLASH_IN_MS = 100
