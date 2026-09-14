@@ -88,6 +88,10 @@ android {
         targetSdk = 36
         versionCode = 5
         versionName = "0.1.4"
+
+        // Instrumented tests only: audio/OggOpusEncoderDeviceTest drives the real
+        // MediaCodec Opus encoder, which has no JVM stand-in.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -156,4 +160,8 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
+
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }
