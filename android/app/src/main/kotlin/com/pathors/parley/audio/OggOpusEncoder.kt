@@ -148,6 +148,11 @@ class OggOpusEncoder private constructor(
      * A stream with no audio at all would produce a container the muxer refuses
      * to close, so one frame of silence is written instead — the file is always
      * valid, just 20 ms long.
+     *
+     * On failure this throws and leaves the partial file **in place** as long as
+     * any Opus packets reached it; only a file that never received one is
+     * deleted. See the comment on the catch for why. [cancel] is the way to ask
+     * for the file to go away.
      */
     fun finish(): File {
         synchronized(lock) {
@@ -181,7 +186,14 @@ class OggOpusEncoder private constructor(
                 return outputFile
             } catch (e: Throwable) {
                 release()
-                runCatching { outputFile.delete() }
+                // Delete only a file with nothing in it. Ogg is a streaming
+                // container — the pages already written decode on their own —
+                // so a stream the muxer could not close is a recording that
+                // ends a little early, not a write-off. The likeliest reason to
+                // be here is the disk filling up mid-meeting, which is exactly
+                // when throwing the meeting away is the worst possible answer.
+                // Callers that want the partial file gone say so with [cancel].
+                if (packetsWritten == 0L) runCatching { outputFile.delete() }
                 throw e
             } finally {
                 release()
