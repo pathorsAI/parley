@@ -19,6 +19,12 @@ let package = Package(
     ],
     targets: [
         .target(name: "ParleyKit", resources: [.process("Resources")]),
-        .testTarget(name: "ParleyKitTests", dependencies: ["ParleyKit"]),
+        // The playback tests render real Ogg/Opus through the engine, so the
+        // demo recording the screenshot script produces is carried here too —
+        // by value rather than by a path into the app target, because
+        // `swift test` runs with no idea where the Xcode project is.
+        .testTarget(
+            name: "ParleyKitTests", dependencies: ["ParleyKit"],
+            resources: [.copy("Resources")]),
     ]
 )

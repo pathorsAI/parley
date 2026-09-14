@@ -5,19 +5,28 @@ import SwiftUI
 
 /// One recording's playback, for one detail screen.
 ///
-/// ## The decode path, and why there is no Ogg parser here
+/// ## The decode path, and why `AVAudioPlayer` is not it
 ///
 /// Recordings are 16 kHz mono Ogg/Opus — what `OggOpusEncoder` writes and what
-/// `PUT /recordings/:id/audio` holds. The plan allowed for two ways to play
-/// that: hand it to AVFoundation, or demux the Ogg by hand and transcode to CAF
-/// once. AVFoundation wins: `AVAudioPlayer(contentsOf:)` opens the file,
-/// reports the right duration, seeks, and honours `enableRate`, and
-/// `ExtAudioFile` reads the same file's PCM for the waveform (see
-/// `AudioPeaks`). Both are covered by `AudioPeaksTests`, which is the test to
-/// look at if playback ever stops working on a new OS: if it goes red, the
-/// hand-written demuxer is back on the table.
+/// `PUT /recordings/:id/audio` holds. `AVAudioPlayer` opens that file, reports
+/// the right duration and plays it from the top, and for two releases that
+/// looked like enough. It is not: **`AVAudioPlayer` cannot seek inside an
+/// Ogg/Opus file.** Assigning `currentTime` moves the number it reports back to
+/// you and nothing else — decoding carries on from wherever it was — so the
+/// scrubber and every "tap a turn to jump there" affordance moved a playhead
+/// over audio that never moved with it (#375). Every check written against it
+/// passed, because they all asked the player where it was and the answer is
+/// exactly the part that lies.
 ///
-/// Two Ogg quirks survive that and shape the code below:
+/// So the player is gone and `OggPlaybackEngine` (ParleyKit) is here instead:
+/// `ExtAudioFile` — the same reader `AudioPeaks` already uses for the waveform,
+/// and the one thing that does position correctly in this container — feeding
+/// an `AVAudioPlayerNode` → `AVAudioUnitTimePitch` → mixer graph. The time
+/// pitch unit is what `enableRate` used to be. `OggPlaybackEngineTests` renders
+/// that graph offline and compares the samples against the file, which is the
+/// only form of proof this particular bug respects.
+///
+/// Two Ogg quirks survive the change and still shape the code below:
 ///
 /// - Opening is **not free**. There is no frame count in an Ogg header, so
 ///   AudioToolbox finds the duration by walking to the last page. For a
@@ -84,8 +93,8 @@ final class PlaybackController: NSObject, ObservableObject {
     /// second still counts as one, which is what a drag needs.
     @Published private(set) var seekGeneration = 0
 
-    private var player: AVAudioPlayer?
-    /// Which file `player` holds, so a `.task` that re-runs does not reopen it
+    private var engine: OggPlaybackEngine?
+    /// Which file `engine` holds, so a `.task` that re-runs does not reopen it
     /// and a *different* file does.
     private var loadedURL: URL?
     private var ticker: Task<Void, Never>?
@@ -96,6 +105,7 @@ final class PlaybackController: NSObject, ObservableObject {
     /// that can go back down is a flag two computations can disagree about.
     private var peaksCancelled = Flag()
     private var sessionActive = false
+    private var observers: [NSObjectProtocol] = []
     private let store: LocalAudioStore
     private let recordingId: String
 
@@ -106,16 +116,18 @@ final class PlaybackController: NSObject, ObservableObject {
         // An unset key reads as 0, which is not a speed.
         self.rate = Self.menu.contains(saved) ? saved : 1
         super.init()
+        observeTheSession()
     }
 
     deinit {
         ticker?.cancel()
         peaksTask?.cancel()
         peaksCancelled.raise()
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
         // The session is handed back here as well as on pause: a screen popped
         // mid-playback must not leave `.playback` active, or the next meeting
         // starts by fighting for a category it should have had for free.
-        player?.stop()
+        engine?.close()
         if sessionActive {
             try? AVAudioSession.sharedInstance()
                 .setActive(false, options: .notifyOthersOnDeactivation)
@@ -137,34 +149,35 @@ final class PlaybackController: NSObject, ObservableObject {
         loadedURL = url
         phase = .preparing
 
-        let opened: Result<AVAudioPlayer, Error> = await Task.detached {
+        // Off the main actor: see the type doc on what opening an Ogg costs.
+        let opened: Result<OggPlaybackEngine, Error> = await Task.detached {
             do {
-                let player = try AVAudioPlayer(contentsOf: url)
-                // Before `prepareToPlay()`: setting it afterwards is silently
-                // ignored on some builds, and a rate that does nothing is worse
-                // than no rate control at all.
-                player.enableRate = true
-                // The waveform is drawn from the file, not from the output
-                // meter, so metering would cost a buffer scan per frame for
-                // nothing.
-                player.isMeteringEnabled = false
-                player.prepareToPlay()
-                return .success(player)
+                return .success(try OggPlaybackEngine(url: url))
             } catch {
                 return .failure(error)
             }
         }.value
 
+        // A second `load` for a different file, or an `unload`, can land while
+        // the open is in flight. Whatever came back belongs to a screen that has
+        // moved on.
+        guard loadedURL == url else {
+            if case .success(let stale) = opened { stale.close() }
+            return
+        }
+
         switch opened {
         case .failure(let error):
             phase = .failed(error.localizedDescription)
-        case .success(let player):
-            player.delegate = self
-            player.rate = Float(rate)
-            self.player = player
-            duration = player.duration
+        case .success(let engine):
+            engine.rate = isHoldingTwoX ? Self.heldRate : rate
+            engine.onFinish = { [weak self] in
+                Task { @MainActor [weak self] in self?.finish() }
+            }
+            self.engine = engine
+            duration = engine.duration
             phase = .ready
-            startPeaks(url: url, seconds: player.duration)
+            startPeaks(url: url, seconds: engine.duration)
         }
     }
 
@@ -173,8 +186,8 @@ final class PlaybackController: NSObject, ObservableObject {
     /// and the player must not be left holding a deleted file, an active audio
     /// session, and a duration for something that is gone.
     func unload() {
-        player?.stop()
-        player = nil
+        engine?.close()
+        engine = nil
         loadedURL = nil
         stopTicking()
         releaseSession()
@@ -238,19 +251,25 @@ final class PlaybackController: NSObject, ObservableObject {
     }
 
     func play() {
-        guard canPlay, let player else { return }
+        guard canPlay, let engine else { return }
         activateSession()
         // A file played to the end restarts rather than refusing: the button
         // still says "play", so it has to play.
         if currentTime >= duration - 0.05 { seek(to: 0) }
-        player.rate = Float(isHoldingTwoX ? Self.heldRate : rate)
-        guard player.play() else { return }
+        engine.rate = isHoldingTwoX ? Self.heldRate : rate
+        do {
+            try engine.play()
+        } catch {
+            releaseSession()
+            phase = .failed(error.localizedDescription)
+            return
+        }
         isPlaying = true
         startTicking()
     }
 
     func pause() {
-        player?.pause()
+        engine?.pause()
         isPlaying = false
         stopTicking()
         releaseSession()
@@ -262,10 +281,14 @@ final class PlaybackController: NSObject, ObservableObject {
 
     /// Move the playhead. Applied live, so a scrub during playback keeps playing
     /// from the new position rather than stopping and resuming.
+    ///
+    /// Called on every frame of a drag. The engine coalesces — a seek arriving
+    /// while the previous one is still re-priming replaces it — so this stays a
+    /// cheap call however fast the finger moves.
     func seek(to time: TimeInterval) {
-        guard let player else { return }
+        guard let engine else { return }
         let clamped = min(max(0, time), max(0, duration))
-        player.currentTime = clamped
+        engine.seek(to: clamped)
         currentTime = clamped
         seekGeneration += 1
     }
@@ -273,7 +296,7 @@ final class PlaybackController: NSObject, ObservableObject {
     func setRate(_ value: Double) {
         rate = value
         UserDefaults.standard.set(value, forKey: Self.rateKey)
-        if !isHoldingTwoX { player?.rate = Float(value) }
+        if !isHoldingTwoX { engine?.rate = value }
     }
 
     /// The next speed the `1×` button steps to. Off-cycle speeds chosen from the
@@ -289,22 +312,34 @@ final class PlaybackController: NSObject, ObservableObject {
     func holdTwoX(_ holding: Bool) {
         guard isHoldingTwoX != holding else { return }
         isHoldingTwoX = holding
-        player?.rate = Float(holding ? Self.heldRate : rate)
+        engine?.rate = holding ? Self.heldRate : rate
+    }
+
+    /// The end of the file, from the engine's last buffer.
+    ///
+    /// Parks the playhead at the end rather than snapping it back to zero:
+    /// "this is over" is the true state, and the next play tap restarts (see
+    /// `play`). The same outcome `audioPlayerDidFinishPlaying` used to produce.
+    private func finish() {
+        isPlaying = false
+        currentTime = duration
+        stopTicking()
+        releaseSession()
     }
 
     // MARK: the clock
 
-    /// 10 Hz, and only while playing. `AVAudioPlayer.currentTime` is a poll —
-    /// there is no callback — so the choice is a timer or nothing, and 10 Hz is
-    /// the slowest rate at which a 1pt playhead crossing a 350pt waveform still
-    /// looks continuous.
+    /// 10 Hz, and only while playing. The engine's position is a poll — it is
+    /// read off the player node's render time — so the choice is a timer or
+    /// nothing, and 10 Hz is the slowest rate at which a 1pt playhead crossing a
+    /// 350pt waveform still looks continuous.
     private func startTicking() {
         ticker?.cancel()
         ticker = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 100_000_000)
-                guard let self, let player = self.player, self.isPlaying else { return }
-                self.currentTime = player.currentTime
+                guard let self, let engine = self.engine, self.isPlaying else { return }
+                self.currentTime = engine.currentTime
             }
         }
     }
@@ -336,6 +371,41 @@ final class PlaybackController: NSObject, ObservableObject {
         sessionActive = false
     }
 
+    /// A phone call, Siri, or headphones pulled out.
+    ///
+    /// Two notifications and no retry ladder. An interruption pauses, and does
+    /// not resume itself: the person put the app down to take a call, and a
+    /// recording that starts talking again on its own is worse than one that
+    /// waits. A configuration change (a route the engine cannot keep its graph
+    /// on) is handed to the engine, which rebuilds and picks up where the clock
+    /// says it was — `AVAudioPlayer` used to absorb that for us.
+    private func observeTheSession() {
+        let center = NotificationCenter.default
+        observers.append(
+            center.addObserver(
+                forName: AVAudioSession.interruptionNotification,
+                object: AVAudioSession.sharedInstance(), queue: .main
+            ) { [weak self] note in
+                let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+                guard let raw, AVAudioSession.InterruptionType(rawValue: raw) == .began else {
+                    return
+                }
+                Task { @MainActor [weak self] in
+                    guard let self, self.isPlaying else { return }
+                    self.pause()
+                }
+            })
+        observers.append(
+            center.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, let engine = self.engine, self.isPlaying else { return }
+                    engine.handleConfigurationChange()
+                }
+            })
+    }
+
     /// A box the blocking peaks computation can poll from another thread.
     private final class Flag: @unchecked Sendable {
         private let lock = NSLock()
@@ -349,31 +419,6 @@ final class PlaybackController: NSObject, ObservableObject {
             lock.lock()
             raised = true
             lock.unlock()
-        }
-    }
-}
-
-extension PlaybackController: AVAudioPlayerDelegate {
-    /// Park the playhead at the end rather than snapping it back to zero: "this
-    /// is over" is the true state, and the next play tap restarts (see `play`).
-    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully: Bool) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.isPlaying = false
-            self.currentTime = self.duration
-            self.stopTicking()
-            self.releaseSession()
-        }
-    }
-
-    nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.isPlaying = false
-            self.stopTicking()
-            self.releaseSession()
-            self.phase = .failed(
-                error?.localizedDescription ?? String(localized: "Couldn't play this recording"))
         }
     }
 }
