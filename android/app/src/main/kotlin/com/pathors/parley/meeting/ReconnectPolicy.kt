@@ -14,7 +14,12 @@ package com.pathors.parley.meeting
  * the budget ([recordSuccess]), exactly as iOS does on `connect` succeeding.
  *
  * Nothing here touches the recording: a relay that never comes back costs the
- * live transcript only, and the cloud transcribes the uploaded audio anyway.
+ * live transcript only, and the audio is saved and uploaded either way. What
+ * fills the gap afterwards is this app's own backfill — `TranscriptCoverage`
+ * measures what came back against the audio's length and re-transcribes from
+ * the file when it falls short. The cloud does not do it for us; an earlier
+ * version of this comment said it did, and the failure handling below was
+ * written believing it.
  *
  * Synchronized because the events collector and the reconnect job both reach it
  * from whichever thread the session's dispatcher gave them.

@@ -230,7 +230,10 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             val result = runCatching { container.cloud.deleteAccount() }
             result.fold(
                 onSuccess = {
-                    withContext(Dispatchers.IO) { container.uploadQueue.clear() }
+                    // Every queue that holds audio, not just the upload one:
+                    // the backfill queue keeps the same kind of file, and the
+                    // confirmation dialog promises all of it is discarded.
+                    withContext(Dispatchers.IO) { container.discardLocalRecordings() }
                     container.auth.clearSession()
                 },
                 onFailure = { error ->
