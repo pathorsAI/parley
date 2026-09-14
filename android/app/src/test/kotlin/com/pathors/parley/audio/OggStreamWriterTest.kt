@@ -26,6 +26,10 @@ import java.nio.ByteOrder
  */
 class OggStreamWriterTest {
 
+    /** Config 23, one frame: CELT wideband, 20 ms — 960 granule units. */
+    private val TOC_CELT_WB_20MS = 0xB8.toByte()
+
+
     // ------------------------------------------------------------------ helpers
 
     /** A fixed serial keeps every byte of the output reproducible. */
@@ -60,8 +64,51 @@ class OggStreamWriterTest {
     )
 
     /** A recognisable packet of a given size, so payload mix-ups are visible. */
+    @Test
+    fun `granule follows the packet's own framing, not a fixed 20 ms`() {
+        // Config 23 code 3: CELT wideband 20 ms with an explicit frame count —
+        // the shape a bundling encoder hands over. Three frames is 2880 granule
+        // units, not the 960 a per-packet constant would credit. Getting this
+        // wrong does not fail anywhere; it just makes the file's clock run slow.
+        val bundled = ByteArray(180)
+        bundled[0] = 0xBB.toByte()
+        bundled[1] = 3
+
+        val pages = Pages()
+        val w = writer(pages)
+        w.append(bundled)
+        w.finish()
+
+        assertEquals(312L + 2880L, granule(pages.list.last()))
+    }
+
+    @Test
+    fun `a packet shorter than 20 ms is credited what it is worth`() {
+        // Config 16 is CELT narrowband 2.5 ms: 120 granule units. A writer that
+        // assumed 960 would claim eight times the audio it actually holds.
+        val short = ByteArray(24)
+        short[0] = 0x80.toByte()
+
+        val pages = Pages()
+        val w = writer(pages)
+        w.append(short)
+        w.finish()
+
+        assertEquals(312L + 120L, granule(pages.list.last()))
+    }
+
+    /**
+     * A packet that looks like one, starting with a real TOC byte.
+     *
+     * The writer reads framing out of byte 0, so a fixture full of zeroes is not
+     * a 20 ms packet — TOC 0x00 is SILK narrowband 10 ms, and a test built on it
+     * would pin half the granule the codec really produces. 0xB8 is config 23,
+     * CELT wideband 20 ms, one frame: what `c2.android.opus.encoder` emits for
+     * all but the first handful of packets, as measured in
+     * `OggOpusEncoderDeviceTest`.
+     */
     private fun packet(size: Int, seed: Int = 0) =
-        ByteArray(size) { (seed * 31 + it).toByte() }
+        ByteArray(size) { if (it == 0) TOC_CELT_WB_20MS else (seed * 31 + it).toByte() }
 
     /**
      * Ogg's CRC-32 done the slow, obvious way: poly 0x04C11DB7, init 0, no

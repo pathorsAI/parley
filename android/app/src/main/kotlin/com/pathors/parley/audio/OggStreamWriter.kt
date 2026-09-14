@@ -86,6 +86,19 @@ class OggStreamWriter(
 
     private var pageSequence = 0
     private var packetCount = 0L
+
+    /**
+     * What each pending packet is worth in granule units, read from its own TOC
+     * byte rather than assumed.
+     *
+     * Kept alongside [pending] rather than derived at page time because a packet
+     * is authoritative about its own framing and nothing else is: see
+     * [granuleOf].
+     */
+    private val pendingGranules = ArrayDeque<Long>()
+
+    /** Granule of every packet already written to a page, excluding pre-skip. */
+    private var writtenGranule = 0L
     private var pageCount = 0L
     private var headersWritten = false
     private var finished = false
@@ -131,8 +144,46 @@ class OggStreamWriter(
         if (!headersWritten) writeHeaders()
 
         pending.addLast(packet)
+        pendingGranules.addLast(granuleOf(packet))
         packetCount++
         emitPages(force = false, eos = false)
+    }
+
+    /**
+     * What one Opus packet is worth in granule units, from its own TOC byte.
+     *
+     * Production used to assume a flat [GRANULE_PER_PACKET], i.e. that every
+     * `MediaCodec` output buffer carries exactly one 20 ms frame. That is true
+     * of `c2.android.opus.encoder` — `OggOpusEncoderDeviceTest` measures it — but
+     * it is a property of that encoder, not of the API. A vendor encoder that
+     * bundled frames would have produced a file whose clock ran slow, with no
+     * error anywhere: mid-file timestamps drifting further out the longer the
+     * meeting ran, on the one screen whose whole point is tapping a sentence to
+     * hear it. Reading the framing instead of assuming it makes that
+     * unrepresentable rather than merely unlikely.
+     *
+     * RFC 6716 §3.1: the TOC's top five bits pick the configuration, whose frame
+     * duration follows the mode, and the bottom two say how many frames the
+     * packet packs.
+     */
+    private fun granuleOf(packet: ByteArray): Long {
+        if (packet.isEmpty()) return 0L
+        val toc = packet[0].toInt() and 0xFF
+        val config = toc ushr 3
+        val frameSamples = when {
+            config < 12 -> SILK_FRAME_SAMPLES[config % 4]
+            config < 16 -> HYBRID_FRAME_SAMPLES[config % 2]
+            else -> CELT_FRAME_SAMPLES[config % 4]
+        }
+        val frames = when (toc and 0x03) {
+            0 -> 1
+            1, 2 -> 2
+            // Code 3 packs an arbitrary count in the six low bits of the next
+            // byte. A truncated packet claiming code 3 has no count to read, so
+            // it is worth the one frame we can account for rather than zero.
+            else -> if (packet.size >= 2) (packet[1].toInt() and 0x3F).coerceAtLeast(1) else 1
+        }
+        return frameSamples * frames
     }
 
     /**
@@ -179,12 +230,11 @@ class OggStreamWriter(
             // Granule counts 48 kHz samples through the *end* of this page, and
             // includes the pre-skip (RFC 7845 §4): the decoder subtracts the
             // pre-skip again, so leaving it out makes every timestamp 6.5 ms early.
-            val granule = preSkip + (packetCount - pending.size) * GRANULE_PER_PACKET
-            writePage(payloads, granule, if (isLast) FLAG_EOS else FLAG_NONE)
+            repeat(take) { writtenGranule += pendingGranules.removeFirst() }
+            writePage(payloads, preSkip + writtenGranule, if (isLast) FLAG_EOS else FLAG_NONE)
         }
         if (eos && !emittedEos) {
-            val granule = preSkip + packetCount * GRANULE_PER_PACKET
-            writePage(emptyList(), granule, FLAG_EOS)
+            writePage(emptyList(), preSkip + writtenGranule, FLAG_EOS)
         }
     }
 
@@ -304,6 +354,15 @@ class OggStreamWriter(
          * iOS's `granulePerPacket` and desktop's `GRANULE_PER_FRAME`.
          */
         const val GRANULE_PER_PACKET = 960L
+
+        /**
+         * Opus frame durations in 48 kHz granule units, indexed the way RFC 6716
+         * §3.1 lays the configurations out: SILK cycles 10/20/40/60 ms, hybrid
+         * 10/20 ms, CELT 2.5/5/10/20 ms.
+         */
+        private val SILK_FRAME_SAMPLES = longArrayOf(480, 960, 1920, 2880)
+        private val HYBRID_FRAME_SAMPLES = longArrayOf(480, 960)
+        private val CELT_FRAME_SAMPLES = longArrayOf(120, 240, 480, 960)
 
         /**
          * Opus look-ahead: 312 samples at 48 kHz = 6.5 ms. The value desktop
