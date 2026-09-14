@@ -8,6 +8,8 @@ import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.meeting.ImportSession
 import com.pathors.parley.meeting.MeetingSession
+import com.pathors.parley.playback.AudioRetention
+import com.pathors.parley.playback.LocalAudioStore
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.upload.MeetingUploader
 import com.pathors.parley.upload.PendingUploadQueue
@@ -72,7 +74,18 @@ class AppContainer(private val app: Application) {
     /** Exposed as well as wrapped: the home screen lists what is still waiting. */
     val uploadQueue: PendingUploadQueue = PendingUploadQueue.default(app)
 
-    val uploader: MeetingUploader = MeetingUploader(cloud, uploadQueue)
+    /** The recordings whose audio is on this phone, playable without a download. */
+    val localAudio: LocalAudioStore = LocalAudioStore.default(app)
+
+    /** "Keep audio on this phone" — read by the uploader, toggled in the account sheet. */
+    val audioRetention: AudioRetention = AudioRetention(app)
+
+    val uploader: MeetingUploader = MeetingUploader(
+        cloud = cloud,
+        queue = uploadQueue,
+        localAudio = localAudio,
+        keepsAudioOnPhone = audioRetention::keepsAudioOnPhoneNow,
+    )
 
     /**
      * The last sign-in callback error code (never display copy — the UI maps it),
