@@ -167,6 +167,12 @@
     <string name="account_audio_none">這支手機沒有存任何音檔。</string>
     <string name="account_audio_remove_all">刪除已存的音檔</string>
 
+    <!-- Appearance -->
+    <string name="account_appearance">外觀</string>
+    <string name="account_appearance_system">跟隨系統</string>
+    <string name="account_appearance_light">淺色</string>
+    <string name="account_appearance_dark">深色</string>
+
     <!-- Foreground service notification -->
     <string name="notification_channel_name">會議錄音</string>
     <string name="notification_channel_description">Parley 正在錄製會議時顯示。</string>

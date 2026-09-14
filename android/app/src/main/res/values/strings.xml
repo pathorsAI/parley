@@ -168,6 +168,12 @@
     <string name="account_audio_none">No audio stored on this phone.</string>
     <string name="account_audio_remove_all">Remove stored audio</string>
 
+    <!-- Appearance -->
+    <string name="account_appearance">Appearance</string>
+    <string name="account_appearance_system">System</string>
+    <string name="account_appearance_light">Light</string>
+    <string name="account_appearance_dark">Dark</string>
+
     <!-- Foreground service notification -->
     <string name="notification_channel_name">Meeting recording</string>
     <string name="notification_channel_description">Shows while Parley is recording a meeting.</string>

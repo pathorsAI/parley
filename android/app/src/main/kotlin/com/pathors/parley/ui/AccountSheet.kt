@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -19,12 +22,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.pathors.parley.R
 import com.pathors.parley.cloud.HostedQuota
 import com.pathors.parley.playback.AudioStorageSection
+import com.pathors.parley.ui.theme.ThemePreference
+import com.pathors.parley.ui.theme.rememberThemePreference
+import com.pathors.parley.ui.theme.rememberThemePreferenceStore
+import kotlinx.coroutines.launch
 
 /**
  * Who is signed in, what the plan has left, and the two ways out — signing out,
@@ -62,6 +70,8 @@ fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
             AccountIdentity(account)
 
             AudioStorageSection()
+
+            AppearanceSection()
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
@@ -101,6 +111,50 @@ fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
 /**
  * Who is signed in and what the plan has left — or why neither is known yet.
  */
+/**
+ * Light, dark, or whatever the phone is doing.
+ *
+ * The app used to have no say: the theme read `isSystemInDarkTheme()` and that
+ * was the end of it. It reads a stored preference now, and this is the only
+ * place to set it — iOS offers the same three (`SettingsView`'s appearance
+ * picker), and someone who keeps their phone on auto but wants one app dark
+ * has nowhere else to say so.
+ */
+@Composable
+private fun AppearanceSection() {
+    val store = rememberThemePreferenceStore()
+    val current = rememberThemePreference()
+    val scope = rememberCoroutineScope()
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = stringResource(R.string.account_appearance),
+            style = MaterialTheme.typography.titleSmall,
+        )
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            ThemePreference.entries.forEachIndexed { index, preference ->
+                SegmentedButton(
+                    selected = preference == current,
+                    onClick = { scope.launch { store.set(preference) } },
+                    shape = SegmentedButtonDefaults.itemShape(
+                        index = index,
+                        count = ThemePreference.entries.size,
+                    ),
+                ) {
+                    Text(stringResource(appearanceLabel(preference)))
+                }
+            }
+        }
+    }
+}
+
+@StringRes
+private fun appearanceLabel(preference: ThemePreference): Int = when (preference) {
+    ThemePreference.SYSTEM -> R.string.account_appearance_system
+    ThemePreference.LIGHT -> R.string.account_appearance_light
+    ThemePreference.DARK -> R.string.account_appearance_dark
+}
+
 @Composable
 private fun AccountIdentity(account: HomeViewModel.AccountState) {
     when {
