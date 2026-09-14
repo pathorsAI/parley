@@ -111,9 +111,32 @@
     <string name="detail_no_transcript">This recording has no transcript.</string>
     <string name="detail_findings">Findings</string>
     <string name="detail_action_items">Action items</string>
-    <string name="detail_playback_unavailable">Playback isn\'t available in this version.</string>
     <string name="detail_speakers">%1$d speakers</string>
     <string name="detail_length">Length %1$s</string>
+
+    <!-- Playback -->
+    <string name="playback_download">Download to play back</string>
+    <string name="playback_downloading">Downloading…</string>
+    <string name="playback_preparing">Preparing…</string>
+    <string name="playback_retry">Try again</string>
+    <string name="playback_failed_network">The download didn\'t finish.</string>
+    <string name="playback_failed_missing">There\'s no audio stored for this recording.</string>
+    <string name="playback_failed_unplayable">This recording\'s audio couldn\'t be played.</string>
+    <string name="playback_play">Play</string>
+    <string name="playback_pause">Pause</string>
+    <string name="playback_speed">Playback speed</string>
+    <string name="playback_scrub">Scrub</string>
+
+    <!-- Audio on this phone -->
+    <string name="account_audio_title">Audio on this phone</string>
+    <string name="account_keep_audio">Keep audio on this phone</string>
+    <string name="account_keep_audio_detail">Recordings made here stay on the device, so they play back without downloading them again.</string>
+    <plurals name="account_audio_stored">
+        <item quantity="one">%1$d recording · %2$s</item>
+        <item quantity="other">%1$d recordings · %2$s</item>
+    </plurals>
+    <string name="account_audio_none">No audio stored on this phone.</string>
+    <string name="account_audio_remove_all">Remove stored audio</string>
 
     <!-- Foreground service notification -->
     <string name="notification_channel_name">Meeting recording</string>

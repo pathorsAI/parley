@@ -110,9 +110,32 @@
     <string name="detail_no_transcript">這筆錄音沒有逐字稿。</string>
     <string name="detail_findings">觀察重點</string>
     <string name="detail_action_items">後續行動</string>
-    <string name="detail_playback_unavailable">這個版本還不支援播放。</string>
     <string name="detail_speakers">%1$d 位說話者</string>
     <string name="detail_length">長度 %1$s</string>
+
+    <!-- Playback -->
+    <string name="playback_download">下載後播放</string>
+    <string name="playback_downloading">下載中…</string>
+    <string name="playback_preparing">準備中…</string>
+    <string name="playback_retry">再試一次</string>
+    <string name="playback_failed_network">下載沒有完成。</string>
+    <string name="playback_failed_missing">這筆錄音沒有存音檔。</string>
+    <string name="playback_failed_unplayable">這筆錄音的音檔無法播放。</string>
+    <string name="playback_play">播放</string>
+    <string name="playback_pause">暫停</string>
+    <string name="playback_speed">播放速度</string>
+    <string name="playback_scrub">拖曳進度</string>
+
+    <!-- Audio on this phone -->
+    <string name="account_audio_title">這支手機上的音檔</string>
+    <string name="account_keep_audio">音檔留在這支手機</string>
+    <string name="account_keep_audio_detail">在這裡錄的會議，音檔會留在裝置上，不用重新下載就能播放。</string>
+    <!-- Chinese has no singular/plural distinction: one "other" form is the whole set. -->
+    <plurals name="account_audio_stored">
+        <item quantity="other">%1$d 筆錄音・%2$s</item>
+    </plurals>
+    <string name="account_audio_none">這支手機沒有存任何音檔。</string>
+    <string name="account_audio_remove_all">刪除已存的音檔</string>
 
     <!-- Foreground service notification -->
     <string name="notification_channel_name">會議錄音</string>

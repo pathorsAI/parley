@@ -142,6 +142,10 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.datastore.preferences)
+    // Media3/ExoPlayer plays the recording back. Its OggExtractor seeks
+    // Opus streams natively, which is why Android needs none of the
+    // hand-written seek machinery iOS had to build (see PlaybackEngine.kt).
+    implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.browser)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
