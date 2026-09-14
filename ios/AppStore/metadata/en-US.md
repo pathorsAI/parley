@@ -85,6 +85,21 @@ Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
 ## What's New — 1.13
 
+Recordings can be played back on the phone. Meetings recorded here now stay
+on the phone (Settings → Keep audio on this phone, on by default), and a
+recording made elsewhere can be downloaded from its row, its long-press menu,
+or the transcript screen. Open a recording and a player sits under the title:
+the whole meeting as a waveform, drag it to scrub — lift your finger higher
+while dragging for finer control — a speed control from 0.75× to 2×, and
+hold the edge of the transcript to play at 2× while you hold. The transcript
+follows the audio and marks who is talking, and tapping a timecode — or
+anywhere in a turn's text — jumps the audio there.
+
+Search inside a transcript. Tap the magnifying glass on a recording, type,
+and every match is highlighted in place, with a count and next/previous
+arrows at the bottom; tapping a highlighted match plays from that turn. The
+library search still covers titles and snippets — this one covers the words.
+
 A recording can be transcribed again. When the transcript came up thin or
 wrong — the relay dropped out, the room was loud — open the recording, tap ⋯
 and choose Re-transcribe. The whole audio goes through transcription once
@@ -93,26 +108,28 @@ highlights and folder you already had stay exactly as they were. It uses your
 account's transcription hours the same as a new meeting would, and each
 recording can be re-run three times.
 
-Tap the words to hear them. Tapping anywhere in a turn's text jumps the audio
-to that turn. The timecode still works; you just no longer have to aim for
-it. The turn you tapped flashes blue so you know it landed.
+The app looks different. The page is white, the text is ink, and blue is
+reserved for what is happening right now: the person speaking, the live
+waveform, the thing you can tap. Speakers are Speaker A, B and C instead of
+numbers. While recording there is a real waveform — calm, rounded and pale —
+and a Discard action for a recording that should not have started, so a
+mis-tap no longer leaves a two-second file in the library.
 
-Search inside a transcript. Tap the magnifying glass on a recording, type,
-and every match is highlighted in place, with a count and next/previous
-arrows at the bottom; tapping a highlighted match plays from that turn. The
-library search still covers titles and snippets — this one covers the words.
+After a recording, the suggested name and folder are one card and one
+decision: save as suggested, adjust, or skip.
 
-And seeking actually seeks. In 1.12, dragging the scrubber or tapping a
-timecode moved the clock while the audio kept playing from the beginning:
-the player iOS ships cannot move inside an Ogg/Opus file, it only reports
-that it did. Playback runs on a different engine now, and where the playhead
-is, the sound is.
+In the library, swipe across the header to move between folders, and the
+import button no longer wears a download arrow.
 
-The waveforms are calmer — thicker, rounder, half the height, and pale —
-both while recording and under a recording's title. The red marker at the
-edge of the live waveform is gone: the newest bar is where now is.
+The keyboard admits when the microphone is gone. If iOS's own dictation takes
+the microphone mid-session, the voice pane now says so and a tap starts a
+fresh session, instead of showing ⏹ over silence until Parley was force-quit.
 
-## What's New — 1.12
+Since 1.7, also: the phone names and files its own recordings; an audio file
+from anywhere can be imported and transcribed here; and a meeting whose live
+transcript came up short is transcribed again from the audio.
+
+## What's New — 1.12 (never reached the store — folded into 1.13)
 
 Recordings can be played back on the phone. Meetings recorded here now stay
 on the phone (Settings → Keep audio on this phone, on by default), and a
