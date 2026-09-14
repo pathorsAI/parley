@@ -31,6 +31,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -55,11 +57,18 @@ sealed interface MeetingState {
      * Done. [recordingId] is null when the capture was dropped as a misfire
      * ([dropped]); [pendingUpload] means it is saved locally but not yet in the
      * cloud, which is a normal offline outcome, not a failure.
+     *
+     * [interruptedBy] is set when the meeting was saved because something ended
+     * it rather than because the user did — the mic was taken, the process lost
+     * the foreground service, an unexpected exception reached the capture loop.
+     * The recording is real and complete up to that moment; the flag is there so
+     * the UI can say so instead of implying the user stopped when they did not.
      */
     data class Finished(
         val recordingId: String?,
         val pendingUpload: Boolean,
         val dropped: Boolean,
+        val interruptedBy: MeetingFailure? = null,
     ) : MeetingState
 
     /** The recording could not happen (or could not be saved). */
@@ -138,12 +147,9 @@ private fun defaultSessionScope(): CoroutineScope = CoroutineScope(
 
 /**
  * One live meeting: microphone → Ogg/Opus file **and** microphone → STT relay,
- * from the same chunk stream, plus the upload that follows.
- *
- * ```
- * MicCapture ──ByteArray(3200)──┬──▶ OggOpusEncoder.append   ──▶ {id}.ogg
- *                               └──▶ SttRelayClient.sendPcm  ──▶ segments
- * ```
+ * from the same chunk stream, plus the upload that follows. See [CapturePipeline]
+ * for the fan-out and for why only one of those two branches is allowed to fail
+ * loudly.
  *
  * Hosted by [MeetingService] so the capture survives the screen going away; the
  * UI observes the flows and never touches the pipeline directly beyond [stop].
@@ -151,6 +157,14 @@ private fun defaultSessionScope(): CoroutineScope = CoroutineScope(
  * The session owns its own coroutine scope: it must outlive both the composable
  * that shows it and the service that started it (the upload tail runs while the
  * service is already stopping itself).
+ *
+ * ## Saving is the default; deleting takes a decision
+ *
+ * There are four ways out — [stop], [stopInterrupted], [discard], [dispose] —
+ * and only [discard] removes the audio. Every other ending closes the container
+ * and hands the file to the upload queue, including the endings that are
+ * failures: a microphone taken away forty minutes in has ended the *recording*,
+ * not the *recorded*. [CaptureEnding] holds that table.
  */
 class MeetingSession(
     private val context: Context,
@@ -197,13 +211,24 @@ class MeetingSession(
      *  numbers its own segments from zero, so without a per-leg id prefix a
      *  reconnect would overwrite the opening of the meeting. */
     private var relayLeg = 0
-    private var reconnectAttempts = 0
+
+    /** Consecutive-failure budget for redialling the relay. */
+    private val reconnect = ReconnectPolicy()
+
     /** `elapsedRealtime` at the first microphone chunk — the offset a
      *  reconnected leg needs to place its timestamps after the audio that
      *  came before it. */
     private var captureStartedAt = 0L
 
     @Volatile private var finishRequested = false
+
+    /**
+     * Guards the save: the user tapping Stop and the capture loop failing can
+     * arrive at the same instant, and the encoder may only be finished once.
+     * Whichever gets here first owns the outcome.
+     */
+    private val saveMutex = Mutex()
+    private var saved = false
 
     /**
      * Committed runs and the tentative tail, keyed by segment id — the relay
@@ -221,20 +246,22 @@ class MeetingSession(
 
     /**
      * The capture, with a floor under it. [capture] already maps the failures it
-     * knows about; this turns everything else into [MeetingFailure.UNKNOWN]
-     * instead of an uncaught exception. That distinction is the difference
-     * between an error screen the user can retry from and a process death
-     * mid-meeting.
+     * knows about; this catches everything else — a full disk, a device quirk, a
+     * bug — and saves the recording rather than letting it reach the thread's
+     * default handler.
+     *
+     * This catch-all used to be the most expensive line in the file: it deleted
+     * the audio before reporting the failure, so any exception nobody had
+     * thought of cost the user their meeting.
      */
     private suspend fun runCapture() {
         try {
             capture()
         } catch (e: CancellationException) {
-            throw e // ordinary teardown (abandon/dispose), not a failure
+            throw e // ordinary teardown (discard/dispose), not a failure
         } catch (t: Throwable) {
             Log.e(TAG, "meeting capture failed", t)
-            abandon()
-            _state.value = MeetingState.Failed(MeetingFailure.UNKNOWN, t.message)
+            interruptFromCapture(MeetingFailure.UNKNOWN, t.message)
         }
     }
 
@@ -259,8 +286,8 @@ class MeetingSession(
         // a rejected one arrives as an event rather than an exception.
         eventsJob = scope.launch { client.events.collect(::onRelayEvent) }
         // `open()` rather than `connect()`: the socket does not have to be up
-        // before the microphone does. OkHttp holds the audio behind the config
-        // frame until the upgrade lands, so the recording begins when the user
+        // before the microphone does. Audio queued before the upgrade lands is
+        // held and written in order, so the recording begins when the user
         // asked for it instead of one network round trip later.
         client.open()
 
@@ -277,19 +304,19 @@ class MeetingSession(
         startTicker()
         startMicMonitor()
 
+        val pipeline = CapturePipeline(
+            audio = { chunk -> encoder.append(chunk) },
+            // The field, not the local: a reconnect swaps the client, and a
+            // captured one would keep feeding a socket nobody reads.
+            relay = { this.relay?.let { client -> RelaySink { chunk -> client.enqueuePcm(chunk) } } },
+        )
+
         try {
-            mic.start().collect { chunk ->
-                encoder.append(chunk)
-                // The field, not the local: a reconnect swaps the client, and a
-                // captured one would keep feeding a socket nobody reads.
-                relay?.sendPcm(chunk)
-            }
+            mic.start().collect(pipeline::accept)
         } catch (e: MicCaptureException) {
-            abandon()
-            _state.value = MeetingState.Failed(micFailure(e), e.message)
+            interruptFromCapture(micFailure(e), e.message)
         } catch (e: OpusEncodeException) {
-            abandon()
-            _state.value = MeetingState.Failed(MeetingFailure.ENCODER_UNAVAILABLE, e.message)
+            interruptFromCapture(MeetingFailure.ENCODER_UNAVAILABLE, e.message)
         }
     }
 
@@ -329,18 +356,19 @@ class MeetingSession(
      * costs live transcript, not the recording — and the cloud transcribes the
      * uploaded audio anyway. That is why this retries quietly in the background
      * instead of failing the meeting.
+     *
+     * The budget is [ReconnectPolicy]'s, which counts *consecutive* failures:
+     * see there for why a meeting that reconnects successfully must get its
+     * retries back.
      */
     private fun scheduleReconnect() {
         if (finishRequested || reconnectJob != null) return
         if (_state.value !is MeetingState.Recording) return
-        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return
-        reconnectAttempts += 1
-        // 1, 2, 4, 8 … capped. Long enough not to hammer a relay that is down,
-        // short enough that walking back into Wi-Fi picks up quickly.
-        val backoff = minOf(
-            RECONNECT_MAX_DELAY_MS,
-            RECONNECT_BASE_DELAY_MS shl (reconnectAttempts - 1),
-        )
+        val backoff = reconnect.nextDelayMs()
+        if (backoff == null) {
+            Log.w(TAG, "relay reconnect budget spent; the live transcript stops here")
+            return
+        }
         reconnectJob = scope.launch {
             delay(backoff)
             reconnectJob = null
@@ -355,7 +383,20 @@ class MeetingSession(
             relay = next
             eventsJob = scope.launch { next.events.collect(::onRelayEvent) }
             next.open()
-            _issue.value = null
+
+            // Only a handshake that actually completed refills the budget.
+            // `awaitOpen` resolves either way — a rejected upgrade arrives as an
+            // event, not an exception — so `isTerminated` is what tells an open
+            // socket from a refused one. The wait is bounded because a socket
+            // that never resolves at all would otherwise keep this coroutine
+            // alive for the rest of the meeting, and *that* case is not a
+            // success either: a leg nobody ever answered has proved nothing.
+            val resolved =
+                withTimeoutOrNull(HANDSHAKE_TIMEOUT_MS) { next.awaitOpen(); true } ?: false
+            if (resolved && !next.isTerminated) {
+                reconnect.recordSuccess()
+                _issue.value = null
+            }
         }
     }
 
@@ -423,18 +464,89 @@ class MeetingSession(
      * the service has stopped itself.
      */
     suspend fun stop() {
-        val current = _state.value
-        if (current !is MeetingState.Recording && current !is MeetingState.Connecting) return
-        finishRequested = true
-        _state.value = MeetingState.Finishing
+        if (!beginFinishing()) return
+        quiesce()
+        withTimeoutOrNull(CAPTURE_JOIN_TIMEOUT_MS) { captureJob?.join() }
+        closeRelay()
+        save(interruptedBy = null, detail = null)
+    }
+
+    /**
+     * Save and stop because something *else* ended the recording.
+     *
+     * Same path as [stop] in every respect that touches the file — the container
+     * is closed, the transcript is finalised, the recording goes to the upload
+     * queue — and different only in what the terminal state says afterwards.
+     * That sameness is the fix: the microphone being taken, the encoder dying or
+     * the foreground service being destroyed used to route to a teardown that
+     * deleted the .ogg, so an interruption at minute forty cost all forty.
+     *
+     * Mirrors iOS, where losing the microphone sets a flag and takes the
+     * ordinary stop path (`MeetingRecorder.handle(_:)`).
+     *
+     * @param reason what ended it, for the log and for the UI when there turns
+     *   out to be nothing worth saving.
+     */
+    suspend fun stopInterrupted(reason: MeetingFailure, detail: String? = null) {
+        if (!beginFinishing()) return
+        Log.w(TAG, "meeting interrupted ($reason): $detail — saving what was recorded")
+        quiesce()
+        withTimeoutOrNull(CAPTURE_JOIN_TIMEOUT_MS) { captureJob?.join() }
+        closeRelay()
+        save(interruptedBy = reason, detail = detail)
+    }
+
+    /**
+     * [stopInterrupted] for a failure raised *by the capture coroutine itself*.
+     *
+     * Identical except that it must not wait for the capture job: it is running
+     * on it, and a job cannot join itself.
+     */
+    private suspend fun interruptFromCapture(reason: MeetingFailure, detail: String?) {
+        if (!beginFinishing()) return
+        Log.w(TAG, "capture ended early ($reason): $detail — saving what was recorded")
+        quiesce()
+        closeRelay()
+        save(interruptedBy = reason, detail = detail)
+    }
+
+    /**
+     * Claim the wind-down. False when there is nothing live to wind down, either
+     * because the recording never started or because somebody else got here
+     * first.
+     */
+    private fun beginFinishing(): Boolean {
+        while (true) {
+            val current = _state.value
+            if (current !is MeetingState.Recording && current !is MeetingState.Connecting) {
+                return false
+            }
+            // Compare-and-set rather than a plain write: the user tapping Stop
+            // and the capture loop throwing are genuinely concurrent, and
+            // exactly one of them may own the wind-down.
+            if (_state.compareAndSet(current, MeetingState.Finishing)) {
+                finishRequested = true
+                return true
+            }
+        }
+    }
+
+    /**
+     * Everything that is not the audio file: the ticker, the reconnects, the
+     * silenced-mic monitor and the microphone itself. Deliberately touches
+     * neither the encoder nor the capture job — releasing the microphone is not
+     * the same act as throwing the recording away. See [CaptureEnding].
+     */
+    private fun quiesce() {
         tickerJob?.cancel()
         reconnectJob?.cancel()
         reconnectJob = null
-        stopMicMonitor()
+        runCatching { stopMicMonitor() }
+        runCatching { mic.stop() }
+    }
 
-        mic.stop()
-        withTimeoutOrNull(CAPTURE_JOIN_TIMEOUT_MS) { captureJob?.join() }
-
+    /** Finalize the transcript and let the relay flush its tail, then hang up. */
+    private suspend fun closeRelay() {
         relay?.let { client ->
             runCatching { client.finish() }
             // The relay keeps the socket open to flush the last utterance; the
@@ -443,77 +555,123 @@ class MeetingSession(
             client.cancel()
         }
         eventsJob?.cancel()
-
-        // stop() can win the race against runCapture() reaching the encoder, so
-        // there may be nothing to finish. Pin it to a local: from here on the
-        // type system carries the fact that we have an encoder.
-        val encoder = this.encoder
-        if (encoder == null) {
-            _state.value = MeetingState.Failed(MeetingFailure.ENCODER_UNAVAILABLE)
-            return
-        }
-        val audio = try {
-            withContext(Dispatchers.IO) { encoder.finish() }
-        } catch (e: OpusEncodeException) {
-            _state.value = MeetingState.Failed(MeetingFailure.ENCODER_UNAVAILABLE, e.message)
-            return
-        }
-        val durationMs = encoder.durationMs.toDouble()
-
-        _state.value = MeetingState.Uploading
-        val id = try {
-            uploader.enqueue(
-                EnqueueRequest(
-                    audio = audio,
-                    title = title,
-                    durationMs = durationMs,
-                    segments = finalSegments(),
-                    startedAtMs = startedAtMs,
-                    source = RecordingSource.LIVE,
-                )
-            )
-        } catch (e: Throwable) {
-            _state.value = MeetingState.Failed(MeetingFailure.UPLOAD_FAILED, e.message)
-            return
-        }
-        if (id == null) {
-            // Under two seconds: a tap of the record button, not a meeting.
-            _state.value = MeetingState.Finished(null, pendingUpload = false, dropped = true)
-            return
-        }
-        val result = runCatching { uploader.drain() }.getOrNull()
-        _state.value = MeetingState.Finished(
-            recordingId = id,
-            pendingUpload = result == null || result.remaining > 0,
-            dropped = false,
-        )
     }
 
     /**
-     * Tear everything down without saving — the process is going away, or the
-     * capture already failed. Idempotent.
+     * Close the container, hand the file to the upload queue, publish the
+     * outcome. Runs at most once per session.
      */
-    fun abandon() {
-        tickerJob?.cancel()
-        eventsJob?.cancel()
-        reconnectJob?.cancel()
-        reconnectJob = null
-        // Before the encoder, and before the microphone: the capture loop is the
-        // only thing that calls `encoder.append`, and a chunk that arrives after
-        // `encoder.cancel()` throws. `cancel()` does not wait, so the ordering
-        // is a strong hint rather than a guarantee — the catch-all in
-        // [runCapture] is what makes the remaining window harmless.
-        captureJob?.cancel()
-        runCatching { stopMicMonitor() }
-        runCatching { mic.stop() }
-        runCatching { relay?.cancel() }
-        runCatching { encoder?.cancel() }
+    private suspend fun save(interruptedBy: MeetingFailure?, detail: String?) =
+        saveMutex.withLock {
+            if (saved) return@withLock
+            saved = true
+
+            // stop() can win the race against capture() reaching the encoder, so
+            // there may be nothing to finish.
+            val encoder = this.encoder
+            val audio = encoder?.let { withContext(Dispatchers.IO) { finishEncoder(it) } }
+            if (encoder == null || audio == null) {
+                _state.value = MeetingState.Failed(
+                    interruptedBy ?: MeetingFailure.ENCODER_UNAVAILABLE,
+                    detail,
+                )
+                return@withLock
+            }
+
+            _state.value = MeetingState.Uploading
+            val id = try {
+                uploader.enqueue(
+                    EnqueueRequest(
+                        audio = audio,
+                        title = title,
+                        durationMs = encoder.durationMs.toDouble(),
+                        segments = finalSegments(),
+                        startedAtMs = startedAtMs,
+                        source = RecordingSource.LIVE,
+                    )
+                )
+            } catch (e: Throwable) {
+                _state.value = MeetingState.Failed(MeetingFailure.UPLOAD_FAILED, e.message)
+                return@withLock
+            }
+
+            val result = if (id == null) null else runCatching { uploader.drain() }.getOrNull()
+            _state.value = terminalStateFor(
+                recordingId = id,
+                pendingUpload = result == null || result.remaining > 0,
+                interruptedBy = interruptedBy,
+                detail = detail,
+            )
+        }
+
+    /**
+     * Close the Ogg container, and keep the bytes even when closing fails.
+     *
+     * Ogg is a streaming container: the pages already on disk decode on their
+     * own, so a file whose muxer could not be stopped is a recording that ends a
+     * fraction early, not a write-off. Since the likeliest reason `finish()`
+     * throws is the disk filling up mid-meeting — precisely when the user has
+     * the most to lose — "no clean close" must not mean "no recording".
+     * [OggOpusEncoder.finish] deletes only a file it wrote nothing into.
+     *
+     * @return the file to upload, or null when there is genuinely nothing there.
+     */
+    private fun finishEncoder(encoder: OggOpusEncoder): File? = try {
+        encoder.finish()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (t: Throwable) {
+        Log.e(TAG, "could not finalise ${encoder.file.name}; keeping what is on disk", t)
+        encoder.file.takeIf { it.isFile && it.length() > 0L }
     }
 
-    /** Release everything this session still holds. */
+    /**
+     * Throw the recording away: stop the microphone, drop the relay without
+     * draining it, and delete the audio.
+     *
+     * The only path in the session that deletes anything, and it exists so that
+     * every *other* path can safely not. Mirrors iOS `MeetingRecorder.discard()`.
+     */
+    fun discard() {
+        // Through the same claim as every other ending, so it cannot overwrite a
+        // recording that has already been saved.
+        if (!beginFinishing()) return
+        release(CaptureEnding.DISCARDED)
+        byId.clear()
+        _segments.value = emptyList()
+        _issue.value = null
+        _state.value = MeetingState.Finished(null, pendingUpload = false, dropped = true)
+    }
+
+    /**
+     * Release everything this session still holds, without touching the audio.
+     *
+     * Called once the UI has acknowledged a terminal state, by which point the
+     * recording is either in the upload queue or was never worth keeping — so
+     * there is nothing here to decide and nothing to delete.
+     */
     fun dispose() {
-        abandon()
+        release(CaptureEnding.RELEASED)
         scope.coroutineContext[Job]?.cancel()
+    }
+
+    /**
+     * Wind the machinery down. [ending] decides the one thing that cannot be
+     * undone; see [CaptureEnding] for the table and for why it is so lopsided.
+     */
+    private fun release(ending: CaptureEnding) {
+        quiesce()
+        eventsJob?.cancel()
+        runCatching { relay?.cancel() }
+        if (ending.deletesAudio) {
+            // Before the encoder: the capture loop is the only thing that calls
+            // `encoder.append`, and a chunk that arrives after `encoder.cancel()`
+            // throws. `cancel()` does not wait, so the ordering is a strong hint
+            // rather than a guarantee — the catch-all in [runCapture] is what
+            // makes the remaining window harmless.
+            captureJob?.cancel()
+            runCatching { encoder?.cancel() }
+        }
     }
 
     /** Finals only, tentative tail dropped — what the cloud persists. */
@@ -552,11 +710,8 @@ class MeetingSession(
         const val TAIL_TIMEOUT_MS = 8_000L
         const val CAPTURE_JOIN_TIMEOUT_MS = 5_000L
 
-        /** Reconnect ceiling for one meeting — enough for a genuinely flaky
-         *  hour, few enough that a relay that is simply gone stops being
-         *  dialled. */
-        const val MAX_RECONNECT_ATTEMPTS = 8
-        const val RECONNECT_BASE_DELAY_MS = 1_000L
-        const val RECONNECT_MAX_DELAY_MS = 15_000L
+        /** Ceiling on waiting for a reconnect's handshake to resolve; the
+         *  client's own connect timeout is shorter, so this is a backstop. */
+        const val HANDSHAKE_TIMEOUT_MS = 20_000L
     }
 }
