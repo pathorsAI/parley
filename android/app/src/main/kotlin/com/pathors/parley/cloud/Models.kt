@@ -81,6 +81,12 @@ data class PushResponse(
     @Serializable(with = EpochMillisSerializer::class) val updatedAt: Double? = null,
 )
 
+/** `POST /stt/batch` → `{ id }`, the hosted transcription job to poll. */
+@Serializable
+data class BatchJobCreated(
+    val id: String,
+)
+
 /**
  * `GET /me/usage` — the plan and the metered balances the hosted STT relay
  * enforces. Mirrors iOS `HostedQuota`; the server additionally returns
