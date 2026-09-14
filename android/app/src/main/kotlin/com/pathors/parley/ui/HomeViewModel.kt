@@ -30,6 +30,16 @@ enum class HomeError { NETWORK, SERVER, SIGNED_OUT }
 enum class DeleteAccountError { OWNS_ORGANIZATIONS, FAILED }
 
 /**
+ * Why one recording did not get deleted. The screen owns the copy for each case.
+ *
+ * [FORBIDDEN] is its own case for the same reason [DeleteAccountError] splits
+ * out organization ownership: a 403 means this account is not allowed to delete
+ * that row — it belongs to an organization, or it was shared in — and "try
+ * again" would send the user round a loop that can never close.
+ */
+enum class DeleteRecordingError { FORBIDDEN, FAILED }
+
+/**
  * The library screen's state: what the cloud has, what is still waiting to get
  * there, and the account details behind the avatar button.
  *
@@ -45,6 +55,13 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val pending: List<PendingUpload> = emptyList(),
         val uploading: Boolean = false,
         val error: HomeError? = null,
+        /**
+         * Recording ids with a `DELETE` in flight. A set rather than a single
+         * id: the rows are independent, and one slow delete must not lock the
+         * rest of the library.
+         */
+        val deleting: Set<String> = emptySet(),
+        val deleteError: DeleteRecordingError? = null,
     )
 
     data class AccountState(
@@ -104,6 +121,62 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             refresh()
         }
     }
+
+    /**
+     * Delete one recording from the cloud (`DELETE /recordings/{id}`).
+     *
+     * The call has existed since the sync work landed and had no caller at all,
+     * which left the library append-only: a mis-tapped recording, a test, a
+     * meeting recorded in the wrong room — all permanent. That is also a
+     * user-data-control inconsistency Play cares about, since deleting the whole
+     * *account* was already possible and deleting one row was not.
+     *
+     * The row is dropped locally on success instead of triggering a refresh: the
+     * list is already correct, and a reload would blank the screen and re-fetch
+     * everything to learn one thing we know. A 404 counts as success — the row is
+     * gone, which is what was asked for, and showing an error for it would leave
+     * a ghost in the list that no amount of retrying can remove.
+     */
+    fun deleteRecording(id: String) {
+        // Demo mode renders fixtures; there is nothing in the cloud to delete and
+        // a screenshot run must never write against a real account.
+        if (DemoMode.isActive) return
+        if (id in _state.value.deleting) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(
+                deleting = _state.value.deleting + id,
+                deleteError = null,
+            )
+            val result = runCatching { container.cloud.deleteRecording(id) }
+            val failure = result.exceptionOrNull()
+            val gone = failure == null || (failure as? CloudException)?.isNotFound == true
+            _state.value = if (gone) {
+                _state.value.copy(
+                    recordings = _state.value.recordings.filterNot { it.id == id },
+                    deleting = _state.value.deleting - id,
+                )
+            } else {
+                _state.value.copy(
+                    deleting = _state.value.deleting - id,
+                    deleteError = classifyRecordingDeletion(failure),
+                )
+            }
+        }
+    }
+
+    /** Dismiss the deletion error so the next attempt starts clean. */
+    fun clearDeleteRecordingError() {
+        if (_state.value.deleteError != null) {
+            _state.value = _state.value.copy(deleteError = null)
+        }
+    }
+
+    private fun classifyRecordingDeletion(error: Throwable?): DeleteRecordingError =
+        if ((error as? CloudException)?.isForbidden == true) {
+            DeleteRecordingError.FORBIDDEN
+        } else {
+            DeleteRecordingError.FAILED
+        }
 
     fun loadAccount() {
         if (DemoMode.isActive) {
