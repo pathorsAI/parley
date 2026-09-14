@@ -45,6 +45,22 @@ struct RecordingDetailView: View {
     /// would get from its own pressed state, for a target that has no pressed
     /// state because it is a paragraph.
     @State private var flashedTurn: String?
+    /// Whether the search field is up. Driven by the toolbar button, so the
+    /// transcript stays a clean column of text whenever nobody is searching —
+    /// a permanent search bar on a reading screen is a bar you read past every
+    /// time and use once a week.
+    @State private var searching = false
+    /// What is being searched for. Empty is the whole of the "not searching"
+    /// state: no highlights, no counter bar.
+    @State private var query = ""
+    /// Which hit `n of N` is pointing at, as an index into the hit list.
+    ///
+    /// An index rather than the `Hit` itself because the list is recomputed from
+    /// scratch on every keystroke, and "the third match" survives that where a
+    /// value identifying a range in a string does not. Clamped at the point of
+    /// use — the list can shrink under it between renders.
+    @State private var currentHit = 0
+    @FocusState private var queryFocused: Bool
 
     /// The re-transcription confirmation, and whether one is in flight.
     ///
@@ -86,10 +102,17 @@ struct RecordingDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .background(Theme.background)
         .toolbar {
-            // The overflow menu goes innermost, ahead of the two controls that
-            // were here first: download and copy are the actions on this screen
-            // and copy keeps the outermost trailing position it has always had.
+            // The overflow menu goes innermost, ahead of the controls that were
+            // here first: download and copy are the actions on this screen and
+            // copy keeps the outermost trailing position it has always had.
             ToolbarItem(placement: .topBarTrailing) { overflowMenu }
+            // Search sits out here as its own button rather than as another
+            // row in the overflow menu. Two reasons: finding a phrase is
+            // something you do *while reading*, over and over, where
+            // re-transcribing is a once-ever action; and the overflow menu is
+            // personal-scope only, so a search buried in it would not exist at
+            // all on an org recording.
+            ToolbarItem(placement: .topBarTrailing) { searchButton }
             ToolbarItem(placement: .topBarTrailing) { downloadControl }
             ToolbarItem(placement: .topBarTrailing) {
                 CopyTranscriptButton(
@@ -109,6 +132,13 @@ struct RecordingDetailView: View {
                 "The whole recording is transcribed again from the start, and the transcript you have now is replaced when the new one comes back. It uses your account's transcription hours, the same as a new meeting would."
             )
         }
+        // Closing the field clears the query, because a search that is out of
+        // sight must not leave the transcript highlighted — the reader has no
+        // bar left to explain the tint, or to clear it with.
+        .onChange(of: searching) { _, open in
+            queryFocused = open
+            if !open { query = "" }
+        }
         .task { await load() }
         // Keyed on the URL, so the download landing is what opens the player:
         // the block is showing "Download to play back" until this runs, and the
@@ -126,6 +156,73 @@ struct RecordingDetailView: View {
     /// the "not on the phone" state — `PlaybackBar` draws the download button
     /// from the same model.
     private var audioURL: URL? { downloads.url(for: summary.id) }
+
+    /// Shows and hides the search field. Absent when there is no transcript to
+    /// search, for the same reason the copy button goes inert on an empty one.
+    @ViewBuilder
+    private var searchButton: some View {
+        if !readable.isEmpty {
+            Button {
+                searching.toggle()
+            } label: {
+                Label("Search transcript", systemImage: "magnifyingglass")
+            }
+        }
+    }
+
+    /// The search field, and the reason it is hand-built rather than
+    /// `.searchable`.
+    ///
+    /// `.searchable(text:isPresented:)` was tried first and cannot do what this
+    /// screen needs: its bar lives in the navigation drawer *permanently*, and
+    /// `isPresented` governs only whether the field is focused, not whether the
+    /// bar exists. That leaves a search bar sitting over the transcript on every
+    /// visit — which is precisely what #367 asked to avoid, and it makes the
+    /// toolbar button that is supposed to summon it redundant. (iOS 26 can
+    /// minimise a `.searchable` bar into a toolbar button, but the app ships to
+    /// iOS 17, and a search field that exists on some phones and not others is
+    /// worse than one that behaves the same everywhere.)
+    ///
+    /// So: page-coloured with a hairline, the same chrome as `PlaybackBar`
+    /// above it and the counter bar below, and it is simply not in the view
+    /// tree when nobody is searching.
+    @ViewBuilder
+    private var searchField: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(Color(.tertiaryLabel))
+                .accessibilityHidden(true)
+            TextField("Search this transcript", text: $query)
+                .focused($queryFocused)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                // The field is a filter, not a form: there is nothing to submit
+                // because the highlights are already keeping up with the typing.
+                .submitLabel(.done)
+                .onSubmit { queryFocused = false }
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(Color(.tertiaryLabel))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear")
+            }
+            Button("Cancel") { searching = false }
+                .font(.parley.subheadline)
+        }
+        .font(.parley.body)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(Theme.background)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color(.separator))
+                .frame(height: 0.5)
+        }
+    }
 
     /// Fetch this recording's audio, or show how far that has got.
     ///
@@ -288,6 +385,12 @@ struct RecordingDetailView: View {
     private func transcript(_ meta: RecordingMeta) -> some View {
         let segments = meta.segments.filter { $0.isFinal }
         let current = currentTurn(segments)
+        // Computed once per render and handed down two ways: the flat list is
+        // what `n of N` counts and what the chevrons walk, and the grouping is
+        // what each turn highlights from without re-scanning the whole list.
+        let hits = TranscriptSearch.hits(in: segments, query: query)
+        let byTurn = Dictionary(grouping: hits, by: { $0.segmentID })
+        let active = hits.indices.contains(currentHit) ? hits[currentHit] : hits.first
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 22) {
@@ -300,7 +403,9 @@ struct RecordingDetailView: View {
                             .foregroundStyle(Color(.secondaryLabel))
                     }
                     ForEach(segments, id: \.id) { seg in
-                        turn(seg, meta: meta, isCurrent: seg.id == current)
+                        turn(
+                            seg, meta: meta, isCurrent: seg.id == current,
+                            hits: byTurn[seg.id] ?? [], active: active)
                     }
                 }
                 .padding(20)
@@ -326,9 +431,109 @@ struct RecordingDetailView: View {
                 if playing { followsAudio = true }
             }
             .onChange(of: playback.seekGeneration) { _, _ in followsAudio = true }
+            // A new query starts again from the top hit and takes the reader
+            // there. Recomputed inside rather than closing over `hits`, so the
+            // scroll target is the new query's first match and not the previous
+            // keystroke's.
+            .onChange(of: query) { _, typed in
+                currentHit = 0
+                guard let first = TranscriptSearch.hits(in: segments, query: typed).first
+                else { return }
+                followsAudio = false
+                withAnimation(.easeOut(duration: 0.35)) {
+                    proxy.scrollTo(first.segmentID, anchor: UnitPoint(x: 0, y: 0.3))
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                matchBar(hits: hits, proxy: proxy)
+            }
         }
+        // Both pinned blocks in one inset, in the order they read: the player,
+        // then the query. The field goes *under* the player rather than over
+        // it because the player is what this screen is for — searching is a
+        // thing you do to the transcript, and it belongs next to the transcript.
         .safeAreaInset(edge: .top, spacing: 0) {
-            PlaybackBar(controller: playback, summary: summary, orgId: orgId)
+            VStack(spacing: 0) {
+                PlaybackBar(controller: playback, summary: summary, orgId: orgId)
+                if searching { searchField }
+            }
+        }
+    }
+
+    /// `n of N` and the two chevrons, pinned under the transcript while a query
+    /// is live and gone the moment it is cleared.
+    ///
+    /// A `safeAreaInset` for the same reason the player is one: the transcript
+    /// keeps its own scrolling and scrolls *under* the bar, so walking the hits
+    /// never has the counter scroll away from the reader who is using it.
+    ///
+    /// Same chrome as `PlaybackBar` — page-coloured with a hairline — so the
+    /// screen reads as one surface with something pinned at each end rather
+    /// than a transcript wedged between two tinted bands.
+    @ViewBuilder
+    private func matchBar(hits: [TranscriptSearch.Hit], proxy: ScrollViewProxy) -> some View {
+        if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            HStack(spacing: 18) {
+                if hits.isEmpty {
+                    Text("No matches")
+                } else {
+                    Text("\(min(currentHit, hits.count - 1) + 1) of \(hits.count)")
+                        .monospacedDigit()
+                }
+                Spacer(minLength: 0)
+                // Up and down, not left and right: the transcript is one
+                // column and the previous match is above the thumb, not behind
+                // it.
+                chevron("chevron.up", label: "Previous match", hits: hits, step: -1, proxy: proxy)
+                chevron("chevron.down", label: "Next match", hits: hits, step: 1, proxy: proxy)
+            }
+            .font(.parley.footnote)
+            .foregroundStyle(Color(.secondaryLabel))
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(Theme.background)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(Color(.separator))
+                    .frame(height: 0.5)
+            }
+        }
+    }
+
+    private func chevron(
+        _ symbol: String, label: LocalizedStringKey, hits: [TranscriptSearch.Hit],
+        step delta: Int, proxy: ScrollViewProxy
+    ) -> some View {
+        Button {
+            step(delta, hits: hits, proxy: proxy)
+        } label: {
+            Image(systemName: symbol)
+                .font(.parley.footnote.weight(.semibold))
+                // A caption-sized glyph is a 10pt target; the padding is what
+                // makes it a thumb-sized one without making it look like a
+                // button.
+                .frame(width: 32, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(hits.isEmpty)
+        .accessibilityLabel(label)
+    }
+
+    /// Move to the next or previous hit, wrapping at both ends.
+    ///
+    /// Turns following off, and that is the point of it: without this, the next
+    /// turn change during playback scrolls the transcript off the hit the reader
+    /// just asked to be taken to. Somebody walking matches is reading, not
+    /// listening along, and the playhead has to give way.
+    private func step(_ delta: Int, hits: [TranscriptSearch.Hit], proxy: ScrollViewProxy) {
+        guard !hits.isEmpty else { return }
+        let from = min(currentHit, hits.count - 1)
+        let next = (from + delta + hits.count) % hits.count
+        currentHit = next
+        followsAudio = false
+        withAnimation(.easeOut(duration: 0.35)) {
+            proxy.scrollTo(hits[next].segmentID, anchor: UnitPoint(x: 0, y: 0.3))
         }
     }
 
@@ -336,9 +541,10 @@ struct RecordingDetailView: View {
     /// turn** — the same rule as the live screen, where blue means "this is
     /// happening now". On a finished recording nothing is happening until
     /// somebody presses play, and then exactly one turn is.
-    private func turn(_ seg: TranscriptSegment, meta: RecordingMeta, isCurrent: Bool)
-        -> some View
-    {
+    private func turn(
+        _ seg: TranscriptSegment, meta: RecordingMeta, isCurrent: Bool,
+        hits: [TranscriptSearch.Hit], active: TranscriptSearch.Hit?
+    ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text(verbatim: meta.speakerLabel(for: seg))
@@ -358,7 +564,7 @@ struct RecordingDetailView: View {
                 .buttonStyle(.plain)
                 .disabled(!playback.isSeekable)
             }
-            Text(verbatim: seg.text)
+            Text(highlighting(seg, hits: hits, active: active))
                 .font(.parley.body)
                 .foregroundStyle(flashedTurn == seg.id ? Theme.primary : Color(.label))
                 .textSelection(.enabled)
@@ -388,6 +594,33 @@ struct RecordingDetailView: View {
                         seg, label: meta.speakerLabel(for: seg)))
             }
         }
+    }
+
+    /// A turn's text with its search hits marked.
+    ///
+    /// Background tint rather than bold or a colour change: the transcript is a
+    /// page of prose in one weight, and re-weighting words inside it makes the
+    /// paragraph look mis-set. A wash behind the glyphs leaves the text exactly
+    /// as it reads unsearched — which matters, because every other hit stays on
+    /// screen while the reader works through them.
+    ///
+    /// Two strengths. Every hit gets the pale one so the reader can see how the
+    /// matches are distributed; the current one gets twice that, so `n of N` is
+    /// pointing at something findable without a second kind of mark.
+    ///
+    /// `Text(verbatim:)` is not used any more, but nothing is given up: an
+    /// `AttributedString` built from a plain `String` carries no markdown
+    /// parsing either, so a turn containing `*` or `_` still renders as spoken.
+    private func highlighting(
+        _ seg: TranscriptSegment, hits: [TranscriptSearch.Hit],
+        active: TranscriptSearch.Hit?
+    ) -> AttributedString {
+        var text = AttributedString(seg.text)
+        for hit in hits {
+            guard let range = Range(hit.range, in: text) else { continue }
+            text[range].backgroundColor = Theme.primary.opacity(hit == active ? 0.5 : 0.25)
+        }
+        return text
     }
 
     /// Send the audio to the start of a turn, and say so.
@@ -437,11 +670,23 @@ struct RecordingDetailView: View {
     /// a press that stays put for 0.35 s is unambiguous. Text selection and the
     /// turn's context menu both keep working because neither begins with a third
     /// of a second of stillness.
+    ///
+    /// They stand down while the search field is open, and they have to. The
+    /// strips are an overlay on the scroll view and the counter bar is a safe
+    /// area inset of it, and in the overlap the strip wins the hit test — which
+    /// put the right-hand strip exactly on top of the "next match" chevron and
+    /// made it untappable while "previous match", 44pt further in, worked fine.
+    /// Gating on `searching` rather than nudging the chevron inboard because the
+    /// chevron would still be sitting under an invisible gesture target; and a
+    /// reader walking search hits is not the person holding an edge for 2×.
+    @ViewBuilder
     private var edgeZones: some View {
-        HStack(spacing: 0) {
-            edgeZone
-            Spacer(minLength: 0)
-            edgeZone
+        if !searching {
+            HStack(spacing: 0) {
+                edgeZone
+                Spacer(minLength: 0)
+                edgeZone
+            }
         }
     }
 
