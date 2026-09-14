@@ -1,5 +1,6 @@
 package com.pathors.parley.ui
 
+import androidx.annotation.StringRes
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -26,8 +28,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,6 +45,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -97,6 +103,7 @@ fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
     )
     val state by viewModel.state.collectAsState()
     val playback by viewModel.playbackState.collectAsState()
+    val retranscribe by viewModel.retranscribe.collectAsState()
     val untitled = stringResource(R.string.recording_untitled)
 
     // Whether the search field is up. Held here rather than in [DetailBody]
@@ -152,13 +159,15 @@ fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
                             )
                         }
                     }
-                    ShareTranscriptButton(
-                        text = plainTranscript,
-                        isEmpty = readable.isEmpty(),
-                    )
                     CopyTranscriptButton(
                         text = plainTranscript,
                         isEmpty = readable.isEmpty(),
+                    )
+                    DetailOverflowMenu(
+                        transcript = plainTranscript,
+                        transcriptEmpty = readable.isEmpty(),
+                        state = retranscribe,
+                        onRetranscribe = viewModel::askToRetranscribe,
                     )
                 },
             )
@@ -199,6 +208,7 @@ fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
                     onCycleRate = viewModel::cycleRate,
                     onDownload = viewModel::downloadAudio,
                 )
+                RetranscribeStatus(retranscribe)
                 DetailBody(
                     meta = meta,
                     state = state,
@@ -214,7 +224,216 @@ fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
             }
         }
     }
+
+    if (retranscribe.phase == RetranscribeState.Phase.CONFIRMING) {
+        RetranscribeConfirmation(
+            onConfirm = viewModel::confirmRetranscribe,
+            onDismiss = viewModel::dismissRetranscribe,
+        )
+    }
 }
+
+/**
+ * The `⋯` menu, and the one place on this screen that spends money.
+ *
+ * ## Why the toolbar was rearranged to make room
+ *
+ * Four trailing controls plus a back arrow leaves a phone title with about two
+ * words, and "Copy" is a labelled `TextButton` rather than an icon, so it is the
+ * width of two of them. Something had to leave, and share is what left: it is
+ * the least used of the three (the transcript is far more often pasted than sent
+ * on), it loses nothing by being a labelled row instead of a glyph, and unlike
+ * copy it has no in-place feedback to sacrifice — [CopyTranscriptButton]'s whole
+ * confirmation is the label changing to "Copied", which a menu that closes on
+ * tap would throw away. Search stays out here because finding a phrase is
+ * something you do *while reading*, repeatedly, where re-transcribing is a
+ * once-ever action. Net effect: three trailing slots before and after.
+ *
+ * The `⋯` is rightmost, where Android has always put overflow.
+ *
+ * ## Why re-transcribing is in here rather than beside copy
+ *
+ * The same reason iOS gives it a menu: it spends the account's transcription
+ * hours and rewrites the document on screen, and an action like that should not
+ * sit one mis-tap away from "copy". The extra tap buys a confirmation the person
+ * chose to walk towards.
+ */
+@Composable
+private fun DetailOverflowMenu(
+    transcript: () -> String,
+    transcriptEmpty: Boolean,
+    state: RetranscribeState,
+    onRetranscribe: () -> Unit,
+) {
+    val context = LocalContext.current
+    val shareTitle = stringResource(R.string.transcript_share_title)
+    var open by remember { mutableStateOf(false) }
+
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(Icons.Default.MoreVert, stringResource(R.string.detail_more_actions))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.transcript_share)) },
+                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                enabled = !transcriptEmpty,
+                onClick = {
+                    open = false
+                    val payload = transcript()
+                    if (payload.isNotEmpty()) {
+                        TranscriptClipboard.share(context, payload, shareTitle)
+                    }
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.retranscribe_action)) },
+                leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                enabled = state.canRequest,
+                onClick = {
+                    open = false
+                    onRetranscribe()
+                },
+            )
+            // Under the row it is about rather than above the menu, which is
+            // where iOS puts it: a Material menu is read top-down, so a sentence
+            // explaining the item above it needs no rule about which way to look.
+            // Always present, never only-when-disabled — "2 re-transcriptions
+            // left" is exactly what somebody deciding whether to spend one wants
+            // to know, and a note that appeared only on refusal would tell them
+            // after the fact.
+            Text(
+                text = state.block
+                    ?.let { stringResource(retranscribeNoteRes(it)) }
+                    ?: stringResource(
+                        R.string.retranscribe_remaining,
+                        state.retriesRemaining,
+                    ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .width(RETRANSCRIBE_NOTE_WIDTH)
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+            )
+        }
+    }
+}
+
+/** The copy for each reason the action is unavailable. See [RetranscribeBlock]. */
+@StringRes
+internal fun retranscribeNoteRes(block: RetranscribeBlock): Int = when (block) {
+    RetranscribeBlock.IN_FLIGHT -> R.string.retranscribe_queued
+    RetranscribeBlock.BUDGET_SPENT -> R.string.retranscribe_budget_spent
+    RetranscribeBlock.NO_AUDIO -> R.string.retranscribe_no_audio
+}
+
+/**
+ * The second tap, and the only place the cost is stated.
+ *
+ * Three things have to be in it, because all three are irreversible surprises:
+ * the whole recording goes again, the transcript on screen is replaced by what
+ * comes back, and it is billed against the account's hours exactly as a new
+ * meeting would be.
+ */
+@Composable
+private fun RetranscribeConfirmation(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.retranscribe_confirm_title)) },
+        text = { Text(stringResource(R.string.retranscribe_confirm_body)) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(stringResource(R.string.retranscribe_action))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        },
+    )
+}
+
+/**
+ * One line under the player while a re-transcription is running, and one line if
+ * the last one failed.
+ *
+ * Deliberately not a spinner over the screen, not a disabled state on the text,
+ * and not an item inside the transcript list. The job takes minutes; the
+ * transcript that is already here stays readable, searchable and playable
+ * throughout, and the only thing that changes when the new one lands is the
+ * words — so the honest UI is a sentence saying so, above a document that still
+ * works.
+ *
+ * Outside the `LazyColumn` rather than its first item for two reasons: a status
+ * that scrolled away would be unfindable ten turns down, and an extra list item
+ * would shift every index [firstSegmentItemIndex] computes — the arithmetic that
+ * follow-the-audio and the search chevrons both scroll by.
+ */
+@Composable
+private fun RetranscribeStatus(state: RetranscribeState) {
+    if (!state.showsStatus) return
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (state.isRunning) {
+            // Top-aligned, not centre-aligned: the sentence wraps to two lines on
+            // a phone, and a spinner centred against both would float in the gap
+            // between them rather than sitting beside the line it belongs to.
+            Row(verticalAlignment = Alignment.Top) {
+                CircularProgressIndicator(
+                    modifier = Modifier
+                        .padding(top = 3.dp)
+                        .size(14.dp),
+                    strokeWidth = 2.dp,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.retranscribe_queued),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        when (val failure = state.failure) {
+            null -> Unit
+            is RetranscribeFailure.Cloud -> RetranscribeError(
+                text = stringResource(
+                    failure.problem.messageRes(),
+                    *failure.problem.messageArgs(),
+                ),
+            )
+
+            RetranscribeFailure.AudioUnavailable ->
+                RetranscribeError(stringResource(R.string.retranscribe_audio_failed))
+
+            RetranscribeFailure.BudgetSpent ->
+                RetranscribeError(stringResource(R.string.retranscribe_budget_spent))
+        }
+    }
+}
+
+@Composable
+private fun RetranscribeError(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
+    )
+}
+
+/**
+ * How wide the note under the menu item is allowed to be.
+ *
+ * A `DropdownMenu` sizes itself to its widest child and its items do not wrap,
+ * so a sentence left to its own devices would stretch the menu past the edge of
+ * the screen. Constraining the only multi-line child is what lets it wrap
+ * instead.
+ */
+private val RETRANSCRIBE_NOTE_WIDTH = 240.dp
 
 /**
  * The scrolling half of the screen, and the two places it answers to the

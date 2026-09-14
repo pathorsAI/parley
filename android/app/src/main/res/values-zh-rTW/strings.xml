@@ -164,6 +164,7 @@
     <string name="detail_action_items">後續行動</string>
     <string name="detail_speakers">%1$d 位說話者</string>
     <string name="detail_length">長度 %1$s</string>
+    <string name="detail_more_actions">更多動作</string>
 
     <!-- 複製與分享逐字稿 -->
     <string name="transcript_clip_label">Parley 逐字稿</string>
@@ -198,6 +199,10 @@
     <string name="retranscribe_queued">正在重新轉錄這筆錄音。新的逐字稿完成後會取代現在這份。</string>
     <string name="retranscribe_budget_spent">這筆錄音重新轉錄的次數已經用完了。</string>
     <string name="retranscribe_remaining">還可以重新轉錄 %1$d 次</string>
+    <string name="retranscribe_confirm_title">要重新轉錄這筆錄音嗎？</string>
+    <string name="retranscribe_confirm_body">整段錄音會從頭再轉錄一次，新的逐字稿完成後，會取代你現在看到的這一份。這會用掉你帳號的轉錄時數，跟開一場新會議一樣。</string>
+    <string name="retranscribe_no_audio">這筆錄音沒有音檔，沒有東西可以重新轉錄。</string>
+    <string name="retranscribe_audio_failed">拿不到音檔，所以沒有送出轉錄。</string>
 
     <!-- 託管轉錄的失敗訊息。每一種都對應到不同的下一步。 -->
     <string name="batch_error_signed_out">請先登入 Parley Cloud 才能轉錄錄音。</string>
