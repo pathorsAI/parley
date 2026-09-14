@@ -70,6 +70,7 @@ import com.pathors.parley.meeting.MeetingSession
 import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.meeting.TranscriptionIssue
 import com.pathors.parley.screenshot.DemoMode
+import com.pathors.parley.ui.theme.ParleyTheme
 import com.pathors.parley.screenshot.rememberDemoMeeting
 import java.util.UUID
 import kotlinx.coroutines.delay
@@ -252,11 +253,11 @@ fun MeetingScreen(onDone: () -> Unit) {
     MeetingContent(
         session = active,
         onStop = { MeetingService.requestStop(context) },
-        // `clear()` disposes the session, which cancels the encoder and deletes
-        // the part-written file, and stops the foreground service with it. See
-        // [DiscardControl] for why this path needs an API of its own.
+        // Not `clear()`: disposal stopped deleting the audio when the failure
+        // paths learned to preserve it, so the only thing that still keeps the
+        // dialog's promise is an action that means exactly this.
         onDiscard = {
-            MeetingService.clear()
+            MeetingService.requestDiscard(context)
             onDone()
         },
         onDone = onDone,
@@ -409,7 +410,10 @@ private fun MeetingContent(
                     .defaultMinSize(minHeight = 56.dp)
                     .padding(vertical = 4.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error,
+                    // The recording red, not the error red. Since the brand
+                    // palette landed these mean different things: this button is
+                    // the state of the recording, not a fault.
+                    containerColor = ParleyTheme.colors.recording,
                     contentColor = MaterialTheme.colorScheme.onError,
                 ),
             ) {
@@ -437,12 +441,11 @@ private fun MeetingContent(
  * findable without ever competing with Stop for the thumb. And a confirmation,
  * because it throws the audio away.
  *
- * ⚠️ Today the throwing-away is `MeetingService.clear()` → `dispose()` →
- * `abandon()`, which cancels the encoder and deletes the part-written `.ogg`.
- * That is correct only for as long as `abandon()` keeps its delete-the-file
- * meaning. An explicit `MeetingService.requestDiscard(context)` would make this
- * path say what it means instead of borrowing a teardown that is about to grow a
- * second, opposite purpose.
+ * The throwing-away goes through [MeetingService.requestDiscard], which is the
+ * only path in the app that deletes a recording. It used to ride on disposal
+ * instead, and that stopped being safe the moment every other ending learned to
+ * preserve the audio: the dialog would still promise nothing was saved while the
+ * `.ogg` sat in the cache directory.
  */
 @Composable
 private fun DiscardControl(onDiscard: () -> Unit, modifier: Modifier = Modifier) {

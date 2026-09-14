@@ -89,6 +89,12 @@ class MeetingService : Service() {
                 return START_NOT_STICKY
             }
 
+            ACTION_DISCARD -> {
+                ensureForeground()
+                discardRecording()
+                return START_NOT_STICKY
+            }
+
             ACTION_DEMO_NOTIFICATION -> {
                 // The notification and nothing else — see [startDemoNotification].
                 if (!BuildConfig.DEBUG || !DemoMode.isActive) {
@@ -193,6 +199,31 @@ class MeetingService : Service() {
         }
     }
 
+    /**
+     * Throw the recording away at the user's request.
+     *
+     * The counterpart to [stopRecording], and the only path here that destroys
+     * anything. Every failure ending now saves instead, so the promise the
+     * confirmation dialog makes — nothing is saved or uploaded — has to be kept
+     * by an action that says so, not by a side effect of disposal.
+     */
+    private fun discardRecording() {
+        val session = _activeSession.value
+        if (session == null) {
+            stopSelfAndForeground()
+            return
+        }
+        // The application scope for the same reason [stopRecording] uses it: the
+        // session must finish releasing the microphone and deleting the file
+        // even though `stopSelf()` is about to take the service down.
+        applicationContext.parleyContainer.appScope.launch {
+            runCatching { session.discard() }
+            _activeSession.value = null
+            session.dispose()
+            stopSelfAndForeground()
+        }
+    }
+
     /** Safe to call twice, and safe to call from [clear] on another thread. */
     private fun stopSelfAndForeground() {
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -283,6 +314,7 @@ class MeetingService : Service() {
 
     companion object {
         private const val ACTION_STOP = "com.pathors.parley.action.STOP_MEETING"
+        private const val ACTION_DISCARD = "com.pathors.parley.action.DISCARD_MEETING"
         private const val ACTION_DEMO_NOTIFICATION = "com.pathors.parley.action.DEMO_NOTIFICATION"
         private const val EXTRA_DEMO_ELAPSED_MS = "com.pathors.parley.extra.DEMO_ELAPSED_MS"
         private const val CHANNEL_ID = "meeting-recording"
@@ -349,6 +381,20 @@ class MeetingService : Service() {
             ContextCompat.startForegroundService(
                 context,
                 Intent(context, MeetingService::class.java).setAction(ACTION_STOP),
+            )
+        }
+
+        /**
+         * Throw the recording away: no file, no upload, no library entry.
+         *
+         * Distinct from [clear], which only lets go of a session whose fate is
+         * already settled. Discarding is a decision, and after the failure paths
+         * learned to preserve audio it is the one decision that deletes.
+         */
+        fun requestDiscard(context: Context) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, MeetingService::class.java).setAction(ACTION_DISCARD),
             )
         }
 
