@@ -14,6 +14,8 @@
     <string name="action_back">Back</string>
     <string name="action_refresh">Refresh</string>
     <string name="action_stop">Stop</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_share">Share</string>
 
     <!-- Sign in -->
     <string name="sign_in_tagline">Record a meeting. Read the transcript. Everywhere you work.</string>
@@ -40,6 +42,15 @@
     <string name="recording_untitled">Untitled recording</string>
     <string name="recording_source_upload">Imported</string>
     <string name="recording_source_live">Recorded</string>
+    <string name="home_recording_actions">Recording options</string>
+    <string name="home_delete_recording">Delete recording</string>
+    <string name="home_deleting">Deleting…</string>
+    <string name="home_delete_confirm_title">Delete this recording?</string>
+    <string name="home_delete_confirm_body">This permanently deletes “%1$s” from your Parley account — the audio, the transcript and anything the desktop app found in it. It cannot be undone.</string>
+    <string name="home_delete_confirm_action">Delete</string>
+    <string name="home_delete_error_title">Recording not deleted</string>
+    <string name="home_delete_error_forbidden">You aren\'t allowed to delete this recording. It belongs to an organization or was shared with you — whoever owns it has to delete it.</string>
+    <string name="home_delete_error_failed">The recording was not deleted. Check your connection and try again.</string>
 
     <!-- Account sheet -->
     <string name="account_title">Account</string>
@@ -65,7 +76,16 @@
     <string name="meeting_permission_title">Microphone access needed</string>
     <string name="meeting_permission_body">Parley records the meeting on this device and streams it for live transcription.</string>
     <string name="meeting_permission_grant">Allow microphone</string>
-    <string name="meeting_permission_denied">Microphone permission was denied. Turn it on in system settings to record.</string>
+    <string name="meeting_permission_denied">Microphone permission was denied. Parley can\'t record without it.</string>
+    <string name="meeting_permission_blocked">Microphone access is turned off for Parley, and Android won\'t ask again. Turn it on in system settings to record.</string>
+    <string name="meeting_permission_settings">Open system settings</string>
+    <string name="meeting_consent_title">Before you start recording</string>
+    <string name="meeting_consent_body">Parley picks up the room through the microphone, sends the audio to your Parley account for live transcription, and syncs the recording and transcript there. Confirm that everyone present has agreed to be recorded.</string>
+    <string name="meeting_consent_confirm">Everyone has agreed</string>
+    <string name="meeting_discard">Discard</string>
+    <string name="meeting_discard_title">Discard this recording?</string>
+    <string name="meeting_discard_body">The audio and transcript are thrown away. Nothing is saved or uploaded.</string>
+    <string name="meeting_discard_confirm">Discard</string>
     <string name="meeting_connecting">Connecting…</string>
     <string name="meeting_recording">Recording</string>
     <string name="meeting_finishing">Finishing the transcript…</string>
@@ -115,6 +135,15 @@
     <string name="detail_playback_unavailable">Playback isn\'t available in this version.</string>
     <string name="detail_speakers">%1$d speakers</string>
     <string name="detail_length">Length %1$s</string>
+
+    <!-- Copying and sharing a transcript -->
+    <string name="transcript_clip_label">Parley transcript</string>
+    <string name="transcript_copy">Copy transcript</string>
+    <string name="transcript_copied">Copied</string>
+    <string name="transcript_share">Share transcript</string>
+    <string name="transcript_share_title">Transcript</string>
+    <string name="transcript_segment_actions">Copy or share this part</string>
+    <string name="transcript_copy_segment">Copy this part</string>
 
     <!-- Foreground service notification -->
     <string name="notification_channel_name">Meeting recording</string>

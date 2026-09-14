@@ -1,8 +1,14 @@
 package com.pathors.parley.ui
 
 import android.Manifest
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
@@ -13,6 +19,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,8 +30,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,14 +48,18 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.pathors.parley.R
 import com.pathors.parley.kit.TranscriptSegment
@@ -57,15 +71,46 @@ import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.meeting.TranscriptionIssue
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.screenshot.rememberDemoMeeting
+import java.util.UUID
 import kotlinx.coroutines.delay
 
 /**
- * The live meeting: permission gate, transcript, level meter, stop button.
+ * Identifies the OS process this composition is running in.
+ *
+ * A [rememberSaveable] value written before the process was killed comes back
+ * not matching, which is the only reliable way this screen can tell a rotation
+ * (same process, the service and its session are still there) from a restore
+ * after process death (new process, everything in memory is gone). See
+ * [MeetingScreen] — getting that distinction wrong is what made the app start
+ * recording on its own.
+ */
+private object ProcessId {
+    val value: String = UUID.randomUUID().toString()
+}
+
+/**
+ * The live meeting: permission gate, consent, transcript, level meter, controls.
  *
  * The screen owns none of the recording. It asks [MeetingService] to start,
  * observes the [MeetingSession] the service publishes, and asks it to stop —
  * which is what lets the user leave this screen (or the app) mid-meeting without
  * the capture noticing.
+ *
+ * ## Nothing here ever starts the microphone by itself
+ *
+ * Two facts used to combine into an app that recorded a room nobody had pointed
+ * it at. `rememberNavController` saves the back stack into the
+ * `SavedStateRegistry`, so a process killed while a meeting was on screen is
+ * restored straight back onto this destination; and the "start at most once"
+ * latch was a plain `remember`, which resets to false in the new process where
+ * `MeetingService.activeSession` is also null. The start effect then read that
+ * as "nothing is recording and nobody has started one yet" and opened the mic.
+ * The user's own account of it: *I opened Parley and it was recording.*
+ *
+ * So the latch is a [rememberSaveable] carrying [ProcessId] rather than a
+ * boolean, and a value from a dead process means *leave*, not *start*. On top of
+ * that the only thing that can now reach `MeetingService.start` at all is the
+ * user pressing through [RecordingConsentDialog].
  */
 @Composable
 fun MeetingScreen(onDone: () -> Unit) {
@@ -93,9 +138,13 @@ fun MeetingScreen(onDone: () -> Unit) {
                 onDispose { MeetingService.requestStop(context) }
             }
         }
-        MeetingContent(session = demo, onStop = onDone, onDone = onDone)
+        // Discard leaves the demo screen exactly as Stop does — there is no
+        // session to throw away, and the affordance belongs in the screenshot.
+        MeetingContent(session = demo, onStop = onDone, onDiscard = onDone, onDone = onDone)
         return
     }
+
+    val activity = remember(context) { context.findActivity() }
 
     var granted by remember {
         mutableStateOf(
@@ -105,6 +154,9 @@ fun MeetingScreen(onDone: () -> Unit) {
     }
     var denied by remember { mutableStateOf(false) }
 
+    // Denied so firmly that the system will not ask again — see [PermissionGate].
+    var blocked by remember { mutableStateOf(false) }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
@@ -113,35 +165,102 @@ fun MeetingScreen(onDone: () -> Unit) {
         val ok = result[Manifest.permission.RECORD_AUDIO] == true
         granted = ok
         denied = !ok
+        // From Android 11 a second refusal is permanent: the platform stops
+        // showing the dialog and `launch()` returns a denial without the user
+        // ever seeing anything. The only signal that has happened is the
+        // rationale flag going false *after* a denial, so it is read here and
+        // nowhere else — before the first request it is false too, and acting on
+        // that would send a first-time user to system settings.
+        blocked = !ok && activity != null &&
+            !ActivityCompat.shouldShowRequestPermissionRationale(
+                activity,
+                Manifest.permission.RECORD_AUDIO,
+            )
     }
 
-    // Start at most once per visit. Keyed on `granted` alone, and latched: when a
-    // finished meeting is cleared the published session goes back to null, and a
-    // session-keyed effect would read that as "start another one".
-    var started by remember { mutableStateOf(false) }
-    LaunchedEffect(granted) {
-        if (granted && !started && MeetingService.activeSession.value == null) {
-            started = true
-            MeetingService.start(context)
+    // Coming back from the app's own settings page. The switch may have been
+    // flipped while we were away and nothing else re-reads it — without this the
+    // user grants the permission, returns, and is still staring at the gate.
+    val settingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            denied = false
+            blocked = false
         }
+    }
+
+    // Start at most once per visit, and remember *which process* did it. A plain
+    // boolean cannot tell a restored back stack from a rotation; see the class
+    // docs for what that cost.
+    var startedIn by rememberSaveable { mutableStateOf<String?>(null) }
+    val restored = startedIn != null && startedIn != ProcessId.value
+    var consenting by rememberSaveable { mutableStateOf(false) }
+
+    // The meeting this screen was showing did not survive the process. There is
+    // nothing to rejoin and nothing to resume, so leave — silently opening the
+    // microphone again is exactly the bug.
+    LaunchedEffect(restored) {
+        if (restored) onDone()
+    }
+
+    // Ask before recording, never instead of asking. A meeting already running
+    // (the user came back through the library's "Return to it") is adopted
+    // without a second consent — they consented when it started.
+    LaunchedEffect(granted, restored) {
+        if (restored || !granted) return@LaunchedEffect
+        if (startedIn == null && MeetingService.activeSession.value == null) consenting = true
     }
 
     if (!granted) {
         PermissionGate(
             denied = denied,
+            blocked = blocked,
             onRequest = { permissionLauncher.launch(requiredPermissions()) },
+            onOpenSettings = { settingsLauncher.launch(appSettingsIntent(context)) },
             onCancel = onDone,
         )
         return
     }
 
+    if (consenting) {
+        RecordingConsentDialog(
+            onConfirm = {
+                consenting = false
+                startedIn = ProcessId.value
+                MeetingService.start(context)
+            },
+            onCancel = {
+                consenting = false
+                onDone()
+            },
+        )
+    }
+
     val active = session
     if (active == null) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
+        Box(Modifier.fillMaxSize(), Alignment.Center) {
+            // Nothing is starting while the consent dialog is up or while we are
+            // on our way out, and a spinner under either would claim otherwise.
+            if (!consenting && !restored) CircularProgressIndicator()
+        }
         return
     }
 
-    MeetingContent(session = active, onStop = { MeetingService.requestStop(context) }, onDone = onDone)
+    MeetingContent(
+        session = active,
+        onStop = { MeetingService.requestStop(context) },
+        // `clear()` disposes the session, which cancels the encoder and deletes
+        // the part-written file, and stops the foreground service with it. See
+        // [DiscardControl] for why this path needs an API of its own.
+        onDiscard = {
+            MeetingService.clear()
+            onDone()
+        },
+        onDone = onDone,
+    )
 }
 
 private fun requiredPermissions(): Array<String> =
@@ -151,8 +270,31 @@ private fun requiredPermissions(): Array<String> =
         arrayOf(Manifest.permission.RECORD_AUDIO)
     }
 
+/** This app's page in system Settings, where a permanent denial can be undone. */
+private fun appSettingsIntent(context: Context): Intent = Intent(
+    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+    Uri.fromParts("package", context.packageName, null),
+)
+
+/**
+ * The hosting [Activity], which `shouldShowRequestPermissionRationale` requires.
+ * A Compose `LocalContext` is not always one: under a theme overlay it is a
+ * `ContextWrapper` around it.
+ */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 @Composable
-private fun MeetingContent(session: LiveMeeting, onStop: () -> Unit, onDone: () -> Unit) {
+private fun MeetingContent(
+    session: LiveMeeting,
+    onStop: () -> Unit,
+    onDiscard: () -> Unit,
+    onDone: () -> Unit,
+) {
+    val context = LocalContext.current
     val state by session.state.collectAsState()
     val segments by session.segments.collectAsState()
     val issue by session.issue.collectAsState()
@@ -176,16 +318,38 @@ private fun MeetingContent(session: LiveMeeting, onStop: () -> Unit, onDone: () 
             .padding(horizontal = 16.dp),
     ) {
         Spacer(Modifier.height(16.dp))
-        Text(
-            text = formatClock(elapsed),
-            style = MaterialTheme.typography.displaySmall,
-            fontWeight = FontWeight.Medium,
-        )
-        Text(
-            text = statusLabel(state),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = formatClock(elapsed),
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = statusLabel(state),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            // Copying works mid-meeting on purpose: the reason to grab a line is
+            // usually that it was just said.
+            CopyTranscriptButton(
+                text = {
+                    TranscriptClipboard.liveTranscript(segments) {
+                        speakerLabel(context, it.speaker)
+                    }
+                },
+                isEmpty = segments.isEmpty(),
+            )
+            ShareTranscriptButton(
+                text = {
+                    TranscriptClipboard.liveTranscript(segments) {
+                        speakerLabel(context, it.speaker)
+                    }
+                },
+                isEmpty = segments.isEmpty(),
+            )
+        }
         Spacer(Modifier.height(12.dp))
         LevelMeter(level = level, live = state is MeetingState.Recording)
 
@@ -240,7 +404,9 @@ private fun MeetingContent(session: LiveMeeting, onStop: () -> Unit, onDone: () 
                 onClick = onStop,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp)
+                    // A minimum, not a height: at the largest accessibility font
+                    // a fixed 56.dp clips the label it exists to show.
+                    .defaultMinSize(minHeight = 56.dp)
                     .padding(vertical = 4.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error,
@@ -249,9 +415,113 @@ private fun MeetingContent(session: LiveMeeting, onStop: () -> Unit, onDone: () 
             ) {
                 Text(stringResource(R.string.action_stop))
             }
+            DiscardControl(
+                onDiscard = onDiscard,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            )
         }
         Spacer(Modifier.height(16.dp))
     }
+}
+
+/**
+ * The way out for a recording that should not have started.
+ *
+ * Stop means *keep this*: it finalizes the audio, uploads it and puts a row in
+ * the library. Until this existed a mis-tap had no other exit at all — the
+ * recording had to be stopped, uploaded, and then lived in the library forever,
+ * because single-recording deletion did not exist either.
+ *
+ * Plain secondary text under the stop button rather than a second button, for
+ * the same reason iOS does it that way (`LiveView.discardControl`): it must be
+ * findable without ever competing with Stop for the thumb. And a confirmation,
+ * because it throws the audio away.
+ *
+ * ⚠️ Today the throwing-away is `MeetingService.clear()` → `dispose()` →
+ * `abandon()`, which cancels the encoder and deletes the part-written `.ogg`.
+ * That is correct only for as long as `abandon()` keeps its delete-the-file
+ * meaning. An explicit `MeetingService.requestDiscard(context)` would make this
+ * path say what it means instead of borrowing a teardown that is about to grow a
+ * second, opposite purpose.
+ */
+@Composable
+private fun DiscardControl(onDiscard: () -> Unit, modifier: Modifier = Modifier) {
+    var confirming by rememberSaveable { mutableStateOf(false) }
+    val label = stringResource(R.string.meeting_discard)
+    TextButton(
+        onClick = { confirming = true },
+        modifier = modifier.semantics { contentDescription = label },
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    if (confirming) {
+        AlertDialog(
+            onDismissRequest = { confirming = false },
+            title = { Text(stringResource(R.string.meeting_discard_title)) },
+            text = { ScrollingDialogText(stringResource(R.string.meeting_discard_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirming = false
+                    onDiscard()
+                }) {
+                    Text(
+                        text = stringResource(R.string.meeting_discard_confirm),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirming = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
+        )
+    }
+}
+
+/**
+ * What the user agrees to before the microphone opens.
+ *
+ * Not a nicety and not a UX flourish: the phone is about to pick up everyone in
+ * the room and stream them to a server, and in most of the places Parley is used
+ * that needs everyone's agreement, not just the holder's. So the confirming
+ * button says "Everyone has agreed" rather than "OK" — the same wording as iOS
+ * (`LiveView`), because a button labelled OK records nothing but a reflex.
+ */
+@Composable
+private fun RecordingConsentDialog(onConfirm: () -> Unit, onCancel: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(stringResource(R.string.meeting_consent_title)) },
+        text = { ScrollingDialogText(stringResource(R.string.meeting_consent_body)) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(stringResource(R.string.meeting_consent_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        },
+    )
+}
+
+/**
+ * Dialog body copy that stays readable at the largest font scale: an
+ * `AlertDialog` clips its text slot rather than scrolling it, and these two
+ * dialogs are the ones whose whole point is the paragraph.
+ */
+@Composable
+private fun ScrollingDialogText(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier.verticalScroll(rememberScrollState()),
+    )
 }
 
 @Composable
@@ -372,11 +642,30 @@ private fun LiveTranscript(segments: List<TranscriptSegment>) {
     }
 }
 
+/**
+ * Why there is no microphone yet, and what to do about it.
+ *
+ * [blocked] is the case this screen used to have no answer for. Android 11+
+ * treats a second refusal as final: the system dialog never appears again and
+ * `permissionLauncher.launch()` returns a denial without showing anything, so a
+ * "Allow microphone" button becomes a control that does *nothing at all* when
+ * pressed. The only remaining route is the app's page in system Settings, so
+ * that is what the button becomes.
+ */
 @Composable
-private fun PermissionGate(denied: Boolean, onRequest: () -> Unit, onCancel: () -> Unit) {
+private fun PermissionGate(
+    denied: Boolean,
+    blocked: Boolean,
+    onRequest: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onCancel: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            // The copy grows with the font scale and grows again when the denial
+            // lines appear; without this it is simply cut off at the bottom.
+            .verticalScroll(rememberScrollState())
             .padding(32.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -394,14 +683,23 @@ private fun PermissionGate(denied: Boolean, onRequest: () -> Unit, onCancel: () 
         if (denied) {
             Spacer(Modifier.height(8.dp))
             Text(
-                text = stringResource(R.string.meeting_permission_denied),
+                text = stringResource(
+                    if (blocked) R.string.meeting_permission_blocked
+                    else R.string.meeting_permission_denied
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.error,
             )
         }
         Spacer(Modifier.height(24.dp))
-        Button(onClick = onRequest, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.meeting_permission_grant))
+        if (blocked) {
+            Button(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.meeting_permission_settings))
+            }
+        } else {
+            Button(onClick = onRequest, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.meeting_permission_grant))
+            }
         }
         TextButton(onClick = onCancel) {
             Text(stringResource(R.string.action_cancel))

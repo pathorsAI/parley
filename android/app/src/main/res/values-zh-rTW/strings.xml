@@ -13,6 +13,8 @@
     <string name="action_back">返回</string>
     <string name="action_refresh">重新整理</string>
     <string name="action_stop">停止</string>
+    <string name="action_copy">複製</string>
+    <string name="action_share">分享</string>
 
     <!-- Sign in -->
     <string name="sign_in_tagline">錄下會議、讀懂逐字稿，走到哪都能用。</string>
@@ -39,6 +41,15 @@
     <string name="recording_untitled">未命名錄音</string>
     <string name="recording_source_upload">匯入</string>
     <string name="recording_source_live">錄製</string>
+    <string name="home_recording_actions">錄音選項</string>
+    <string name="home_delete_recording">刪除錄音</string>
+    <string name="home_deleting">刪除中…</string>
+    <string name="home_delete_confirm_title">要刪除這筆錄音嗎？</string>
+    <string name="home_delete_confirm_body">這會從你的 Parley 帳號永久刪除「%1$s」——音訊、逐字稿，以及桌面版分析出來的內容。刪除後無法復原。</string>
+    <string name="home_delete_confirm_action">刪除</string>
+    <string name="home_delete_error_title">錄音未被刪除</string>
+    <string name="home_delete_error_forbidden">你沒有刪除這筆錄音的權限。它屬於某個組織，或是別人分享給你的——要請擁有者自己刪。</string>
+    <string name="home_delete_error_failed">錄音未被刪除。請檢查網路連線後再試一次。</string>
 
     <!-- Account sheet -->
     <string name="account_title">帳號</string>
@@ -64,7 +75,16 @@
     <string name="meeting_permission_title">需要麥克風權限</string>
     <string name="meeting_permission_body">Parley 會在這台裝置上錄音，並即時傳送以產生逐字稿。</string>
     <string name="meeting_permission_grant">允許使用麥克風</string>
-    <string name="meeting_permission_denied">麥克風權限被拒絕。請到系統設定開啟後再錄音。</string>
+    <string name="meeting_permission_denied">麥克風權限被拒絕。沒有這個權限，Parley 無法錄音。</string>
+    <string name="meeting_permission_blocked">Parley 的麥克風權限已被關閉，Android 不會再詢問。請到系統設定開啟後才能錄音。</string>
+    <string name="meeting_permission_settings">前往系統設定</string>
+    <string name="meeting_consent_title">開始錄音前</string>
+    <string name="meeting_consent_body">Parley 會透過麥克風收錄現場聲音，將音訊傳送到你的 Parley 帳號做即時轉錄，並把錄音與逐字稿同步到那裡。請確認在場所有人都同意被錄音。</string>
+    <string name="meeting_consent_confirm">所有人都已同意</string>
+    <string name="meeting_discard">丟棄</string>
+    <string name="meeting_discard_title">要丟棄這段錄音嗎？</string>
+    <string name="meeting_discard_body">音訊與逐字稿都會被丟掉，不會儲存也不會上傳。</string>
+    <string name="meeting_discard_confirm">丟棄</string>
     <string name="meeting_connecting">連線中…</string>
     <string name="meeting_recording">錄音中</string>
     <string name="meeting_finishing">正在收尾逐字稿…</string>
@@ -114,6 +134,15 @@
     <string name="detail_playback_unavailable">這個版本還不支援播放。</string>
     <string name="detail_speakers">%1$d 位說話者</string>
     <string name="detail_length">長度 %1$s</string>
+
+    <!-- 複製與分享逐字稿 -->
+    <string name="transcript_clip_label">Parley 逐字稿</string>
+    <string name="transcript_copy">複製逐字稿</string>
+    <string name="transcript_copied">已複製</string>
+    <string name="transcript_share">分享逐字稿</string>
+    <string name="transcript_share_title">逐字稿</string>
+    <string name="transcript_segment_actions">複製或分享這一段</string>
+    <string name="transcript_copy_segment">複製這一段</string>
 
     <!-- Foreground service notification -->
     <string name="notification_channel_name">會議錄音</string>
