@@ -98,6 +98,10 @@
     <string name="meeting_issue_quota">Transcription stopped: the hosted transcription quota is used up. The audio is still being recorded.</string>
     <string name="meeting_issue_error">Transcription stopped unexpectedly. The audio is still being recorded.</string>
     <string name="meeting_mic_silenced">Another app has taken the microphone — Parley is recording silence until it gives it back.</string>
+    <string name="meeting_mic_recovering">Trying to get the microphone back. The recording is still open and picks up where it left off.</string>
+    <string name="meeting_mic_lost_taken">Something else is holding the microphone. Everything recorded so far is safe; bring Parley to the front to try again.</string>
+    <string name="meeting_mic_lost_broken">The microphone stopped working. Everything recorded so far is safe — stop the meeting to save it.</string>
+    <string name="meeting_storage_low">This phone is nearly out of storage. Parley will stop and save the recording before it runs out.</string>
     <string name="meeting_title_format">Meeting %1$s</string>
     <string name="speaker_label">Speaker %1$d</string>
     <string name="speaker_unknown">Speaker</string>
@@ -106,6 +110,7 @@
     <string name="failure_not_signed_in">You are signed out. Sign in and try again.</string>
     <string name="failure_mic_permission">Microphone permission is not granted.</string>
     <string name="failure_mic_unavailable">The microphone isn\'t available — a call or another app may be using it.</string>
+    <string name="failure_storage_full">This phone is out of storage. Free some space and try again.</string>
     <string name="failure_encoder_unavailable">This device can\'t encode Opus audio, so the recording can\'t be saved.</string>
     <string name="failure_upload">The recording is saved on this device but couldn\'t be uploaded yet.</string>
     <string name="failure_unknown">Something went wrong.</string>
