@@ -16,9 +16,22 @@
     <string name="action_copy">複製</string>
     <string name="action_share">分享</string>
 
+    <!-- Launch -->
+    <string name="launch_loading">正在載入 Parley</string>
+
+    <!-- Onboarding: the screen a cold install lands on -->
+    <string name="onboarding_tagline">面對面會議的口袋錄音機——邊講邊出逐字稿，起身時已經在雲端。</string>
+    <string name="onboarding_point_room">把手機放在桌上就好</string>
+    <string name="onboarding_point_room_detail">收整個房間的聲音，並自動分辨不同說話者。</string>
+    <string name="onboarding_point_live">即時轉錄，不必自備 API key</string>
+    <string name="onboarding_point_live_detail">登入後就能用我們代管的轉錄服務，免費額度足夠日常使用。</string>
+    <string name="onboarding_point_sync">錄音同步到你的帳號</string>
+    <string name="onboarding_point_sync_detail">手機錄的會議，用桌面版打開就能做深度分析。</string>
+    <string name="onboarding_sign_in_methods">支援信箱密碼、Google 與 Apple 登入。開始錄音前，Parley 一定會先請你確認在場所有人都同意錄音。</string>
+
     <!-- Sign in -->
-    <string name="sign_in_tagline">錄下會議、讀懂逐字稿，走到哪都能用。</string>
-    <string name="sign_in_button">登入</string>
+    <string name="sign_in_button">登入或註冊</string>
+    <string name="sign_in_in_progress">登入中…</string>
     <string name="sign_in_waiting">等待瀏覽器回傳登入狀態…</string>
     <string name="sign_in_no_browser">找不到可以用來登入的瀏覽器。</string>
     <string name="sign_in_failed">登入沒有完成（%1$s）。</string>
@@ -54,10 +67,15 @@
     <!-- Account sheet -->
     <string name="account_title">帳號</string>
     <string name="account_plan">方案：%1$s</string>
-    <string name="account_usage_title">本期用量</string>
-    <string name="account_stt_usage">語音轉錄：%1$s／%2$s</string>
-    <string name="account_llm_usage">分析額度：%1$s／%2$s</string>
-    <string name="account_unlimited">無上限</string>
+    <string name="account_usage_title">用量（本期）</string>
+    <string name="account_usage_transcription">轉錄時數</string>
+    <string name="account_usage_credits">AI 額度</string>
+    <!-- used / limit unit, e.g. "2.4 / 10 小時" -->
+    <string name="account_usage_amount">%1$s / %2$s %3$s</string>
+    <!-- used unit, on a plan with no ceiling, e.g. "2.4 小時 · 無上限" -->
+    <string name="account_usage_amount_unlimited">%1$s %2$s · 無上限</string>
+    <string name="account_usage_unit_hours">小時</string>
+    <string name="account_usage_unit_credits">點</string>
     <string name="account_period_reset">%1$s 重置</string>
     <string name="account_loading">載入中…</string>
     <string name="account_load_failed">無法載入帳號資訊。</string>
@@ -172,6 +190,28 @@
     <string name="account_appearance_system">跟隨系統</string>
     <string name="account_appearance_light">淺色</string>
     <string name="account_appearance_dark">深色</string>
+
+    <!-- Sync -->
+    <string name="account_sync_title">同步</string>
+    <plurals name="account_sync_pending">
+        <item quantity="other">%1$d 筆錄音等待同步</item>
+    </plurals>
+    <string name="account_sync_done">所有錄音都已同步</string>
+    <string name="account_sync_retry">立即重試同步</string>
+    <string name="account_sync_detail">網路中斷、伺服器暫時無回應或額度不足時，手機會保留完成的錄音，直到同步成功。</string>
+
+    <!-- Language -->
+    <string name="account_language">語言</string>
+    <string name="account_language_change">變更</string>
+    <string name="account_language_detail">Parley 支援英文與繁體中文，預設跟隨手機的語言。只想改 Parley 的話，到系統設定裡調整。</string>
+
+    <!-- About -->
+    <string name="account_about_title">關於</string>
+    <string name="account_version">版本 %1$s（%2$d）</string>
+    <string name="account_about_detail">即時教練與深度分析以桌面版為主；手機負責面對面會議的錄音、轉錄與閱讀。</string>
+    <string name="link_desktop">Parley 桌面版</string>
+    <string name="link_privacy_policy">隱私權政策</string>
+    <string name="link_support">支援與問題回報</string>
 
     <!-- Foreground service notification -->
     <string name="notification_channel_name">會議錄音</string>

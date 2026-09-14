@@ -17,9 +17,22 @@
     <string name="action_copy">Copy</string>
     <string name="action_share">Share</string>
 
+    <!-- Launch -->
+    <string name="launch_loading">Loading Parley</string>
+
+    <!-- Onboarding: the screen a cold install lands on -->
+    <string name="onboarding_tagline">A pocket recorder for the meetings you have in person — live transcript while you talk, in the cloud by the time you stand up.</string>
+    <string name="onboarding_point_room">Put the phone on the table</string>
+    <string name="onboarding_point_room_detail">It picks up the whole room and keeps the speakers apart.</string>
+    <string name="onboarding_point_live">Live transcription, no API key</string>
+    <string name="onboarding_point_live_detail">Sign in and ride our hosted transcription. The free tier covers everyday use.</string>
+    <string name="onboarding_point_sync">Recordings sync to your account</string>
+    <string name="onboarding_point_sync_detail">Open a meeting you recorded on the phone in the desktop app for the deep analysis.</string>
+    <string name="onboarding_sign_in_methods">Email and password, Google, and Apple all work. Before any recording starts, Parley asks you to confirm everyone in the room has agreed to it.</string>
+
     <!-- Sign in -->
-    <string name="sign_in_tagline">Record a meeting. Read the transcript. Everywhere you work.</string>
-    <string name="sign_in_button">Sign in</string>
+    <string name="sign_in_button">Sign in or create an account</string>
+    <string name="sign_in_in_progress">Signing in…</string>
     <string name="sign_in_waiting">Waiting for the browser to hand the session back…</string>
     <string name="sign_in_no_browser">No browser is available to sign in with.</string>
     <string name="sign_in_failed">Sign-in did not complete (%1$s).</string>
@@ -55,10 +68,15 @@
     <!-- Account sheet -->
     <string name="account_title">Account</string>
     <string name="account_plan">Plan: %1$s</string>
-    <string name="account_usage_title">This period</string>
-    <string name="account_stt_usage">Transcription: %1$s of %2$s</string>
-    <string name="account_llm_usage">Analysis credits: %1$s of %2$s</string>
-    <string name="account_unlimited">unlimited</string>
+    <string name="account_usage_title">Usage (this period)</string>
+    <string name="account_usage_transcription">Transcription hours</string>
+    <string name="account_usage_credits">AI credits</string>
+    <!-- used / limit unit, e.g. "2.4 / 10 hr" -->
+    <string name="account_usage_amount">%1$s / %2$s %3$s</string>
+    <!-- used unit, on a plan with no ceiling, e.g. "2.4 hr · unlimited" -->
+    <string name="account_usage_amount_unlimited">%1$s %2$s · unlimited</string>
+    <string name="account_usage_unit_hours">hr</string>
+    <string name="account_usage_unit_credits">credits</string>
     <string name="account_period_reset">Resets on %1$s</string>
     <string name="account_loading">Loading…</string>
     <string name="account_load_failed">Couldn\'t load your account details.</string>
@@ -173,6 +191,29 @@
     <string name="account_appearance_system">System</string>
     <string name="account_appearance_light">Light</string>
     <string name="account_appearance_dark">Dark</string>
+
+    <!-- Sync -->
+    <string name="account_sync_title">Sync</string>
+    <plurals name="account_sync_pending">
+        <item quantity="one">%1$d recording waiting to sync</item>
+        <item quantity="other">%1$d recordings waiting to sync</item>
+    </plurals>
+    <string name="account_sync_done">Everything is synced</string>
+    <string name="account_sync_retry">Retry sync now</string>
+    <string name="account_sync_detail">When the network drops, the server goes quiet, or you run out of quota, the phone holds on to finished recordings until they sync.</string>
+
+    <!-- Language -->
+    <string name="account_language">Language</string>
+    <string name="account_language_change">Change</string>
+    <string name="account_language_detail">Parley speaks English and Traditional Chinese, and follows your phone\'s language by default. Change it for Parley alone in the system settings.</string>
+
+    <!-- About -->
+    <string name="account_about_title">About</string>
+    <string name="account_version">Version %1$s (%2$d)</string>
+    <string name="account_about_detail">Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings.</string>
+    <string name="link_desktop">Parley for desktop</string>
+    <string name="link_privacy_policy">Privacy Policy</string>
+    <string name="link_support">Support &amp; feedback</string>
 
     <!-- Foreground service notification -->
     <string name="notification_channel_name">Meeting recording</string>
