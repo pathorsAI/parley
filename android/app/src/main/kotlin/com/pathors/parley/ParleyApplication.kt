@@ -7,7 +7,9 @@ import android.util.Log
 import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.meeting.ImportSession
+import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingSession
+import com.pathors.parley.meeting.RecordingFiles
 import com.pathors.parley.playback.AudioRetention
 import com.pathors.parley.playback.LocalAudioStore
 import com.pathors.parley.screenshot.DemoMode
@@ -39,7 +41,10 @@ class ParleyApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
-        container.drainPendingUploads()
+        // Rather than a bare drain: see [AppContainer.adoptOrphanedRecordings]
+        // for why launch is the only safe moment to go looking for a recording
+        // the last process died in the middle of. The sweep drains afterwards.
+        container.adoptOrphanedRecordings()
     }
 }
 
@@ -160,6 +165,42 @@ class AppContainer(private val app: Application) {
     fun onSignedIn() {
         _authError.value = null
         drainPendingUploads()
+    }
+
+    /**
+     * Claim any Ogg file left behind by a recording that never finished, then
+     * drain the queue — which by then includes whatever was just claimed.
+     *
+     * Runs from `Application.onCreate` and nowhere else. A live recording writes
+     * its Ogg into the very directory this scans, so adopting one would move the
+     * file out from under the encoder; "before anything has had a chance to
+     * start recording" is the only guarantee available, and it is a guarantee
+     * only at launch. iOS calls its equivalent from exactly one place for
+     * exactly this reason (`App/Parley/AppState.swift:107`).
+     *
+     * The adopted recordings carry **no transcript**, on purpose — see
+     * [RecordingFiles.adoptOrphans].
+     */
+    fun adoptOrphanedRecordings() {
+        appScope.launch {
+            // Demo mode must not reach the network and must not touch a real
+            // user's recordings, the same two reasons [drainPendingUploads] has.
+            if (DemoMode.isActive) return@launch
+            runCatching {
+                RecordingFiles.adoptOrphans(app, uploader) { startedAtMs ->
+                    MeetingService.defaultTitle(app, startedAtMs)
+                }
+                // Logged rather than swallowed: a sweep that fails silently is
+                // indistinguishable from a sweep that found nothing, and those
+                // are very different facts when someone reports a lost meeting.
+            }.onFailure { Log.w(TAG, "could not sweep for orphaned recordings", it) }
+            // Sequential rather than parallel with the sweep: a rescued meeting
+            // should reach the cloud on the same launch that found it, and
+            // enqueueing into a drain already in flight would leave it for next
+            // time.
+            if (auth.currentToken() == null) return@launch
+            runCatching { uploader.drain() }
+        }
     }
 
     /** Best-effort upload of everything the queue is holding. Never throws. */

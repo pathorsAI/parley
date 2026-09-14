@@ -548,6 +548,7 @@ private fun failureMessage(reason: MeetingFailure): String = when (reason) {
     MeetingFailure.MIC_PERMISSION -> stringResource(R.string.failure_mic_permission)
     MeetingFailure.MIC_UNAVAILABLE -> stringResource(R.string.failure_mic_unavailable)
     MeetingFailure.ENCODER_UNAVAILABLE -> stringResource(R.string.failure_encoder_unavailable)
+    MeetingFailure.STORAGE_FULL -> stringResource(R.string.failure_storage_full)
     MeetingFailure.UPLOAD_FAILED -> stringResource(R.string.failure_upload)
     MeetingFailure.UNKNOWN -> stringResource(R.string.failure_unknown)
 }

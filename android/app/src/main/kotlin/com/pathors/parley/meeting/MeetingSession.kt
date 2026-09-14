@@ -1,16 +1,22 @@
 package com.pathors.parley.meeting
 
+import android.app.Activity
+import android.app.Application
 import android.content.Context
 import android.media.AudioManager
 import android.media.AudioRecordingConfiguration
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.StatFs
 import android.os.SystemClock
 import android.util.Log
 import com.pathors.parley.audio.MicCapture
 import com.pathors.parley.audio.MicCaptureException
+import com.pathors.parley.audio.MicRecoveryState
 import com.pathors.parley.audio.OggOpusEncoder
 import com.pathors.parley.audio.OpusEncodeException
+import com.pathors.parley.audio.StorageHeadroom
 import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.TranscriptSegmentDto
@@ -81,6 +87,16 @@ enum class MeetingFailure {
     MIC_PERMISSION,
     MIC_UNAVAILABLE,
     ENCODER_UNAVAILABLE,
+
+    /**
+     * The device ran out of room. Reported *before* the disk actually fills,
+     * which is the only useful moment: the save path itself needs space to close
+     * the container, write the manifest and move the file into the upload queue,
+     * so a recording that discovers the problem by failing to write has already
+     * lost the ability to save itself. See
+     * [com.pathors.parley.audio.StorageHeadroom].
+     */
+    STORAGE_FULL,
     UPLOAD_FAILED,
     UNKNOWN,
 }
@@ -125,6 +141,35 @@ interface LiveMeeting {
      * after it is still worth having.
      */
     val micSilenced: StateFlow<Boolean>
+
+    /**
+     * Whether the microphone is ours, being fought for, or gone — see
+     * [MicRecoveryState].
+     *
+     * Defaulted rather than abstract so the screenshot demo and any future
+     * stand-in do not have to care: a fixture meeting never loses its
+     * microphone, and `Holding` is the honest answer for one.
+     */
+    val micRecovery: StateFlow<MicRecoveryState> get() = LiveMeetingDefaults.HOLDING
+
+    /**
+     * True when the device is low enough on storage that the recording is
+     * heading for [MeetingFailure.STORAGE_FULL]. A warning, not a failure: the
+     * recording is still running and there is still time to free some room.
+     *
+     * Defaulted for the same reason as [micRecovery].
+     */
+    val storageLow: StateFlow<Boolean> get() = LiveMeetingDefaults.NOT_LOW
+}
+
+/**
+ * The stand-in flows [LiveMeeting]'s defaulted members hand back. Shared
+ * singletons rather than a fresh flow per property read, which would allocate on
+ * every recomposition and never emit.
+ */
+internal object LiveMeetingDefaults {
+    val HOLDING: StateFlow<MicRecoveryState> = MutableStateFlow(MicRecoveryState.Holding)
+    val NOT_LOW: StateFlow<Boolean> = MutableStateFlow(false)
 }
 
 private const val TAG = "MeetingSession"
@@ -191,6 +236,12 @@ class MeetingSession(
     private val _micSilenced = MutableStateFlow(false)
     override val micSilenced: StateFlow<Boolean> = _micSilenced.asStateFlow()
 
+    /** Straight through from the microphone; the session adds nothing to it. */
+    override val micRecovery: StateFlow<MicRecoveryState> get() = mic.micRecovery
+
+    private val _storageLow = MutableStateFlow(false)
+    override val storageLow: StateFlow<Boolean> = _storageLow.asStateFlow()
+
     /** RMS of the last microphone chunk, 0..1 — drives the level meter. */
     override val level: StateFlow<Float> get() = mic.level
 
@@ -205,7 +256,9 @@ class MeetingSession(
     private var eventsJob: Job? = null
     private var tickerJob: Job? = null
     private var reconnectJob: Job? = null
+    private var storageJob: Job? = null
     private var micMonitor: AudioManager.AudioRecordingCallback? = null
+    private var foregroundMonitor: Application.ActivityLifecycleCallbacks? = null
 
     /** Bumped for every relay connection this recording makes; each leg
      *  numbers its own segments from zero, so without a per-leg id prefix a
@@ -214,6 +267,9 @@ class MeetingSession(
 
     /** Consecutive-failure budget for redialling the relay. */
     private val reconnect = ReconnectPolicy()
+
+    /** When there is too little room left to start, and when to stop and save. */
+    private val storage = StorageHeadroom()
 
     /** `elapsedRealtime` at the first microphone chunk — the offset a
      *  reconnected leg needs to place its timestamps after the audio that
@@ -272,6 +328,16 @@ class MeetingSession(
             return
         }
 
+        // Before the file, not after: refusing to start is a sentence the user
+        // can act on, whereas a write that fails forty minutes in is a recording
+        // that cannot even save itself. See [StorageHeadroom].
+        val free = withContext(Dispatchers.IO) { freeBytesForRecording() }
+        if (!storage.canStart(free)) {
+            Log.w(TAG, "refusing to record: only $free bytes free")
+            _state.value = MeetingState.Failed(MeetingFailure.STORAGE_FULL, "$free bytes free")
+            return
+        }
+
         val encoder = try {
             OggOpusEncoder.create(newAudioFile())
         } catch (e: OpusEncodeException) {
@@ -303,6 +369,8 @@ class MeetingSession(
         captureStartedAt = SystemClock.elapsedRealtime()
         startTicker()
         startMicMonitor()
+        startForegroundMonitor()
+        startStorageWatch()
 
         val pipeline = CapturePipeline(
             audio = { chunk -> encoder.append(chunk) },
@@ -419,7 +487,15 @@ class MeetingSession(
         val audio = context.getSystemService(AudioManager::class.java) ?: return
         val callback = object : AudioManager.AudioRecordingCallback() {
             override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
-                _micSilenced.value = configs.any { it.isClientSilenced }
+                val silenced = configs.any { it.isClientSilenced }
+                _micSilenced.value = silenced
+                // The banner was the whole response to this until now, and a
+                // banner is not a recovery: the recording kept running and kept
+                // writing zeroes for as long as the other app held the
+                // microphone. Handing it to the capture turns the same signal
+                // into an attempt to take the input back. See
+                // [MicCapture.notePlatformSilenced].
+                mic.notePlatformSilenced(silenced)
             }
         }
         // A Handler is required: this runs on Dispatchers.IO, which has no Looper.
@@ -437,6 +513,87 @@ class MeetingSession(
         _micSilenced.value = false
         context.getSystemService(AudioManager::class.java)
             ?.unregisterAudioRecordingCallback(callback)
+    }
+
+    /**
+     * Tell the capture when Parley comes to the foreground.
+     *
+     * Not an audio signal at all, which is exactly why it matters: the platform
+     * is markedly more willing to hand the microphone to a foreground app, so
+     * this is the one moment that can turn a refusal into an acceptance. A
+     * recovery that has spent its ladder is waiting for precisely this — see
+     * [com.pathors.parley.kit.CaptureRecovery.Event.AppBecameActive] and iOS
+     * `App/Parley/AudioCapture.swift:513-523`, which observes the same thing
+     * through `didBecomeActiveNotification`.
+     *
+     * `registerActivityLifecycleCallbacks` rather than `ProcessLifecycleOwner`:
+     * it needs no extra dependency, and "an activity resumed" is the fact we
+     * want. Firing it more often than strictly necessary is free — the policy
+     * answers it with `Wait` whenever the microphone is already ours.
+     */
+    private fun startForegroundMonitor() {
+        if (finishRequested) return
+        val application = context.applicationContext as? Application ?: return
+        val callback = object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) = mic.noteAppForegrounded()
+            override fun onActivityCreated(activity: Activity, state: Bundle?) = Unit
+            override fun onActivityStarted(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivityStopped(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, state: Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        }
+        application.registerActivityLifecycleCallbacks(callback)
+        foregroundMonitor = callback
+        // Same race as the ticker and the mic monitor: a stop() between the
+        // guard above and this line found the field still null.
+        if (finishRequested) stopForegroundMonitor()
+    }
+
+    private fun stopForegroundMonitor() {
+        val callback = foregroundMonitor ?: return
+        foregroundMonitor = null
+        (context.applicationContext as? Application)
+            ?.unregisterActivityLifecycleCallbacks(callback)
+    }
+
+    /**
+     * Watch the free space and stop *before* the disk fills.
+     *
+     * Stopping is the whole point, and so is the fact that it stops through
+     * [stopInterrupted]: the recording so far is closed, queued and uploaded
+     * exactly as a user-ended one would be. A recording that runs until a write
+     * fails has lost the room it needed to save itself — closing the container,
+     * writing the manifest and moving the file into the upload queue all want
+     * disk. See [CaptureEnding] for why deleting is never the answer.
+     *
+     * The stop is launched as its own job rather than run here, because
+     * [quiesce] cancels this one: winding down from inside the job being
+     * cancelled would abandon the save half-done.
+     */
+    private fun startStorageWatch() {
+        if (finishRequested) return
+        val job = scope.launch {
+            while (true) {
+                delay(STORAGE_CHECK_MS)
+                val free = withContext(Dispatchers.IO) { freeBytesForRecording() }
+                when (storage.assess(free)) {
+                    StorageHeadroom.Headroom.CRITICAL -> {
+                        Log.w(TAG, "only $free bytes left; stopping and saving")
+                        _storageLow.value = true
+                        scope.launch {
+                            stopInterrupted(MeetingFailure.STORAGE_FULL, "$free bytes free")
+                        }
+                        return@launch
+                    }
+
+                    StorageHeadroom.Headroom.LOW -> _storageLow.value = true
+                    StorageHeadroom.Headroom.AMPLE -> _storageLow.value = false
+                }
+            }
+        }
+        storageJob = job
+        if (finishRequested) job.cancel()
     }
 
     private fun upsert(segment: TranscriptSegment) {
@@ -550,7 +707,10 @@ class MeetingSession(
         tickerJob?.cancel()
         reconnectJob?.cancel()
         reconnectJob = null
+        storageJob?.cancel()
+        storageJob = null
         runCatching { stopMicMonitor() }
+        runCatching { stopForegroundMonitor() }
         runCatching { mic.stop() }
     }
 
@@ -616,9 +776,13 @@ class MeetingSession(
     /**
      * Close the Ogg container, and keep the bytes even when closing fails.
      *
-     * Ogg is a streaming container: the pages already on disk decode on their
-     * own, so a file whose muxer could not be stopped is a recording that ends a
-     * fraction early, not a write-off. Since the likeliest reason `finish()`
+     * Ogg is a streaming container and [OggOpusEncoder] writes its pages by
+     * hand, so every page already on disk is complete, checksummed and decodes
+     * on its own: a stream that could not be closed cleanly is a recording that
+     * ends a fraction early, not a write-off. (That was the intent before the
+     * container was hand-written too, but `MediaMuxer` finalises the file in
+     * `stop()`, so until then this comment described something the code could
+     * not actually deliver.) Since the likeliest reason `finish()`
      * throws is the disk filling up mid-meeting — precisely when the user has
      * the most to lose — "no clean close" must not mean "no recording".
      * [OggOpusEncoder.finish] deletes only a file it wrote nothing into.
@@ -699,10 +863,23 @@ class MeetingSession(
                 )
             }
 
-    private fun newAudioFile(): File {
-        val dir = File(context.cacheDir, RECORDINGS_DIR).apply { mkdirs() }
-        return File(dir, "meeting-$startedAtMs.ogg")
-    }
+    /**
+     * The Ogg file this capture writes, under `filesDir` — see [RecordingFiles]
+     * for why the only copy of a meeting must not live in a cache directory.
+     */
+    private fun newAudioFile(): File = RecordingFiles.newLiveFile(context, startedAtMs)
+
+    /**
+     * Free space where the recording is being written, or [Long.MAX_VALUE] when
+     * the platform will not say.
+     *
+     * Fail-open on purpose: a `StatFs` that throws is not a reason to refuse a
+     * meeting. The check exists to catch the phone that is *obviously* full, and
+     * an unknown answer is not that.
+     */
+    private fun freeBytesForRecording(): Long = runCatching {
+        StatFs(RecordingFiles.directory(context).absolutePath).availableBytes
+    }.getOrDefault(Long.MAX_VALUE)
 
     private fun micFailure(e: MicCaptureException): MeetingFailure = when (e) {
         is MicCaptureException.PermissionDenied -> MeetingFailure.MIC_PERMISSION
@@ -712,8 +889,15 @@ class MeetingSession(
     }
 
     private companion object {
-        const val RECORDINGS_DIR = "recordings"
         const val TICK_MS = 200L
+
+        /**
+         * How often to ask how much room is left. Six seconds is far more often
+         * than it needs to be at 3 kB/s — the point is to notice a *different*
+         * app filling the disk during our meeting, which can happen at any
+         * speed, and a `StatFs` call is a few microseconds.
+         */
+        const val STORAGE_CHECK_MS = 6_000L
 
         /** How long to wait for the relay's flushed tail before giving up on it. */
         const val TAIL_TIMEOUT_MS = 8_000L

@@ -81,7 +81,9 @@ android {
 
     defaultConfig {
         applicationId = "com.pathors.parley"
-        // minSdk 29: MediaMuxer OGG output + MediaCodec Opus encoder both require API 29.
+        // minSdk 29: the MediaCodec Opus *encoder* arrived in API 29. The Ogg
+        // container is written by hand now (see audio/OggStreamWriter.kt), so
+        // MediaMuxer's OGG output — which also needed 29 — no longer figures.
         minSdk = 29
         targetSdk = 36
         versionCode = 5

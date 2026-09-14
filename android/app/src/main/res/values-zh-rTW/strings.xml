@@ -123,6 +123,10 @@
     <string name="meeting_issue_quota">轉錄已停止：託管轉錄額度已用完。錄音仍在繼續。</string>
     <string name="meeting_issue_error">轉錄意外中斷。錄音仍在繼續。</string>
     <string name="meeting_mic_silenced">麥克風被其他 app 佔用中——在它釋放之前，Parley 錄到的是靜音。</string>
+    <string name="meeting_mic_recovering">正在把麥克風搶回來。錄音檔還開著，拿回來就會從中斷的地方繼續錄。</string>
+    <string name="meeting_mic_lost_taken">麥克風被其他程式佔住了。目前錄到的內容都還在；把 Parley 切到前景可以再試一次。</string>
+    <string name="meeting_mic_lost_broken">麥克風停止運作了。目前錄到的內容都還在——結束會議就會存下來。</string>
+    <string name="meeting_storage_low">這支手機的儲存空間快滿了。空間用完之前，Parley 會先停止並存下錄音。</string>
     <string name="meeting_title_format">會議 %1$s</string>
     <string name="speaker_label">說話者 %1$d</string>
     <string name="speaker_unknown">說話者</string>
@@ -131,6 +135,7 @@
     <string name="failure_not_signed_in">你已登出，請重新登入後再試。</string>
     <string name="failure_mic_permission">尚未取得麥克風權限。</string>
     <string name="failure_mic_unavailable">麥克風無法使用 —— 可能正在通話，或被其他 app 佔用。</string>
+    <string name="failure_storage_full">這支手機的儲存空間不足。清出一些空間後再試一次。</string>
     <string name="failure_encoder_unavailable">這台裝置無法編碼 Opus 音訊，因此無法保存錄音。</string>
     <string name="failure_upload">錄音已存在這台裝置，但還沒能上傳。</string>
     <string name="failure_unknown">發生了未預期的錯誤。</string>
