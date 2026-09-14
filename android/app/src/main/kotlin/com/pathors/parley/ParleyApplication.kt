@@ -11,8 +11,11 @@ import com.pathors.parley.meeting.MeetingSession
 import com.pathors.parley.playback.AudioRetention
 import com.pathors.parley.playback.LocalAudioStore
 import com.pathors.parley.screenshot.DemoMode
+import com.pathors.parley.upload.ManualRetryLedger
 import com.pathors.parley.upload.MeetingUploader
+import com.pathors.parley.upload.PendingBackfillQueue
 import com.pathors.parley.upload.PendingUploadQueue
+import com.pathors.parley.upload.TranscriptBackfiller
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -80,9 +83,34 @@ class AppContainer(private val app: Application) {
     /** "Keep audio on this phone" — read by the uploader, toggled in the account sheet. */
     val audioRetention: AudioRetention = AudioRetention(app)
 
+    /**
+     * Recordings whose live transcript came up short, waiting to be transcribed
+     * again in full. Exposed alongside the backfiller because a storage readout
+     * has to count these bytes too — they are the same Oggs the upload queue was
+     * holding a moment ago.
+     */
+    val backfillQueue: PendingBackfillQueue = PendingBackfillQueue.default(app)
+
+    /** How many hand-triggered re-transcriptions each recording has spent. */
+    val manualRetries: ManualRetryLedger = ManualRetryLedger.default(app)
+
     val uploader: MeetingUploader = MeetingUploader(
         cloud = cloud,
         queue = uploadQueue,
+        backfills = backfillQueue,
+        localAudio = localAudio,
+        keepsAudioOnPhone = audioRetention::keepsAudioOnPhoneNow,
+    )
+
+    /**
+     * The transcript safety net. A recording reaches it two ways: automatically,
+     * when [uploader] measures the transcript it just pushed against the audio
+     * and finds a hole, or because somebody asked.
+     */
+    val backfiller: TranscriptBackfiller = TranscriptBackfiller(
+        cloud = cloud,
+        queue = backfillQueue,
+        ledger = manualRetries,
         localAudio = localAudio,
         keepsAudioOnPhone = audioRetention::keepsAudioOnPhoneNow,
     )
@@ -106,6 +134,28 @@ class AppContainer(private val app: Application) {
         _authError.value = code
     }
 
+    /**
+     * Throw away everything this device is holding for the signed-in account:
+     * recordings waiting to upload, recordings waiting to be transcribed again,
+     * and the ledger of re-transcriptions they have spent.
+     *
+     * Account deletion only. Once `DELETE /me` has succeeded there is no account
+     * left for any of it to reach, and leaving finished meeting audio on disk
+     * would contradict what the confirmation dialog promised — which says
+     * "recordings still waiting to upload on this device are discarded too", and
+     * a backfill blob is exactly one of those, one step further along.
+     *
+     * Ordinary sign-out deliberately keeps all three: the same person usually
+     * signs back in, and the recordings are still theirs.
+     *
+     * Blocking file I/O; call it off the main thread.
+     */
+    fun discardLocalRecordings() {
+        uploadQueue.clear()
+        backfillQueue.clear()
+        manualRetries.clear()
+    }
+
     /** Called after a successful sign-in callback: push anything that was waiting. */
     fun onSignedIn() {
         _authError.value = null
@@ -120,6 +170,26 @@ class AppContainer(private val app: Application) {
             if (DemoMode.isActive) return@launch
             if (auth.currentToken() == null) return@launch
             runCatching { uploader.drain() }
+            // An upload that just finished may have queued a backfill, so the
+            // two run in this order and not the other.
+            drainPendingBackfills()
+        }
+    }
+
+    /**
+     * Best-effort re-transcription of everything the backfill queue is holding.
+     * Never throws.
+     *
+     * Separate from [drainPendingUploads] because the two are different debts: an
+     * upload owes the cloud a recording and is urgent; a backfill owes an
+     * already-uploaded recording a better transcript and is not. A backfill must
+     * never delay or fail an upload.
+     */
+    fun drainPendingBackfills() {
+        appScope.launch {
+            if (DemoMode.isActive) return@launch
+            if (auth.currentToken() == null) return@launch
+            runCatching { backfiller.drain() }
         }
     }
 

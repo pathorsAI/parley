@@ -156,6 +156,12 @@
     <string name="playback_speed">播放速度</string>
     <string name="playback_scrub">拖曳進度</string>
 
+    <!-- 重新轉錄：即時逐字稿漏掉太多時的補救 -->
+    <string name="retranscribe_action">重新轉錄</string>
+    <string name="retranscribe_queued">正在重新轉錄這筆錄音。新的逐字稿完成後會取代現在這份。</string>
+    <string name="retranscribe_budget_spent">這筆錄音重新轉錄的次數已經用完了。</string>
+    <string name="retranscribe_remaining">還可以重新轉錄 %1$d 次</string>
+
     <!-- 託管轉錄的失敗訊息。每一種都對應到不同的下一步。 -->
     <string name="batch_error_signed_out">請先登入 Parley Cloud 才能轉錄錄音。</string>
     <string name="batch_error_quota">本月的託管轉錄額度已用完——升級方案，或等額度重置。</string>

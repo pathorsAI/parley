@@ -1,5 +1,6 @@
 package com.pathors.parley.cloud
 
+import com.pathors.parley.kit.TranscriptSegment
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.PrimitiveKind
@@ -11,11 +12,14 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
 
 /**
  * DTOs for the Parley cloud (`api.parley.tw`). Field names mirror the desktop's
@@ -66,7 +70,80 @@ data class RecordingSummary(
     val folderId: String? = null,
     /** Server push time (epoch ms) — last-writer-wins ordering across devices. */
     @Serializable(with = EpochMillisSerializer::class) val updatedAt: Double? = null,
-)
+) {
+    companion object {
+        /**
+         * How many people the transcript accounts for. A transcript with turns
+         * in it always has at least one speaker, even when every turn came back
+         * unattributed.
+         */
+        fun speakerCount(segments: List<TranscriptSegmentDto>): Int {
+            val distinct = segments.map { "${it.source}-${it.speaker}" }.toSet().size
+            return maxOf(distinct, if (segments.isEmpty()) 0 else 1)
+        }
+
+        /**
+         * The library row's preview line: the opening of the conversation,
+         * capped so a list request does not carry whole meetings.
+         */
+        fun snippet(segments: List<TranscriptSegmentDto>): String =
+            segments.take(3).joinToString(" ") { it.text }.take(SNIPPET_LIMIT)
+
+        /**
+         * The library card a recording would have, derived from the meta the
+         * cloud already holds for it.
+         *
+         * For callers that have a recording's full entry but not the summary row
+         * beside it — the detail screen fetches `GET /recordings/{id}/meta` and
+         * nothing else. Every field here is one the meta genuinely knows;
+         * `updatedAt` is deliberately left null rather than guessed, because it
+         * is the server's own write clock and inventing one would reorder a
+         * last-writer-wins merge.
+         */
+        fun fromMeta(meta: RecordingMeta): RecordingSummary {
+            val segments = meta.segments
+            return RecordingSummary(
+                id = meta.id,
+                title = meta.title,
+                source = meta.source,
+                createdAt = meta.createdAt,
+                durationMs = meta.durationMs,
+                speakerCount = speakerCount(segments),
+                findingsCount = meta.findingsCount,
+                actionItemsCount = meta.actionItemsCount,
+                hasAudio = meta.hasAudio,
+                snippet = snippet(segments),
+                folderId = meta.folderId,
+                updatedAt = null,
+            )
+        }
+
+        /** Matches iOS `CloudRecordingSummary.snippet` and the desktop. */
+        private const val SNIPPET_LIMIT = 120
+    }
+
+    /**
+     * The same summary, re-derived for a transcript that replaced the one it was
+     * built from.
+     *
+     * Only the three facts the transcript actually speaks for move: the speaker
+     * count, the preview line, and the duration. The title, the folder, and the
+     * analysis counts are somebody else's facts about this recording and survive
+     * a re-transcription untouched; `hasAudio` stays as it was because the audio
+     * in the cloud is the very file that was re-transcribed.
+     *
+     * The duration is taken as whichever is longer — a batch job's reported
+     * length can undershoot what the recording already knew about itself.
+     */
+    fun replacingTranscript(
+        segments: List<TranscriptSegmentDto>,
+        durationMs: Double,
+    ): RecordingSummary = copy(
+        durationMs = maxOf(durationMs, this.durationMs),
+        speakerCount = speakerCount(segments),
+        snippet = snippet(segments),
+    )
+}
 
 /** `GET /recordings` → `{ recordings: [...] }`. */
 @Serializable
@@ -197,6 +274,12 @@ class RecordingMeta(val raw: JsonObject) {
     fun speakerName(segment: TranscriptSegmentDto): String? =
         speakerNames[speakerKey(segment)]?.takeIf { it.isNotEmpty() }
 
+    /** How many findings a desktop analysis has attached, for a summary row. */
+    val findingsCount: Int get() = (raw["findings"] as? JsonArray)?.size ?: 0
+
+    /** How many action items a desktop analysis has attached. */
+    val actionItemsCount: Int get() = (raw["actionItems"] as? JsonArray)?.size ?: 0
+
     /** A copy with a different `folderId`, every other field preserved verbatim. */
     fun withFolderId(folderId: String?): RecordingMeta = RecordingMeta(
         buildJsonObject {
@@ -205,8 +288,86 @@ class RecordingMeta(val raw: JsonObject) {
         }
     )
 
+    /**
+     * Swap in a transcript produced by a later, better pass over the same audio,
+     * and change nothing else.
+     *
+     * Surgical on purpose. A re-transcription of a recording that has been
+     * around for a while is not a fresh upload: the entry may carry speaker
+     * names somebody typed, findings and action items from a desktop analysis, a
+     * brief, meeting context, a filing decision. Rebuilding the meta from the
+     * new transcript would be correct about the words and would silently throw
+     * all of that away — a far worse outcome than the thin transcript the person
+     * was trying to fix. Keeping [raw] and replacing two keys in it is what
+     * makes that guarantee hold for fields this app has never heard of.
+     *
+     * `speakerNames` is the one field this arguably *should* clear, since a
+     * second diarization pass can number the speakers differently. It is kept
+     * anyway: a name attached to the wrong turn is visible and fixable in
+     * seconds, and a name the user typed and then lost is neither.
+     *
+     * The duration is taken as whichever is longer, matching the queue's own
+     * reconciliation — a batch job's reported length can undershoot what the
+     * recording already knew about itself.
+     */
+    fun replacingTranscript(
+        segments: List<TranscriptSegmentDto>,
+        durationMs: Double,
+    ): RecordingMeta = RecordingMeta(
+        buildJsonObject {
+            raw.forEach { (key, value) ->
+                if (key != "segments" && key != "durationMs") put(key, value)
+            }
+            put("segments", encodeSegments(segments))
+            put("durationMs", msPrimitive(maxOf(durationMs, this@RecordingMeta.durationMs)))
+        }
+    )
+
     override fun toString(): String = raw.toString()
+
+    companion object {
+        /**
+         * The `segments` array as every Parley client writes it.
+         *
+         * `isFinal` is written as `true` unconditionally: the tentative tail is
+         * never persisted, so everything that reaches here is committed by
+         * definition, and a segment that arrived claiming otherwise would
+         * confuse a desktop reading the entry back.
+         */
+        fun encodeSegments(segments: List<TranscriptSegmentDto>): JsonArray = buildJsonArray {
+            segments.forEach { segment ->
+                addJsonObject {
+                    put("id", segment.id)
+                    put("source", segment.source)
+                    put("speaker", segment.speaker)
+                    put("text", segment.text)
+                    put("isFinal", true)
+                    put("startMs", segment.startMs)
+                    put("endMs", segment.endMs)
+                }
+            }
+        }
+    }
 }
+
+/**
+ * The cloud DTO for a segment the relay or a batch job produced.
+ *
+ * The two types stay separate on purpose (see [TranscriptSegmentDto]); this is
+ * the one place the conversion lives, so a field added to either is a compile
+ * error here rather than a silently dropped value on the wire.
+ */
+fun TranscriptSegment.toDto(): TranscriptSegmentDto = TranscriptSegmentDto(
+    id = id,
+    source = source,
+    speaker = speaker,
+    text = text,
+    isFinal = isFinal,
+    startMs = startMs,
+    endMs = endMs,
+)
+
+fun List<TranscriptSegment>.toDtos(): List<TranscriptSegmentDto> = map { it.toDto() }
 
 // ── JsonObject readers ────────────────────────────────────────────────────────
 // Tolerant on purpose: a field the desktop wrote with an unexpected type must

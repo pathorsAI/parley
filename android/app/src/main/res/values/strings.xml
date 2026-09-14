@@ -157,6 +157,12 @@
     <string name="playback_speed">Playback speed</string>
     <string name="playback_scrub">Scrub</string>
 
+    <!-- Re-transcribing a recording whose live transcript came up short -->
+    <string name="retranscribe_action">Transcribe again</string>
+    <string name="retranscribe_queued">Re-transcribing this recording. The new transcript replaces this one when it\'s ready.</string>
+    <string name="retranscribe_budget_spent">This recording has been re-transcribed as many times as allowed.</string>
+    <string name="retranscribe_remaining">%1$d re-transcriptions left</string>
+
     <!-- Hosted transcription failures. Each one names a different next step. -->
     <string name="batch_error_signed_out">Sign in to Parley Cloud to transcribe recordings.</string>
     <string name="batch_error_quota">Your monthly hosted transcription quota is used up — upgrade your plan or wait for it to reset.</string>

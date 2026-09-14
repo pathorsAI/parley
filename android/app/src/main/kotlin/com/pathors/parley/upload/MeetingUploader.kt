@@ -90,6 +90,15 @@ class MeetingUploader(
     private val cloud: CloudClient,
     private val queue: PendingUploadQueue,
     /**
+     * Where a recording goes when its transcript does not account for its audio.
+     *
+     * Null means this uploader has no safety net and retires every Ogg the
+     * moment the cloud has it — the pre-backfill behaviour, kept as the default
+     * so a test that is asking about upload retries does not have to hand one
+     * over. [create] wires the real queue.
+     */
+    private val backfills: PendingBackfillQueue? = null,
+    /**
      * Where a kept recording's audio goes once the cloud has it. Null means this
      * uploader has nowhere to keep audio and always deletes — which is what the
      * upload tests want, and nothing else.
@@ -183,9 +192,13 @@ class MeetingUploader(
             try {
                 uploadWithRetry(item, audio)
                 // The cloud now holds everything, so the *queue's* copy has done
-                // its job. What happens to the Ogg after that is `retireAudio`'s
-                // decision, not this one's.
-                retireAudio(item.id, audio)
+                // its job — unless the transcript that went up does not account
+                // for the audio that went with it, in which case the Ogg is the
+                // only thing that can still fix it and is handed to the backfill
+                // queue instead of retired.
+                if (!handOffForBackfill(item, audio)) {
+                    retireAudio(item.id, audio)
+                }
                 withContext(Dispatchers.IO) { queue.remove(item.id) }
                 uploaded++
             } catch (e: CancellationException) {
@@ -223,6 +236,32 @@ class MeetingUploader(
      * it is not in the cloud, and keeping it would put a row of noise in the
      * storage total that no screen could explain.
      */
+    /**
+     * Give the Ogg to the backfill queue when the transcript that just went up
+     * leaves too much of the recording unaccounted for.
+     *
+     * Deliberately quiet about its own failures. The recording is safely in the
+     * cloud with the transcript it has by the time this runs; failing to queue a
+     * backfill costs quality, not the meeting, and must not surface as an upload
+     * failure. A failure here falls through to the ordinary retirement, which is
+     * exactly what would have happened before there was a safety net.
+     *
+     * @return whether the backfill queue now owns the file. False means the
+     *   caller still has to retire it.
+     */
+    private suspend fun handOffForBackfill(pending: PendingUpload, audio: File): Boolean {
+        val queue = backfills ?: return false
+        if (!TranscriptBackfiller.coverage(pending).needsBackfill()) return false
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                queue.enqueueMoving(
+                    BackfillRequest(pending = pending, folderId = pending.folderId),
+                    audio,
+                )
+            }.isSuccess
+        }
+    }
+
     private suspend fun retireAudio(id: String, audio: File) = withContext(Dispatchers.IO) {
         if (!audio.isFile) return@withContext
         val store = localAudio
@@ -271,6 +310,7 @@ class MeetingUploader(
             return MeetingUploader(
                 cloud = cloud,
                 queue = PendingUploadQueue.default(context),
+                backfills = PendingBackfillQueue.default(context),
                 localAudio = LocalAudioStore.default(context),
                 keepsAudioOnPhone = retention::keepsAudioOnPhoneNow,
             )
