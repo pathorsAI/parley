@@ -2,10 +2,17 @@
 <!--
   The XML theme exists only to dress the window before Compose takes over: the
   activity is a single Compose surface, so all real styling lives in
-  ui/theme/Theme.kt (Material 3, dynamic color on API 31+).
+  ui/theme/Theme.kt (Material 3, Parley's own palette and faces — no dynamic
+  color; see the rationale in that file).
 
   Parent is a platform DayNight theme rather than a Material Components one:
   the app deliberately has no `com.google.android.material` dependency.
+
+  `windowBackground` is what shows through the transparent system bars, and it
+  is `colorBackground` only for the handful of frames before Compose runs. From
+  then on ParleyTheme overwrites it with the scheme's own background, because
+  the app's appearance can now differ from the device's and this attribute
+  cannot: it resolves against the configuration's night mode, not ours.
 -->
 <resources>
     <style name="Theme.Parley" parent="@android:style/Theme.DeviceDefault.DayNight">
