@@ -73,6 +73,7 @@
     <string name="meeting_uploaded">Uploaded</string>
     <string name="meeting_queued">Saved on this device. It uploads as soon as the network is back.</string>
     <string name="meeting_dropped">That was under two seconds, so nothing was saved.</string>
+    <string name="meeting_interrupted">The meeting was cut short, but everything recorded up to that point is saved.</string>
     <string name="meeting_transcript_empty">The transcript appears here as people speak.</string>
     <string name="meeting_issue_quota">Transcription stopped: the hosted transcription quota is used up. The audio is still being recorded.</string>
     <string name="meeting_issue_error">Transcription stopped unexpectedly. The audio is still being recorded.</string>

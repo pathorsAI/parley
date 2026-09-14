@@ -141,20 +141,27 @@ class MeetingService : Service() {
     }
 
     /**
-     * Stop the service when the session fails.
+     * Stop the service when the session reaches a terminal state on its own.
      *
-     * A failed capture (microphone busy, expired token, no encoder) leaves the
-     * session in [MeetingState.Failed] and nothing else happens: nobody calls
-     * [requestStop], so without this the microphone foreground service and its
-     * "Recording a meeting" notification would sit there until the user killed
-     * the app. [MeetingState.Finished] needs no branch — that path runs through
-     * [stopRecording], which stops the service itself.
+     * A capture that ends without anyone calling [requestStop] — the microphone
+     * was taken, the token expired, the encoder died — leaves the session
+     * finished or failed and nothing else happens, so without this the
+     * microphone foreground service and its "Recording a meeting" notification
+     * would sit there until the user killed the app.
+     *
+     * [MeetingState.Finished] is watched as well as [MeetingState.Failed]
+     * because an interrupted recording now *saves* and therefore finishes, where
+     * it used to be thrown away and reported as a failure. The ordinary stop
+     * path reaches the same state through [stopRecording], which stops the
+     * service itself; both are idempotent, so the overlap is harmless.
      */
     private fun observe(session: MeetingSession) {
         observerJob?.cancel()
         observerJob = serviceScope.launch {
             session.state.collect { state ->
-                if (state is MeetingState.Failed) stopSelfAndForeground()
+                if (state is MeetingState.Failed || state is MeetingState.Finished) {
+                    stopSelfAndForeground()
+                }
             }
         }
     }
@@ -197,12 +204,28 @@ class MeetingService : Service() {
         super.onDestroy()
         if (instance === this) instance = null
         serviceScope.cancel()
+
         // A session still recording when the service dies (task swiped away, low
-        // memory) has lost its permission to hold the mic — drop it rather than
-        // leaving a silent recording running.
-        val session = _activeSession.value
-        if (session != null && session.state.value is MeetingState.Recording) {
-            session.abandon()
+        // memory) has lost its permission to hold the microphone. That is one
+        // fact, and it used to be treated as two: the capture was torn down
+        // *and* the audio deleted, so swiping the app away threw the meeting out
+        // with the microphone. Releasing the input and destroying the recording
+        // are unrelated decisions — only the first of them follows from the
+        // service going away.
+        //
+        // Deliberately the application scope, not the (already cancelled)
+        // service scope: closing the container and writing the upload manifest
+        // has to outlive this instance, exactly as the ordinary stop does.
+        val session = _activeSession.value ?: return
+        val state = session.state.value
+        if (state !is MeetingState.Recording && state !is MeetingState.Connecting) return
+        applicationContext.parleyContainer.appScope.launch {
+            runCatching {
+                session.stopInterrupted(
+                    MeetingFailure.MIC_UNAVAILABLE,
+                    "the recording service was destroyed",
+                )
+            }
         }
     }
 

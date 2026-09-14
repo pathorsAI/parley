@@ -72,6 +72,7 @@
     <string name="meeting_uploaded">已上傳</string>
     <string name="meeting_queued">已存在這台裝置，網路恢復後會自動上傳。</string>
     <string name="meeting_dropped">錄音不到兩秒，因此沒有保存。</string>
+    <string name="meeting_interrupted">會議中途中斷，但中斷前錄到的內容都已保留。</string>
     <string name="meeting_transcript_empty">有人開口說話後，逐字稿會顯示在這裡。</string>
     <string name="meeting_issue_quota">轉錄已停止：託管轉錄額度已用完。錄音仍在繼續。</string>
     <string name="meeting_issue_error">轉錄意外中斷。錄音仍在繼續。</string>
