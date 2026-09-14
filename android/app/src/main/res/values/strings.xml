@@ -160,6 +160,7 @@
     <string name="detail_action_items">Action items</string>
     <string name="detail_speakers">%1$d speakers</string>
     <string name="detail_length">Length %1$s</string>
+    <string name="detail_more_actions">More actions</string>
 
     <!-- Copying and sharing a transcript -->
     <string name="transcript_clip_label">Parley transcript</string>
@@ -194,6 +195,10 @@
     <string name="retranscribe_queued">Re-transcribing this recording. The new transcript replaces this one when it\'s ready.</string>
     <string name="retranscribe_budget_spent">This recording has been re-transcribed as many times as allowed.</string>
     <string name="retranscribe_remaining">%1$d re-transcriptions left</string>
+    <string name="retranscribe_confirm_title">Transcribe this recording again?</string>
+    <string name="retranscribe_confirm_body">The whole recording is transcribed again from the start, and the transcript you have now is replaced when the new one comes back. It uses your account\'s transcription hours, the same as a new meeting would.</string>
+    <string name="retranscribe_no_audio">There\'s no audio for this recording, so there\'s nothing to transcribe again.</string>
+    <string name="retranscribe_audio_failed">The audio couldn\'t be fetched, so nothing was sent for transcription.</string>
 
     <!-- Hosted transcription failures. Each one names a different next step. -->
     <string name="batch_error_signed_out">Sign in to Parley Cloud to transcribe recordings.</string>
