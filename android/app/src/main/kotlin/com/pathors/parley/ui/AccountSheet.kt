@@ -24,6 +24,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.pathors.parley.R
 import com.pathors.parley.cloud.HostedQuota
+import com.pathors.parley.playback.AudioStorageSection
 
 /**
  * Who is signed in, what the plan has left, and the two ways out — signing out,
@@ -59,6 +60,8 @@ fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
             )
 
             AccountIdentity(account)
+
+            AudioStorageSection()
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
 

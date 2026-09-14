@@ -1,11 +1,14 @@
 package com.pathors.parley.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pathors.parley.AppContainer
 import com.pathors.parley.cloud.RecordingMeta
+import com.pathors.parley.playback.PlaybackController
+import com.pathors.parley.playback.PlaybackState
 import com.pathors.parley.screenshot.DemoMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,7 +43,42 @@ data class ActionItemRow(
 class RecordingDetailViewModel(
     private val container: AppContainer,
     private val recordingId: String,
+    /**
+     * Application context, for the player. Passed in rather than reached for
+     * through [AppContainer]: a ViewModel that can see the whole Application is
+     * a ViewModel that can leak an Activity by accident.
+     */
+    context: Context,
 ) : ViewModel() {
+
+    /**
+     * The player for this recording. Built with the screen and released with
+     * it — one recording, one engine, and `onCleared` is what guarantees the
+     * audio stops when the screen goes away.
+     */
+    private val playback = PlaybackController(
+        context = context,
+        cloud = container.cloud,
+        store = container.localAudio,
+        scope = viewModelScope,
+        demo = DemoMode.isActive,
+    )
+
+    val playbackState: StateFlow<PlaybackState> = playback.state
+
+    fun togglePlayPause() = playback.togglePlayPause()
+
+    fun seekTo(ms: Long) = playback.seekTo(ms)
+
+    fun setRate(rate: Float) = playback.setRate(rate)
+
+    fun cycleRate() = playback.cycleRate()
+
+    fun downloadAudio() = playback.download()
+
+    override fun onCleared() {
+        playback.release()
+    }
 
     data class UiState(
         val loading: Boolean = true,
@@ -60,13 +98,28 @@ class RecordingDetailViewModel(
     fun load() {
         if (DemoMode.isActive) {
             _state.value = fromMeta(DemoMode.meta(recordingId))
+            openPlayer()
             return
         }
         viewModelScope.launch {
             _state.value = UiState(loading = true)
             val result = runCatching { container.cloud.recordingMeta(recordingId) }
             _state.value = fromMeta(result.getOrNull())
+            openPlayer()
         }
+    }
+
+    /**
+     * Point the player at this recording once the meta has arrived.
+     *
+     * The meta's `durationMs` is what the scrubber is scaled by until the
+     * engine has opened the file and can report its own: an Ogg's true length
+     * is only known after its last page, so a player that waited for it would
+     * draw a zero-width timeline for the first moment of every screen.
+     */
+    private fun openPlayer() {
+        val duration = _state.value.meta?.durationMs?.toLong() ?: 0L
+        playback.open(recordingId, duration)
     }
 
     companion object {
@@ -82,9 +135,16 @@ class RecordingDetailViewModel(
             )
         }
 
-        fun factory(container: AppContainer, recordingId: String) = viewModelFactory {
-            initializer { RecordingDetailViewModel(container, recordingId) }
-        }
+        fun factory(container: AppContainer, recordingId: String, context: Context) =
+            viewModelFactory {
+                initializer {
+                    RecordingDetailViewModel(
+                        container,
+                        recordingId,
+                        context.applicationContext,
+                    )
+                }
+            }
 
         internal fun readFindings(meta: RecordingMeta): List<FindingRow> =
             (meta.raw["findings"] as? JsonArray).orEmptyObjects().mapNotNull { obj ->

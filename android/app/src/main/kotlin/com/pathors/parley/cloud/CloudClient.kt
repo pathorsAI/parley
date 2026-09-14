@@ -3,6 +3,8 @@ package com.pathors.parley.cloud
 import com.pathors.parley.util.deleteQuietly
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -193,15 +195,39 @@ class CloudClient(
      * `GET /recordings/{id}/audio` — stream the Ogg/Opus blob straight to
      * [destination]. Written to a sibling `.part` file and renamed on success, so
      * an interrupted download never leaves a half file that looks playable.
+     *
+     * [onProgress] is called as bytes land, with the running total and the
+     * `Content-Length` the server declared (**-1 when it declared none**, which
+     * a chunked response legitimately does). It is invoked from the IO thread
+     * doing the copy, so a UI caller has to hop back itself, and it is called at
+     * most once per [PROGRESS_INTERVAL_BYTES] rather than per read — a callback
+     * that recomposes a screen 20,000 times for a 40 MB file is a stutter, not
+     * progress. The final call always reports the true total, so a progress bar
+     * finishes at exactly 1.
      */
-    suspend fun downloadAudio(id: String, destination: File) {
+    suspend fun downloadAudio(
+        id: String,
+        destination: File,
+        onProgress: ((bytesRead: Long, totalBytes: Long) -> Unit)? = null,
+    ) {
         execute(Request.Builder().url(url("recordings", id, "audio")).get()) { response ->
             withContext(Dispatchers.IO) {
                 destination.parentFile?.mkdirs()
                 val part = File(destination.parentFile, destination.name + ".part")
                 val body = response.body ?: throw CloudException(0, "empty_audio_response")
-                body.byteStream().use { input ->
-                    part.outputStream().use { output -> input.copyTo(output) }
+                val expected = body.contentLength()
+                try {
+                    body.byteStream().use { input ->
+                        part.outputStream().use { output ->
+                            copyReporting(input, output, expected, onProgress)
+                        }
+                    }
+                } catch (e: Throwable) {
+                    // The `.part` file is the whole point: a cancelled or broken
+                    // download must not survive as something a later run could
+                    // mistake for a complete blob.
+                    part.deleteQuietly()
+                    throw e
                 }
                 if (destination.exists()) destination.deleteQuietly()
                 if (!part.renameTo(destination)) {
@@ -210,6 +236,33 @@ class CloudClient(
                 }
             }
         }
+    }
+
+    private fun copyReporting(
+        input: InputStream,
+        output: OutputStream,
+        expected: Long,
+        onProgress: ((Long, Long) -> Unit)?,
+    ) {
+        if (onProgress == null) {
+            input.copyTo(output)
+            return
+        }
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0L
+        var reported = 0L
+        onProgress(0L, expected)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            output.write(buffer, 0, read)
+            total += read
+            if (total - reported >= PROGRESS_INTERVAL_BYTES) {
+                reported = total
+                onProgress(total, expected)
+            }
+        }
+        onProgress(total, if (expected >= 0) expected else total)
     }
 
     /**
@@ -314,6 +367,9 @@ class CloudClient(
     companion object {
         /** The production cloud. Same default as iOS and the desktop. */
         const val DEFAULT_BASE_URL = "https://api.parley.tw"
+
+        /** How often [downloadAudio] reports progress. See its doc. */
+        private const val PROGRESS_INTERVAL_BYTES = 64L * 1024L
 
         private val APPLICATION_JSON = "application/json".toMediaType()
         private val AUDIO_OGG = "audio/ogg".toMediaType()
