@@ -29,6 +29,10 @@
     <string name="home_account">帳號</string>
     <string name="home_empty_title">還沒有任何錄音</string>
     <string name="home_empty_body">錄一場會議，或匯入你手上既有的音訊檔。</string>
+    <string name="home_empty_import">匯入音訊檔</string>
+    <string name="home_search">搜尋錄音</string>
+    <string name="home_search_hint">搜尋標題與摘要</string>
+    <string name="home_search_empty">沒有符合的錄音。</string>
     <string name="home_record">錄一場會議</string>
     <string name="home_import">匯入錄音檔</string>
     <string name="home_pending_header">等待上傳</string>
@@ -42,6 +46,9 @@
     <string name="recording_untitled">未命名錄音</string>
     <string name="recording_source_upload">匯入</string>
     <string name="recording_source_live">錄製</string>
+    <string name="recording_meta_duration">長度</string>
+    <string name="recording_meta_speakers">說話者</string>
+    <string name="recording_meta_audio">有音檔</string>
     <string name="home_recording_actions">錄音選項</string>
     <string name="home_delete_recording">刪除錄音</string>
     <string name="home_deleting">刪除中…</string>

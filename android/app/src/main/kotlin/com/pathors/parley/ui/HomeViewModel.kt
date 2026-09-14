@@ -9,6 +9,7 @@ import com.pathors.parley.cloud.CloudException
 import com.pathors.parley.cloud.CloudUser
 import com.pathors.parley.cloud.HostedQuota
 import com.pathors.parley.cloud.RecordingSummary
+import com.pathors.parley.kit.TranscriptSearch
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.upload.PendingUpload
 import kotlinx.coroutines.Dispatchers
@@ -263,6 +264,37 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     companion object {
+
+        /**
+         * The library narrowed to a query: titles and snippets, nothing else.
+         *
+         * Pure, in-memory and re-run on every keystroke, because the whole
+         * library is already here — `GET /recordings` returns the account's
+         * rows in one response, so asking the server to filter them would be a
+         * round trip to learn something this process already knows. It also
+         * means the field keeps working with no network, which is the state the
+         * error banner above the list exists for.
+         *
+         * Title *and* snippet, the same pair iOS searches (`LibraryView.swift`
+         * `filtered`): a meeting is as often remembered by something that was
+         * said in it as by what it ended up being called, and the snippet is the
+         * only part of what was said that the list has.
+         *
+         * Matching is [TranscriptSearch.matches] rather than a lowercased
+         * `contains`, so "cafe" finds "Café" and the library agrees with the
+         * search inside a transcript about what a query means.
+         */
+        internal fun filterRecordings(
+            recordings: List<RecordingSummary>,
+            query: String,
+        ): List<RecordingSummary> {
+            if (query.isBlank()) return recordings
+            return recordings.filter { recording ->
+                TranscriptSearch.matches(recording.title, query) ||
+                    TranscriptSearch.matches(recording.snippet.orEmpty(), query)
+            }
+        }
+
         fun factory(container: AppContainer) = viewModelFactory {
             initializer { HomeViewModel(container) }
         }

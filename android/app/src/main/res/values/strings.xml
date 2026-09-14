@@ -30,6 +30,10 @@
     <string name="home_account">Account</string>
     <string name="home_empty_title">No recordings yet</string>
     <string name="home_empty_body">Record a meeting, or import an audio file you already have.</string>
+    <string name="home_empty_import">Import an audio file</string>
+    <string name="home_search">Search recordings</string>
+    <string name="home_search_hint">Search titles and snippets</string>
+    <string name="home_search_empty">No matches.</string>
     <string name="home_record">Record a meeting</string>
     <string name="home_import">Import recording</string>
     <string name="home_pending_header">Waiting to upload</string>
@@ -41,8 +45,11 @@
     <string name="home_recording_in_progress">A meeting is being recorded</string>
     <string name="home_recording_in_progress_action">Return to it</string>
     <string name="recording_untitled">Untitled recording</string>
-    <string name="recording_source_upload">Imported</string>
-    <string name="recording_source_live">Recorded</string>
+    <string name="recording_source_upload">UPLOAD</string>
+    <string name="recording_source_live">LIVE</string>
+    <string name="recording_meta_duration">Length</string>
+    <string name="recording_meta_speakers">Speakers</string>
+    <string name="recording_meta_audio">Audio available</string>
     <string name="home_recording_actions">Recording options</string>
     <string name="home_delete_recording">Delete recording</string>
     <string name="home_deleting">Deleting…</string>
