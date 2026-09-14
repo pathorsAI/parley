@@ -1,5 +1,8 @@
 package com.pathors.parley.cloud
 
+import com.pathors.parley.kit.BatchJobStatus
+import com.pathors.parley.kit.BatchTranscriptResponse
+import com.pathors.parley.kit.BatchTranscriptionService
 import com.pathors.parley.util.deleteQuietly
 import java.io.File
 import java.io.IOException
@@ -136,8 +139,25 @@ class CloudClient(
     private val http: OkHttpClient = ParleyHttp.shared,
     private val tokenProvider: suspend () -> String?,
     private val onUnauthorized: suspend () -> Unit = {},
-) {
+) : BatchTranscriptionService {
     private val base: HttpUrl = baseUrl.trimEnd('/').toHttpUrl()
+
+    /**
+     * The same connection pool with one whole-call bound, for `POST /stt/batch`.
+     *
+     * [ParleyHttp.shared] deliberately has no call timeout, because a queued
+     * upload may legitimately take minutes. A batch job is different: the
+     * request does not finish when the last byte is written — the cloud has to
+     * ingest and store the blob before it answers, which is a *read* wait after
+     * a long *write*, and the shared 60-second read timeout would give up on a
+     * large file that is doing nothing wrong. 300 seconds for the whole call is
+     * what iOS `CloudClient.batchUploadTimeout` allows.
+     */
+    private val batchUploadHttp: OkHttpClient by lazy {
+        http.newBuilder()
+            .callTimeout(BATCH_UPLOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .build()
+    }
 
     // ── identity / usage ─────────────────────────────────────────────────────
 
@@ -304,6 +324,59 @@ class CloudClient(
         execute(Request.Builder().url(url("recordings", id)).delete()) { }
     }
 
+    // ── hosted batch transcription ───────────────────────────────────────────
+    //
+    // The four calls behind `BatchTranscriber`, which drives them. Same
+    // endpoints and same contract as iOS `CloudClient` and the desktop's
+    // `parley_batch`; see `kit/BatchTranscription.kt` for why the audio is a
+    // file here and a byte array there.
+
+    /**
+     * `POST /stt/batch` — create a job from already-compressed audio; the
+     * response is the job id.
+     *
+     * The hints parameter is omitted entirely when empty so the cloud
+     * auto-detects, rather than being handed an empty list to interpret.
+     */
+    override suspend fun startBatchJob(
+        audio: File,
+        diarization: Boolean,
+        languageHints: List<String>,
+    ): String {
+        val url = url("stt", "batch").newBuilder()
+            .addQueryParameter("diarization", if (diarization) "1" else "0")
+            .apply {
+                if (languageHints.isNotEmpty()) {
+                    addQueryParameter("language_hints", languageHints.joinToString(","))
+                }
+            }
+            .build()
+        val request = Request.Builder().url(url).post(audio.asRequestBody(OCTET_STREAM))
+        val text = execute(request, client = batchUploadHttp) { response -> bodyText(response) }
+        return CloudJson.decodeFromString(BatchJobCreated.serializer(), text).id
+    }
+
+    override suspend fun batchJobStatus(id: String): BatchJobStatus =
+        CloudJson.decodeFromString(
+            BatchJobStatus.serializer(),
+            getText(url("stt", "batch", id)),
+        )
+
+    override suspend fun batchTranscript(id: String): BatchTranscriptResponse =
+        CloudJson.decodeFromString(
+            BatchTranscriptResponse.serializer(),
+            getText(url("stt", "batch", id, "transcript")),
+        )
+
+    /**
+     * Best-effort cleanup so the cloud isn't left holding the audio. The
+     * transcript is already downloaded by the time this runs, so every failure
+     * here — expired session, no network, job already gone — is swallowed.
+     */
+    override suspend fun deleteBatchJob(id: String) {
+        runCatching { execute(Request.Builder().url(url("stt", "batch", id)).delete()) { } }
+    }
+
     // ── plumbing ─────────────────────────────────────────────────────────────
 
     private fun url(vararg segments: String): HttpUrl =
@@ -322,10 +395,11 @@ class CloudClient(
      */
     private suspend fun <T> execute(
         builder: Request.Builder,
+        client: OkHttpClient = http,
         onSuccess: suspend (Response) -> T,
     ): T {
         tokenProvider()?.let { builder.header("Authorization", "Bearer $it") }
-        val response = await(http.newCall(builder.build()))
+        val response = await(client.newCall(builder.build()))
         try {
             if (!response.isSuccessful) {
                 val text = bodyText(response)
@@ -371,8 +445,12 @@ class CloudClient(
         /** How often [downloadAudio] reports progress. See its doc. */
         private const val PROGRESS_INTERVAL_BYTES = 64L * 1024L
 
+        /** See [batchUploadHttp]. The same 300 seconds iOS allows. */
+        private const val BATCH_UPLOAD_TIMEOUT_SECONDS = 300L
+
         private val APPLICATION_JSON = "application/json".toMediaType()
         private val AUDIO_OGG = "audio/ogg".toMediaType()
+        private val OCTET_STREAM = "application/octet-stream".toMediaType()
         private val EMPTY_BODY: RequestBody = "".toRequestBody(null)
     }
 }

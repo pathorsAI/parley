@@ -353,9 +353,18 @@ class MeetingSession(
      * Reopen the relay while the microphone keeps running.
      *
      * Nothing about the audio file depends on the socket, so a dropped relay
-     * costs live transcript, not the recording — and the cloud transcribes the
-     * uploaded audio anyway. That is why this retries quietly in the background
-     * instead of failing the meeting.
+     * costs live transcript, not the recording. That is why this retries
+     * quietly in the background instead of failing the meeting.
+     *
+     * It is NOT because the cloud transcribes the uploaded audio for us — an
+     * earlier version of this comment said so and it was never true. Uploading a
+     * recording stores it; nothing on the server side transcribes it again. What
+     * repairs a transcript this loop failed to save is the client's own backfill
+     * pass (`upload/TranscriptBackfiller`), which measures what came back
+     * against the audio on disk and re-runs the whole file when it falls short.
+     * Anything here that quietly gives up on the live transcript is therefore
+     * spending that pass's budget, not deferring to a server that would have
+     * done the work anyway.
      *
      * The budget is [ReconnectPolicy]'s, which counts *consecutive* failures:
      * see there for why a meeting that reconnects successfully must get its

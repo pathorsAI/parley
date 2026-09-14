@@ -189,6 +189,24 @@
     <string name="playback_speed">Playback speed</string>
     <string name="playback_scrub">Scrub</string>
 
+    <!-- Re-transcribing a recording whose live transcript came up short -->
+    <string name="retranscribe_action">Transcribe again</string>
+    <string name="retranscribe_queued">Re-transcribing this recording. The new transcript replaces this one when it\'s ready.</string>
+    <string name="retranscribe_budget_spent">This recording has been re-transcribed as many times as allowed.</string>
+    <string name="retranscribe_remaining">%1$d re-transcriptions left</string>
+
+    <!-- Hosted transcription failures. Each one names a different next step. -->
+    <string name="batch_error_signed_out">Sign in to Parley Cloud to transcribe recordings.</string>
+    <string name="batch_error_quota">Your monthly hosted transcription quota is used up — upgrade your plan or wait for it to reset.</string>
+    <string name="batch_error_too_many">Too many transcriptions running at once — wait for a meeting or an earlier upload to finish, then try again.</string>
+    <string name="batch_error_too_large">This recording is too large for hosted transcription — split it into shorter files and upload them separately.</string>
+    <string name="batch_error_upstream">Parley Cloud couldn\'t reach the transcription service — try again in a few minutes.</string>
+    <string name="batch_error_offline">Can\'t reach the cloud right now. The re-transcription runs by itself once the network is back.</string>
+    <string name="batch_error_job_failed">Transcription failed: %1$s</string>
+    <string name="batch_error_timed_out">Transcription timed out.</string>
+    <string name="batch_error_http">Hosted transcription failed (HTTP %1$d)</string>
+    <string name="batch_error_http_code">Hosted transcription failed (HTTP %1$d): %2$s</string>
+
     <!-- Audio on this phone -->
     <string name="account_audio_title">Audio on this phone</string>
     <string name="account_keep_audio">Keep audio on this phone</string>
