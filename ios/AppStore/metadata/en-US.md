@@ -97,6 +97,17 @@ Tap the words to hear them. Tapping anywhere in a turn's text jumps the audio
 to that turn. The timecode still works; you just no longer have to aim for
 it. The turn you tapped flashes blue so you know it landed.
 
+Search inside a transcript. Tap the magnifying glass on a recording, type,
+and every match is highlighted in place, with a count and next/previous
+arrows at the bottom; tapping a highlighted match plays from that turn. The
+library search still covers titles and snippets — this one covers the words.
+
+And seeking actually seeks. In 1.12, dragging the scrubber or tapping a
+timecode moved the clock while the audio kept playing from the beginning:
+the player iOS ships cannot move inside an Ogg/Opus file, it only reports
+that it did. Playback runs on a different engine now, and where the playhead
+is, the sound is.
+
 The waveforms are calmer — thicker, rounder, half the height, and pale —
 both while recording and under a recording's title. The red marker at the
 edge of the live waveform is gone: the newest bar is where now is.
