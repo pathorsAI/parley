@@ -3,13 +3,15 @@ package com.pathors.parley.audio
 import android.media.MediaCodec
 import android.media.MediaCodecList
 import android.media.MediaFormat
-import android.media.MediaMuxer
 import android.util.Log
 import com.pathors.parley.util.deleteQuietly
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.min
@@ -22,7 +24,13 @@ sealed class OpusEncodeException(message: String, cause: Throwable? = null) :
     class EncoderUnavailable(cause: Throwable? = null) :
         OpusEncodeException("no usable Opus encoder on this device", cause)
 
-    /** The OGG muxer could not be created, started or finalised. */
+    /**
+     * The Ogg output could not be opened, written or finalised.
+     *
+     * Named for the `MediaMuxer` that used to do this job; kept under that name
+     * because it is what every call site catches and the failure it reports —
+     * "the file did not happen" — has not changed.
+     */
     class MuxerFailed(message: String, cause: Throwable? = null) :
         OpusEncodeException(message, cause)
 
@@ -63,19 +71,30 @@ sealed class OpusEncodeException(message: String, cause: Throwable? = null) :
  * Opus encoder uses the general audio mode. At 24 kbps mono speech the
  * difference is not audible and does not affect transcription.
  *
- * ## Ogg framing and CSD
+ * ## Ogg framing: we write the container ourselves
  *
- * `MediaMuxer(MUXER_OUTPUT_OGG)` writes the `OpusHead`/`OpusTags` pages itself,
- * but only if the track format carries the codec-specific data: `csd-0` (the
- * 19-byte `OpusHead` identification header), `csd-1` (codec delay in
- * nanoseconds) and `csd-2` (seek pre-roll in nanoseconds). Those only exist
- * **after** `INFO_OUTPUT_FORMAT_CHANGED`, so `addTrack`/`start` happen there —
- * never with the format we configured. Should an encoder emit the headers as
- * `BUFFER_FLAG_CODEC_CONFIG` output buffers instead of putting them in the
- * format (or omit them entirely), we capture those buffers and, failing that,
- * synthesize the same `OpusHead` the desktop writes (pre-skip 312, input rate
- * 16 000, mapping family 0) plus the conventional 6.5 ms delay / 80 ms pre-roll.
- * Getting this wrong yields a file players reject, so it is handled defensively.
+ * `MediaCodec` produces Opus packets; [OggStreamWriter] wraps them in Ogg pages
+ * and this class writes those pages straight to a [FileOutputStream]. There is
+ * no `MediaMuxer` in the path any more, and that is the whole point of the
+ * design.
+ *
+ * A `MediaMuxer` file only becomes a file when `stop()` runs — the container is
+ * finalised at the end. Kill the app mid-meeting (low memory, battery pull, a
+ * swipe from Recents) and the `.ogg` on disk is unreadable no matter how many
+ * megabytes of audio physically made it there. Crash recovery has nothing to
+ * adopt. Ogg itself has no such property: every page is self-describing and
+ * independently CRC'd, so a file that stops mid-stream is a recording that ends
+ * early. Hand-writing the pages is what converts "the process died" from
+ * "lost the meeting" into "lost the last second of it".
+ *
+ * That also puts Android in line with the other two recorders, which both
+ * already write their own pages: iOS
+ * (`ios/ParleyKit/Sources/ParleyKit/OggOpusEncoder.swift:164-243`) and desktop
+ * (`src-tauri/src/replay_audio.rs:259`).
+ *
+ * The one thing the codec still has to tell us is its pre-skip, and it only
+ * does so once it has run — see [ensureOggWriter] for why the header pages are
+ * written lazily rather than in [create].
  *
  * ## Threading
  *
@@ -91,18 +110,26 @@ sealed class OpusEncodeException(message: String, cause: Throwable? = null) :
 class OggOpusEncoder private constructor(
     private val outputFile: File,
     private val codec: MediaCodec,
-    private val muxer: MediaMuxer,
+    private val rawOutput: FileOutputStream,
+    private val output: BufferedOutputStream,
 ) {
     private val lock = Any()
     private val bufferInfo = MediaCodec.BufferInfo()
     private val carry = ByteArray(FRAME_BYTES)
-    private val capturedCsd = ArrayList<ByteArray>(3)
 
     private var carryLen = 0
     private var framesQueued = 0L
     private var packetsWritten = 0L
-    private var trackIndex = -1
-    private var muxerStarted = false
+    private var pagesSinceSync = 0
+
+    /**
+     * The pre-skip the codec reported, in 48 kHz samples, or null if it has not
+     * said (yet, or at all). Read once, when the first page is about to go out.
+     */
+    private var reportedPreSkip: Int? = null
+    private var oggWriter: OggStreamWriter? = null
+    private var oversizedPacketLogged = false
+
     private var inputEos = false
     private var finished = false
     private var released = false
@@ -142,11 +169,12 @@ class OggOpusEncoder private constructor(
     }
 
     /**
-     * Zero-pad the last partial frame, flush the encoder, finalise the container
-     * and release everything. Returns the finished file. Call exactly once.
+     * Zero-pad the last partial frame, flush the encoder, close the stream with
+     * its end-of-stream page and release everything. Returns the finished file.
+     * Call exactly once.
      *
-     * A stream with no audio at all would produce a container the muxer refuses
-     * to close, so one frame of silence is written instead — the file is always
+     * A stream with no audio at all would be a file with headers and nothing
+     * else, so one frame of silence is written instead — the file is always
      * valid, just 20 ms long.
      *
      * On failure this throws and leaves the partial file **in place** as long as
@@ -170,29 +198,39 @@ class OggOpusEncoder private constructor(
                 }
                 signalEndOfStream()
                 drainOutput(endOfStream = true)
-                if (!muxerStarted || packetsWritten == 0L) {
+                val writer = oggWriter
+                if (writer == null || packetsWritten == 0L) {
                     throw OpusEncodeException.MuxerFailed("encoder produced no Opus packets")
                 }
                 try {
-                    muxer.stop()
-                } catch (e: Exception) {
+                    writer.finish()
+                    output.flush()
+                    // The one sync that is never skipped: after this returns the
+                    // recording survives anything short of the disk itself.
+                    runCatching { rawOutput.fd.sync() }
+                } catch (e: IOException) {
                     throw OpusEncodeException.MuxerFailed("could not finalise the Ogg file", e)
                 }
                 Log.i(
                     TAG,
                     "encoded ${outputFile.name}: $packetsWritten packets, " +
-                        "${durationMs}ms, ${outputFile.length()} bytes",
+                        "${writer.pagesWritten} pages, ${durationMs}ms, " +
+                        "${outputFile.length()} bytes",
                 )
                 return outputFile
             } catch (e: Throwable) {
                 release()
                 // Delete only a file with nothing in it. Ogg is a streaming
-                // container — the pages already written decode on their own —
-                // so a stream the muxer could not close is a recording that
-                // ends a little early, not a write-off. The likeliest reason to
-                // be here is the disk filling up mid-meeting, which is exactly
-                // when throwing the meeting away is the worst possible answer.
-                // Callers that want the partial file gone say so with [cancel].
+                // container and we now write the pages ourselves, so every page
+                // that reached the sink is complete, CRC'd and independently
+                // decodable: a stream we could not close cleanly really is a
+                // recording that ends a fraction early. (The old comment here
+                // claimed exactly that while `MediaMuxer`, which finalises the
+                // container in `stop()`, quietly made it false — an unclosed
+                // muxer file was a write-off.) The likeliest reason to be here is
+                // the disk filling up mid-meeting, which is exactly when throwing
+                // the meeting away is the worst possible answer. Callers that
+                // want the partial file gone say so with [cancel].
                 if (packetsWritten == 0L) runCatching { outputFile.delete() }
                 throw e
             } finally {
@@ -265,7 +303,7 @@ class OggOpusEncoder private constructor(
     }
 
     /**
-     * Move whatever the encoder has ready into the muxer. With
+     * Move whatever the encoder has ready into the Ogg stream. With
      * `endOfStream = false` this returns as soon as nothing is pending (zero
      * timeout — safe to call from a live capture path); with `true` it blocks
      * until the encoder reports end of stream.
@@ -283,7 +321,10 @@ class OggOpusEncoder private constructor(
 
                 index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                     idle = 0
-                    startMuxer(codec.outputFormat)
+                    // The first moment the codec can tell us its pre-skip. It
+                    // always precedes the first audio buffer, so the value is in
+                    // hand before the headers are written.
+                    captureFormatPreSkip(codec.outputFormat)
                 }
 
                 index == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> idle = 0
@@ -304,6 +345,11 @@ class OggOpusEncoder private constructor(
     /**
      * Route one ready output buffer — CSD blob or Opus packet — and release it.
      *
+     * A codec-config buffer is the `OpusHead` the codec wants us to put in the
+     * container, **not** audio: writing it as an audio page would put a header
+     * packet in the middle of the stream and make the first second of every
+     * recording garbage.
+     *
      * @return true when that buffer carried the end-of-stream flag, i.e. the
      *   drain loop is done.
      */
@@ -317,7 +363,7 @@ class OggOpusEncoder private constructor(
             buffer.position(bufferInfo.offset)
             buffer.limit(bufferInfo.offset + bufferInfo.size)
             if (isConfig) {
-                captureCsd(buffer)
+                captureCsdPreSkip(buffer)
             } else {
                 writePacket(buffer)
             }
@@ -328,56 +374,119 @@ class OggOpusEncoder private constructor(
     }
 
     /**
-     * Header blob, not audio: keep it in case the output format turns out not to
-     * carry the CSD itself.
+     * Some encoders put `csd-0` in the output format; others emit it as a
+     * `BUFFER_FLAG_CODEC_CONFIG` buffer and leave the format bare. Both paths
+     * land here, and both are only interesting for one field.
      */
-    private fun captureCsd(buffer: ByteBuffer) {
-        if (capturedCsd.size < 3) {
-            val copy = ByteArray(bufferInfo.size)
-            // Bulk read: `ByteBuffer.get(ByteArray)` reads as an indexed accessor in Kotlin.
-            buffer[copy]
-            capturedCsd.add(copy)
-        }
+    private fun captureFormatPreSkip(format: MediaFormat) {
+        if (reportedPreSkip != null) return
+        val csd = runCatching {
+            if (format.containsKey(KEY_CSD_0)) format.getByteBuffer(KEY_CSD_0) else null
+        }.getOrNull() ?: return
+        val copy = ByteArray(csd.remaining())
+        csd.duplicate()[copy]
+        reportedPreSkip = parsePreSkip(copy)
     }
 
-    private fun writePacket(buffer: ByteBuffer) {
-        if (!muxerStarted) startMuxer(codec.outputFormat)
-        muxer.writeSampleData(trackIndex, buffer, bufferInfo)
-        packetsWritten++
-    }
-
-    private fun startMuxer(format: MediaFormat) {
-        if (muxerStarted) return
-        ensureOpusCsd(format)
-        try {
-            trackIndex = muxer.addTrack(format)
-            muxer.start()
-        } catch (e: Exception) {
-            throw OpusEncodeException.MuxerFailed("could not start the Ogg muxer", e)
-        }
-        muxerStarted = true
+    private fun captureCsdPreSkip(buffer: ByteBuffer) {
+        if (reportedPreSkip != null) return
+        val copy = ByteArray(bufferInfo.size)
+        // Bulk read: `ByteBuffer.get(ByteArray)` reads as an indexed accessor in Kotlin.
+        buffer.duplicate()[copy]
+        reportedPreSkip = parsePreSkip(copy)
     }
 
     /**
-     * Guarantee the three Opus CSD blobs the OGG muxer requires, filling gaps
-     * from the codec-config buffers we captured and then from spec defaults.
+     * One output buffer becomes one Ogg packet.
+     *
+     * That equivalence is an assumption about the codec, and it is the one thing
+     * here that would fail quietly if it were wrong: granule positions count 960
+     * samples per packet, so an encoder that bundled several 20 ms frames into a
+     * single output buffer would produce a file whose clock runs slow — playback
+     * ending early, timestamps drifting against the transcript. AOSP's Opus
+     * encoder emits one packet per buffer (it is fed one frame at a time and has
+     * nowhere to bundle), and no vendor encoder has been seen to differ, but the
+     * failure is silent enough to be worth a tripwire: at 24 kbps a 20 ms packet
+     * is ~60 bytes, so anything an order of magnitude larger gets a log line.
      */
-    private fun ensureOpusCsd(format: MediaFormat) {
-        if (!format.containsKey(KEY_CSD_0)) {
-            val head = capturedCsd.getOrNull(0)?.takeIf { it.size >= OPUS_HEAD_BYTES }
-                ?: buildOpusHead()
-            format.setByteBuffer(KEY_CSD_0, ByteBuffer.wrap(head))
-            Log.w(TAG, "encoder did not report csd-0; supplied an OpusHead")
+    private fun writePacket(buffer: ByteBuffer) {
+        val packet = ByteArray(bufferInfo.size)
+        buffer[packet]
+        if (!oversizedPacketLogged && packet.size > SUSPICIOUS_PACKET_BYTES) {
+            oversizedPacketLogged = true
+            Log.w(
+                TAG,
+                "Opus packet of ${packet.size} bytes for a 20 ms frame; if this codec " +
+                    "bundles frames per buffer the granule positions will run slow",
+            )
         }
-        if (!format.containsKey(KEY_CSD_1)) {
-            val delay = capturedCsd.getOrNull(1)?.takeIf { it.size == 8 }
-                ?: longLe(DEFAULT_CODEC_DELAY_NS)
-            format.setByteBuffer(KEY_CSD_1, ByteBuffer.wrap(delay))
+        ensureOggWriter().append(packet)
+        packetsWritten++
+    }
+
+    /**
+     * The [OggStreamWriter], created — and its two header pages written — on the
+     * way to the first audio page rather than in [create].
+     *
+     * The ordering is the subtle part of this class. `OpusHead` carries the
+     * pre-skip, `OpusHead` must be the very first page in the file, and the
+     * pre-skip is the encoder's own priming delay, which `MediaCodec` only
+     * reveals once it has processed audio — as `csd-0` in the output format, or
+     * as a codec-config output buffer, whichever this device's encoder does.
+     * Waiting until a packet is actually in hand is what lets us use the real
+     * value: guess it and every timestamp in the file is off by the difference,
+     * which shows up as playback drifting against the transcript.
+     *
+     * By the time this runs, either [captureFormatPreSkip] or
+     * [captureCsdPreSkip] has had its chance, because both happen strictly
+     * before the first non-config output buffer. If neither produced anything we
+     * fall back to the 312 samples (6.5 ms) that desktop and iOS use.
+     */
+    private fun ensureOggWriter(): OggStreamWriter {
+        oggWriter?.let { return it }
+
+        if (reportedPreSkip == null) {
+            runCatching { codec.outputFormat }.getOrNull()?.let(::captureFormatPreSkip)
         }
-        if (!format.containsKey(KEY_CSD_2)) {
-            val preRoll = capturedCsd.getOrNull(2)?.takeIf { it.size == 8 }
-                ?: longLe(DEFAULT_SEEK_PRE_ROLL_NS)
-            format.setByteBuffer(KEY_CSD_2, ByteBuffer.wrap(preRoll))
+        val preSkip = reportedPreSkip ?: OggStreamWriter.OPUS_PRE_SKIP
+        if (reportedPreSkip == null) {
+            Log.w(TAG, "encoder reported no OpusHead; assuming pre-skip $preSkip")
+        }
+
+        val writer = OggStreamWriter(sink = ::writePage, preSkip = preSkip)
+        writer.writeHeaders()
+        oggWriter = writer
+        return writer
+    }
+
+    /**
+     * Put one finished page on disk.
+     *
+     * The `flush()` is not optional bookkeeping — it is the durability promise.
+     * Once the bytes are out of our buffer and into the OS page cache, killing
+     * the process cannot lose them: the kernel still owns them and still writes
+     * them out. Everything before that lives in a `BufferedOutputStream` that
+     * dies with the process.
+     */
+    private fun writePage(page: ByteArray) {
+        try {
+            output.write(page)
+            output.flush()
+        } catch (e: IOException) {
+            throw OpusEncodeException.MuxerFailed(
+                "could not write ${outputFile.absolutePath}", e,
+            )
+        }
+        if (++pagesSinceSync >= PAGES_PER_FSYNC) {
+            pagesSinceSync = 0
+            // A `flush()` survives the app dying; only an `fsync()` survives the
+            // *machine* dying (kernel panic, battery pull). Doing it every page
+            // would mean a disk barrier every second for the whole meeting; not
+            // doing it at all would risk the page cache going down with the
+            // kernel. Every ~30 pages is ~30 s of audio at ~3 KB a page: a
+            // rounding error of I/O, and a bounded amount to lose. A failing
+            // fsync is never a reason to fail a recording that is otherwise fine.
+            runCatching { rawOutput.fd.sync() }
         }
     }
 
@@ -386,7 +495,7 @@ class OggOpusEncoder private constructor(
         released = true
         runCatching { codec.stop() }
         runCatching { codec.release() }
-        runCatching { muxer.release() }
+        runCatching { output.close() }
     }
 
     companion object {
@@ -409,19 +518,28 @@ class OggOpusEncoder private constructor(
         private const val MAX_ATTEMPTS = 1_000
 
         private const val KEY_CSD_0 = "csd-0"
-        private const val KEY_CSD_1 = "csd-1"
-        private const val KEY_CSD_2 = "csd-2"
-        private const val OPUS_HEAD_BYTES = 19
+
+        /** Offset of the pre-skip field inside a 19-byte `OpusHead`. */
+        private const val PRE_SKIP_OFFSET = 10
 
         /**
-         * Opus look-ahead: 312 samples at the 48 kHz Opus clock = 6.5 ms. Same
-         * value the desktop writes into its own `OpusHead`.
+         * `fsync()` cadence, in pages. See the comment at the call site in
+         * [writePage] for the trade-off this number picks.
          */
-        private const val OPUS_PRE_SKIP = 312
-        private const val DEFAULT_CODEC_DELAY_NS = 6_500_000L
+        private const val PAGES_PER_FSYNC = 30
 
-        /** Conventional Opus seek pre-roll: 80 ms. */
-        private const val DEFAULT_SEEK_PRE_ROLL_NS = 80_000_000L
+        /**
+         * A 20 ms packet this large means the codec is not doing what we think.
+         * See [writePacket]; ~60 bytes is normal at 24 kbps.
+         */
+        private const val SUSPICIOUS_PACKET_BYTES = 600
+
+        /**
+         * Output buffer size. Pages are flushed as they are produced, so this
+         * only has to swallow one page (~3 KB at 24 kbps) without splitting the
+         * write; 8 KB leaves room for a page that runs long.
+         */
+        private const val OUTPUT_BUFFER_BYTES = 8 * 1024
 
         /**
          * Open an encoder writing Ogg/Opus to [outputFile] (overwritten if it
@@ -468,17 +586,19 @@ class OggOpusEncoder private constructor(
                 throw OpusEncodeException.EncoderUnavailable(e)
             }
 
-            val muxer = try {
+            val stream = try {
                 outputFile.parentFile?.mkdirs()
                 if (outputFile.exists()) outputFile.deleteQuietly()
-                MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_OGG)
+                FileOutputStream(outputFile)
             } catch (e: Exception) {
                 runCatching { codec.stop() }
                 runCatching { codec.release() }
                 throw OpusEncodeException.MuxerFailed("cannot write ${outputFile.absolutePath}", e)
             }
 
-            return OggOpusEncoder(outputFile, codec, muxer)
+            return OggOpusEncoder(
+                outputFile, codec, stream, BufferedOutputStream(stream, OUTPUT_BUFFER_BYTES),
+            )
         }
 
         /**
@@ -502,30 +622,21 @@ class OggOpusEncoder private constructor(
         }
 
         /**
-         * The 19-byte `OpusHead` identification header, byte-for-byte what
-         * `replay_audio.rs` builds: version 1, mono, pre-skip 312, input rate
-         * 16 000, 0 dB gain, channel mapping family 0.
+         * Read the pre-skip out of a codec-supplied `OpusHead`, or null if this
+         * blob is not one.
+         *
+         * The check is worth having: `csd-0` is whatever the vendor decided to
+         * put there, and a short or mislabelled blob would otherwise yield a
+         * nonsense pre-skip that misaligns playback for the entire recording.
+         * Rejecting it costs us the real priming figure and falls back to 312 —
+         * a much smaller error than trusting garbage.
          */
-        internal fun buildOpusHead(): ByteArray =
-            ByteBuffer.allocate(OPUS_HEAD_BYTES).order(ByteOrder.LITTLE_ENDIAN).apply {
-                put('O'.code.toByte())
-                put('p'.code.toByte())
-                put('u'.code.toByte())
-                put('s'.code.toByte())
-                put('H'.code.toByte())
-                put('e'.code.toByte())
-                put('a'.code.toByte())
-                put('d'.code.toByte())
-                put(1)                                  // version
-                put(CHANNELS.toByte())                  // channel count
-                putShort(OPUS_PRE_SKIP.toShort())       // pre-skip
-                putInt(SAMPLE_RATE)                     // original input rate
-                putShort(0)                             // output gain, Q7.8
-                put(0)                                  // channel mapping family
-            }.array()
-
-        /** A little-endian int64, the encoding csd-1 / csd-2 use. */
-        private fun longLe(value: Long): ByteArray =
-            ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(value).array()
+        private fun parsePreSkip(head: ByteArray): Int? {
+            if (head.size < OggStreamWriter.OPUS_HEAD_BYTES) return null
+            if (String(head, 0, 8, Charsets.US_ASCII) != "OpusHead") return null
+            val preSkip = ByteBuffer.wrap(head).order(ByteOrder.LITTLE_ENDIAN)
+                .getShort(PRE_SKIP_OFFSET).toInt() and 0xFFFF
+            return preSkip
+        }
     }
 }

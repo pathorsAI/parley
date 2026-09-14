@@ -24,8 +24,10 @@ android/
   (MediaExtractor/MediaCodec + anti-aliased resample to 16 kHz mono) → streamed
   through the same STT relay faster than realtime → segments. Metering is
   byte-based server-side, so quota accounting is identical to live capture.
-- **Storage/upload**: finished recordings encode to Ogg/Opus
-  (MediaCodec + MediaMuxer, hence minSdk 29) and go through a durable
+- **Storage/upload**: finished recordings encode to Ogg/Opus (MediaCodec for
+  Opus, hence minSdk 29; the Ogg container is written page by page by
+  `OggStreamWriter`, so a recording the process dies in the middle of is still
+  playable up to its last flushed page) and go through a durable
   pending-upload queue — audio first (`PUT /recordings/:id/audio`), then
   summary+meta (`POST /recordings/:id`), matching iOS `MeetingUploader`.
 
