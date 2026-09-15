@@ -10,8 +10,15 @@ import UIKit
 /// The live screen's `WaveformView` scrolls, because during a meeting the
 /// question is "did it hear the last thing I said". Afterwards the question is
 /// the opposite one — "where in this hour was the bit about the price" — and only
-/// a view of the *whole* file can answer it. So this is static: one bar per 3pt
+/// a view of the *whole* file can answer it. So this is static: one bar per 5pt
 /// of width, the entire recording, played portion in signal blue.
+///
+/// The bar geometry — 3pt wide, 2pt apart, capsule ends, symmetric about a
+/// centreline — is shared with `WaveformView` on purpose. A recording and its
+/// playback are the same object, and drawing them in two visual languages makes
+/// them look like two features. The strip is also half the height it was, for
+/// the same reason the live one is: a player pinned under the navigation bar
+/// should hand the page back to the transcript as fast as it can.
 ///
 /// ## Three states, one height
 ///
@@ -30,7 +37,11 @@ struct PlaybackBar: View {
     let orgId: String?
 
     enum Layout {
-        static let waveformHeight: CGFloat = 72
+        /// Half of the 72pt it started at. Still the whole scrub target, and
+        /// comfortably above the 32pt a finger needs — the drag's precision
+        /// tiers come from *vertical* travel outside the strip, not from room
+        /// inside it, so a shorter strip costs the gesture nothing.
+        static let waveformHeight: CGFloat = 36
         static let controlsHeight: CGFloat = 44
         static let sidePadding: CGFloat = 20
         /// What every state occupies. See the type doc.
@@ -42,7 +53,7 @@ struct PlaybackBar: View {
             content
         }
         // Full height only once there is a waveform to show. Before the audio
-        // is on the phone the block is one control row: a 116pt band holding a
+        // is on the phone the block is one control row: an 80pt band holding a
         // single line of blue text reads as a hole in the page, not a player.
         .frame(height: hasWaveform ? Layout.blockHeight : Layout.controlsHeight)
         .padding(.horizontal, Layout.sidePadding)
@@ -189,12 +200,17 @@ private struct ScrubbableWaveform: View {
         (90, 1.0 / 16, "Finer"),
     ]
 
-    private static let barWidth: CGFloat = 2
-    private static let gap: CGFloat = 1
-    /// Silence is still a mark — the same reason `WaveformView` has a floor.
-    /// 2pt against that view's 4pt because this field is showing a whole hour at
-    /// once, so a quiet stretch should read as a thin line rather than a band.
-    private static let minBar: CGFloat = 2
+    /// The same geometry as `WaveformView` — see the type doc on why the two
+    /// waveforms are drawn alike.
+    private static let barWidth: CGFloat = 3
+    private static let gap: CGFloat = 2
+    /// Silence is still a mark — the same reason `WaveformView` has a floor. At
+    /// one bar width it draws as a dot, so a quiet stretch of an hour-long file
+    /// reads as a dotted centreline rather than a gap in the recording.
+    private static let minBar: CGFloat = 3
+    /// The playhead's line. Thin, because it is a position rather than a
+    /// marker, but thick enough to be dragged towards.
+    private static let playheadWidth: CGFloat = 2
 
     @State private var scrub: Scrub?
 
@@ -253,6 +269,7 @@ private struct ScrubbableWaveform: View {
             let x = CGFloat(index) * step
             let scaled = CGFloat(min(1, max(0, value / loudest)))
             let height = Self.minBar + (size.height - Self.minBar) * scaled
+            // Symmetric about the centreline, the same as the live waveform.
             let rect = CGRect(
                 x: x, y: midY - height / 2, width: Self.barWidth, height: height)
             let rounded = CGSize(width: Self.barWidth / 2, height: Self.barWidth / 2)
@@ -263,19 +280,27 @@ private struct ScrubbableWaveform: View {
             }
         }
         // Blue is what has been heard — the part of this recording that is
-        // happening, or has happened, now.
-        context.fill(played, with: .color(Theme.primary))
-        context.fill(unplayed, with: .color(Color(.tertiaryLabel)))
+        // happening, or has happened, now. Both sides are stated softly: the
+        // waveform is a map of the file, not the loudest thing on the screen.
+        context.fill(played, with: .color(Theme.primary.opacity(0.9)))
+        context.fill(unplayed, with: .color(Color(.tertiaryLabel).opacity(0.5)))
 
         // The playhead, in ink. Not blue: the blue is already saying which side
-        // of it has played, and a blue line on a blue field would vanish.
+        // of it has played, and a blue line on a blue field would vanish. A
+        // rounded 2pt line rather than a full-bleed rule — it is a control, so
+        // it has to be visible, but it belongs to the same soft geometry as the
+        // bars it sits among.
         if controller.duration > 0 {
-            context.fill(
-                Path(
-                    CGRect(
-                        x: min(size.width - 1, max(0, playheadX - 0.5)), y: 0,
-                        width: 1, height: size.height)),
-                with: .color(Color(.label)))
+            var playhead = Path()
+            playhead.addRoundedRect(
+                in: CGRect(
+                    x: min(
+                        size.width - Self.playheadWidth,
+                        max(0, playheadX - Self.playheadWidth / 2)),
+                    y: 0, width: Self.playheadWidth, height: size.height),
+                cornerSize: CGSize(
+                    width: Self.playheadWidth / 2, height: Self.playheadWidth / 2))
+            context.fill(playhead, with: .color(Color(.label)))
         }
     }
 

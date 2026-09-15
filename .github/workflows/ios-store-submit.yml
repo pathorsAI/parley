@@ -1,0 +1,137 @@
+name: iOS store submission
+
+# Pushes this repository's App Store listing for one version to App Store
+# Connect and, unless it is a dry run, submits that version to App Review.
+#
+# Separate from `ios-release.yml` on purpose. That workflow's job ends where
+# TestFlight begins: it archives, exports, and uploads a build. This one starts
+# from a build that is already there and does the part that used to be a human
+# pasting text into a web form at midnight — What's New in both locales, the
+# 6.9-inch screenshots, the build attachment, export compliance, and the
+# submission itself.
+#
+# It is `workflow_dispatch`-only, and not because submitting should be hard: the
+# App Store Connect API key exists solely as a GitHub secret, so there is no
+# machine outside CI that can run `asc_submit.py` at all. A tag trigger would
+# also be wrong — a version goes to review when a human has read the rendered
+# product page, which is not something a `git push` knows.
+#
+#   gh workflow run "iOS store submission" -f version=1.12 -f build=23 \
+#     -f dry_run=true
+#
+# Dry run is the default, and the only thing it skips is step 7: the review
+# submission. Everything else — the text, the screenshots, the attached build —
+# is written to Connect either way, so a dry run leaves the version sitting in
+# Connect exactly as it would be submitted, for somebody to look at first.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Marketing version to submit, for example 1.12"
+        required: true
+        type: string
+      build:
+        description: "CFBundleVersion of the TestFlight build to attach, for example 23"
+        required: true
+        type: string
+      dry_run:
+        description: "Update the listing but do not submit to App Review"
+        required: false
+        default: true
+        type: boolean
+      release_type:
+        description: "Release automatically after approval, or hold it"
+        required: false
+        default: AFTER_APPROVAL
+        type: choice
+        options:
+          - AFTER_APPROVAL
+          - MANUAL
+
+# Nothing is written to the repository; the deliverable goes to App Store
+# Connect.
+permissions:
+  contents: read
+
+# Two runs against the same app would race on the screenshot sets — one deletes
+# the set the other is uploading into — and on the single review submission
+# Connect allows to be open at a time.
+concurrency:
+  group: ios-store-submit
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    name: Update the listing and submit for review
+    runs-on: ubuntu-latest
+    # Generous because the script waits: up to 30 minutes for a build that is
+    # still processing, then a poll per screenshot until Apple reports it
+    # COMPLETE.
+    timeout-minutes: 90
+
+    steps:
+      - name: What this run will do
+        env:
+          VERSION: ${{ inputs.version }}
+          BUILD: ${{ inputs.build }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          echo "version      : $VERSION"
+          echo "build        : $BUILD"
+          echo "release type : $RELEASE_TYPE"
+          echo "dry run      : $DRY_RUN"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::notice::Dry run: the listing and the build attachment will be written to App Store Connect, but $VERSION will NOT be submitted to App Review."
+          else
+            echo "::warning::Not a dry run: this run will submit $VERSION to App Review."
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # A venv rather than a bare `pip install`: the runner's system python3 is
+      # marked externally managed, and that refusal looks nothing like what it
+      # is. Same reasoning as the signing step in ios-release.yml.
+      - name: Install Python dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ascvenv"
+          "$RUNNER_TEMP/ascvenv/bin/pip" install --quiet pyjwt cryptography requests
+
+      # Before the real thing, and in this workflow rather than in ci.yml: ci.yml
+      # is the desktop app's pre-merge gate and ignores ios/**, so a test living
+      # there would run on every frontend PR and never on the one that matters.
+      # These tests need no network and no secrets — they cover the parser, the
+      # screenshot ordering, and the guard that refuses to edit a version Apple
+      # has taken out of our hands.
+      - name: Unit tests
+        run: |
+          "$RUNNER_TEMP/ascvenv/bin/python" -m unittest discover \
+            -s .github/scripts -p 'test_*.py' -v
+
+      # The same App Store Connect API key ios-release.yml authenticates the
+      # TestFlight upload with. Nothing here needs a signing identity: no binary
+      # is built, only the listing around one that already exists.
+      - name: Submit
+        env:
+          ASC_KEY_ID: ${{ secrets.APPLE_API_KEY }}
+          ASC_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER }}
+          ASC_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+          VERSION: ${{ inputs.version }}
+          BUILD: ${{ inputs.build }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          # Inputs are passed through the environment and quoted here rather than
+          # interpolated into the script line, so a version string can never
+          # become part of the command.
+          flags=()
+          if [ "$DRY_RUN" = "true" ]; then
+            flags+=(--dry-run)
+          fi
+          "$RUNNER_TEMP/ascvenv/bin/python" .github/scripts/asc_submit.py \
+            --version "$VERSION" \
+            --build "$BUILD" \
+            --release-type "$RELEASE_TYPE" \
+            "${flags[@]}"

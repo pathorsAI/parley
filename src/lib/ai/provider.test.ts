@@ -58,3 +58,49 @@ describe("getModel credential handling", () => {
     expect(anthropicMock.mock.calls[0][0]).toMatchObject({ apiKey: "sk-ant-clean" });
   });
 });
+
+/**
+ * The "custom" provider is the only one whose endpoint the registry does not
+ * know: it comes from Settings. Two things must hold — the URL is used as typed
+ * (minus trailing slashes; no `/v1` invented for the user), and a blank one is
+ * refused loudly rather than turned into a request to a relative path inside
+ * the webview, whose HTML 404 body fails as "Unexpected token '<'".
+ */
+describe("getModel with a user-supplied base URL", () => {
+  beforeEach(() => oaiMock.mockClear());
+
+  function customSettings(customBaseUrl: string, customApiKey = ""): Settings {
+    return {
+      llmProviders: { realtime: "custom", deep: "custom" },
+      models: { custom: { realtime: "my-model", deep: "my-model" } },
+      reasoningEffort: { realtime: "low", deep: "medium" },
+      customBaseUrl,
+      customApiKey,
+    } as unknown as Settings;
+  }
+
+  it("uses the typed URL verbatim, minus trailing slashes", () => {
+    getModel(customSettings("  http://localhost:8000/v1//  "), "realtime");
+    expect(oaiMock.mock.calls[0][0]).toMatchObject({ baseURL: "http://localhost:8000/v1" });
+  });
+
+  it("sends a filler credential when the server takes no key", () => {
+    getModel(customSettings("http://localhost:8000/v1"), "deep");
+    expect(oaiMock.mock.calls[0][0]).toMatchObject({ apiKey: "no-key" });
+  });
+
+  it("sends the key when there is one", () => {
+    getModel(customSettings("http://localhost:8000/v1", " sk-mine\n"), "deep");
+    expect(oaiMock.mock.calls[0][0]).toMatchObject({ apiKey: "sk-mine" });
+  });
+
+  it("never sends json_schema to an unknown gateway", () => {
+    getModel(customSettings("http://localhost:8000/v1"), "deep");
+    expect(oaiMock.mock.calls[0][0]).toMatchObject({ supportsStructuredOutputs: false });
+  });
+
+  it("refuses to build a model when the base URL is blank", () => {
+    expect(() => getModel(customSettings("   "), "deep")).toThrow(/base URL/i);
+    expect(oaiMock).not.toHaveBeenCalled();
+  });
+});

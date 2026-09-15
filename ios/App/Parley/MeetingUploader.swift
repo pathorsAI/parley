@@ -308,13 +308,7 @@ final class MeetingUploader {
             "source": pending.source,
             "createdAt": pending.startedAt.timeIntervalSince1970 * 1_000,
             "durationMs": pending.durationMs,
-            "segments": finals.map { segment in
-                [
-                    "id": segment.id, "source": segment.source, "speaker": segment.speaker,
-                    "text": segment.text, "isFinal": true,
-                    "startMs": Double(segment.startMs), "endMs": Double(segment.endMs),
-                ] as [String: Any]
-            },
+            "segments": RecordingMeta.encode(finals),
             "speakerNames": [String: String](),
             "findings": [Any](),
             "actionItems": [Any](),
@@ -334,15 +328,13 @@ final class MeetingUploader {
         finals: [TranscriptSegment],
         folderId: String?
     ) -> CloudRecordingSummary {
-        let speakers = Set(finals.map { "\($0.source)-\($0.speaker)" }).count
-        let snippet = finals.prefix(3).map(\.text).joined(separator: " ").prefix(120)
-        return CloudRecordingSummary(
+        CloudRecordingSummary(
             id: pending.id, title: pending.displayTitle, source: pending.source,
             createdAt: pending.startedAt.timeIntervalSince1970 * 1_000,
             durationMs: pending.durationMs,
-            speakerCount: max(speakers, finals.isEmpty ? 0 : 1),
+            speakerCount: CloudRecordingSummary.speakerCount(of: finals),
             findingsCount: 0, actionItemsCount: 0,
-            hasAudio: true, snippet: String(snippet),
+            hasAudio: true, snippet: CloudRecordingSummary.snippet(of: finals),
             folderId: folderId, updatedAt: nil)
     }
 
@@ -482,27 +474,62 @@ final class MeetingUploader {
         /// The personal folder the recording landed in, so the re-push files it
         /// where the first push did rather than dropping it into the root.
         var folderId: String?
-        /// Re-runs a person asked for by hand. Only a transcription that
-        /// actually completed increments this: a run that dies on a flat
-        /// network has cost nothing and must not spend the budget.
+        /// Which hand-triggered attempt this is: 0 for the automatic backfill
+        /// that queued itself, 1 for the first re-run somebody asked for.
+        ///
+        /// The *budget* those attempts come out of is `ManualRetryBudget`, not
+        /// this number — a finished backfill deletes its manifest, so a count
+        /// living here could never be read back after a successful run. What
+        /// this is for is telling the two kinds of run apart when one finishes,
+        /// because only a manual one is charged. Only a transcription that
+        /// actually completed spends the budget: a run that dies on a flat
+        /// network has cost nothing and stays queued for free.
         var manualRetries: Int = 0
+        /// The recording's meta exactly as it already exists, JSON-encoded, so
+        /// the re-push can put the new transcript *into* it instead of building
+        /// a fresh entry over the top of somebody's speaker names and analysis.
+        /// See `RecordingMeta.replaceTranscript`.
+        ///
+        /// Optional because the automatic path has nothing to preserve — the
+        /// recording was created seconds ago by the upload that queued this —
+        /// and because a manifest written by an older build does not have the
+        /// key at all.
+        var existingMeta: Data?
+        /// The summary the library is already showing, for the same reason:
+        /// `findingsCount` and the title belong to the recording, not to the
+        /// transcript being replaced. See `replacingTranscript`.
+        var existingSummary: CloudRecordingSummary?
 
-        enum CodingKeys: String, CodingKey { case pending, folderId, manualRetries }
+        enum CodingKeys: String, CodingKey {
+            case pending, folderId, manualRetries, existingMeta, existingSummary
+        }
 
-        init(pending: PendingUpload, folderId: String?, manualRetries: Int = 0) {
+        init(
+            pending: PendingUpload,
+            folderId: String?,
+            manualRetries: Int = 0,
+            existingMeta: Data? = nil,
+            existingSummary: CloudRecordingSummary? = nil
+        ) {
             self.pending = pending
             self.folderId = folderId
             self.manualRetries = manualRetries
+            self.existingMeta = existingMeta
+            self.existingSummary = existingSummary
         }
 
         /// Written to disk and read back by a later build, same as
-        /// `PendingUpload` — a missing count reads as "none spent yet" rather
-        /// than dropping the entry.
+        /// `PendingUpload` — a missing count reads as "none spent yet", and
+        /// missing carry-over state as "there was nothing to carry over",
+        /// rather than dropping the entry.
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             pending = try c.decode(PendingUpload.self, forKey: .pending)
             folderId = try c.decodeIfPresent(String.self, forKey: .folderId)
             manualRetries = try c.decodeIfPresent(Int.self, forKey: .manualRetries) ?? 0
+            existingMeta = try c.decodeIfPresent(Data.self, forKey: .existingMeta)
+            existingSummary = try c.decodeIfPresent(
+                CloudRecordingSummary.self, forKey: .existingSummary)
         }
     }
 
@@ -612,6 +639,13 @@ final class MeetingUploader {
         let transcript = try await BatchTranscriber(service: cloud)
             .transcribe(audio: audio, diarization: true, languageHints: [])
 
+        // The transcription has completed and been billed, so a hand-triggered
+        // run is charged *here* — after the await that could have thrown, and
+        // before the empty-transcript exit below. Everything above this line
+        // can fail for free; nothing below it can fail in a way that gives the
+        // hour back.
+        if request.manualRetries > 0 { spendManualRetry(for: id) }
+
         // A job that came back with nothing is not an improvement on a thin
         // transcript — keep what the meeting already had rather than blanking
         // it, and stop retrying audio that has now been paid for once.
@@ -620,21 +654,190 @@ final class MeetingUploader {
             return
         }
 
-        let repaired = PendingUpload(
-            id: id,
-            startedAt: request.pending.startedAt,
-            durationMs: max(request.pending.durationMs, Double(transcript.durationMs)),
-            segments: transcript.segments,
-            defaultSave: request.pending.defaultSave,
-            source: request.pending.source,
-            title: request.pending.title)
-        let meta = buildMeta(pending: repaired, finals: repaired.segments, folderId: request.folderId)
-        let summary = buildSummary(
-            pending: repaired, finals: repaired.segments, folderId: request.folderId)
+        let durationMs = max(request.pending.durationMs, Double(transcript.durationMs))
+        let meta: RecordingMeta
+        let summary: CloudRecordingSummary
+        if var existing = request.existingMeta.flatMap(decodeMeta),
+            let existingSummary = request.existingSummary
+        {
+            // A re-run of a recording that already has a life of its own: edit
+            // the transcript inside what is there rather than replacing it.
+            // `request.folderId` is not applied — the captured meta already
+            // carries the recording's own folder, and writing the request's
+            // copy over it would turn a re-transcription into a move.
+            existing.replaceTranscript(segments: transcript.segments, durationMs: durationMs)
+            meta = existing
+            summary = existingSummary.replacingTranscript(
+                segments: transcript.segments, durationMs: durationMs)
+        } else {
+            // The automatic path: this recording was created by the upload that
+            // queued the backfill, so there is nothing on it to preserve.
+            let repaired = PendingUpload(
+                id: id,
+                startedAt: request.pending.startedAt,
+                durationMs: durationMs,
+                segments: transcript.segments,
+                defaultSave: request.pending.defaultSave,
+                source: request.pending.source,
+                title: request.pending.title)
+            meta = buildMeta(
+                pending: repaired, finals: repaired.segments, folderId: request.folderId)
+            summary = buildSummary(
+                pending: repaired, finals: repaired.segments, folderId: request.folderId)
+        }
 
         // Audio is already in the cloud and unchanged, so this is a metadata
         // push only — the recording keeps its id, its folder and its sharing.
         try await cloud.pushRecording(id: id, summary: summary, meta: meta)
         finishBackfill(id: id)
+    }
+
+    private static func decodeMeta(_ data: Data) -> RecordingMeta? {
+        guard let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return RecordingMeta(raw: raw)
+    }
+
+    // MARK: re-transcribing on request
+
+    enum ManualBackfillError: LocalizedError {
+        /// The cap in `TranscriptCoverage.BackfillPolicy.maxManualRetries` is
+        /// spent for this recording. The menu item is already disabled in that
+        /// case; this is the backstop for a screen that was open while the last
+        /// run finished elsewhere.
+        case retryBudgetSpent
+
+        var errorDescription: String? {
+            switch self {
+            case .retryBudgetSpent:
+                return String(
+                    localized: "This recording has been re-transcribed as many times as allowed.")
+            }
+        }
+    }
+
+    /// Queue a re-transcription somebody asked for, on a recording that is
+    /// already in the cloud.
+    ///
+    /// The same queue the automatic backfill uses, and deliberately so: the
+    /// work is identical — transcribe the whole file, push the metadata, leave
+    /// the audio in the cloud alone — and a second mechanism would be a second
+    /// set of retry, persistence and cap bugs. What is different is only how it
+    /// got there, which is what `manualRetries` records.
+    ///
+    /// `audio` is **copied**, not moved, unlike `enqueueBackfill`. The file it
+    /// points at is the one in `LocalAudioStore` that the player on screen is
+    /// reading from — moving it out would stop playback mid-sentence and make
+    /// the recording look un-downloaded while its own re-transcription ran.
+    ///
+    /// Personal scope only. The caller enforces that (the entry point is hidden
+    /// in org scope) because only the personal endpoints can be re-pushed from
+    /// the phone at all.
+    static func enqueueManualBackfill(
+        summary: CloudRecordingSummary, meta: RecordingMeta, audioAt audio: URL
+    ) throws {
+        let id = summary.id
+        let budget = manualRetryBudget()
+        guard budget.allowsRetry(for: id) else { throw ManualBackfillError.retryBudgetSpent }
+
+        let folderId = meta.folderId ?? summary.folderId
+        let createdAt = meta.createdAt > 0 ? meta.createdAt : summary.createdAt
+        let pending = PendingUpload(
+            id: id,
+            startedAt: Date(timeIntervalSince1970: createdAt / 1_000),
+            durationMs: max(meta.durationMs, summary.durationMs),
+            // What the recording reads as today. It is only a fallback — the
+            // new transcript replaces it — but a request that carried no
+            // transcript at all would push a blank one if the job came back
+            // empty and the fallback path were ever taken.
+            segments: meta.segments.filter { $0.isFinal && !$0.id.hasSuffix("-tail") },
+            defaultSave: SaveDestination(scope: "personal", orgId: nil, folderId: folderId),
+            source: summary.source.isEmpty ? "live" : summary.source,
+            title: meta.title.isEmpty ? (summary.title.isEmpty ? nil : summary.title) : meta.title)
+
+        // Before the audio is touched, and with a hard `try` rather than a
+        // `try?`: a request that reached the queue without the meta it is
+        // preserving would fall through to the automatic path and rebuild the
+        // entry from the new transcript alone — wiping the analysis this whole
+        // detour exists to protect. Failing to queue is the better outcome.
+        let existingMeta = try JSONSerialization.data(withJSONObject: meta.raw)
+
+        let destination = try backfillAudioURL(for: id)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
+        }
+        try FileManager.default.copyItem(at: audio, to: destination)
+
+        // Over any request already sitting in the queue for this recording —
+        // an automatic backfill, or one of these whose run never landed. There
+        // is one audio file and one manifest per id, so this replaces it rather
+        // than racing it.
+        let queued = backfillRequest(id: id)?.manualRetries ?? 0
+        let request = BackfillRequest(
+            pending: pending,
+            folderId: folderId,
+            manualRetries: max(queued + 1, budget.nextAttempt(for: id)),
+            existingMeta: existingMeta,
+            existingSummary: summary)
+        do {
+            try JSONEncoder().encode(request).write(
+                to: backfillManifestURL(for: id), options: .atomic)
+        } catch {
+            // An Ogg with no manifest beside it is invisible to `loadBackfills`
+            // and would sit in Application Support for the life of the install.
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
+    }
+
+    /// Whether this recording has a re-transcription waiting or in flight, so
+    /// the detail screen can say so and not offer a second one.
+    static func hasQueuedBackfill(for id: String) -> Bool {
+        guard let url = try? backfillManifestURL(for: id) else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+
+    static func manualRetriesRemaining(for id: String) -> Int {
+        manualRetryBudget().remaining(for: id)
+    }
+
+    private static func backfillRequest(id: String) -> BackfillRequest? {
+        guard let url = try? backfillManifestURL(for: id),
+            let data = try? Data(contentsOf: url)
+        else { return nil }
+        return try? JSONDecoder().decode(BackfillRequest.self, from: data)
+    }
+
+    /// Beside the two queues rather than in `UserDefaults`: this is a record of
+    /// money spent, and it belongs in the same container that survives the same
+    /// events the queued audio does.
+    private static func manualRetryLedgerURL() throws -> URL {
+        let base = try FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask,
+            appropriateFor: nil, create: true)
+        let directory = base.appendingPathComponent("Parley", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("ManualRetries.json")
+    }
+
+    /// An unreadable or absent ledger reads as an empty one. The failure mode
+    /// that matters is the other direction: a ledger that could not be read
+    /// must not lock somebody out of a recording they have never re-run.
+    static func manualRetryBudget() -> ManualRetryBudget {
+        guard let url = try? manualRetryLedgerURL(),
+            let data = try? Data(contentsOf: url),
+            let budget = try? JSONDecoder().decode(ManualRetryBudget.self, from: data)
+        else { return ManualRetryBudget() }
+        return budget
+    }
+
+    private static func spendManualRetry(for id: String) {
+        var budget = manualRetryBudget()
+        budget.spend(for: id)
+        guard let url = try? manualRetryLedgerURL(),
+            let data = try? JSONEncoder().encode(budget)
+        else { return }
+        try? data.write(to: url, options: .atomic)
     }
 }

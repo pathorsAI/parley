@@ -276,6 +276,76 @@ Two things in that checklist are easy to skip and expensive to skip:
   [`AppStore/capture-screenshots.sh`](AppStore/capture-screenshots.sh) whenever
   the UI moves; it fails rather than shipping a blank or mis-sized frame.
 
+## Submitting to the App Store from CI
+
+The part of the submission that lives in this repository is pushed by a workflow
+rather than retyped. [`ios-store-submit.yml`](../.github/workflows/ios-store-submit.yml)
+runs [`.github/scripts/asc_submit.py`](../.github/scripts/asc_submit.py) against
+the App Store Connect API and does six things, then optionally a seventh:
+
+| Step | What it does |
+| --- | --- |
+| 1 | resolves the app by bundle id |
+| 2 | finds or creates the App Store version, refusing one Apple has taken out of our hands |
+| 3 | attaches the TestFlight build, waiting up to 30 minutes if it is still processing |
+| 4 | sets **What's New** in both locales from `AppStore/metadata/*.md` |
+| 5 | replaces the **6.9-inch screenshot set** in both locales from `AppStore/screenshots/` |
+| 6 | answers **export compliance** on the build — `usesNonExemptEncryption = false`, because the app speaks only HTTPS |
+| 7 | creates a review submission and submits it — **skipped in a dry run** |
+
+```bash
+# dry run: writes 1–6 to Connect, submits nothing
+gh workflow run "iOS store submission" -f version=1.12 -f build=23 -f dry_run=true
+
+# the real thing, once the version reads right in Connect
+gh workflow run "iOS store submission" -f version=1.12 -f build=23 -f dry_run=false
+```
+
+`dry_run` defaults to `true`, and step 7 is the only thing it skips. That is the
+point: a dry run leaves the version in Connect in exactly the state it would be
+submitted in, so the product page can be read before anybody commits to it.
+Steps 1–6 are idempotent — re-running re-attaches the same build, overwrites the
+same text, and replaces the screenshot set with an identical one — and step 7 is
+the one door that does not open twice.
+
+`release_type` is `AFTER_APPROVAL` by default, meaning Apple releases the version
+as soon as it passes review. Pass `MANUAL` to hold it.
+
+It authenticates with the same `APPLE_API_KEY` / `APPLE_API_ISSUER` /
+`APPLE_API_KEY_CONTENT` secrets as the release workflow, with the same ES256 JWT
+as `asc_signing.py`. Those secrets are the whole reason this is a workflow and
+not a script you can run: **there is no local path**, because the key exists
+nowhere outside GitHub. It is also why the unit tests
+([`test_asc_submit.py`](../.github/scripts/test_asc_submit.py)) run in this
+workflow rather than in `ci.yml`, which ignores `ios/**` entirely — they need no
+network and no secrets, and they cover the three failures a dry run cannot
+reveal: the What's New parser reading the wrong version's section, screenshots
+uploading in an order nobody chose, and a version already in review being
+patched instead of refused.
+
+**What it will not do, and what that leaves you.** The script sets `whatsNew` and
+nothing else on the localization unless it is given `--sync-metadata`, which the
+workflow deliberately does not pass. Description, keywords, and promotional text
+are the copy people argue about; they are reviewed in Connect against the
+rendered page, not pushed blind from a Markdown table. Also still manual: the
+**App Privacy** label, **pricing and availability**, and **App Review
+Information** with the reviewer account — see
+[`AppStore/README.md`](AppStore/README.md).
+
+**Order matters.** The build has to be in TestFlight and finished processing
+before there is anything to attach, so this runs after `ios-release.yml`, not
+instead of it. And the version must be editable: a version in
+`WAITING_FOR_REVIEW`, `IN_REVIEW`, or `READY_FOR_SALE` stops the run with a
+message saying so rather than failing somewhere in the middle. Cancel the review
+submission in Connect first, or submit the next version.
+
+**Write the release notes first.** The script reads `## What's New — {version}`
+out of both `AppStore/metadata/en-US.md` and `zh-Hant.md` and refuses to run if
+either is missing — a version must never go to review carrying the previous
+release's notes. It un-wraps the Markdown (one line per paragraph, blank lines
+kept, and no space inserted where two Chinese lines were joined), so the files
+stay wrapped for reading in a diff.
+
 ## Before submission
 
 Run on a real device, not only the simulator. Nothing below is covered by the

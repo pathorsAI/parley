@@ -13,10 +13,26 @@
     <string name="action_back">返回</string>
     <string name="action_refresh">重新整理</string>
     <string name="action_stop">停止</string>
+    <string name="action_copy">複製</string>
+    <string name="action_share">分享</string>
+    <string name="action_clear">清除</string>
+
+    <!-- Launch -->
+    <string name="launch_loading">正在載入 Parley</string>
+
+    <!-- Onboarding: the screen a cold install lands on -->
+    <string name="onboarding_tagline">面對面會議的口袋錄音機——邊講邊出逐字稿，起身時已經在雲端。</string>
+    <string name="onboarding_point_room">把手機放在桌上就好</string>
+    <string name="onboarding_point_room_detail">收整個房間的聲音，並自動分辨不同說話者。</string>
+    <string name="onboarding_point_live">即時轉錄，不必自備 API key</string>
+    <string name="onboarding_point_live_detail">登入後就能用我們代管的轉錄服務，免費額度足夠日常使用。</string>
+    <string name="onboarding_point_sync">錄音同步到你的帳號</string>
+    <string name="onboarding_point_sync_detail">手機錄的會議，用桌面版打開就能做深度分析。</string>
+    <string name="onboarding_sign_in_methods">支援信箱密碼、Google 與 Apple 登入。開始錄音前，Parley 一定會先請你確認在場所有人都同意錄音。</string>
 
     <!-- Sign in -->
-    <string name="sign_in_tagline">錄下會議、讀懂逐字稿，走到哪都能用。</string>
-    <string name="sign_in_button">登入</string>
+    <string name="sign_in_button">登入或註冊</string>
+    <string name="sign_in_in_progress">登入中…</string>
     <string name="sign_in_waiting">等待瀏覽器回傳登入狀態…</string>
     <string name="sign_in_no_browser">找不到可以用來登入的瀏覽器。</string>
     <string name="sign_in_failed">登入沒有完成（%1$s）。</string>
@@ -26,6 +42,10 @@
     <string name="home_account">帳號</string>
     <string name="home_empty_title">還沒有任何錄音</string>
     <string name="home_empty_body">錄一場會議，或匯入你手上既有的音訊檔。</string>
+    <string name="home_empty_import">匯入音訊檔</string>
+    <string name="home_search">搜尋錄音</string>
+    <string name="home_search_hint">搜尋標題與摘要</string>
+    <string name="home_search_empty">沒有符合的錄音。</string>
     <string name="home_record">錄一場會議</string>
     <string name="home_import">匯入錄音檔</string>
     <string name="home_pending_header">等待上傳</string>
@@ -39,14 +59,31 @@
     <string name="recording_untitled">未命名錄音</string>
     <string name="recording_source_upload">匯入</string>
     <string name="recording_source_live">錄製</string>
+    <string name="recording_meta_duration">長度</string>
+    <string name="recording_meta_speakers">說話者</string>
+    <string name="recording_meta_audio">有音檔</string>
+    <string name="home_recording_actions">錄音選項</string>
+    <string name="home_delete_recording">刪除錄音</string>
+    <string name="home_deleting">刪除中…</string>
+    <string name="home_delete_confirm_title">要刪除這筆錄音嗎？</string>
+    <string name="home_delete_confirm_body">這會從你的 Parley 帳號永久刪除「%1$s」——音訊、逐字稿，以及桌面版分析出來的內容。刪除後無法復原。</string>
+    <string name="home_delete_confirm_action">刪除</string>
+    <string name="home_delete_error_title">錄音未被刪除</string>
+    <string name="home_delete_error_forbidden">你沒有刪除這筆錄音的權限。它屬於某個組織，或是別人分享給你的——要請擁有者自己刪。</string>
+    <string name="home_delete_error_failed">錄音未被刪除。請檢查網路連線後再試一次。</string>
 
     <!-- Account sheet -->
     <string name="account_title">帳號</string>
     <string name="account_plan">方案：%1$s</string>
-    <string name="account_usage_title">本期用量</string>
-    <string name="account_stt_usage">語音轉錄：%1$s／%2$s</string>
-    <string name="account_llm_usage">分析額度：%1$s／%2$s</string>
-    <string name="account_unlimited">無上限</string>
+    <string name="account_usage_title">用量（本期）</string>
+    <string name="account_usage_transcription">轉錄時數</string>
+    <string name="account_usage_credits">AI 額度</string>
+    <!-- used / limit unit, e.g. "2.4 / 10 小時" -->
+    <string name="account_usage_amount">%1$s / %2$s %3$s</string>
+    <!-- used unit, on a plan with no ceiling, e.g. "2.4 小時 · 無上限" -->
+    <string name="account_usage_amount_unlimited">%1$s %2$s · 無上限</string>
+    <string name="account_usage_unit_hours">小時</string>
+    <string name="account_usage_unit_credits">點</string>
     <string name="account_period_reset">%1$s 重置</string>
     <string name="account_loading">載入中…</string>
     <string name="account_load_failed">無法載入帳號資訊。</string>
@@ -64,7 +101,16 @@
     <string name="meeting_permission_title">需要麥克風權限</string>
     <string name="meeting_permission_body">Parley 會在這台裝置上錄音，並即時傳送以產生逐字稿。</string>
     <string name="meeting_permission_grant">允許使用麥克風</string>
-    <string name="meeting_permission_denied">麥克風權限被拒絕。請到系統設定開啟後再錄音。</string>
+    <string name="meeting_permission_denied">麥克風權限被拒絕。沒有這個權限，Parley 無法錄音。</string>
+    <string name="meeting_permission_blocked">Parley 的麥克風權限已被關閉，Android 不會再詢問。請到系統設定開啟後才能錄音。</string>
+    <string name="meeting_permission_settings">前往系統設定</string>
+    <string name="meeting_consent_title">開始錄音前</string>
+    <string name="meeting_consent_body">Parley 會透過麥克風收錄現場聲音，將音訊傳送到你的 Parley 帳號做即時轉錄，並把錄音與逐字稿同步到那裡。請確認在場所有人都同意被錄音。</string>
+    <string name="meeting_consent_confirm">所有人都已同意</string>
+    <string name="meeting_discard">丟棄</string>
+    <string name="meeting_discard_title">要丟棄這段錄音嗎？</string>
+    <string name="meeting_discard_body">音訊與逐字稿都會被丟掉，不會儲存也不會上傳。</string>
+    <string name="meeting_discard_confirm">丟棄</string>
     <string name="meeting_connecting">連線中…</string>
     <string name="meeting_recording">錄音中</string>
     <string name="meeting_finishing">正在收尾逐字稿…</string>
@@ -72,10 +118,15 @@
     <string name="meeting_uploaded">已上傳</string>
     <string name="meeting_queued">已存在這台裝置，網路恢復後會自動上傳。</string>
     <string name="meeting_dropped">錄音不到兩秒，因此沒有保存。</string>
+    <string name="meeting_interrupted">會議中途中斷，但中斷前錄到的內容都已保留。</string>
     <string name="meeting_transcript_empty">有人開口說話後，逐字稿會顯示在這裡。</string>
     <string name="meeting_issue_quota">轉錄已停止：託管轉錄額度已用完。錄音仍在繼續。</string>
     <string name="meeting_issue_error">轉錄意外中斷。錄音仍在繼續。</string>
     <string name="meeting_mic_silenced">麥克風被其他 app 佔用中——在它釋放之前，Parley 錄到的是靜音。</string>
+    <string name="meeting_mic_recovering">正在把麥克風搶回來。錄音檔還開著，拿回來就會從中斷的地方繼續錄。</string>
+    <string name="meeting_mic_lost_taken">麥克風被其他程式佔住了。目前錄到的內容都還在；把 Parley 切到前景可以再試一次。</string>
+    <string name="meeting_mic_lost_broken">麥克風停止運作了。目前錄到的內容都還在——結束會議就會存下來。</string>
+    <string name="meeting_storage_low">這支手機的儲存空間快滿了。空間用完之前，Parley 會先停止並存下錄音。</string>
     <string name="meeting_title_format">會議 %1$s</string>
     <string name="speaker_label">說話者 %1$d</string>
     <string name="speaker_unknown">說話者</string>
@@ -84,6 +135,7 @@
     <string name="failure_not_signed_in">你已登出，請重新登入後再試。</string>
     <string name="failure_mic_permission">尚未取得麥克風權限。</string>
     <string name="failure_mic_unavailable">麥克風無法使用 —— 可能正在通話，或被其他 app 佔用。</string>
+    <string name="failure_storage_full">這支手機的儲存空間不足。清出一些空間後再試一次。</string>
     <string name="failure_encoder_unavailable">這台裝置無法編碼 Opus 音訊，因此無法保存錄音。</string>
     <string name="failure_upload">錄音已存在這台裝置，但還沒能上傳。</string>
     <string name="failure_unknown">發生了未預期的錯誤。</string>
@@ -110,9 +162,98 @@
     <string name="detail_no_transcript">這筆錄音沒有逐字稿。</string>
     <string name="detail_findings">觀察重點</string>
     <string name="detail_action_items">後續行動</string>
-    <string name="detail_playback_unavailable">這個版本還不支援播放。</string>
     <string name="detail_speakers">%1$d 位說話者</string>
     <string name="detail_length">長度 %1$s</string>
+    <string name="detail_more_actions">更多動作</string>
+
+    <!-- 複製與分享逐字稿 -->
+    <string name="transcript_clip_label">Parley 逐字稿</string>
+    <string name="transcript_copy">複製逐字稿</string>
+    <string name="transcript_copied">已複製</string>
+    <string name="transcript_share">分享逐字稿</string>
+    <string name="transcript_share_title">逐字稿</string>
+    <string name="transcript_segment_actions">複製或分享這一段</string>
+    <string name="transcript_copy_segment">複製這一段</string>
+    <string name="transcript_seek_here">從這裡開始播放</string>
+    <string name="transcript_search">搜尋逐字稿</string>
+    <string name="transcript_search_hint">在這份逐字稿裡搜尋</string>
+    <string name="transcript_search_empty">沒有符合的內容</string>
+    <string name="transcript_search_position">第 %1$d 筆，共 %2$d 筆</string>
+    <string name="transcript_search_previous">上一個符合</string>
+    <string name="transcript_search_next">下一個符合</string>
+    <!-- Playback -->
+    <string name="playback_download">下載後播放</string>
+    <string name="playback_downloading">下載中…</string>
+    <string name="playback_preparing">準備中…</string>
+    <string name="playback_retry">再試一次</string>
+    <string name="playback_failed_network">下載沒有完成。</string>
+    <string name="playback_failed_missing">這筆錄音沒有存音檔。</string>
+    <string name="playback_failed_unplayable">這筆錄音的音檔無法播放。</string>
+    <string name="playback_play">播放</string>
+    <string name="playback_pause">暫停</string>
+    <string name="playback_speed">播放速度</string>
+    <string name="playback_scrub">拖曳進度</string>
+
+    <!-- 重新轉錄：即時逐字稿漏掉太多時的補救 -->
+    <string name="retranscribe_action">重新轉錄</string>
+    <string name="retranscribe_queued">正在重新轉錄這筆錄音。新的逐字稿完成後會取代現在這份。</string>
+    <string name="retranscribe_budget_spent">這筆錄音重新轉錄的次數已經用完了。</string>
+    <string name="retranscribe_remaining">還可以重新轉錄 %1$d 次</string>
+    <string name="retranscribe_confirm_title">要重新轉錄這筆錄音嗎？</string>
+    <string name="retranscribe_confirm_body">整段錄音會從頭再轉錄一次，新的逐字稿完成後，會取代你現在看到的這一份。這會用掉你帳號的轉錄時數，跟開一場新會議一樣。</string>
+    <string name="retranscribe_no_audio">這筆錄音沒有音檔，沒有東西可以重新轉錄。</string>
+    <string name="retranscribe_audio_failed">拿不到音檔，所以沒有送出轉錄。</string>
+
+    <!-- 託管轉錄的失敗訊息。每一種都對應到不同的下一步。 -->
+    <string name="batch_error_signed_out">請先登入 Parley Cloud 才能轉錄錄音。</string>
+    <string name="batch_error_quota">本月的託管轉錄額度已用完——升級方案，或等額度重置。</string>
+    <string name="batch_error_too_many">同時進行的轉錄太多了——等某場會議或先前的上傳跑完，再試一次。</string>
+    <string name="batch_error_too_large">這筆錄音超過託管轉錄的上限——請切成較短的檔案分次上傳。</string>
+    <string name="batch_error_upstream">Parley Cloud 連不上轉錄服務——請過幾分鐘再試。</string>
+    <string name="batch_error_offline">目前連不上雲端。網路恢復後會自動重新轉錄。</string>
+    <string name="batch_error_job_failed">轉錄失敗：%1$s</string>
+    <string name="batch_error_timed_out">轉錄逾時。</string>
+    <string name="batch_error_http">託管轉錄失敗（HTTP %1$d）</string>
+    <string name="batch_error_http_code">託管轉錄失敗（HTTP %1$d）：%2$s</string>
+
+    <!-- Audio on this phone -->
+    <string name="account_audio_title">這支手機上的音檔</string>
+    <string name="account_keep_audio">音檔留在這支手機</string>
+    <string name="account_keep_audio_detail">在這裡錄的會議，音檔會留在裝置上，不用重新下載就能播放。</string>
+    <!-- Chinese has no singular/plural distinction: one "other" form is the whole set. -->
+    <plurals name="account_audio_stored">
+        <item quantity="other">%1$d 筆錄音・%2$s</item>
+    </plurals>
+    <string name="account_audio_none">這支手機沒有存任何音檔。</string>
+    <string name="account_audio_remove_all">刪除已存的音檔</string>
+
+    <!-- Appearance -->
+    <string name="account_appearance">外觀</string>
+    <string name="account_appearance_system">跟隨系統</string>
+    <string name="account_appearance_light">淺色</string>
+    <string name="account_appearance_dark">深色</string>
+
+    <!-- Sync -->
+    <string name="account_sync_title">同步</string>
+    <plurals name="account_sync_pending">
+        <item quantity="other">%1$d 筆錄音等待同步</item>
+    </plurals>
+    <string name="account_sync_done">所有錄音都已同步</string>
+    <string name="account_sync_retry">立即重試同步</string>
+    <string name="account_sync_detail">網路中斷、伺服器暫時無回應或額度不足時，手機會保留完成的錄音，直到同步成功。</string>
+
+    <!-- Language -->
+    <string name="account_language">語言</string>
+    <string name="account_language_change">變更</string>
+    <string name="account_language_detail">Parley 支援英文與繁體中文，預設跟隨手機的語言。只想改 Parley 的話，到系統設定裡調整。</string>
+
+    <!-- About -->
+    <string name="account_about_title">關於</string>
+    <string name="account_version">版本 %1$s（%2$d）</string>
+    <string name="account_about_detail">即時教練與深度分析以桌面版為主；手機負責面對面會議的錄音、轉錄與閱讀。</string>
+    <string name="link_desktop">Parley 桌面版</string>
+    <string name="link_privacy_policy">隱私權政策</string>
+    <string name="link_support">支援與問題回報</string>
 
     <!-- Foreground service notification -->
     <string name="notification_channel_name">會議錄音</string>

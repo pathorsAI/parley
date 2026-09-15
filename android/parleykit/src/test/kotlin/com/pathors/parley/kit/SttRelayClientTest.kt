@@ -144,6 +144,49 @@ class SttRelayClientTest {
     }
 
     @Test
+    fun enqueuedPcmReachesTheWire(): Unit = runBlocking {
+        enqueueUpgrade()
+        val relay = newClient()
+        relay.connect()
+        take(textFrames) // config
+
+        relay.enqueuePcm(shortArrayOf(0x0102, -2))
+
+        val frame = binaryFrames.poll(5, TimeUnit.SECONDS)
+        assertNotNull(frame)
+        assertEquals("0201feff", frame!!.hex())
+        assertEquals(0L, relay.droppedPcmChunks)
+    }
+
+    /**
+     * The regression that cost recordings: `sendPcm` suspended until the socket
+     * drained, the socket never drained, and because the live capture called it
+     * from the same coroutine that fed the encoder, the microphone stopped being
+     * read at all and the kernel dropped audio out of the .ogg file.
+     *
+     * A client that was never opened is exactly a socket that never drains —
+     * nothing consumes the outbound queue — so this is the stall, reproduced.
+     * The fix is that audio is dropped instead of the caller being held: the
+     * loop must finish promptly, and the queue must stay bounded.
+     */
+    @Test(timeout = 60_000)
+    fun enqueuePcmNeverWaitsForASocketThatIsNotDraining() {
+        val relay = newClient() // deliberately never opened
+        val chunk = ByteArray(3_200)
+        val chunks = SttRelayClient.MAX_QUEUED_CHUNKS * 4
+
+        val startedAt = System.nanoTime()
+        repeat(chunks) { relay.enqueuePcm(chunk) }
+        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+
+        assertTrue("handing over $chunks chunks took ${elapsedMs}ms", elapsedMs < 5_000)
+        assertTrue(
+            "a queue that never drains must drop, not grow",
+            relay.droppedPcmChunks > 0,
+        )
+    }
+
+    @Test
     fun finishSendsFinalizeAndLeavesTheSocketOpen(): Unit = runBlocking {
         enqueueUpgrade()
         val relay = newClient()

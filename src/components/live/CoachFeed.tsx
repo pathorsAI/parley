@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import { useStore, meetingBriefText } from "../../lib/store";
 import { useStickToBottom } from "../../lib/useStickToBottom";
-import { hasProviderKey } from "../../lib/ai/settings";
+import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { runAnalysis } from "../../lib/analysis/engine";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
@@ -195,8 +195,12 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
     const id = crypto.randomUUID();
     setAskCards((c) => [...c, { id, question: q, answer: "", busy: true }]);
     const state = useStore.getState();
-    if (!hasProviderKey(state.settings, "realtime")) {
-      setAskCards((c) => patchCard(c, id, { answer: t("ask.missingKey"), busy: false }));
+    const gate = providerGateKey(
+      missingProviderRequirement(state.settings, "realtime"),
+      "ask.missingKey",
+    );
+    if (gate) {
+      setAskCards((c) => patchCard(c, id, { answer: t(gate), busy: false }));
       return;
     }
     try {

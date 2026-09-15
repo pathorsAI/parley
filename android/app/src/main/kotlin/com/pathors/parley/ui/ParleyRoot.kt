@@ -6,16 +6,13 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
@@ -46,6 +43,11 @@ private object Route {
  *
  * The one exception is [DemoMode], which stands the wall down without a token so
  * the store screenshots can be captured. It is debug-only and writes nothing.
+ *
+ * "Not signed in" is [OnboardingScreen] rather than a bare sign-in form: the
+ * signed-out state and first run are the same state on this app — there is
+ * nothing to do without an account — and the screen a cold install lands on has
+ * to say what the app is before it asks for one.
  */
 @Composable
 fun ParleyRoot() {
@@ -56,10 +58,12 @@ fun ParleyRoot() {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when {
             demo -> ParleyNavHost(container)
-            signedIn == null ->
-                Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
+            // Still reading the stored token. Named, not a bare spinner: a
+            // returning user must not watch an anonymous loading screen, nor
+            // see the onboarding wall flash by before their session resolves.
+            signedIn == null -> LaunchScreen()
 
-            signedIn == false -> SignInScreen(container)
+            signedIn == false -> OnboardingScreen(container)
             else -> ParleyNavHost(container)
         }
     }

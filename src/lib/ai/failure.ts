@@ -1,5 +1,5 @@
 import { describeAiError } from "./errors";
-import { hasProviderKey } from "./settings";
+import { missingProviderRequirement, type ProviderRequirement } from "./settings";
 import { PROVIDER_BY_ID } from "./providers";
 import type { LlmWorkload, Settings } from "../types";
 
@@ -17,7 +17,16 @@ import type { LlmWorkload, Settings } from "../types";
  * regexes here are the shared subset (it keeps two extra kinds — structured
  * output and model availability — that only apply to schema-bound calls).
  */
-export type AiFailureKind = "missingKey" | "auth" | "rate" | "model" | "generic";
+export type AiFailureKind =
+  | "missingKey"
+  /** A user-supplied endpoint ("custom") with no base URL yet. */
+  | "missingBaseUrl"
+  /** A user-supplied endpoint with no model id yet — its list is free text. */
+  | "missingModel"
+  | "auth"
+  | "rate"
+  | "model"
+  | "generic";
 
 export interface AiFailure {
   kind: AiFailureKind;
@@ -38,12 +47,18 @@ export function classifyAiFailure(
   const provider = settings.llmProviders[workload];
   const providerLabel = PROVIDER_BY_ID[provider]?.label ?? provider;
   const detail = describeAiError(err);
-  const kind = kindOf(detail, hasProviderKey(settings, workload));
+  const kind = kindOf(detail, missingProviderRequirement(settings, workload));
   return { kind, detail, providerLabel, fixInSettings: kind !== "rate" && kind !== "generic" };
 }
 
-function kindOf(message: string, keyConfigured: boolean): AiFailureKind {
-  if (!keyConfigured) return "missingKey";
+function kindOf(message: string, missing: ProviderRequirement | null): AiFailureKind {
+  // An incomplete configuration outranks whatever the request came back with:
+  // the request was doomed. Name the field that is actually blank — telling a
+  // user with a self-hosted endpoint to "add an API key" sends them looking for
+  // something their server never issued.
+  if (missing === "baseUrl") return "missingBaseUrl";
+  if (missing === "model") return "missingModel";
+  if (missing) return "missingKey";
   const m = message.toLowerCase();
   if (/(^|[^a-z])401|unauthorized|invalid.*api|api.*key|x-api-key|authentication|forbidden|403/.test(m)) {
     return "auth";
@@ -60,6 +75,8 @@ function kindOf(message: string, keyConfigured: boolean): AiFailureKind {
 /** The i18n key for this failure's one-line, actionable hint. */
 export const AI_FAILURE_HINT_KEY = {
   missingKey: "ai.fail.missingKey",
+  missingBaseUrl: "ai.fail.missingBaseUrl",
+  missingModel: "ai.fail.missingModel",
   auth: "ai.fail.auth",
   rate: "ai.fail.rate",
   model: "ai.fail.model",

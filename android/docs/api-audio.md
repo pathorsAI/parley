@@ -11,9 +11,17 @@ public entry points, one shared converter:
 | `AudioFileDecoder` | any audio file → `Flow<ByteArray>` | importing a file |
 | `OggOpusEncoder` | `ByteArray` chunks → `.ogg` file | persisting a recording |
 | `Resampler` / `Pcm` | building blocks | anything custom |
+| `OggStreamWriter` | Opus packets → Ogg pages | inside `OggOpusEncoder` |
+| `StorageHeadroom` | free bytes → a verdict | deciding whether to start or stop |
+| `CaptureWatchdog` | a clock → "has capture stalled?" | the capture's own backstop |
+| `AudioRouteChoice` | input devices → the best one | reacting to a headset |
 
-No new dependencies: `MediaCodec`, `MediaExtractor`, `MediaMuxer`, `AudioRecord`
-and coroutines only.
+The last four are **pure JVM and unit-tested**; the recovery state machine that
+drives them lives in `:parleykit` as `CaptureRecovery`.
+
+No new dependencies: `MediaCodec`, `MediaExtractor`, `AudioRecord` and
+coroutines only. The Ogg container is written by hand (`OggStreamWriter`)
+rather than by `MediaMuxer` — see that file for why.
 
 ---
 
@@ -86,10 +94,31 @@ mic.stop()          // …or job.cancel(), both are safe
 | `UnsupportedConfiguration` | no sample rate / source combination worked |
 | `ReadFailed(errorCode)` | device died or permission revoked mid-stream |
 
-Not detectable here: from Android 10 on, an app that takes the mic away
-mid-recording makes the framework feed us **silence** instead of an error. The
-`level` meter reveals it to the user; if you want to react programmatically,
-register an `AudioManager.AudioRecordingCallback` in the service layer.
+### Losing the microphone, and getting it back
+
+`MicCapture` used to be a one-shot: the first failure ended the flow, and
+because the collector is the encoder, the recording ended with it. It now opens
+and reopens the hardware as many times as it has to **inside one collection**,
+so a phone call, an assistant, or another recorder no longer ends the meeting.
+
+The table above therefore only applies to the **first** open — a microphone that
+cannot be opened when the user taps record is reported, because that is a
+sentence the user can act on. Everything after that is recovered from, driven by
+`CaptureRecovery` (`:parleykit`) and fed from four places, because no one of
+them is reliable alone:
+
+| Source | Catches |
+|---|---|
+| a negative `AudioRecord.read` | a dead object, an invalidated record |
+| `notePlatformSilenced` | Android 10+ feeding us **silence** rather than an error |
+| `AudioDeviceCallback` | a headset arriving or leaving |
+| `CaptureWatchdog` | reads that simply stop, which the platform never announces |
+
+Call `notePlatformSilenced` from an `AudioManager.AudioRecordingCallback` and
+`noteAppForegrounded` from the activity lifecycle; `MeetingSession` does both.
+Watch `micRecovery` to tell "recording" from "trying to get the microphone
+back" — and note that giving up does **not** end the flow: the file stays open
+and the next foreground trip tries again.
 
 ---
 
@@ -240,8 +269,11 @@ per hour of imported audio at `BALANCED`.
 alias rejection, streaming vs one-shot equality, DC gain, output length), the
 PCM byte conversions, the decoder's PCM sink and the synthesized `OpusHead`.
 
-`MediaCodec`, `MediaMuxer` and `AudioRecord` cannot run on the JVM, so those
-paths are written defensively and verified by hand. Manual checklist:
+`MediaCodec` and `AudioRecord` cannot run on the JVM, so those paths are
+written defensively and verified by hand. The Ogg container is pure JVM on
+purpose and *is* unit-tested (`OggStreamWriterTest`), including the property
+that a stream abandoned without `finish()` still leaves valid pages. Manual
+checklist:
 
 1. **Mic** — record 30 s, confirm the file plays back and `level` tracks speech.
 2. **Mic while busy** — start a phone call, then start recording: expect

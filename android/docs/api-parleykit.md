@@ -305,9 +305,15 @@ thread and hands you finished segments on the flow.
 
 ## Not in this module
 
-- **Audio capture and Ogg/Opus encoding.** iOS's `OggOpusEncoder` (AudioToolbox)
-  has no pure-JVM equivalent; Android uses `MediaCodec` + `MediaMuxer` (hence
-  `minSdk 29`), which lives in `:app`.
+- **Audio capture and Opus encoding.** iOS's `OggOpusEncoder` (AudioToolbox)
+  has no pure-JVM equivalent; Android uses `MediaCodec` (hence `minSdk 29`),
+  which lives in `:app`. The Ogg *container* is hand-written and pure JVM, but
+  it sits next to the encoder in `:app` (`audio/OggStreamWriter`) rather than
+  here, since nothing outside the encoder has a use for it.
+- **The microphone recovery this module's `CaptureRecovery` decides.** The
+  policy is here because it is pure logic and the only part testable without a
+  device; everything that touches `AudioRecord`, `AudioManager` or the activity
+  lifecycle is in `:app` (`audio/MicCapture`).
 - **Cloud REST client / DTOs** (`CloudClient`, `CloudModels`) — separate work,
   same package. It reuses `TranscriptSegment` from here.
 - **Keychain / dictation IPC** — iOS-specific (`KeychainStore`,
