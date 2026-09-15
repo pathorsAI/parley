@@ -8,6 +8,8 @@ import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.cloud.TranscriptSegmentDto
 import com.pathors.parley.cloud.msPrimitive
+import com.pathors.parley.playback.AudioRetention
+import com.pathors.parley.playback.LocalAudioStore
 import com.pathors.parley.util.deleteQuietly
 import java.io.File
 import java.io.IOException
@@ -87,6 +89,27 @@ data class DrainResult(
 class MeetingUploader(
     private val cloud: CloudClient,
     private val queue: PendingUploadQueue,
+    /**
+     * Where a recording goes when its transcript does not account for its audio.
+     *
+     * Null means this uploader has no safety net and retires every Ogg the
+     * moment the cloud has it — the pre-backfill behaviour, kept as the default
+     * so a test that is asking about upload retries does not have to hand one
+     * over. [create] wires the real queue.
+     */
+    private val backfills: PendingBackfillQueue? = null,
+    /**
+     * Where a kept recording's audio goes once the cloud has it. Null means this
+     * uploader has nowhere to keep audio and always deletes — which is what the
+     * upload tests want, and nothing else.
+     */
+    private val localAudio: LocalAudioStore? = null,
+    /**
+     * The "keep audio on this phone" setting, read at retirement time rather
+     * than captured at construction: the switch can be flipped between a
+     * recording finishing and its upload finally going through.
+     */
+    private val keepsAudioOnPhone: suspend () -> Boolean = { false },
     /** Attempts per recording within one drain pass, including the first. */
     private val maxAttempts: Int = 3,
     /** Backoff between attempts: 1 s, 2 s, 4 s … Injectable so tests do not sleep. */
@@ -168,6 +191,14 @@ class MeetingUploader(
             }
             try {
                 uploadWithRetry(item, audio)
+                // The cloud now holds everything, so the *queue's* copy has done
+                // its job — unless the transcript that went up does not account
+                // for the audio that went with it, in which case the Ogg is the
+                // only thing that can still fix it and is handed to the backfill
+                // queue instead of retired.
+                if (!handOffForBackfill(item, audio)) {
+                    retireAudio(item.id, audio)
+                }
                 withContext(Dispatchers.IO) { queue.remove(item.id) }
                 uploaded++
             } catch (e: CancellationException) {
@@ -184,6 +215,58 @@ class MeetingUploader(
             discarded = discarded,
             failure = failure,
         )
+    }
+
+    /**
+     * The end of an Ogg's life in the upload queue, for every path that reaches
+     * it: a live meeting, an import, and a queued upload that finally synced.
+     *
+     * One function because the setting has to mean the same thing down all of
+     * them — a "keep audio on this phone" that only held live recordings would
+     * be a setting nobody could predict. (iOS makes the same argument in
+     * `MeetingUploader.retireAudio`.)
+     *
+     * A failed move deletes instead. The cloud already has the file, so the cost
+     * is a recording that has to be downloaded to play back; leaving it in a
+     * queue directory that nothing reads any more would cost the same bytes
+     * forever with no way to see or clear them.
+     *
+     * The one path deliberately NOT routed through here is the too-short live
+     * capture dropped by [enqueue]: a two-second misfire was never a recording,
+     * it is not in the cloud, and keeping it would put a row of noise in the
+     * storage total that no screen could explain.
+     */
+    /**
+     * Give the Ogg to the backfill queue when the transcript that just went up
+     * leaves too much of the recording unaccounted for.
+     *
+     * Deliberately quiet about its own failures. The recording is safely in the
+     * cloud with the transcript it has by the time this runs; failing to queue a
+     * backfill costs quality, not the meeting, and must not surface as an upload
+     * failure. A failure here falls through to the ordinary retirement, which is
+     * exactly what would have happened before there was a safety net.
+     *
+     * @return whether the backfill queue now owns the file. False means the
+     *   caller still has to retire it.
+     */
+    private suspend fun handOffForBackfill(pending: PendingUpload, audio: File): Boolean {
+        val queue = backfills ?: return false
+        if (!TranscriptBackfiller.coverage(pending).needsBackfill()) return false
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                queue.enqueueMoving(
+                    BackfillRequest(pending = pending, folderId = pending.folderId),
+                    audio,
+                )
+            }.isSuccess
+        }
+    }
+
+    private suspend fun retireAudio(id: String, audio: File) = withContext(Dispatchers.IO) {
+        if (!audio.isFile) return@withContext
+        val store = localAudio
+        if (store != null && keepsAudioOnPhone() && store.put(id, audio)) return@withContext
+        audio.deleteQuietly()
     }
 
     private suspend fun uploadWithRetry(pending: PendingUpload, audio: File) {
@@ -222,8 +305,16 @@ class MeetingUploader(
         /** Lowercase UUID — the same id shape every Parley client generates. */
         fun newRecordingId(): String = UUID.randomUUID().toString().lowercase(Locale.ROOT)
 
-        fun create(context: Context, cloud: CloudClient): MeetingUploader =
-            MeetingUploader(cloud, PendingUploadQueue.default(context))
+        fun create(context: Context, cloud: CloudClient): MeetingUploader {
+            val retention = AudioRetention(context)
+            return MeetingUploader(
+                cloud = cloud,
+                queue = PendingUploadQueue.default(context),
+                backfills = PendingBackfillQueue.default(context),
+                localAudio = LocalAudioStore.default(context),
+                keepsAudioOnPhone = retention::keepsAudioOnPhoneNow,
+            )
+        }
 
         /**
          * The full entry JSON pushed as `meta` — the desktop's `HistoryEntry`

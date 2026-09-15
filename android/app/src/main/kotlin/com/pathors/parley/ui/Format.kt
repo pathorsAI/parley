@@ -43,19 +43,6 @@ fun formatTimestamp(epochMs: Double): String =
 fun formatDate(epochMs: Double): String =
     DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(epochMs.toLong()))
 
-/** Metered seconds, shown as minutes once there are enough of them to matter. */
-fun formatSeconds(seconds: Double): String {
-    val whole = seconds.toLong().coerceAtLeast(0L)
-    return if (whole < 120) {
-        String.format(Locale.getDefault(), "%d s", whole)
-    } else {
-        String.format(Locale.getDefault(), "%d min", whole / 60)
-    }
-}
-
-fun formatCredits(credits: Double): String =
-    String.format(Locale.getDefault(), "%.1f", credits)
-
 /**
  * The speaker label for a live segment. Diarization reports 0 when it cannot
  * tell people apart, which is one unnamed speaker rather than "Speaker 0".

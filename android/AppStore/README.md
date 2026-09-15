@@ -6,9 +6,11 @@ it holds **no credentials and no screenshots of real meeting content**, and
 nothing here can push to Play Console — the save/publish action stays with a
 human who can see the rendered product page first.
 
-The Play organization account for Pathors (派斯科技股份有限公司) exists;
-identity verification is pending. This packet is what gets pasted in the moment
-it clears.
+The Play organization account for Pathors (派斯科技股份有限公司) exists and its
+identity verification **cleared on 2026-08-17**; `com.pathors.parley` is **live
+on the production track** (app id `4972589806984548870`). This packet is what
+gets pasted when a listing field changes — it is no longer a queue waiting on
+an account.
 
 ## What lives where
 
@@ -57,20 +59,24 @@ and the per-release loop. This folder is only the store-facing content.
 
 ## Open items before submission
 
-Each is marked `[TODO: confirm with Jack]` where it appears:
+**None of the five that used to be listed here.** They are recorded as closed
+rather than deleted, because this file told anyone who opened it that the app
+was months of work away from submitting, long after it had shipped:
 
-- **Account deletion** — no in-app deletion on Android and no web route an
-  Android user can reach; Play requires one. [`data-safety.md`](data-safety.md).
-- **The review account** — `appreview@pathors.com` is named in the iOS packet;
-  its password is in the secret manager, and this repo cannot verify that it is
-  still live or what sample meetings it now holds.
-  [`review-notes.md`](review-notes.md).
-- **No consent prompt on Android** — iOS has one and advertises it; the Android
-  copy therefore does not claim it. [`listing-en.md`](listing-en.md).
-- **Feature graphic** — 1024 × 500 does not exist yet.
-  [`assets/README.md`](assets/README.md).
-- **Screenshots** — no demo mode on Android, so they need a seeded account and
-  a manual walk. [`assets/README.md`](assets/README.md).
+- **Account deletion** — done. In-app deletion in `ui/AccountSheet.kt`, and the
+  web route a non-installer can reach. [`data-safety.md`](data-safety.md).
+- **The review account** — `appreview@pathors.com`, confirmed able to sign in on
+  2026-09-13. [`review-notes.md`](review-notes.md).
+- **No consent prompt on Android** — done. Recording now asks before the
+  microphone opens, matching iOS, so the listing copy is free to say so.
+  [`listing-en.md`](listing-en.md).
+- **Feature graphic** — done, both locales, in
+  [`assets/`](assets/).
+- **Screenshots** — done. Android has demo mode (`screenshot/DemoMode.kt`), so
+  they no longer need a seeded account.
+
+What is genuinely outstanding is one thing, and it is not a blocker:
+`website/index.html` still has no Android section (see below).
 
 ## After approval
 

@@ -81,11 +81,25 @@ android {
 
     defaultConfig {
         applicationId = "com.pathors.parley"
-        // minSdk 29: MediaMuxer OGG output + MediaCodec Opus encoder both require API 29.
+        // minSdk 29: the MediaCodec Opus *encoder* arrived in API 29. The Ogg
+        // container is written by hand now (see audio/OggStreamWriter.kt), so
+        // MediaMuxer's OGG output — which also needed 29 — no longer figures.
         minSdk = 29
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.1.4"
+        versionCode = 6
+
+        // 1.13, not 0.2: the jump is the point. Android shipped as 0.1.x while it
+        // carried iOS 1.1's feature set, and this release is the one that closes
+        // that gap — playback, search, onboarding, re-transcription, and a
+        // recording that survives the things that used to delete it. Matching the
+        // iOS number also means the two stores stop describing the same product
+        // with numbers ten releases apart. There is no Android 1.0–1.12; the gap
+        // in the tag history is the honest record of how this went.
+        versionName = "1.13"
+
+        // Instrumented tests only: audio/OggOpusEncoderDeviceTest drives the real
+        // MediaCodec Opus encoder, which has no JVM stand-in.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -142,6 +156,10 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.datastore.preferences)
+    // Media3/ExoPlayer plays the recording back. Its OggExtractor seeks
+    // Opus streams natively, which is why Android needs none of the
+    // hand-written seek machinery iOS had to build (see PlaybackEngine.kt).
+    implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.browser)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
@@ -150,4 +168,8 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
+
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }

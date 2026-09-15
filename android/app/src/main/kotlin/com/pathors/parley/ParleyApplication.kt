@@ -7,10 +7,17 @@ import android.util.Log
 import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.meeting.ImportSession
+import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingSession
+import com.pathors.parley.meeting.RecordingFiles
+import com.pathors.parley.playback.AudioRetention
+import com.pathors.parley.playback.LocalAudioStore
 import com.pathors.parley.screenshot.DemoMode
+import com.pathors.parley.upload.ManualRetryLedger
 import com.pathors.parley.upload.MeetingUploader
+import com.pathors.parley.upload.PendingBackfillQueue
 import com.pathors.parley.upload.PendingUploadQueue
+import com.pathors.parley.upload.TranscriptBackfiller
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,7 +41,10 @@ class ParleyApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
-        container.drainPendingUploads()
+        // Rather than a bare drain: see [AppContainer.adoptOrphanedRecordings]
+        // for why launch is the only safe moment to go looking for a recording
+        // the last process died in the middle of. The sweep drains afterwards.
+        container.adoptOrphanedRecordings()
     }
 }
 
@@ -72,7 +82,43 @@ class AppContainer(private val app: Application) {
     /** Exposed as well as wrapped: the home screen lists what is still waiting. */
     val uploadQueue: PendingUploadQueue = PendingUploadQueue.default(app)
 
-    val uploader: MeetingUploader = MeetingUploader(cloud, uploadQueue)
+    /** The recordings whose audio is on this phone, playable without a download. */
+    val localAudio: LocalAudioStore = LocalAudioStore.default(app)
+
+    /** "Keep audio on this phone" — read by the uploader, toggled in the account sheet. */
+    val audioRetention: AudioRetention = AudioRetention(app)
+
+    /**
+     * Recordings whose live transcript came up short, waiting to be transcribed
+     * again in full. Exposed alongside the backfiller because a storage readout
+     * has to count these bytes too — they are the same Oggs the upload queue was
+     * holding a moment ago.
+     */
+    val backfillQueue: PendingBackfillQueue = PendingBackfillQueue.default(app)
+
+    /** How many hand-triggered re-transcriptions each recording has spent. */
+    val manualRetries: ManualRetryLedger = ManualRetryLedger.default(app)
+
+    val uploader: MeetingUploader = MeetingUploader(
+        cloud = cloud,
+        queue = uploadQueue,
+        backfills = backfillQueue,
+        localAudio = localAudio,
+        keepsAudioOnPhone = audioRetention::keepsAudioOnPhoneNow,
+    )
+
+    /**
+     * The transcript safety net. A recording reaches it two ways: automatically,
+     * when [uploader] measures the transcript it just pushed against the audio
+     * and finds a hole, or because somebody asked.
+     */
+    val backfiller: TranscriptBackfiller = TranscriptBackfiller(
+        cloud = cloud,
+        queue = backfillQueue,
+        ledger = manualRetries,
+        localAudio = localAudio,
+        keepsAudioOnPhone = audioRetention::keepsAudioOnPhoneNow,
+    )
 
     /**
      * The last sign-in callback error code (never display copy — the UI maps it),
@@ -93,10 +139,68 @@ class AppContainer(private val app: Application) {
         _authError.value = code
     }
 
+    /**
+     * Throw away everything this device is holding for the signed-in account:
+     * recordings waiting to upload, recordings waiting to be transcribed again,
+     * and the ledger of re-transcriptions they have spent.
+     *
+     * Account deletion only. Once `DELETE /me` has succeeded there is no account
+     * left for any of it to reach, and leaving finished meeting audio on disk
+     * would contradict what the confirmation dialog promised — which says
+     * "recordings still waiting to upload on this device are discarded too", and
+     * a backfill blob is exactly one of those, one step further along.
+     *
+     * Ordinary sign-out deliberately keeps all three: the same person usually
+     * signs back in, and the recordings are still theirs.
+     *
+     * Blocking file I/O; call it off the main thread.
+     */
+    fun discardLocalRecordings() {
+        uploadQueue.clear()
+        backfillQueue.clear()
+        manualRetries.clear()
+    }
+
     /** Called after a successful sign-in callback: push anything that was waiting. */
     fun onSignedIn() {
         _authError.value = null
         drainPendingUploads()
+    }
+
+    /**
+     * Claim any Ogg file left behind by a recording that never finished, then
+     * drain the queue — which by then includes whatever was just claimed.
+     *
+     * Runs from `Application.onCreate` and nowhere else. A live recording writes
+     * its Ogg into the very directory this scans, so adopting one would move the
+     * file out from under the encoder; "before anything has had a chance to
+     * start recording" is the only guarantee available, and it is a guarantee
+     * only at launch. iOS calls its equivalent from exactly one place for
+     * exactly this reason (`App/Parley/AppState.swift:107`).
+     *
+     * The adopted recordings carry **no transcript**, on purpose — see
+     * [RecordingFiles.adoptOrphans].
+     */
+    fun adoptOrphanedRecordings() {
+        appScope.launch {
+            // Demo mode must not reach the network and must not touch a real
+            // user's recordings, the same two reasons [drainPendingUploads] has.
+            if (DemoMode.isActive) return@launch
+            runCatching {
+                RecordingFiles.adoptOrphans(app, uploader) { startedAtMs ->
+                    MeetingService.defaultTitle(app, startedAtMs)
+                }
+                // Logged rather than swallowed: a sweep that fails silently is
+                // indistinguishable from a sweep that found nothing, and those
+                // are very different facts when someone reports a lost meeting.
+            }.onFailure { Log.w(TAG, "could not sweep for orphaned recordings", it) }
+            // Sequential rather than parallel with the sweep: a rescued meeting
+            // should reach the cloud on the same launch that found it, and
+            // enqueueing into a drain already in flight would leave it for next
+            // time.
+            if (auth.currentToken() == null) return@launch
+            runCatching { uploader.drain() }
+        }
     }
 
     /** Best-effort upload of everything the queue is holding. Never throws. */
@@ -107,6 +211,26 @@ class AppContainer(private val app: Application) {
             if (DemoMode.isActive) return@launch
             if (auth.currentToken() == null) return@launch
             runCatching { uploader.drain() }
+            // An upload that just finished may have queued a backfill, so the
+            // two run in this order and not the other.
+            drainPendingBackfills()
+        }
+    }
+
+    /**
+     * Best-effort re-transcription of everything the backfill queue is holding.
+     * Never throws.
+     *
+     * Separate from [drainPendingUploads] because the two are different debts: an
+     * upload owes the cloud a recording and is urgent; a backfill owes an
+     * already-uploaded recording a better transcript and is not. A backfill must
+     * never delay or fail an upload.
+     */
+    fun drainPendingBackfills() {
+        appScope.launch {
+            if (DemoMode.isActive) return@launch
+            if (auth.currentToken() == null) return@launch
+            runCatching { backfiller.drain() }
         }
     }
 

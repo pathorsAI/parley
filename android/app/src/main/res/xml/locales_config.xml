@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The languages Parley ships, declared so Android 13+ can offer a per-app
+  language picker for it (Settings › System › Languages › App languages).
+
+  Without this file that picker does not exist, and the account sheet's Language
+  row would open a settings page with nothing on it to change. Keep in step with
+  the `values-*` resource folders: a locale listed here with no strings behind it
+  gives someone an empty app.
+-->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="zh-TW" />
+</locale-config>

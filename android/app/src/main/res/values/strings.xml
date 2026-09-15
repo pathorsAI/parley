@@ -14,10 +14,26 @@
     <string name="action_back">Back</string>
     <string name="action_refresh">Refresh</string>
     <string name="action_stop">Stop</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_share">Share</string>
+    <string name="action_clear">Clear</string>
+
+    <!-- Launch -->
+    <string name="launch_loading">Loading Parley</string>
+
+    <!-- Onboarding: the screen a cold install lands on -->
+    <string name="onboarding_tagline">A pocket recorder for the meetings you have in person — live transcript while you talk, in the cloud by the time you stand up.</string>
+    <string name="onboarding_point_room">Put the phone on the table</string>
+    <string name="onboarding_point_room_detail">It picks up the whole room and keeps the speakers apart.</string>
+    <string name="onboarding_point_live">Live transcription, no API key</string>
+    <string name="onboarding_point_live_detail">Sign in and ride our hosted transcription. The free tier covers everyday use.</string>
+    <string name="onboarding_point_sync">Recordings sync to your account</string>
+    <string name="onboarding_point_sync_detail">Open a meeting you recorded on the phone in the desktop app for the deep analysis.</string>
+    <string name="onboarding_sign_in_methods">Email and password, Google, and Apple all work. Before any recording starts, Parley asks you to confirm everyone in the room has agreed to it.</string>
 
     <!-- Sign in -->
-    <string name="sign_in_tagline">Record a meeting. Read the transcript. Everywhere you work.</string>
-    <string name="sign_in_button">Sign in</string>
+    <string name="sign_in_button">Sign in or create an account</string>
+    <string name="sign_in_in_progress">Signing in…</string>
     <string name="sign_in_waiting">Waiting for the browser to hand the session back…</string>
     <string name="sign_in_no_browser">No browser is available to sign in with.</string>
     <string name="sign_in_failed">Sign-in did not complete (%1$s).</string>
@@ -27,6 +43,10 @@
     <string name="home_account">Account</string>
     <string name="home_empty_title">No recordings yet</string>
     <string name="home_empty_body">Record a meeting, or import an audio file you already have.</string>
+    <string name="home_empty_import">Import an audio file</string>
+    <string name="home_search">Search recordings</string>
+    <string name="home_search_hint">Search titles and snippets</string>
+    <string name="home_search_empty">No matches.</string>
     <string name="home_record">Record a meeting</string>
     <string name="home_import">Import recording</string>
     <string name="home_pending_header">Waiting to upload</string>
@@ -38,16 +58,33 @@
     <string name="home_recording_in_progress">A meeting is being recorded</string>
     <string name="home_recording_in_progress_action">Return to it</string>
     <string name="recording_untitled">Untitled recording</string>
-    <string name="recording_source_upload">Imported</string>
-    <string name="recording_source_live">Recorded</string>
+    <string name="recording_source_upload">UPLOAD</string>
+    <string name="recording_source_live">LIVE</string>
+    <string name="recording_meta_duration">Length</string>
+    <string name="recording_meta_speakers">Speakers</string>
+    <string name="recording_meta_audio">Audio available</string>
+    <string name="home_recording_actions">Recording options</string>
+    <string name="home_delete_recording">Delete recording</string>
+    <string name="home_deleting">Deleting…</string>
+    <string name="home_delete_confirm_title">Delete this recording?</string>
+    <string name="home_delete_confirm_body">This permanently deletes “%1$s” from your Parley account — the audio, the transcript and anything the desktop app found in it. It cannot be undone.</string>
+    <string name="home_delete_confirm_action">Delete</string>
+    <string name="home_delete_error_title">Recording not deleted</string>
+    <string name="home_delete_error_forbidden">You aren\'t allowed to delete this recording. It belongs to an organization or was shared with you — whoever owns it has to delete it.</string>
+    <string name="home_delete_error_failed">The recording was not deleted. Check your connection and try again.</string>
 
     <!-- Account sheet -->
     <string name="account_title">Account</string>
     <string name="account_plan">Plan: %1$s</string>
-    <string name="account_usage_title">This period</string>
-    <string name="account_stt_usage">Transcription: %1$s of %2$s</string>
-    <string name="account_llm_usage">Analysis credits: %1$s of %2$s</string>
-    <string name="account_unlimited">unlimited</string>
+    <string name="account_usage_title">Usage (this period)</string>
+    <string name="account_usage_transcription">Transcription hours</string>
+    <string name="account_usage_credits">AI credits</string>
+    <!-- used / limit unit, e.g. "2.4 / 10 hr" -->
+    <string name="account_usage_amount">%1$s / %2$s %3$s</string>
+    <!-- used unit, on a plan with no ceiling, e.g. "2.4 hr · unlimited" -->
+    <string name="account_usage_amount_unlimited">%1$s %2$s · unlimited</string>
+    <string name="account_usage_unit_hours">hr</string>
+    <string name="account_usage_unit_credits">credits</string>
     <string name="account_period_reset">Resets on %1$s</string>
     <string name="account_loading">Loading…</string>
     <string name="account_load_failed">Couldn\'t load your account details.</string>
@@ -65,7 +102,16 @@
     <string name="meeting_permission_title">Microphone access needed</string>
     <string name="meeting_permission_body">Parley records the meeting on this device and streams it for live transcription.</string>
     <string name="meeting_permission_grant">Allow microphone</string>
-    <string name="meeting_permission_denied">Microphone permission was denied. Turn it on in system settings to record.</string>
+    <string name="meeting_permission_denied">Microphone permission was denied. Parley can\'t record without it.</string>
+    <string name="meeting_permission_blocked">Microphone access is turned off for Parley, and Android won\'t ask again. Turn it on in system settings to record.</string>
+    <string name="meeting_permission_settings">Open system settings</string>
+    <string name="meeting_consent_title">Before you start recording</string>
+    <string name="meeting_consent_body">Parley picks up the room through the microphone, sends the audio to your Parley account for live transcription, and syncs the recording and transcript there. Confirm that everyone present has agreed to be recorded.</string>
+    <string name="meeting_consent_confirm">Everyone has agreed</string>
+    <string name="meeting_discard">Discard</string>
+    <string name="meeting_discard_title">Discard this recording?</string>
+    <string name="meeting_discard_body">The audio and transcript are thrown away. Nothing is saved or uploaded.</string>
+    <string name="meeting_discard_confirm">Discard</string>
     <string name="meeting_connecting">Connecting…</string>
     <string name="meeting_recording">Recording</string>
     <string name="meeting_finishing">Finishing the transcript…</string>
@@ -73,10 +119,15 @@
     <string name="meeting_uploaded">Uploaded</string>
     <string name="meeting_queued">Saved on this device. It uploads as soon as the network is back.</string>
     <string name="meeting_dropped">That was under two seconds, so nothing was saved.</string>
+    <string name="meeting_interrupted">The meeting was cut short, but everything recorded up to that point is saved.</string>
     <string name="meeting_transcript_empty">The transcript appears here as people speak.</string>
     <string name="meeting_issue_quota">Transcription stopped: the hosted transcription quota is used up. The audio is still being recorded.</string>
     <string name="meeting_issue_error">Transcription stopped unexpectedly. The audio is still being recorded.</string>
     <string name="meeting_mic_silenced">Another app has taken the microphone — Parley is recording silence until it gives it back.</string>
+    <string name="meeting_mic_recovering">Trying to get the microphone back. The recording is still open and picks up where it left off.</string>
+    <string name="meeting_mic_lost_taken">Something else is holding the microphone. Everything recorded so far is safe; bring Parley to the front to try again.</string>
+    <string name="meeting_mic_lost_broken">The microphone stopped working. Everything recorded so far is safe — stop the meeting to save it.</string>
+    <string name="meeting_storage_low">This phone is nearly out of storage. Parley will stop and save the recording before it runs out.</string>
     <string name="meeting_title_format">Meeting %1$s</string>
     <string name="speaker_label">Speaker %1$d</string>
     <string name="speaker_unknown">Speaker</string>
@@ -85,6 +136,7 @@
     <string name="failure_not_signed_in">You are signed out. Sign in and try again.</string>
     <string name="failure_mic_permission">Microphone permission is not granted.</string>
     <string name="failure_mic_unavailable">The microphone isn\'t available — a call or another app may be using it.</string>
+    <string name="failure_storage_full">This phone is out of storage. Free some space and try again.</string>
     <string name="failure_encoder_unavailable">This device can\'t encode Opus audio, so the recording can\'t be saved.</string>
     <string name="failure_upload">The recording is saved on this device but couldn\'t be uploaded yet.</string>
     <string name="failure_unknown">Something went wrong.</string>
@@ -111,9 +163,99 @@
     <string name="detail_no_transcript">This recording has no transcript.</string>
     <string name="detail_findings">Findings</string>
     <string name="detail_action_items">Action items</string>
-    <string name="detail_playback_unavailable">Playback isn\'t available in this version.</string>
     <string name="detail_speakers">%1$d speakers</string>
     <string name="detail_length">Length %1$s</string>
+    <string name="detail_more_actions">More actions</string>
+
+    <!-- Copying and sharing a transcript -->
+    <string name="transcript_clip_label">Parley transcript</string>
+    <string name="transcript_copy">Copy transcript</string>
+    <string name="transcript_copied">Copied</string>
+    <string name="transcript_share">Share transcript</string>
+    <string name="transcript_share_title">Transcript</string>
+    <string name="transcript_segment_actions">Copy or share this part</string>
+    <string name="transcript_copy_segment">Copy this part</string>
+    <string name="transcript_seek_here">Play from here</string>
+    <string name="transcript_search">Search transcript</string>
+    <string name="transcript_search_hint">Search this transcript</string>
+    <string name="transcript_search_empty">No matches</string>
+    <string name="transcript_search_position">%1$d of %2$d</string>
+    <string name="transcript_search_previous">Previous match</string>
+    <string name="transcript_search_next">Next match</string>
+    <!-- Playback -->
+    <string name="playback_download">Download to play back</string>
+    <string name="playback_downloading">Downloading…</string>
+    <string name="playback_preparing">Preparing…</string>
+    <string name="playback_retry">Try again</string>
+    <string name="playback_failed_network">The download didn\'t finish.</string>
+    <string name="playback_failed_missing">There\'s no audio stored for this recording.</string>
+    <string name="playback_failed_unplayable">This recording\'s audio couldn\'t be played.</string>
+    <string name="playback_play">Play</string>
+    <string name="playback_pause">Pause</string>
+    <string name="playback_speed">Playback speed</string>
+    <string name="playback_scrub">Scrub</string>
+
+    <!-- Re-transcribing a recording whose live transcript came up short -->
+    <string name="retranscribe_action">Transcribe again</string>
+    <string name="retranscribe_queued">Re-transcribing this recording. The new transcript replaces this one when it\'s ready.</string>
+    <string name="retranscribe_budget_spent">This recording has been re-transcribed as many times as allowed.</string>
+    <string name="retranscribe_remaining">%1$d re-transcriptions left</string>
+    <string name="retranscribe_confirm_title">Transcribe this recording again?</string>
+    <string name="retranscribe_confirm_body">The whole recording is transcribed again from the start, and the transcript you have now is replaced when the new one comes back. It uses your account\'s transcription hours, the same as a new meeting would.</string>
+    <string name="retranscribe_no_audio">There\'s no audio for this recording, so there\'s nothing to transcribe again.</string>
+    <string name="retranscribe_audio_failed">The audio couldn\'t be fetched, so nothing was sent for transcription.</string>
+
+    <!-- Hosted transcription failures. Each one names a different next step. -->
+    <string name="batch_error_signed_out">Sign in to Parley Cloud to transcribe recordings.</string>
+    <string name="batch_error_quota">Your monthly hosted transcription quota is used up — upgrade your plan or wait for it to reset.</string>
+    <string name="batch_error_too_many">Too many transcriptions running at once — wait for a meeting or an earlier upload to finish, then try again.</string>
+    <string name="batch_error_too_large">This recording is too large for hosted transcription — split it into shorter files and upload them separately.</string>
+    <string name="batch_error_upstream">Parley Cloud couldn\'t reach the transcription service — try again in a few minutes.</string>
+    <string name="batch_error_offline">Can\'t reach the cloud right now. The re-transcription runs by itself once the network is back.</string>
+    <string name="batch_error_job_failed">Transcription failed: %1$s</string>
+    <string name="batch_error_timed_out">Transcription timed out.</string>
+    <string name="batch_error_http">Hosted transcription failed (HTTP %1$d)</string>
+    <string name="batch_error_http_code">Hosted transcription failed (HTTP %1$d): %2$s</string>
+
+    <!-- Audio on this phone -->
+    <string name="account_audio_title">Audio on this phone</string>
+    <string name="account_keep_audio">Keep audio on this phone</string>
+    <string name="account_keep_audio_detail">Recordings made here stay on the device, so they play back without downloading them again.</string>
+    <plurals name="account_audio_stored">
+        <item quantity="one">%1$d recording · %2$s</item>
+        <item quantity="other">%1$d recordings · %2$s</item>
+    </plurals>
+    <string name="account_audio_none">No audio stored on this phone.</string>
+    <string name="account_audio_remove_all">Remove stored audio</string>
+
+    <!-- Appearance -->
+    <string name="account_appearance">Appearance</string>
+    <string name="account_appearance_system">System</string>
+    <string name="account_appearance_light">Light</string>
+    <string name="account_appearance_dark">Dark</string>
+
+    <!-- Sync -->
+    <string name="account_sync_title">Sync</string>
+    <plurals name="account_sync_pending">
+        <item quantity="one">%1$d recording waiting to sync</item>
+        <item quantity="other">%1$d recordings waiting to sync</item>
+    </plurals>
+    <string name="account_sync_done">Everything is synced</string>
+    <string name="account_sync_retry">Retry sync now</string>
+    <string name="account_sync_detail">When the network drops, the server goes quiet, or you run out of quota, the phone holds on to finished recordings until they sync.</string>
+
+    <!-- Language -->
+    <string name="account_language">Language</string>
+    <string name="account_language_change">Change</string>
+    <string name="account_language_detail">Parley speaks English and Traditional Chinese, and follows your phone\'s language by default. Change it for Parley alone in the system settings.</string>
+
+    <!-- About -->
+    <string name="account_about_title">About</string>
+    <string name="account_version">Version %1$s (%2$d)</string>
+    <string name="account_about_detail">Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings.</string>
+    <string name="link_desktop">Parley for desktop</string>
+    <string name="link_privacy_policy">Privacy Policy</string>
+    <string name="link_support">Support &amp; feedback</string>
 
     <!-- Foreground service notification -->
     <string name="notification_channel_name">Meeting recording</string>

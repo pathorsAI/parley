@@ -11,8 +11,9 @@ import kotlin.math.sin
 
 /**
  * Byte-level conversions and the decoder's PCM sink. Everything here is pure
- * JVM; the MediaCodec/MediaMuxer halves of the audio layer are covered by the
- * manual checklist in `android/docs/api-audio.md`.
+ * JVM; the MediaCodec half of the audio layer is covered by the manual
+ * checklist in `android/docs/api-audio.md`, and the Ogg container it feeds by
+ * `OggStreamWriterTest`.
  */
 class PcmConversionTest {
 
@@ -167,7 +168,7 @@ class PcmConversionTest {
 
     @Test
     fun `synthesized OpusHead matches the desktop encoder`() {
-        val head = OggOpusEncoder.buildOpusHead()
+        val head = OggStreamWriter.buildOpusHead()
         assertEquals(19, head.size)
         assertEquals("OpusHead", String(head, 0, 8, Charsets.US_ASCII))
 
