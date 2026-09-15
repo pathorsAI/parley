@@ -132,6 +132,31 @@ describe("macOS menu bar accelerators", () => {
     }
   });
 
+  it("never accelerates a chord that does not carry Command", () => {
+    // The invariant this file was missing, and 0.30.0 shipped without.
+    //
+    // AppKit matches an NSMenu key equivalent inside `sendEvent:`, BEFORE the
+    // event reaches the key window's first responder. A menu item holding a
+    // bare "?" therefore eats the character before any text field can see it —
+    // the app stops being able to type a question mark at all. The webview's
+    // typing guard cannot help, because the webview never gets the event.
+    //
+    // Command is what makes a chord safe to hand to a menu: nobody types ⌘?
+    // into a sentence. This is also why Apple's own guidance is that every key
+    // equivalent carries it.
+    for (const def of COMMANDS) {
+      for (const chord of def.keys) {
+        if (!chord.native) continue;
+        expect(
+          chord.native.includes("CmdOrCtrl"),
+          `${def.id} accelerates "${chord.native}", which would swallow typing`
+        ).toBe(true);
+        // And the accelerator must actually match the chord it is attached to.
+        expect(chord.mod, `${def.id}: accelerator says Command, chord does not`).toBe(true);
+      }
+    }
+  });
+
   it("never gives two commands the same accelerator", () => {
     const accelerators = COMMANDS.flatMap((c) => c.keys.map((k) => k.native)).filter(Boolean);
     expect(new Set(accelerators).size).toBe(accelerators.length);

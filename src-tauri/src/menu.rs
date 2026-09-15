@@ -142,7 +142,7 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         "global",
         "shortcuts.show",
         "Keyboard Shortcuts",
-        "Shift+Slash",
+        "Shift+CmdOrCtrl+Slash",
     )?;
 
     // ── Diagnostics (unchanged) ─────────────────────────────────────────────
