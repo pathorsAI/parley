@@ -86,8 +86,16 @@ android {
         // MediaMuxer's OGG output — which also needed 29 — no longer figures.
         minSdk = 29
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.1.4"
+        versionCode = 6
+
+        // 1.13, not 0.2: the jump is the point. Android shipped as 0.1.x while it
+        // carried iOS 1.1's feature set, and this release is the one that closes
+        // that gap — playback, search, onboarding, re-transcription, and a
+        // recording that survives the things that used to delete it. Matching the
+        // iOS number also means the two stores stop describing the same product
+        // with numbers ten releases apart. There is no Android 1.0–1.12; the gap
+        // in the tag history is the honest record of how this went.
+        versionName = "1.13"
 
         // Instrumented tests only: audio/OggOpusEncoderDeviceTest drives the real
         // MediaCodec Opus encoder, which has no JVM stand-in.
