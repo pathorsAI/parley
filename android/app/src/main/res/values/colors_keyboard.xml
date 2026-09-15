@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Colors for the voice-typing keyboard (see voicetyping/KeyboardPalette.kt).
+
+  The keyboard cannot use `ui/theme/Theme.kt`: an InputMethodService renders
+  classic Views, not Compose, so the Material 3 scheme is not in scope. These
+  values are the light half of the same scheme — the `primary`/`secondary` seeds
+  from Theme.kt plus stock M3 neutrals — and `values-night/` carries the dark
+  half. On API 31+ the accent is replaced at runtime with the platform's dynamic
+  color, which is what Theme.kt does through dynamicLightColorScheme().
+
+  Light values live here rather than in `values/colors.xml` alongside the launcher
+  background so the keyboard's palette reads as one block.
+-->
+<resources>
+    <color name="keyboard_background">#FFF4FBFB</color>
+    <color name="keyboard_on_background">#FF191C1D</color>
+    <color name="keyboard_muted">#FF3F484A</color>
+    <color name="keyboard_accent">#FF00696E</color>
+    <color name="keyboard_on_accent">#FFFFFFFF</color>
+    <color name="keyboard_key">#FFDBE4E5</color>
+    <color name="keyboard_on_key">#FF191C1D</color>
+    <color name="keyboard_error">#FFBA1A1A</color>
+</resources>

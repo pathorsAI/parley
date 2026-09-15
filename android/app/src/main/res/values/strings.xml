@@ -115,6 +115,48 @@
     <string name="detail_speakers">%1$d speakers</string>
     <string name="detail_length">Length %1$s</string>
 
+    <!-- Voice typing: the keyboard itself (voicetyping/ParleyInputMethodService) -->
+    <string name="voice_typing_ime_label">Parley Voice</string>
+    <string name="voice_typing_subtype">Parley Voice</string>
+    <string name="voice_typing_mic_start">Start dictation</string>
+    <string name="voice_typing_mic_stop">Stop dictation</string>
+    <string name="voice_typing_switch_keyboard">Switch keyboard</string>
+    <string name="voice_typing_backspace">Backspace</string>
+    <string name="voice_typing_enter">Enter</string>
+    <string name="voice_typing_idle">Tap the mic and start talking.</string>
+    <string name="voice_typing_connecting">Connecting…</string>
+    <string name="voice_typing_listening">Listening…</string>
+    <string name="voice_typing_listening_countdown">Listening… %1$d s left</string>
+    <string name="voice_typing_transcribing">Finishing the last words…</string>
+    <string name="voice_typing_limit_reached">That\'s the limit for one dictation. Tap the mic to carry on.</string>
+    <string name="voice_typing_needs_mic">Dictation needs microphone access, and a keyboard can\'t ask for it. Set it up in Parley.</string>
+    <string name="voice_typing_needs_sign_in">Sign in to Parley to dictate.</string>
+    <string name="voice_typing_open_app">Set up in Parley</string>
+    <string name="voice_typing_open_sign_in">Open Parley to sign in</string>
+    <string name="voice_typing_error_mic">The microphone isn\'t available — a call or another app may be using it.</string>
+    <string name="voice_typing_error_connection">Couldn\'t reach transcription. Check your connection and try again.</string>
+    <string name="voice_typing_error_quota">Your hosted transcription quota is used up.</string>
+    <string name="voice_typing_error_relay">Transcription stopped unexpectedly. Try again.</string>
+
+    <!-- Voice typing: in-app setup (ui/VoiceTypingSetupScreen) -->
+    <string name="voice_typing_setup_title">Voice typing</string>
+    <string name="voice_typing_setup_headline">Type by voice in any app</string>
+    <string name="voice_typing_setup_body">Tap the mic on the Parley keyboard and your words land at the cursor.</string>
+    <string name="voice_typing_setup_ready">Everything is ready. Switch back to what you were typing and tap the mic.</string>
+    <string name="voice_typing_setup_step_enable_title">Enable the Parley keyboard</string>
+    <string name="voice_typing_setup_step_enable_body">In the system\'s on-screen keyboard list, turn Parley Voice on.</string>
+    <string name="voice_typing_setup_step_enable_action">Open keyboard settings</string>
+    <string name="voice_typing_setup_step_switch_title">Switch to it</string>
+    <string name="voice_typing_setup_step_switch_body">Tap into any text field, then pick Parley Voice from the keyboard picker.</string>
+    <string name="voice_typing_setup_step_switch_action">Choose keyboard</string>
+    <string name="voice_typing_setup_step_mic_title">Allow the microphone</string>
+    <string name="voice_typing_setup_step_mic_body">A keyboard can\'t ask for this itself, so it is granted here — once.</string>
+    <string name="voice_typing_setup_step_mic_action">Allow microphone</string>
+    <string name="voice_typing_setup_mic_denied">Microphone access was denied. Turn it on in system settings to dictate.</string>
+    <string name="voice_typing_setup_app_settings">Open app settings</string>
+    <string name="voice_typing_setup_step_done">Done</string>
+    <string name="account_voice_typing">Set up voice typing</string>
+
     <!-- Foreground service notification -->
     <string name="notification_channel_name">Meeting recording</string>
     <string name="notification_channel_description">Shows while Parley is recording a meeting.</string>

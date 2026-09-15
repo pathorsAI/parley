@@ -41,7 +41,11 @@ import com.pathors.parley.cloud.HostedQuota
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
+fun AccountSheet(
+    viewModel: HomeViewModel,
+    onDismiss: () -> Unit,
+    onSetUpVoiceTyping: () -> Unit,
+) {
     val account by viewModel.account.collectAsState()
     val sheetState = rememberModalBottomSheetState()
     var confirmingDelete by remember { mutableStateOf(false) }
@@ -59,6 +63,17 @@ fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
             )
 
             AccountIdentity(account)
+
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+            // Voice typing has no home of its own in the library, and this is the
+            // app's only settings-shaped surface. The steps themselves live on
+            // their own screen because one of them — granting the microphone —
+            // needs an Activity the keyboard does not have; see
+            // ui/VoiceTypingSetupScreen.kt.
+            TextButton(onClick = onSetUpVoiceTyping) {
+                Text(stringResource(R.string.account_voice_typing))
+            }
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
 

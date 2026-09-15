@@ -25,19 +25,21 @@ import androidx.navigation.compose.rememberNavController
 import com.pathors.parley.AppContainer
 import com.pathors.parley.R
 import com.pathors.parley.screenshot.DemoMode
+import com.pathors.parley.voicetyping.VoiceTypingSetup
 
-/** The four places the app can be. */
+/** The five places the app can be. */
 private object Route {
     const val HOME = "home"
     const val MEETING = "meeting"
     const val IMPORT = "import"
     const val RECORDING = "recording/{id}"
+    const val VOICE_TYPING = "voice-typing"
 
     fun recording(id: String) = "recording/$id"
 }
 
 /**
- * The whole UI: a sign-in wall in front of a four-screen navigation graph.
+ * The whole UI: a sign-in wall in front of a five-screen navigation graph.
  *
  * The wall is driven by whether a token is *stored*, not by whether the cloud
  * answered — being offline must never look like being signed out (see
@@ -71,6 +73,7 @@ private fun ParleyNavHost(container: AppContainer) {
     val context = LocalContext.current
 
     DemoNavigation(navController)
+    VoiceTypingHandOff(navController)
 
     // The Storage Access Framework: no storage permission, any provider (Files,
     // Drive, a recorder app), and the grant lives as long as we need the Uri.
@@ -95,7 +98,11 @@ private fun ParleyNavHost(container: AppContainer) {
                 onRecord = { navController.navigate(Route.MEETING) },
                 onImport = { picker.launch(arrayOf("audio/*")) },
                 onOpenRecording = { id -> navController.navigate(Route.recording(id)) },
+                onSetUpVoiceTyping = { navController.navigate(Route.VOICE_TYPING) },
             )
+        }
+        composable(Route.VOICE_TYPING) {
+            VoiceTypingSetupScreen(onBack = { navController.popBackStack() })
         }
         composable(Route.MEETING) {
             MeetingScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })
@@ -131,6 +138,27 @@ private fun DemoNavigation(navController: NavHostController) {
             DemoMode.Screen.TRANSCRIPT -> navController.navigate(Route.recording(DemoMode.FEATURED_ID))
             DemoMode.Screen.MEETING -> navController.navigate(Route.MEETING)
         }
+    }
+}
+
+/**
+ * Lands the keyboard's hand-off (`parley://voice-typing`) on the setup screen.
+ *
+ * The keyboard cannot request the microphone permission itself, so its setup
+ * affordance opens the app instead — and it has to arrive *somewhere useful*, not
+ * on the library. The request is a latch rather than an event precisely because
+ * the common case is a signed-out user: the graph does not exist while the
+ * sign-in wall is up, so the navigation happens once this composable finally
+ * mounts. See `voicetyping/VoiceTypingSetup.kt`.
+ */
+@Composable
+private fun VoiceTypingHandOff(navController: NavHostController) {
+    val pending by VoiceTypingSetup.SetupRequest.pending.collectAsState()
+    LaunchedEffect(pending) {
+        if (!pending) return@LaunchedEffect
+        VoiceTypingSetup.SetupRequest.consume()
+        navController.popBackStack(Route.HOME, inclusive = false)
+        navController.navigate(Route.VOICE_TYPING)
     }
 }
 
