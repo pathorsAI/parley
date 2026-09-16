@@ -83,6 +83,37 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.14
+
+Everything here is a fix, and most of it is something 1.13 got wrong.
+
+Re-transcribe now re-transcribes. It would say it was working when nothing
+was running, and there was no way to retry short of force-quitting Parley —
+a job interrupted by locking the phone was simply lost. It now picks itself
+back up when you come back to Parley, a job that is waiting says so instead
+of showing a spinner that means nothing, and there is a Start now button
+beside it. One failed job no longer blocks every recording queued behind it,
+and a re-run you asked for is only counted against your limit once.
+
+The transcript scrolls again. Two invisible strips down the left and right
+edges — the ones that play at 2× while you hold them — were catching the
+scroll before it reached the page. They still hold 2×, and they no longer
+swallow anything else.
+
+Dragging the timeline moves the transcript with it, including while paused,
+which is exactly when you are dragging to a point to read what was said
+there.
+
+A name you type is the name that gets saved. Renaming from the filing card
+used to put the suggested name back over yours unless you happened to
+dismiss the suggestion first. Accepting the same new folder twice no longer
+creates it twice. And a recording you renamed is no longer overwritten hours
+later by a background job still holding the name it had at the start.
+
+Discard is a button you can see. While recording it was a line of grey text
+that read like a caption; it is a real control now, with a target you can
+actually hit.
+
 ## What's New — 1.13
 
 Recordings can be played back on the phone. Meetings recorded here now stay
