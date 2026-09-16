@@ -17,6 +17,19 @@ final class AppState: NSObject, ObservableObject {
     @Published var signInError: String?
     @Published var pendingUploadCount = MeetingUploader.pendingCount
 
+    /// Bumped once for every backfill that successfully pushes, from whichever
+    /// drain ran it — launch, sign-in, a foregrounding, or the Re-transcribe
+    /// tap itself.
+    ///
+    /// The queue has always been able to finish a re-transcription while the
+    /// user was looking at the very recording it belongs to, and nothing told
+    /// anyone: the screen kept the transcript it had loaded, so the repaired
+    /// one appeared by chance the next time they opened it. A counter rather
+    /// than the recording's id, because a view only cares whether *its* data
+    /// might have changed and asking it to match ids would be one more thing to
+    /// get wrong.
+    @Published private(set) var backfillRevision: Int = 0
+
     /// False only until the stored session has been read out of the Keychain —
     /// which is synchronous, so this is true within the first frame. The root
     /// view waits on it so a returning user never sees the sign-in wall flash by
@@ -257,12 +270,26 @@ final class AppState: NSObject, ObservableObject {
     }
 
     /// Re-transcribe recordings whose live transcript did not account for their
-    /// audio. Silent by design — the recording is already in the library and
-    /// readable, so this improves it rather than unblocking it, and there is
-    /// nothing here for a person to do or decide.
-    func syncPendingBackfills() async {
-        guard signedIn else { return }
-        _ = await MeetingUploader.syncPendingBackfills(cloud: cloud)
+    /// audio. Automatic passes are silent by design — the recording is already
+    /// in the library and readable, so this improves it rather than unblocking
+    /// it. The result is returned rather than dropped for the one caller that
+    /// is not silent: the Re-transcribe screen, which asked for this pass and
+    /// is owed an answer about it.
+    ///
+    /// Gated on `hasAccount`, not `signedIn`. `signedIn` is `user != nil`, and
+    /// `user` is only ever populated by a successful `me()` — but
+    /// `refreshSession()` deliberately *keeps* the session when `me()` fails on
+    /// a flaky network, so the app spends that whole run fully usable with
+    /// `user == nil`. Gating here on `signedIn` made every Re-transcribe tap in
+    /// that state enqueue the work, flip the screen to "Re-transcribing…", and
+    /// then return without touching the queue. A token is enough to try with;
+    /// if it is dead the server says 401 and that is the authority.
+    @discardableResult
+    func syncPendingBackfills() async -> MeetingUploader.BackfillResult {
+        guard hasAccount else { return .skipped }
+        return await MeetingUploader.syncPendingBackfills(cloud: cloud) { [weak self] _ in
+            self?.backfillRevision += 1
+        }
     }
 
     func deleteAccount() async throws {

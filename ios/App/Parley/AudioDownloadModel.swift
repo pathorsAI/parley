@@ -28,6 +28,12 @@ final class AudioDownloadModel: ObservableObject {
     private let store: LocalAudioStore
     /// Only `.downloading` and `.failed` live here. See the type comment.
     @Published private var active: [String: AudioDownloadState] = [:]
+    /// The download running for each id, so a second caller can wait for it.
+    ///
+    /// Not published and not a state: nothing renders from this. It exists so
+    /// that `download` means the same thing to its callers whether or not the
+    /// file is already on its way — see the doc comment there.
+    private var inFlight: [String: Task<Void, Never>] = [:]
     /// Bumped whenever the store's contents change, which is what makes the
     /// rows re-read `has(_:)`. The store is a directory, not a publisher.
     @Published private var revision = 0
@@ -64,11 +70,33 @@ final class AudioDownloadModel: ObservableObject {
 
     /// Fetch the audio and hand it to the store.
     ///
+    /// Awaiting this always means "there is no download of this recording still
+    /// running", including when somebody else started it. It used to mean that
+    /// only when *this* call did the work: a second caller returned instantly,
+    /// which is fine for the three buttons that only want the download to be
+    /// happening, and wrong for Re-transcribe, which awaits this and then reads
+    /// the file. Tap Download and then Re-transcribe and the second one came
+    /// back with the audio still in flight, found no local URL, and reported
+    /// "Download failed" about a download that was going perfectly well.
+    func download(_ id: String, cloud: CloudClient) async {
+        if let existing = inFlight[id] { return await existing.value }
+        let task = Task { [weak self] in
+            await self?.performDownload(id, cloud: cloud)
+            // Cleared from inside the task, before it completes, so that by the
+            // time anyone's `await` returns the slot is already free. Clearing
+            // it after the await instead would leave a window where a finished
+            // task is still the one a new caller joins, and they would be told
+            // a download had happened when it had not.
+            self?.inFlight[id] = nil
+        }
+        inFlight[id] = task
+        await task.value
+    }
+
     /// Written to a temporary file first and then *moved* in, so a download that
     /// dies halfway through can never leave a truncated Ogg in the store under a
     /// name that `has(_:)` would call local.
-    func download(_ id: String, cloud: CloudClient) async {
-        guard !isDownloading(id) else { return }
+    private func performDownload(_ id: String, cloud: CloudClient) async {
         active[id] = .downloading(0)
         do {
             let data = try await cloud.downloadAudio(id: id) { [weak self] fraction in

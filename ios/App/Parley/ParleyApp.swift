@@ -57,6 +57,21 @@ struct ParleyApp: App {
                     guard phase == .active else { return }
                     AppState.publishKeyboardReadiness()
                     Task { await app.refreshFeatureFlags() }
+                    // The line that turns "dead until force-quit" into
+                    // "recovers by itself". `UIBackgroundModes` here is `audio`
+                    // only, so a re-transcription — minutes of work on an hour
+                    // of audio — is killed the moment the phone is locked or
+                    // the user switches apps. Nothing else re-drove the queue
+                    // between cold launches: Settings' "Retry sync now" is only
+                    // rendered for pending *uploads*, and backfills do not
+                    // count towards those. So a job that died on a lock screen
+                    // left the detail screen saying "Re-transcribing…" forever,
+                    // with the menu item that would retry it greyed out,
+                    // because both were reading a manifest nobody was running.
+                    // Coming back to the app is the obvious moment to try
+                    // again, and passes are serialized, so this cannot pile up
+                    // behind a drain already in flight.
+                    Task { await app.syncPendingBackfills() }
                 }
         }
     }

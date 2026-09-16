@@ -74,9 +74,24 @@ final class MeetingUploader {
         var sharedToOrgName: String?
     }
 
-    struct SyncResult {
+    /// What one pass over the upload queue did.
+    ///
+    /// `@unchecked Sendable` for the one field that cannot be checked: `Error`
+    /// carries no `Sendable` conformance, and this value crosses from the pass
+    /// back to the main actor. Everything that reaches it is an immutable value
+    /// — `CloudError`, `CancellationError`, or a finished `NSError` out of
+    /// `URLSession` — so there is nothing here for two threads to disagree
+    /// about.
+    struct SyncResult: @unchecked Sendable {
         let uploaded: Int
+        /// Entries that could never have succeeded and were dropped rather than
+        /// left at the head of the queue. See `hasAudio` and `isTerminal`.
+        let discarded: Int
         let remaining: Int
+        /// Why the pass stopped short, if it did; nil when it reached the end.
+        /// Kept rather than swallowed so a caller has something true to say
+        /// about a queue that is not draining.
+        let failure: Error?
     }
 
     private struct PendingUpload: Codable {
@@ -213,22 +228,91 @@ final class MeetingUploader {
     }
 
     static func syncPending(cloud: CloudClient, orgs: [CloudOrg]) async -> SyncResult {
-        let pending = loadPending()
         var uploaded = 0
-        for item in pending {
+        var discarded = 0
+        var failure: Error?
+        for item in loadPending() {
+            // The manifest outlived its audio — an interrupted `persist`, or
+            // the user clearing storage out from under the queue. `upload`
+            // reads the Ogg with a hard `try`, so this entry throws on every
+            // pass for the life of the install and, because the queue is
+            // oldest-first and stops at the first failure, takes every
+            // recording behind it down with it. There is no meeting left to
+            // send, so drop it instead of guarding the door with it.
+            guard hasAudio(at: try? audioURL(for: item.id)) else {
+                removePending(id: item.id)
+                discarded += 1
+                continue
+            }
             do {
                 _ = try await upload(item, cloud: cloud, orgs: orgs)
                 uploaded += 1
+            } catch is CancellationError {
+                // The pass was torn down, not the upload refused. Stop without
+                // marking anything: the queue is exactly as it was.
+                failure = CancellationError()
+                break
+            } catch let error as CloudError where isTerminal(error) {
+                // The server will refuse this request identically forever — the
+                // file is too large, the account is out of credit, the payload
+                // is malformed. Retrying costs an upload of an hour of audio
+                // every launch and blocks everything queued behind it.
+                removePending(id: item.id)
+                discarded += 1
+                failure = error
             } catch {
-                // Keep the item in-order. A later recording can be retried by the
-                // next foreground launch, but do not spin a failing network loop.
+                // Transport, or a 5xx: the next item would fail the same way,
+                // so stop the pass and keep the queue in order.
+                failure = error
                 break
             }
         }
-        return SyncResult(uploaded: uploaded, remaining: max(0, pending.count - uploaded))
+        // Read back rather than subtracted: `upload` retires an entry itself —
+        // to the backfill queue when the transcript came up short — so the only
+        // honest count of what is left is the directory's own.
+        return SyncResult(
+            uploaded: uploaded, discarded: discarded, remaining: loadPending().count,
+            failure: failure)
     }
 
     static var pendingCount: Int { loadPending().count }
+
+    /// Whether a queued entry still has an Ogg worth running.
+    ///
+    /// Both queues read their audio with a hard `try`, so an entry whose file
+    /// is gone or truncated to nothing can never run again — and both queues
+    /// stop at the first failure, so one of those at the head holds everything
+    /// behind it hostage. Android skips and drops them for exactly this reason
+    /// and calls it "the same protection `MeetingUploader.drain` gives the
+    /// upload queue" (`TranscriptBackfiller.kt`); this is that protection,
+    /// which iOS turns out never to have had on either queue.
+    private static func hasAudio(at url: URL?) -> Bool {
+        guard let url else { return false }
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        return size > 0
+    }
+
+    /// Whether a server's answer is the end of the road for a queued entry.
+    ///
+    /// A 4xx means the server objected to the request itself — the file is too
+    /// large (413), the account is out of credit (402), the payload is
+    /// malformed (400) — and the identical request will be refused identically
+    /// on every future pass. Left in a stop-at-first-failure queue, one of
+    /// those jams every recording behind it forever, which is the whole reason
+    /// a dead-letter path exists here.
+    ///
+    /// The exceptions are the 4xx that somebody's later action clears: signing
+    /// in again (401), being granted access or paying (403), and simply waiting
+    /// (408, 425, 429). Those stop the pass rather than end the entry. 5xx and
+    /// transport failures are not this function's business — they fall through
+    /// to `false` and stop the pass.
+    private static func isTerminal(_ error: CloudError) -> Bool {
+        switch error.status {
+        case 401, 403, 408, 425, 429: return false
+        case 400..<500: return true
+        default: return false
+        }
+    }
 
     private static func upload(
         _ pending: PendingUpload,
@@ -490,18 +574,37 @@ final class MeetingUploader {
         /// a fresh entry over the top of somebody's speaker names and analysis.
         /// See `RecordingMeta.replaceTranscript`.
         ///
-        /// Optional because the automatic path has nothing to preserve — the
-        /// recording was created seconds ago by the upload that queued this —
-        /// and because a manifest written by an older build does not have the
-        /// key at all.
+        /// Optional, and nil for every automatic backfill: that one is queued
+        /// by the upload that created the recording seconds earlier, so there
+        /// is nothing on it yet to capture. It is **not** a licence to rebuild
+        /// the entry from this request — `runBackfill` re-reads the recording
+        /// from the cloud in that case, because by the time an automatic
+        /// backfill finally runs (a later launch, possibly days later) the user
+        /// may well have renamed and filed it, and `request.pending.title` is
+        /// still the clock name it was born with. A manifest written by an
+        /// older build has no key here either and takes the same path.
         var existingMeta: Data?
         /// The summary the library is already showing, for the same reason:
         /// `findingsCount` and the title belong to the recording, not to the
         /// transcript being replaced. See `replacingTranscript`.
         var existingSummary: CloudRecordingSummary?
+        /// When a run of this request last *started*, and how many have.
+        ///
+        /// Stamped before the work rather than after it, because what they are
+        /// for is telling a request that is being worked on apart from one that
+        /// was abandoned mid-flight. `UIBackgroundModes` here is `audio` only,
+        /// so a multi-minute transcription dies the moment the phone is locked,
+        /// and the manifest it leaves behind is byte-identical to one that is
+        /// running right now. Only the process knows the difference (see
+        /// `RunningBackfills`), and only until it is killed — after that this
+        /// date is all anyone has, which is why the detail screen is given it
+        /// rather than a bare "queued".
+        var lastAttemptAt: Date?
+        var attemptCount: Int = 0
 
         enum CodingKeys: String, CodingKey {
             case pending, folderId, manualRetries, existingMeta, existingSummary
+            case lastAttemptAt, attemptCount
         }
 
         init(
@@ -509,19 +612,26 @@ final class MeetingUploader {
             folderId: String?,
             manualRetries: Int = 0,
             existingMeta: Data? = nil,
-            existingSummary: CloudRecordingSummary? = nil
+            existingSummary: CloudRecordingSummary? = nil,
+            lastAttemptAt: Date? = nil,
+            attemptCount: Int = 0
         ) {
             self.pending = pending
             self.folderId = folderId
             self.manualRetries = manualRetries
             self.existingMeta = existingMeta
             self.existingSummary = existingSummary
+            self.lastAttemptAt = lastAttemptAt
+            self.attemptCount = attemptCount
         }
 
         /// Written to disk and read back by a later build, same as
-        /// `PendingUpload` — a missing count reads as "none spent yet", and
-        /// missing carry-over state as "there was nothing to carry over",
-        /// rather than dropping the entry.
+        /// `PendingUpload` — a missing count reads as "none spent yet", missing
+        /// carry-over state as "there was nothing to carry over", and a missing
+        /// attempt stamp as "nothing has tried this yet", rather than dropping
+        /// the entry. Someone can update Parley with a re-transcription still
+        /// queued, and a manifest from the shipped build has neither of the two
+        /// attempt keys.
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             pending = try c.decode(PendingUpload.self, forKey: .pending)
@@ -530,6 +640,8 @@ final class MeetingUploader {
             existingMeta = try c.decodeIfPresent(Data.self, forKey: .existingMeta)
             existingSummary = try c.decodeIfPresent(
                 CloudRecordingSummary.self, forKey: .existingSummary)
+            lastAttemptAt = try c.decodeIfPresent(Date.self, forKey: .lastAttemptAt)
+            attemptCount = try c.decodeIfPresent(Int.self, forKey: .attemptCount) ?? 0
         }
     }
 
@@ -608,27 +720,186 @@ final class MeetingUploader {
 
     static var pendingBackfillCount: Int { loadBackfills().count }
 
-    /// Transcribe the queued audio in full and replace the transcript that
-    /// came up short. Returns how many recordings were repaired.
+    /// What one pass over the backfill queue did. `@unchecked Sendable` for the
+    /// same reason as `SyncResult`, and on the same terms.
+    struct BackfillResult: @unchecked Sendable {
+        let repaired: Int
+        /// Entries that can never run and were dropped: a manifest whose Ogg is
+        /// gone, or a request the server refuses permanently.
+        let discarded: Int
+        let remaining: Int
+        /// Why the pass stopped short, or the last refusal it dead-lettered on
+        /// the way through. Nil when nothing went wrong at all.
+        ///
+        /// Throwing this away is what made a stuck re-transcription silent: the
+        /// queue knew perfectly well why it had stopped and discarded the
+        /// reason inside a bare `catch`. Note that a non-nil failure does not
+        /// mean *this* recording failed — ask `backfillState(for:)` for that.
+        let failure: Error?
+
+        /// The pass never ran, so nothing changed and the queue is whatever it
+        /// already was.
+        static var skipped: BackfillResult {
+            BackfillResult(
+                repaired: 0, discarded: 0, remaining: MeetingUploader.pendingBackfillCount,
+                failure: nil)
+        }
+    }
+
+    /// What a recording's re-transcription is actually doing, as opposed to
+    /// what the queue directory happens to contain.
+    ///
+    /// The distinction is the bug this type exists for. The screen used to ask
+    /// `hasQueuedBackfill(for:)`, which is a `fileExists` call, so a job that
+    /// iOS killed on the lock screen read exactly like one that was
+    /// mid-transcription: "Re-transcribing…" forever, with the menu item that
+    /// would retry it disabled, until the app was force-quit.
+    enum BackfillState: Equatable {
+        /// Nothing queued for this recording.
+        case none
+        /// A run is alive in this process right now.
+        case running
+        /// A manifest is on disk and nothing is running it. `lastAttempt` is
+        /// when a run last started — nil if none ever has, which is the state a
+        /// freshly queued request and a manifest from an older build share.
+        case queued(lastAttempt: Date?)
+    }
+
+    /// Whether this recording's re-transcription is running, merely waiting, or
+    /// not queued at all.
+    static func backfillState(for id: String) -> BackfillState {
+        if RunningBackfills.shared.contains(id) { return .running }
+        guard let url = try? backfillManifestURL(for: id),
+            FileManager.default.fileExists(atPath: url.path)
+        else { return .none }
+        // Deliberately keyed off the file rather than off a successful decode:
+        // a manifest this build cannot read is still work somebody is owed, and
+        // reporting it as "nothing queued" would offer a second run beside it.
+        return .queued(lastAttempt: backfillRequest(id: id)?.lastAttemptAt)
+    }
+
+    /// Transcribe the queued audio in full and replace the transcripts that
+    /// came up short, oldest first.
     ///
     /// Whole-file rather than gap-filling on purpose: an async job costs less
     /// than the realtime leg that already ran, so the arithmetic never favours
     /// stitching. What stitching would cost instead is a seam — two models,
     /// two speaker numberings and two clocks meeting in the middle of a
     /// sentence — for a saving of a few cents.
-    static func syncPendingBackfills(cloud: CloudClient) async -> Int {
+    ///
+    /// Safe to call from anywhere at any time: passes are serialized by
+    /// `BackfillDrainGate`. `onRepaired` is called as each recording lands
+    /// rather than at the end, because a pass can be several recordings and
+    /// many minutes long and the screen the user has open should not have to
+    /// wait for the last one to learn its own transcript changed.
+    static func syncPendingBackfills(
+        cloud: CloudClient,
+        onRepaired: (@MainActor @Sendable (String) -> Void)? = nil
+    ) async -> BackfillResult {
+        await BackfillDrainGate.shared.drain(cloud: cloud, onRepaired: onRepaired)
+    }
+
+    /// One pass over the queue. Only ever called through the gate.
+    fileprivate static func drainBackfills(
+        cloud: CloudClient,
+        onRepaired: (@MainActor @Sendable (String) -> Void)?
+    ) async -> BackfillResult {
         var repaired = 0
+        var discarded = 0
+        var failure: Error?
+
         for request in loadBackfills() {
-            do {
-                try await runBackfill(request, cloud: cloud)
-                repaired += 1
-            } catch {
-                // Leave it queued and stop: a backfill is never urgent, and a
-                // failing network will fail the next one the same way.
+            if Task.isCancelled {
+                failure = CancellationError()
                 break
             }
+            let id = request.pending.id
+            switch await attemptBackfill(request, cloud: cloud) {
+            case .repaired:
+                repaired += 1
+                // After `attemptBackfill` has returned, so the state this wakes
+                // the screen up to read is already `.none` rather than
+                // `.running`.
+                await onRepaired?(id)
+            case .discarded(let error):
+                discarded += 1
+                if let error { failure = error }
+            case .stopped(let error):
+                failure = error
+                // A flat network fails the next one the same way, and a
+                // backfill is never urgent. Everything still queued keeps its
+                // place for the next pass.
+                return BackfillResult(
+                    repaired: repaired, discarded: discarded,
+                    remaining: loadBackfills().count, failure: failure)
+            }
         }
-        return repaired
+        return BackfillResult(
+            repaired: repaired, discarded: discarded, remaining: loadBackfills().count,
+            failure: failure)
+    }
+
+    /// How one queued request ended.
+    private enum BackfillOutcome {
+        case repaired
+        /// Dropped for good. Carries the refusal when there was one; a manifest
+        /// with no audio left has nobody to quote.
+        case discarded(Error?)
+        /// Left queued, and the pass should stop here.
+        case stopped(Error)
+    }
+
+    private static func attemptBackfill(
+        _ request: BackfillRequest, cloud: CloudClient
+    ) async -> BackfillOutcome {
+        let id = request.pending.id
+        guard hasAudio(at: try? backfillAudioURL(for: id)) else {
+            // The manifest outlived its blob: an interrupted enqueue, or the
+            // user clearing app storage. It can never run, and `loadBackfills`
+            // is oldest-first, so keeping it would block the head of the queue
+            // forever — a fresh request the user just made would sit behind it
+            // while the screen said "Re-transcribing…". Mirrors Android.
+            removeBackfill(id: id)
+            return .discarded(nil)
+        }
+
+        markAttempt(request)
+        RunningBackfills.shared.begin(id)
+        defer { RunningBackfills.shared.end(id) }
+
+        do {
+            try await runBackfill(request, cloud: cloud)
+            return .repaired
+        } catch is CancellationError {
+            // Not this recording's failure: the task running the pass was torn
+            // down. Reported as itself rather than folded into the generic
+            // catch, where a cancelled launch task was indistinguishable from a
+            // flat network. Nothing is charged and nothing is dropped.
+            return .stopped(CancellationError())
+        } catch let error as CloudError where isTerminal(error) {
+            // `finishBackfill` rather than `removeBackfill`: this request is
+            // over, and a request that is over gets its audio retired on the
+            // same terms as any other — a phone set to keep audio keeps it.
+            finishBackfill(id: id)
+            return .discarded(error)
+        } catch {
+            return .stopped(error)
+        }
+    }
+
+    /// Stamp a request as tried, in the manifest, before the work starts.
+    ///
+    /// Guarded on the manifest still being there so this can never write one
+    /// back that something else has just finished and deleted.
+    private static func markAttempt(_ request: BackfillRequest) {
+        var updated = request
+        updated.attemptCount += 1
+        updated.lastAttemptAt = Date()
+        guard let url = try? backfillManifestURL(for: request.pending.id),
+            FileManager.default.fileExists(atPath: url.path),
+            let data = try? JSONEncoder().encode(updated)
+        else { return }
+        try? data.write(to: url, options: .atomic)
     }
 
     private static func runBackfill(_ request: BackfillRequest, cloud: CloudClient) async throws {
@@ -670,26 +941,68 @@ final class MeetingUploader {
             summary = existingSummary.replacingTranscript(
                 segments: transcript.segments, durationMs: durationMs)
         } else {
-            // The automatic path: this recording was created by the upload that
-            // queued the backfill, so there is nothing on it to preserve.
-            let repaired = PendingUpload(
-                id: id,
-                startedAt: request.pending.startedAt,
-                durationMs: durationMs,
-                segments: transcript.segments,
-                defaultSave: request.pending.defaultSave,
-                source: request.pending.source,
-                title: request.pending.title)
-            meta = buildMeta(
-                pending: repaired, finals: repaired.segments, folderId: request.folderId)
-            summary = buildSummary(
-                pending: repaired, finals: repaired.segments, folderId: request.folderId)
+            // The automatic path. It used to rebuild the entry out of
+            // `request.pending`, on the reasoning that the recording had been
+            // created seconds earlier by the upload that queued this and so had
+            // nothing on it worth keeping. That reasoning holds at the moment
+            // of queueing and stops holding immediately afterwards: this run
+            // happens on a *later* launch, and between the two the user may
+            // have renamed the recording, moved it, and had a filing suggestion
+            // accepted on it. Pushing the rebuilt entry put the clock name —
+            // "Meeting Sep 16, 3:20 PM" — back over the name they typed, along
+            // with the folder and `filingSuggested`. A rename undone hours
+            // later by a background job is silent data loss.
+            //
+            // So read the recording as it stands right now and edit the
+            // transcript inside it, exactly as the manual path does.
+            // `request.folderId` is not applied, for the same reason it is not
+            // applied above: the recording's own folder is the current one.
+            //
+            // A hard `try`: a fetch that failed would leave us holding only the
+            // stale copy, and quietly pushing that is the very thing this
+            // branch exists to stop. Better to leave the request queued and
+            // come back — the network that just failed here is the network the
+            // push below needs anyway.
+            var current = try await cloud.recordingMeta(id: id)
+            current.replaceTranscript(segments: transcript.segments, durationMs: durationMs)
+            meta = current
+            summary = repushSummary(
+                meta: current, fallback: request.pending, segments: transcript.segments)
         }
 
         // Audio is already in the cloud and unchanged, so this is a metadata
         // push only — the recording keeps its id, its folder and its sharing.
         try await cloud.pushRecording(id: id, summary: summary, meta: meta)
         finishBackfill(id: id)
+    }
+
+    /// The summary that goes up beside a re-pushed meta on the automatic path,
+    /// derived from that meta rather than from the queued request.
+    ///
+    /// Every field here except the three the transcript speaks for is a fact
+    /// the *recording* owns — its name, its folder, how much analysis is on it
+    /// — and the request is out of date about all of them by the time an
+    /// automatic backfill runs. `fallback` covers a meta so sparse it cannot
+    /// name itself, which is not something the server should return but is
+    /// cheap to survive.
+    private static func repushSummary(
+        meta: RecordingMeta, fallback: PendingUpload, segments: [TranscriptSegment]
+    ) -> CloudRecordingSummary {
+        CloudRecordingSummary(
+            id: meta.id.isEmpty ? fallback.id : meta.id,
+            title: meta.title.isEmpty ? fallback.displayTitle : meta.title,
+            source: (meta.raw["source"] as? String) ?? fallback.source,
+            createdAt: meta.createdAt > 0
+                ? meta.createdAt : fallback.startedAt.timeIntervalSince1970 * 1_000,
+            // `replaceTranscript` has already reconciled the two lengths.
+            durationMs: meta.durationMs,
+            speakerCount: CloudRecordingSummary.speakerCount(of: segments),
+            findingsCount: (meta.raw["findings"] as? [Any])?.count ?? 0,
+            actionItemsCount: (meta.raw["actionItems"] as? [Any])?.count ?? 0,
+            hasAudio: true,
+            snippet: CloudRecordingSummary.snippet(of: segments),
+            folderId: meta.folderId,
+            updatedAt: nil)
     }
 
     private static func decodeMeta(_ data: Data) -> RecordingMeta? {
@@ -791,11 +1104,15 @@ final class MeetingUploader {
         }
     }
 
-    /// Whether this recording has a re-transcription waiting or in flight, so
-    /// the detail screen can say so and not offer a second one.
+    /// Whether this recording has a re-transcription waiting or in flight, so a
+    /// caller can decline to offer a second one.
+    ///
+    /// The coarse question, kept for callers that only need a yes/no. Anything
+    /// that *shows* the answer should ask `backfillState(for:)` instead —
+    /// "waiting" and "in flight" are the two this cannot tell apart, and
+    /// conflating them is what left the spinner running forever.
     static func hasQueuedBackfill(for id: String) -> Bool {
-        guard let url = try? backfillManifestURL(for: id) else { return false }
-        return FileManager.default.fileExists(atPath: url.path)
+        backfillState(for: id) != .none
     }
 
     static func manualRetriesRemaining(for id: String) -> Int {
@@ -839,5 +1156,84 @@ final class MeetingUploader {
             let data = try? JSONEncoder().encode(budget)
         else { return }
         try? data.write(to: url, options: .atomic)
+    }
+}
+
+/// Which recordings have a backfill run alive **in this process, right now**.
+///
+/// The queue's own files cannot answer that. A manifest left behind by a job
+/// iOS killed on the lock screen is byte-for-byte the same as one belonging to
+/// a job that is mid-transcription, which is why "Re-transcribing…" used to
+/// stick until a force-quit: the screen was reading `fileExists` and calling it
+/// progress. So the fact lives in memory instead, where it dies with the
+/// process that owned it — a run cannot outlive the thing running it, and a
+/// relaunch therefore reads `.queued` and offers the retry.
+///
+/// A locked box rather than an actor because the detail screen asks while it is
+/// laying out, and there is nowhere in a `View` to `await` an answer.
+private final class RunningBackfills: @unchecked Sendable {
+    static let shared = RunningBackfills()
+    private let lock = NSLock()
+    private var ids: Set<String> = []
+
+    func contains(_ id: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return ids.contains(id)
+    }
+
+    func begin(_ id: String) {
+        lock.lock()
+        ids.insert(id)
+        lock.unlock()
+    }
+
+    func end(_ id: String) {
+        lock.lock()
+        ids.remove(id)
+        lock.unlock()
+    }
+}
+
+/// Serializes passes over the backfill queue.
+///
+/// An actor on its own does not do this. A drain suspends on every network
+/// call, and an actor lets the next caller in at every suspension point, so two
+/// `drain` bodies would happily interleave inside one actor. The gate therefore
+/// keeps a handle on the pass in flight and makes a later caller wait for it
+/// before taking its own turn.
+///
+/// Without it, launch, sign-in, every foregrounding and the Re-transcribe tap
+/// can all be walking the same directory at once: the same hour of audio
+/// transcribed twice, pushed twice, and — worst — charged twice against
+/// `ManualRetryBudget`, so one re-run the user asked for eats two of the three
+/// they are allowed. Android has the same gate (`TranscriptBackfiller`'s
+/// `drainMutex`); iOS had nothing.
+///
+/// Chained rather than coalesced, deliberately. A caller that has just written
+/// a manifest needs a pass that *starts after* its write, and joining one that
+/// took its snapshot of the directory earlier would silently not run it.
+private actor BackfillDrainGate {
+    static let shared = BackfillDrainGate()
+
+    /// The last pass handed out. A new caller queues behind it rather than
+    /// beside it, and the chain is released once nothing is waiting so the
+    /// actor does not hold the final pass — and its result — alive for the
+    /// life of the process.
+    private var tail: Task<MeetingUploader.BackfillResult, Never>?
+
+    func drain(
+        cloud: CloudClient,
+        onRepaired: (@MainActor @Sendable (String) -> Void)?
+    ) async -> MeetingUploader.BackfillResult {
+        let previous = tail
+        let pass = Task {
+            _ = await previous?.value
+            return await MeetingUploader.drainBackfills(cloud: cloud, onRepaired: onRepaired)
+        }
+        tail = pass
+        let result = await pass.value
+        if tail == pass { tail = nil }
+        return result
     }
 }

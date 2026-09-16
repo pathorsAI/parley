@@ -23,14 +23,34 @@ import SwiftUI
 /// only a write the user explicitly asked for ever says so. Finishing a meeting
 /// must not get worse because this feature exists.
 ///
-/// ## Acceptance is derived, never stored
+/// ## An answered offer is retired, not compared away
 ///
-/// `proposedTitle` and `proposedFolders` compare the suggestion against the
-/// name and folder the recording currently carries, and each retires itself
-/// once it has nothing left to offer. An "applied" flag would be a second copy
-/// of that same fact, free to drift — a title accepted here and then changed
-/// elsewhere would leave the block still claiming there is something to accept.
-/// Deriving it means every route to the same outcome retires the same offer.
+/// Both halves used to be derived purely by comparison against what the
+/// recording currently is, and neither comparison can express "the user has
+/// already answered this".
+///
+/// `proposedTitle` compared the suggestion against `currentTitle` and retired
+/// itself when they matched, which is only an answer for the user who takes the
+/// proposed name verbatim. Someone who answers with a THIRD string — their own,
+/// typed in the Adjust sheet — leaves the two names unequal forever, so the
+/// block redrew with the model's name over the top of the one they had just
+/// saved, and offered to write it for them.
+///
+/// `proposedFolders` drops the chip pointing at the folder the recording is
+/// already in, which retires the accepted candidate and nothing else. The
+/// runners-up the pass also proposed outlive the accept, so the block redrew as
+/// a bare folder line for a question already answered — and a candidate with no
+/// id, meaning "create a folder called X", is deliberately not compared away at
+/// all, because `nil` is also "the personal root". Accepting a new folder left
+/// that same candidate on offer, and a second `Save as suggested` created a
+/// SECOND folder under the same name.
+///
+/// So each half records what the user did — `titleAnswered`, `folderAnswered` —
+/// instead of inferring it from what the recording ended up being. Both are set
+/// by `apply`, which every accept route goes through, and only once its push
+/// has returned: a write that threw leaves the offer open, because it is still
+/// worth taking. `forget()` clears them with the rest of the offer, because the
+/// next recording gets its own to answer.
 @MainActor
 final class FilingSuggestionModel: ObservableObject {
 
@@ -61,14 +81,25 @@ final class FilingSuggestionModel: ObservableObject {
     /// `recordingId`, and NOT cleared by `forget()`: a dismissed card must stay
     /// dismissed, and this view is re-entered every time the tab comes back.
     private var consideredId: String?
+    /// The user has answered the name half of this offer — with the proposed
+    /// name or with one of their own, it makes no difference. Set by `apply`,
+    /// which every accept route goes through, and cleared by `forget()` with
+    /// the rest of the offer.
+    private var titleAnswered = false
+    /// The user has answered the home half of this offer — by taking the
+    /// proposed folder, by picking a different one in the Adjust sheet, or by
+    /// having a new one created for them. Set by `apply` alongside its twin,
+    /// and cleared by `forget()` with the rest of the offer.
+    private var folderAnswered = false
     private var pass: Task<Void, Never>?
 
     // MARK: what is left to offer
 
     /// The proposed name, or nil when there is nothing left to propose — an
-    /// empty suggestion (the model had nothing better), or a recording that is
-    /// already called that.
+    /// offer the user has already answered, an empty suggestion (the model had
+    /// nothing better), or a recording that is already called that.
     var proposedTitle: String? {
+        guard !titleAnswered else { return nil }
         guard let suggestion else { return nil }
         let proposed = suggestion.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !proposed.isEmpty else { return nil }
@@ -78,12 +109,20 @@ final class FilingSuggestionModel: ObservableObject {
         return proposed
     }
 
-    /// The folders still worth offering. The chip pointing at the folder the
-    /// recording is already in is dropped — but a `nil` id is compared out
-    /// explicitly rather than by equality, because `nil` is also "the personal
-    /// root", and an unfiled recording is exactly the case a brand-new folder
-    /// gets proposed for.
+    /// The folders still worth offering, or none at all once the user has said
+    /// where this recording lives — every candidate goes, runners-up included,
+    /// because they were alternative answers to a question that now has one.
+    ///
+    /// The comparison below still runs, for the recording that is already in a
+    /// proposed folder before anyone has answered anything: the chip pointing at
+    /// the folder it is in is dropped, but a `nil` id is compared out explicitly
+    /// rather than by equality, because `nil` is also "the personal root", and
+    /// an unfiled recording is exactly the case a brand-new folder gets proposed
+    /// for. What that same `nil` cannot do is retire itself once accepted —
+    /// which is `folderAnswered`'s job, and why creating the folder twice is no
+    /// longer a double tap away.
     var proposedFolders: [FilingFolderSuggestion] {
+        guard !folderAnswered else { return [] }
         guard let suggestion else { return [] }
         let live = suggestion.folders.filter { folder in
             folder.folderId == nil || folder.folderId != currentFolderId
@@ -91,10 +130,12 @@ final class FilingSuggestionModel: ObservableObject {
         return Array(live.prefix(3))
     }
 
-    /// The block draws nothing once there is neither a name nor a home left to
-    /// offer.
+    /// The block draws nothing once neither half is still on offer. Asking the
+    /// two halves is the whole test now that both can retire themselves: each
+    /// already answers nil for a suggestion that never arrived, so a separate
+    /// `suggestion != nil` would only be a second place for the rule to live.
     var hasSomethingToOffer: Bool {
-        suggestion != nil && (proposedTitle != nil || !proposedFolders.isEmpty)
+        proposedTitle != nil || !proposedFolders.isEmpty
     }
 
     /// The folder the one-tap accept files into: the model's best answer, which
@@ -125,9 +166,14 @@ final class FilingSuggestionModel: ObservableObject {
     }
 
     /// Drop the suggestion without writing anything. Used when a new meeting
-    /// starts: the card belongs to the recording that just ended, and leaving
+    /// starts — the card belongs to the recording that just ended, and leaving
     /// it up over the next one would offer a rename for a recording the user
-    /// has moved on from.
+    /// has moved on from — and by the routes that have finished with the offer
+    /// AFTER their own write landed (`dismiss`, the Adjust sheet's Save).
+    ///
+    /// It clears `recordingId`, so a write ordered after this one is a no-op:
+    /// retire the offer once the push it was answered with has returned, never
+    /// before.
     func forget() {
         pass?.cancel()
         pass = nil
@@ -136,6 +182,8 @@ final class FilingSuggestionModel: ObservableObject {
         currentTitle = ""
         currentFolderId = nil
         existingFolders = []
+        titleAnswered = false
+        folderAnswered = false
         isWriting = false
         writeFailed = false
     }
@@ -215,13 +263,18 @@ final class FilingSuggestionModel: ObservableObject {
     /// Merely offering a candidate must not bring it into being — the user
     /// would end up with an empty folder for every candidate the pass ever
     /// proposed and never accepted.
-    func apply(title: String?, folder: FilingFolderSuggestion?, app: AppState) async {
-        guard !isWriting, let id = recordingId else { return }
+    ///
+    /// - Returns: whether a push landed. The Adjust sheet needs to tell a Save
+    ///   that wrote — and so carried `filingSuggested` with it — apart from a
+    ///   Save that found nothing to change.
+    @discardableResult
+    func apply(title: String?, folder: FilingFolderSuggestion?, app: AppState) async -> Bool {
+        guard !isWriting, let id = recordingId else { return false }
         var newTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         if newTitle?.isEmpty == true || newTitle == currentTitle { newTitle = nil }
         var newFolder = folder
         if let alreadyThere = folder?.folderId, alreadyThere == currentFolderId { newFolder = nil }
-        guard newTitle != nil || newFolder != nil else { return }
+        guard newTitle != nil || newFolder != nil else { return false }
         isWriting = true
         writeFailed = false
         defer { isWriting = false }
@@ -238,10 +291,27 @@ final class FilingSuggestionModel: ObservableObject {
                 if let newTitle { meta.title = newTitle }
                 if let targetId { meta.folderId = targetId }
             }
-            if let newTitle { currentTitle = newTitle }
-            if let targetId { currentFolderId = targetId }
+            if let newTitle {
+                currentTitle = newTitle
+                // The name half is settled, whatever name it settled on. Only
+                // once the push is back: a write that threw leaves the offer
+                // open, because it is still worth taking.
+                titleAnswered = true
+            }
+            if let targetId {
+                currentFolderId = targetId
+                // The home half is settled, wherever it settled — including the
+                // folder created a moment ago, whose id came back from
+                // `createFolder`. Retiring it here is what stops a second tap
+                // creating a second folder under that same name. After the
+                // push, like the name: a write that threw is still worth
+                // retrying.
+                folderAnswered = true
+            }
+            return true
         } catch {
             writeFailed = true
+            return false
         }
     }
 

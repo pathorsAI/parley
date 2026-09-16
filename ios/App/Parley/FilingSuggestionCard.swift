@@ -361,11 +361,29 @@ private struct FilingAdjustSheet: View {
     private func save() {
         let folder = choices.first { $0.id == chosen }?.folder
         Task {
-            await model.apply(title: title, folder: folder, app: app)
+            let pushed = await model.apply(title: title, folder: folder, app: app)
             // A failed push keeps the sheet up with the edits intact — the
             // block behind it carries the message, and dismissing would throw
             // away the only copy of what the user typed.
-            if !model.writeFailed { dismiss() }
+            guard !model.writeFailed else { return }
+            // Saving here answers the offer outright, and answers it in the
+            // user's own words, so the block behind the sheet has to be retired
+            // rather than left to work it out: a name the user typed is neither
+            // the model's nor the one the recording had, and a block still
+            // holding the model's suggestion would redraw with it as the
+            // headline, the name just saved demoted to "Was: …", and `Save as
+            // suggested` still on screen offering to write over it.
+            //
+            // After the push and never before — `forget()` clears the recording
+            // id, and a write ordered against no id is a silent no-op. A Save
+            // that found nothing to change pushed nothing, so it leaves through
+            // `dismiss`, which lands `filingSuggested` for the desktop.
+            if pushed {
+                model.forget()
+            } else {
+                model.dismiss(app: app)
+            }
+            dismiss()
         }
     }
 }

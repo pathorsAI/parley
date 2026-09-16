@@ -61,14 +61,40 @@ struct RecordingDetailView: View {
     /// use — the list can shrink under it between renders.
     @State private var currentHit = 0
     @FocusState private var queryFocused: Bool
-
-    /// The re-transcription confirmation, and whether one is in flight.
+    /// The transcript's own width, measured off the scroll view, so the 2× hold
+    /// can tell whether a press landed in one of the bands at either edge.
+    @State private var transcriptWidth: CGFloat = 0
+    /// Where the finger went down on the transcript, while it is down.
     ///
-    /// `isReTranscribing` covers "queued" as well as "running": the queue is on
-    /// disk, so a request that outlived the app is still this recording's
-    /// pending re-transcription when the screen opens again.
+    /// Recorded by the drag half of the 2× gesture, because a `LongPressGesture`
+    /// value is a bare `Bool` and carries no location, and the location is the
+    /// whole of the question being asked.
+    @State private var pressStart: CGPoint?
+    /// Whether a touch is currently down on the transcript.
+    ///
+    /// `@GestureState` for exactly one reason: it unwinds by itself when the
+    /// gesture ends, fails, or is interrupted, and that is what makes the release
+    /// of 2× unmissable. A plain flag stays set when a system gesture, a context
+    /// menu, or the screen going away takes the touch mid-hold, and the recording
+    /// then plays at 2× with nothing holding it.
+    @GestureState private var pressing = false
+
+    /// The re-transcription confirmation, and what this recording's
+    /// re-transcription is actually doing.
+    ///
+    /// Three states rather than a `Bool`, and that is the whole of the fix for
+    /// "it says it's transcribing but it isn't". The flag this replaces was set
+    /// from a `fileExists` on the queue directory, so "a run is under way" and
+    /// "a manifest nobody is running" were the same answer — and the screen
+    /// showed the spinner for both while the menu item that would have retried
+    /// it was disabled *because* of them. iOS kills a backfill the moment the
+    /// phone is locked, so the second state is the common one, and the only way
+    /// out of it was to force-quit the app.
+    ///
+    /// Waiting and working now render differently, and only `.running` disables
+    /// the action.
     @State private var confirmingReTranscribe = false
-    @State private var isReTranscribing = false
+    @State private var backfill: MeetingUploader.BackfillState = .none
     /// How many hand-triggered re-runs this recording has left. Read from the
     /// ledger when the screen loads rather than on every render — the answer
     /// lives in a file, and the body is not a place to touch the disk.
@@ -138,6 +164,15 @@ struct RecordingDetailView: View {
         .onChange(of: searching) { _, open in
             queryFocused = open
             if !open { query = "" }
+        }
+        // A backfill landed somewhere in the app, and it may well be this one:
+        // the queue drains on launch, on sign-in, on every foregrounding and on
+        // the Re-transcribe tap itself, so a repaired transcript can arrive
+        // while the reader is sitting on the recording it belongs to. Before
+        // this, it did not — the screen kept the transcript it had fetched, and
+        // the new one turned up by chance on some later visit.
+        .onChange(of: app.backfillRevision) { _, _ in
+            Task { await backfillLanded() }
         }
         .task { await load() }
         // Keyed on the URL, so the download landing is what opens the player:
@@ -287,14 +322,20 @@ struct RecordingDetailView: View {
     /// The transcript has to be loaded — it is what the queued request carries
     /// as its fallback and what the re-push preserves the rest of — and the
     /// budget has to have something left in it.
+    ///
+    /// Only `.running` closes the item. A `.queued` recording is one nobody is
+    /// working on, and refusing it there is what left people stuck: a job iOS
+    /// killed on the lock screen disabled its own retry for the life of the
+    /// install. Asking again is exactly the right thing to be able to do.
     private var canReTranscribe: Bool {
-        meta != nil && !isReTranscribing && retriesRemaining > 0
+        guard meta != nil, retriesRemaining > 0 else { return false }
+        return backfill != .running
     }
 
     /// Why the item above is disabled, when it is. nil when it is not: a menu
     /// that explains an action you can simply take is noise.
     private var reTranscribeNote: String? {
-        if isReTranscribing {
+        if backfill == .running {
             return String(localized: "Already re-transcribing this recording.")
         }
         if retriesRemaining <= 0 {
@@ -337,28 +378,72 @@ struct RecordingDetailView: View {
                 summary: summary, meta: meta, audioAt: source)
         } catch {
             reTranscribeError = error.localizedDescription
+            refreshReTranscribeState()
             return
         }
 
-        isReTranscribing = true
-        // Straight into the queue rather than waiting for the next foreground
-        // pass: the person is looking at the screen they asked from.
-        await app.syncPendingBackfills()
+        await drainNow()
+    }
 
-        if MeetingUploader.hasQueuedBackfill(for: summary.id) {
-            // Still queued means the run did not land. Say so and leave it
-            // there — the queue retries it, and nothing has been lost.
-            reTranscribeError = String(
-                localized: "Re-transcribing didn't finish. It stays queued and will be retried.")
-            refreshReTranscribeState()
-        } else {
+    /// Run the queue now, for a request that is already in it.
+    ///
+    /// What the "start now" button in the status panel does, and what the tail
+    /// of `reTranscribe()` does once it has queued the work. Deliberately not a
+    /// second `enqueueManualBackfill`: the manifest and the audio are already on
+    /// disk, and re-queuing would spend another retry from the budget for a job
+    /// the user has already paid for. This is the foregrounding drain, asked for
+    /// by hand.
+    private func drainNow() async {
+        // Whatever the last attempt said is about to be answered by this one,
+        // and a red line under a live spinner is the panel claiming both at
+        // once.
+        reTranscribeError = nil
+        // Optimistic, and true within the frame: the drain below is what runs
+        // this recording. It is also what takes the button off the screen, so
+        // the same pass cannot be asked for twice while it is under way.
+        backfill = .running
+        let result = await app.syncPendingBackfills()
+        refreshReTranscribeState()
+        if backfill == .none {
+            // Gone from the queue is the one unambiguous "it worked": the new
+            // transcript is on the server, and `load()` is what puts it on the
+            // screen.
             await load()
+            return
         }
+        // Still queued. Say what went wrong — the queue now keeps the reason
+        // instead of swallowing it — and let the panel below say what happens
+        // to the request next.
+        reTranscribeError = failureMessage(result.failure)
+    }
+
+    /// Why a pass came back without this recording's new transcript.
+    ///
+    /// The queue's own reason when it kept one and it is a reason worth reading.
+    /// A `CancellationError` is not: it means the app went away mid-pass, which
+    /// the reader can see for themselves and which the foreground drain already
+    /// takes care of.
+    private func failureMessage(_ failure: Error?) -> String {
+        if let failure, !(failure is CancellationError) {
+            return failure.localizedDescription
+        }
+        return String(localized: "Re-transcribing didn't finish this time.")
+    }
+
+    /// A backfill — possibly another recording's — finished pushing.
+    ///
+    /// Reloading rather than matching ids: `backfillRevision` is a counter by
+    /// design, and a wasted meta fetch on the recording that is on screen costs
+    /// less than the bookkeeping to avoid it.
+    private func backfillLanded() async {
+        refreshReTranscribeState()
+        if backfill == .none { reTranscribeError = nil }
+        await load()
     }
 
     private func refreshReTranscribeState() {
         guard orgId == nil else { return }
-        isReTranscribing = MeetingUploader.hasQueuedBackfill(for: summary.id)
+        backfill = MeetingUploader.backfillState(for: summary.id)
         retriesRemaining = MeetingUploader.manualRetriesRemaining(for: summary.id)
     }
 
@@ -395,7 +480,7 @@ struct RecordingDetailView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 22) {
                     reTranscribeStatus
-                    header
+                    header(meta)
                     findings(meta)
                     if segments.isEmpty {
                         Text("This recording has no transcript.")
@@ -416,8 +501,33 @@ struct RecordingDetailView: View {
             // precisely the distinction that has to be made.
             .simultaneousGesture(
                 DragGesture(minimumDistance: 8).onChanged { _ in followsAudio = false })
+            // 2× while an edge is held, and it lives here rather than in the
+            // strips it draws. An overlay is a *sibling* layered above the scroll
+            // view, and hit testing — which runs before any gesture arbitration —
+            // hands the touch to the topmost layer that will take it and never
+            // gives it back to the one underneath. A strip that merely *might*
+            // want the touch therefore takes it away from the scroll view's pan
+            // outright, which is how 44pt of each edge stopped scrolling at all.
+            // On the scroll view the press is in the pan's own arena and loses to
+            // it by priority the moment the finger moves.
+            .simultaneousGesture(twoXHold)
+            // The scroll view's own width, for the edge test above.
+            .background {
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { transcriptWidth = geo.size.width }
+                        .onChange(of: geo.size.width) { _, width in transcriptWidth = width }
+                }
+            }
             .overlay(alignment: .top) { twoXPill }
             .overlay { edgeZones }
+            // The one place 2× is released, and it is driven by the gesture state
+            // unwinding rather than by an `onEnded`: a cancelled press has no end.
+            .onChange(of: pressing) { _, down in
+                guard !down else { return }
+                playback.holdTwoX(false)
+                pressStart = nil
+            }
             .onChange(of: current) { _, turn in
                 guard followsAudio, playback.isPlaying, let turn else { return }
                 // Upper third, so there is context above and a paragraph's worth
@@ -430,7 +540,28 @@ struct RecordingDetailView: View {
             .onChange(of: playback.isPlaying) { _, playing in
                 if playing { followsAudio = true }
             }
-            .onChange(of: playback.seekGeneration) { _, _ in followsAudio = true }
+            // A seek is not the same question as following. Following asks
+            // whether the app may move the page while nobody asked it to, and
+            // while paused the answer is no; a seek *is* the asking, so it takes
+            // the reader there unconditionally — paused as much as playing, which
+            // is the whole of dragging the timeline to a point to read what was
+            // said at it.
+            //
+            // The target is recomputed here rather than left to `onChange(of:
+            // current)` below. Both run in the same update, in modifier order,
+            // and that one reads `followsAudio` before this one has written it —
+            // so a discrete seek, the VoiceOver ±15 s or a short flick, is lost
+            // between them. Recomputing sidesteps the ordering entirely: it does
+            // not care whether `current` changed at all.
+            //
+            // Unanimated on purpose. A scrub emits one of these per frame, and
+            // 0.35 s animations sixty times a second pile up and read as lag; a
+            // seek is a jump, and the finger is already supplying the continuity.
+            .onChange(of: playback.seekGeneration) { _, _ in
+                followsAudio = true
+                guard let turn = currentTurn(segments) else { return }
+                proxy.scrollTo(turn, anchor: UnitPoint(x: 0, y: 0.3))
+            }
             // A new query starts again from the top hit and takes the reader
             // there. Recomputed inside rather than closing over `hits`, so the
             // scroll target is the new query's first match and not the previous
@@ -661,56 +792,97 @@ struct RecordingDetailView: View {
         return found
     }
 
-    /// The two invisible strips that hold 2× while pressed — YouTube's gesture,
-    /// on the only part of this screen with room for it.
+    /// How wide a band at either edge holds 2×. The same number twice over: the
+    /// strips `edgeZones` draws, and the test `twoXHold` applies.
+    private static let edgeBand: CGFloat = 44
+
+    /// The two strips that mark where 2× can be held — YouTube's gesture, on the
+    /// only part of this screen with room for it.
     ///
-    /// 44pt of each edge, the full height of the transcript. They sit *over* the
-    /// text and still let everything through: a `LongPressGesture` that has not
-    /// fired yet claims nothing, so a scroll that starts in a strip scrolls, and
-    /// a press that stays put for 0.35 s is unambiguous. Text selection and the
-    /// turn's context menu both keep working because neither begins with a third
-    /// of a second of stillness.
+    /// They are a map and nothing else: `allowsHitTesting(false)`, because the
+    /// gesture itself is on the scroll view. An overlay is a sibling layered
+    /// above the scroll view, not a descendant of it, and hit testing runs before
+    /// gesture arbitration — so a strip that takes the touch keeps it, and the
+    /// pan recognizer underneath never enters the arena at all. That is not a
+    /// theory: gating these on `searching` was once necessary because the
+    /// right-hand strip sat on top of the "next match" chevron and swallowed
+    /// taps meant for a `Button`, a far stronger claimant than a pan. Inert, the
+    /// strips cannot swallow anything, and the gate is gone with them — 2× works
+    /// while searching again.
     ///
-    /// They stand down while the search field is open, and they have to. The
-    /// strips are an overlay on the scroll view and the counter bar is a safe
-    /// area inset of it, and in the overlap the strip wins the hit test — which
-    /// put the right-hand strip exactly on top of the "next match" chevron and
-    /// made it untappable while "previous match", 44pt further in, worked fine.
-    /// Gating on `searching` rather than nudging the chevron inboard because the
-    /// chevron would still be sitting under an invisible gesture target; and a
-    /// reader walking search hits is not the person holding an edge for 2×.
-    @ViewBuilder
+    /// **Do not put the gesture back here.** It scrolls because it is over there.
     private var edgeZones: some View {
-        if !searching {
-            HStack(spacing: 0) {
-                edgeZone
-                Spacer(minLength: 0)
-                edgeZone
-            }
+        HStack(spacing: 0) {
+            edgeZone
+            Spacer(minLength: 0)
+            edgeZone
         }
+        .allowsHitTesting(false)
     }
 
     private var edgeZone: some View {
         Color.clear
-            .frame(width: 44)
-            .contentShape(Rectangle())
-            .gesture(
-                LongPressGesture(minimumDuration: 0.35)
-                    // Sequenced with a drag that never has to move, so the finger
-                    // can simply stay down: the long press satisfies the first
-                    // half and the second half runs until release.
-                    .sequenced(before: DragGesture(minimumDistance: 0))
-                    .onChanged { value in
-                        if case .second(true, _) = value { playback.holdTwoX(true) }
-                    }
-                    .onEnded { _ in playback.holdTwoX(false) }
-            )
+            .frame(width: Self.edgeBand)
             .accessibilityLabel("Playback speed")
             .accessibilityHint("Hold for 2×")
     }
 
+    /// Hold an edge of the transcript for 2×, released on let-go.
+    ///
+    /// `simultaneously(with:)` and not `sequenced(before:)` because the decision
+    /// needs the touch's *location* from first touch-down, and a long press
+    /// carries none — the drag is there to say where, not to move. It is also
+    /// what keeps the state honest: `pressing` follows the drag, which lives
+    /// until the finger leaves, where the press is over the moment its 0.35 s is
+    /// up.
+    ///
+    /// `maximumDistance` is what keeps scrolling clean. A finger already on its
+    /// way fails the press at 10pt and the pan carries on; a finger that stays
+    /// put for a third of a second meant it.
+    ///
+    /// The press's own `onEnded` is the moment 2× engages, and it has to be:
+    /// a `LongPressGesture`'s value reads `true` from touch-down — it means "a
+    /// press is being detected", not "a press has succeeded" — so engaging on
+    /// the value would put every tap near an edge into 2× for as long as the tap
+    /// lasted. `onEnded` fires when the duration is satisfied, which is the
+    /// thing being asked about.
+    private var twoXHold: some Gesture {
+        LongPressGesture(minimumDuration: 0.35, maximumDistance: 10)
+            .onEnded { _ in
+                guard let start = pressStart, startedInEdgeBand(start) else { return }
+                playback.holdTwoX(true)
+            }
+            .simultaneously(
+                with: DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        // Written once per touch: `startLocation` does not move,
+                        // and re-assigning it on every frame of a scroll would
+                        // invalidate the whole transcript sixty times a second.
+                        guard pressStart != value.startLocation else { return }
+                        pressStart = value.startLocation
+                    }
+            )
+            .updating($pressing) { value, state, _ in
+                state = value.second != nil
+            }
+    }
+
+    /// Whether a touch went down in one of the bands at either edge.
+    ///
+    /// The width guard is not paranoia: before the first layout `transcriptWidth`
+    /// is 0, the right-hand test reads `x > -44`, and the whole page would be an
+    /// edge band.
+    private func startedInEdgeBand(_ point: CGPoint) -> Bool {
+        guard transcriptWidth > 0 else { return false }
+        return point.x < Self.edgeBand || point.x > transcriptWidth - Self.edgeBand
+    }
+
     /// What YouTube shows while the same gesture is held: a small mark saying the
     /// speed is not the one you chose, so a release is obviously what ends it.
+    ///
+    /// A badge, so it takes no touches: it appears over the transcript in the
+    /// middle of a hold, and a hit-testable one would be a hole in the page
+    /// exactly where the reader is already pressing.
     @ViewBuilder
     private var twoXPill: some View {
         if playback.isHoldingTwoX {
@@ -727,57 +899,135 @@ struct RecordingDetailView: View {
                     .overlay(Capsule().stroke(Color(.separator), lineWidth: 0.5)))
             .padding(.top, 8)
             .transition(.opacity)
+            .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
     }
 
-    /// One line at the top of the transcript while a re-transcription is
-    /// queued or running, and one line if the last one failed.
+    /// A few lines at the top of the transcript saying what this recording's
+    /// re-transcription is doing, if anything.
     ///
     /// Deliberately not a spinner over the screen and deliberately not a
     /// disabled state on the text. The job takes minutes, the transcript that
     /// is already here is readable and playable throughout, and the only thing
     /// that changes when the new one lands is the words — so the honest UI is a
     /// sentence saying so, above a document that still works.
+    ///
+    /// The spinner belongs to `.running` **only**. Spinning over a request that
+    /// nothing is running is the whole of the reported bug: the app said it was
+    /// transcribing, it was not, and there was no second thing on the screen to
+    /// contradict it. Waiting therefore gets plain text, the truth about what
+    /// will move it, and a button that moves it now. For the same reason the
+    /// failure line and the spinner are in different branches and can never
+    /// appear together.
     @ViewBuilder
     private var reTranscribeStatus: some View {
-        if isReTranscribing || reTranscribeError != nil {
-            VStack(alignment: .leading, spacing: 6) {
-                if isReTranscribing {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.mini)
-                        Text("Re-transcribing… this can take a few minutes.")
-                    }
-                    .font(.parley.footnote)
-                    .foregroundStyle(Color(.secondaryLabel))
+        switch backfill {
+        case .running:
+            statusPanel {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.mini)
+                    Text("Re-transcribing… this can take a few minutes.")
                 }
-                if let reTranscribeError {
-                    Text(verbatim: reTranscribeError)
-                        .font(.parley.footnote)
-                        .foregroundStyle(Theme.destructive)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                .font(.parley.footnote)
+                .foregroundStyle(Color(.secondaryLabel))
+                .accessibilityElement(children: .combine)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
+        case .queued(let lastAttempt):
+            statusPanel {
+                failureLine
+                VStack(alignment: .leading, spacing: 6) {
+                    if let lastAttempt {
+                        Text(
+                            "Waiting to re-transcribe. It last tried \(lastAttempt.formatted(.relative(presentation: .named))), and tries again when you open Parley or bring it back to the front."
+                        )
+                    } else {
+                        Text(
+                            "Waiting to re-transcribe. Nothing is running it yet — it starts when you open Parley or bring it back to the front."
+                        )
+                    }
+                    Button("Start now") { Task { await drainNow() } }
+                        .font(.parley.footnote.weight(.semibold))
+                        .accessibilityLabel("Start re-transcribing now")
+                }
+                .font(.parley.footnote)
+                .foregroundStyle(Color(.secondaryLabel))
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        case .none:
+            // Nothing is queued, so there is nothing to report but a refusal —
+            // a download that failed, or a budget that is spent — and that has
+            // to stay on screen, because it is the only account of a tap that
+            // did not produce a re-transcription.
+            if reTranscribeError != nil {
+                statusPanel { failureLine }
+                    .accessibilityElement(children: .combine)
+            }
         }
+    }
+
+    /// The last attempt's complaint, in the one colour this screen uses for
+    /// them. `verbatim` because the message is already localized — it comes
+    /// from an `Error` or from `failureMessage`.
+    @ViewBuilder
+    private var failureLine: some View {
+        if let reTranscribeError {
+            Text(verbatim: reTranscribeError)
+                .font(.parley.footnote)
+                .foregroundStyle(Theme.destructive)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// The shape all three of those share: a left-aligned block above the
+    /// header.
+    ///
+    /// Layout only, and no `accessibilityElement(children: .combine)` here on
+    /// purpose. Combining is right for the branches that are pure prose, and
+    /// wrong for the queued one, where a button folded into a paragraph is a
+    /// button VoiceOver has to be talked into finding.
+    private func statusPanel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// The recording's facts, as one plain secondary line. It used to sit in a
     /// pale-blue band, which made the least important thing on the page the only
     /// thing with a shape.
-    private var header: some View {
-        HStack(spacing: 14) {
-            Label(Self.duration(summary.durationMs), systemImage: "clock")
-            Label("\(summary.speakerCount ?? 0) speakers", systemImage: "person.2")
-            if let n = summary.findingsCount, n > 0 {
-                Label("\(n) findings", systemImage: "lightbulb")
+    ///
+    /// Counted off `meta` rather than read off `summary`, with `summary` kept
+    /// only as the fallback for what `meta` cannot answer. `summary` is a `let`
+    /// handed in by the library row and is never refetched for the life of this
+    /// screen, so after a re-transcription lands it describes the transcript
+    /// that was just replaced — five speakers over a transcript that now has
+    /// three. `meta` is what `load()` refreshes and what the rest of the page is
+    /// already drawn from, so it is the only one of the two that can be right.
+    private func header(_ meta: RecordingMeta) -> some View {
+        let speakers = Self.speakerCount(meta) ?? summary.speakerCount ?? 0
+        let findings = meta.findings.count
+        return HStack(spacing: 14) {
+            Label(
+                Self.duration(meta.durationMs > 0 ? meta.durationMs : summary.durationMs),
+                systemImage: "clock")
+            Label("\(speakers) speakers", systemImage: "person.2")
+            if findings > 0 {
+                Label("\(findings) findings", systemImage: "lightbulb")
             }
             Spacer(minLength: 0)
         }
         .font(.parley.caption.monospacedDigit())
         .foregroundStyle(Color(.secondaryLabel))
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// How many people the transcript itself has in it, or nil when there is no
+    /// transcript to count — a recording whose job never produced one keeps the
+    /// server's number rather than being told it has nobody in it.
+    private static func speakerCount(_ meta: RecordingMeta) -> Int? {
+        let speakers = Set(meta.segments.filter { $0.isFinal }.map(\.speaker))
+        return speakers.isEmpty ? nil : speakers.count
     }
 
     /// What the analysis found, above the transcript it was found in.

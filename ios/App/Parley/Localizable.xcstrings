@@ -460,6 +460,23 @@
         }
       }
     },
+    "Asks you to confirm, then throws the audio and transcript away.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Asks you to confirm, then throws the audio and transcript away."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "會先請你確認，然後把錄音與逐字稿直接丟掉。"
+          }
+        }
+      }
+    },
     "Audio error: %@": {
       "extractionState": "manual",
       "localizations": {
@@ -983,6 +1000,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "捨棄"
+          }
+        }
+      }
+    },
+    "Discard recording": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discard recording"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "捨棄錄音"
           }
         }
       }
@@ -2851,19 +2885,19 @@
         }
       }
     },
-    "Re-transcribing didn't finish. It stays queued and will be retried.": {
+    "Re-transcribing didn't finish this time.": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Re-transcribing didn't finish. It stays queued and will be retried."
+            "value": "Re-transcribing didn't finish this time."
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "重新轉錄沒有完成，已留在佇列中稍後重試。"
+            "value": "這次重新轉錄沒有完成。"
           }
         }
       }
@@ -3576,6 +3610,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "開始語音輸入"
+          }
+        }
+      }
+    },
+    "Start now": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start now"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "立刻開始"
+          }
+        }
+      }
+    },
+    "Start re-transcribing now": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start re-transcribing now"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "立刻開始重新轉錄"
           }
         }
       }
@@ -4354,6 +4422,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "語音鍵盤"
+          }
+        }
+      }
+    },
+    "Waiting to re-transcribe. It last tried %@, and tries again when you open Parley or bring it back to the front.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting to re-transcribe. It last tried %@, and tries again when you open Parley or bring it back to the front."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待重新轉錄。上次嘗試：%@，下次開啟 Parley 或把它切回前景時會再試一次。"
+          }
+        }
+      }
+    },
+    "Waiting to re-transcribe. Nothing is running it yet — it starts when you open Parley or bring it back to the front.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting to re-transcribe. Nothing is running it yet — it starts when you open Parley or bring it back to the front."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待重新轉錄。目前沒有任何工作在跑——開啟 Parley 或把它切回前景時就會開始。"
           }
         }
       }

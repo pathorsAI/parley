@@ -303,18 +303,41 @@ struct LiveView: View {
 
     /// The way out for a recording that should not have started. Stop is
     /// "keep this"; without a second door every mis-tap became a two-second
-    /// recording in the library. Plain secondary text under the circle, and a
-    /// confirmation, because it throws the audio away.
+    /// recording in the library. A confirmation follows, because it throws the
+    /// audio away.
+    ///
+    /// It is an outlined capsule because the line of secondary text it used to
+    /// be was indistinguishable from the explanatory prose on this same screen
+    /// — same face, same size, same `secondaryLabel` — and its tap target was
+    /// the height of one 15pt line. Ink and a hairline outline say "tappable"
+    /// without saying "recommended": not red, because the record circle above
+    /// it is already the screen's one red thing and a second would compete with
+    /// the control the user actually reaches for (the keyboard's ✕ is drawn
+    /// down for the same reason), and not blue, because blue here would be the
+    /// app recommending that you throw the meeting away. The red belongs in the
+    /// confirmation, which has it.
     private var discardControl: some View {
         Button {
             showDiscardConfirm = true
         } label: {
-            Text("Discard")
-                .font(.parley.subheadline)
-                .foregroundStyle(Color(.secondaryLabel))
+            HStack(spacing: 6) {
+                Image(systemName: "trash")
+                Text("Discard")
+            }
+            .font(.parley.subheadlineEmphasized)
+            .foregroundStyle(Color(.label))
+            .padding(.horizontal, 18)
+            // 44pt so the target is the HIG minimum rather than the line box,
+            // and `contentShape` so the whole capsule takes the tap, not just
+            // the glyph and the word.
+            .frame(minHeight: 44)
+            .contentShape(Capsule())
+            .overlay(Capsule().stroke(Color(.separator), lineWidth: 1))
         }
         .buttonStyle(.plain)
         .disabled(recorder.isBusy)
+        .accessibilityLabel(Text("Discard recording"))
+        .accessibilityHint(Text("Asks you to confirm, then throws the audio and transcript away."))
         .confirmationDialog(
             "Discard this recording?", isPresented: $showDiscardConfirm, titleVisibility: .visible
         ) {
