@@ -478,7 +478,7 @@ class MicCapture @JvmOverloads constructor(
         var action = first
         _level.value = 0f
         while (!stopRequested && sender.open) {
-            when (action) {
+            when (val current = action) {
                 // The policy had nothing to say about whatever got us here —
                 // in practice a second interruption for one already being
                 // handled. **Not** a reason to sit still: by the time this
@@ -489,44 +489,16 @@ class MicCapture @JvmOverloads constructor(
                     action = CaptureRecovery.Action.Rebuild(0)
                 }
 
-                is CaptureRecovery.Action.Rebuild -> {
-                    _micRecovery.value = MicRecoveryState.Recovering
-                    // An event arriving during the backoff supersedes the
-                    // attempt it was waiting out: an interruption that ends
-                    // while we are sleeping for four seconds should not cost
-                    // the remaining four.
-                    val interrupting = sleep(action.afterMillis)
-                    if (interrupting != null) {
-                        action = interrupting
-                        continue
+                is CaptureRecovery.Action.Rebuild ->
+                    when (val outcome = attemptRebuild(current, sender)) {
+                        is RebuildOutcome.Reopened -> return outcome.opened
+                        RebuildOutcome.Over -> return null
+                        is RebuildOutcome.Next -> action = outcome.action
                     }
-                    if (stopRequested || !sender.open) return null
-                    action = try {
-                        val reopened = openAndStart()
-                        recovery.apply(CaptureRecovery.Event.RebuildSucceeded(reopened.sampleRate))
-                        Log.i(TAG, "microphone recovered at ${reopened.sampleRate} Hz")
-                        return reopened
-                    } catch (e: MicCaptureException.PermissionDenied) {
-                        // Not a takeover: the user revoked RECORD_AUDIO. No
-                        // ladder can fix that, and the session needs to hear it
-                        // so the recording so far is closed and saved.
-                        Log.w(TAG, "RECORD_AUDIO revoked mid-recording")
-                        fatal = e
-                        return null
-                    } catch (e: MicCaptureException) {
-                        Log.w(TAG, "microphone rebuild failed: ${e.message}")
-                        recovery.apply(
-                            CaptureRecovery.Event.RebuildFailed(
-                                systemHoldsInput = e.systemHoldsInput,
-                                description = e.message,
-                            ),
-                        )
-                    }
-                }
 
                 is CaptureRecovery.Action.GiveUp -> {
-                    Log.w(TAG, "microphone recovery gave up: ${action.loss}")
-                    _micRecovery.value = MicRecoveryState.Lost(action.loss)
+                    Log.w(TAG, "microphone recovery gave up: ${current.loss}")
+                    _micRecovery.value = MicRecoveryState.Lost(current.loss)
                     // Still armed. The recording stays open and the file keeps
                     // whatever it already has; the next foreground trip or
                     // audio-server restart runs one more chain.
@@ -535,6 +507,62 @@ class MicCapture @JvmOverloads constructor(
             }
         }
         return null
+    }
+
+    /** What one rung of the recovery ladder produced. */
+    private sealed interface RebuildOutcome {
+        /** The microphone is ours again. */
+        data class Reopened(val opened: OpenedRecord) : RebuildOutcome
+
+        /**
+         * Nothing left to climb for: [stop], a gone collector, or a loss no
+         * ladder can fix, in which case [fatal] is already set.
+         */
+        data object Over : RebuildOutcome
+
+        /** Keep climbing — [action] is what the policy decided next. */
+        data class Next(val action: CaptureRecovery.Action) : RebuildOutcome
+    }
+
+    /**
+     * One rung: wait out the backoff, then try to open the microphone again.
+     *
+     * The wait is interruptible on purpose. An event arriving during the
+     * backoff supersedes the attempt it was waiting out, so an interruption
+     * that ends while we are sleeping for four seconds does not cost the
+     * remaining four.
+     */
+    private fun attemptRebuild(
+        rebuild: CaptureRecovery.Action.Rebuild,
+        sender: ChunkSender,
+    ): RebuildOutcome {
+        _micRecovery.value = MicRecoveryState.Recovering
+        val interrupting = sleep(rebuild.afterMillis)
+        if (interrupting != null) return RebuildOutcome.Next(interrupting)
+        if (stopRequested || !sender.open) return RebuildOutcome.Over
+        return try {
+            val reopened = openAndStart()
+            recovery.apply(CaptureRecovery.Event.RebuildSucceeded(reopened.sampleRate))
+            Log.i(TAG, "microphone recovered at ${reopened.sampleRate} Hz")
+            RebuildOutcome.Reopened(reopened)
+        } catch (e: MicCaptureException.PermissionDenied) {
+            // Not a takeover: the user revoked RECORD_AUDIO. No ladder can fix
+            // that, and the session needs to hear it so the recording so far is
+            // closed and saved.
+            Log.w(TAG, "RECORD_AUDIO revoked mid-recording")
+            fatal = e
+            RebuildOutcome.Over
+        } catch (e: MicCaptureException) {
+            Log.w(TAG, "microphone rebuild failed: ${e.message}")
+            RebuildOutcome.Next(
+                recovery.apply(
+                    CaptureRecovery.Event.RebuildFailed(
+                        systemHoldsInput = e.systemHoldsInput,
+                        description = e.message,
+                    ),
+                ),
+            )
+        }
     }
 
     /**

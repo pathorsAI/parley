@@ -109,25 +109,52 @@ object RecordingFiles {
         uploader: MeetingUploader,
         title: (startedAtMs: Long) -> String,
     ): Int = withContext(Dispatchers.IO) {
+        // Both locations: where captures write now, and where versions before
+        // the move to `filesDir` wrote. Sweeping the second one is the whole
+        // migration.
         var adopted = 0
         for (directory in listOf(directory(context), legacyDirectory(context))) {
-            val files = directory.listFiles { file ->
-                file.isFile && file.name.endsWith(OGG_SUFFIX)
-            } ?: continue
-            for (file in files.sortedBy { it.lastModified() }) {
-                try {
-                    if (adopt(file, uploader, title)) adopted += 1
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (t: Throwable) {
-                    // A single unreadable file must not cost the rest of the
-                    // sweep, and none of it may cost the app its launch.
-                    Log.w(TAG, "could not adopt ${file.name}", t)
-                }
-            }
+            adopted += adoptOrphansIn(directory, uploader, title)
         }
         if (adopted > 0) Log.i(TAG, "adopted $adopted orphaned recording(s)")
         adopted
+    }
+
+    /**
+     * Rescue every orphaned Ogg file in one directory, oldest first so a
+     * rescued library reads in the order the meetings happened.
+     *
+     * One bad file costs only itself — for the reason [adoptOrphans]
+     * documents, this runs on the way into `ParleyApplication.onCreate`, and a
+     * file that cannot be read is not a reason for the app not to start.
+     * Cancellation is the one thing that does propagate, because a cancelled
+     * launch is not a failed rescue.
+     *
+     * @return how many recordings were adopted out of this directory.
+     */
+    private suspend fun adoptOrphansIn(
+        directory: File,
+        uploader: MeetingUploader,
+        title: (startedAtMs: Long) -> String,
+    ): Int {
+        // Null rather than empty when the directory does not exist, which is
+        // the normal case for the legacy one on a fresh install.
+        val files = directory.listFiles { file ->
+            file.isFile && file.name.endsWith(OGG_SUFFIX)
+        } ?: return 0
+        var adopted = 0
+        for (file in files.sortedBy { it.lastModified() }) {
+            try {
+                if (adopt(file, uploader, title)) adopted += 1
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                // A single unreadable file must not cost the rest of the
+                // sweep, and none of it may cost the app its launch.
+                Log.w(TAG, "could not adopt ${file.name}", t)
+            }
+        }
+        return adopted
     }
 
     private suspend fun adopt(
