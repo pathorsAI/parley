@@ -171,32 +171,7 @@ class PlaybackController(
                 downloadFraction = -1f,
             )
         }
-        downloadJob = scope.launch {
-            try {
-                cloud.downloadAudio(id, store.audioFile(id)) { read, total ->
-                    val fraction = if (total > 0L) (read.toDouble() / total).toFloat() else -1f
-                    _state.update { current ->
-                        if (current.phase == PlaybackPhase.DOWNLOADING) {
-                            current.copy(downloadFraction = fraction.coerceIn(-1f, 1f))
-                        } else {
-                            current
-                        }
-                    }
-                }
-                prepare()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                Log.w(TAG, "audio download failed for $id", e)
-                fail(
-                    if ((e as? CloudException)?.isNotFound == true) {
-                        PlaybackFailure.DOWNLOAD_MISSING
-                    } else {
-                        PlaybackFailure.DOWNLOAD_NETWORK
-                    }
-                )
-            }
-        }
+        downloadJob = scope.launch { fetchAndPrepare(id) }
     }
 
     fun togglePlayPause() {
@@ -254,6 +229,57 @@ class PlaybackController(
     }
 
     // ── internals ────────────────────────────────────────────────────────────
+
+    /**
+     * The body of the download job: stream the file down, then open it.
+     *
+     * Cancellation is rethrown rather than reported, because a cancelled job is
+     * the screen going away or a second [download] superseding this one —
+     * neither is a failure to show anybody.
+     */
+    private suspend fun fetchAndPrepare(id: String) {
+        try {
+            cloud.downloadAudio(id, store.audioFile(id), ::publishDownloadProgress)
+            prepare()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            Log.w(TAG, "audio download failed for $id", e)
+            fail(downloadFailure(e))
+        }
+    }
+
+    /**
+     * Report download progress, and only while the download is still the thing
+     * happening: the callback runs on the IO thread doing the copy, so a report
+     * already in flight when the job is cancelled must not write a progress bar
+     * back over whatever replaced it.
+     *
+     * A total of 0 or less is the server declaring no length; -1 is how
+     * [PlaybackState.downloadFraction] says "indeterminate".
+     */
+    private fun publishDownloadProgress(read: Long, total: Long) {
+        val fraction = if (total > 0L) (read.toDouble() / total).toFloat() else -1f
+        _state.update { current ->
+            if (current.phase == PlaybackPhase.DOWNLOADING) {
+                current.copy(downloadFraction = fraction.coerceIn(-1f, 1f))
+            } else {
+                current
+            }
+        }
+    }
+
+    /**
+     * A 404 is the server saying it has no audio for this recording, which is
+     * permanent and worth different copy; everything else is treated as a
+     * transport problem worth retrying.
+     */
+    private fun downloadFailure(e: Throwable): PlaybackFailure =
+        if ((e as? CloudException)?.isNotFound == true) {
+            PlaybackFailure.DOWNLOAD_MISSING
+        } else {
+            PlaybackFailure.DOWNLOAD_NETWORK
+        }
 
     private suspend fun prepare() {
         val id = recordingId ?: return

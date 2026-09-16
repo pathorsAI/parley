@@ -643,81 +643,132 @@ class MicCapture @JvmOverloads constructor(
         return opened
     }
 
-    @SuppressLint("MissingPermission") // checked by the caller before we get here
+    /**
+     * Walk the compatibility ladder: [CANDIDATE_RATES] outermost, and within each
+     * rate every source in [CANDIDATE_SOURCES].
+     *
+     * Every rung that fails appends its reason to one `failures` string, and the
+     * exception thrown when the ladder runs out carries the whole thing. That
+     * string is the only evidence we get from a phone that "cannot record" —
+     * losing it turns a diagnosable device quirk into an unreproducible report.
+     */
     private fun openRecord(): OpenedRecord {
-        val inputs = inputDevices()
-        val preferred = AudioRouteChoice.preferred(inputs)
+        val preferred = AudioRouteChoice.preferred(inputDevices())
         val failures = StringBuilder()
         for (rate in CANDIDATE_RATES) {
-            val minBuffer = AudioRecord.getMinBufferSize(
-                rate,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-            )
-            if (minBuffer <= 0) {
-                failures.append("${rate}Hz: getMinBufferSize=$minBuffer; ")
-                continue
-            }
-            val chunkAtRate = rate * Pcm.CHUNK_MILLIS / 1000 * Pcm.BYTES_PER_SAMPLE
-            val bufferSize = max(minBuffer * 2, chunkAtRate * 4)
-            for (source in CANDIDATE_SOURCES) {
-                val record = try {
-                    AudioRecord.Builder()
-                        .setAudioSource(source)
-                        .setAudioFormat(
-                            AudioFormat.Builder()
-                                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                                .setSampleRate(rate)
-                                .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                                .build(),
-                        )
-                        .setBufferSizeInBytes(bufferSize)
-                        .build()
-                } catch (e: Exception) {
-                    // UnsupportedOperationException / IllegalArgumentException /
-                    // SecurityException all mean "not this combination".
-                    failures.append("${rate}Hz src=$source: ${e.javaClass.simpleName}; ")
-                    continue
-                }
-                if (record.state == AudioRecord.STATE_INITIALIZED) {
-                    // Pin the record to the input the user would expect. Without
-                    // this the platform's pick is final for the life of the
-                    // record: a headset put on mid-meeting is ignored and the
-                    // phone keeps recording its own microphone, which is the
-                    // "silently much worse audio" failure AudioRouteChoice
-                    // exists for. Best effort — a refusal leaves the platform's
-                    // choice in place, which is still a working recording.
-                    val pinned = preferred?.let { wanted ->
-                        platformDevice(wanted.id)?.let { record.setPreferredDevice(it) } ?: false
-                    } ?: false
-                    Log.i(
-                        TAG,
-                        "capturing at $rate Hz mono, source=$source, " +
-                            "input=${preferred?.type ?: "none offered"}" +
-                            (if (pinned) "" else " (not pinned; platform's choice stands)") +
-                            " → ${Pcm.SAMPLE_RATE} Hz",
-                    )
-                    return OpenedRecord(
-                        record = record,
-                        sampleRate = rate,
-                        source = source,
-                        // What we *wanted*, not what we managed to pin. This is
-                        // the comparison AudioRouteChoice.needsRebuild is built
-                        // for: it asks whether the best available input has
-                        // changed, so storing the intent keeps a device change
-                        // that does not move the answer — plugging in a charger
-                        // — from punching a hole in the audio. Storing null on a
-                        // refused pin would instead make the *next* unrelated
-                        // device change look like a route change.
-                        input = preferred,
-                    )
-                }
-                failures.append("${rate}Hz src=$source: state=${record.state}; ")
-                record.release()
-            }
+            openAtRate(rate, preferred, failures)?.let { return it }
         }
         throw MicCaptureException.UnsupportedConfiguration(
             "no usable AudioRecord configuration ($failures)",
+        )
+    }
+
+    /**
+     * One rung of the rate ladder: try every source at [rate], or return null
+     * having said why in [failures].
+     *
+     * Buffer is at least 2× the reported minimum and at least 4 chunks, so a
+     * scheduling hiccup cannot cost us audio.
+     */
+    private fun openAtRate(
+        rate: Int,
+        preferred: InputDevice?,
+        failures: StringBuilder,
+    ): OpenedRecord? {
+        val minBuffer = AudioRecord.getMinBufferSize(
+            rate,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        )
+        if (minBuffer <= 0) {
+            failures.append("${rate}Hz: getMinBufferSize=$minBuffer; ")
+            return null
+        }
+        val chunkAtRate = rate * Pcm.CHUNK_MILLIS / 1000 * Pcm.BYTES_PER_SAMPLE
+        val bufferSize = max(minBuffer * 2, chunkAtRate * 4)
+        for (source in CANDIDATE_SOURCES) {
+            val record = buildRecord(rate, source, bufferSize, failures) ?: continue
+            if (record.state == AudioRecord.STATE_INITIALIZED) {
+                return claimRecord(record, rate, source, preferred)
+            }
+            failures.append("${rate}Hz src=$source: state=${record.state}; ")
+            record.release()
+        }
+        return null
+    }
+
+    /**
+     * Build one `AudioRecord` for a rate/source pair, or return null having
+     * recorded the refusal in [failures].
+     *
+     * A built record is not necessarily a working one — the caller still has to
+     * check `state`, which is the other half of how the platform says no.
+     */
+    @SuppressLint("MissingPermission") // checked by openAndStart before we get here
+    private fun buildRecord(
+        rate: Int,
+        source: Int,
+        bufferSize: Int,
+        failures: StringBuilder,
+    ): AudioRecord? =
+        try {
+            AudioRecord.Builder()
+                .setAudioSource(source)
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(rate)
+                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                        .build(),
+                )
+                .setBufferSizeInBytes(bufferSize)
+                .build()
+        } catch (e: Exception) {
+            // UnsupportedOperationException / IllegalArgumentException /
+            // SecurityException all mean "not this combination".
+            failures.append("${rate}Hz src=$source: ${e.javaClass.simpleName}; ")
+            null
+        }
+
+    /**
+     * Take ownership of an initialised record: pin its input, log what we got,
+     * and wrap it up.
+     *
+     * Pin the record to the input the user would expect. Without this the
+     * platform's pick is final for the life of the record: a headset put on
+     * mid-meeting is ignored and the phone keeps recording its own microphone,
+     * which is the "silently much worse audio" failure AudioRouteChoice exists
+     * for. Best effort — a refusal leaves the platform's choice in place, which
+     * is still a working recording.
+     */
+    private fun claimRecord(
+        record: AudioRecord,
+        rate: Int,
+        source: Int,
+        preferred: InputDevice?,
+    ): OpenedRecord {
+        val pinned = preferred?.let { wanted ->
+            platformDevice(wanted.id)?.let { record.setPreferredDevice(it) } ?: false
+        } ?: false
+        Log.i(
+            TAG,
+            "capturing at $rate Hz mono, source=$source, " +
+                "input=${preferred?.type ?: "none offered"}" +
+                (if (pinned) "" else " (not pinned; platform's choice stands)") +
+                " → ${Pcm.SAMPLE_RATE} Hz",
+        )
+        return OpenedRecord(
+            record = record,
+            sampleRate = rate,
+            source = source,
+            // What we *wanted*, not what we managed to pin. This is the
+            // comparison AudioRouteChoice.needsRebuild is built for: it asks
+            // whether the best available input has changed, so storing the
+            // intent keeps a device change that does not move the answer —
+            // plugging in a charger — from punching a hole in the audio.
+            // Storing null on a refused pin would instead make the *next*
+            // unrelated device change look like a route change.
+            input = preferred,
         )
     }
 
