@@ -99,4 +99,19 @@ describe("safeExportFileName", () => {
   it("does not repeat an extension the title already ends with", () => {
     expect(safeExportFileName("interview.m4a", "m4a")).toBe("interview.m4a");
   });
+
+  it("keeps a suffix that is really a path fragment, not an extension", () => {
+    // The text after the last dot has to look like a suffix to be dropped as
+    // one. `2026.09/16` ends in a path separator run, so it stays in the name.
+    expect(safeExportFileName("Backup 2026.09/16", "ogg")).toBe("Backup 2026.09-16.ogg");
+  });
+
+  it("drops a trailing extension even from a title carrying a line break", () => {
+    // Pinned because it is the one case where this changed: the strip used to be
+    // /^(.+)\.[^./\\]+$/, and `.` does not match a line terminator, so a pasted
+    // two-line title kept its extension by accident of the pattern rather than
+    // by intent. The break itself becomes `-` either way, being a control
+    // character.
+    expect(safeExportFileName("Acme\nkickoff.m4a", "m4a")).toBe("Acme-kickoff.m4a");
+  });
 });

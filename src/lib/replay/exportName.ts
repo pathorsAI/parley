@@ -33,19 +33,50 @@ const MAX_NAME_CHARS = 80;
  *  survive being carried between the two, so the whole set goes. */
 const ILLEGAL_PUNCT = /[<>:"/\\|?*]/g;
 
-/** A title that already ends in an extension keeps it out of the result, so an
- *  imported `interview.m4a` doesn't come back as `interview.m4a.m4a`. The stem
- *  is captured rather than the suffix matched on its own, so a title that is
- *  nothing BUT a suffix (`.hidden`) keeps its text instead of vanishing. */
-const TRAILING_EXT = /^(.+)\.[^./\\]+$/;
-
-/** Leading dot hides the file on macOS; a trailing dot or space is dropped by
- *  Windows. Dashes go too — they are usually ours, left by a replacement. */
-const EDGE_NOISE_LEAD = /^[\s.-]+/;
-const EDGE_NOISE_TRAIL = /[\s.-]+$/;
-
 /** The DOS device names, still reserved in every Windows directory. */
 const RESERVED_DEVICE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+/**
+ * Every pattern in this file has to run in linear time on its input, because
+ * the input is a title a user typed and can be any length. That rules out the
+ * two obvious regexes, which are written as index scans below instead:
+ *
+ *   /^(.+)\.[^./\\]+$/  — a greedy `.+` in front of a literal is the classic
+ *                         super-linear backtracker (Sonar S5852): on a long
+ *                         title with no match the engine retries the whole
+ *                         string from every split point.
+ *   /[\s.-]+$/          — anchoring a quantified class to the END means one
+ *                         attempt per starting position, so a long run of
+ *                         spaces that isn't followed by end-of-string costs
+ *                         O(n²).
+ *
+ * The survivors are safe by shape: ILLEGAL_PUNCT and the `^\.+` in normalizeExt
+ * are a bare class and a start-anchored run, and RESERVED_DEVICE is an anchored
+ * alternation of fixed literals. None can backtrack.
+ */
+
+/** A title that already ends in an extension keeps it out of the result, so an
+ *  imported `interview.m4a` doesn't come back as `interview.m4a.m4a`.
+ *
+ *  The dot that matters is the LAST one, since whatever follows it is the suffix
+ *  by definition. A stem has to precede it, so a title that is nothing BUT a
+ *  suffix (`.hidden`) keeps its text instead of vanishing; and a "suffix"
+ *  carrying a path separator is not one. */
+function stripTrailingExtension(title: string): string {
+  const dot = title.lastIndexOf(".");
+  if (dot <= 0 || dot === title.length - 1) return title;
+  const suffix = title.slice(dot + 1);
+  if (suffix.includes("/") || suffix.includes("\\")) return title;
+  return title.slice(0, dot);
+}
+
+/** Leading dot hides the file on macOS; a trailing dot or space is dropped by
+ *  Windows. Dashes go too — they are usually ours, left by a replacement.
+ *  `trim()` rather than `\s` for the whitespace test: on a single character the
+ *  two agree, and it keeps this loop regex-free. */
+function isEdgeNoise(ch: string): boolean {
+  return ch === "." || ch === "-" || ch.trim() === "";
+}
 
 /**
  * A filename that both macOS and Windows will accept, built from a recording's
@@ -54,7 +85,8 @@ const RESERVED_DEVICE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
  */
 export function safeExportFileName(title: string, ext: string): string {
   const suffix = normalizeExt(ext);
-  const cleaned = trimEdges(replaceIllegal(title.replace(TRAILING_EXT, "$1"))) || FALLBACK_EXPORT_NAME;
+  const cleaned =
+    trimEdges(replaceIllegal(stripTrailingExtension(title))) || FALLBACK_EXPORT_NAME;
   const base = truncate(escapeDeviceName(cleaned), MAX_NAME_CHARS - suffix.length);
   return `${base}${suffix}`;
 }
@@ -74,7 +106,11 @@ function replaceIllegal(name: string): string {
 }
 
 function trimEdges(name: string): string {
-  return name.replace(EDGE_NOISE_LEAD, "").replace(EDGE_NOISE_TRAIL, "");
+  let start = 0;
+  let end = name.length;
+  while (start < end && isEdgeNoise(name[start])) start += 1;
+  while (end > start && isEdgeNoise(name[end - 1])) end -= 1;
+  return name.slice(start, end);
 }
 
 /** `.ogg` from `ogg`, `.ogg`, or `..ogg`; nothing at all from an empty or
