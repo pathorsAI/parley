@@ -118,41 +118,156 @@ fun MeetingScreen(onDone: () -> Unit) {
     val context = LocalContext.current
     val session by MeetingService.activeSession.collectAsState()
 
-    // Store screenshots: scripted segments on a timer, no permission prompt, no
-    // microphone — an emulator has no audio input, and a capture must never
-    // depend on one.
     if (DemoMode.isActive) {
-        // One exception, for the Play foreground-service declaration video: if
-        // RECORD_AUDIO happens to be granted already, run the real service in
-        // notification-only mode so the ongoing notification can be filmed. A
-        // plain screenshot run never grants it, so it stays notification-free;
-        // the video run grants it deliberately via `adb shell pm grant`. See
-        // `MeetingService.startDemoNotification`.
-        val demo = rememberDemoMeeting()
-        val canShowNotification = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.RECORD_AUDIO,
-        ) == PackageManager.PERMISSION_GRANTED
-        if (canShowNotification) {
-            DisposableEffect(Unit) {
-                MeetingService.startDemoNotification(context, demo.elapsedMs.value)
-                onDispose { MeetingService.requestStop(context) }
-            }
-        }
-        // Discard leaves the demo screen exactly as Stop does — there is no
-        // session to throw away, and the affordance belongs in the screenshot.
-        MeetingContent(session = demo, onStop = onDone, onDiscard = onDone, onDone = onDone)
+        DemoMeetingScreen(onDone = onDone)
         return
     }
 
-    val activity = remember(context) { context.findActivity() }
+    val mic = rememberMicPermission()
 
-    var granted by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED
+    // Start at most once per visit, and remember *which process* did it. A plain
+    // boolean cannot tell a restored back stack from a rotation; see the class
+    // docs for what that cost.
+    var startedIn by rememberSaveable { mutableStateOf<String?>(null) }
+    val restored = startedIn != null && startedIn != ProcessId.value
+    var consenting by rememberSaveable { mutableStateOf(false) }
+
+    // The meeting this screen was showing did not survive the process. There is
+    // nothing to rejoin and nothing to resume, so leave — silently opening the
+    // microphone again is exactly the bug.
+    LaunchedEffect(restored) {
+        if (restored) onDone()
+    }
+
+    // Ask before recording, never instead of asking — see [shouldRequestConsent].
+    LaunchedEffect(mic.granted, restored) {
+        val running = MeetingService.activeSession.value
+        if (shouldRequestConsent(mic.granted, restored, startedIn, running)) consenting = true
+    }
+
+    if (!mic.granted) {
+        PermissionGate(
+            denied = mic.denied,
+            blocked = mic.blocked,
+            onRequest = mic.onRequest,
+            onOpenSettings = mic.onOpenSettings,
+            onCancel = onDone,
+        )
+        return
+    }
+
+    if (consenting) {
+        RecordingConsentDialog(
+            onConfirm = {
+                consenting = false
+                startedIn = ProcessId.value
+                MeetingService.start(context)
+            },
+            onCancel = {
+                consenting = false
+                onDone()
+            },
         )
     }
+
+    val active = session
+    if (active == null) {
+        // Nothing is starting while the consent dialog is up or while we are on
+        // our way out, and a spinner under either would claim otherwise.
+        MeetingStartingIndicator(spinning = !consenting && !restored)
+        return
+    }
+
+    MeetingContent(
+        session = active,
+        onStop = { MeetingService.requestStop(context) },
+        // Not `clear()`: disposal stopped deleting the audio when the failure
+        // paths learned to preserve it, so the only thing that still keeps the
+        // dialog's promise is an action that means exactly this.
+        onDiscard = {
+            MeetingService.requestDiscard(context)
+            onDone()
+        },
+        onDone = onDone,
+    )
+}
+
+/**
+ * Whether arriving on this screen should ask the user to consent to a recording.
+ *
+ * This predicate is the whole guard in front of `MeetingService.start`, so the
+ * answer is no unless every one of these holds: the microphone is ours; this
+ * composition is not a back stack [restored] into a new process (see
+ * [MeetingScreen] — telling that apart from a rotation is what stopped the app
+ * recording on its own); this visit has not already started a meeting; and there
+ * is no [running] meeting to adopt.
+ *
+ * That last one is why a meeting already in progress (the user came back through
+ * the library's "Return to it") is adopted without a second consent — they
+ * consented when it started.
+ */
+private fun shouldRequestConsent(
+    granted: Boolean,
+    restored: Boolean,
+    startedIn: String?,
+    running: MeetingSession?,
+): Boolean = granted && !restored && startedIn == null && running == null
+
+/**
+ * Store screenshots: scripted segments on a timer, no permission prompt, no
+ * microphone — an emulator has no audio input, and a capture must never depend
+ * on one.
+ */
+@Composable
+private fun DemoMeetingScreen(onDone: () -> Unit) {
+    val context = LocalContext.current
+    val demo = rememberDemoMeeting()
+    // One exception, for the Play foreground-service declaration video: if
+    // RECORD_AUDIO happens to be granted already, run the real service in
+    // notification-only mode so the ongoing notification can be filmed. A plain
+    // screenshot run never grants it, so it stays notification-free; the video
+    // run grants it deliberately via `adb shell pm grant`. See
+    // `MeetingService.startDemoNotification`.
+    if (context.hasRecordAudioPermission()) {
+        DisposableEffect(Unit) {
+            MeetingService.startDemoNotification(context, demo.elapsedMs.value)
+            onDispose { MeetingService.requestStop(context) }
+        }
+    }
+    // Discard leaves the demo screen exactly as Stop does — there is no session
+    // to throw away, and the affordance belongs in the screenshot.
+    MeetingContent(session = demo, onStop = onDone, onDiscard = onDone, onDone = onDone)
+}
+
+/** Waiting for the service to publish the session the consent dialog asked for. */
+@Composable
+private fun MeetingStartingIndicator(spinning: Boolean) {
+    Box(Modifier.fillMaxSize(), Alignment.Center) {
+        if (spinning) CircularProgressIndicator()
+    }
+}
+
+/**
+ * Whether the microphone is ours, plus the two ways of going to ask for it.
+ *
+ * The three flags travel together because they are only ever written from the
+ * launcher callbacks in [rememberMicPermission] — and [blocked] may only be
+ * *read* from there, which is the whole reason that callback is where it is.
+ */
+private class MicPermission(
+    val granted: Boolean,
+    val denied: Boolean,
+    val blocked: Boolean,
+    val onRequest: () -> Unit,
+    val onOpenSettings: () -> Unit,
+)
+
+@Composable
+private fun rememberMicPermission(): MicPermission {
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+
+    var granted by remember { mutableStateOf(context.hasRecordAudioPermission()) }
     var denied by remember { mutableStateOf(false) }
 
     // Denied so firmly that the system will not ask again — see [PermissionGate].
@@ -185,84 +300,25 @@ fun MeetingScreen(onDone: () -> Unit) {
     val settingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED
+        granted = context.hasRecordAudioPermission()
         if (granted) {
             denied = false
             blocked = false
         }
     }
 
-    // Start at most once per visit, and remember *which process* did it. A plain
-    // boolean cannot tell a restored back stack from a rotation; see the class
-    // docs for what that cost.
-    var startedIn by rememberSaveable { mutableStateOf<String?>(null) }
-    val restored = startedIn != null && startedIn != ProcessId.value
-    var consenting by rememberSaveable { mutableStateOf(false) }
-
-    // The meeting this screen was showing did not survive the process. There is
-    // nothing to rejoin and nothing to resume, so leave — silently opening the
-    // microphone again is exactly the bug.
-    LaunchedEffect(restored) {
-        if (restored) onDone()
-    }
-
-    // Ask before recording, never instead of asking. A meeting already running
-    // (the user came back through the library's "Return to it") is adopted
-    // without a second consent — they consented when it started.
-    LaunchedEffect(granted, restored) {
-        if (restored || !granted) return@LaunchedEffect
-        if (startedIn == null && MeetingService.activeSession.value == null) consenting = true
-    }
-
-    if (!granted) {
-        PermissionGate(
-            denied = denied,
-            blocked = blocked,
-            onRequest = { permissionLauncher.launch(requiredPermissions()) },
-            onOpenSettings = { settingsLauncher.launch(appSettingsIntent(context)) },
-            onCancel = onDone,
-        )
-        return
-    }
-
-    if (consenting) {
-        RecordingConsentDialog(
-            onConfirm = {
-                consenting = false
-                startedIn = ProcessId.value
-                MeetingService.start(context)
-            },
-            onCancel = {
-                consenting = false
-                onDone()
-            },
-        )
-    }
-
-    val active = session
-    if (active == null) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) {
-            // Nothing is starting while the consent dialog is up or while we are
-            // on our way out, and a spinner under either would claim otherwise.
-            if (!consenting && !restored) CircularProgressIndicator()
-        }
-        return
-    }
-
-    MeetingContent(
-        session = active,
-        onStop = { MeetingService.requestStop(context) },
-        // Not `clear()`: disposal stopped deleting the audio when the failure
-        // paths learned to preserve it, so the only thing that still keeps the
-        // dialog's promise is an action that means exactly this.
-        onDiscard = {
-            MeetingService.requestDiscard(context)
-            onDone()
-        },
-        onDone = onDone,
+    return MicPermission(
+        granted = granted,
+        denied = denied,
+        blocked = blocked,
+        onRequest = { permissionLauncher.launch(requiredPermissions()) },
+        onOpenSettings = { settingsLauncher.launch(appSettingsIntent(context)) },
     )
 }
+
+private fun Context.hasRecordAudioPermission(): Boolean =
+    ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+        PackageManager.PERMISSION_GRANTED
 
 private fun requiredPermissions(): Array<String> =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

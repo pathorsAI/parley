@@ -43,17 +43,7 @@ fun ImportScreen(onDone: () -> Unit) {
 
     val active = session
     if (active == null) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(32.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(stringResource(R.string.import_no_file))
-            Spacer(Modifier.height(16.dp))
-            Button(onClick = onDone) { Text(stringResource(R.string.action_close)) }
-        }
+        NoImportGate(onDone = onDone)
         return
     }
 
@@ -77,81 +67,139 @@ fun ImportScreen(onDone: () -> Unit) {
             style = MaterialTheme.typography.titleLarge,
         )
         Spacer(Modifier.height(24.dp))
-        Text(
-            text = active.title,
-            style = MaterialTheme.typography.titleMedium,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        val duration = (state as? ImportState.Running)?.durationMs ?: -1L
-        Text(
-            text = if (duration >= 0) {
-                stringResource(R.string.import_length, formatDuration(duration.toDouble()))
-            } else {
-                stringResource(R.string.import_length_unknown)
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
+        ImportFileHeader(title = active.title, state = state)
         Spacer(Modifier.height(32.dp))
-        Text(text = phaseLabel(state), style = MaterialTheme.typography.bodyLarge)
-        Spacer(Modifier.height(12.dp))
-
-        val running = state as? ImportState.Running
-        if (running != null && running.decodeProgress >= 0f) {
-            LinearProgressIndicator(
-                progress = { running.decodeProgress.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = stringResource(
-                    R.string.import_progress,
-                    (running.decodeProgress * 100).roundToInt().coerceIn(0, 100),
-                    formatDuration(running.transcribedMs.toDouble()),
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else if (state is ImportState.Preparing ||
-            state is ImportState.Running ||
-            state is ImportState.Uploading
-        ) {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        }
-
-        (state as? ImportState.Failed)?.let { failed ->
-            Spacer(Modifier.height(16.dp))
-            Text(
-                text = failureMessage(failed.reason),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-
+        ImportProgress(state = state)
+        ImportFailureNotice(state = state)
         Box(Modifier.weight(1f))
-
-        val terminal = state is ImportState.Failed ||
-            state is ImportState.Cancelled ||
-            state is ImportState.Finished
-        OutlinedButton(
+        ImportDismissButton(
+            state = state,
             onClick = {
                 container.clearImport()
                 onDone()
             },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
-        ) {
-            Text(
-                stringResource(
-                    if (terminal) R.string.action_close else R.string.action_cancel
-                )
-            )
-        }
+        )
     }
 }
+
+/** Landed here with nothing to watch — the only thing left to offer is the way out. */
+@Composable
+private fun NoImportGate(onDone: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(stringResource(R.string.import_no_file))
+        Spacer(Modifier.height(16.dp))
+        Button(onClick = onDone) { Text(stringResource(R.string.action_close)) }
+    }
+}
+
+/**
+ * What is being imported, and how long it is.
+ *
+ * The length is only known once the decoder has opened the file, so before that
+ * the line says so rather than showing a zero.
+ */
+@Composable
+private fun ImportFileHeader(title: String, state: ImportState) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleMedium,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+    )
+    val duration = (state as? ImportState.Running)?.durationMs ?: -1L
+    Text(
+        text = if (duration >= 0) {
+            stringResource(R.string.import_length, formatDuration(duration.toDouble()))
+        } else {
+            stringResource(R.string.import_length_unknown)
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/**
+ * The phase, and a bar for it where there is one to draw.
+ *
+ * Decoding reports a fraction, so that phase gets a determinate bar and the
+ * trailing "transcribed" figure beside it; preparing and uploading have no
+ * measure at all and get the indeterminate one. A finished or cancelled import
+ * gets no bar, because there is nothing left in flight.
+ */
+@Composable
+private fun ImportProgress(state: ImportState) {
+    Text(text = phaseLabel(state), style = MaterialTheme.typography.bodyLarge)
+    Spacer(Modifier.height(12.dp))
+
+    val running = state as? ImportState.Running
+    if (running != null && running.decodeProgress >= 0f) {
+        LinearProgressIndicator(
+            progress = { running.decodeProgress.coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = stringResource(
+                R.string.import_progress,
+                (running.decodeProgress * 100).roundToInt().coerceIn(0, 100),
+                formatDuration(running.transcribedMs.toDouble()),
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    } else if (state.isInFlight()) {
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun ImportFailureNotice(state: ImportState) {
+    val failed = state as? ImportState.Failed ?: return
+    Spacer(Modifier.height(16.dp))
+    Text(
+        text = failureMessage(failed.reason),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.error,
+    )
+}
+
+/**
+ * One button for both endings: it drops the session either way, so only the
+ * label moves — cancelling a run in flight, closing one that is over.
+ */
+@Composable
+private fun ImportDismissButton(state: ImportState, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp),
+    ) {
+        Text(
+            stringResource(
+                if (state.isTerminal()) R.string.action_close else R.string.action_cancel
+            )
+        )
+    }
+}
+
+/** Still working: there is something to cancel and something to show a bar for. */
+private fun ImportState.isInFlight(): Boolean =
+    this is ImportState.Preparing ||
+        this is ImportState.Running ||
+        this is ImportState.Uploading
+
+/** Over, one way or another. */
+private fun ImportState.isTerminal(): Boolean =
+    this is ImportState.Failed ||
+        this is ImportState.Cancelled ||
+        this is ImportState.Finished
 
 @Composable
 private fun phaseLabel(state: ImportState): String = when (state) {
