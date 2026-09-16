@@ -15,7 +15,7 @@ Scope: `com.pathors.parley`, the cloud edition as it ships. Base URL
 | --- | --- | --- |
 | Does your app collect or share any of the required user data types? | **Yes** | Account identity, recorded audio and transcripts all leave the device. |
 | Is all of the user data collected by your app encrypted in transit? | **Yes** | Everything is HTTPS or WSS to `api.parley.tw` (`CloudClient.DEFAULT_BASE_URL`, `SttRelayClient.DEFAULT_RELAY_URL`), and the manifest sets `android:usesCleartextTraffic="false"`, so a plaintext request cannot be made even by mistake. |
-| Do you provide a way for users to request that their data is deleted? | **See [Deletion](#deletion-the-open-item)** — the honest answer today is "request by other means", and Play also wants a deletion URL. This is the one answer that is not yet true-and-complete. |
+| Do you provide a way for users to request that their data is deleted? | **Yes** | In-app account deletion (`ui/AccountSheet.kt`, two-step confirmation), per-recording deletion from the library, and the public web route a non-installer can reach. See [Deletion](#deletion--settled). |
 
 ## Data types
 
@@ -95,11 +95,12 @@ item. The facts:
 - The iOS app ships the same thing at Settings → Account → Delete Account
   (`ios/App/Parley/SettingsView.swift` → `AppState.deleteAccount()`).
 
-One gap remains, and it is not a Play blocker: the Android app still has **no
-in-app deletion of a single recording**. `CloudClient.deleteRecording` exists
-but has no caller outside the client itself, so the library screen offers no
-delete action. Play's form asks about account and account-data deletion, both
-of which are covered; per-item deletion is a product gap, not a compliance one.
+No gap remains. Per-recording deletion landed with the catch-up release: the
+library offers it from an overflow menu and a long press, behind a confirmation
+that names the recording, and it also clears what the phone kept locally — the
+audio saved for playback, any queued re-transcription, and the retry ledger
+entry. `CloudClient.deleteRecording` used to have no caller outside the client;
+it has one now.
 
 Answer **"Users can request that their data is deleted: Yes"** and
 **"Users can delete their data from the app: Yes"**, entering
@@ -117,7 +118,7 @@ backend, so the story has to match; where it does not, the reason is here.
 | 2 | `Diagnostics → Other Diagnostic Data` — "Yes, if server logs retain it" | The app ships **no** crash reporter, analytics SDK, or diagnostic upload. Any request/error logging is the backend's, not the app's. | Answer **Crash logs: No**, **Diagnostics: No**, **Other app performance data: No**. Play's form scopes to data the app collects or transmits; server-side request logs belong in the privacy policy. `[TODO: confirm with Jack]` whether `api.parley.tw` retains request logs linked to an account, so the policy says the true thing. |
 | 3 | `User Content → Other User Content` includes "folders … and organization placement" | Android surfaces neither. Folders and organizations are explicitly out of scope (`android/docs/app-structure.md`, "Known gaps"; `api-cloud.md`, "Not implemented"). `folderId` exists in the wire shape but nothing sets it. | Nothing to fix — Android collects a strict subset. Do not copy the words "folders" or "organization" into the Play form. |
 | 4 | The label covers recordings the user makes | Android also transmits the audio of **files the user imports** — a source iOS does not have (`ImportSession`, `source: "upload"`). | Covered by *Voice or sound recordings*; just do not describe the row as "recordings made in the app". |
-| 5 | Deletion is in-app (iOS Settings → Account → Delete Account) | No in-app deletion on Android, of an account or of a recording. | The blocker above. **This is the one real contradiction between the two stores.** |
+| 5 | Deletion is in-app (iOS Settings → Account → Delete Account) | Android matches it, and goes further: account deletion in the account sheet, **and** per-recording deletion from the library, which iOS does not offer. | Nothing to fix. The two stores no longer contradict each other here. |
 | 6 | Keyboard extension section (Full Access, no extra data type) | No Android equivalent exists — there is no Parley keyboard in this app. | Ignore that section entirely; it is iOS-only. |
 
 Rows 1–4 are wording differences that come from the two apps genuinely doing
