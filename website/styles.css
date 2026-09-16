@@ -408,6 +408,27 @@ img { max-width: 100%; display: block; }
 .feature-row__copy em { color: var(--teal); font-style: normal; }
 /* A CTA that belongs to one feature-row's copy, not to a centred section. */
 .row-cta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 26px; }
+
+/* ---------- Google Play badge ----------
+   Google's asset, unmodified — the guidelines forbid recreating, recoloring or
+   rearranging the lockup, so this is an <img> and not a hand-drawn button like
+   the App Store one on the row above.
+
+   Sizing is driven by those same guidelines. The 646x250 PNG is 41px of
+   transparent padding around a 564x168 badge, so at an img height of 72px the
+   badge itself renders 48px tall — over the 28px minimum, and close enough to
+   a .btn--lg to sit level with the buttons in the download section. Clear
+   space must be a quarter of the badge, 12.1px; the padding already carries
+   11.8px of it and the margin below covers the rest several times over.      */
+.badge-play {
+  display: inline-block;
+  margin: 6px;
+  border-radius: var(--radius-sm);
+  transition: transform 0.2s ease;
+}
+.badge-play img { height: 72px; width: auto; }
+.badge-play:hover { transform: translateY(-2px); }
+.badge-play:focus-visible { outline: 2px solid var(--sky); outline-offset: 4px; }
 .checklist { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
 .checklist li { position: relative; padding-left: 28px; color: var(--text); font-size: 15px; }
 .checklist li::before {
