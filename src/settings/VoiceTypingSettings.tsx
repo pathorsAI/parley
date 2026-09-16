@@ -285,7 +285,10 @@ function describeTrigger(
  * Accessibility grant that needs is requested when voice typing is enabled
  * (host.ts also asks at launch while the feature is on). Windows needs no
  * grant: the injection either lands or UIPI refuses it for an elevated target,
- * and the overlay says so at that moment.
+ * and the overlay says so at that moment. What Windows does lose is the
+ * dictionary's learning loop — watching the pasted-into field for a correction
+ * needs an accessibility observer that only macOS has — so the panel says so
+ * rather than letting the feature look self-teaching everywhere.
  */
 export const VoiceTypingSettings = () => {
   const { t } = useI18n();
@@ -451,23 +454,35 @@ export const VoiceTypingSettings = () => {
 
   return (
     <div className="flex max-w-md flex-col gap-6">
-      <div className="flex items-center justify-between gap-3">
-        <span className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium">{t("settings.voiceTyping.pushToTalk")}</span>
-          <span className="text-[11px] text-muted-foreground">
-            {t("settings.voiceTyping.hint")}
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between gap-3">
+          <span className="flex flex-col gap-0.5">
+            <span className="text-sm font-medium">{t("settings.voiceTyping.pushToTalk")}</span>
+            <span className="text-[11px] text-muted-foreground">
+              {t("settings.voiceTyping.hint")}
+            </span>
           </span>
-        </span>
-        <Button
-          variant={settings.voiceTypingEnabled ? "outline" : "default"}
-          size="sm"
-          className="h-7 shrink-0 px-2 text-[11px]"
-          onClick={() => setVoiceTypingEnabled(!settings.voiceTypingEnabled)}
-        >
-          {settings.voiceTypingEnabled
-            ? t("settings.voiceTyping.disable")
-            : t("settings.voiceTyping.enable")}
-        </Button>
+          <Button
+            variant={settings.voiceTypingEnabled ? "outline" : "default"}
+            size="sm"
+            className="h-7 shrink-0 px-2 text-[11px]"
+            onClick={() => setVoiceTypingEnabled(!settings.voiceTypingEnabled)}
+          >
+            {settings.voiceTypingEnabled
+              ? t("settings.voiceTyping.disable")
+              : t("settings.voiceTyping.enable")}
+          </Button>
+        </div>
+        {/* The dictionary's growth loop rides on watching the field we pasted
+            into, which is macOS accessibility observation — the Windows
+            observer is a stub that returns false, so no correction is ever
+            noticed there. Said once here, where someone who fixed the same
+            word three times would come looking. */}
+        {!mac && (
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            {t("settings.voiceTyping.correctionLearningWindows")}
+          </p>
+        )}
       </div>
 
       <div className="flex flex-col gap-1.5">

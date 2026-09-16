@@ -218,8 +218,51 @@ describe("talkTimeRatio", () => {
     expect(r!.them).toBeCloseTo(0.25, 5);
   });
 
+  /** Same segment, still being revised — the tally must not see it yet. */
+  const pending = (
+    source: TranscriptSegment["source"],
+    startMs: number,
+    endMs: number
+  ): TranscriptSegment => ({ ...fseg(source, startMs, endMs), isFinal: false });
+
   it("returns null for diarized mix sessions (no per-source me)", () => {
     expect(talkTimeRatio([fseg("mix", 0, 1000), fseg("mix", 1000, 2000)])).toBeNull();
+  });
+
+  it("returns null when only the user was captured, as on Windows", () => {
+    // Windows never captures system audio, so a whole meeting arrives as "me".
+    // Reporting 100% there would slander every Windows user after every call.
+    expect(talkTimeRatio([fseg("me", 0, 3000), fseg("me", 4000, 9000)])).toBeNull();
+  });
+
+  it("returns null when only the far side was captured", () => {
+    expect(talkTimeRatio([fseg("them", 0, 3000), fseg("them", 4000, 9000)])).toBeNull();
+  });
+
+  it("ignores segments that are not final yet", () => {
+    // The far side exists only as an in-flight segment: not a split yet.
+    expect(talkTimeRatio([fseg("me", 0, 3000), pending("them", 3000, 5000)])).toBeNull();
+    const r = talkTimeRatio([fseg("me", 0, 3000), fseg("them", 3000, 4000), pending("me", 4000, 9000)]);
+    expect(r!.me).toBeCloseTo(0.75, 5);
+  });
+
+  it("does not let a zero-duration segment vouch for a side", () => {
+    expect(talkTimeRatio([fseg("me", 0, 3000), fseg("them", 3000, 3000)])).toBeNull();
+    // Nor does it inflate the other side's share once the split is real.
+    const r = talkTimeRatio([fseg("me", 0, 3000), fseg("them", 3000, 4000), fseg("them", 5000, 5000)]);
+    expect(r!.me).toBeCloseTo(0.75, 5);
+    expect(r!.them).toBeCloseTo(0.25, 5);
+  });
+
+  it("ignores mix segments that ride along with a real me/them split", () => {
+    // Diarized "mix" never belongs to a side, so it neither counts nor blocks.
+    const r = talkTimeRatio([fseg("mix", 0, 8000), fseg("me", 0, 3000), fseg("them", 3000, 4000)]);
+    expect(r!.me).toBeCloseTo(0.75, 5);
+    expect(r!.them).toBeCloseTo(0.25, 5);
+  });
+
+  it("returns null for an empty transcript", () => {
+    expect(talkTimeRatio([])).toBeNull();
   });
 });
 

@@ -223,25 +223,35 @@ export function syllablesPerMin(hz: number): number {
  * segments. Only meaningful when speakers are split by capture source (non-
  * diarized: "me" vs "them"); in diarized "mix" sessions there is no per-source
  * "me", so this returns null and callers fall back to the mic voiced-ratio.
+ *
+ * A split needs evidence of BOTH sides, not just one. Windows has no
+ * system-audio capture at all (the mixer and the system tap are macOS-only, see
+ * src-tauri/src/audio/mod.rs), so every segment of every Windows recording
+ * carries source "me" — and a one-sided tally is not a conversation split, it's
+ * the absence of the far side. Counting it as one made the scorecard announce
+ * "100% — you dominated the conversation" after every Windows meeting.
  */
 export function talkTimeRatio(
   segments: TranscriptSegment[]
 ): { me: number; them: number } | null {
   let me = 0;
   let them = 0;
-  let sawSplit = false;
+  // Zero-length segments are no evidence of anyone having spoken, so they can't
+  // vouch for a side either — hence the flags track contributed time, not hits.
+  let sawMe = false;
+  let sawThem = false;
   for (const s of segments) {
     if (!s.isFinal) continue;
     const dur = Math.max(0, s.endMs - s.startMs);
+    if (dur <= 0) continue;
     if (s.source === "me") {
       me += dur;
-      sawSplit = true;
+      sawMe = true;
     } else if (s.source === "them") {
       them += dur;
-      sawSplit = true;
+      sawThem = true;
     }
   }
-  const total = me + them;
-  if (!sawSplit || total <= 0) return null;
-  return { me: me / total, them: them / total };
+  if (!sawMe || !sawThem) return null;
+  return { me: me / (me + them), them: them / (me + them) };
 }

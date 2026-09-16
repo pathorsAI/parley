@@ -24,6 +24,7 @@ import {
 } from "../lib/cloud/orgs";
 import type { CloudAuth, CloudInvitation, CloudOrg, CloudOrgMember } from "../lib/cloud/types";
 import { isTauri } from "../lib/tauriEvents";
+import { openDiagnosticsWindow } from "../lib/diagnostics";
 import { fetchLatestReleaseNotes, markReleaseNotesSeen, type ReleaseNotes } from "../lib/releaseNotes";
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
@@ -296,13 +297,21 @@ export function SettingsApp() {
       );
       setTesting(false);
     } else {
-      await invoke("start_mic_test", { inputDevice: settings.inputDevice }).catch((error) =>
+      // Enter the testing state only if the mic actually opened. `start_mic_test`
+      // could never fail for a device problem until the capture layer learned to
+      // report one, so this used to swallow the error and light up a live-looking
+      // test with the level meter pinned at 0 — the same silent lie a meeting told
+      // when the mic was denied or held by another app.
+      try {
+        await invoke("start_mic_test", { inputDevice: settings.inputDevice });
+        setTesting(true);
+      } catch (error) {
         log.warn("settings: start mic test failed", {
           inputDevice: settings.inputDevice,
           error: String(error),
-        }),
-      );
-      setTesting(true);
+        });
+        toast.error(t("settings.transcription.micTestFailed"));
+      }
     }
   }
 
@@ -1114,6 +1123,23 @@ export function SettingsApp() {
               </pre>
             )}
             <div className="flex items-center gap-2">
+              {/* The Field Log window used to be reachable only from the native
+                  Diagnostics menu, which Windows never draws (the main window
+                  is undecorated) — so on Windows the log had no door at all.
+                  This button is that door on both platforms. */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() =>
+                  openDiagnosticsWindow().catch((e) =>
+                    log.error("logs: open field log failed", { error: String(e) }),
+                  )
+                }
+              >
+                <ScrollText className="size-3.5" />
+                {t("settings.logs.openFieldLog")}
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
