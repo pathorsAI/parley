@@ -414,19 +414,23 @@ img { max-width: 100%; display: block; }
    rearranging the lockup, so this is an <img> and not a hand-drawn button like
    the App Store one on the row above.
 
-   Sizing is driven by those same guidelines. The 646x250 PNG is 41px of
-   transparent padding around a 564x168 badge, so at an img height of 72px the
-   badge itself renders 48px tall — over the 28px minimum, and close enough to
-   a .btn--lg to sit level with the buttons in the download section. Clear
-   space must be a quarter of the badge, 12.1px; the padding already carries
-   11.8px of it and the margin below covers the rest several times over.      */
+   Sizing is driven by those same guidelines. The official SVG is edge to edge:
+   its 238.96x70.87 viewBox is all badge, with no padding baked in, so the whole
+   of the required clear space has to come from the margin here. That space is a
+   quarter of the badge height — 12px at the 48px used below — and the margin
+   matches it exactly. 48px also clears the 28px minimum and sits level with the
+   .btn--lg buttons it appears beside in the download section.
+
+   Vector rather than the PNG next to it in the same download: the badge is
+   small, sharp-edged and sits on a dark background, which is exactly where a
+   downscaled bitmap shows its seams on a HiDPI screen.                        */
 .badge-play {
   display: inline-block;
-  margin: 6px;
+  margin: 12px;
   border-radius: var(--radius-sm);
   transition: transform 0.2s ease;
 }
-.badge-play img { height: 72px; width: auto; }
+.badge-play img { height: 48px; width: auto; }
 .badge-play:hover { transform: translateY(-2px); }
 .badge-play:focus-visible { outline: 2px solid var(--sky); outline-offset: 4px; }
 .checklist { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }

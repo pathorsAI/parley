@@ -116,9 +116,15 @@ shade pulled down over the running recording to show the ongoing "Recording a
 meeting" notification, its chronometer and its Stop action → the shade dismissed
 → Stop pressed.
 
-**It still has to be hosted.** Play's form takes a *URL*, not an upload, so the
-file must go up as an unlisted YouTube video and the link pasted into the
-declaration. Do not invent one.
+**It is hosted.** Play's form takes a *URL*, not an upload, so the file went up
+as an unlisted YouTube video on 2026-08-19:
+[`https://youtu.be/jIm6IXJG6iA`](https://youtu.be/jIm6IXJG6iA). That URL, and
+nothing invented, is what belongs in the declaration —
+[`fgs-declaration.md`](fgs-declaration.md) is where it is recorded.
+
+⚠️ It shows meeting recording only. Play reviews the declaration against the
+**permission**, so the release that ships voice typing — a second user of
+`RECORD_AUDIO` — needs a take covering both features before it rolls out.
 
 The full field-by-field answer sheet — which service type, why a foreground
 service rather than a background job, what is real in the video and what is
