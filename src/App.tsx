@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { exit } from "@tauri-apps/plugin-process";
 import { TitleBar } from "./components/TitleBar";
 import { AppShell } from "./components/shell/AppShell";
 import { Onboarding } from "./components/Onboarding";
@@ -71,6 +72,26 @@ function importDroppedFiles(paths: string[]): void {
       log.error("import: drop failed", { error: String(error) });
       toast.error(error instanceof Error ? error.message : String(error));
     });
+}
+
+/**
+ * Quit the whole app. Used for the close button off macOS, where the main
+ * window is the app's only presence: see `exitOnClose`. Extracted to module
+ * scope so its `catch` callback doesn't push the close-request listener
+ * closures past the nested-function depth limit.
+ */
+function exitApp(): void {
+  exit(0).catch((error) => log.warn("window: exit on close failed", { error: String(error) }));
+}
+
+/**
+ * Close-to-quit for Windows/Linux. The stop has to land before the process
+ * goes away — `exit` is immediate and would cut the IPC mid-flight, leaving the
+ * native capture to die with the process instead of finishing its teardown — so
+ * the exit is chained onto it, on success and failure alike.
+ */
+function exitOnClose(stopIfRecording: () => Promise<void>): void {
+  void stopIfRecording().then(exitApp, exitApp);
 }
 
 /**
@@ -214,28 +235,44 @@ const App = () => {
   // would also kill the voice-typing host that lives in this window, leaving
   // the global push-to-talk key dead until the app is relaunched. An active
   // meeting is still stopped first: a hidden window must never keep recording.
-  // On Windows close destroys the window as the platform expects (voice typing
-  // isn't wired there yet); relaunching goes through the single-instance
-  // plugin, which recreates the window from config.
+  //
+  // Everywhere else the close button QUITS. Hiding needs somewhere to hide to,
+  // and off macOS there is none: no Dock, and no tray icon in the Tauri config.
+  // Merely letting the window be destroyed didn't end the process either —
+  // `initVoiceTyping` prewarms a hidden `voice-typing` window with
+  // `skipTaskbar`, and Tauri only raises ExitRequested once the window map is
+  // empty — so Parley vanished from screen and taskbar while still sitting in
+  // Task Manager holding the global Ctrl+Alt+Space hotkey, unreachable except
+  // by relaunching. A background process the user cannot see or reach is the
+  // wrong bargain for keeping voice typing alive.
   useEffect(() => {
     if (!isTauri()) return;
     let active = true;
     let unlisten: (() => void) | undefined;
-    const stopIfRecording = () => {
-      if (isMeetingActive(useStore.getState().meetingStatus)) {
-        invoke("stop_meeting").catch((error) => log.warn("meeting: stop on close failed", { error: String(error) }));
-      }
+    const stopIfRecording = (): Promise<void> => {
+      if (!isMeetingActive(useStore.getState().meetingStatus)) return Promise.resolve();
+      return invoke<void>("stop_meeting").catch((error) =>
+        log.warn("meeting: stop on close failed", { error: String(error) }),
+      );
     };
-    window.addEventListener("beforeunload", stopIfRecording);
+    // Swallow the promise: a `beforeunload` handler that returns anything
+    // non-null asks the webview for a "leave site?" confirmation, which would
+    // stall an HMR reload behind a dialog nobody can answer.
+    const stopOnUnload = () => void stopIfRecording();
+    window.addEventListener("beforeunload", stopOnUnload);
     getCurrentWindow()
       .onCloseRequested((event) => {
-        stopIfRecording();
+        // Both paths hold the close: macOS to hide instead, elsewhere to let
+        // the stop IPC land before the process goes away.
+        event.preventDefault();
         if (isMac()) {
-          event.preventDefault();
+          void stopIfRecording();
           getCurrentWindow()
             .hide()
             .catch((error) => log.warn("window: hide on close failed", { error: String(error) }));
+          return;
         }
+        exitOnClose(stopIfRecording);
       })
       .then((fn) => {
         if (active) {
@@ -247,7 +284,7 @@ const App = () => {
       .catch((error) => log.warn("window: close listener failed", { error: String(error) }));
     return () => {
       active = false;
-      window.removeEventListener("beforeunload", stopIfRecording);
+      window.removeEventListener("beforeunload", stopOnUnload);
       unlisten?.();
     };
   }, []);

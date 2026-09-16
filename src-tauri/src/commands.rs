@@ -355,23 +355,10 @@ pub fn start_meeting(
                         Some(meeting_paused.clone()),
                     ));
                 }
-                (None, None) => {
-                    // No capture at all — without this the meeting would sit in
-                    // "recording" forever with an empty transcript. Release the
-                    // mic claim too: nothing is capturing, so voice typing / the
-                    // mic test shouldn't stay locked out until the frontend
-                    // reacts to the error (its stop_meeting is a no-op by then).
-                    coord.stop(MicUser::Meeting);
-                    log::error!("meeting: no audio source could be started");
-                    let _ = app.emit(
-                        "meeting://error",
-                        serde_json::json!({
-                            "source": "meeting",
-                            "code": "capture",
-                            "message": "no audio source could be started",
-                        }),
-                    );
-                }
+                // No capture at all: handled by the shared no-capture tail
+                // after the cfg blocks, which is the one place that knows what
+                // a source-less meeting owes the user.
+                (None, None) => {}
             }
         } else {
             // No diarization → two sessions. Record the mic only (mixing two
@@ -415,6 +402,10 @@ pub fn start_meeting(
         let mic = Microphone {
             device_name: input_device,
         };
+        // The mic is the only source here, so a failure to open it is a failure
+        // to record — no second stream can carry the meeting. The shared
+        // no-capture tail below releases the claim and raises the error;
+        // `spawn_capture` has already logged the device's own reason.
         if let Ok(rx) = spawn_capture(&coord, MicUser::Meeting, mic, gate.clone(), "me") {
             // No system capture on this platform → no far-end reference to gate on.
             let rx = spawn_mic_prosody_tap(&app, rx, None);
@@ -432,6 +423,28 @@ pub fn start_meeting(
             );
             state.tasks.lock().unwrap().push(task);
         }
+    }
+
+    // Every capture that came up owns exactly one transcription session task,
+    // and `tasks` was cleared above — so an empty list means nothing at all is
+    // recording. Announcing "recording" anyway is how a Windows user with the
+    // microphone denied got a LIVE badge over a whole silent meeting, and how
+    // Settings stayed mic-locked until the frontend happened to react.
+    if state.tasks.lock().unwrap().is_empty() {
+        // Release the mic claim too: nothing is capturing, so voice typing /
+        // the mic test shouldn't stay locked out until the frontend reacts to
+        // the error (its stop_meeting is a no-op by then).
+        coord.stop(MicUser::Meeting);
+        log::error!("meeting: no audio source could be started");
+        let _ = app.emit(
+            "meeting://error",
+            serde_json::json!({
+                "source": "meeting",
+                "code": "capture",
+                "message": "no audio source could be started",
+            }),
+        );
+        return Ok(());
     }
 
     let _ = app.emit("meeting://status", "recording");
@@ -585,12 +598,26 @@ pub fn discard_recording(path: String) {
     }
 }
 
-/// Save a meeting transcript (markdown) to ~/Documents/Parley and return the
-/// absolute path written. Creates the folder if needed.
+/// The app's folder inside the user's Documents directory — where the
+/// human-readable artifacts (saved transcripts, Soniox diagnostic logs) go.
+///
+/// Resolved through Tauri's path API rather than `$HOME`, which Windows does
+/// not set: reading it there failed every save and every diagnostic log with
+/// "no HOME dir", so the one artifact support asks for never existed.
+pub(crate) fn documents_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let docs = app.path().document_dir().map_err(|e| e.to_string())?;
+    Ok(docs.join("Parley"))
+}
+
+/// Save a meeting transcript (markdown) to the Documents/Parley folder and
+/// return the absolute path written. Creates the folder if needed.
 #[tauri::command]
-pub fn save_transcript(filename: String, contents: String) -> Result<String, String> {
-    let home = std::env::var("HOME").map_err(|_| "no HOME dir".to_string())?;
-    let dir = std::path::Path::new(&home).join("Documents").join("Parley");
+pub fn save_transcript(
+    app: AppHandle,
+    filename: String,
+    contents: String,
+) -> Result<String, String> {
+    let dir = documents_dir(&app)?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     // Sanitize the filename to a single path component.
     let safe = filename.replace(['/', '\\'], "-");

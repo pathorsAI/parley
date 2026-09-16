@@ -33,27 +33,67 @@ pub struct Microphone {
     pub device_name: Option<String>,
 }
 
+/// How long [`Microphone::start`] waits for the capture thread's verdict on
+/// opening the device. Opening takes a few milliseconds in practice, and a
+/// device that cannot be opened at all fails immediately — so this grace is
+/// only ever burned in full by a driver that wedges mid-open, where blocking
+/// `start_meeting` (a main-thread command) any longer would freeze the UI.
+const OPEN_VERDICT_GRACE: Duration = Duration::from_millis(1500);
+
 impl AudioSource for Microphone {
+    /// The device can only be opened on the thread that will own it — the cpal
+    /// stream is `!Send` on macOS — which is why the verdict has to come back
+    /// over a channel instead of `start` opening the device itself.
+    ///
+    /// Reporting it at all is the point: `start` used to return `Ok`
+    /// unconditionally and leave the real failure to an `eprintln!` that a
+    /// release build has no console for. A Windows user with mic access denied
+    /// (or the device held by another app) got the LIVE badge, a ticking clock,
+    /// a whole meeting of nothing, and not one line in `parley.log` about it.
     fn start(
         &self,
         tx: UnboundedSender<Vec<i16>>,
         running: Arc<AtomicBool>,
     ) -> Result<JoinHandle<()>> {
         let device_name = self.device_name.clone();
-        let handle = std::thread::spawn(move || {
-            if let Err(e) = run(device_name, tx, running) {
-                eprintln!("[mic] capture stopped: {e}");
+        let (verdict_tx, verdict_rx) = std::sync::mpsc::channel::<Result<()>>();
+        let handle = std::thread::spawn(move || match open(device_name, tx) {
+            Ok(stream) => {
+                let _ = verdict_tx.send(Ok(()));
+                capture_until_stopped(stream, running);
+            }
+            // Logged here as well as sent: past the grace below nobody is
+            // listening on the channel any more, and the device's own reason is
+            // the one thing support needs out of a silent meeting.
+            Err(e) => {
+                log::error!("[mic] could not open the input device: {e}");
+                let _ = verdict_tx.send(Err(e));
             }
         });
-        Ok(handle)
+        match verdict_rx.recv_timeout(OPEN_VERDICT_GRACE) {
+            Ok(Ok(())) => Ok(handle),
+            Ok(Err(e)) => Err(e),
+            // A slow open gets the benefit of the doubt — the thread is still
+            // working on it and will log either way. Failing here instead would
+            // abort a meeting over a merely sluggish USB or Bluetooth device.
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                log::warn!("[mic] device open exceeded {OPEN_VERDICT_GRACE:?}; assuming it opens");
+                Ok(handle)
+            }
+            // The thread ended without a verdict, i.e. it panicked inside
+            // `open`. Nothing is capturing, so this must not read as success.
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(anyhow!(
+                "microphone capture thread ended before the device opened"
+            )),
+        }
     }
 }
 
-fn run(
-    device_name: Option<String>,
-    tx: UnboundedSender<Vec<i16>>,
-    running: Arc<AtomicBool>,
-) -> Result<()> {
+/// Open the requested input device and start its stream. Everything that can
+/// fail about a microphone happens in here, so the verdict [`Microphone::start`]
+/// waits on carries a real reason. The returned stream must stay on the calling
+/// thread — it is `!Send` on macOS.
+fn open(device_name: Option<String>, tx: UnboundedSender<Vec<i16>>) -> Result<cpal::Stream> {
     let host = cpal::default_host();
     // Select the requested device by name, else fall back to the default.
     let device = match device_name.as_deref().filter(|n| !n.is_empty()) {
@@ -73,7 +113,7 @@ fn run(
     let channels = config.channels as usize;
     let in_rate = config.sample_rate.0;
 
-    eprintln!(
+    log::info!(
         "[mic] capturing on {:?} @ {} Hz, {} ch ({:?}) → {} Hz mono",
         device.name().unwrap_or_default(),
         in_rate,
@@ -90,7 +130,11 @@ fn run(
         other => return Err(anyhow!("unsupported sample format: {other:?}")),
     };
     stream.play()?;
+    Ok(stream)
+}
 
+/// Hold an opened device until the session's gate clears, then release it.
+fn capture_until_stopped(stream: cpal::Stream, running: Arc<AtomicBool>) {
     // Poll the gate tightly so the stream (and the device) is released within a
     // few ms of stop — voice typing cuts on release and a lingering device would
     // keep feeding the next moments of audio. A 10 ms tick is negligible CPU.
@@ -98,7 +142,6 @@ fn run(
         std::thread::sleep(Duration::from_millis(10));
     }
     drop(stream);
-    Ok(())
 }
 
 fn build_stream<T>(
@@ -132,7 +175,10 @@ where
                 let _ = tx.send(out);
             }
         },
-        |e| eprintln!("[mic] stream error: {e}"),
+        // A device lost or reconfigured mid-meeting surfaces only here, and the
+        // capture keeps "running" (silently) afterwards — so this has to reach
+        // `parley.log`, the one place a support request can read it back from.
+        |e| log::error!("[mic] stream error, capture may have dropped: {e}"),
         None,
     )?;
     Ok(stream)
