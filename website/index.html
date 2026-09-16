@@ -6,9 +6,9 @@
     <title>Parley — Record every meeting, and open it to your own AI</title>
     <meta
       name="description"
-      content="Parley is an open-source meeting recorder for macOS, Windows and iPhone: record the call, transcribe it live, search everything you have ever said. On macOS it captures both sides of the conversation. Then a built-in MCP server hands the whole library to Claude — or any MCP client — so the AI you already pay for does the thinking. Local-first, bring your own providers."
+      content="Parley is an open-source meeting recorder for macOS, Windows, iPhone and Android: record the call, transcribe it live, search everything you have ever said. On macOS it captures both sides of the conversation. Then a built-in MCP server hands the whole library to Claude — or any MCP client — so the AI you already pay for does the thinking. Local-first, bring your own providers."
     />
-    <meta name="keywords" content="meeting recorder, MCP server, Model Context Protocol, meeting transcription, transcript search, meeting notes, Claude MCP, sales call analysis, negotiation, voice typing, push to talk dictation, open source, macOS, Windows, iPhone" />
+    <meta name="keywords" content="meeting recorder, MCP server, Model Context Protocol, meeting transcription, transcript search, meeting notes, Claude MCP, sales call analysis, negotiation, voice typing, push to talk dictation, open source, macOS, Windows, iPhone, Android" />
     <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://parley.tw/" />
 
@@ -37,7 +37,7 @@
         "@type": "SoftwareApplication",
         "name": "Parley",
         "applicationCategory": "BusinessApplication",
-        "operatingSystem": "macOS, Windows, iOS",
+        "operatingSystem": "macOS, Windows, iOS, Android",
         "url": "https://parley.tw/",
         "description": "An open-source meeting recorder: record the call, transcribe it live — both sides of the conversation on macOS, your microphone on Windows — analyze it afterwards, and search across everything. A built-in Model Context Protocol server exposes the whole library to any MCP client, so an external AI can read, search, organize and re-analyze it. Local-first, with your own transcription and model providers.",
         "license": "https://www.apache.org/licenses/LICENSE-2.0",
@@ -494,26 +494,29 @@ claude mcp add --transport http parley \
         because it can tap system audio; iOS and Android cannot, and this section
         says so rather than implying a parity the platforms will never allow.
 
-        When the Android app reaches Google Play, replace the .cta__note at the
-        bottom with the real listing link.
+        iPhone and Android get a row each because they are not the same product:
+        Android can transcribe an audio file you already have and iPhone cannot,
+        iPhone has the voice-typing keyboard and Android does not. Claim only
+        what the shipped build on each store actually does.
       -->
       <section class="section section--alt" id="phone">
         <div class="section__head reveal">
           <span class="eyebrow">On your phone</span>
           <h2>The meetings you have in person</h2>
-          <p>Not every meeting happens on a call. Parley for iPhone records the room you are sitting in — the coffee shop, the customer's office, the table where nobody is opening a laptop — and the transcript arrives while people are still talking.</p>
+          <p>Not every meeting happens on a call. Parley for iPhone and Android records the room you are sitting in — the coffee shop, the customer's office, the table where nobody is opening a laptop — and the transcript arrives while people are still talking.</p>
         </div>
 
         <div class="feature-rows">
           <div class="feature-row reveal">
             <div class="feature-row__copy">
-              <span class="eyebrow eyebrow--sm">Put the phone down</span>
+              <span class="eyebrow eyebrow--sm">On iPhone</span>
               <h3>Record the room, read it live</h3>
               <p>One microphone, speakers separated automatically. Recording never starts until you confirm everyone present has agreed, and a finished recording survives a dead network — it queues on the phone and syncs itself later.</p>
               <ul class="checklist">
                 <li>Live transcript with automatic speaker separation</li>
                 <li>Consent prompt before every session</li>
                 <li>Voice typing into any app, from the Parley keyboard or the Action Button</li>
+                <li>Personal and organization libraries, shared or moved between them</li>
                 <li>English and Traditional Chinese, following your phone's language</li>
               </ul>
               <div class="row-cta">
@@ -533,12 +536,46 @@ claude mcp add --transport http parley \
 
           <div class="feature-row feature-row--rev reveal">
             <div class="feature-row__copy">
+              <span class="eyebrow eyebrow--sm">On Android</span>
+              <h3>Record the room — or hand it a recording</h3>
+              <p>The same in-person capture, plus one thing the iPhone app cannot do: point Parley at an audio file you already have — a voice memo, an interview, a call someone else recorded — and it transcribes that too. Play any of it back on a waveform you can drag, with the transcript moving in step.</p>
+              <ul class="checklist">
+                <li>Live transcript with automatic speaker separation — no API key on the phone</li>
+                <li>Transcribe audio files you already have, not only the room in front of you</li>
+                <li>Scrubbable waveform at 0.75×–2×, with the transcript following the audio</li>
+                <li>Tap a line to jump to that moment; search inside a transcript or across the library</li>
+                <li>Keep the audio on the phone to replay offline, and copy or share any transcript</li>
+                <li>English and Traditional Chinese, following your phone's language</li>
+              </ul>
+              <div class="row-cta">
+                <!--
+                  Google's badge guidelines forbid recreating or recoloring the
+                  lockup, so this is their unmodified asset rather than a button
+                  drawn to match the ones above. Height keeps the artwork well
+                  over the 28px minimum, and .badge-play adds margin so the
+                  required quarter-height clear space holds at every breakpoint.
+                -->
+                <a class="badge-play" href="https://play.google.com/store/apps/details?id=com.pathors.parley" target="_blank" rel="noopener">
+                  <img src="assets/google-play-badge.png" alt="Get it on Google Play" width="646" height="250" />
+                </a>
+              </div>
+            </div>
+            <figure class="media-slot media-slot--wide" data-media="showcase-android">
+              <div class="media-slot__hint">
+                <p><strong>showcase-android</strong></p>
+                <code>website/assets/showcase-android.png</code>
+              </div>
+            </figure>
+          </div>
+
+          <div class="feature-row reveal">
+            <div class="feature-row__copy">
               <span class="eyebrow eyebrow--sm">One account, every device</span>
               <h3>Caught on the phone, worked on the desktop</h3>
               <p>Recordings and transcripts sync to the same Parley account, so a meeting you captured at a table opens on the desktop with the full report behind it — timestamps, action items, delivery scorecard, and everything the MCP server can reach.</p>
               <ul class="checklist">
                 <li>Hosted transcription on sign-in — no API key on the phone</li>
-                <li>Personal and organization libraries, shared or moved between them</li>
+                <li>Recordings queue on the phone through a dead network and sync themselves later</li>
                 <li>No phone calls, no FaceTime, no other apps' audio — neither iOS nor Android offers such an API, and Parley does not pretend otherwise</li>
               </ul>
             </div>
@@ -550,8 +587,6 @@ claude mcp add --transport http parley \
             </figure>
           </div>
         </div>
-
-        <p class="cta__note">An Android app is built and syncs to the same account — it records the room and also transcribes audio files you already have. It is not on Google Play yet; this page gets the link the day it is.</p>
       </section>
 
       <!-- Open source / why it matters -->
@@ -588,6 +623,11 @@ claude mcp add --transport http parley \
               <span>Download for Windows</span>
             </a>
             <a class="btn btn--ghost btn--lg" href="https://apps.apple.com/app/id6795031201" target="_blank" rel="noopener">Get it for iPhone</a>
+            <!-- Plain text, not the Play badge: this row is desktop installers, and
+                 dropping a store lockup between two pill buttons would both break the
+                 row and shrink the badge below the size Google's guidelines allow. The
+                 badge itself lives in the Android section, where it has room. -->
+            <a class="btn btn--ghost btn--lg" href="https://play.google.com/store/apps/details?id=com.pathors.parley" target="_blank" rel="noopener">Get it for Android</a>
           </div>
           <p class="cta__note">On Windows, Parley records your microphone — capturing the other side of the call is macOS-only for now. The Windows installer is not code-signed yet, so SmartScreen asks you to click More info → Run anyway.</p>
           <p class="cta__note">Bring your preferred transcription and AI provider keys, or sign in for hosted ones. Local model routes are supported where available.</p>
@@ -607,7 +647,7 @@ claude mcp add --transport http parley \
             <a href="#features">Why Parley</a>
             <a href="#mcp">MCP server</a>
             <a href="#voice-typing">Voice typing</a>
-            <a href="#phone">iPhone</a>
+            <a href="#phone">iPhone &amp; Android</a>
             <a href="#download">Download</a>
           </nav>
           <nav class="footer__col" aria-label="Project">
