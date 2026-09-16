@@ -9,7 +9,7 @@ import { log } from "../log";
 const LABEL = "voice-typing";
 const WIDTH = 460;
 const HEIGHT = 180;
-/** Gap above the screen bottom (sits low, just clearing the Dock). */
+/** Gap above the bottom of the WORK AREA (sits low, just clearing the Dock). */
 const BOTTOM_MARGIN = 64;
 
 let ensuring: Promise<void> | null = null;
@@ -67,12 +67,22 @@ async function ensureOverlay(): Promise<void> {
 export type MonitorGeometry = {
   position: { x: number; y: number };
   size: { width: number; height: number };
+  /**
+   * Tauri's `Monitor.workArea` (@tauri-apps/api 2.11): the display minus the
+   * taskbar / Dock / menu bar, in physical px. Optional because callers that
+   * only hold raw display bounds are still valid input — see
+   * bottomCenterPhysical for what happens then.
+   */
+  workArea?: {
+    position: { x: number; y: number };
+    size: { width: number; height: number };
+  };
   scaleFactor: number;
 };
 
 /**
- * Bottom-centre of `mon` for the WIDTH×HEIGHT (logical px) overlay, returned in
- * PHYSICAL px.
+ * Bottom-centre of `mon`'s WORK AREA for the WIDTH×HEIGHT (logical px) overlay,
+ * returned in PHYSICAL px.
  *
  * Physical rather than logical because Tauri converts a logical position using
  * the window's CURRENT scale factor — which is still the old display's while
@@ -80,12 +90,19 @@ export type MonitorGeometry = {
  * external 1x) that lands it at double/half the intended offset. Monitor
  * geometry is already physical, so doing the whole calculation there sidesteps
  * the conversion.
+ *
+ * The work area, not the full display: BOTTOM_MARGIN clears a default Windows
+ * taskbar but not a taller one, nor one stacked two rows deep, so measuring
+ * from the screen bottom could leave the pill behind it. Displays that report
+ * no work area fall back to their full bounds — the old behaviour — rather than
+ * having a taskbar height guessed for them.
  */
 export function bottomCenterPhysical(mon: MonitorGeometry): { x: number; y: number } {
   const scale = mon.scaleFactor || 1;
+  const area = mon.workArea ?? { position: mon.position, size: mon.size };
   return {
-    x: Math.round(mon.position.x + (mon.size.width - WIDTH * scale) / 2),
-    y: Math.round(mon.position.y + mon.size.height - (HEIGHT + BOTTOM_MARGIN) * scale),
+    x: Math.round(area.position.x + (area.size.width - WIDTH * scale) / 2),
+    y: Math.round(area.position.y + area.size.height - (HEIGHT + BOTTOM_MARGIN) * scale),
   };
 }
 

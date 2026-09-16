@@ -1,5 +1,9 @@
 <!doctype html>
-<html lang="en" class="dark">
+<!-- lang matches the app's default locale, not this file's language: main.tsx
+     overwrites it from the saved setting on boot, and this is the value the
+     first paint uses. It has to carry the Hant subtag for the same reason
+     main.tsx does — see the note there and on --font-sans in index.css. -->
+<html lang="zh-Hant-TW" class="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/parley.svg" />

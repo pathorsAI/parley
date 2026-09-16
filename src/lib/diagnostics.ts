@@ -1,6 +1,7 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "./tauriEvents";
 import { log } from "./log";
+import { fitWindowSize } from "./windowBounds";
 
 /** Emitted by the native Diagnostics → View Logs menu item (see menu.rs). */
 const VIEW_LOGS_MENU = "menu://view-logs";
@@ -26,10 +27,10 @@ export async function openDiagnosticsWindow(): Promise<void> {
   const win = new WebviewWindow("diagnostics", {
     url: "index.html#diagnostics",
     title: "Parley — Field Log",
-    width: 900,
-    height: 600,
-    minWidth: 600,
-    minHeight: 380,
+    // Clamped to the display's work area: see fitWindowSize — these logical
+    // sizes were picked on a Mac and overflow a scaled Windows desktop.
+    ...(await fitWindowSize({ width: 900, height: 600, minWidth: 600, minHeight: 380 })),
+    center: true,
     resizable: true,
   });
   win.once("tauri://error", (e) => log.error("diagnostics: window error", { error: String(e) }));

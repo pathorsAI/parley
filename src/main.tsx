@@ -5,7 +5,9 @@ import "./index.css";
 import { attachConsoleOnce, log } from "./lib/log";
 import { initFolderRegistry } from "./lib/history/folders";
 import { initDictionary } from "./lib/dictionary";
-import { desktopPlatform } from "./lib/platform";
+import { desktopPlatform, isTauri } from "./lib/platform";
+import { useStore } from "./lib/store";
+import type { AppLanguage } from "./lib/types";
 import { restoreZoom } from "./lib/zoom";
 import { installGlobalCommands } from "./lib/commands/bind";
 import { initMenuCommands } from "./lib/commands/menuBridge";
@@ -63,6 +65,64 @@ document.documentElement.dataset.appWindow = window_;
 // And to the right OS: the transparent/rounded chrome is macOS-only — the
 // Windows main window is undecorated but opaque (see tauri.windows.conf.json).
 document.documentElement.dataset.platform = desktopPlatform();
+
+/**
+ * BCP-47 tag for the UI language. `zh-Hant-TW`, never a bare `zh`: the script
+ * subtag is what actually steers the webview's Han font fallback to
+ * Traditional forms, and without it Chromium/WebView2 answers a Chinese string
+ * with a Simplified or Japanese face. See --font-sans in index.css for the
+ * other half — the explicit families and the tag fix different halves of the
+ * same problem, so neither replaces the other.
+ */
+function langTagOf(language: AppLanguage): string {
+  return language === "en" ? "en" : "zh-Hant-TW";
+}
+
+function applyLangTag(language: AppLanguage): void {
+  document.documentElement.lang = langTagOf(language);
+}
+
+applyLangTag(useStore.getState().settings.language);
+// The boot value is not enough: the switcher lives in the Settings *window*,
+// so every other window learns about a language change through settingsSync,
+// with no reload to re-read index.html. Subscribed straight off the store the
+// way theme.ts watches its setting — as a subscription rather than a hook,
+// because the secondary windows render no shared shell to hang one on (same
+// reason as installGlobalCommands above).
+useStore.subscribe((state, previous) => {
+  if (state.settings.language !== previous.settings.language) {
+    applyLangTag(state.settings.language);
+  }
+});
+
+// WebView2 hands out Edge's own context menu — Back / Reload / Save as… /
+// Print… / Inspect — anywhere the app doesn't claim the event. "Reload"
+// mid-meeting reloads the webview and takes a running recording with it, so
+// suppress the menu where we have nothing of our own to offer. WKWebView's
+// menu is far thinner, which is why this only ever showed up on Windows.
+//
+// Two carve-outs, both about not stealing something the user needs: editable
+// text keeps the webview's cut/copy/paste menu (the sidebar's rename input
+// already stopPropagation()s for exactly this reason — see AppSidebar.tsx),
+// and so does a live selection, where copy is the only thing on offer. This
+// listens on the bubble phase at the window, so anything that stopped
+// propagation on the way up — Radix's ContextMenu triggers, those inputs —
+// never reaches it and keeps its own behaviour. Tauri-only, so `bun run dev`
+// in a browser keeps its devtools menu.
+if (isTauri()) {
+  globalThis.addEventListener("contextmenu", (event) => {
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest("input, textarea, [contenteditable]:not([contenteditable='false'])")
+    ) {
+      return;
+    }
+    const selection = globalThis.getSelection();
+    if (selection && !selection.isCollapsed && selection.toString().trim()) return;
+    event.preventDefault();
+  });
+}
 
 const SettingsApp = lazy(() =>
   import("./settings/SettingsApp").then((module) => ({ default: module.SettingsApp }))
