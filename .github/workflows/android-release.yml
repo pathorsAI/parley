@@ -120,8 +120,20 @@ jobs:
           java-version: "17"
           cache: gradle
 
+      # `packages` is set because the action's default is `tools platform-tools`,
+      # and Google has withdrawn `tools` from the SDK repository — sdkmanager
+      # exits 1 with "Failed to find package 'tools'" and takes the whole release
+      # with it. Nothing here ever used `tools`; it was only ever inherited.
+      #
+      # The licence text is no longer echoed. Accepting the licences still
+      # happens; printing them buried the actual failure under several hundred
+      # lines of MIPS evaluation agreement, which is how this took a second run
+      # to spot.
       - name: Set up the Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
 
       # A tag that disagrees with the build file ships the wrong thing under the
       # right name, and it is only noticed once the bundle sits in Play. Same
