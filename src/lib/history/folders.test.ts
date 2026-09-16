@@ -10,9 +10,12 @@ vi.mock("../tauriEvents", () => ({ isTauri: () => false }));
 
 import {
   createLocalFolder,
+  deleteLocalFolder,
   filingChoices,
+  folderGeneration,
   isArchived,
   listLocalFolders,
+  mirrorCloudFolders,
   renameLocalFolder,
   setLocalFolderArchived,
   writeLocalFolders,
@@ -85,6 +88,54 @@ describe("the cloud mirror-down cannot un-archive", () => {
     writeLocalFolders([]);
 
     expect(listLocalFolders()).toEqual([]);
+  });
+});
+
+describe("a local edit outranks a cloud snapshot taken before it", () => {
+  // Regression: deleting a folder appeared to do nothing. A reload fires on
+  // window focus, so its cloud read was already in flight when the delete
+  // landed — and the reply, taken before the DELETE, still listed the folder.
+  // Mirroring that down resurrected it, on disk and on screen.
+  it("drops a snapshot older than a local delete, and the folder stays gone", () => {
+    const doomed = createLocalFolder("和運租車");
+    const kept = createLocalFolder("台數科");
+    // What reloadFolders does: read the generation, then go to the network.
+    const since = folderGeneration();
+    const inFlight = listLocalFolders();
+    // The user answers the confirmation while that read is still outstanding.
+    deleteLocalFolder(doomed.id);
+
+    const rendered = mirrorCloudFolders(inFlight, since);
+
+    expect(rendered.map((f) => f.id)).toEqual([kept.id]);
+    expect(listLocalFolders().map((f) => f.id)).toEqual([kept.id]);
+  });
+
+  it("writes an uncontested snapshot down, additions and removals alike", () => {
+    const shared = createLocalFolder("shared");
+    const localOnly = createLocalFolder("dropped by the cloud");
+    const since = folderGeneration();
+
+    const rendered = mirrorCloudFolders(
+      [
+        { id: shared.id, name: "shared", createdAt: shared.createdAt },
+        { id: "other-device", name: "made elsewhere", createdAt: shared.createdAt + 1 },
+      ],
+      since
+    );
+
+    expect(rendered.map((f) => f.name)).toEqual(["shared", "made elsewhere"]);
+    expect(listLocalFolders().some((f) => f.id === localOnly.id)).toBe(false);
+  });
+
+  it("drops a snapshot older than a local rename, so the new name survives", () => {
+    const f = createLocalFolder("old name");
+    const since = folderGeneration();
+    const inFlight = [{ id: f.id, name: "old name", createdAt: f.createdAt }];
+    renameLocalFolder(f.id, "new name");
+
+    expect(mirrorCloudFolders(inFlight, since).map((x) => x.name)).toEqual(["new name"]);
+    expect(listLocalFolders().map((x) => x.name)).toEqual(["new name"]);
   });
 });
 
