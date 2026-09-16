@@ -267,6 +267,17 @@ class CaptureRecovery(
     val ladderMillis: Long
         get() = if (maxAttempts <= 1) 0L else (1 until maxAttempts).sumOf { backoffFor(it) }
 
+    /**
+     * The event table, deliberately flat and in the same order as the Swift
+     * `switch` it was ported from, so the two platforms can still be diffed by
+     * eye. The three events whose answer depends on the phase we are already in
+     * delegate to a named function below rather than nesting a decision inside
+     * an arm.
+     *
+     * Those helpers write [phase] and [attempts] without taking the lock
+     * themselves, and are private so that this stays true: they are only ever
+     * reached through this method, which holds it.
+     */
     @Synchronized
     fun apply(event: Event): Action = when (event) {
         Event.Restarted, is Event.RebuildSucceeded -> {
@@ -276,24 +287,7 @@ class CaptureRecovery(
             Action.Wait
         }
 
-        Event.Interrupted -> {
-            beganWithInterruption = true
-            // A second beginning for an interruption already being handled says
-            // nothing new, and answering it with another probe would only put a
-            // second chain on the same `AudioRecord`.
-            if (phase != Phase.RUNNING) {
-                Action.Wait
-            } else {
-                phase = Phase.INTERRUPTED
-                attempts = 0
-                // A probe rather than a wait. This is the *only* thing that can
-                // notice an interruption whose end is never announced — and
-                // being refused while the other client still holds the
-                // microphone costs one failed open, which is what the ladder is
-                // for.
-                Action.Rebuild(probeAfterMillis)
-            }
-        }
+        Event.Interrupted -> onInterrupted()
 
         Event.InterruptionEnded -> {
             // Reached from LOST too: the system announcing that it is done with
@@ -304,19 +298,21 @@ class CaptureRecovery(
             Action.Rebuild(resumeAfterMillis)
         }
 
-        Event.AppBecameActive ->
-            // The refusal that burned the ladder was "a backgrounded app,
-            // competing with something in the foreground". Being in the
-            // foreground is the other half of that answer.
-            if (phase == Phase.RUNNING) {
-                Action.Wait
-            } else {
-                phase = Phase.RECOVERING
-                attempts = 0
-                Action.Rebuild(0)
-            }
+        Event.AppBecameActive -> onAppBecameActive()
 
-        Event.AudioServerDied -> {
+        // The same answer as [Event.InterruptionEnded], and today the same
+        // delay — but deliberately *not* folded into one arm with it, because
+        // it is not the same fact. That one is the other client announcing it
+        // has let go; this one is every `AudioRecord` in the process dying with
+        // the audio server that was holding it, ours included. Two reasons to
+        // keep them apart. This file's stated value is being a line-for-line
+        // port of `CaptureRecovery.swift`, where they are separate cases and a
+        // reader can check the two platforms agree by looking. And
+        // [resumeAfterMillis] is documented as the settle after an
+        // *interruption* — of the numbers here it is the likeliest to want a
+        // different value once a restarted audio server has been measured,
+        // which a shared arm would silently apply to both.
+        Event.AudioServerDied -> { // NOSONAR — S1871: same answer, different reasons; see above
             phase = Phase.RECOVERING
             attempts = 0
             Action.Rebuild(resumeAfterMillis)
@@ -328,28 +324,67 @@ class CaptureRecovery(
             Action.Rebuild(0)
         }
 
-        is Event.RebuildFailed ->
-            // Already given up: a straggler from the chain that gave up is not
-            // a reason to tell the user twice.
-            if (phase == Phase.LOST) {
-                Action.Wait
+        is Event.RebuildFailed -> onRebuildFailed(event)
+    }
+
+    /**
+     * [Event.Interrupted]: probe, unless a chain is already climbing.
+     *
+     * [beganWithInterruption] is recorded either way. The interruption happened
+     * whether or not this is the call that starts the chain, and it is what the
+     * eventual [Action.GiveUp] describes the loss with.
+     */
+    private fun onInterrupted(): Action {
+        beganWithInterruption = true
+        // A second beginning for an interruption already being handled says
+        // nothing new, and answering it with another probe would only put a
+        // second chain on the same `AudioRecord`.
+        if (phase != Phase.RUNNING) return Action.Wait
+        phase = Phase.INTERRUPTED
+        attempts = 0
+        // A probe rather than a wait. This is the *only* thing that can notice
+        // an interruption whose end is never announced — and being refused
+        // while the other client still holds the microphone costs one failed
+        // open, which is what the ladder is for.
+        return Action.Rebuild(probeAfterMillis)
+    }
+
+    /**
+     * [Event.AppBecameActive]: one immediate attempt from every phase except
+     * [Phase.RUNNING], where the microphone is already ours and there is
+     * nothing to take back.
+     */
+    private fun onAppBecameActive(): Action {
+        if (phase == Phase.RUNNING) return Action.Wait
+        // The refusal that burned the ladder was "a backgrounded app, competing
+        // with something in the foreground". Being in the foreground is the
+        // other half of that answer.
+        phase = Phase.RECOVERING
+        attempts = 0
+        return Action.Rebuild(0)
+    }
+
+    /** [Event.RebuildFailed]: the next rung of the ladder, or the end of it. */
+    private fun onRebuildFailed(event: Event.RebuildFailed): Action {
+        // Already given up: a straggler from the chain that gave up is not a
+        // reason to tell the user twice.
+        if (phase == Phase.LOST) return Action.Wait
+        attempts += 1
+        if (event.systemHoldsInput) beganWithInterruption = true
+        if (attempts < maxAttempts) {
+            phase = Phase.RECOVERING
+            return Action.Rebuild(backoffFor(attempts))
+        }
+        phase = Phase.LOST
+        // What the user is told has to describe what happened rather than the
+        // last thing that went wrong — see [beganWithInterruption].
+        return Action.GiveUp(
+            if (beganWithInterruption || event.systemHoldsInput) {
+                Loss.TakenBySystem
             } else {
-                attempts += 1
-                if (event.systemHoldsInput) beganWithInterruption = true
-                if (attempts >= maxAttempts) {
-                    phase = Phase.LOST
-                    Action.GiveUp(
-                        if (beganWithInterruption || event.systemHoldsInput) {
-                            Loss.TakenBySystem
-                        } else {
-                            Loss.Broken(event.description)
-                        },
-                    )
-                } else {
-                    phase = Phase.RECOVERING
-                    Action.Rebuild(backoffFor(attempts))
-                }
-            }
+                Loss.Broken(event.description)
+            },
+        )
     }
 
     companion object {
