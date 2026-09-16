@@ -157,7 +157,10 @@ export function AskPanel() {
                 let assistantBody = null;
                 if (m.content) {
                   assistantBody = (
-                    <div className="prose prose-invert prose-sm select-text max-w-none text-foreground prose-p:my-1.5 prose-pre:my-2 prose-pre:bg-neutral-900 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5">
+                    // See ReportContent: `dark:prose-invert`, or light mode gets
+                    // white headings on white. The code block keeps its dark
+                    // background in both themes, so its text stays light.
+                    <div className="prose prose-sm select-text max-w-none text-foreground dark:prose-invert prose-p:my-1.5 prose-pre:my-2 prose-pre:bg-neutral-900 prose-pre:text-neutral-100 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
                     </div>
                   );
