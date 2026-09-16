@@ -25,6 +25,24 @@ import kotlin.math.sin
  */
 object OpusProbe {
 
+    /**
+     * How long to wait on a `MediaCodec` buffer before turning to the other end
+     * of the codec: the same 10 ms the production encoder uses.
+     */
+    private const val DEQUEUE_TIMEOUT_US = 10_000L
+
+    /** One 20 ms frame, in microseconds, for the input timestamps. */
+    private const val FRAME_DURATION_US = 20_000L
+
+    /** The fixed part of an Ogg page header, before the lacing table (RFC 3533 §6). */
+    private const val PAGE_HEADER_BYTES = 27
+
+    /**
+     * Turns of the decode loop before it gives up. A stall net, not a limit on
+     * file length: at one 20 ms packet per turn it allows over half an hour.
+     */
+    private const val DECODE_LOOP_GUARD = 100_000
+
     // ------------------------------------------------------------------ PCM in
 
     /**
@@ -193,97 +211,33 @@ object OpusProbe {
      * [OggOpusEncoder]'s assumption about the result: this counts buffers.
      */
     fun encode(pcm: ByteArray, bitrate: Int = OggOpusEncoder.DEFAULT_BITRATE): EncodeRun {
-        val codecName = selectEncoderName()
-        val codec = if (codecName != null) {
-            MediaCodec.createByCodecName(codecName)
-        } else {
-            MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS)
-        }
+        val codec = createEncoder()
+        // Asked of the codec rather than of the lookup, because the fallback path
+        // does not say which implementation it landed on.
         val resolvedName = codec.name
-
-        val format = MediaFormat.createAudioFormat(
-            MediaFormat.MIMETYPE_AUDIO_OPUS, Pcm.SAMPLE_RATE, 1,
-        ).apply {
-            setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
-            setInteger(MediaFormat.KEY_PCM_ENCODING, Pcm.ENCODING_PCM_16BIT)
-        }
-
-        val frameBytes = OggOpusEncoder.FRAME_BYTES
-        val packets = mutableListOf<Packet>()
-        var reportedPreSkip: Int? = null
-        var framesQueued = 0
+        val feed = PcmFeed(pcm)
+        val output = EncoderOutput()
 
         try {
-            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            codec.configure(
+                encoderFormat(bitrate), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE,
+            )
             codec.start()
 
             val info = MediaCodec.BufferInfo()
-            var offset = 0
-            var inputDone = false
-            var outputDone = false
-
-            fun drain(timeoutUs: Long) {
-                while (true) {
-                    val index = codec.dequeueOutputBuffer(info, timeoutUs)
-                    when {
-                        index >= 0 -> {
-                            val isConfig =
-                                (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
-                            val buffer = codec.getOutputBuffer(index)
-                            if (buffer != null && info.size > 0) {
-                                buffer.clear()
-                                buffer.position(info.offset)
-                                buffer.limit(info.offset + info.size)
-                                val bytes = ByteArray(info.size)
-                                buffer.get(bytes)
-                                if (isConfig) {
-                                    reportedPreSkip = reportedPreSkip ?: preSkipOf(bytes)
-                                } else {
-                                    packets += describe(bytes, info.presentationTimeUs)
-                                }
-                            }
-                            if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                                outputDone = true
-                            }
-                            codec.releaseOutputBuffer(index, false)
-                            if (outputDone) return
-                        }
-
-                        index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                            if (reportedPreSkip == null) {
-                                reportedPreSkip = preSkipOf(codec.outputFormat)
-                            }
-                        }
-
-                        else -> return
-                    }
+            while (!output.sawEndOfStream) {
+                if (!feed.inputDone) {
+                    val index = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_US)
+                    if (index >= 0) feed.queueInto(codec, index)
                 }
-            }
-
-            while (!outputDone) {
-                if (!inputDone) {
-                    val index = codec.dequeueInputBuffer(10_000L)
-                    if (index >= 0) {
-                        val buffer = codec.getInputBuffer(index)!!
-                        if (offset < pcm.size) {
-                            val n = minOf(frameBytes, pcm.size - offset)
-                            buffer.clear()
-                            buffer.put(pcm, offset, n)
-                            codec.queueInputBuffer(
-                                index, 0, n, framesQueued * 20_000L, 0,
-                            )
-                            offset += n
-                            framesQueued++
-                        } else {
-                            codec.queueInputBuffer(
-                                index, 0, 0, framesQueued * 20_000L,
-                                MediaCodec.BUFFER_FLAG_END_OF_STREAM,
-                            )
-                            inputDone = true
-                        }
-                    }
-                }
-                drain(if (inputDone) 10_000L else 0L)
+                // While PCM is still going in, poll the output with a zero
+                // timeout: the codec is entitled to have nothing ready yet and
+                // blocking would only starve it of input. Once the end-of-stream
+                // buffer is queued there is nothing left to do but wait, and
+                // blocking is then what keeps this loop from spinning.
+                drainEncoderOutput(
+                    codec, info, if (feed.inputDone) DEQUEUE_TIMEOUT_US else 0L, output,
+                )
             }
         } finally {
             runCatching { codec.stop() }
@@ -292,13 +246,178 @@ object OpusProbe {
 
         return EncodeRun(
             codecName = resolvedName,
-            isSoftware = resolvedName.contains(".google.") ||
-                resolvedName.startsWith("c2.android.") ||
-                resolvedName.startsWith("OMX.google."),
-            framesQueued = framesQueued,
-            packets = packets,
-            reportedPreSkip = reportedPreSkip,
+            isSoftware = isSoftwareCodec(resolvedName),
+            framesQueued = feed.framesQueued,
+            packets = output.packets,
+            reportedPreSkip = output.reportedPreSkip,
         )
+    }
+
+    /**
+     * The encoder [OggOpusEncoder.create] would get, found the same two ways it
+     * finds one: ask `MediaCodecList` which codec handles the capture format, and
+     * fall back to the platform default for the MIME type when it names none.
+     */
+    private fun createEncoder(): MediaCodec {
+        val codecName = selectEncoderName()
+        return if (codecName != null) {
+            MediaCodec.createByCodecName(codecName)
+        } else {
+            MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS)
+        }
+    }
+
+    /** The capture format, with the keys [OggOpusEncoder.create] configures. */
+    private fun encoderFormat(bitrate: Int): MediaFormat =
+        MediaFormat.createAudioFormat(
+            MediaFormat.MIMETYPE_AUDIO_OPUS, Pcm.SAMPLE_RATE, 1,
+        ).apply {
+            setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+            setInteger(MediaFormat.KEY_PCM_ENCODING, Pcm.ENCODING_PCM_16BIT)
+        }
+
+    /**
+     * True when the codec's name marks it as one of Google's software codecs.
+     *
+     * Reported, never asserted on. A vendor encoder that bundled frames is
+     * exactly the device-specific failure these tests exist to catch, so the
+     * report has to name which kind of codec produced the numbers.
+     */
+    private fun isSoftwareCodec(name: String): Boolean =
+        name.contains(".google.") ||
+            name.startsWith("c2.android.") ||
+            name.startsWith("OMX.google.")
+
+    /**
+     * The PCM still waiting to go into the encoder, handed over one 20 ms frame
+     * per input buffer.
+     *
+     * Its own object because the cursor, the frame count and "input finished"
+     * advance together, and [drainEncoderOutput] has to be free to run between
+     * any two frames.
+     */
+    private class PcmFeed(private val pcm: ByteArray) {
+        /** Bytes already queued. */
+        private var offset = 0
+
+        /** 20 ms input buffers queued so far: one packet each, is what production assumes. */
+        var framesQueued = 0
+            private set
+
+        /** True once the end-of-stream buffer is queued; nothing may follow it. */
+        var inputDone = false
+            private set
+
+        /**
+         * Fill one dequeued input buffer: the next 20 ms frame, or the empty
+         * end-of-stream buffer once the PCM runs out.
+         *
+         * Timestamps come off the 20 ms grid the frames themselves imply rather
+         * than from anything the codec reports, so the input clock stays
+         * independent of the output clock under measurement.
+         */
+        fun queueInto(codec: MediaCodec, index: Int) {
+            val buffer = codec.getInputBuffer(index)!!
+            val presentationTimeUs = framesQueued * FRAME_DURATION_US
+            if (offset < pcm.size) {
+                // A trailing partial frame is queued short; the codec pads it.
+                val n = minOf(OggOpusEncoder.FRAME_BYTES, pcm.size - offset)
+                buffer.clear()
+                buffer.put(pcm, offset, n)
+                codec.queueInputBuffer(index, 0, n, presentationTimeUs, 0)
+                offset += n
+                framesQueued++
+            } else {
+                codec.queueInputBuffer(
+                    index, 0, 0, presentationTimeUs,
+                    MediaCodec.BUFFER_FLAG_END_OF_STREAM,
+                )
+                inputDone = true
+            }
+        }
+    }
+
+    /**
+     * What one encode run produced, accumulated as the output buffers arrive.
+     *
+     * Everything here is a tally; nothing in it decides whether the numbers are
+     * right. That judgement belongs to the assertions in the device test.
+     */
+    private class EncoderOutput {
+        /** Every non-config output buffer, in the order the codec emitted it. */
+        val packets = mutableListOf<Packet>()
+
+        /** The first pre-skip the codec disclosed, from `csd-0` or the output format. */
+        var reportedPreSkip: Int? = null
+
+        /** True once a buffer carried `BUFFER_FLAG_END_OF_STREAM`. */
+        var sawEndOfStream = false
+    }
+
+    /**
+     * Take every output buffer the codec currently has ready, then return.
+     *
+     * A zero [timeoutUs] turns this into a poll, which is what lets [encode] keep
+     * feeding input; it also returns the moment end of stream is seen, since no
+     * buffer can follow that one.
+     */
+    private fun drainEncoderOutput(
+        codec: MediaCodec,
+        info: MediaCodec.BufferInfo,
+        timeoutUs: Long,
+        output: EncoderOutput,
+    ) {
+        while (true) {
+            val index = codec.dequeueOutputBuffer(info, timeoutUs)
+            when {
+                index >= 0 -> {
+                    takeEncodedBuffer(codec, info, index, output)
+                    codec.releaseOutputBuffer(index, false)
+                    if (output.sawEndOfStream) return
+                }
+
+                // The output format lands before the first packet and carries
+                // `csd-0`, which is where the pre-skip usually shows up.
+                index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED ->
+                    output.reportedPreSkip =
+                        output.reportedPreSkip ?: preSkipOf(codec.outputFormat)
+
+                else -> return
+            }
+        }
+    }
+
+    /**
+     * Copy one output buffer out of the codec and file it.
+     *
+     * The copy is deliberate: the buffer goes straight back to the codec
+     * afterwards and every measurement here happens later, on bytes this process
+     * owns. Config buffers hold `OpusHead` rather than audio, so they are read
+     * for their pre-skip and kept out of the packet count.
+     */
+    private fun takeEncodedBuffer(
+        codec: MediaCodec,
+        info: MediaCodec.BufferInfo,
+        index: Int,
+        output: EncoderOutput,
+    ) {
+        val isConfig = (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
+        val buffer = codec.getOutputBuffer(index)
+        if (buffer != null && info.size > 0) {
+            buffer.clear()
+            buffer.position(info.offset)
+            buffer.limit(info.offset + info.size)
+            val bytes = ByteArray(info.size)
+            buffer.get(bytes)
+            if (isConfig) {
+                output.reportedPreSkip = output.reportedPreSkip ?: preSkipOf(bytes)
+            } else {
+                output.packets += describe(bytes, info.presentationTimeUs)
+            }
+        }
+        if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+            output.sawEndOfStream = true
+        }
     }
 
     private fun preSkipOf(format: MediaFormat): Int? = runCatching {
@@ -351,57 +470,101 @@ object OpusProbe {
     fun parse(bytes: ByteArray): List<Page> {
         val pages = mutableListOf<Page>()
         var offset = 0
-        while (offset + 27 <= bytes.size) {
-            if (bytes[offset] != 'O'.code.toByte() ||
-                bytes[offset + 1] != 'g'.code.toByte() ||
-                bytes[offset + 2] != 'g'.code.toByte() ||
-                bytes[offset + 3] != 'S'.code.toByte()
-            ) {
-                break
-            }
-            val header = ByteBuffer.wrap(bytes, offset, 27).order(ByteOrder.LITTLE_ENDIAN)
-            val version = header.get(offset + 4).toInt() and 0xFF
-            if (version != 0) break
-            val flags = header.get(offset + 5).toInt() and 0xFF
-            val granule = header.getLong(offset + 6)
-            val serial = header.getInt(offset + 14)
-            val sequence = header.getInt(offset + 18)
-            val segCount = bytes[offset + 26].toInt() and 0xFF
-            if (offset + 27 + segCount > bytes.size) break
-
-            var payloadBytes = 0
-            val packetSizes = mutableListOf<Int>()
-            var running = 0
-            for (i in 0 until segCount) {
-                val lace = bytes[offset + 27 + i].toInt() and 0xFF
-                payloadBytes += lace
-                running += lace
-                if (lace < 255) {
-                    packetSizes += running
-                    running = 0
-                }
-            }
-            val continued = segCount > 0 &&
-                (bytes[offset + 27 + segCount - 1].toInt() and 0xFF) == 255
-            val length = 27 + segCount + payloadBytes
-            if (offset + length > bytes.size) break
-
-            pages += Page(
-                offset = offset,
-                length = length,
-                sequence = sequence,
-                granule = granule,
-                flags = flags,
-                serial = serial,
-                packetSizes = packetSizes,
-                continued = continued,
-                payload = bytes.copyOfRange(
-                    offset + 27 + segCount, offset + 27 + segCount + payloadBytes,
-                ),
-            )
-            offset += length
+        // Fewer than a fixed header's worth of bytes left cannot be a page at
+        // all, complete or otherwise.
+        while (offset + PAGE_HEADER_BYTES <= bytes.size) {
+            val page = readPage(bytes, offset) ?: break
+            pages += page
+            offset += page.length
         }
         return pages
+    }
+
+    /**
+     * Read the page that starts at [offset], or null if what sits there is not a
+     * complete, well-formed page.
+     *
+     * Null covers every way the walk ends: no `OggS` capture pattern, a version
+     * this parser does not claim to understand, or a header that promises more
+     * bytes than the file still has. None of them is an error — [parse] explains
+     * why truncation is the expected case here.
+     */
+    private fun readPage(bytes: ByteArray, offset: Int): Page? {
+        if (!hasCapturePattern(bytes, offset)) return null
+
+        // Absolute gets throughout, so every index below reads as "byte N of the
+        // page header" straight out of RFC 3533 §6.
+        val header = ByteBuffer.wrap(bytes, offset, PAGE_HEADER_BYTES)
+            .order(ByteOrder.LITTLE_ENDIAN)
+        val version = header[offset + 4].toInt() and 0xFF
+        if (version != 0) return null
+
+        val segCount = bytes[offset + 26].toInt() and 0xFF
+        val lacingStart = offset + PAGE_HEADER_BYTES
+        if (lacingStart + segCount > bytes.size) return null
+
+        val lacing = readLacingTable(bytes, lacingStart, segCount)
+        val length = PAGE_HEADER_BYTES + segCount + lacing.payloadBytes
+        if (offset + length > bytes.size) return null
+
+        val payloadStart = lacingStart + segCount
+        return Page(
+            offset = offset,
+            length = length,
+            sequence = header.getInt(offset + 18),
+            granule = header.getLong(offset + 6),
+            flags = header[offset + 5].toInt() and 0xFF,
+            serial = header.getInt(offset + 14),
+            packetSizes = lacing.packetSizes,
+            continued = lacing.continued,
+            payload = bytes.copyOfRange(payloadStart, payloadStart + lacing.payloadBytes),
+        )
+    }
+
+    /** `OggS`, the four bytes every Ogg page begins with. */
+    private fun hasCapturePattern(bytes: ByteArray, offset: Int): Boolean =
+        bytes[offset] == 'O'.code.toByte() &&
+            bytes[offset + 1] == 'g'.code.toByte() &&
+            bytes[offset + 2] == 'g'.code.toByte() &&
+            bytes[offset + 3] == 'S'.code.toByte()
+
+    /** What a page's lacing table says about the packets sitting on that page. */
+    private class Lacing(
+        /** Payload bytes the table accounts for, i.e. the rest of the page. */
+        val payloadBytes: Int,
+        /** Sizes of the packets that *end* on this page. */
+        val packetSizes: List<Int>,
+        /** True when the table ends in 255, i.e. its last packet spills over. */
+        val continued: Boolean,
+    )
+
+    /**
+     * Rebuild packet boundaries from the [segCount] lacing values at [start].
+     *
+     * RFC 3533 §6: every value contributes 0..255 bytes of payload, and any value
+     * below 255 terminates a packet. So a run of 255s is one packet continuing
+     * and its size is the run's sum — which is also why a table whose last value
+     * is 255 leaves a packet unfinished on this page.
+     */
+    private fun readLacingTable(bytes: ByteArray, start: Int, segCount: Int): Lacing {
+        var payloadBytes = 0
+        val packetSizes = mutableListOf<Int>()
+        var running = 0
+        var lastLace = 0
+        for (i in 0 until segCount) {
+            lastLace = bytes[start + i].toInt() and 0xFF
+            payloadBytes += lastLace
+            running += lastLace
+            if (lastLace < 255) {
+                packetSizes += running
+                running = 0
+            }
+        }
+        return Lacing(
+            payloadBytes = payloadBytes,
+            packetSizes = packetSizes,
+            continued = segCount > 0 && lastLace == 255,
+        )
     }
 
     /** The audio packets of a file, in order, rebuilt from its pages. */
@@ -468,6 +631,9 @@ object OpusProbe {
         val mime = format.getString(MediaFormat.KEY_MIME)!!
         extractor.selectTrack(0)
 
+        // Carried into the result for the report only. It is the last granule the
+        // extractor found, i.e. the writer's own arithmetic read back, so nothing
+        // asserts on it.
         val extractorDurationUs =
             if (format.containsKey(MediaFormat.KEY_DURATION)) {
                 format.getLong(MediaFormat.KEY_DURATION)
@@ -476,83 +642,180 @@ object OpusProbe {
             }
 
         val codec = MediaCodec.createDecoderByType(mime)
-        var decodedBytes = 0L
-        var sampleCount = 0
-        var outRate = 0
-        var outChannels = 0
-        var bytesPerSample = 2
-
-        try {
+        val pcm = PcmTally()
+        val sampleCount = try {
             codec.configure(format, null, null, 0)
             codec.start()
-            val info = MediaCodec.BufferInfo()
-            var inputDone = false
-            var outputDone = false
-            var guard = 0
-
-            while (!outputDone && guard++ < 100_000) {
-                if (!inputDone) {
-                    val index = codec.dequeueInputBuffer(10_000L)
-                    if (index >= 0) {
-                        val buffer = codec.getInputBuffer(index)!!
-                        buffer.clear()
-                        val size = extractor.readSampleData(buffer, 0)
-                        if (size < 0) {
-                            codec.queueInputBuffer(
-                                index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM,
-                            )
-                            inputDone = true
-                        } else {
-                            codec.queueInputBuffer(
-                                index, 0, size, extractor.sampleTime, 0,
-                            )
-                            sampleCount++
-                            extractor.advance()
-                        }
-                    }
-                }
-                val index = codec.dequeueOutputBuffer(info, 10_000L)
-                when {
-                    index >= 0 -> {
-                        if (info.size > 0 &&
-                            (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
-                        ) {
-                            decodedBytes += info.size
-                        }
-                        if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                            outputDone = true
-                        }
-                        codec.releaseOutputBuffer(index, false)
-                    }
-
-                    index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                        val out = codec.outputFormat
-                        outRate = out.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                        outChannels = out.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                        bytesPerSample = if (out.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
-                            Pcm.bytesPerSample(out.getInteger(MediaFormat.KEY_PCM_ENCODING))
-                                .takeIf { it > 0 } ?: 2
-                        } else {
-                            2
-                        }
-                    }
-                }
-            }
+            runDecodeLoop(codec, extractor, pcm)
         } finally {
             runCatching { codec.stop() }
             runCatching { codec.release() }
             runCatching { extractor.release() }
         }
 
-        if (outRate == 0) outRate = 48_000
-        if (outChannels == 0) outChannels = 1
-
         return DecodeResult(
             extractorDurationUs = extractorDurationUs,
-            decodedFrames = decodedBytes / (bytesPerSample.toLong() * outChannels),
-            sampleRate = outRate,
-            channels = outChannels,
+            decodedFrames = pcm.decodedFrames,
+            sampleRate = pcm.sampleRate,
+            channels = pcm.channels,
             sampleCount = sampleCount,
         )
+    }
+
+    /**
+     * Pump the decoder until it says end of stream, and report how many
+     * compressed samples went in.
+     *
+     * Input and output are driven from the same turn of the loop because
+     * `MediaCodec` produces nothing once its input queue runs dry: draining to
+     * exhaustion before feeding again would deadlock against itself.
+     *
+     * The iteration guard is a stall net rather than a limit on file length — see
+     * [DECODE_LOOP_GUARD]. A decoder that stopped answering would otherwise hang
+     * the whole test run instead of failing one assertion.
+     */
+    private fun runDecodeLoop(
+        codec: MediaCodec,
+        extractor: MediaExtractor,
+        pcm: PcmTally,
+    ): Int {
+        val info = MediaCodec.BufferInfo()
+        var sampleCount = 0
+        var inputDone = false
+        var guard = 0
+
+        while (!pcm.sawEndOfStream && guard++ < DECODE_LOOP_GUARD) {
+            if (!inputDone) {
+                when (feedDecoder(codec, extractor)) {
+                    InputStep.QUEUED_SAMPLE -> sampleCount++
+                    InputStep.QUEUED_END_OF_STREAM -> inputDone = true
+                    InputStep.NO_BUFFER -> Unit
+                }
+            }
+            drainDecoderOutput(codec, info, pcm)
+        }
+        return sampleCount
+    }
+
+    /** What one attempt to hand the decoder something achieved. */
+    private enum class InputStep {
+        /** A compressed sample from the extractor went in. */
+        QUEUED_SAMPLE,
+
+        /** The track was exhausted, so the end-of-stream buffer went in instead. */
+        QUEUED_END_OF_STREAM,
+
+        /** The codec had no free input buffer this time round; try again later. */
+        NO_BUFFER,
+    }
+
+    /**
+     * Move the extractor's next compressed sample into the decoder.
+     *
+     * Reading straight into the codec's own input buffer is what `MediaExtractor`
+     * expects: it copies the sample in, and `sampleTime` describes the sample
+     * just read, which is why the timestamp is taken before `advance()`.
+     */
+    private fun feedDecoder(codec: MediaCodec, extractor: MediaExtractor): InputStep {
+        val index = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_US)
+        if (index < 0) return InputStep.NO_BUFFER
+
+        val buffer = codec.getInputBuffer(index)!!
+        buffer.clear()
+        val size = extractor.readSampleData(buffer, 0)
+        if (size < 0) {
+            codec.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+            return InputStep.QUEUED_END_OF_STREAM
+        }
+
+        codec.queueInputBuffer(index, 0, size, extractor.sampleTime, 0)
+        extractor.advance()
+        return InputStep.QUEUED_SAMPLE
+    }
+
+    /**
+     * Take at most one output buffer, or adopt the format the decoder announces
+     * before the first of them.
+     *
+     * One buffer per call rather than a drain loop, so [runDecodeLoop] always
+     * gets back to feeding input.
+     */
+    private fun drainDecoderOutput(
+        codec: MediaCodec,
+        info: MediaCodec.BufferInfo,
+        pcm: PcmTally,
+    ) {
+        val index = codec.dequeueOutputBuffer(info, DEQUEUE_TIMEOUT_US)
+        when {
+            index >= 0 -> {
+                pcm.take(info)
+                codec.releaseOutputBuffer(index, false)
+            }
+
+            index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> pcm.adopt(codec.outputFormat)
+        }
+    }
+
+    /**
+     * PCM counted as the decoder emits it, plus the output format it arrived in.
+     *
+     * Bytes rather than the decoder's presentation timestamps, on purpose: those
+     * timestamps come from the container's granule positions, so believing them
+     * would be one more way of reading the writer's arithmetic back to itself.
+     * Bytes that came out of the decoder are the independent measure.
+     */
+    private class PcmTally {
+        /** PCM bytes emitted so far, codec-config buffers excluded. */
+        var decodedBytes = 0L
+            private set
+
+        /** True once a buffer carried `BUFFER_FLAG_END_OF_STREAM`. */
+        var sawEndOfStream = false
+            private set
+
+        private var reportedRate = 0
+        private var reportedChannels = 0
+        private var bytesPerSample = 2
+
+        /**
+         * Sample rate the decoder announced, or Opus's native 48 kHz if it never
+         * announced one — which is what a file too short to reach an output
+         * format change leaves behind.
+         */
+        val sampleRate: Int get() = if (reportedRate == 0) 48_000 else reportedRate
+
+        /** Channel count the decoder announced, defaulting to mono for the same reason. */
+        val channels: Int get() = if (reportedChannels == 0) 1 else reportedChannels
+
+        /** PCM frames per channel — the only form a duration can be computed from. */
+        val decodedFrames: Long get() = decodedBytes / (bytesPerSample.toLong() * channels)
+
+        /** Fold one output buffer into the totals. */
+        fun take(info: MediaCodec.BufferInfo) {
+            if (info.size > 0 && (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                decodedBytes += info.size
+            }
+            if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                sawEndOfStream = true
+            }
+        }
+
+        /**
+         * Record the format the decoder reports, so [decodedFrames] divides the
+         * byte count by the right sample width and channel count.
+         *
+         * `KEY_PCM_ENCODING` is optional and a decoder that omits it means 16-bit,
+         * which is also the fallback when it names an encoding of unknown width.
+         */
+        fun adopt(format: MediaFormat) {
+            reportedRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            reportedChannels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            bytesPerSample = if (format.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+                Pcm.bytesPerSample(format.getInteger(MediaFormat.KEY_PCM_ENCODING))
+                    .takeIf { it > 0 } ?: 2
+            } else {
+                2
+            }
+        }
     }
 }
