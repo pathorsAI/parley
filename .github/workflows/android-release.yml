@@ -280,14 +280,23 @@ jobs:
           track: ${{ steps.play.outputs.track }}
           status: ${{ steps.play.outputs.status }}
           userFraction: ${{ steps.play.outputs.user_fraction }}
-          # Commit the edit without asking Play to review it. While the app has
-          # a rejected or unreviewed change outstanding, Play refuses an edit
-          # that would auto-submit ("Changes cannot be sent for review
-          # automatically") and the whole upload fails — which is what took
-          # android-v0.1.2 down. The bundle still lands on the track; sending
-          # it for review is a click in Play Console, and for the internal
-          # track no review is needed at all.
-          changesNotSentForReview: true
+          # This flag is a trap in both directions, so the history matters.
+          #
+          # It was set to `true` for android-v0.1.2, when the app had a rejected
+          # change outstanding and Play refused any edit that would auto-submit:
+          # "Changes cannot be sent for review automatically".
+          #
+          # The app has since been approved and published, and Play now says the
+          # exact opposite — "Changes are sent for review automatically. The
+          # query parameter changesNotSentForReview must not be set" — which is
+          # what took android-v1.13 down, at the last step, three runs in.
+          #
+          # So the answer depends on the app's review state, and the state that
+          # made `true` correct is gone. `false` is the action's own default and
+          # what nearly everyone runs. If the app ever goes back into a
+          # rejected-edit state, this may need to flip again; do not flip it on
+          # the strength of one error message without reading both cases above.
+          changesNotSentForReview: false
 
       # Deliberately loud. The run is green, so the summary is the only place
       # that says this build is not on Play yet.
