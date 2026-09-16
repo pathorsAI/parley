@@ -21,6 +21,7 @@ import { useReplayPlayer, type ReplayPlayer } from "./useReplayPlayer";
 import { useReplayPlayheadMs, useReplaySession, useReplayTrim } from "./spine";
 import { useCommandScope, useCommandShortcut } from "../../lib/commands/bind";
 import { seekTarget, type SeekCommandId } from "../../lib/replay/seek";
+import { safeExportFileName } from "../../lib/replay/exportName";
 
 /**
  * One of the six seek commands, wired to this screen's player. A hook rather
@@ -108,10 +109,11 @@ export function ReplayScreen() {
     if (!isTauri()) return;
     try {
       const ext = session!.audioPath.split(".").pop() || "ogg";
-      const base = session!.name.replace(/\.[^./\\]+$/, "") || "recording";
       const { save } = await import("@tauri-apps/plugin-dialog");
       const dst = await save({
-        defaultPath: `${base}.${ext}`,
+        // The display title can hold anything the timestamp format or the user
+        // typed — `/` and `:` included, both illegal on Windows. See exportName.
+        defaultPath: safeExportFileName(session!.name, ext),
         filters: [{ name: "Audio", extensions: [ext] }],
       });
       if (!dst) return;

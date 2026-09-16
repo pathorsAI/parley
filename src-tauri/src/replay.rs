@@ -255,6 +255,7 @@ pub async fn transcribe_file(
     // there and the endpoint has to be handed in from the frontend.
     let result = match provider.as_str() {
         "soniox" => run_upload_and_transcribe(
+            &app,
             &client,
             &api_key,
             &upload_path,
@@ -469,7 +470,9 @@ async fn measure_speech_rate_blocking(path: String) -> f32 {
 /// Upload `upload_path` to Soniox, create + poll the transcription job, fetch the
 /// transcript, and group it into segments. Split out from `transcribe_file` so
 /// the caller can guarantee temp-file cleanup regardless of outcome.
+#[allow(clippy::too_many_arguments)]
 async fn run_upload_and_transcribe(
+    app: &AppHandle,
     client: &reqwest::Client,
     api_key: &str,
     upload_path: &str,
@@ -579,17 +582,20 @@ async fn run_upload_and_transcribe(
 
     // Persist a reviewable log of the raw Soniox response + request context.
     // Best-effort: never let a logging failure abort the transcription.
-    write_soniox_log(SonioxLogContext {
-        model,
-        enable_speaker_diarization: diarization,
-        language_hints,
-        file_name: &file_name,
-        audio_duration_ms,
-        token_count,
-        tokens_with_speaker,
-        distinct_speakers: &distinct_speakers,
-        raw_transcript: &raw_transcript,
-    });
+    write_soniox_log(
+        app,
+        SonioxLogContext {
+            model,
+            enable_speaker_diarization: diarization,
+            language_hints,
+            file_name: &file_name,
+            audio_duration_ms,
+            token_count,
+            tokens_with_speaker,
+            distinct_speakers: &distinct_speakers,
+            raw_transcript: &raw_transcript,
+        },
+    );
 
     // 5. Best-effort cleanup of the uploaded file + transcription on Soniox.
     let _ = client
@@ -1544,25 +1550,23 @@ struct SonioxLogContext<'a> {
 }
 
 /// Write a reviewable JSON log of the raw Soniox transcript response plus the
-/// request context to `~/Documents/Parley/logs/soniox-<timestamp>.json`.
+/// request context to `<Documents>/Parley/logs/soniox-<timestamp>.json`.
 ///
-/// Best-effort: any failure (no HOME, IO error, …) is reported via `log::warn!`
-/// and swallowed — logging must NEVER fail the transcription.
-fn write_soniox_log(ctx: SonioxLogContext) {
-    if let Err(e) = try_write_soniox_log(&ctx) {
+/// Best-effort: any failure (unresolvable Documents dir, IO error, …) is
+/// reported via `log::warn!` and swallowed — logging must NEVER fail the
+/// transcription.
+fn write_soniox_log(app: &AppHandle, ctx: SonioxLogContext) {
+    if let Err(e) = try_write_soniox_log(app, &ctx) {
         log::warn!("replay: failed to write soniox response log error={}", e);
     }
 }
 
 /// Fallible inner half of `write_soniox_log`. Returns the absolute path written.
-fn try_write_soniox_log(ctx: &SonioxLogContext) -> Result<(), String> {
-    // Mirror commands.rs::save_transcript's ~/Documents/Parley layout, under a
-    // dedicated `logs/` subdirectory.
-    let home = std::env::var("HOME").map_err(|_| "no HOME dir".to_string())?;
-    let dir = std::path::Path::new(&home)
-        .join("Documents")
-        .join("Parley")
-        .join("logs");
+fn try_write_soniox_log(app: &AppHandle, ctx: &SonioxLogContext) -> Result<(), String> {
+    // Mirror commands.rs::save_transcript's Documents/Parley layout, under a
+    // dedicated `logs/` subdirectory — same `documents_dir` resolver, so both
+    // land in the same place on every platform.
+    let dir = crate::commands::documents_dir(app)?.join("logs");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
     // Unique, human-readable file name: a UTC timestamp (seconds since the Unix

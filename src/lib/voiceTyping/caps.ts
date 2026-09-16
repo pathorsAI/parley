@@ -1,4 +1,5 @@
 import { isMac } from "../platform";
+import { formatKey } from "../commands/format";
 import type { TranslationKey } from "../../i18n/messages";
 
 /**
@@ -19,6 +20,13 @@ import type { TranslationKey } from "../../i18n/messages";
  * "combo:super+shift+KeyD" or "right-option", written by the recorder in
  * W3C `KeyboardEvent.code` tokens, not by the table. Same output shape, two
  * unrelated inputs.
+ *
+ * What the two DO share is how a non-modifier key is spelled, and that part now
+ * comes from format.ts ({@link formatKey}). It used to be copied here, and the
+ * copy was the mac-only one: "Enter" printed as ↩ for everybody, so a Windows
+ * user reading their own trigger was shown a key their keyboard does not have.
+ * One table, two callers — the decoding of `code` tokens below is the only
+ * thing that is genuinely ours.
  */
 
 /** The hold-friendly single modifier keys watched by the HID tap (need Input
@@ -52,38 +60,44 @@ const MOD_SYMBOL_WIN: Record<string, string> = {
   shift: "Shift",
 };
 
-/** Human label for a W3C KeyboardEvent.code token. */
-function keyLabel(code: string): string {
+/**
+ * The character a punctuation `code` stands for. Only the codes whose name says
+ * nothing about the key are here: "Semicolon" is the physical key, ";" is what
+ * is printed on it. (US layout, like every `code` token — a token IS a position
+ * on a US keyboard, so this mapping is the one the spec already implies.)
+ */
+const CODE_CHARS: Record<string, string> = {
+  Minus: "-",
+  Equal: "=",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Backslash: "\\",
+  Semicolon: ";",
+  Quote: "'",
+  Comma: ",",
+  Period: ".",
+  Slash: "/",
+  Backquote: "`",
+};
+
+/**
+ * Human label for a W3C KeyboardEvent.code token.
+ *
+ * The named keys — Enter, Tab, the arrows, the navigation block — are handed to
+ * {@link formatKey}, whose token names happen to coincide with the
+ * `KeyboardEvent.key` names it was written for, and which is where the
+ * mac-glyph-or-Windows-word decision now lives for the whole app. Anything it
+ * doesn't know keeps its token ("F13", "IntlBackslash"), which is at least an
+ * honest description of the key.
+ *
+ * `mac` is a parameter for the same reason {@link shortcutCaps}'s is: both
+ * spellings have to be exercisable without stubbing the OS.
+ */
+export function keyLabel(code: string, mac: boolean = isMac()): string {
   if (code.startsWith("Key")) return code.slice(3);
   if (code.startsWith("Digit")) return code.slice(5);
   if (code.startsWith("Numpad")) return `Num ${code.slice(6)}`;
-  const MAP: Record<string, string> = {
-    Space: "Space",
-    Minus: "-",
-    Equal: "=",
-    BracketLeft: "[",
-    BracketRight: "]",
-    Backslash: "\\",
-    Semicolon: ";",
-    Quote: "'",
-    Comma: ",",
-    Period: ".",
-    Slash: "/",
-    Backquote: "`",
-    ArrowUp: "↑",
-    ArrowDown: "↓",
-    ArrowLeft: "←",
-    ArrowRight: "→",
-    Enter: "↩",
-    Tab: "⇥",
-    Backspace: "⌫",
-    Delete: "⌦",
-    Home: "↖",
-    End: "↘",
-    PageUp: "⇞",
-    PageDown: "⇟",
-  };
-  return MAP[code] ?? code;
+  return CODE_CHARS[code] ?? formatKey(code, mac);
 }
 
 /**
@@ -111,7 +125,7 @@ export function shortcutCaps(
     return shortcut
       .slice("combo:".length)
       .split("+")
-      .map((part) => symbols[part] ?? keyLabel(part))
+      .map((part) => symbols[part] ?? keyLabel(part, mac))
       .join(sep);
   }
   return shortcut;

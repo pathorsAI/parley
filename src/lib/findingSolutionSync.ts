@@ -2,6 +2,7 @@ import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "./tauriEvents";
 import { log } from "./log";
 import type { FindingSolutionEntry, TimelineEvent } from "./types";
+import { fitWindowSize } from "./windowBounds";
 
 // Cross-window protocol for the standalone "how to reply" window. The MAIN
 // window is the source of truth and the only generator (it holds the transcript
@@ -35,10 +36,10 @@ export async function openFindingSolutionWindow(): Promise<void> {
   const win = new WebviewWindow("finding-solution", {
     url: "index.html#finding-solution",
     title: "Parley — How to reply",
-    width: 420,
-    height: 640,
-    minWidth: 320,
-    minHeight: 360,
+    // Clamped to the display's work area: see fitWindowSize — 640 logical px of
+    // height is most of a 150%-scaled Windows desktop.
+    ...(await fitWindowSize({ width: 420, height: 640, minWidth: 320, minHeight: 360 })),
+    center: true,
     resizable: true,
   });
   win.once("tauri://error", (e) => log.error("finding-solution: window error", { error: String(e) }));

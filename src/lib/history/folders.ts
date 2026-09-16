@@ -74,6 +74,19 @@ export function filingChoices(folders: readonly Folder[], keep?: string | null):
 /** Hydrated registry (null until initFolderRegistry / the first refresh). */
 let cache: Folder[] | null = null;
 
+/**
+ * How many times THIS window's user has edited the registry — create, rename,
+ * archive, delete. Only ever compared for equality across an await, so that a
+ * caller can tell whether the registry moved under it; the absolute value
+ * means nothing. See {@link mirrorCloudFolders}.
+ */
+let generation = 0;
+
+/** How many times the local registry has been mutated BY THE USER this session. */
+export function folderGeneration(): number {
+  return generation;
+}
+
 function parseFolders(raw: string | null): Folder[] | null {
   try {
     const v = JSON.parse(raw ?? "[]") as Folder[];
@@ -200,7 +213,11 @@ export async function listFoldersFresh(): Promise<Folder[]> {
  *
  *  `archivedAt` is local-only (see {@link Folder}), so the incoming list can't
  *  speak to it: each folder keeps whatever archive state this machine already
- *  had for that id. Without this, every cloud reload un-archives everything. */
+ *  had for that id. Without this, every cloud reload un-archives everything.
+ *
+ *  Does NOT bump the mutation generation: this is the mirror coming down, not
+ *  an edit the user made, and counting it would have every reload invalidate
+ *  the next one. */
 export function writeLocalFolders(folders: Folder[]): void {
   const archived = new Map(read().map((f) => [f.id, f.archivedAt]));
   persist(
@@ -210,6 +227,34 @@ export function writeLocalFolders(folders: Folder[]): void {
       return typeof at === "number" ? { ...base, archivedAt: at } : base;
     })
   );
+}
+
+/**
+ * Mirror a cloud snapshot down over the local registry and return what to
+ * render — unless a local mutation landed after the snapshot was taken
+ * (`since`, read from {@link folderGeneration} BEFORE the cloud request went
+ * out), in which case the local registry is the newer truth and the snapshot
+ * is dropped.
+ *
+ * The guard exists because without it a deleted folder comes back. Anything
+ * that reloads the list on window focus (useLibraryTree does) starts a cloud
+ * read; the user's delete lands while that read is still in flight; the reply
+ * — a list taken before the DELETE, so it still names the folder — is written
+ * back down over the registry. The folder reappears on disk and on screen, and
+ * deleting looks like it did nothing at all.
+ */
+export function mirrorCloudFolders(cloud: readonly Folder[], since: number): Folder[] {
+  if (generation !== since) {
+    log.debug("folders: dropped a cloud snapshot older than a local edit", {
+      since,
+      generation,
+    });
+    return listLocalFolders();
+  }
+  // Through writeLocalFolders, never persist(): the archived flag is local-only
+  // and has to be carried across, which is that function's whole job.
+  writeLocalFolders([...cloud]);
+  return listLocalFolders();
 }
 
 /**
@@ -227,6 +272,7 @@ export function createLocalFolder(name: string): Folder {
     return { id: revived.id, name: revived.name, createdAt: revived.createdAt };
   }
   const f: Folder = { id: crypto.randomUUID(), name: clean, createdAt: Date.now() };
+  generation += 1;
   persist([...read(), f]);
   return f;
 }
@@ -234,6 +280,7 @@ export function createLocalFolder(name: string): Folder {
 /** Put a personal folder away, or bring it back (no-op if missing). Membership
  *  is untouched — this only decides whether the folder is in your way. */
 export function setLocalFolderArchived(id: string, archived: boolean): void {
+  generation += 1;
   persist(
     read().map((f) => {
       if (f.id !== id) return f;
@@ -245,11 +292,13 @@ export function setLocalFolderArchived(id: string, archived: boolean): void {
 
 /** Rename a personal folder (no-op if missing). */
 export function renameLocalFolder(id: string, name: string): void {
+  generation += 1;
   persist(read().map((f) => (f.id === id ? { ...f, name: name.trim() } : f)));
 }
 
 /** Delete a personal folder (the recordings it held fall to the root). */
 export function deleteLocalFolder(id: string): void {
+  generation += 1;
   persist(read().filter((f) => f.id !== id));
 }
 

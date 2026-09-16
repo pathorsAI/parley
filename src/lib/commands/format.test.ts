@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatChord, modChordCap, formatKey } from "./format";
+import { formatChord, formatChordLabel, modChordCap, formatKey } from "./format";
 import type { Chord } from "./registry";
 
 /**
@@ -45,16 +45,14 @@ describe("formatChord", () => {
   });
 
   it("upper-cases a letter and leaves everything else verbatim", () => {
-    expect(formatKey("k")).toBe("K");
+    expect(formatKey("k", MAC)).toBe("K");
     // Punctuation and digits have no case to change.
     for (const key of [",", "[", "]", "?", "=", "+", "-", "0"]) {
-      expect(formatKey(key)).toBe(key);
+      expect(formatKey(key, MAC)).toBe(key);
+      expect(formatKey(key, PC)).toBe(key);
     }
-    // Named keys that already read as themselves keep their word.
-    expect(formatKey("Home")).toBe("Home");
-    expect(formatKey("End")).toBe("End");
-    expect(formatKey("Enter")).toBe("↩");
-    expect(formatKey("Escape")).toBe("Esc");
+    expect(formatKey("Escape", MAC)).toBe("Esc");
+    expect(formatKey("Escape", PC)).toBe("Esc");
   });
 
   it("prints no shift cap for `shift: \"any\"`, on either platform", () => {
@@ -72,6 +70,54 @@ describe("formatChord", () => {
   it("ignores the menu-bar accelerator — that is a binding fact, not a cap", () => {
     const chord: Chord = { mod: true, key: "1", native: "CmdOrCtrl+1" };
     expect(formatChord(chord, MAC)).toEqual(["⌘", "1"]);
+  });
+});
+
+describe("a key cap is the glyph the host keyboard actually prints", () => {
+  it("gives macOS its glyphs and Windows the word on the same keycap", () => {
+    for (const [key, glyph] of [
+      ["Enter", "↩"],
+      ["Backspace", "⌫"],
+      ["Delete", "⌦"],
+      ["Tab", "⇥"],
+    ] as const) {
+      expect(formatKey(key, MAC)).toBe(glyph);
+      // No Windows table to get out of step: the `KeyboardEvent.key` name IS
+      // the word a PC keycap carries.
+      expect(formatKey(key, PC)).toBe(key);
+    }
+  });
+
+  it("spells the navigation block out on both platforms, glyphs being no help", () => {
+    // ↖ ↘ ⇞ ⇟ appear on no keyboard either vendor ships, so they would be a
+    // riddle on macOS too — the one case where both sides say the same thing.
+    // The cheat sheet's replay.toStart / replay.toEnd rows are these.
+    for (const mac of [MAC, PC]) {
+      expect(formatKey("Home", mac)).toBe("Home");
+      expect(formatKey("End", mac)).toBe("End");
+      expect(formatKey("PageUp", mac)).toBe("PgUp");
+      expect(formatKey("PageDown", mac)).toBe("PgDn");
+    }
+  });
+
+  it("carries the platform down from the chord, not from the host OS", () => {
+    // formatChord must not consult isMac() behind its caller's back: the cap
+    // and the modifiers in front of it have to come from the same platform, or
+    // a sheet rendered for one reads half in the other's alphabet.
+    expect(formatChord({ mod: true, shift: true, key: "Enter" }, MAC)).toEqual(["⇧", "⌘", "↩"]);
+    expect(formatChord({ mod: true, shift: true, key: "Enter" }, PC)).toEqual([
+      "Ctrl",
+      "Shift",
+      "Enter",
+    ]);
+  });
+
+  it("spells the dictionary bubble's Alt+Enter for the platform it renders on", () => {
+    // voice-typing's "add to dictionary" hint (host.ts SUGGEST_SHORTCUT). It
+    // was a translated string reading "⌥↩" in both locales until this became
+    // computed.
+    expect(formatChordLabel({ alt: true, key: "Enter" }, MAC)).toBe("⌥↩");
+    expect(formatChordLabel({ alt: true, key: "Enter" }, PC)).toBe("Alt+Enter");
   });
 });
 

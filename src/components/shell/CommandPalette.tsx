@@ -13,6 +13,7 @@ import {
 } from "../../lib/library/quickSwitch";
 import { navigateTo, type Location } from "../../lib/nav/navigate";
 import { useCommandShortcut } from "../../lib/commands/bind";
+import { formatKey } from "../../lib/commands/format";
 import { isMeetingActive, useStore } from "../../lib/store";
 import { useI18n, type TranslationKey } from "../../i18n";
 import type { LibraryTree } from "./useLibraryTree";
@@ -245,9 +246,15 @@ export function CommandPalette({ tree }: Readonly<{ tree: LibraryTree }>) {
           </div>
 
           <div className="flex shrink-0 items-center gap-3 border-t px-3 py-1.5 text-[10px] text-muted-foreground/70">
+            {/* Only the LABELS are translated; the caps come from the one
+                formatter, so they read "Enter"/"Esc" on a Windows keyboard
+                instead of the mac ↵ and a lowercase esc that were hardcoded
+                here. The arrows need no help — ↑↓ are printed on every
+                keyboard either platform ships, and as one cap they say
+                "either of these" better than two boxes would. */}
             <Hint keys="↑↓" label={t("shell.palette.hint.move")} />
-            <Hint keys="↵" label={t("shell.palette.hint.open")} />
-            <Hint keys="esc" label={t("shell.palette.hint.close")} />
+            <Hint keys={formatKey("Enter")} label={t("shell.palette.hint.open")} />
+            <Hint keys={formatKey("Escape")} label={t("shell.palette.hint.close")} />
           </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>

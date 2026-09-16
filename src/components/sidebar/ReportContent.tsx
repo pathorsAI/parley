@@ -54,7 +54,12 @@ export function ReportContent({
   const components = makeMarkdownComponents(onTimestamp ?? setHighlightMs, onJump);
 
   return (
-    <div className="prose prose-invert prose-sm max-w-none select-text text-foreground prose-p:my-1.5 prose-headings:mb-1 prose-headings:mt-3 prose-ul:my-1.5 prose-li:my-0.5">
+    // `dark:prose-invert`, never a bare `prose-invert`: inverting unconditionally
+    // paints headings, bold runs, table headers and quote borders WHITE, which in
+    // light mode is white on white — the debrief lost every heading and kept only
+    // its paragraphs, because `text-foreground` below colours those and nothing
+    // else. Body text reading fine is exactly what made this hard to see.
+    <div className="prose prose-sm max-w-none select-text text-foreground dark:prose-invert prose-p:my-1.5 prose-headings:mb-1 prose-headings:mt-3 prose-ul:my-1.5 prose-li:my-0.5">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={components}

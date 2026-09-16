@@ -10,7 +10,9 @@ import { StudyScreen } from "../study/StudyScreen";
 import { HomeScreen } from "../home/HomeScreen";
 import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { useLibraryTree } from "./useLibraryTree";
+import { useI18n } from "../../i18n";
 import { useNavShortcuts } from "../../lib/nav/useNavShortcuts";
 import { useCommandScope } from "../../lib/commands/bind";
 import { useSidebarCollapsed } from "../../lib/shell/sidebar";
@@ -66,6 +68,9 @@ export function AppShell() {
             left to aim at, naming the place is the only way to reach it. It
             stays absent while a meeting is focused — see below. */}
         {!focused && <CommandPalette tree={tree} />}
+        {/* Not gated on `focused`, unlike ⌘K: a question already asked has to
+            stay answerable, or the caller awaiting it never hears back. */}
+        <FolderDeleteConfirm tree={tree} />
       </>
     );
   }
@@ -94,7 +99,35 @@ export function AppShell() {
           Deliberately absent from a FOCUSED meeting above, where the live coach
           owns the window; a merely collapsed tree still gets it. */}
       <CommandPalette tree={tree} />
+      <FolderDeleteConfirm tree={tree} />
     </>
+  );
+}
+
+/**
+ * The folder delete the tree is waiting on an answer to. Its own component so
+ * that both shell branches spend one line on it, and so the strings are read
+ * where they are used — ConfirmDialog itself knows no i18n keys.
+ */
+function FolderDeleteConfirm({
+  tree,
+}: Readonly<{ tree: ReturnType<typeof useLibraryTree> }>) {
+  const { t } = useI18n();
+  const pending = tree.pendingFolderDelete;
+  if (!pending) return null;
+  return (
+    <ConfirmDialog
+      // The trash button's own label doubles as the title: one name for the
+      // action, whether it is read off a tooltip or off the dialog it opens.
+      title={t("history.folder.delete")}
+      // deleteConfirm already reads as a body: it names the folder and says
+      // that the recordings inside move back to the root rather than go.
+      body={t("history.folder.deleteConfirm", { name: pending.folder.name })}
+      confirmLabel={t("common.delete")}
+      cancelLabel={t("common.cancel")}
+      onConfirm={tree.confirmFolderDelete}
+      onCancel={tree.cancelFolderDelete}
+    />
   );
 }
 

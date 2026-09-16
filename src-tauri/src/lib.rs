@@ -210,8 +210,11 @@ pub fn run() {
 /// Bring the main window back for a Dock-icon click (macOS Reopen) or a second
 /// app launch (single-instance callback): un-minimize + show + focus.
 /// Recreated from the window config if it was destroyed — possible via paths
-/// that bypass the frontend's hide-on-close (e.g. a crashed webview, or the
-/// Windows close button, which destroys the window).
+/// that bypass the frontend's hide-on-close, such as a crashed webview. Off
+/// macOS the close button now quits the app outright rather than destroying the
+/// window and leaving the process running, so a second launch there is a cold
+/// start; this path still matters for it, because the single-instance callback
+/// routes that launch here either way.
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.unminimize();

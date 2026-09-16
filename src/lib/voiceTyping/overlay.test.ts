@@ -62,6 +62,38 @@ describe("bottomCenterPhysical", () => {
     expect(Number.isInteger(x)).toBe(true);
     expect(Number.isInteger(y)).toBe(true);
   });
+
+  // The pill used to be placed against the whole display, which clears a default
+  // Windows taskbar and nothing larger — a tall or vertically-stacked one covered
+  // it. The work area is the display minus that furniture, so it is what the
+  // margin has to be measured from.
+  it("sits above a taskbar by measuring from the work area, not the display", () => {
+    const { x, y } = bottomCenterPhysical(
+      monitor({
+        workArea: { position: { x: 0, y: 0 }, size: { width: 1920, height: 940 } },
+      }),
+    );
+    expect(x).toBe((1920 - WIDTH) / 2);
+    expect(y).toBe(940 - HEIGHT - BOTTOM_MARGIN);
+  });
+
+  it("honours a work area that is inset on the left, as a side-docked taskbar is", () => {
+    const { x, y } = bottomCenterPhysical(
+      monitor({
+        workArea: { position: { x: 120, y: 0 }, size: { width: 1800, height: 1080 } },
+      }),
+    );
+    expect(x).toBe(120 + (1800 - WIDTH) / 2);
+    expect(y).toBe(1080 - HEIGHT - BOTTOM_MARGIN);
+  });
+
+  it("falls back to the full display when the platform reports no work area", () => {
+    // Older API versions omit it; the overlay must still land somewhere sane
+    // rather than at the origin.
+    const { x, y } = bottomCenterPhysical(monitor({ workArea: undefined }));
+    expect(x).toBe((1920 - WIDTH) / 2);
+    expect(y).toBe(1080 - HEIGHT - BOTTOM_MARGIN);
+  });
 });
 
 describe("monitorContaining", () => {

@@ -36,8 +36,9 @@ function toneFor(status: Status): string {
  * macOS shows two: microphone and System Audio Recording. Windows shows only
  * the microphone — its consent is a real setting the backend reads out of the
  * registry and can deep-link to (ms-settings:privacy-microphone), whereas
- * loopback capture of system audio needs no consent at all, so a "System audio"
- * row there would be a permission the user cannot grant and does not need.
+ * system audio has no row to show: WASAPI loopback capture isn't implemented,
+ * so there is no permission to grant. Hiding the row on its own would leave
+ * the absence invisible, so a plain note takes its place.
  *
  * Feature-scoped permissions are NOT listed here — Input Monitoring is
  * requested by the voice-typing key picker and Accessibility by enabling voice
@@ -82,9 +83,14 @@ export function PermissionsPanel() {
   // triggers the prompt (which itself offers an "Open System Settings" button);
   // every click after that opens the relevant Privacy pane directly — otherwise
   // repeat clicks would do nothing.
+  //
+  // Windows has no runtime prompt to try: request_microphone() is an empty stub
+  // there, so the two-step would spend the user's first click on a command that
+  // changes nothing on screen. Go straight to ms-settings:privacy-microphone,
+  // which is the only place the setting can actually be flipped.
   const requested = useRef<Set<string>>(new Set());
   async function grant(key: string, pane: string, request: () => Promise<void>) {
-    if (requested.current.has(key)) {
+    if (!isMac() || requested.current.has(key)) {
       await invoke("open_privacy_settings", { pane }).catch((error) =>
         log.warn("permissions: open privacy settings failed", { error: String(error), pane }),
       );
@@ -122,8 +128,17 @@ export function PermissionsPanel() {
         label={t("settings.permissions.microphone")}
         desc={t("settings.permissions.microphoneDesc")}
         status={microphone}
+        // "Grant" promises a prompt that macOS delivers and Windows does not:
+        // there the one and only step is the Settings pane, so the button says
+        // where it goes.
+        actionLabel={t(isMac() ? "settings.voiceTyping.grant" : "settings.permissions.openSettings")}
         onGrant={() => grant("mic", "microphone", () => invoke("request_microphone"))}
       />
+      {!isMac() && (
+        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
+          {t("settings.permissions.systemAudioWindows")}
+        </p>
+      )}
       {isMac() && systemAudioSupported && (
         <Row
           label={t("settings.permissions.systemAudio")}
@@ -148,12 +163,15 @@ function Row({
   desc,
   help,
   status,
+  actionLabel,
   onGrant,
 }: Readonly<{
   label: string;
   desc: string;
   help?: string;
   status: Status;
+  /** Defaults to "Grant" — pass one when the click does something else. */
+  actionLabel?: string;
   onGrant: () => void;
 }>) {
   const { t } = useI18n();
@@ -176,7 +194,7 @@ function Row({
               <span className={`text-[11px] font-medium ${tone}`}>{t("settings.permissions.denied")}</span>
             )}
             <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={onGrant}>
-              {t("settings.voiceTyping.grant")}
+              {actionLabel ?? t("settings.voiceTyping.grant")}
             </Button>
           </>
         )}

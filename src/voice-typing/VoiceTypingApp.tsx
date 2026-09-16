@@ -5,7 +5,7 @@ import { preloadZhConverter } from "../lib/zhConvert";
 import { normalizeTranscriptText } from "../lib/textNormalize";
 import { useI18n, type TranslationKey } from "../i18n";
 import { useThemePreference } from "../lib/theme";
-import { modChordCap } from "../lib/commands/format";
+import { formatChordLabel, modChordCap } from "../lib/commands/format";
 import { log } from "../lib/log";
 import {
   SUGGEST_ACTION_EVENT,
@@ -409,7 +409,11 @@ export const VoiceTypingApp = () => {
               className="flex items-center gap-1 rounded-full bg-sky-500 px-2.5 py-0.5 text-[11px] font-medium text-white"
             >
               {t("dict.suggest.add")}
-              <span className="opacity-70">{t("dict.suggest.shortcutHint")}</span>
+              {/* The cap for host.ts's SUGGEST_SHORTCUT ("Alt+Enter"), computed
+                  rather than translated: a keycap is not prose, and as a
+                  dictionary string it spelled the mac "⌥" and "↩" in BOTH
+                  locales — two keys a Windows user does not have. */}
+              <span className="opacity-70">{formatChordLabel({ alt: true, key: "Enter" })}</span>
             </button>
             <button
               type="button"

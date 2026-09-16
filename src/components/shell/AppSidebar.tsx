@@ -148,10 +148,17 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
             onRename={(name) => tree.renamePersonalFolder(f.id, name)}
             onArchive={() => setArchived(f, true)}
             onDelete={() => {
-              tree.deletePersonalFolder(f);
-              if (nodeActive(node)) {
-                selectLibrary({ kind: "personal", node: { kind: "unassigned" } });
-              }
+              // Only move off the folder once it is actually gone: the question
+              // is asked in-app now, so cancelling used to navigate you away
+              // from a folder that was still there.
+              tree
+                .deletePersonalFolder(f)
+                .then((deleted) => {
+                  if (deleted && nodeActive(node)) {
+                    selectLibrary({ kind: "personal", node: { kind: "unassigned" } });
+                  }
+                })
+                .catch(() => {});
             }}
           />
         );
@@ -284,10 +291,14 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
                   onRename={(name) => tree.renamePersonalFolder(f.id, name)}
                   onUnarchive={() => setArchived(f, false)}
                   onDelete={() => {
-                    tree.deletePersonalFolder(f);
-                    if (nodeActive(node)) {
-                      selectLibrary({ kind: "personal", node: { kind: "unassigned" } });
-                    }
+                    tree
+                      .deletePersonalFolder(f)
+                      .then((deleted) => {
+                        if (deleted && nodeActive(node)) {
+                          selectLibrary({ kind: "personal", node: { kind: "unassigned" } });
+                        }
+                      })
+                      .catch(() => {});
                   }}
                 />
               );
@@ -595,8 +606,10 @@ function Row({
           <ContextMenuItem
             variant="destructive"
             onSelect={() => {
-              // Delete confirms with a blocking confirm() (useLibraryTree), and
-              // blocking mid-close leaves the menu painted over the sheet.
+              // Delete puts a dialog up (useLibraryTree), and Radix restores
+              // focus to the row as this menu closes. Letting that land first
+              // keeps the two from fighting over who holds focus — the dialog
+              // would otherwise mount, take focus, and immediately lose it.
               requestAnimationFrame(() => onDelete());
             }}
           >

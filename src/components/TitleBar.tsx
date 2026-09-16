@@ -66,6 +66,54 @@ function useWindowFocused(): boolean {
   return focused;
 }
 
+/**
+ * Track whether the main window is maximized, so the Windows caption cluster
+ * can offer restore instead of a second maximize.
+ *
+ * Driven by the window's own resize event rather than by our click handler:
+ * Windows Snap, a double-click on the drag region and the system menu all
+ * maximize without ever passing through the button, and a button that lied
+ * about the window state would be worse than the one that never changed. Tauri
+ * has no dedicated maximize event, so onResized is the signal and isMaximized()
+ * is the question — the payload only carries the new size.
+ *
+ * macOS never renders this cluster (the traffic lights do zoom instead), so
+ * there's no listener to keep alive there.
+ */
+function useWindowMaximized(): boolean {
+  const [maximized, setMaximized] = useState(false);
+  useEffect(() => {
+    if (!isTauri() || isMac()) return;
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    async function connectResizeEvents() {
+      const win = getCurrentWindow();
+      const read = async () => {
+        try {
+          const now = await win.isMaximized();
+          if (active) setMaximized(now);
+        } catch {
+          /* ignore — keep the last known state */
+        }
+      };
+      // Seed from the current value: the window can already be maximized when
+      // this mounts (a reload, or a size restored from the last session).
+      await read();
+      const un = await win.onResized(() => void read());
+      if (active) unlisten = un;
+      else un();
+    }
+    connectResizeEvents().catch((error) =>
+      log.warn("window: maximize listener failed", { error: String(error) })
+    );
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+  return maximized;
+}
+
 
 function TrafficLights({
   focused,
@@ -495,13 +543,17 @@ function PrimaryAction({
 
 /**
  * Caption controls for the undecorated Windows main window: minimize /
- * maximize / close at the trailing edge, full titlebar height, flat hover —
- * the native caption-button convention (close hovers Windows signal red).
+ * maximize-or-restore / close at the trailing edge, full titlebar height, flat
+ * hover — the native caption-button convention (close hovers Windows signal
+ * red). The middle button follows the window's actual maximized state, so it
+ * says restore once the window is maximized however that happened.
  */
 function WindowsControls({
+  maximized,
   onAction,
   t,
 }: Readonly<{
+  maximized: boolean;
   onAction: (action: WindowAction) => void;
   t: TFn;
 }>) {
@@ -516,15 +568,33 @@ function WindowsControls({
       >
         <Minus className="size-4" strokeWidth={1.25} />
       </button>
+      {/* One button, two states — the click is a toggle either way (see
+          controlWindow), so the glyph and the label are all that change. The
+          label matters as much as the glyph: a screen reader on a maximized
+          window used to announce "maximize window". */}
       <button
         type="button"
-        aria-label={t("titlebar.maximizeWindow")}
+        aria-label={maximized ? t("titlebar.restoreWindow") : t("titlebar.maximizeWindow")}
         onClick={() => onAction("maximize")}
         className={`${base} hover:bg-muted hover:text-foreground`}
       >
-        <svg viewBox="0 0 10 10" aria-hidden className="size-[10px]">
-          <rect x="0.5" y="0.5" width="9" height="9" rx="1.5" fill="none" stroke="currentColor" />
-        </svg>
+        {maximized ? (
+          /* Windows' restore glyph: two offset squares, the back one up and to
+             the right, with the overlap knocked out — so the back square is a
+             path tracing only the edges the front square doesn't cover. */
+          <svg viewBox="0 0 10 10" aria-hidden className="size-[10px]">
+            <path
+              d="M2.5 2.5V2A1.5 1.5 0 0 1 4 0.5H8A1.5 1.5 0 0 1 9.5 2V6A1.5 1.5 0 0 1 8 7.5H7.5"
+              fill="none"
+              stroke="currentColor"
+            />
+            <rect x="0.5" y="2.5" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 10 10" aria-hidden className="size-[10px]">
+            <rect x="0.5" y="0.5" width="9" height="9" rx="1.5" fill="none" stroke="currentColor" />
+          </svg>
+        )}
       </button>
       <button
         type="button"
@@ -550,6 +620,7 @@ function WindowsControls({
 export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean }>) {
   const { t } = useI18n();
   const focused = useWindowFocused();
+  const maximized = useWindowMaximized();
   const status = useStore((s) => s.meetingStatus);
   const sttKey = useStore((s) => sttApiKey(s.settings, s.settings.transcriptionProvider));
   const stopMeeting = useStore((s) => s.stopMeeting);
@@ -741,7 +812,9 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           window loses focus — matching the system buttons. Hidden in fullscreen,
           where macOS shows no window controls. */}
       {!fullscreen && mac && <TrafficLights focused={focused} onAction={controlWindow} t={t} />}
-      {!fullscreen && !mac && <WindowsControls onAction={controlWindow} t={t} />}
+      {!fullscreen && !mac && (
+        <WindowsControls maximized={maximized} onAction={controlWindow} t={t} />
+      )}
 
       {/* Top-left: information, not brand (macOS's menu bar already says
           Parley) — while recording, the session vitals (rec + elapsed + mic

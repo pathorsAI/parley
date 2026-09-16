@@ -63,6 +63,10 @@ html[data-platform="macos"][data-app-window="main"] #root {
 }
 
 body {
+  /* Right for macOS: WKWebView subpixel-antialiases by default, which is too
+     heavy for Geist at these sizes. WebView2 ignores the property outright, so
+     Windows text will always render a shade heavier than the mac screenshots
+     the design was drawn against — that is the engine, not a bug to chase. */
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
   user-select: none;
@@ -75,17 +79,42 @@ textarea,
   user-select: text;
 }
 
-/* Thin, unobtrusive scrollbars for panels */
+/* Thin, unobtrusive scrollbars for panels.
+
+   The thumb is mixed from --muted-foreground rather than hard-coded, because
+   the hard-coded near-black it used to be was a dark-theme value: in light
+   theme it drew a black bar down a white rail. Mixing the token keeps it a
+   quiet grey in both themes for free.
+
+   Both spellings are deliberate, and the standard one wins where it exists:
+   Chromium (and WebKit since Safari 18.2) ignores the ::-webkit-scrollbar
+   pseudo-elements entirely once scrollbar-width/scrollbar-color are set, so
+   those two lines are what current WebView2 and WKWebView actually render and
+   the -webkit- block is the fallback for older engines. Keeping them in sync
+   matters — they are the same scrollbar, not two designs.
+
+   Deliberately NOT here: scrollbar-gutter: stable. Both engines give these
+   containers a space-consuming scrollbar (styling ::-webkit-scrollbar opts
+   out of macOS overlay scrollbars), so a global gutter would reserve a second
+   strip next to the live one and shrink every pane that was measured without
+   it. Worth revisiting per-container if a pane is seen jumping on overflow. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 40%, transparent) transparent;
+}
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
 *::-webkit-scrollbar-thumb {
-  background: #2a2a30;
+  background: color-mix(in oklab, var(--muted-foreground) 40%, transparent);
   border-radius: 4px;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: #3a3a42;
+  background: color-mix(in oklab, var(--muted-foreground) 65%, transparent);
 }
 
 /* Radix ScrollArea wraps content in a `display: table` div that grows to
@@ -100,7 +129,18 @@ textarea,
 
 @theme inline {
   --font-heading: var(--font-sans);
-  --font-sans: 'Geist Variable', sans-serif;
+  /* Geist carries no Han glyphs, so every Chinese string in a zh-TW-first app
+     falls through to whatever comes next — and a bare `sans-serif` is not good
+     enough on Windows, where Chromium answers with Microsoft YaHei or MS
+     Gothic and renders Traditional Chinese in Simplified or Japanese glyph
+     variants. Naming the faces takes that choice away from the engine. The
+     three are mutually exclusive by platform (JhengHei on Windows, PingFang TC
+     on macOS, Noto CJK TC on Linux), so each OS lands on its own and the order
+     between them never bites; what matters is that they all sit AFTER Geist,
+     which keeps Latin text in Geist. The `Hant` script subtag on <html lang>
+     (set in main.tsx) is the other half of this and not redundant: it steers
+     fallback for anything these families miss, which this list cannot. */
+  --font-sans: 'Geist Variable', 'Microsoft JhengHei', 'PingFang TC', 'Noto Sans CJK TC', sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);

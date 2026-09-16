@@ -43,18 +43,20 @@ type StepId =
 // Ordered onboarding steps. The Parley sign-in step only exists in the official
 // (cloud) build — it offers the free hosted STT + LLM. CLOUD_ENABLED is a
 // compile-time constant, so the OSS build never ships the step at all.
-// The perms step stays macOS-only: it walks the TCC prompts, and Windows has no
-// runtime permission prompt to walk — mic access there is a system setting the
-// user changes (or doesn't) outside the app, so a step that can only say "go
-// look in Settings" would be a dead page in the flow. Voice typing runs on both
-// platforms and gets its step on both.
+// The perms step runs on both platforms. macOS walks the TCC prompts; Windows
+// has no runtime prompt, but the step is still the only place that shows
+// whether the mic is actually allowed (the backend reads the consent store) and
+// sends the user to the exact pane that flips it
+// (ms-settings:privacy-microphone) — the welcome checklist promises that step,
+// so skipping it left the promise unkept. Voice typing gets its step on both
+// platforms too.
 const STEPS: StepId[] = [
   "lang",
   "welcome",
   ...(CLOUD_ENABLED ? (["login"] as StepId[]) : []),
   "llm",
   "stt",
-  ...(isMac() ? (["perms"] as StepId[]) : []),
+  "perms",
   "profile",
   "diarize",
   "voiceTyping",
@@ -90,7 +92,7 @@ export function Onboarding() {
       // polling it below is safe.
       setPerms(await invoke<Perms>("check_permissions"));
     } catch {
-      /* non-macOS or unavailable */
+      /* command unavailable (plain-browser dev, or an unsupported OS) */
     }
   }
 
@@ -176,7 +178,13 @@ export function Onboarding() {
           {current === "welcome" && (
             <div className="flex flex-col gap-3">
               <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.welcome.title")}</h2>
-              <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.welcome.body")}</p>
+              {/* "Both your voice and the other party" is a macOS promise: the
+                  system-audio tap has no Windows counterpart yet, and the first
+                  thing a Windows user reads should not be a capability the app
+                  doesn't have. */}
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                {t(isMac() ? "onboarding.welcome.body" : "onboarding.welcome.body.windows")}
+              </p>
               <ul className="mt-1 flex flex-col gap-1.5 text-sm text-muted-foreground">
                 <li>• {t("onboarding.welcome.point1")}</li>
                 <li>• {t("onboarding.welcome.point2")}</li>
@@ -314,19 +322,28 @@ export function Onboarding() {
 
           {current === "perms" && (
             <div className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold tracking-tight">{t("onboarding.perms.title")}</h2>
-              <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.perms.body")}</p>
+              <h2 className="text-base font-semibold tracking-tight">
+                {t(isMac() ? "onboarding.perms.title" : "onboarding.perms.title.windows")}
+              </h2>
+              {/* Windows names one permission, not two, and points at its own
+                  Settings app — the macOS copy would send the user hunting for
+                  a "System Audio Recording" grant that doesn't exist there. */}
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                {t(isMac() ? "onboarding.perms.body" : "onboarding.perms.body.windows")}
+              </p>
 
               <PermRow
                 icon={<Mic className="size-4" />}
                 label={t("onboarding.perms.mic")}
                 ok={micOk}
-                actionLabel={t("onboarding.perms.grant")}
+                actionLabel={t(isMac() ? "onboarding.perms.grant" : "settings.permissions.openSettings")}
                 onAction={async () => {
                   // Not yet determined → the native prompt is enough; only jump
                   // to System Settings when it was explicitly denied (the OS
-                  // won't re-prompt in that case).
-                  if (perms?.microphone === "denied") {
+                  // won't re-prompt in that case). Windows never prompts at all
+                  // — request_microphone() is a stub there — so its only useful
+                  // click is the deep link into the privacy pane.
+                  if (!isMac() || perms?.microphone === "denied") {
                     await invoke("open_privacy_settings", { pane: "microphone" }).catch((error) =>
                       log.warn("permissions: open microphone settings failed", { error: String(error) }),
                     );
@@ -338,7 +355,11 @@ export function Onboarding() {
                   await recheck();
                 }}
               />
-              {perms?.systemAudio !== "unsupported" && (
+              {/* macOS only, and only where the tap exists (< 14.2 reports
+                  unsupported). Windows always reports unsupported, but `perms`
+                  is null until the first check answers — without the platform
+                  test the row would flash into a Windows user's first run. */}
+              {isMac() && perms?.systemAudio !== "unsupported" && (
                 <PermRow
                   icon={<Volume2 className="size-4" />}
                   label={t("onboarding.perms.systemAudio")}
@@ -368,7 +389,9 @@ export function Onboarding() {
                 >
                   {t("onboarding.perms.recheck")}
                 </Button>
-                <span className="text-[11px] text-muted-foreground">{t("onboarding.perms.hint")}</span>
+                <span className="text-[11px] text-muted-foreground">
+                  {t(isMac() ? "onboarding.perms.hint" : "onboarding.perms.hint.windows")}
+                </span>
               </div>
             </div>
           )}

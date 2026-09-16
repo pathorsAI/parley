@@ -4,6 +4,7 @@ import { isTauri } from "./tauriEvents";
 import { log } from "./log";
 import type { Settings } from "./types";
 import type { CloudAuth } from "./cloud/types";
+import { fitWindowSize } from "./windowBounds";
 
 const SETTINGS_EVENT = "settings://updated";
 
@@ -31,13 +32,15 @@ export async function openSettingsWindow(category?: SettingsCategory): Promise<v
     if (category) await emit(SETTINGS_NAVIGATE_EVENT, category);
     return;
   }
+  // 880x760 was chosen on a Mac. On a Windows display at 150% scaling that is
+  // taller than the work area, and the 520px minimum then stops the user
+  // dragging the bottom edge back on screen — hence the clamp, and `center` so
+  // a clamped window still has an origin inside the display.
   const win = new WebviewWindow("settings", {
     url: `index.html#${hash}`,
     title: "Parley Settings",
-    width: 880,
-    height: 760,
-    minWidth: 720,
-    minHeight: 520,
+    ...(await fitWindowSize({ width: 880, height: 760, minWidth: 720, minHeight: 520 })),
+    center: true,
     resizable: true,
   });
   win.once("tauri://error", (e) => log.error("settings: window error", { error: String(e) }));

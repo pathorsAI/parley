@@ -13,11 +13,12 @@ import type { Chord } from "./registry";
  */
 
 /**
- * Keys whose `KeyboardEvent.key` name is not what the keycap says. Everything
- * absent is printed verbatim, which is right for the punctuation the table uses
- * (",", "[", "]", "?", "=", "+", "-", "0") and for "Home"/"End" — those already
- * say themselves, and the macOS ↖/↘ glyphs are recognised by far fewer people
- * than the words are.
+ * Keys whose `KeyboardEvent.key` name is not what the keycap says, on either
+ * platform. Everything absent is printed verbatim, which is right for the
+ * punctuation the table uses (",", "[", "]", "?", "=", "+", "-", "0") and for
+ * "Home"/"End" — those already say themselves, and the macOS ↖/↘ glyphs are
+ * recognised by far fewer people than the words are. ⇞/⇟ lose the same
+ * argument, so PgUp/PgDn are words here too rather than mac-only glyphs.
  */
 const KEY_CAPS: Record<string, string> = {
   " ": "Space",
@@ -25,15 +26,41 @@ const KEY_CAPS: Record<string, string> = {
   ArrowRight: "→",
   ArrowUp: "↑",
   ArrowDown: "↓",
-  Enter: "↩",
   Escape: "Esc",
+  PageUp: "PgUp",
+  PageDown: "PgDn",
 };
 
-/** One key's cap. Single characters are upper-cased so the table's "k" prints
- *  as the K that is actually engraved on the key; punctuation is unaffected by
- *  that (`",".toUpperCase()` is ","). */
-export function formatKey(key: string): string {
-  const named = KEY_CAPS[key];
+/**
+ * The caps macOS prints as a glyph and Windows spells out. These four ARE
+ * engraved on an Apple keyboard, which is the whole test for being here: a cap
+ * is what the user sees on the key, not a symbol we like.
+ *
+ * Windows needs no table of its own — every one of them falls through to the
+ * `KeyboardEvent.key` name, which is already the word a PC keycap carries
+ * ("Enter", "Backspace"). Before this split existed, a Windows user who
+ * recorded Ctrl+Shift+Enter was told to press "Ctrl + Shift + ↩".
+ */
+const KEY_CAPS_MAC: Record<string, string> = {
+  Enter: "↩",
+  Tab: "⇥",
+  Backspace: "⌫",
+  Delete: "⌦",
+};
+
+/**
+ * One key's cap. Single characters are upper-cased so the table's "k" prints
+ * as the K that is actually engraved on the key; punctuation is unaffected by
+ * that (`",".toUpperCase()` is ",").
+ *
+ * `mac` is a parameter, like everywhere else in this module, so both spellings
+ * are provable in the plain-Node suite. voiceTyping/caps.ts spells a different
+ * input (a stored `KeyboardEvent.code` token) but the same keys, so it comes
+ * through here rather than keeping a second table — two tables is how ↩ ended
+ * up with two answers.
+ */
+export function formatKey(key: string, mac: boolean = isMac()): string {
+  const named = (mac ? KEY_CAPS_MAC[key] : undefined) ?? KEY_CAPS[key];
   if (named) return named;
   return key.length === 1 ? key.toUpperCase() : key;
 }
@@ -66,7 +93,7 @@ export function formatChord(chord: Chord, mac: boolean): string[] {
   if (chord.alt) caps.push(mac ? "⌥" : "Alt");
   if (chord.shift === true) caps.push(mac ? "⇧" : "Shift");
   if (chord.mod && mac) caps.push("⌘");
-  caps.push(formatKey(chord.key));
+  caps.push(formatKey(chord.key, mac));
   return caps;
 }
 

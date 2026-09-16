@@ -4,11 +4,12 @@ import {
   createLocalFolder,
   deleteLocalFolder,
   emitFoldersUpdated,
+  folderGeneration,
   listLocalFolders,
   listenForFoldersUpdated,
+  mirrorCloudFolders,
   renameLocalFolder,
   setLocalFolderArchived,
-  writeLocalFolders,
   type Folder as LocalFolder,
 } from "../../lib/history/folders";
 import {
@@ -59,10 +60,18 @@ export interface LibraryTree {
   /** Put a personal folder away (or bring it back) — nothing moves, nothing is
    *  deleted; it just leaves the tree and the filing pickers. */
   archivePersonalFolder: (id: string, archived: boolean) => void;
-  deletePersonalFolder: (folder: LocalFolder) => void;
+  /** ASK to delete a personal folder. Resolves true once the user has said yes
+   *  and the folder is gone, false if they backed out. */
+  deletePersonalFolder: (folder: LocalFolder) => Promise<boolean>;
   createOrgFolder: (orgId: string, name: string) => Promise<void>;
   renameOrgFolder: (orgId: string, id: string, name: string) => Promise<void>;
   deleteOrgFolder: (orgId: string, folder: LocalFolder) => Promise<boolean>;
+  /** The delete waiting on an answer, or null. The hook owns it so that both
+   *  doors onto the same action — the row's hover button and its context menu —
+   *  can only ever put ONE dialog on screen. */
+  pendingFolderDelete: { folder: LocalFolder } | null;
+  confirmFolderDelete: () => void;
+  cancelFolderDelete: () => void;
 }
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -92,12 +101,16 @@ export function useLibraryTree(): LibraryTree {
   const reloadFolders = useCallback(async () => {
     if (CLOUD_ENABLED && syncEnabled()) {
       try {
+        // Read the generation before the first await: from here on the user can
+        // edit the registry out from under us — this reload runs on window
+        // focus, which is exactly when a dialog closing hands control back —
+        // and mirrorCloudFolders needs to know the answer below is older.
+        const since = folderGeneration();
         // Push local-only folders FIRST, so mirroring the cloud list down can't
         // drop folders created while sync was off.
         await pushUnsyncedFolders();
         const cloud = (await listCloudFolders()).map(toLocalFolder).sort(byCreatedAt);
-        writeLocalFolders(cloud);
-        setPersonalFolders(cloud);
+        setPersonalFolders(mirrorCloudFolders(cloud, since));
         return;
       } catch (e) {
         log.warn("library: cloud folders failed; using local", { error: String(e) });
@@ -213,9 +226,55 @@ export function useLibraryTree(): LibraryTree {
     emitFoldersUpdated().catch(() => {});
   }, []);
 
-  const deletePersonalFolder = useCallback(
-    (folder: LocalFolder) => {
-      if (!globalThis.confirm(t("history.folder.deleteConfirm", { name: folder.name }))) return;
+  // ── Deleting a folder, in two halves ────────────────────────────────────────
+  // Asking and doing used to be one call, because `confirm()` blocked until the
+  // user answered. On Windows that dialog is a window of its own, and the focus
+  // it cycles on the way out raced the very delete it had just authorized (see
+  // ConfirmDialog), so the question is app state now and the deed waits for the
+  // answer to come back — which turns the caller's "did it actually happen?"
+  // from a return value into a promise.
+  //
+  // The live request is kept in a ref as well as in state: the ref is what
+  // confirm/cancel read, so neither callback has to be rebuilt each time a
+  // request arrives, while the state is what puts the dialog on screen. Only
+  // the state's shape is exposed — a caller has no business holding `resolve`.
+  const pendingRef = useRef<{
+    folder: LocalFolder;
+    /** Absent for a personal folder; an org folder is deleted through the API. */
+    orgId?: string;
+    resolve: (deleted: boolean) => void;
+  } | null>(null);
+  const [pendingFolderDelete, setPendingFolderDelete] = useState<{
+    folder: LocalFolder;
+  } | null>(null);
+
+  const requestFolderDelete = useCallback(
+    (folder: LocalFolder, orgId?: string) =>
+      new Promise<boolean>((resolve) => {
+        // A second delete asked for while one is still on screen replaces it.
+        // The outgoing request has to be answered, or whoever awaited it waits
+        // for the rest of the session.
+        pendingRef.current?.resolve(false);
+        pendingRef.current = { folder, orgId, resolve };
+        setPendingFolderDelete({ folder });
+      }),
+    []
+  );
+
+  const cancelFolderDelete = useCallback(() => {
+    const req = pendingRef.current;
+    pendingRef.current = null;
+    setPendingFolderDelete(null);
+    req?.resolve(false);
+  }, []);
+
+  const confirmFolderDelete = useCallback(() => {
+    const req = pendingRef.current;
+    pendingRef.current = null;
+    setPendingFolderDelete(null);
+    if (!req) return;
+    const { folder, orgId, resolve } = req;
+    if (orgId === undefined) {
       deleteLocalFolder(folder.id);
       setPersonalFolders(listLocalFolders());
       if (CLOUD_ENABLED && syncEnabled()) {
@@ -224,8 +283,26 @@ export function useLibraryTree(): LibraryTree {
         );
       }
       emitFoldersUpdated().catch(() => {});
-    },
-    [t]
+      resolve(true);
+      return;
+    }
+    // An org folder is only gone once the server says so, so unlike the local
+    // registry there is a failure to report — and a caller that must not move
+    // its selection off a folder that is still there.
+    deleteOrgFolder(orgId, folder.id)
+      .then(() => {
+        ensureOrgFolders(orgId, true);
+        resolve(true);
+      })
+      .catch((e) => {
+        toast.error(t("history.folder.deleteFailed", { error: errText(e) }));
+        resolve(false);
+      });
+  }, [ensureOrgFolders, t]);
+
+  const deletePersonalFolder = useCallback(
+    (folder: LocalFolder) => requestFolderDelete(folder),
+    [requestFolderDelete]
   );
 
   const createOrgFolderUI = useCallback(
@@ -257,21 +334,11 @@ export function useLibraryTree(): LibraryTree {
   );
 
   /** Returns true when the folder was actually deleted (so the caller can move
-   *  a selection that pointed at it). */
+   *  a selection that pointed at it) — unchanged contract, now answered by the
+   *  dialog rather than by a blocking prompt. */
   const deleteOrgFolderUI = useCallback(
-    async (orgId: string, folder: LocalFolder) => {
-      if (!globalThis.confirm(t("history.folder.deleteConfirm", { name: folder.name })))
-        return false;
-      try {
-        await deleteOrgFolder(orgId, folder.id);
-        ensureOrgFolders(orgId, true);
-        return true;
-      } catch (e) {
-        toast.error(t("history.folder.deleteFailed", { error: errText(e) }));
-        return false;
-      }
-    },
-    [ensureOrgFolders, t]
+    (orgId: string, folder: LocalFolder) => requestFolderDelete(folder, orgId),
+    [requestFolderDelete]
   );
 
   return {
@@ -290,5 +357,8 @@ export function useLibraryTree(): LibraryTree {
     createOrgFolder: createOrgFolderUI,
     renameOrgFolder: renameOrgFolderUI,
     deleteOrgFolder: deleteOrgFolderUI,
+    pendingFolderDelete,
+    confirmFolderDelete,
+    cancelFolderDelete,
   };
 }
