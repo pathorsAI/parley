@@ -68,6 +68,19 @@ final class DictationCoordinator: ObservableObject {
     @Published private(set) var windowProblem: String?
 
     private var session = ""
+    /// When the running session began, for the clock on the Live Activity.
+    ///
+    /// A stored property rather than something read off the existing state
+    /// because none of it carries a time. `state` is an enum, the downlink is
+    /// re-stamped on every transcript change rather than at the start, and the
+    /// window's `openedAt` is the microphone's clock, not the session's — a
+    /// second dictation inside one window would inherit the first one's start
+    /// and put a card on the lock screen claiming to have been listening for
+    /// minutes. Set once in `launch()`, never cleared: what makes it stop
+    /// counting is `state.isLive` going false, which is the same predicate the
+    /// keyboard reads, and a resumed `micTaken` session deliberately picks the
+    /// original start back up rather than restarting the clock.
+    private var sessionStartedAt: Date?
     /// The microphone. Not a session's: once the user has chosen a window it
     /// outlives the dictation that opened it, and the *next* dictation borrows
     /// it rather than opening its own. That is the entire mechanism — see the
@@ -277,6 +290,7 @@ final class DictationCoordinator: ObservableObject {
         runs = []
         committed = ""
         partial = ""
+        sessionStartedAt = Date()
         state = .starting
         micTaken = false
         active = true
@@ -1418,6 +1432,36 @@ final class DictationCoordinator: ObservableObject {
     private func publishWindow() {
         window.updatedAt = Date()
         DictationChannel.writeWindow(window)
+        publishMicActivity()
+    }
+
+    /// Tell the Live Activity the same two things the keyboard was just told.
+    ///
+    /// Hung off `publish()` and `publishWindow()` rather than off the ~15 places
+    /// that call them, and that is the whole point: those two functions already
+    /// exist because "the session changed" and "the window changed" each needed
+    /// one place to be said from, and the card is a third reader of exactly
+    /// those two facts. Calling the controller from the call sites instead would
+    /// be a second set of them to keep in step with the first, and the failure
+    /// would be silent — a lock screen that disagrees with the keyboard about
+    /// whether the microphone is open. The card is a second keyboard as far as
+    /// this object is concerned; it should be told in the same breath.
+    ///
+    /// `isLive` is the existing predicate for "a process is holding a microphone
+    /// on this session's behalf" (`starting` / `listening` / `reconnecting` /
+    /// `finishing`); the four states outside it are claims about the past, and
+    /// there is no dictation left to draw.
+    ///
+    /// `trouble` is `micTaken` and `error` only. Not `reconnecting`: the
+    /// microphone is still open there and the audio is being held, so it is a
+    /// pause in the words arriving rather than an interruption — the same
+    /// distinction `publishLive` and `DictationChannel.Downlink.State` draw, and
+    /// the one the card would lose first if nobody wrote it down again here.
+    private func publishMicActivity() {
+        MicActivityController.shared.dictationChanged(
+            startedAt: state.isLive ? sessionStartedAt : nil,
+            window: window,
+            trouble: state == .micTaken || state == .error)
     }
 
     // MARK: background linger
@@ -1531,6 +1575,7 @@ final class DictationCoordinator: ObservableObject {
             .init(
                 session: session, committed: committed, partial: partial,
                 state: state, errorMessage: errorMessage))
+        publishMicActivity()
     }
 
     /// Dismiss the dictation screen back to the app's normal UI (used when the

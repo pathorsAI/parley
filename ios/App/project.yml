@@ -23,6 +23,10 @@ targets:
       - package: ParleyKit
       # Embeds the keyboard extension into the app bundle.
       - target: ParleyKeyboard
+      # Same, for the widget extension that draws the microphone Live Activity.
+      # An extension that is built but not embedded is a card that never
+      # appears, with nothing anywhere saying why.
+      - target: ParleyActivities
     entitlements:
       path: Parley/Parley.entitlements
       properties:
@@ -40,6 +44,14 @@ targets:
         # Localized in Parley/InfoPlist.xcstrings; this is the fallback value.
         NSMicrophoneUsageDescription: Parley records the meeting in the room so it can transcribe it live. Audio goes only to the transcription provider tied to your account.
         UIBackgroundModes: [audio]
+        # Without this key ActivityKit is not merely disabled, it is silent:
+        # `ActivityAuthorizationInfo().areActivitiesEnabled` reads false and
+        # `Activity.request` throws `unsupported`, with nothing on screen and
+        # nothing in the log to connect that to a missing Info.plist entry. It
+        # is the easiest thing in this feature to forget and the hardest to
+        # diagnose afterwards, which is why it is commented and the other
+        # booleans here are not.
+        NSSupportsLiveActivities: true
         ITSAppUsesNonExemptEncryption: false
         CFBundleURLTypes:
           - CFBundleURLName: com.pathors.parley.ios.auth
@@ -116,3 +128,50 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: SXHVCQXJHZ
+
+  ParleyActivities:
+    type: app-extension
+    platform: iOS
+    sources: [../Activities]
+    dependencies:
+      # For MicActivityAttributes, MicActivityState and the four
+      # LiveActivityIntents. The widget cannot import the app target, so the
+      # only way it and the app agree on what the card says — down to the red —
+      # is that both link this package.
+      - package: ParleyKit
+    entitlements:
+      path: ../Activities/ParleyActivities.entitlements
+      properties:
+        # The same App Group as the app and the keyboard, and it is worth being
+        # explicit about why an extension that never reads the container needs
+        # it. `LiveActivityIntent.perform()` runs in the *app's* process, so the
+        # mailbox writes in MicActivityIntents happen on the app's entitlement.
+        # But this target compiles that code and links it, and an extension
+        # holding a build of `DictationChannel` it is not entitled to use is a
+        # discrepancy that would only surface the day someone moves one line of
+        # it. Both halves declare the same group so neither can drift.
+        com.apple.security.application-groups: [group.com.pathors.parley.ios]
+    info:
+      path: ../Activities/Info.plist
+      properties:
+        # Localized in ../Activities/InfoPlist.xcstrings; this is the fallback.
+        CFBundleDisplayName: Parley Live Activity
+        CFBundleShortVersionString: "1.14"
+        CFBundleVersion: "26"
+        NSExtension:
+          # There is no ActivityKit extension point: a Live Activity is drawn by
+          # a WidgetKit extension, from the same `ActivityConfiguration` that a
+          # home-screen widget would declare a `StaticConfiguration` in. And no
+          # NSExtensionPrincipalClass — unlike the keyboard, the entry point is
+          # the `@main` WidgetBundle the extension compiles.
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pathors.parley.ios.activities
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: SXHVCQXJHZ
+    # No UIAppFonts here, for the same reason ParleyKeyboard has none: a widget
+    # draws under a tight memory budget, the card is four short lines of text,
+    # and the system faces are what a lock screen is already set in.

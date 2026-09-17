@@ -460,9 +460,11 @@ struct KeyboardRootView: View {
         bridge.hasFullAccess ? .white : KBTheme.inkSoft(dark)
     }
 
-    /// One solid thump as the finger lands on the record button, not when it
+    /// A rising two-beat as the finger lands on the record button, not when it
     /// lifts: the press is the moment the user commits to speaking, and a
-    /// confirmation that arrives after the release confirms nothing.
+    /// confirmation that arrives after the release confirms nothing. Only the
+    /// pattern's first beat is synchronous with the press; see
+    /// `Haptics.dictationStarted` for why it grows rather than thumps once.
     ///
     /// Only on the press that *starts* something — ⏹ ends with the success
     /// pattern instead (`Haptics.dictationDelivered`), and the two are

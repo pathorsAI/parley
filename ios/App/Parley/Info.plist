@@ -35,6 +35,8 @@
 	<false/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Parley records the meeting in the room so it can transcribe it live. Audio goes only to the transcription provider tied to your account.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>UIAppFonts</key>
 	<array>
 		<string>DMSans-Regular.ttf</string>
