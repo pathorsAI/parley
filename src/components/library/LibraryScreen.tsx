@@ -29,6 +29,7 @@ import { log } from "../../lib/log";
 import { isTauri } from "../../lib/tauriEvents";
 import { VoiceTypingHistory } from "../../history/VoiceTypingHistory";
 import { LibraryCard, MoveDialog } from "./LibraryCards";
+import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { RecordingTimeline } from "./RecordingTimeline";
 import type { LibraryTree } from "../shell/useLibraryTree";
 import { filingChoices, type Folder as LocalFolder } from "../../lib/history/folders";
@@ -147,6 +148,10 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [sharingId, setSharingId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  /** The delete waiting on an answer. Both doors onto the action — the card's
+   *  trash button and the timeline row's — go through here, so only one dialog
+   *  can ever be on screen. */
+  const [pendingDelete, setPendingDelete] = useState<HistoryCardItem | null>(null);
   /** A pending hand-off to an org: which recording, which org, and which of its
    *  folders (null = the org root). The copy-or-move answer comes next. */
   const [movePrompt, setMovePrompt] = useState<{
@@ -443,9 +448,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
             log.error("library: open failed", { id: entry.id, error: String(error) })
           );
         }}
-        onDelete={(entry) => {
-          remove(entry).catch(() => {});
-        }}
+        onDelete={(entry) => setPendingDelete(entry)}
         onRename={(id, title) => {
           rename(id, title).catch(() => {});
         }}
@@ -476,9 +479,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
                 log.error("library: open failed", { id: entry.id, error: String(error) })
               );
             }}
-            onDelete={() => {
-              remove(entry).catch(() => {});
-            }}
+            onDelete={() => setPendingDelete(entry)}
             onRename={(title) => {
               rename(entry.id, title).catch(() => {});
             }}
@@ -550,6 +551,27 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       {/* The timeline's date headers are sticky, so it owns its own top padding
           — rows must slide under the header, not through a gap above it. */}
       <div className={`min-h-0 flex-1 overflow-y-auto ${isAll ? "px-4 pb-4" : "p-4"}`}>{body}</div>
+
+      {pendingDelete && (
+        <ConfirmDialog
+          // The trash button's own label doubles as the title, so the action
+          // has one name whether it is read off a tooltip or off this dialog.
+          title={isOrg ? t("history.org.remove") : t("history.delete")}
+          body={
+            isOrg
+              ? t("history.org.removeConfirm", { title: pendingDelete.title })
+              : t("history.deleteConfirm", { title: pendingDelete.title })
+          }
+          confirmLabel={isOrg ? t("history.org.remove") : t("common.delete")}
+          cancelLabel={t("common.cancel")}
+          onConfirm={() => {
+            const item = pendingDelete;
+            setPendingDelete(null);
+            remove(item).catch(() => {});
+          }}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
 
       {movePrompt && (
         <MoveDialog
