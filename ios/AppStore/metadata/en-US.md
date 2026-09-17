@@ -87,13 +87,14 @@ Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
 Everything here is a fix, and most of it is something 1.13 got wrong.
 
-Re-transcribe now re-transcribes. It would say it was working when nothing
-was running, and there was no way to retry short of force-quitting Parley —
-a job interrupted by locking the phone was simply lost. It now picks itself
-back up when you come back to Parley, a job that is waiting says so instead
-of showing a spinner that means nothing, and there is a Start now button
-beside it. One failed job no longer blocks every recording queued behind it,
-and a re-run you asked for is only counted against your limit once.
+Re-transcribe stops pretending. It would say it was working when nothing was
+running, and there was no way to retry short of force-quitting Parley — a job
+interrupted by locking the phone was simply lost. It now picks itself back up
+when you come back to Parley, a job that is waiting says so instead of showing
+a spinner that means nothing, and there is a Start now button beside it. When
+a re-run fails it now tells you, rather than spinning on in silence. One
+failed job no longer blocks every recording queued behind it, and a re-run you
+asked for is only counted against your limit once.
 
 The transcript scrolls again. Two invisible strips down the left and right
 edges — the ones that play at 2× while you hold them — were catching the
