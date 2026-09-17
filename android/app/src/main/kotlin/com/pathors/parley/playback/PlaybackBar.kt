@@ -36,7 +36,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
@@ -367,10 +369,7 @@ fun WaveformScrubber(
     // 400 values down to ~110 on every 50 ms tick would be work done 20 times a
     // second for a picture that did not move.
     var barCount by remember { mutableStateOf(0) }
-    val bars = remember(overview, barCount) {
-        if (barCount <= 0 || overview == null) FloatArray(0)
-        else AudioPeaks.resample(overview.peaks, barCount)
-    }
+    val bars = remember(overview, barCount) { resampleBars(overview, barCount) }
 
     val step = with(androidx.compose.ui.platform.LocalDensity.current) {
         (BAR_WIDTH + BAR_GAP).toPx()
@@ -385,67 +384,134 @@ fun WaveformScrubber(
             .onSizeChanged { measured ->
                 barCount = (measured.width / step).toInt().coerceAtLeast(0)
             }
-            .pointerInput(enabled, durationMs) {
-                if (!enabled) return@pointerInput
-                detectTapGestures { offset ->
-                    onScrubEnd(timeAt(offset.x, size.width, durationMs))
-                }
-            }
-            .pointerInput(enabled, durationMs) {
-                if (!enabled) return@pointerInput
-                var x = 0f
-                detectHorizontalDragGestures(
-                    onDragStart = { offset ->
-                        x = offset.x
-                        onScrub(timeAt(x, size.width, durationMs))
-                    },
-                    onHorizontalDrag = { change, delta ->
-                        change.consume()
-                        x += delta
-                        onScrub(timeAt(x, size.width, durationMs))
-                    },
-                    onDragEnd = { onScrubEnd(timeAt(x, size.width, durationMs)) },
-                    onDragCancel = { onScrubEnd(timeAt(x, size.width, durationMs)) },
-                )
-            },
+            .scrubGestures(enabled, durationMs, onScrub, onScrubEnd),
     ) {
-        val minBar = BAR_WIDTH.toPx()
-        if (bars.isEmpty() || size.height < minBar) return@DrawCanvas
+        drawWaveform(bars, step, positionMs, durationMs, played, unplayed, playhead)
+    }
+}
 
-        val loudest = maxOf(bars.max(), MIN_LOUDEST)
-        val midY = size.height / 2f
-        val barWidth = BAR_WIDTH.toPx()
-        val radius = CornerRadius(barWidth / 2f, barWidth / 2f)
-        val progressX = if (durationMs > 0L) {
-            size.width * (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
-        } else {
-            0f
-        }
+/**
+ * The bars to draw for [barCount] columns of canvas, or an empty array while
+ * there is nothing to draw yet — before the first measure, or before the peaks
+ * have been computed.
+ */
+private fun resampleBars(overview: AudioPeaks.Overview?, barCount: Int): FloatArray =
+    if (barCount <= 0 || overview == null) FloatArray(0)
+    else AudioPeaks.resample(overview.peaks, barCount)
 
-        bars.forEachIndexed { index, value ->
-            val x = index * step
-            val scaled = (value / loudest).coerceIn(0f, 1f)
-            val height = minBar + (size.height - minBar) * scaled
-            drawRoundRect(
-                color = if (x + barWidth <= progressX) played else unplayed,
-                topLeft = Offset(x, midY - height / 2f),
-                size = Size(barWidth, height),
-                cornerRadius = radius,
-            )
-        }
-
-        if (durationMs > 0L) {
-            // Not the primary colour: that is already saying which side of the
-            // line has played, and a primary line on a primary field vanishes.
-            val width = PLAYHEAD_WIDTH.toPx()
-            drawRoundRect(
-                color = playhead,
-                topLeft = Offset((progressX - width / 2f).coerceIn(0f, size.width - width), 0f),
-                size = Size(width, size.height),
-                cornerRadius = CornerRadius(width / 2f, width / 2f),
-            )
+/**
+ * The scrub gesture: tap commits straight away, drag reports every move through
+ * [onScrub] and commits through [onScrubEnd].
+ *
+ * Two separate `pointerInput`s rather than one, because the tap detector and the
+ * drag detector each want the whole gesture: sharing one scope makes the first
+ * one to suspend the only one that ever sees a pointer.
+ */
+private fun Modifier.scrubGestures(
+    enabled: Boolean,
+    durationMs: Long,
+    onScrub: (Long) -> Unit,
+    onScrubEnd: (Long) -> Unit,
+): Modifier = this
+    .pointerInput(enabled, durationMs) {
+        if (!enabled) return@pointerInput
+        detectTapGestures { offset ->
+            onScrubEnd(timeAt(offset.x, size.width, durationMs))
         }
     }
+    .pointerInput(enabled, durationMs) {
+        if (!enabled) return@pointerInput
+        var x = 0f
+        detectHorizontalDragGestures(
+            onDragStart = { offset ->
+                x = offset.x
+                onScrub(timeAt(x, size.width, durationMs))
+            },
+            onHorizontalDrag = { change, delta ->
+                change.consume()
+                x += delta
+                onScrub(timeAt(x, size.width, durationMs))
+            },
+            onDragEnd = { onScrubEnd(timeAt(x, size.width, durationMs)) },
+            onDragCancel = { onScrubEnd(timeAt(x, size.width, durationMs)) },
+        )
+    }
+
+/**
+ * One draw pass: the bars, then the playhead over them.
+ *
+ * Bails on a canvas too short for a single bar rather than drawing a squashed
+ * one, which also means nothing at all is drawn before the first real measure.
+ */
+private fun DrawScope.drawWaveform(
+    bars: FloatArray,
+    step: Float,
+    positionMs: Long,
+    durationMs: Long,
+    played: Color,
+    unplayed: Color,
+    playhead: Color,
+) {
+    val minBar = BAR_WIDTH.toPx()
+    if (bars.isEmpty() || size.height < minBar) return
+
+    val progressX = if (durationMs > 0L) {
+        size.width * (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+
+    drawBars(bars, step, minBar, progressX, played, unplayed)
+    // No duration means no meaningful position, so there is no line to put.
+    if (durationMs > 0L) drawPlayhead(progressX, playhead)
+}
+
+/**
+ * The bars themselves, [played] up to [progressX] and [unplayed] after it.
+ *
+ * Normalised to the loudest bar with a floor under it, and every bar at least
+ * its own width tall. See the [WaveformScrubber] doc for why both.
+ */
+private fun DrawScope.drawBars(
+    bars: FloatArray,
+    step: Float,
+    minBar: Float,
+    progressX: Float,
+    played: Color,
+    unplayed: Color,
+) {
+    val loudest = maxOf(bars.max(), MIN_LOUDEST)
+    val midY = size.height / 2f
+    val barWidth = BAR_WIDTH.toPx()
+    val radius = CornerRadius(barWidth / 2f, barWidth / 2f)
+
+    bars.forEachIndexed { index, value ->
+        val x = index * step
+        val scaled = (value / loudest).coerceIn(0f, 1f)
+        val height = minBar + (size.height - minBar) * scaled
+        drawRoundRect(
+            color = if (x + barWidth <= progressX) played else unplayed,
+            topLeft = Offset(x, midY - height / 2f),
+            size = Size(barWidth, height),
+            cornerRadius = radius,
+        )
+    }
+}
+
+/**
+ * The line at the current position.
+ *
+ * Not the primary colour: that is already saying which side of the line has
+ * played, and a primary line on a primary field vanishes.
+ */
+private fun DrawScope.drawPlayhead(progressX: Float, color: Color) {
+    val width = PLAYHEAD_WIDTH.toPx()
+    drawRoundRect(
+        color = color,
+        topLeft = Offset((progressX - width / 2f).coerceIn(0f, size.width - width), 0f),
+        size = Size(width, size.height),
+        cornerRadius = CornerRadius(width / 2f, width / 2f),
+    )
 }
 
 private fun timeAt(x: Float, width: Int, durationMs: Long): Long {
