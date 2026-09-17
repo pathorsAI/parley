@@ -509,24 +509,24 @@ private fun DetailBody(
             hasSegments = segments.isNotEmpty(),
         )
     }
+    val scroll = remember(listState, firstSegmentItem) {
+        TranscriptScroll(listState, firstSegmentItem)
+    }
     val currentIndex = currentTurnIndex(segments, positionMs)
 
     FollowPlayheadEffects(
-        listState = listState,
+        scroll = scroll,
         followsAudio = followsAudio,
         isPlaying = isPlaying,
         seekGeneration = seekGeneration,
         currentIndex = currentIndex,
-        firstSegmentItem = firstSegmentItem,
         onFollowChange = { followsAudio = it },
     )
-    SearchScrollEffects(
-        listState = listState,
-        searching = searching,
+    ClearQueryOnCloseEffect(searching = searching, onQueryChange = { query = it })
+    JumpToFirstHitEffect(
+        scroll = scroll,
         query = query,
         matches = matches,
-        firstSegmentItem = firstSegmentItem,
-        onQueryChange = { query = it },
         onCurrentHitChange = { currentHit = it },
         onReleaseFollow = { followsAudio = false },
     )
@@ -548,12 +548,14 @@ private fun DetailBody(
             state = state,
             segments = segments,
             untitled = untitled,
-            listState = listState,
-            currentIndex = currentIndex,
-            isSeekable = isSeekable,
-            matches = matches,
-            activeHit = activeHit,
-            onSeek = onSeek,
+            scroll = scroll,
+            decoration = TurnDecoration(
+                currentIndex = currentIndex,
+                isSeekable = isSeekable,
+                matches = matches,
+                activeHit = activeHit,
+                onSeek = onSeek,
+            ),
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
@@ -568,11 +570,7 @@ private fun DetailBody(
                         // The playhead gives way — see this function's doc.
                         followsAudio = false
                         scope.launch {
-                            listState.scrollToHit(
-                                matches.hits[next],
-                                matches.turnIndexById,
-                                firstSegmentItem,
-                            )
+                            scroll.toHit(matches.hits[next], matches.turnIndexById)
                         }
                     }
                 },
@@ -654,14 +652,14 @@ private fun rememberTranscriptMatches(
  */
 @Composable
 private fun FollowPlayheadEffects(
-    listState: LazyListState,
+    scroll: TranscriptScroll,
     followsAudio: Boolean,
     isPlaying: Boolean,
     seekGeneration: Int,
     currentIndex: Int,
-    firstSegmentItem: Int,
     onFollowChange: (Boolean) -> Unit,
 ) {
+    val listState = scroll.listState
     LaunchedEffect(listState) {
         listState.interactionSource.interactions.collect { interaction ->
             if (interaction is DragInteraction.Start) onFollowChange(false)
@@ -676,36 +674,40 @@ private fun FollowPlayheadEffects(
 
     LaunchedEffect(currentIndex, followsAudio, isPlaying) {
         if (!followsAudio || !isPlaying || currentIndex < 0) return@LaunchedEffect
-        listState.animateScrollToTurn(firstSegmentItem + currentIndex)
+        scroll.toTurn(currentIndex)
     }
 }
 
 /**
- * The two things a live query does to the list on its own, without anybody
- * pressing a chevron.
+ * Closing the field clears the query, because a search that is out of sight must
+ * not leave the transcript highlighted — the reader has no bar left to explain
+ * the tint, or to clear it with.
  */
 @Composable
-private fun SearchScrollEffects(
-    listState: LazyListState,
-    searching: Boolean,
+private fun ClearQueryOnCloseEffect(searching: Boolean, onQueryChange: (String) -> Unit) {
+    LaunchedEffect(searching) { if (!searching) onQueryChange("") }
+}
+
+/**
+ * A new query starts again from the top hit and takes the reader there.
+ *
+ * The jump gives the playhead up for the same reason a chevron does — see
+ * [DetailBody]: somebody taken to a match is reading, and the next turn change
+ * would otherwise scroll the page off the hit they just asked for.
+ */
+@Composable
+private fun JumpToFirstHitEffect(
+    scroll: TranscriptScroll,
     query: String,
     matches: TranscriptMatches,
-    firstSegmentItem: Int,
-    onQueryChange: (String) -> Unit,
     onCurrentHitChange: (Int) -> Unit,
     onReleaseFollow: () -> Unit,
 ) {
-    // Closing the field clears the query, because a search that is out of sight
-    // must not leave the transcript highlighted — the reader has no bar left to
-    // explain the tint, or to clear it with.
-    LaunchedEffect(searching) { if (!searching) onQueryChange("") }
-
-    // A new query starts again from the top hit and takes the reader there.
     LaunchedEffect(query) {
         onCurrentHitChange(0)
         val first = matches.hits.firstOrNull() ?: return@LaunchedEffect
         onReleaseFollow()
-        listState.scrollToHit(first, matches.turnIndexById, firstSegmentItem)
+        scroll.toHit(first, matches.turnIndexById)
     }
 }
 
@@ -723,19 +725,15 @@ private fun TranscriptList(
     state: RecordingDetailViewModel.UiState,
     segments: List<TranscriptSegmentDto>,
     untitled: String,
-    listState: LazyListState,
-    currentIndex: Int,
-    isSeekable: Boolean,
-    matches: TranscriptMatches,
-    activeHit: TranscriptSearch.Hit?,
-    onSeek: (Long) -> Unit,
+    scroll: TranscriptScroll,
+    decoration: TurnDecoration,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val flash = rememberTurnFlash()
 
     LazyColumn(
-        state = listState,
+        state = scroll.listState,
         modifier = modifier,
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -772,13 +770,13 @@ private fun TranscriptList(
             TranscriptTurn(
                 label = speakerLabel(context, segment, meta.speakerName(segment)),
                 segment = segment,
-                isCurrent = index == currentIndex,
+                isCurrent = index == decoration.currentIndex,
                 isFlashing = flash.isFlashing(segment.id),
-                enabled = isSeekable,
-                hits = matches.byTurn[segment.id].orEmpty(),
-                activeHit = activeHit,
+                enabled = decoration.isSeekable,
+                hits = decoration.matches.byTurn[segment.id].orEmpty(),
+                activeHit = decoration.activeHit,
                 onTap = {
-                    onSeek(segment.startMs)
+                    decoration.onSeek(segment.startMs)
                     flash.light(segment.id)
                 },
             )
@@ -890,40 +888,72 @@ private fun stepHit(current: Int, delta: Int, total: Int): Int? {
 }
 
 /**
- * Put a hit on screen: the turn it is in, a third of the way down, animated.
+ * How to scroll to the *n*th turn of the conversation.
  *
- * By turn rather than by character — a `LazyListState` addresses items, and a
- * turn is the smallest thing it can be asked for. That is the right grain
- * anyway: the reader needs the sentence around the word, not the word alone.
+ * The list and the index of its first turn only ever travelled together, because
+ * neither is any use alone: `LazyListState` addresses items, turns are only some
+ * of the items, and the offset between the two numbering schemes is the whole of
+ * what [firstSegmentItemIndex] works out. Naming the pair is what stops the
+ * follow, the chevrons and the list itself each being handed both halves.
  *
- * Silently does nothing for a hit whose segment is not in the list, which cannot
- * happen today (the same filtered list feeds both) but would otherwise be an
- * index arithmetic bug rendered as a scroll to a findings card.
+ * [listState] stays visible because the list is still what `LazyColumn` is given
+ * and what reports drags; it is the arithmetic that is put away.
  */
-private suspend fun LazyListState.scrollToHit(
-    hit: TranscriptSearch.Hit,
-    turnIndexById: Map<String, Int>,
-    firstSegmentItem: Int,
+@Stable
+private class TranscriptScroll(
+    val listState: LazyListState,
+    private val firstSegmentItem: Int,
 ) {
-    val turn = turnIndexById[hit.segmentId] ?: return
-    animateScrollToTurn(firstSegmentItem + turn)
+    /**
+     * Scroll turn [turn] to the upper third of the viewport, animated.
+     *
+     * The one place the anchor is applied, so following the playhead and walking
+     * search hits cannot drift apart about where "here" is on screen.
+     */
+    suspend fun toTurn(turn: Int) {
+        val viewport = listState.layoutInfo.viewportSize.height
+        listState.animateScrollToItem(
+            index = firstSegmentItem + turn,
+            // Negative, so the turn lands a third of the way down rather than
+            // flush against the player.
+            scrollOffset = -(viewport * FOLLOW_ANCHOR).toInt(),
+        )
+    }
+
+    /**
+     * Put a hit on screen: the turn it is in, a third of the way down, animated.
+     *
+     * By turn rather than by character — a `LazyListState` addresses items, and
+     * a turn is the smallest thing it can be asked for. That is the right grain
+     * anyway: the reader needs the sentence around the word, not the word alone.
+     *
+     * Silently does nothing for a hit whose segment is not in the list, which
+     * cannot happen today (the same filtered list feeds both) but would otherwise
+     * be an index arithmetic bug rendered as a scroll to a findings card.
+     */
+    suspend fun toHit(hit: TranscriptSearch.Hit, turnIndexById: Map<String, Int>) {
+        val turn = turnIndexById[hit.segmentId] ?: return
+        toTurn(turn)
+    }
 }
 
 /**
- * Scroll [item] to the upper third of the viewport, animated.
+ * How each turn in the list is drawn, and what a tap on one does.
  *
- * The one place the anchor is applied, so following the playhead and walking
- * search hits cannot drift apart about where "here" is on screen.
+ * Which turn is current, whether taps do anything at all, what the query matched
+ * and which match is the live one are four answers that [TranscriptList] never
+ * reads for itself — it passes every one of them straight through to the turns.
+ * A data class rather than a loose bundle so a render that changed none of them
+ * still lets the list skip.
  */
-private suspend fun LazyListState.animateScrollToTurn(item: Int) {
-    val viewport = layoutInfo.viewportSize.height
-    animateScrollToItem(
-        index = item,
-        // Negative, so the turn lands a third of the way down rather than flush
-        // against the player.
-        scrollOffset = -(viewport * FOLLOW_ANCHOR).toInt(),
-    )
-}
+@Stable
+private data class TurnDecoration(
+    val currentIndex: Int,
+    val isSeekable: Boolean,
+    val matches: TranscriptMatches,
+    val activeHit: TranscriptSearch.Hit?,
+    val onSeek: (Long) -> Unit,
+)
 
 /**
  * One turn of the conversation, and the two gestures on it.
