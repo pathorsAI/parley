@@ -355,6 +355,10 @@ public enum DictationChannel {
             "dictation-down.json", "dictation-up.json",
             "dictation-window.json", "dictation-window-control.json",
             "dictation-ready.json", "dictation-presence.json",
+            // Not a dictation mailbox (see `MeetingControlChannel`), but it is
+            // in the same container and whatever this clear is for — a signed
+            // out account, a reinstall — it is for that file too.
+            "meeting-control.json",
         ] {
             if let url = container?.appendingPathComponent(name) {
                 try? FileManager.default.removeItem(at: url)
@@ -364,18 +368,21 @@ public enum DictationChannel {
 
     // MARK: file plumbing
 
-    private static var container: URL? {
+    // Module-internal rather than private: `MeetingControlChannel` is a mailbox
+    // in the very same App Group container, and there is nothing about reading
+    // and writing a JSON file there that should be written down twice.
+    static var container: URL? {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
     }
 
-    private static func write<T: Encodable>(_ value: T, to name: String) {
+    static func write<T: Encodable>(_ value: T, to name: String) {
         guard let url = container?.appendingPathComponent(name),
             let data = try? JSONEncoder().encode(value)
         else { return }
         try? data.write(to: url, options: .atomic)
     }
 
-    private static func read<T: Decodable>(_ name: String) -> T? {
+    static func read<T: Decodable>(_ name: String) -> T? {
         guard let url = container?.appendingPathComponent(name),
             let data = try? Data(contentsOf: url)
         else { return nil }

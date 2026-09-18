@@ -75,7 +75,10 @@ struct LiveView: View {
             .alert("Before you start recording", isPresented: $showRecordingConsent) {
                 Button("Cancel", role: .cancel) {}
                 Button("Everyone has agreed") {
-                    Task { await recorder.start(token: KeychainStore.get(AppState.tokenKey)) }
+                    Task {
+                        await recorder.start(
+                            token: KeychainStore.get(AppState.tokenKey), app: app)
+                    }
                 }
             } message: {
                 Text("Parley picks up the room through the microphone, sends the audio to your Parley account for live transcription, and syncs the recording and transcript there. Confirm that everyone present has agreed to be recorded.")

@@ -189,8 +189,25 @@ final class KeyboardViewController: UIInputViewController {
     /// The keyboard is going away, which is the end of the user's chance to fix
     /// the words in this field — so it is the moment to learn from whatever they
     /// fixed. See `KeyboardLexiconWatch` for what this can and cannot see.
+    ///
+    /// It is also the moment a running dictation becomes invisible. The live
+    /// transcript above the keys goes with the keyboard, the app keeps
+    /// recording, and until now nothing in the user's hand said so — so a
+    /// session that is still live gets the falling two-beat on the way out. Only
+    /// a live one: dismissing the keyboard is an ordinary, constant action, and
+    /// a buzz every time is how a signal turns into noise and gets ignored.
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        // Before the harvest, not after: the pattern is answering a gesture the
+        // user is making right now, and the first beat is the one that has to
+        // land with it. `bridge.listening` is the keyboard's own mirror of
+        // `DictationChannel.Downlink.State.isLive` — `drainDownlink` sets it for
+        // `starting`, `listening`, `reconnecting` and `finishing` and clears it
+        // for every terminal state — so it is the liveness test rather than a
+        // second flag kept beside it. `reconnecting` is deliberately included:
+        // that session's microphone is open and its audio is being held, which
+        // is precisely the thing the user is walking away from.
+        if hasFullAccess, bridge.listening { Haptics.dictationContinuesInBackground() }
         lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
     }
 
