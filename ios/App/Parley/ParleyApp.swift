@@ -56,6 +56,11 @@ struct ParleyApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
                     AppState.publishKeyboardReadiness()
+                    // A Live Activity can only be *started* from the foreground,
+                    // so a refusal is remembered rather than retried at the rate
+                    // the transcript moves. This is the only event that can make
+                    // the next attempt different.
+                    MicActivityController.shared.appBecameActive()
                     Task { await app.refreshFeatureFlags() }
                     // The line that turns "dead until force-quit" into
                     // "recovers by itself". `UIBackgroundModes` here is `audio`

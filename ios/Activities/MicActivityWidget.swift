@@ -71,14 +71,54 @@ struct MicActivityWidget: Widget {
                     CardButtons(face: face)
                 }
             } compactLeading: {
+                // The dot, and deliberately nothing beside it. The only
+                // question a collapsed island has to answer is the one the card
+                // exists for — is the microphone open, and for what — and the
+                // dot's colour answers both halves. Elapsed time is something
+                // you stop and read, and stopping to read is what the long
+                // press and the lock-screen card are for.
+                //
+                // This region used to be followed by the clock, and that is
+                // what made the compact island about four fifths of the screen
+                // wide on device while it read `0:25`: a `Text(timerInterval:)`
+                // reserves the width of the widest value its range can reach
+                // (see `CardFace.init`), and a compact region hands a timer
+                // more width than its digits need on top of that. Shortening
+                // the ranges fixes the arithmetic, not the shape: a meeting's
+                // range is honestly unbounded, so any clock here would still be
+                // laid out for `8:00:00`. Taking the clock out is the only
+                // version of this that can never widen again, which is the
+                // property the other candidates could not offer.
                 StatusDot(face: face)
             } compactTrailing: {
-                Clock(face: face).font(.caption2.monospacedDigit())
+                // Nothing, and an empty region is a supported answer rather
+                // than a hole: the compact presentation is two slots either
+                // side of the camera, and the system decides what an empty one
+                // is worth — either it collapses or it keeps a minimum padding
+                // around the sensors. Both are the floor. Nothing the widget
+                // can put here makes the island narrower than leaving it out,
+                // which is the whole point: whatever the floor turns out to
+                // measure, this presentation now sits on it and cannot be
+                // pushed off it by a long recording.
+                //
+                // Which side the dot goes on is therefore not a width question,
+                // and it is settled by the other presentations: the dot leads
+                // the row in the expanded island and on the lock screen, so it
+                // leads here too and does not change sides when the island
+                // opens.
+                //
+                // (Reasoned from the layout rules, not measured — there is no
+                // device in this loop. What is unverified is how many points an
+                // empty region keeps, not whether it can grow.)
+                EmptyView()
             } minimal: {
                 // What is left when another app's activity is sharing the
                 // island: the dot alone. It is the smallest thing that still
                 // answers the only question the card exists for — is the
-                // microphone open, and for what.
+                // microphone open, and for what — which is why the compact
+                // presentation above now says exactly as much. Sharing the
+                // island stopped being the only situation in which that is
+                // enough.
                 StatusDot(face: face)
             }
             .keylineTint(face.accent)
@@ -148,6 +188,17 @@ private struct StatusDot: View {
 }
 
 /// Elapsed, or remaining. Never a number this process computed.
+///
+/// **Its width comes from the range, not from the digits.** A
+/// `Text(timerInterval:)` is laid out once, for the widest value its range can
+/// reach, and it does not grow as the number does — so the range a mode is
+/// given in `CardFace.init` is a layout decision as much as a temporal one, and
+/// a clock reading `0:25` can be sized for `8:00:00`. Both places this is drawn
+/// pin it to the right and let it take the width it asks for: the lock screen
+/// puts a `Spacer` before it, and the expanded island's trailing region sizes
+/// itself to its content and gives the rest to the leading one. So a mode with
+/// an honest short range does not leave a hole — it hands the meeting title the
+/// room it was wasting.
 private struct Clock: View {
     let face: CardFace
 
@@ -157,16 +208,12 @@ private struct Clock: View {
             // twitches sideways once a second and takes the title next to it
             // with it. Monospaced ones tick in place.
             .monospacedDigit()
-            // The clock is the right-hand column everywhere it appears, and it
-            // grows a field when a recording passes an hour. Trailing so it
-            // grows leftwards into the gap rather than shoving the row.
-            .multilineTextAlignment(.trailing)
     }
 }
 
 /// The buttons, on the lock screen and in the expanded island only — the
-/// compact and minimal presentations are a few points wide and have room for
-/// exactly the dot and the clock.
+/// compact and minimal presentations are a few points wide and carry the dot
+/// and nothing else.
 ///
 /// **Nothing that destroys recorded audio is on this card, and that is not an
 /// oversight to be helpfully corrected.** Dictation's ✕ throws away a
@@ -311,16 +358,41 @@ private struct CardFace {
             pulses = true
         }
 
-        // Standby is the only mode with an end it knows about, so it is the only
-        // one that counts down. The others count up from `since` towards the
-        // eight hours after which the system takes the card away by itself —
-        // an upper bound that is honest because it is the card's actual
-        // lifetime, rather than a `distantFuture` the formatter has to widen
-        // for.
+        // Each mode gets the tightest end it can actually stand behind, and the
+        // reason is as much layout as honesty: a `Text(timerInterval:)` reserves
+        // the width of the widest value its range can reach the moment it is
+        // laid out, and never narrows again (see `Clock`). A range of eight
+        // hours draws `0:25` in a box sized for `8:00:00`, which is how the
+        // compact island came to take four fifths of the screen.
         if state.mode == .standby, let until = state.until, until > state.since {
+            // The only mode with an end somebody else decided — the window's
+            // own expiry — so the only one that counts down.
             clock = state.since...until
             countsDown = true
+        } else if state.mode == .dictation {
+            // A dictation stops itself: `DictationCoordinator` arms a backstop
+            // at `dictationLimit` for exactly this reason, so the card can name
+            // the session's real ceiling and be laid out as `M:SS`. If the
+            // backstop's stop lands a beat late the clock sits at the cap
+            // instead of running past it, which is the better of the two
+            // failures — the session it is describing is over.
+            clock = state.since...state.since.addingTimeInterval(
+                MicActivityPolicy.dictationLimit)
+            countsDown = false
         } else {
+            // A meeting — and a standby whose `until` did not survive the trip,
+            // which has nothing better to fall back on.
+            //
+            // **A meeting is genuinely unbounded and this is not the bug the
+            // compact island had.** Nothing in the app stops a recording at a
+            // set length, so any tighter end here would be a number the card
+            // cannot keep: the clock would freeze while the microphone was
+            // still open, which is the one lie this card exists to prevent. The
+            // eight hours are not invented either — they are when the system
+            // takes the card away, so they are the card's actual lifetime. A
+            // wide clock is the cost, and there is room for it in the expanded
+            // island and on the lock screen, which are the only two places it
+            // is still drawn.
             clock = state.since...state.since.addingTimeInterval(MicActivityPolicy.systemLimit)
             countsDown = false
         }

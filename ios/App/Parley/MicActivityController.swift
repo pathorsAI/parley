@@ -39,6 +39,15 @@ final class MicActivityController {
     /// `MicActivityState`), and a second card could only ever describe a
     /// situation the app does not allow.
     private var activity: Activity<MicActivityAttributes>?
+    /// `Activity.request` has been refused, and asking again cannot help until
+    /// something outside this object changes.
+    ///
+    /// The only thing that can change it is the app coming to the front — that
+    /// is what the refusal is usually about — so `appBecameActive()` is the one
+    /// place it clears. Not cleared in `end()`: a card that could not start is
+    /// not a card that ended, and clearing there would re-arm the retry on the
+    /// very next word.
+    private var requestRefused = false
     /// What the card is currently carrying, so an unchanged state is not pushed
     /// again.
     ///
@@ -157,6 +166,17 @@ final class MicActivityController {
         // mid-recording should still have the card they already have taken
         // down, and `end()` below is what does that.
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        // The "no retry" this file's comment has always claimed, now actually
+        // enforced. Without it a refused request is retried at the rate `sync()`
+        // is called — and `sync()` is driven from `DictationCoordinator.publish()`,
+        // which fires per settled word. A session served over the no-jump path
+        // starts with the app already in the background, where `Activity.request`
+        // is refused every time, so the failure state was not rare: it was the
+        // normal one for the path this feature was built to serve, and it put a
+        // synchronous ActivityKit round trip on the main actor dozens of times a
+        // minute in a process whose only remaining job was to keep a microphone
+        // and a heartbeat alive.
+        guard !requestRefused else { return }
         do {
             activity = try Activity.request(
                 attributes: MicActivityAttributes(),
@@ -166,10 +186,26 @@ final class MicActivityController {
             cardStartedAt = now
             armRefresh()
         } catch {
+            requestRefused = true
             let mode = state.mode.rawValue
             let why = error.localizedDescription
             log.notice("no \(mode, privacy: .public) card: \(why, privacy: .public)")
         }
+    }
+
+    /// The app is in front again, so a request that was refused for being in the
+    /// background is worth one more attempt.
+    ///
+    /// Called from `ParleyApp`'s `scenePhase` handler rather than from a
+    /// notification observed here, because that is already the one place this
+    /// app collects "we are active again" work, and a second subscriber to the
+    /// same event is a second thing to keep in step.
+    ///
+    /// This does not itself start a card — `sync()` will, on the next thing
+    /// either half has to say. A foregrounding with nothing recording should not
+    /// conjure a card, and `derive` returning nil is what guarantees it cannot.
+    func appBecameActive() {
+        requestRefused = false
     }
 
     /// Push new content.
