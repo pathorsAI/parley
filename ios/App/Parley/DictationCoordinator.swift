@@ -300,7 +300,22 @@ final class DictationCoordinator: ObservableObject {
         state = .starting
         micTaken = false
         active = true
-        leg = 0
+        // Bumped, never reset — the same shape as `captureGeneration`, and for
+        // the same reason. A leg number that restarted at zero every session
+        // made the `eventLeg == leg` guard in `handle(_:from:)` blind to the
+        // only case it could not see: an event from the *previous* session's
+        // first leg, which had the same number as this one's. `finishUp` drops
+        // the relay without cancelling it, so that socket is still alive and
+        // still holding a closure that will publish `.closed` whenever the
+        // relay eventually idles it out — and a backgrounded process runs no
+        // main-actor work until something resumes it, which is the next
+        // `parley://dictate`. So the stale obituary was routinely delivered
+        // *into* the session that had just replaced it, and `handle` read it as
+        // this session's socket dying: `scheduleReconnect()` then cancelled the
+        // new client, which is "Connection failed. Please try again." when it
+        // lands during `start()`, and a pane listening to a socket that no
+        // longer exists when it lands after.
+        leg += 1
         reconnectAttempts = 0
         finishRequested = false
         reconnectTask?.cancel()
@@ -376,7 +391,7 @@ final class DictationCoordinator: ObservableObject {
             }
         }
 
-        let client = makeRelay(token: token, leg: 0, timeOffsetMs: 0)
+        let client = makeRelay(token: token, leg: leg, timeOffsetMs: 0)
         relay = client
         audio.attach(client)
 
@@ -485,11 +500,21 @@ final class DictationCoordinator: ObservableObject {
     /// A relay session cannot be resumed, so a reconnect is a new leg with its
     /// own Soniox session — hence the per-leg id prefix and the offset, which
     /// keep the second leg's segments from overwriting the first's.
+    ///
+    /// Every leg is prefixed, including the first. It used to be
+    /// `leg == 0 ? nil : …`, which was only ever an economy — leg 0 had nothing
+    /// to collide with, so it saved a few bytes per id. That stopped being true
+    /// when `leg` became monotonic across sessions (see `launch`): there is no
+    /// leg 0 any more, and a conditional whose condition can no longer hold is
+    /// worse than no conditional. `runs` is emptied per session and keyed by
+    /// id, `SegmentBuilder` files the tail under `"\(source)-tail"` whatever the
+    /// prefix, and nothing outside this object reads the shape of a dictation
+    /// segment id — so the format is this file's to choose.
     private func makeRelay(token: String, leg: Int, timeOffsetMs: UInt64) -> SttRelayClient {
         SttRelayClient(
             options: .init(
                 bearerToken: token, feature: "voice_typing",
-                idPrefix: leg == 0 ? nil : "mix@\(leg)",
+                idPrefix: "mix@\(leg)",
                 timeOffsetMs: timeOffsetMs)
         ) { [weak self] event in
             Task { @MainActor in self?.handle(event, from: leg) }
@@ -1054,7 +1079,22 @@ final class DictationCoordinator: ObservableObject {
         // care, but a network round trip is not, and the second caller must not
         // start a second one.
         guard active else { return }
+        // Closed, not merely dropped. `finish()` sends the finalize frame and
+        // then deliberately leaves the socket open for the drain — but it also
+        // cancels the keepalive and the liveness watchdog, so once the drain is
+        // in, nothing here is keeping that connection alive and nothing is
+        // killing it either. Every successful dictation used to leave one for
+        // the relay to idle out at its leisure, which is a connection per ⏹ on
+        // an account that may well be metered on them. This was the only ending
+        // that did it: `fail`, `cancel` and `endSessionWithMicTaken` all cancel.
+        //
+        // It does not fix the cross-session leak on its own — `readLoop`'s catch
+        // publishes `.closed` for a deliberate teardown exactly as it does for a
+        // dead peer, so cancelling changes when the stale event is emitted, not
+        // whether. The monotonic `leg` in `launch` is what makes it harmless.
+        let finished = relay
         relay = nil
+        finished?.cancel()
         reconnectTask?.cancel()
         reconnectTask = nil
         audio.discard()
