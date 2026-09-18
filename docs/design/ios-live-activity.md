@@ -74,6 +74,38 @@ So the card is built to be correct without any update at all:
 
 An update is therefore an enrichment, never the thing that keeps the card true.
 
+### A clock's width comes from its range, not from its digits
+
+`Text(timerInterval:)` is laid out once, for the widest value the range can
+reach, and it does not grow as the number does. The first version handed every
+clock the same eight-hour range, so every clock was sized for `8:00:00` — and
+the compact Dynamic Island, which had a clock in its trailing slot, took about
+81% of the screen width to show a dot and `0:25`.
+
+So the range each mode is given is a layout decision as much as a temporal one,
+and each one is now the tightest end the card can actually stand behind:
+
+- `.standby` counts down to the window's real expiry,
+- `.dictation` counts up to `MicActivityPolicy.dictationLimit`, the 120 s cap
+  `DictationCoordinator` already enforces, so the clock is laid out as `M:SS`.
+  The constant moved into ParleyKit for this: the widget extension cannot import
+  the app target, and a copied literal would go stale silently, the only symptom
+  being a clock slightly too wide.
+- `.meeting` keeps the eight hours, because a meeting genuinely has no length
+  the app will impose. A tighter end here would be a number the card cannot
+  keep — the clock would stop while the microphone was still open, which is the
+  lie the whole card exists to prevent. The eight hours are the card's real
+  lifetime, a wide clock is what they cost, and the expanded island and the lock
+  screen have room for it.
+
+**The compact island shows the status dot and nothing else.** The only question
+a collapsed island has to answer is *is the microphone open, and for what*, and
+the dot's colour answers both halves. Elapsed time is something you stop and
+read, and stopping to read is what the long-press expansion and the lock-screen
+card are for. Honest ranges alone would not have settled this — a meeting's
+range is unbounded, so a clock in that slot would still be laid out for
+`8:00:00`. An empty region is the one version that can never widen again.
+
 ### Colour is the dot, and the dot only
 
 The three colours live in one 9pt disc. Every word on the card is a system
@@ -234,14 +266,37 @@ the situation the whole feature is about.
 
 | Event | Before | Now |
 |---|---|---|
-| The microphone opens | one `.medium` | `.medium` → `.heavy`, rising |
-| The keyboard is swiped away mid-session | nothing | `.heavy` → `.light`, falling |
+| The microphone opens, either way | one `.medium` (dictation only) | `.medium` → `.heavy`, rising |
+| A meeting recording stops | **nothing** | `.heavy` → `.medium`, falling to rest |
+| The keyboard is swiped away mid-session | nothing | `.heavy` → `.light`, falling away |
 | The transcript lands in the field | `.success` | unchanged |
-| ✕ discards the session | `.rigid` | unchanged |
+| ✕ discards, either way | `.rigid` (dictation only) | unchanged |
 
 The last two were left alone on purpose. The system's success pattern already
 means what it needs to mean and users recognise it from other apps, and `.rigid`
-is already the most distinguishable of the three endings.
+is already the most distinguishable of the endings.
+
+**A meeting recording had no haptics at either end**, which is how this got
+noticed: the microphone opened with two beats and closed with silence. It now
+shares the dictation vocabulary rather than getting one of its own — a
+microphone opening is one event met in two places, and a rise only reads as a
+rise against a fall the same hand has already felt.
+
+The two falls are the pair worth being careful about, because they are the same
+gesture meaning nearly opposite things. *Stopped* comes to rest — it lands on
+`.medium` after 60 ms, and nothing follows because nothing is still running.
+*Leaving* trails away — `.light` after 130 ms, quieter and later, because
+something is still listening behind it. Weight and timing are the two dimensions
+the hand actually reads, and both are used to separate them.
+
+The start beat fires at `phase == .recording`, not on the press. The Record
+button flips synchronously on the tap — before permission, before the audio
+engine is up — so the screen confirms the tap was heard, not that the room is
+being recorded. A rise for a capture that then failed would be the wrong news.
+
+`Haptics` moved from the keyboard target into ParleyKit to make this possible,
+which is what its own header said to do when the app ever needed it rather than
+copying the file. It is guarded with `#if os(iOS)` for the reason given above.
 
 The rise starts at `.medium` rather than `.light`, which makes a shorter slope
 than it could have. That is the point: `.medium` is exactly what shipped before,

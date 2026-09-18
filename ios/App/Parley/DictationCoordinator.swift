@@ -166,7 +166,13 @@ final class DictationCoordinator: ObservableObject {
     /// Safety cap mirroring the desktop's single-session voice-typing limit: a
     /// session the user forgets to stop can't quietly burn the whole hosted
     /// quota. The backstop stops the mic; the tail still flushes.
-    private let maxSeconds: UInt64 = 120
+    ///
+    /// The number itself is `MicActivityPolicy.dictationLimit` rather than a
+    /// literal here, because the Live Activity needs it as well: its clock is a
+    /// `Text(timerInterval:)`, which reserves the width of the widest value its
+    /// range can reach, so the card has to be told where this session ends or
+    /// it lays out for eight hours. Written up where the constant is.
+    private let maxSeconds: TimeInterval = MicActivityPolicy.dictationLimit
 
     /// Dictation redials faster and gives up sooner than a meeting does:
     /// someone is standing there mid-sentence, and the whole session is capped
@@ -609,7 +615,7 @@ final class DictationCoordinator: ObservableObject {
     private func armCap() {
         let limit = maxSeconds
         capTimer = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(Double(limit)))
+            try? await Task.sleep(for: .seconds(limit))
             guard !Task.isCancelled else { return }
             await self?.stop()
         }

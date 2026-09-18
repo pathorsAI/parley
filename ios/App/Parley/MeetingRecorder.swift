@@ -248,6 +248,11 @@ final class MeetingRecorder: ObservableObject {
         // audio session out from under each other.
         await DictationCoordinator.shared.yieldMicrophone()
         phase = .starting
+        // Warm the haptic engine on the tap, for the beat that answers it a
+        // permission check and an engine start later. Unconditional and
+        // unchecked — a device with haptics off ignores it, and nothing below
+        // waits on it (see `Haptics`).
+        Haptics.prepareForRecording()
         status = String(localized: "Starting…")
         startedAt = Date()
         segments = []
@@ -312,6 +317,11 @@ final class MeetingRecorder: ObservableObject {
 
         capture = cap
         phase = .recording
+        // The microphone is open, which is the first moment that is actually
+        // true: the button flipped on the tap and the timer has been running
+        // since, so a rise fired there would have been a claim about a capture
+        // that could still fail. See `Haptics.recordingStarted`.
+        Haptics.recordingStarted()
 
         guard let client else {
             status = String(localized: "Not signed in — microphone test only")
@@ -329,6 +339,19 @@ final class MeetingRecorder: ObservableObject {
         guard isRecording else { return }
         finishRequested = true
         phase = .finishing
+        // Here rather than after the awaits below: closing the microphone,
+        // draining the relay and uploading are seconds of work, and a beat that
+        // waited for them would be answering a later question than the one that
+        // was asked.
+        //
+        // Fired and forgotten, which is load-bearing nowhere and matters most
+        // at the second door into this method: the Live Activity's ⏹ on a
+        // locked screen runs in a backgrounded process, and iOS drops haptics
+        // from one, so that path plays nothing at all. That is the same rule
+        // `Haptics` already documents for the keyboard extension without Full
+        // Access, and it is not worked around — a recording that stopped in
+        // silence still stopped, and the card is what said so.
+        Haptics.recordingStopped()
         reconnectTask?.cancel()
         reconnectTask = nil
 
@@ -358,6 +381,12 @@ final class MeetingRecorder: ObservableObject {
         guard isRecording else { return }
         finishRequested = true
         phase = .finishing
+        // A third outcome gets the third beat, exactly as dictation's ✕ does —
+        // and it is that same beat, because throwing something away is one
+        // meaning (see `Haptics.recordingDiscarded`). Never from the lock
+        // screen: the card has no Discard, by design, because nothing that
+        // deletes recorded audio is reachable from a locked phone.
+        Haptics.recordingDiscarded()
         reconnectTask?.cancel()
         reconnectTask = nil
 

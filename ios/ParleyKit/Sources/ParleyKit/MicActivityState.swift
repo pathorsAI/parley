@@ -142,6 +142,22 @@ public enum MicActivityPolicy {
     /// pretending there is one to update.
     public static let systemLimit: TimeInterval = 8 * 3600
 
+    /// How long one dictation session may run before `DictationCoordinator`
+    /// stops the microphone itself — the safety cap that keeps a session
+    /// somebody forgot about from burning the hosted quota.
+    ///
+    /// **It lives here, rather than in the coordinator that enforces it,
+    /// because the widget has to know it too.** A `Text(timerInterval:)`
+    /// reserves the width of the *widest* value its range can reach, up front,
+    /// so the range handed to a dictation clock is what decides whether the
+    /// card lays out for `2:00` or for `8:00:00`. The widget extension cannot
+    /// import the app target, and a second literal `120` in
+    /// `MicActivityWidget.swift` would go stale the first time this number is
+    /// tuned — silently, since the only symptom is a clock a little too wide.
+    /// So the coordinator reads it from here and the card's range is derived
+    /// from the same constant.
+    public static let dictationLimit: TimeInterval = 120
+
     /// The stale horizon for a content update published at `now`. `nil` when
     /// `staleAfter` is — meaning "make no claim", not "stale immediately".
     public static func staleDate(at now: Date = Date()) -> Date? {
