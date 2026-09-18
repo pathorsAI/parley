@@ -83,6 +83,34 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.15
+
+The microphone now says so on the Lock Screen.
+
+Start a meeting and a card appears on the Lock Screen and in the Dynamic
+Island, with the elapsed time running and a Stop button on it. Lock the phone,
+put it face down, switch to another app — the recording is still visible, and
+still stoppable, without unlocking. Recording no longer means trusting a small
+orange dot and your memory.
+
+The same card covers voice typing. Swipe the keyboard away mid-sentence and
+Parley is still listening, which until now was something you could only find
+out by bringing the keyboard back. Now it moves to the Dynamic Island, with
+Finish and Discard right there.
+
+It also covers the quiet state that was hardest to explain: when you have
+asked Parley to keep the microphone ready between dictations, the card says
+the microphone is open, says plainly that nothing is being recorded, counts
+down how long is left, and lets you end it in one tap.
+
+Nothing from the meeting appears on the card. A Lock Screen is a public
+surface, and what is said in the room stays inside the app.
+
+And you can feel it now. Opening the microphone is a rising two-beat rather
+than a single tap that got lost against the keyclick, and swiping the keyboard
+away while a dictation is still running has its own falling one — so you know
+the microphone stayed behind without looking.
+
 ## What's New — 1.14
 
 Everything here is a fix, and most of it is something 1.13 got wrong.
