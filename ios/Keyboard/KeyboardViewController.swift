@@ -127,38 +127,65 @@ final class KeyboardViewController: UIInputViewController {
         height.isActive = true
         heightConstraint = height
 
+        armChannelObservers()
+    }
+
+    /// Subscribe to the four notes the app sends, once Full Access allows it.
+    ///
+    /// Called from `viewDidLoad` *and* from every `viewWillAppear`, because
+    /// `hasFullAccess` is not a fact about the installation — it is a fact about
+    /// this process at this moment, which is why `viewWillAppear` already
+    /// re-reads it into the bridge. Arming only in `viewDidLoad` made this file
+    /// contradict itself: the same value was trusted forever in one place and
+    /// distrusted every appearance in the other.
+    ///
+    /// The window where that mattered is not a corner case, it is the main path.
+    /// iOS kills this extension almost every time the user bounces to the app
+    /// (see `drainDownlink`), so the *second* dictation of a session is always
+    /// served by a freshly loaded keyboard whose `viewDidLoad` ran during an app
+    /// switch. A keyboard that read `false` there kept a working-looking voice
+    /// pane — the taps still mint sessions — while hearing no downlink, no
+    /// window, no readiness and no presence, so the transcript only moved on the
+    /// next appearance and ⏹ looked like it did nothing for up to the liveness
+    /// watchdog's ~25 s.
+    ///
+    /// Idempotent on `down`: the four are armed and dropped together, so one of
+    /// them being present means all of them are.
+    private func armChannelObservers() {
+        guard hasFullAccess, down == nil else { return }
         // The app fires this when the transcript grows; we also drain on every
         // appearance in case the keyboard was suspended through the notification.
-        if hasFullAccess {
-            down = DarwinObserver(DictationChannel.downNote) { [weak self] in
-                DispatchQueue.main.async { self?.drainDownlink() }
-            }
-            // The app heartbeats an open window, so this note is also what
-            // ticks the chip's countdown down — the extension runs no timer of
-            // its own for it.
-            windowNote = DarwinObserver(DictationChannel.windowNote) { [weak self] in
-                DispatchQueue.main.async { self?.readWindow() }
-            }
-            // Rare compared to the others — signing in and answering the
-            // microphone prompt happen once — but it is the note that turns a
-            // "set up voice typing" pane into a working one without the user
-            // having to dismiss the keyboard and bring it back.
-            readyNote = DarwinObserver(DictationChannel.readyNote) { [weak self] in
-                DispatchQueue.main.async { self?.readReadiness() }
-            }
-            // Every ten seconds while the app is awake, and once more on its
-            // way out. It is what flips the record button between "speak
-            // here" and "this opens Parley", and what keeps a live session's
-            // watchdog from firing while the user is merely pausing.
-            presenceNote = DarwinObserver(DictationChannel.presenceNote) { [weak self] in
-                DispatchQueue.main.async { self?.readPresence() }
-            }
+        down = DarwinObserver(DictationChannel.downNote) { [weak self] in
+            DispatchQueue.main.async { self?.drainDownlink() }
+        }
+        // The app heartbeats an open window, so this note is also what
+        // ticks the chip's countdown down — the extension runs no timer of
+        // its own for it.
+        windowNote = DarwinObserver(DictationChannel.windowNote) { [weak self] in
+            DispatchQueue.main.async { self?.readWindow() }
+        }
+        // Rare compared to the others — signing in and answering the
+        // microphone prompt happen once — but it is the note that turns a
+        // "set up voice typing" pane into a working one without the user
+        // having to dismiss the keyboard and bring it back.
+        readyNote = DarwinObserver(DictationChannel.readyNote) { [weak self] in
+            DispatchQueue.main.async { self?.readReadiness() }
+        }
+        // Every ten seconds while the app is awake, and once more on its
+        // way out. It is what flips the record button between "speak
+        // here" and "this opens Parley", and what keeps a live session's
+        // watchdog from firing while the user is merely pausing.
+        presenceNote = DarwinObserver(DictationChannel.presenceNote) { [weak self] in
+            DispatchQueue.main.async { self?.readPresence() }
         }
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         bridge.hasFullAccess = hasFullAccess
+        // And act on it, rather than only displaying it. See there for why
+        // `viewDidLoad` alone was the wrong place to decide this once.
+        armChannelObservers()
         // Re-read every time: the user can add or remove keyboards while ours
         // is loaded, and that flips whether the system draws the globe for us.
         bridge.showsGlobe = needsInputModeSwitchKey
