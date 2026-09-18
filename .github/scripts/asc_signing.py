@@ -53,6 +53,18 @@ BASE = "https://api.appstoreconnect.apple.com"
 TEAM_ID = "SXHVCQXJHZ"
 APP_BUNDLE = "com.pathors.parley.ios"
 KEYBOARD_BUNDLE = "com.pathors.parley.ios.keyboard"
+# The widget extension that draws the microphone Live Activity, embedded in the
+# app since 1.15. A third bundle id is a third profile, and an embedded
+# extension without one does not fail politely: the archive gets as far as
+# signing and then reports `No profiles for '…' were found`, twenty minutes into
+# a run, about a target the person who added it was not thinking about.
+ACTIVITIES_BUNDLE = "com.pathors.parley.ios.activities"
+
+# Every target that ships inside the .ipa. Anything embedded in the app needs a
+# profile of its own, so adding a target means adding it here — there is nothing
+# that derives this from `project.yml`, and nothing that notices the omission
+# until Apple does.
+SIGNED_BUNDLES = (APP_BUNDLE, KEYBOARD_BUNDLE, ACTIVITIES_BUNDLE)
 
 # Everything this run creates is named with this prefix, so a human reading the
 # developer portal can tell where it came from and cleanup can sanity check that
@@ -272,7 +284,7 @@ def install() -> None:
         for b in api("GET", "/v1/bundleIds?limit=200")["data"]
     }
 
-    for bundle in (APP_BUNDLE, KEYBOARD_BUNDLE):
+    for bundle in SIGNED_BUNDLES:
         bundle_id = registered.get(bundle)
         if not bundle_id:
             raise SystemExit(
@@ -386,17 +398,20 @@ def install() -> None:
             fh.write(f"keychain={KEYCHAIN}\n")
             fh.write(f"app_profile={profiles[APP_BUNDLE]}\n")
             fh.write(f"keyboard_profile={profiles[KEYBOARD_BUNDLE]}\n")
+            fh.write(f"activities_profile={profiles[ACTIVITIES_BUNDLE]}\n")
             fh.write(f"app_profile_uuid={uuids[APP_BUNDLE]}\n")
             fh.write(f"keyboard_profile_uuid={uuids[KEYBOARD_BUNDLE]}\n")
+            fh.write(f"activities_profile_uuid={uuids[ACTIVITIES_BUNDLE]}\n")
 
 
 def write_signing_xcconfig(profiles: dict[str, str]) -> None:
     """Write the xcconfig the archive signs with.
 
-    Two bundle ids need two different profiles, and a build setting given on the
-    xcodebuild command line applies to *every* target at once — so
-    `PROVISIONING_PROFILE_SPECIFIER=…` would hand the app's profile to the
-    keyboard extension as well and the archive would fail on a mismatch.
+    Each bundle id needs its own profile — three of them since the Live Activity
+    widget joined the app and the keyboard — and a build setting given on the
+    xcodebuild command line applies to *every* target at once, so
+    `PROVISIONING_PROFILE_SPECIFIER=…` would hand the app's profile to both
+    extensions as well and the archive would fail on a mismatch.
 
     The way out is that `PRODUCT_BUNDLE_IDENTIFIER` is already per-target, so it
     can name the setting to read: `:identifier` rewrites

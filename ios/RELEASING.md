@@ -11,7 +11,8 @@ phone calls or other apps' audio.
 
 Already configured for the Pathors Apple team (`SXHVCQXJHZ`):
 
-- Bundle IDs: `com.pathors.parley.ios`, `com.pathors.parley.ios.keyboard`
+- Bundle IDs: `com.pathors.parley.ios`, `com.pathors.parley.ios.keyboard`,
+  `com.pathors.parley.ios.activities` (the Live Activity widget, since 1.15)
 - App Group: `group.com.pathors.parley.ios` (the app ↔ keyboard transcript handoff)
 - App Store Connect app: `Parley` (`6795031201`)
 - Sign in with Apple capability and hosted Better Auth Apple provider
@@ -79,14 +80,15 @@ The archive is given a generated `.xcconfig`; the export is given a generated
 the API key, so **no step can create a certificate or a profile**, and a signing
 setup that has drifted fails at once instead of silently repairing itself.
 
-Two bundle ids need two different profiles, and a build setting passed on the
+Each bundle id needs its own profile, and a build setting passed on the
 `xcodebuild` command line applies to every target at once — a single
-`PROVISIONING_PROFILE_SPECIFIER=` would give the keyboard extension the app's
-profile. The generated xcconfig looks the profile up per target instead:
+`PROVISIONING_PROFILE_SPECIFIER=` would give the extensions the app's profile.
+The generated xcconfig looks the profile up per target instead:
 
 ```
-PARLEY_CI_PROFILE_com_pathors_parley_ios          = parley-ci com.pathors.parley.ios
-PARLEY_CI_PROFILE_com_pathors_parley_ios_keyboard = parley-ci com.pathors.parley.ios.keyboard
+PARLEY_CI_PROFILE_com_pathors_parley_ios            = parley-ci com.pathors.parley.ios
+PARLEY_CI_PROFILE_com_pathors_parley_ios_keyboard   = parley-ci com.pathors.parley.ios.keyboard
+PARLEY_CI_PROFILE_com_pathors_parley_ios_activities = parley-ci com.pathors.parley.ios.activities
 
 CODE_SIGN_STYLE = Manual
 CODE_SIGN_IDENTITY = Apple Distribution
@@ -95,6 +97,13 @@ PROVISIONING_PROFILE_SPECIFIER = $(PARLEY_CI_PROFILE_$(PRODUCT_BUNDLE_IDENTIFIER
 
 `PRODUCT_BUNDLE_IDENTIFIER` is per-target and `:identifier` rewrites its dots to
 underscores, so each target resolves the indirection to its own profile.
+
+**Adding an embedded target means adding its bundle id to `SIGNED_BUNDLES` in
+`asc_signing.py`, and registering that id on the developer portal first.**
+Nothing derives that list from `project.yml`. An embedded extension with no
+profile does not fail politely: the run gets twenty minutes in and then reports
+`No profiles for '…' were found`, naming a target whoever reads the log was not
+thinking about. The Live Activity widget added the third one in 1.15.
 
 It has to be an xcconfig rather than command-line settings for a second reason:
 `project.yml` commits `CODE_SIGN_STYLE: Automatic` as a *target* setting — which
@@ -212,7 +221,7 @@ keychain. That is how 1.0 through 1.3 actually shipped.
 not seen. `xcodegen generate` writes `App/Parley/Info.plist` from
 `App/project.yml`, so bump it in **`project.yml`** — editing the plist alone is
 overwritten on the next generate — and commit the regenerated plist with it.
-Both targets carry the number and both must move together. To re-upload without
+All three targets carry the number and they must move together. To re-upload without
 a commit, run the workflow manually with the `build_number` input.
 
 **Building by hand is still a first-class path**, and it is how 1.0 through 1.3
