@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Input-method metadata for the Parley voice keyboard. The service points at this
+  file through <meta-data android:name="android.view.im"> in AndroidManifest.xml;
+  without it the system refuses to list the keyboard at all.
+
+  One subtype, in `keyboard` mode rather than `voice`. A `voice` subtype fills the
+  system's separate "voice input" slot, which is not what this is: Parley is a
+  keyboard the user switches to and stays in, and it has real keys (backspace,
+  return) alongside the mic.
+
+  `settingsActivity` gives the keyboard's row in system settings a way into the
+  app, which is where the microphone permission has to be granted — an IME cannot
+  ask for it itself (see voicetyping/VoiceTypingSetup.kt).
+-->
+<input-method xmlns:android="http://schemas.android.com/apk/res/android"
+    android:settingsActivity="com.pathors.parley.MainActivity"
+    android:supportsSwitchingToNextInputMethod="true">
+    <subtype
+        android:label="@string/voice_typing_subtype"
+        android:imeSubtypeMode="keyboard"
+        android:isAsciiCapable="false" />
+</input-method>
