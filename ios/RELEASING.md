@@ -295,7 +295,7 @@ the App Store Connect API and does six things, then optionally a seventh:
 | Step | What it does |
 | --- | --- |
 | 1 | resolves the app by bundle id |
-| 2 | finds or creates the App Store version, refusing one Apple has taken out of our hands |
+| 2 | finds or creates the App Store version — or renames the one already waiting, when asked to — refusing one Apple has taken out of our hands |
 | 3 | attaches the TestFlight build, waiting up to 30 minutes if it is still processing |
 | 4 | sets **What's New** in both locales from `AppStore/metadata/*.md` |
 | 5 | replaces the **6.9-inch screenshot set** in both locales from `AppStore/screenshots/` |
@@ -327,19 +327,20 @@ not a script you can run: **there is no local path**, because the key exists
 nowhere outside GitHub. It is also why the unit tests
 ([`test_asc_submit.py`](../.github/scripts/test_asc_submit.py)) run in this
 workflow rather than in `ci.yml`, which ignores `ios/**` entirely — they need no
-network and no secrets, and they cover the three failures a dry run cannot
-reveal: the What's New parser reading the wrong version's section, screenshots
-uploading in an order nobody chose, and a version already in review being
-patched instead of refused.
+network and no secrets, and they cover the failures a dry run cannot reveal: the
+What's New parser reading the wrong version's section, screenshots uploading in
+an order nobody chose, a version already in review being patched instead of
+refused, and every branch of the rename described below.
 
 **What it will not do, and what that leaves you.** The script sets `whatsNew` and
 nothing else on the localization unless it is given `--sync-metadata`, which the
 workflow deliberately does not pass. Description, keywords, and promotional text
 are the copy people argue about; they are reviewed in Connect against the
-rendered page, not pushed blind from a Markdown table. Also still manual: the
-**App Privacy** label, **pricing and availability**, and **App Review
-Information** with the reviewer account — see
-[`AppStore/README.md`](AppStore/README.md).
+rendered page, not pushed blind from a Markdown table. It will not rename an
+existing version unless `rename_editable_version` says so, and if two versions
+are somehow editable it refuses rather than picks. Also still manual: the **App
+Privacy** label, **pricing and availability**, and **App Review Information**
+with the reviewer account — see [`AppStore/README.md`](AppStore/README.md).
 
 **Order matters.** The build has to be in TestFlight and finished processing
 before there is anything to attach, so this runs after `ios-release.yml`, not
@@ -354,6 +355,49 @@ either is missing — a version must never go to review carrying the previous
 release's notes. It un-wraps the Markdown (one line per paragraph, blank lines
 kept, and no space inserted where two Chinese lines were joined), so the files
 stay wrapped for reading in a diff.
+
+### One pending version at a time
+
+App Store Connect allows exactly **one** version in an editable state
+(`PREPARE_FOR_SUBMISSION`, `DEVELOPER_REJECTED`, `REJECTED`,
+`METADATA_REJECTED`, `INVALID_BINARY`). So if a version was prepared and never
+submitted — 1.14 sat there while the store stayed on 1.13 — the next release
+cannot be created at all, and step 2 fails like this:
+
+```
+2. App Store version 1.15
+  no 1.15 yet — creating it, releaseType AFTER_APPROVAL
+POST https://api.appstoreconnect.apple.com/v1/appStoreVersions → 409
+  [409 ENTITY_ERROR.RELATIONSHIP.INVALID] The provided entity includes a relationship with an invalid value
+      You cannot create a new version of the App in the current state.
+      source: {'pointer': '/data/relationships/app'}
+```
+
+**That pointer is a red herring.** `/data/relationships/app` reads as "the app id
+is wrong"; the app id is fine, and the version actually in the way is not named
+anywhere in Apple's response. The script now recognises this one 409 and re-raises
+it with the pending version's number, id and state, plus Apple's original text
+underneath — but the message above is what the run that predates the fix left in
+the log, which is why it is quoted here in full.
+
+The fix a human performs in the Connect web form is one field: change the waiting
+version's number from 1.14 to 1.15 and carry on. `rename_editable_version` is
+that field, and it exists because the API key is a GitHub secret — there is no
+machine outside CI that can change it:
+
+```bash
+# 1.15 does not exist and 1.14 is sitting in PREPARE_FOR_SUBMISSION:
+# rename 1.14 to 1.15 and prepare it as this release
+gh workflow run "iOS store submission" -f version=1.15 -f build=27 \
+  -f rename_editable_version=true -f dry_run=true
+```
+
+It is off by default and only ever acts when the requested version does not exist
+yet — a version that is already there is found, not renamed. If nothing is
+editable it creates the version as usual. If *two* versions are editable it stops
+and lists them, because picking one could rename a version somebody else is
+preparing and then submit it. Release notes still come from
+`## What's New — 1.15`, so write them under the number you are renaming **to**.
 
 ## Before submission
 

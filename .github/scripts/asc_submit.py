@@ -17,13 +17,22 @@ is no local path — see `.github/workflows/ios-store-submit.yml`, which is a
 The steps, in order, each printed as its own `::group::`:
 
   1. resolve the app by bundle id
-  2. find or create the App Store version, and refuse to edit one Apple has
-     taken out of our hands
+  2. find or create the App Store version — or, when asked, rename the one
+     already waiting — and refuse to edit one Apple has taken out of our hands
   3. attach the TestFlight build, waiting for it to finish processing
   4. set What's New per locale from ios/AppStore/metadata/*.md
   5. replace the 6.9-inch screenshot set per locale from ios/AppStore/screenshots/
   6. declare export compliance on the build
   7. create a review submission and submit it — skipped by `--dry-run`
+
+Step 2 has one exception worth knowing about before you need it. App Store
+Connect allows exactly one version in an editable state at a time, so a release
+cut while the previous one is still sitting unsubmitted cannot be created at all
+— the POST comes back 409 pointing at the app relationship, which is not where
+the problem is. `--rename-editable-version` renames that waiting version instead
+of creating a new one, which is the single field a human would have changed in
+the web form. It is off by default: "submit 1.15" does not normally mean "take
+whatever is in Connect and call it 1.15".
 
 `--dry-run` is the workflow's default and stops before step 7 only. Everything
 before it is idempotent: re-running re-attaches the same build, overwrites the
@@ -86,6 +95,14 @@ EDITABLE_STATES = {
     "INVALID_BINARY",
 }
 
+# The sentence Apple buries in the 409 for POST /appStoreVersions when a version
+# is already sitting in an editable state. Matched on the detail rather than on
+# the code, which is the catch-all ENTITY_ERROR.RELATIONSHIP.INVALID and means
+# nothing on its own — a bad app id produces the same code.
+VERSION_ALREADY_PENDING = (
+    "You cannot create a new version of the App in the current state"
+)
+
 # Apple's limit on the What's New field. Hitting it is a rejection at PATCH time
 # with a message about `whatsNew`, which is clear enough, but saying it here names
 # the file the text came from.
@@ -116,12 +133,14 @@ class ApiError(SystemExit):
 
     def __init__(self, method: str, url: str, response: requests.Response) -> None:
         lines = [f"{method} {url} → {response.status_code}"]
+        details: list[str] = []
         try:
             for error in response.json().get("errors", []):
                 lines.append(
                     f"  [{error.get('status')} {error.get('code')}] {error.get('title')}"
                 )
                 if error.get("detail"):
+                    details.append(error["detail"])
                     lines.append(f"      {error['detail']}")
                 if error.get("source"):
                     lines.append(f"      source: {error['source']}")
@@ -129,6 +148,14 @@ class ApiError(SystemExit):
             pass
         lines.append("  response body:")
         lines.append(textwrap.indent(response.text[:4000] or "(empty)", "    "))
+        # The `detail` sentences, kept apart from the message so a caller can
+        # recognise one particular failure and say something more useful about
+        # it without grepping the blob above — resolve_version does that for the
+        # one that means "a version is already pending". Not the status code:
+        # Apple sends 409 for half a dozen unrelated things, and the sentence is
+        # the only part that identifies which. Everything unrecognised still
+        # travels as this error, verbatim.
+        self.details = details
         super().__init__("\n".join(lines))
 
 
@@ -461,10 +488,132 @@ def resolve_app(connect: Connect) -> dict:
     return app
 
 
-def resolve_version(
+def editable_versions(connect: Connect, app_id: str) -> list[dict]:
+    """Every version of this app that Connect would still let us edit.
+
+    Filtered here rather than by the API: a `filter[…State]` would have to name
+    either `appStoreState`, which Apple deprecated, or `appVersionState`, which
+    replaced it — betting on one is exactly what `state_of` exists to avoid. No
+    `limit` either, for the reason `localizations` gives: Parley has fewer than
+    twenty versions in its entire history, so Apple's default page of 50 holds
+    all of them.
+    """
+    versions = connect.api(
+        "GET",
+        f"/apps/{app_id}/appStoreVersions",
+        params={"filter[platform]": PLATFORM},
+    )["data"]
+    return [version for version in versions if state_of(version) in EDITABLE_STATES]
+
+
+def rename_editable_version(
     connect: Connect, app_id: str, version_string: str, release_type: str
+) -> dict | None:
+    """Rename the version already waiting in Connect to `version_string`.
+
+    Connect allows one version in an editable state at a time, so a release cut
+    while the previous one sits unsubmitted cannot be created — see
+    `VERSION_ALREADY_PENDING`. The fix a human performs is one field: the version
+    number on the version that is already there. This is that field and nothing
+    else; the listing, the build, and the submission remain steps 3–7's work.
+
+    Returns None when there is nothing to rename, which leaves the caller's
+    create path exactly as it was — that is the ordinary case, and creating is
+    the right thing to do in it.
+    """
+    candidates = editable_versions(connect, app_id)
+    if not candidates:
+        return None
+
+    if len(candidates) > 1:
+        listed = "\n".join(
+            f"    {candidate['attributes'].get('versionString', '?')}  "
+            f"{candidate['id']}  {state_of(candidate)}"
+            for candidate in candidates
+        )
+        raise Stop(
+            f"{len(candidates)} versions are in an editable state, so there is no "
+            f"single one to rename to {version_string}:\n"
+            f"{listed}\n"
+            "  App Store Connect is not supposed to allow this. Picking one here "
+            "could rename a version somebody else is preparing and then submit "
+            "it, so this stops instead: leave exactly one editable version in "
+            "Connect and re-run."
+        )
+
+    version = candidates[0]
+    previous = version["attributes"].get("versionString", "(unknown)")
+    print(
+        f"  no {version_string} yet, but {previous} is waiting in "
+        f"{state_of(version)} — renaming it: {previous} → {version_string} "
+        f"(version {version['id']})"
+    )
+    # One PATCH carrying both attributes rather than a rename followed by the
+    # found path's releaseType PATCH: this version is by definition the one this
+    # run is submitting, so the releaseType the dispatch asked for is the one it
+    # should carry, and Apple takes both in the same request. The found path
+    # keeps its own conditional PATCH — there, a version that already reads right
+    # should not be written to at all.
+    return connect.api(
+        "PATCH",
+        f"/appStoreVersions/{version['id']}",
+        {
+            "data": {
+                "type": "appStoreVersions",
+                "id": version["id"],
+                "attributes": {
+                    "versionString": version_string,
+                    "releaseType": release_type,
+                },
+            }
+        },
+    )["data"]
+
+
+def pending_version_stop(
+    connect: Connect, app_id: str, version_string: str, error: ApiError
+) -> Stop:
+    """Say what Apple's 409 on POST /appStoreVersions actually means.
+
+    Apple's error carries `source: /data/relationships/app`, so it reads as "the
+    app id is wrong". The app id is fine; the version standing in the way is not
+    mentioned anywhere in the response. Reading it the way it is written cost an
+    afternoon on 1.15. Apple's own text is kept at the bottom, so the sentence
+    somebody pastes into a search still appears in the log.
+    """
+    pending = editable_versions(connect, app_id)
+    described = "\n".join(
+        f"    {version['attributes'].get('versionString', '?')}  "
+        f"{version['id']}  {state_of(version)}"
+        for version in pending
+    ) or "    (the API now lists none, which should not be possible here)"
+    return Stop(
+        f"App Store Connect will not create {version_string}: this app already "
+        "has a version in an editable state, and Connect allows exactly one at a "
+        "time.\n"
+        f"{described}\n"
+        "  That version was prepared and never submitted. Either submit or delete "
+        "it in App Store Connect, or re-run this workflow with "
+        "rename_editable_version=true (--rename-editable-version), which renames "
+        f"it to {version_string} and submits it as this release.\n"
+        "  Apple's own words — its `source` pointer at /data/relationships/app is "
+        "not where the problem is:\n"
+        f"{textwrap.indent(str(error), '    ')}"
+    )
+
+
+def resolve_version(
+    connect: Connect,
+    app_id: str,
+    version_string: str,
+    release_type: str,
+    allow_rename: bool = False,
 ) -> dict:
-    """The App Store version to submit — found if it exists, created if not."""
+    """The App Store version to submit — found if it exists, renamed or created.
+
+    `allow_rename` only ever applies when `version_string` is not in Connect at
+    all: with it off, this behaves exactly as it always has, 409 included.
+    """
     existing = connect.api(
         "GET",
         f"/apps/{app_id}/appStoreVersions",
@@ -506,22 +655,35 @@ def resolve_version(
             )["data"]
         return version
 
+    if allow_rename:
+        renamed = rename_editable_version(
+            connect, app_id, version_string, release_type
+        )
+        if renamed is not None:
+            print(f"  renamed {renamed['id']}  state {state_of(renamed)}")
+            return renamed
+
     print(f"  no {version_string} yet — creating it, releaseType {release_type}")
-    created = connect.api(
-        "POST",
-        "/appStoreVersions",
-        {
-            "data": {
-                "type": "appStoreVersions",
-                "attributes": {
-                    "platform": PLATFORM,
-                    "versionString": version_string,
-                    "releaseType": release_type,
-                },
-                "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
-            }
-        },
-    )["data"]
+    try:
+        created = connect.api(
+            "POST",
+            "/appStoreVersions",
+            {
+                "data": {
+                    "type": "appStoreVersions",
+                    "attributes": {
+                        "platform": PLATFORM,
+                        "versionString": version_string,
+                        "releaseType": release_type,
+                    },
+                    "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
+                }
+            },
+        )["data"]
+    except ApiError as error:
+        if not any(VERSION_ALREADY_PENDING in detail for detail in error.details):
+            raise
+        raise pending_version_stop(connect, app_id, version_string, error) from error
     print(f"  created {created['id']}  state {state_of(created)}")
     return created
 
@@ -940,6 +1102,16 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--rename-editable-version",
+        action="store_true",
+        help=(
+            "if this version does not exist yet, rename the version already "
+            "waiting in Connect instead of creating a new one (off by default: "
+            "Connect allows one pending version at a time, and renaming one "
+            "somebody prepared is not what submitting normally means)"
+        ),
+    )
+    parser.add_argument(
         "--repo-root",
         type=Path,
         default=Path(__file__).resolve().parents[2],
@@ -951,17 +1123,18 @@ def main(argv: list[str] | None = None) -> int:
     screenshot_root = args.repo_root / "ios" / "AppStore" / "screenshots"
 
     print(f"Parley iOS — submitting {args.version} (build {args.build})")
-    print(f"  release type : {args.release_type}")
-    print(f"  sync metadata: {args.sync_metadata}")
+    print(f"  release type  : {args.release_type}")
+    print(f"  sync metadata : {args.sync_metadata}")
+    print(f"  rename pending: {args.rename_editable_version}")
     if args.dry_run:
         print(
-            "  DRY RUN      : yes — the listing will be updated and the build "
+            "  DRY RUN       : yes — the listing will be updated and the build "
             "attached, but\n"
-            "                 no review submission will be created or sent."
+            "                  no review submission will be created or sent."
         )
     else:
         print(
-            f"  DRY RUN      : no — this run will submit {args.version} to "
+            f"  DRY RUN       : no — this run will submit {args.version} to "
             "App Review."
         )
     print()
@@ -981,7 +1154,13 @@ def main(argv: list[str] | None = None) -> int:
     endgroup()
 
     group(f"2. App Store version {args.version}")
-    version = resolve_version(connect, app["id"], args.version, args.release_type)
+    version = resolve_version(
+        connect,
+        app["id"],
+        args.version,
+        args.release_type,
+        allow_rename=args.rename_editable_version,
+    )
     summary["version id"] = f"{version['id']} ({state_of(version)})"
     endgroup()
 
