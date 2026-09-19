@@ -15,11 +15,21 @@ upload in the order a human numbered them, or that a version already in review i
 refused rather than patched. Those three are exactly the failures that arrive as
 a wrong product page rather than as an error, so they are tested against fixtures
 and a fake client with no network anywhere.
+
+`--rename-editable-version` is here for the opposite reason: a dry run cannot
+reach it at all without an App Store Connect that happens to be in the one state
+it exists for. Its decisions — rename the single waiting version, refuse to pick
+between two, create when there is nothing to rename, and stay out of the way when
+it is off — are decided entirely from the version list, so they are decided here
+too, against the same fake client.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
+import json
 import sys
 import tempfile
 import unittest
@@ -248,7 +258,13 @@ class FakeConnect:
         queue = self.responses.get((method, path))
         if not queue:
             raise AssertionError(f"unscripted call: {method} {path} {params or ''}")
-        return queue[0] if len(queue) == 1 else queue.pop(0)
+        answer = queue[0] if len(queue) == 1 else queue.pop(0)
+        # A scripted exception is a call Apple refuses. `BaseException` rather
+        # than `Exception` on purpose: ApiError and Stop are both SystemExit,
+        # which does not descend from Exception.
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
 
     def upload(self, operation, blob):
         self.uploads.append((operation, blob))
@@ -257,17 +273,53 @@ class FakeConnect:
         return any(call.method == method and call.path == path for call in self.calls)
 
 
-def version_payload(identifier: str, state: str, release_type: str = "AFTER_APPROVAL"):
+def version_payload(
+    identifier: str,
+    state: str,
+    release_type: str = "AFTER_APPROVAL",
+    version_string: str = "1.12",
+):
     return {
         "id": identifier,
         "type": "appStoreVersions",
         "attributes": {
-            "versionString": "1.12",
+            "versionString": version_string,
             "platform": "IOS",
             "appVersionState": state,
             "releaseType": release_type,
         },
     }
+
+
+def conflict_409(detail: str) -> submit.ApiError:
+    """Apple's 409 on POST /appStoreVersions, without a socket.
+
+    ApiError reads exactly three things off a response — the status, the parsed
+    `errors[]`, and the raw text — so a stand-in carrying those three is the
+    whole of it, and this file keeps the no-network property that lets it run in
+    the submit workflow. The `source` pointer is the real one: Apple blames the
+    app relationship for a problem that is not there.
+    """
+    body = {
+        "errors": [
+            {
+                "id": "00000000-0000-0000-0000-000000000000",
+                "status": "409",
+                "code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
+                "title": "The provided entity includes a relationship with an "
+                "invalid value",
+                "detail": detail,
+                "source": {"pointer": "/data/relationships/app"},
+            }
+        ]
+    }
+    return submit.ApiError(
+        "POST",
+        f"{submit.BASE}/appStoreVersions",
+        SimpleNamespace(
+            status_code=409, json=lambda: body, text=json.dumps(body, indent=2)
+        ),
+    )
 
 
 class VersionStateGuard(unittest.TestCase):
@@ -352,6 +404,211 @@ class VersionStateGuard(unittest.TestCase):
         patched = connect.calls[-1].payload["data"]
         self.assertEqual(patched["attributes"], {"releaseType": "AFTER_APPROVAL"})
         self.assertEqual(patched["id"], "V")
+
+
+class RenameEditableVersion(unittest.TestCase):
+    """`--rename-editable-version`, the one field a human changes in Connect.
+
+    App Store Connect allows one version in an editable state at a time, so 1.15
+    could not be created while 1.14 sat in PREPARE_FOR_SUBMISSION, never
+    submitted. Renaming 1.14 is the whole fix.
+
+    FakeConnect keys on (method, path) and ignores params, so resolve_version's
+    filtered lookup and the unfiltered listing the rename does share one queue:
+    the two-element lists below are those two answers, in that order.
+    """
+
+    LIST = ("GET", "/apps/APP/appStoreVersions")
+
+    def waiting(self, state="PREPARE_FOR_SUBMISSION", release_type="MANUAL"):
+        return version_payload("V14", state, release_type, version_string="1.14")
+
+    def test_the_waiting_version_is_renamed_and_carried_on_with(self):
+        connect = FakeConnect(
+            {
+                self.LIST: [{"data": []}, {"data": [self.waiting()]}],
+                ("PATCH", "/appStoreVersions/V14"): {
+                    "data": version_payload(
+                        "V14", "PREPARE_FOR_SUBMISSION", version_string="1.15"
+                    )
+                },
+            }
+        )
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            version = submit.resolve_version(
+                connect, "APP", "1.15", "AFTER_APPROVAL", allow_rename=True
+            )
+
+        self.assertEqual(version["id"], "V14")
+        self.assertEqual(version["attributes"]["versionString"], "1.15")
+        self.assertFalse(connect.made("POST", "/appStoreVersions"))
+
+        patched = connect.calls[-1].payload["data"]
+        self.assertEqual(patched["id"], "V14")
+        # The releaseType rides along: a renamed version is by definition the one
+        # this run is submitting, so it should carry the type the run asked for
+        # rather than the one the abandoned version happened to have.
+        self.assertEqual(
+            patched["attributes"],
+            {"versionString": "1.15", "releaseType": "AFTER_APPROVAL"},
+        )
+
+        # Both strings and the id, because this log line is the only record that
+        # a version somebody prepared was repurposed as this release.
+        log = printed.getvalue()
+        for fragment in ("1.14", "1.15", "V14"):
+            self.assertIn(fragment, log)
+
+    def test_two_editable_versions_stop_rather_than_pick_one(self):
+        """Connect is not supposed to allow this, and guessing renames the wrong one."""
+        connect = FakeConnect(
+            {
+                self.LIST: [
+                    {"data": []},
+                    {
+                        "data": [
+                            self.waiting(),
+                            version_payload("V9", "REJECTED", version_string="1.9"),
+                        ]
+                    },
+                ]
+            }
+        )
+        with self.assertRaises(submit.Stop) as raised:
+            submit.resolve_version(
+                connect, "APP", "1.15", "AFTER_APPROVAL", allow_rename=True
+            )
+        message = str(raised.exception)
+        for fragment in ("1.14", "V14", "PREPARE_FOR_SUBMISSION", "1.9", "V9", "REJECTED"):
+            self.assertIn(fragment, message)
+        # Two reads and nothing written on the way to refusing.
+        self.assertEqual([call.method for call in connect.calls], ["GET", "GET"])
+
+    def test_nothing_editable_falls_through_to_the_create_path(self):
+        """The ordinary case: the last version shipped, so creating is correct."""
+        connect = FakeConnect(
+            {
+                self.LIST: [
+                    {"data": []},
+                    {
+                        "data": [
+                            version_payload(
+                                "OLD", "READY_FOR_SALE", version_string="1.14"
+                            )
+                        ]
+                    },
+                ],
+                ("POST", "/appStoreVersions"): {
+                    "data": version_payload(
+                        "NEW", "PREPARE_FOR_SUBMISSION", version_string="1.15"
+                    )
+                },
+            }
+        )
+        version = submit.resolve_version(
+            connect, "APP", "1.15", "AFTER_APPROVAL", allow_rename=True
+        )
+        self.assertEqual(version["id"], "NEW")
+        self.assertFalse(any(call.method == "PATCH" for call in connect.calls))
+        self.assertEqual(
+            connect.calls[-1].payload["data"]["attributes"]["versionString"], "1.15"
+        )
+
+    def test_a_found_version_is_never_renamed(self):
+        """Renaming applies only where the version does not exist yet."""
+        connect = FakeConnect(
+            {
+                self.LIST: {
+                    "data": [
+                        version_payload(
+                            "V", "PREPARE_FOR_SUBMISSION", version_string="1.15"
+                        )
+                    ]
+                }
+            }
+        )
+        version = submit.resolve_version(
+            connect, "APP", "1.15", "AFTER_APPROVAL", allow_rename=True
+        )
+        self.assertEqual(version["id"], "V")
+        self.assertEqual([call.method for call in connect.calls], ["GET"])
+
+    def test_off_by_default_the_version_list_is_never_even_read(self):
+        """With renaming off, step 2 makes exactly the calls it always made."""
+        connect = FakeConnect(
+            {
+                self.LIST: {"data": []},
+                ("POST", "/appStoreVersions"): {
+                    "data": version_payload(
+                        "NEW", "PREPARE_FOR_SUBMISSION", version_string="1.15"
+                    )
+                },
+            }
+        )
+        version = submit.resolve_version(connect, "APP", "1.15", "AFTER_APPROVAL")
+        self.assertEqual(version["id"], "NEW")
+        lookups = [call for call in connect.calls if call.path == self.LIST[1]]
+        self.assertEqual(len(lookups), 1)
+        self.assertEqual(lookups[0].params["filter[versionString]"], "1.15")
+
+
+class PendingVersionConflict(unittest.TestCase):
+    """Apple's 409 on the create path, translated into what is actually wrong."""
+
+    LIST = ("GET", "/apps/APP/appStoreVersions")
+
+    def test_it_names_the_version_in_the_way_and_the_way_out(self):
+        connect = FakeConnect(
+            {
+                self.LIST: [
+                    {"data": []},
+                    {
+                        "data": [
+                            version_payload(
+                                "V14",
+                                "PREPARE_FOR_SUBMISSION",
+                                version_string="1.14",
+                            )
+                        ]
+                    },
+                ],
+                ("POST", "/appStoreVersions"): conflict_409(
+                    f"{submit.VERSION_ALREADY_PENDING}."
+                ),
+            }
+        )
+        with self.assertRaises(submit.Stop) as raised:
+            submit.resolve_version(connect, "APP", "1.15", "AFTER_APPROVAL")
+        message = str(raised.exception)
+        # What is in the way, and where.
+        self.assertIn("1.14", message)
+        self.assertIn("V14", message)
+        self.assertIn("PREPARE_FOR_SUBMISSION", message)
+        # And the input that clears it without opening a browser.
+        self.assertIn("--rename-editable-version", message)
+        self.assertIn("rename_editable_version=true", message)
+        # Apple's own sentence and its misleading pointer survive into the new
+        # message, so searching the log for either still lands on this.
+        self.assertIn(submit.VERSION_ALREADY_PENDING, message)
+        self.assertIn("/data/relationships/app", message)
+
+    def test_any_other_conflict_travels_as_it_always_did(self):
+        """Only the one sentence is translated; the rest stay raw for a reason."""
+        connect = FakeConnect(
+            {
+                self.LIST: {"data": []},
+                ("POST", "/appStoreVersions"): conflict_409(
+                    "The attribute 'versionString' has an invalid value."
+                ),
+            }
+        )
+        with self.assertRaises(submit.ApiError) as raised:
+            submit.resolve_version(connect, "APP", "1.15", "AFTER_APPROVAL")
+        self.assertIn("'versionString' has an invalid value", str(raised.exception))
+        # No second look at the version list: there is nothing to explain here.
+        self.assertEqual(
+            len([call for call in connect.calls if call.path == self.LIST[1]]), 1
+        )
 
 
 class ScreenshotUpload(unittest.TestCase):
