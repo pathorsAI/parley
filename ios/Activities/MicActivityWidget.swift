@@ -1,17 +1,16 @@
 import ActivityKit
-// For `LiveActivityIntent` — the constraint on `CardButton`, so that a button
-// can only ever be built from an intent that runs in the app's process.
-import AppIntents
 import ParleyKit
 import SwiftUI
 import WidgetKit
 
 /// The microphone card, on the lock screen and in the Dynamic Island.
 ///
-/// One `ActivityConfiguration` for all three modes, because there is one
-/// microphone — `MicActivityState` explains why that is a fact about the app
-/// rather than a layout preference. What this file adds is the drawing, and two
-/// rules that shape all of it.
+/// **It is about voice typing.** A meeting recording holds the same microphone
+/// and draws nothing — see `MicActivityState.derive` for why, and
+/// `docs/design/ios-live-activity.md` for how it got that way. One
+/// `ActivityConfiguration` for both remaining modes, because there is one
+/// microphone. What this file adds is the drawing, and three rules that shape
+/// all of it.
 ///
 /// ## Every clock is a `Text(timerInterval:)`
 ///
@@ -27,21 +26,36 @@ import WidgetKit
 /// The app's visual language is a plain page with colour used as a signal, not
 /// as decoration (`docs/design/ios-visual-language.md`), and a lock screen is
 /// the plainest page there is. So the accent lives in one 9pt disc and every
-/// word on the card is a system semantic colour. Three marks in three colours
-/// would be a legend to learn; one dot that is red, blue or orange is the same
-/// mark the user already knows from the Record tab, the keyboard's mic pill and
-/// the system's own privacy indicator.
+/// word on the card is a system semantic colour. Two marks in two colours would
+/// be a legend to learn; one dot that is blue or orange is the same mark the
+/// user already knows from the keyboard's mic pill and the system's own privacy
+/// indicator.
+///
+/// ## The card is read, not operated
+///
+/// It used to carry four buttons — finish, discard, stop recording, end standby
+/// — and three are gone by decision. Finish-or-discard is not a choice to make
+/// on a surface you are glancing at with the phone face-up on a table, and stop
+/// recording went with the meeting card. So a **dictation** card is read, not
+/// operated: tapping anywhere opens Parley, where each of those decisions is one
+/// tap away.
+///
+/// **Standby keeps its one button**, and that is a different kind of decision
+/// rather than a surviving exception — see `EndStandbyButton`. Ending standby
+/// settles nothing about content, because standby is the state in which nothing
+/// is being recorded; it closes a microphone that is open, on the only surface
+/// that offers it from a locked screen.
 struct MicActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: MicActivityAttributes.self) { context in
             MicActivityCard(face: CardFace(context.state, isStale: context.isStale))
-                // Tapping anywhere that is not a button opens Parley. The bare
-                // scheme rather than a deep link on purpose: the card is about
-                // what is happening now, and the app's own answer to "show me
-                // that" is wherever it was — a Record tab mid-recording, or the
-                // screen the user left. A URL that insisted on a destination
-                // would be this file guessing at the app's navigation from
-                // outside it.
+                // Tapping anywhere opens Parley, and since the buttons went it
+                // is the card's only interaction. The bare scheme rather than a
+                // deep link on purpose: the card is about what is happening
+                // now, and the app's own answer to "show me that" is wherever
+                // the user left it. A URL that insisted on a destination would
+                // be this file guessing at the app's navigation from outside
+                // it.
                 .widgetURL(URL(string: "parley://")!)
         } dynamicIsland: { context in
             let face = CardFace(context.state, isStale: context.isStale)
@@ -54,10 +68,10 @@ struct MicActivityWidget: Widget {
                                 .font(.subheadline.weight(.medium))
                                 .foregroundStyle(.secondary)
                         }
-                        if let detail = face.detail {
-                            detail
+                        if let note = face.note {
+                            note
                                 .font(.footnote)
-                                .foregroundStyle(face.detailIsHonestyNote ? .secondary : .primary)
+                                .foregroundStyle(.secondary)
                                 .lineLimit(2)
                         }
                     }
@@ -68,7 +82,28 @@ struct MicActivityWidget: Widget {
                         .foregroundStyle(.primary)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    CardButtons(face: face)
+                    // Empty while dictating, and it is meant to stay empty.
+                    // This region held ⏹ and ✕; deciding what happens to a
+                    // transcript is not something to do from a lock screen, so
+                    // a dictation card is read rather than operated and the
+                    // expanded island simply sits shorter.
+                    //
+                    // Standby keeps its one button — see `EndStandbyButton`
+                    // for why that is a different kind of decision rather than
+                    // an exception to this one.
+                    //
+                    // **Do not put a waveform or any other animated visualiser
+                    // here.** It cannot be driven by real audio: a level that
+                    // followed the user's voice would need `activity.update()`
+                    // to land several times a second from a backgrounded app,
+                    // which is this feature's one unverified assumption (see
+                    // `MicActivityPolicy.staleAfter`) and would be a battery
+                    // cost even if it worked. What is left is a loop that moves
+                    // regardless of whether anybody is speaking — a picture of
+                    // listening rather than evidence of it, on the one surface
+                    // whose entire job is to be believable. That is the cheap
+                    // visualiser `docs/design/ios-visual-language.md` rules out.
+                    EndStandbyButton(face: face)
                 }
             } compactLeading: {
                 // The dot, and deliberately nothing beside it. The only
@@ -84,11 +119,15 @@ struct MicActivityWidget: Widget {
                 // reserves the width of the widest value its range can reach
                 // (see `CardFace.init`), and a compact region hands a timer
                 // more width than its digits need on top of that. Shortening
-                // the ranges fixes the arithmetic, not the shape: a meeting's
-                // range is honestly unbounded, so any clock here would still be
-                // laid out for `8:00:00`. Taking the clock out is the only
-                // version of this that can never widen again, which is the
-                // property the other candidates could not offer.
+                // the ranges fixes the arithmetic, not the shape: at the time
+                // a meeting's range was honestly unbounded, so any clock here
+                // would still have been laid out for `8:00:00`. Meetings are
+                // off the card now and both surviving ranges are short, which
+                // makes this the one decision here that could be revisited —
+                // and it should not be. Taking the clock out is the only
+                // version that can never widen again whatever a future mode
+                // brings, and the dot already answers the only question a
+                // collapsed island is asked.
                 StatusDot(face: face)
             } compactTrailing: {
                 // Nothing, and an empty region is a supported answer rather
@@ -99,7 +138,7 @@ struct MicActivityWidget: Widget {
                 // can put here makes the island narrower than leaving it out,
                 // which is the whole point: whatever the floor turns out to
                 // measure, this presentation now sits on it and cannot be
-                // pushed off it by a long recording.
+                // pushed off it by a long session.
                 //
                 // Which side the dot goes on is therefore not a width question,
                 // and it is settled by the other presentations: the dot leads
@@ -142,10 +181,10 @@ private struct MicActivityCard: View {
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.secondary)
                     }
-                    if let detail = face.detail {
-                        detail
-                            .font(face.detailIsHonestyNote ? .footnote : .headline)
-                            .foregroundStyle(face.detailIsHonestyNote ? .secondary : .primary)
+                    if let note = face.note {
+                        note
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                             .lineLimit(2)
                     }
                 }
@@ -154,7 +193,7 @@ private struct MicActivityCard: View {
                     .font(.title2.monospacedDigit())
                     .foregroundStyle(.primary)
             }
-            CardButtons(face: face)
+            EndStandbyButton(face: face)
         }
         .padding(16)
         // `nil` is the system's own background — a dark blurred material in
@@ -165,6 +204,40 @@ private struct MicActivityCard: View {
         // also why `CardFace` resolves the **Dark** tokens unconditionally: the
         // surface under this card is dark even when iOS is in light mode.
         .activityBackgroundTint(nil)
+    }
+}
+
+/// Standby's one button: close the microphone window now.
+///
+/// Nothing for the other mode — a dictation card carries no buttons at all, and
+/// this is not a hole in that rule. ⏹ and ✕ decided the fate of *words*, which
+/// is a judgement about content the card deliberately does not show. Ending
+/// standby decides nothing about content, because standby is the state in which
+/// **nothing is being recorded**; it turns off a microphone that is open.
+///
+/// And it is the surface that most needs to offer it. Every place that announces
+/// a window has always also been a way to end one — the Settings picker, the
+/// Record tab's bar, the keyboard's chip — and this is the fourth and the only
+/// one visible from a locked screen, which is exactly where somebody who has
+/// just noticed an unexplained orange dot is looking.
+///
+/// The word comes from `MicActivityCopy`, not from the intent's `title`:
+/// AppIntents only accepts a main-bundle `LocalizedStringResource`, and
+/// ParleyKit's strings live in `Bundle.module`. Labelling from the title would
+/// compile, look right in English, and ship a card with no Chinese on it.
+private struct EndStandbyButton: View {
+    let face: CardFace
+
+    var body: some View {
+        if face.mode == .standby {
+            Button(intent: EndMicWindowIntent()) {
+                Text(MicActivityCopy.endStandby)
+                    .font(.footnote.weight(.medium))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(face.accent)
+        }
     }
 }
 
@@ -197,8 +270,8 @@ private struct StatusDot: View {
 /// pin it to the right and let it take the width it asks for: the lock screen
 /// puts a `Spacer` before it, and the expanded island's trailing region sizes
 /// itself to its content and gives the rest to the leading one. So a mode with
-/// an honest short range does not leave a hole — it hands the meeting title the
-/// room it was wasting.
+/// an honest short range does not leave a hole — it hands the line beside it
+/// the room it was wasting.
 private struct Clock: View {
     let face: CardFace
 
@@ -211,93 +284,31 @@ private struct Clock: View {
     }
 }
 
-/// The buttons, on the lock screen and in the expanded island only — the
-/// compact and minimal presentations are a few points wide and carry the dot
-/// and nothing else.
-///
-/// **Nothing that destroys recorded audio is on this card, and that is not an
-/// oversight to be helpfully corrected.** Dictation's ✕ throws away a
-/// transcript that was never inserted anywhere, which costs the user one
-/// repetition of a sentence they still remember. A meeting's delete removes an
-/// audio file of a conversation that cannot be had again, and it would sit here
-/// a thumb's width from Stop, reachable without an unlock, on a screen the user
-/// is not looking at carefully. So there is a Stop and there is no Delete, and
-/// the asymmetry is the decision.
-private struct CardButtons: View {
-    let face: CardFace
-
-    var body: some View {
-        HStack(spacing: 8) {
-            switch face.mode {
-            case .meeting:
-                CardButton(
-                    MicActivityCopy.stopRecording, intent: StopMeetingRecordingIntent(),
-                    tint: face.accent)
-            case .dictation:
-                CardButton(
-                    MicActivityCopy.finish, intent: FinishDictationIntent(), tint: face.accent)
-                CardButton(
-                    MicActivityCopy.discard, intent: CancelDictationIntent(), tint: .secondary)
-            case .standby:
-                CardButton(
-                    MicActivityCopy.endStandby, intent: EndMicWindowIntent(), tint: face.accent)
-            }
-        }
-    }
-}
-
-/// The words come from `MicActivityCopy` in ParleyKit rather than from this
-/// target's catalog, and deliberately **not** from the intents' own `title`.
-///
-/// An intent's `title` looks like the right source and cannot be used: AppIntents
-/// requires a `LocalizedStringResource` there to resolve against the *main*
-/// bundle, so it may not name ParleyKit's module bundle, and
-/// `ExtractAppIntentsMetadata` fails the build if it does. The titles are
-/// therefore bare English literals that exist for Shortcuts metadata — which
-/// nothing surfaces, since all four intents are `isDiscoverable = false`.
-/// Labelling the buttons from them would ship an English-only card.
-private struct CardButton<I: LiveActivityIntent>: View {
-    let label: String
-    let intent: I
-    let tint: Color
-
-    init(_ label: String, intent: I, tint: Color) {
-        self.label = label
-        self.intent = intent
-        self.tint = tint
-    }
-
-    var body: some View {
-        // Already localized by `MicActivityCopy`, so the verbatim overload —
-        // running it through `LocalizedStringKey` would look the translated
-        // string up again in a catalog that has never heard of it.
-        Button(label, intent: intent)
-            .font(.footnote.weight(.medium))
-            .buttonStyle(.bordered)
-            .tint(tint)
-            .frame(maxWidth: .infinity)
-    }
-}
-
-// MARK: - What the three modes, and the two doubts, come to
+// MARK: - What the two modes, and the two doubts, come to
 
 /// Everything the card's presentations differ by, worked out once.
 ///
-/// The lock screen and the two island layouts draw the same four things in
+/// The lock screen and the two island layouts draw the same few things in
 /// different arrangements; resolving them here is what keeps a mode from being
-/// red in one presentation and grey in another, which is exactly the kind of
+/// blue in one presentation and grey in another, which is exactly the kind of
 /// disagreement nobody notices until it is on a stranger's lock screen.
 private struct CardFace {
     let mode: MicActivityState.Mode
     let accent: Color
     /// The state word: what is happening, or which of the two doubts applies.
     let state: Text
-    /// The line under it — a meeting's name, or standby's note. `nil` for
-    /// dictation, which has nothing further to say.
-    let detail: Text?
-    /// Whether `detail` is the standby note rather than a meeting title, which
-    /// is the difference between quiet small print and the card's headline.
-    let detailIsHonestyNote: Bool
+    /// Standby's one line of small print. `nil` for dictation, which has
+    /// nothing further to say.
+    ///
+    /// This used to be two different lines wearing one field — a meeting's name
+    /// in headline type and standby's note in quiet footnote type, told apart
+    /// by a companion flag. With meetings off the card there is one producer
+    /// left, so the flag and the two type scales went with it: the line is
+    /// always small print now, and a `nil` is always "there is nothing to add".
+    /// Still an `Optional` rather than a `standby`-only branch in the drawing
+    /// code, because the two layouts differ in *where* the line goes, not in
+    /// whether it exists.
+    let note: Text?
     let clock: ClosedRange<Date>
     let countsDown: Bool
     /// The live dot breathes only while the card is making a confident claim.
@@ -307,28 +318,15 @@ private struct CardFace {
         mode = state.mode
 
         switch state.mode {
-        case .meeting:
-            detail = state.title.map(Text.init(verbatim:))
-                // The app sends `nil` rather than an English "Recording" when a
-                // meeting has no name, because this is the only side that knows
-                // the reader's language. Keyed rather than written as its own
-                // source string: in English the default title and the state
-                // word above it are the same word, and a String Catalog keyed
-                // by the source string cannot hold two translations of it —
-                // 錄音 and 錄音中 are not interchangeable.
-                ?? Text("meeting.untitled.title")
-            detailIsHonestyNote = false
         case .dictation:
-            detail = nil
-            detailIsHonestyNote = false
+            note = nil
         case .standby:
             // The whole reason standby has a card. The orange dot in the status
             // bar is the system saying "the microphone is open", which every
             // user has learned to read as "something is listening" — and here
             // it is not. Nothing else on the card can make that distinction, so
             // this line is not decoration and is never dropped.
-            detail = Text("Microphone open · nothing is being recorded")
-            detailIsHonestyNote = true
+            note = Text("Microphone open · nothing is being recorded")
         }
 
         // Two different doubts, and conflating them would cost the card the one
@@ -380,33 +378,33 @@ private struct CardFace {
                 MicActivityPolicy.dictationLimit)
             countsDown = false
         } else {
-            // A meeting — and a standby whose `until` did not survive the trip,
-            // which has nothing better to fall back on.
+            // A standby whose `until` did not survive the trip, which has
+            // nothing better to fall back on than the card's own lifetime.
             //
-            // **A meeting is genuinely unbounded and this is not the bug the
-            // compact island had.** Nothing in the app stops a recording at a
-            // set length, so any tighter end here would be a number the card
-            // cannot keep: the clock would freeze while the microphone was
-            // still open, which is the one lie this card exists to prevent. The
-            // eight hours are not invented either — they are when the system
-            // takes the card away, so they are the card's actual lifetime. A
-            // wide clock is the cost, and there is room for it in the expanded
-            // island and on the lock screen, which are the only two places it
-            // is still drawn.
+            // The eight hours are not invented — they are when the system takes
+            // the card away. They are also far wider than any window can be, so
+            // this branch draws a clock sized for `8:00:00`; that is the price
+            // of not knowing the expiry, and it is only reachable if the app
+            // sent a window with an open date and no end, which `derive` does
+            // not do. Guessing an hour here to keep the layout tight would be
+            // the card inventing a deadline, which is the one thing it may not
+            // do.
             clock = state.since...state.since.addingTimeInterval(MicActivityPolicy.systemLimit)
             countsDown = false
         }
     }
 
-    /// Nothing is invented here: each of the three already means this exact
-    /// thing somewhere the user has seen it. The **Dark** variants, because a
-    /// Live Activity is drawn on a dark system surface in both appearances —
-    /// and `Dark.primary` is sky rather than brand blue for the reason written
+    /// Nothing is invented here: both of these already mean this exact thing
+    /// somewhere the user has seen it. The **Dark** variants, because a Live
+    /// Activity is drawn on a dark system surface in both appearances — and
+    /// `Dark.primary` is sky rather than brand blue for the reason written
     /// where it is defined: `#1469D4` is too dark to read on a dark page.
+    ///
+    /// `ParleyDesignTokens.recording` is no longer read here, and that is the
+    /// whole of the colour change: the red still exists and the Record tab
+    /// still uses it, but a meeting no longer draws a card for it to appear on.
     private static func accent(for mode: MicActivityState.Mode) -> Color {
         switch mode {
-        // The Record tab's red.
-        case .meeting: return Color(hex: ParleyDesignTokens.Dark.recording)
         // The brand signal blue.
         case .dictation: return Color(hex: ParleyDesignTokens.Dark.primary)
         // iOS's own privacy-indicator orange, which the system is showing in
@@ -419,7 +417,6 @@ private struct CardFace {
 
     private static func label(for mode: MicActivityState.Mode) -> Text {
         switch mode {
-        case .meeting: return Text("Recording")
         case .dictation: return Text("Voice typing")
         case .standby: return Text("Mic ready")
         }

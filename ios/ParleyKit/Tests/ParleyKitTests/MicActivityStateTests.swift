@@ -2,9 +2,9 @@ import XCTest
 
 @testable import ParleyKit
 
-/// The Live Activity's decisions — which of the three things the card shows,
-/// and when there should be no card. All of it is reachable without ActivityKit
-/// on purpose (see `MicActivityState`); what is not reachable here is whether
+/// The Live Activity's decisions — which of the two things the card shows, and
+/// when there should be no card. All of it is reachable without ActivityKit on
+/// purpose (see `MicActivityState`); what is not reachable here is whether
 /// `activity.update()` lands on a backgrounded device, which is a device
 /// question and is written up on `MicActivityPolicy.staleAfter`.
 final class MicActivityStateTests: XCTestCase {
@@ -19,36 +19,19 @@ final class MicActivityStateTests: XCTestCase {
 
     // MARK: precedence
 
-    func testAMeetingOutranksASimultaneousDictation() {
-        // Not a hypothetical: `MeetingRecorder.start` takes the microphone by
-        // calling `DictationCoordinator.yieldMicrophone`, so for as long as that
-        // teardown takes, both inputs are non-nil. The one that is real is the
-        // meeting.
-        let state = MicActivityState.derive(
-            meetingStartedAt: t0, meetingTitle: "Weekly",
-            dictationStartedAt: t0.addingTimeInterval(-5),
-            window: window(), trouble: false, at: t0)
-        XCTAssertEqual(state?.mode, .meeting)
-        XCTAssertEqual(state?.since, t0)
-        XCTAssertEqual(state?.title, "Weekly")
-    }
-
     func testADictationOutranksAnOpenWindow() {
         // The window is the microphone nobody is using; a dictation is somebody
         // using it.
         let state = MicActivityState.derive(
-            meetingStartedAt: nil, meetingTitle: nil,
             dictationStartedAt: t0.addingTimeInterval(3),
             window: window(), trouble: false, at: t0.addingTimeInterval(3))
         XCTAssertEqual(state?.mode, .dictation)
         XCTAssertEqual(state?.since, t0.addingTimeInterval(3))
-        // The title is the meeting's name and nothing else's.
-        XCTAssertNil(state?.title)
     }
 
     func testAnOpenWindowAloneIsStandby() {
         let state = MicActivityState.derive(
-            meetingStartedAt: nil, meetingTitle: nil, dictationStartedAt: nil,
+            dictationStartedAt: nil,
             window: window(), trouble: false, at: t0.addingTimeInterval(10))
         XCTAssertEqual(state?.mode, .standby)
         XCTAssertEqual(state?.since, t0)
@@ -57,23 +40,22 @@ final class MicActivityStateTests: XCTestCase {
     func testNothingRunningMeansNoCardAtAll() {
         XCTAssertNil(
             MicActivityState.derive(
-                meetingStartedAt: nil, meetingTitle: nil, dictationStartedAt: nil,
-                window: nil, trouble: false, at: t0))
+                dictationStartedAt: nil, window: nil, trouble: false, at: t0))
         XCTAssertNil(
             MicActivityState.derive(
-                meetingStartedAt: nil, meetingTitle: nil, dictationStartedAt: nil,
-                window: .closed(length: .oneHour), trouble: false, at: t0))
+                dictationStartedAt: nil, window: .closed(length: .oneHour),
+                trouble: false, at: t0))
     }
 
-    func testAMeetingWithNoNameSendsNoTitleRatherThanAFallback() {
-        // The widget is the only side that knows the reader's language, so an
-        // English default written here would be the one string the app cannot
-        // localize.
-        let state = MicActivityState.derive(
-            meetingStartedAt: t0, meetingTitle: nil, dictationStartedAt: nil,
-            window: nil, trouble: false, at: t0)
-        XCTAssertEqual(state?.mode, .meeting)
-        XCTAssertNil(state?.title)
+    func testAMeetingIsNotAMode() {
+        // The card is about voice typing. A meeting takes the same microphone
+        // and draws nothing — `MeetingRecorder.start` calls
+        // `yieldMicrophone()`, which ends the session and closes the window, so
+        // by the time the meeting is running both inputs here are nil and the
+        // card is correctly gone. The test is the enum: a meeting has no case
+        // to be derived into, so no future caller can quietly put one back
+        // without coming past this file.
+        XCTAssertEqual(MicActivityState.Mode.allCases, [.dictation, .standby])
     }
 
     // MARK: staleness
@@ -83,7 +65,7 @@ final class MicActivityStateTests: XCTestCase {
         // says "open for another 14 minutes" and the process that wrote it is
         // gone. A card here would be a microphone claim nobody is backing.
         let state = MicActivityState.derive(
-            meetingStartedAt: nil, meetingTitle: nil, dictationStartedAt: nil,
+            dictationStartedAt: nil,
             window: window(),
             trouble: false,
             at: t0.addingTimeInterval(MicWindowState.staleAfter))
@@ -92,7 +74,7 @@ final class MicActivityStateTests: XCTestCase {
 
     func testAnExpiredWindowDoesNotPutAStandbyCardOnTheLockScreen() {
         let state = MicActivityState.derive(
-            meetingStartedAt: nil, meetingTitle: nil, dictationStartedAt: nil,
+            dictationStartedAt: nil,
             window: MicWindowState(
                 length: .fiveMinutes, openedAt: t0, expiresAt: t0.addingTimeInterval(300),
                 updatedAt: t0.addingTimeInterval(299)),
@@ -104,19 +86,16 @@ final class MicActivityStateTests: XCTestCase {
 
     func testOnlyStandbyCountsDown() {
         let standby = MicActivityState.derive(
-            meetingStartedAt: nil, meetingTitle: nil, dictationStartedAt: nil,
+            dictationStartedAt: nil,
             window: window(.fifteenMinutes), trouble: false, at: t0)
         XCTAssertEqual(standby?.until, t0.addingTimeInterval(15 * 60))
 
-        // The other two run until the user stops them, and a countdown on them
-        // would be a deadline Parley has not got.
-        let meeting = MicActivityState.derive(
-            meetingStartedAt: t0, meetingTitle: nil, dictationStartedAt: nil,
-            window: window(), trouble: false, at: t0)
-        XCTAssertNil(meeting?.until)
+        // A dictation runs until the user stops it or the coordinator's backstop
+        // does, and neither is a deadline the *card* was handed — so it carries
+        // no `until`, and the widget derives its own range from
+        // `MicActivityPolicy.dictationLimit`.
         let dictation = MicActivityState.derive(
-            meetingStartedAt: nil, meetingTitle: nil, dictationStartedAt: t0,
-            window: window(), trouble: false, at: t0)
+            dictationStartedAt: t0, window: window(), trouble: false, at: t0)
         XCTAssertNil(dictation?.until)
     }
 
@@ -125,13 +104,10 @@ final class MicActivityStateTests: XCTestCase {
     func testTroubleReachesEveryMode() {
         // The honesty rule is not mode-specific: whichever card is up has to be
         // able to stop claiming to be listening.
-        let inputs: [(Date?, Date?, MicWindowState?)] = [
-            (t0, nil, nil), (nil, t0, nil), (nil, nil, window()),
-        ]
-        for (meeting, dictation, window) in inputs {
+        let inputs: [(Date?, MicWindowState?)] = [(t0, nil), (nil, window())]
+        for (dictation, window) in inputs {
             let state = MicActivityState.derive(
-                meetingStartedAt: meeting, meetingTitle: nil, dictationStartedAt: dictation,
-                window: window, trouble: true, at: t0)
+                dictationStartedAt: dictation, window: window, trouble: true, at: t0)
             XCTAssertEqual(state?.trouble, true)
         }
     }
@@ -142,8 +118,7 @@ final class MicActivityStateTests: XCTestCase {
         // on a microphone it does not hold.
         XCTAssertNil(
             MicActivityState.derive(
-                meetingStartedAt: nil, meetingTitle: nil, dictationStartedAt: nil,
-                window: nil, trouble: true, at: t0))
+                dictationStartedAt: nil, window: nil, trouble: true, at: t0))
     }
 
     // MARK: wire format
@@ -153,8 +128,7 @@ final class MicActivityStateTests: XCTestCase {
         // here breaks the card silently rather than at the call site.
         for mode in MicActivityState.Mode.allCases {
             let value = MicActivityState(
-                mode: mode, since: t0, until: t0.addingTimeInterval(900),
-                title: "季度檢討", trouble: true)
+                mode: mode, since: t0, until: t0.addingTimeInterval(900), trouble: true)
             let back = try JSONDecoder().decode(
                 MicActivityState.self, from: JSONEncoder().encode(value))
             XCTAssertEqual(back, value)

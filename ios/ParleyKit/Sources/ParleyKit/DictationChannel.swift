@@ -5,7 +5,7 @@ import Foundation
 /// iOS 8, Full Access included), so dictation runs in the app and the transcript
 /// is handed back through the App Group container.
 ///
-/// Six single-writer mailboxes, each with its own Darwin notification, so the
+/// Seven single-writer mailboxes, each with its own Darwin notification, so the
 /// two processes never contend on the same file:
 ///   - `downlink` (app → keyboard): the growing transcript + session state.
 ///   - `uplink`   (keyboard → app): the session request, host bundle id, and
@@ -18,6 +18,9 @@ import Foundation
 ///   - `presence` (app → keyboard): the app process is alive, and whether a
 ///     start request would be served without opening Parley. A heartbeat,
 ///     like the window's — see `AppPresence`.
+///   - `level` (app → keyboard): how loud the microphone is right now, so the
+///     record button can swell with the voice instead of miming it. The
+///     fastest of them by an order of magnitude — see `MicLevelReading`.
 ///
 /// The window pair is separate from the session pair on purpose: a window
 /// outlives any one dictation and most of what it has to say happens when no
@@ -28,7 +31,9 @@ import Foundation
 /// questions — "is the process there" outlives and underlies "is it holding a
 /// microphone" — and separate from the downlink because a downlink is stamped
 /// only when the transcript moves, and a user pausing to think is not a dead
-/// app.
+/// app. The level is separate from the downlink for the sharper version of
+/// that same reason: it moves whether or not a word does, and the downlink's
+/// stamp is what the liveness watchdog reads (see `MicLevelReading`).
 ///
 /// Darwin notifications carry no payload — they are pure "go re-read" signals.
 /// The files are the source of truth, which is what makes this robust to the
@@ -59,6 +64,12 @@ public enum DictationChannel {
     /// app → keyboard: the app re-stamped its presence, or announced that it
     /// is about to be suspended. See `AppPresence`.
     public static let presenceNote = "com.pathors.parley.dictation.presence"
+    /// app → keyboard: a new microphone level. Posted about twelve times a
+    /// second while someone is speaking and not at all otherwise, which makes
+    /// it the only note here that is a stream rather than an event — and the
+    /// reason its mailbox is not a field on the downlink. See
+    /// `MicLevelReading`.
+    public static let levelNote = "com.pathors.parley.dictation.level"
 
     /// The URL the keyboard opens to start a session. The app routes this in
     /// `onOpenURL`. The session id round-trips so a stale downlink from a prior
@@ -350,15 +361,36 @@ public enum DictationChannel {
         read("dictation-presence.json")
     }
 
+    // MARK: microphone level (app writes, keyboard reads)
+
+    /// Publish how loud the microphone is. Stamped on every write, like the
+    /// window and the presence heartbeat, and for a sharper version of the same
+    /// reason: a reader that believed an unstamped level would draw a swollen
+    /// button for a voice that stopped — or for a process that died — until
+    /// something else happened to take the pane out of its listening shape.
+    ///
+    /// Caller-throttled rather than throttled here, because the throttle has to
+    /// be a decision the writer can suspend: the app writes one final
+    /// `MicLevelReading.silent` the moment a session ends, and that write must
+    /// not be the one the rate limiter swallows. See
+    /// `DictationCoordinator.publishKeyboardLevel`.
+    public static func writeMicLevel(_ value: MicLevelReading) {
+        var stamped = value
+        stamped.updatedAt = Date()
+        write(stamped, to: "dictation-level.json")
+        post(levelNote)
+    }
+
+    public static func readMicLevel() -> MicLevelReading? {
+        read("dictation-level.json")
+    }
+
     public static func clear() {
         for name in [
             "dictation-down.json", "dictation-up.json",
             "dictation-window.json", "dictation-window-control.json",
             "dictation-ready.json", "dictation-presence.json",
-            // Not a dictation mailbox (see `MeetingControlChannel`), but it is
-            // in the same container and whatever this clear is for — a signed
-            // out account, a reinstall — it is for that file too.
-            "meeting-control.json",
+            "dictation-level.json",
         ] {
             if let url = container?.appendingPathComponent(name) {
                 try? FileManager.default.removeItem(at: url)
@@ -368,9 +400,12 @@ public enum DictationChannel {
 
     // MARK: file plumbing
 
-    // Module-internal rather than private: `MeetingControlChannel` is a mailbox
-    // in the very same App Group container, and there is nothing about reading
-    // and writing a JSON file there that should be written down twice.
+    // Module-internal rather than private, and no longer for a reason: this was
+    // opened up for `MeetingControlChannel`, a mailbox in the very same App
+    // Group container, and that channel went with the Live Activity's meeting
+    // mode. Left as-is rather than tightened back to `private` because the next
+    // non-dictation mailbox will want the same plumbing and nothing in this
+    // module abuses it meanwhile.
     static var container: URL? {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
     }
@@ -465,6 +500,158 @@ public struct AppPresence: Codable, Sendable, Equatable {
     /// The next tap will be served where the user already is.
     public func canServeInPlace(at now: Date = Date()) -> Bool {
         isAwake(at: now) && servesInPlace
+    }
+}
+
+/// How loud the microphone is right now, so the keyboard's record button can
+/// swell with the voice rather than mime listening on a loop.
+///
+/// ## Why this is a mailbox of its own
+///
+/// The obvious home for a number about the running session is `Downlink`,
+/// beside the transcript it belongs to, and that is the one place it must not
+/// go. A downlink is re-stamped *only when the transcript moves*, and that
+/// property is load-bearing rather than incidental: `Downlink.presumedDeadAt`
+/// takes the newer of the downlink's stamp and the presence heartbeat, and it
+/// is what tells the keyboard that a file still saying `listening` belongs to a
+/// process nobody is running any more. Several bugs were spent getting that
+/// right — a keyboard drawing ⏹ over a microphone iOS had taken away, a stop
+/// nobody answered, a jetsammed app leaving a pane listening forever.
+///
+/// A level moves ten-plus times a second whether or not a word does. Put it on
+/// the downlink and that file is re-stamped continuously, so the watchdog whose
+/// entire input is the stamp's staleness can never fire, and the mechanism is
+/// not weakened but switched off. The cheaper objections point the same way: it
+/// would rewrite the whole transcript twelve times a second to carry one
+/// `Float`, and it would wake `KeyboardViewController.drainDownlink` — adoption,
+/// insertion, the liveness re-arm — for each of them.
+///
+/// So it is its own file with its own note, like the window and the presence
+/// heartbeat, because it answers a different question on a different clock.
+///
+/// ## Shape: one number, not a trace
+///
+/// A ring of the last N readings would let the keyboard draw a scrolling
+/// waveform, and that is deliberately not what is here. What the pane draws is
+/// a button that swells and rings that follow it outward, and both are
+/// functions of *how loud it is now*; the history would be written twelve times
+/// a second and read for its newest entry alone. It would also be history the
+/// reader already has — every earlier value arrived in an earlier note — which
+/// only buys something for a reader that was suspended, and a keyboard that
+/// missed a second of audio has no use for a second-old waveform when it comes
+/// back. The smallest thing that serves the drawing is one `Float`, and the
+/// lag a ripple needs is a *derived* value the keyboard makes for itself (see
+/// `KeyboardBridge.MicMeter`) rather than one this channel has to carry.
+///
+/// ## Silence is a value, and it is the resting state
+///
+/// `level` is normalised and floored, so a room with nobody in it reads as
+/// exactly zero rather than as a small permanent shimmer. A missing file, an
+/// unstamped one and one the app stopped writing all read as zero too — see
+/// `current(at:)`. That is the honest half of the rule the record button used
+/// to break: the visualiser is driven by real amplitude, and in silence it is
+/// flat.
+public struct MicLevelReading: Codable, Sendable, Equatable {
+    /// How full the meter is, 0…1, already normalised for drawing — see
+    /// `gain`. Not the raw RMS: the shape of that number is a fact about the
+    /// microphone, and a reader should be handed "how loud" rather than
+    /// something it has to know about audio to use.
+    public var level: Float
+    /// When the app last wrote this (stamped by
+    /// `DictationChannel.writeMicLevel`). Optional so a file written before
+    /// this mailbox existed still decodes — and a decoded `nil` reads as
+    /// silence, which is the safe answer.
+    public var updatedAt: Date?
+
+    /// How often the app publishes while someone is speaking — 12 Hz.
+    ///
+    /// The floor of the useful range is around 10 Hz: below it a button that
+    /// swells arrives visibly after the syllable that caused it, which reads as
+    /// lag rather than as a meter. The ceiling is what this costs, and the cost
+    /// is not the drawing. **Every write is a file write plus a Darwin post,
+    /// and the app is usually backgrounded while a dictation runs** — so each
+    /// one is a wake-up in a process iOS is looking for a reason to suspend,
+    /// and doubling the rate doubles that bill for a difference nobody can see.
+    ///
+    /// 12 rather than 15 or 20 because the measurement itself arrives at about
+    /// that rate: `AudioCapture` taps 4096 frames at a time, which is ~85 ms at
+    /// 48 kHz. A faster mailbox would mostly republish readings that had not
+    /// changed and pay full price for them; a slower one would throw away
+    /// readings that exist. This is a *minimum* interval rather than a timer,
+    /// so a device whose buffers are larger simply publishes less often instead
+    /// of publishing stale numbers on a schedule.
+    public static let publishInterval: TimeInterval = 1.0 / 12
+
+    /// How old a reading may be before it reads as silence.
+    ///
+    /// The same stamping-and-staleness rule as `MicWindowState`, and here it is
+    /// the only thing standing between a killed app and a button frozen
+    /// mid-swell. The keyboard learns about levels from a Darwin note; a
+    /// process that has been jetsammed, suspended or swiped away posts none, so
+    /// without an expiry the last value written is the last value drawn — and
+    /// nothing else would take it down for a long time, since the liveness
+    /// watchdog needs ~25 s to give up on the session itself.
+    ///
+    /// Seven publish intervals, which is a far looser ratio than the window's
+    /// or the presence heartbeat's (both a little under three). The asymmetry
+    /// is deliberate, because what a wrong answer costs is different at this
+    /// speed: a window wrongly read as closed changes a word on screen once,
+    /// while a level wrongly read as silence makes the button drop to rest and
+    /// jump back — and audio callbacks in a backgrounded app genuinely do
+    /// bunch. Still comfortably under a second, which is the number that
+    /// matters: a dead app's last reading is gone before anyone could call the
+    /// button stuck.
+    public static let staleAfter: TimeInterval = 0.6
+
+    /// At or below this the reading *is* silence: the button rests and nothing
+    /// ripples. Room tone through a phone microphone normalises to a few
+    /// hundredths, and a meter that answers room tone is a meter that is never
+    /// flat — which is the whole thing the rule exists to prevent.
+    public static let silence: Float = 0.05
+
+    /// What turns `AudioCapture`'s RMS into the 0…1 this carries.
+    ///
+    /// The capture reports the plain RMS of a chunk, which for speech at the
+    /// distance someone holds a phone sits around 0.05–0.25 and essentially
+    /// never approaches 1; ×5 puts ordinary speech across the top half of the
+    /// meter and leaves headroom for a shout. It is a display mapping, not a
+    /// second measurement — the number multiplied here is the same one the
+    /// app's own dictation screen has always drawn.
+    public static let gain: Float = 5
+
+    /// Nothing is being said. The resting value, and what the app writes once
+    /// on its way out of a session so the keyboard is never left mid-swell.
+    public static let silent = MicLevelReading(level: 0)
+
+    public init(level: Float = 0, updatedAt: Date? = nil) {
+        self.level = level
+        self.updatedAt = updatedAt
+    }
+
+    /// Normalise a chunk's RMS. Clamped at both ends, which also disposes of a
+    /// NaN from an empty chunk: `max(0, .nan)` is 0 here, and a meter that drew
+    /// a NaN would not come back.
+    public init(rms: Float, updatedAt: Date? = nil) {
+        self.init(level: min(1, max(0, rms * Self.gain)), updatedAt: updatedAt)
+    }
+
+    /// Nobody has vouched for this reading lately.
+    public func isFresh(at now: Date = Date()) -> Bool {
+        guard let updatedAt else { return false }
+        return now.timeIntervalSince(updatedAt) < Self.staleAfter
+    }
+
+    /// Quiet enough to be nothing.
+    public var isSilent: Bool { level <= Self.silence }
+
+    /// What a reader should actually draw: the published level while it is
+    /// fresh and above the floor, and silence in every other case — stale,
+    /// unstamped, or merely quiet. One accessor rather than three checks at the
+    /// call site, so "a reading nobody refreshed reads as silence, not as the
+    /// last thing seen" cannot be got wrong in one place and right in another.
+    public func current(at now: Date = Date()) -> Float {
+        guard isFresh(at: now), !isSilent else { return 0 }
+        return level
     }
 }
 

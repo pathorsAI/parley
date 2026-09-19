@@ -26,9 +26,9 @@
     /// against the keyclick and the finger's own landing; the dismissal used to
     /// be nothing at all, and so did both ends of a meeting recording.
     ///
-    /// ## Four shapes
+    /// ## Five shapes
     ///
-    /// A new beat has to be one of these or be a fifth on purpose:
+    /// A new beat has to be one of these or be a sixth on purpose:
     ///
     /// | Shape | Means |
     /// |---|---|
@@ -36,6 +36,7 @@
     /// | falling, tight — `.heavy` → `.medium`, 60 ms | it closed, and what it heard was kept |
     /// | falling, slow, to almost nothing — `.heavy` → `.light`, 130 ms | the keyboard is leaving, but something is still listening |
     /// | one hard tick — `.rigid` | thrown away; nothing follows |
+    /// | level, tight — `.heavy` → `.heavy`, 60 ms | the microphone was taken away from you |
     ///
     /// The two tight patterns are each other played backwards, which is the
     /// point: a stop is the undoing of the start that opened it, and that is
@@ -43,6 +44,15 @@
     /// long way from both, because it means nearly the opposite of an ending —
     /// the microphone stayed behind — and it buys that distance twice over, in
     /// how far it drops and in how long it takes.
+    ///
+    /// The flat pair is the newest and the odd one, and it earns its place by
+    /// what it *lacks*. Direction is this file's carrier of intent: a rise is a
+    /// thing the user asked to begin, a fall is a thing they asked to end, and
+    /// every one of the first four answers a press. The fifth answers no press
+    /// at all — it is something that happened *to* them — so it is the one
+    /// shape with nowhere to travel, and going nowhere twice is the only
+    /// two-beat pattern left that is neither a rise nor a fall. See
+    /// `micTakenBySystem`.
     ///
     /// ## Where this lives
     ///
@@ -210,6 +220,56 @@
         public static func dictationContinuesInBackground() {
             heavy.impactOccurred()
             beat(light, after: leaveGap)
+        }
+
+        /// The system took the microphone: `.heavy`, then `.heavy` again a
+        /// breath later. A beat that goes nowhere.
+        ///
+        /// The moment is the user tapping iOS's own dictation key in the strip
+        /// below this keyboard (or a call, or Siri): another process opens a
+        /// recording session, Parley stops hearing anything, and the words
+        /// carry on being spoken into nothing. It is the one interruption where
+        /// the user is *most* likely to keep talking, because they have just
+        /// pressed a microphone button and have every reason to think one is
+        /// listening. Until now the pane's copy was the only thing that told
+        /// them, and the pane is the thing they are not looking at.
+        ///
+        /// **Why flat.** Every other pattern here moves, and the movement is
+        /// what says which way the session went: up to open, down to close,
+        /// down-and-away to leave. All four answer a press. This one answers
+        /// nothing the user did — it is the phone taking something from them
+        /// mid-sentence — and giving it a direction would borrow a meaning it
+        /// has no right to. A rise would say a microphone opened, which is true
+        /// only for somebody else's process. A fall would say this is over,
+        /// and it may not be: recovery is republishing, not resurrection, and
+        /// the very same session can come back with the transcript intact. So
+        /// the shape is the absence of one: the same beat twice, at the tight
+        /// 60 ms gap the other pairs use, so that direction is the *only*
+        /// dimension it differs in — which is the dimension the hand actually
+        /// reads.
+        ///
+        /// **Why not the tick, and why not `.warning`.** `.rigid`
+        /// (`dictationDiscarded`) means thrown away, and nothing was: the words
+        /// already spoken are kept and shown. `UINotificationFeedbackGenerator`'s
+        /// `.warning` is the system's "what you just did failed", and the user
+        /// did not do this — the design doc is explicit that being interrupted
+        /// by the phone's own dictation is not a fault but "the user having
+        /// used their phone", which is exactly why the pane shows no red for
+        /// it. A haptic that apologised would contradict the copy beside it.
+        ///
+        /// **Why both beats are `.heavy`.** Flatness fixes the shape, not the
+        /// volume, and this is the one event competing with a voice that is
+        /// still talking and a screen that is not being looked at. It also
+        /// keeps the rule every pattern here follows: lead with the beat that
+        /// carries the meaning, because the second may not arrive — this fires
+        /// from a drain that can land as the extension is being suspended, and
+        /// half of a flat pair is still a firm thump and never a fall.
+        ///
+        /// Warmed by `prepareForDictation`, which already readies `.heavy` for
+        /// the two patterns that use it.
+        public static func micTakenBySystem() {
+            heavy.impactOccurred()
+            beat(heavy, after: shortGap)
         }
 
         /// Warm the engine up for the end of a session that is already

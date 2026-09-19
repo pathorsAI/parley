@@ -402,9 +402,10 @@ struct KeyboardRootView: View {
     // MARK: the record button
 
     /// The one thing on this pane with a colour: idle it carries Pathors' brand
-    /// gradient, listening it goes flat recording red inside a breathing ring,
-    /// so "armed" is never something you have to read out of a gradient — and
-    /// never needs a second element saying "Listening…" beside it.
+    /// gradient, listening it goes flat recording red and **swells with the
+    /// voice**, so "armed" is never something you have to read out of a
+    /// gradient — and never needs a second element saying "Listening…" beside
+    /// it.
     ///
     /// The **glyph** is where the button stops promising more than it can do. A
     /// microphone means "speak now and the words appear here", and that is only
@@ -414,12 +415,21 @@ struct KeyboardRootView: View {
     private var recordButton: some View {
         PressableButton(action: toggle, onPressDown: startHaptic) { pressed in
             ZStack {
-                if bridge.listening && !reduceMotion {
-                    PulseRing(color: KBTheme.recording)
+                // Only while there is a voice. In silence the rings are not
+                // faint, they are absent — see `LevelRipple`.
+                if bridge.listening, !reduceMotion, bridge.mic.isAudible {
+                    LevelRipple(
+                        color: KBTheme.recording, level: bridge.mic.level,
+                        trail: bridge.mic.trail)
                 }
                 Circle()
                     .fill(recordFill)
                     .frame(width: KBMetrics.recordSize, height: KBMetrics.recordSize)
+                    // The circle and not the ZStack, so the glyph keeps its
+                    // size: a ⏹ that grew and shrank with the voice would read
+                    // as the *control* changing rather than the level.
+                    .scaleEffect(swell)
+                    .animation(.linear(duration: MicLevelReading.publishInterval), value: swell)
                     .brightness(pressed ? -0.06 : 0)
                 Image(systemName: recordGlyph)
                     .font(.system(size: bridge.listening ? 24 : 27, weight: .medium))
@@ -429,6 +439,32 @@ struct KeyboardRootView: View {
         }
         .disabled(!bridge.hasFullAccess)
         .accessibilityLabel(recordLabel)
+    }
+
+    /// How much bigger the button gets at the top of the meter: ⌀80 → ⌀86.4.
+    ///
+    /// Small on purpose. The button sits in a 100pt deck row with the ripple
+    /// behind it, and the ripple is what carries the loudness — the button's
+    /// job is to feel alive under the voice, which it does at a few points of
+    /// scale, not to be a meter in its own right. It also has to stay clear of
+    /// the inner ring (⌀96 at full) or the ring would never be visible around
+    /// it, which is the difference between a button with a halo and a button
+    /// that got slightly bigger.
+    private static let maxSwell: CGFloat = 0.08
+
+    /// The button's size right now, resting at 1.
+    ///
+    /// Silence is the resting state, and so is every state that is not a live
+    /// session: the button has other faces — idle, mic taken, error,
+    /// reconnecting — and none of them has a voice to answer.
+    ///
+    /// Reduce Motion rests too. A level meter is information, but a control
+    /// that changes size under the finger is motion by any reading of the
+    /// setting, and what that setting buys here is exactly what shipped before
+    /// this change: a flat red button.
+    private var swell: CGFloat {
+        guard bridge.listening, !reduceMotion else { return 1 }
+        return 1 + Self.maxSwell * CGFloat(bridge.mic.level)
     }
 
     private var recordGlyph: String {
@@ -673,33 +709,68 @@ struct KeyboardRootView: View {
     }
 }
 
-/// Two rings breathing outwards from the record button while the app is
-/// listening. Deliberately not a level meter: the audio lives in the container
-/// app, and streaming real levels across the App Group at frame rate would cost
-/// far more than the reassurance is worth. It says "still running", and nothing
-/// it can't know — which is also why it replaced the old "Listening…" caption
-/// rather than joining it.
-private struct PulseRing: View {
+/// Two rings pushed outwards from the record button **by the voice**.
+///
+/// This replaces a `repeatForever` animation — two rings that breathed out at a
+/// fixed 1.2 s whatever was being said, or whether anything was. The note it
+/// carried here used to argue that a real meter would cost more than the
+/// reassurance was worth, and that argument is what the level mailbox retired:
+/// one `Float` twelve times a second is not frame-rate streaming, and a
+/// visualiser that mimes listening is the thing this project's rule about
+/// amplitude exists to prevent. A canned pulse is reassuring in the precise way
+/// that is a lie — it looks identical over a microphone that has stopped
+/// hearing anything.
+///
+/// So both rings are functions of the level, and **in silence there is no
+/// ripple at all**: the caller leaves this view out of the tree entirely
+/// (`MicMeter.isAudible`), and even inside it every opacity is multiplied by
+/// the value driving it, so nothing can fade to "almost gone" and sit there.
+///
+/// The travel comes from `trail` being `level` a beat later
+/// (`KeyboardBridge.MicMeter`): a syllable pushes the inner ring out first and
+/// the outer one after it, which is a wavefront moving outward rather than two
+/// circles breathing in step. No timer, no `@State`, nothing driving itself.
+///
+/// **Cheap, because this is a keyboard extension.** Two `Circle`s, and the only
+/// things that change are `opacity` and `scaleEffect` — transforms on a layer
+/// the GPU already has, never a new shape, a blur, a shadow or a re-layout. No
+/// `TimelineView`, no display-link, no per-frame work in this process at all:
+/// SwiftUI interpolates between the twelve values a second the app sends and
+/// stops the moment they stop changing. At rest the view does not exist.
+private struct LevelRipple: View {
     let color: Color
-    @State private var animating = false
+    /// The voice now.
+    let level: Float
+    /// The voice a beat ago.
+    let trail: Float
+
+    /// Full-level reach. The outer ring stops at ⌀104, two points past the
+    /// 100pt deck row — the old pulse's maximum was ⌀100 exactly — which is
+    /// spent knowingly: at that size the ring is a 16 %-alpha wash sitting over
+    /// the gap above the deck, and nothing on this pane moves to make room for
+    /// it (the record button's frame is unchanged, so the layout cannot shift).
+    private static let innerSpread: CGFloat = 0.20
+    private static let outerSpread: CGFloat = 0.30
 
     var body: some View {
         ZStack {
-            ring(delay: 0)
-            ring(delay: 0.6)
+            ring(trail, spread: Self.outerSpread, alpha: 0.16)
+            ring(level, spread: Self.innerSpread, alpha: 0.28)
         }
         .frame(width: KBMetrics.deckHeight, height: KBMetrics.deckHeight)
         .allowsHitTesting(false)
-        .onAppear { animating = true }
     }
 
-    private func ring(delay: Double) -> some View {
+    private func ring(_ value: Float, spread: CGFloat, alpha: Double) -> some View {
         Circle()
-            .fill(color.opacity(animating ? 0 : 0.30))
+            // Both the size and the presence come from the same number, so a
+            // ring can only be seen as far out as the voice actually pushed it.
+            .fill(color.opacity(alpha * Double(value)))
             .frame(width: KBMetrics.recordSize, height: KBMetrics.recordSize)
-            .scaleEffect(animating ? 1.25 : 1)
-            .animation(
-                .easeOut(duration: 1.2).repeatForever(autoreverses: false).delay(delay),
-                value: animating)
+            .scaleEffect(1 + spread * CGFloat(value))
+            // Bridges the gap between readings so twelve steps a second read as
+            // one continuous movement. Matched to the publish interval: longer
+            // and the ring lags the voice, shorter and the step shows.
+            .animation(.linear(duration: MicLevelReading.publishInterval), value: value)
     }
 }

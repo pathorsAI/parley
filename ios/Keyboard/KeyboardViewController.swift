@@ -28,6 +28,11 @@ final class KeyboardViewController: UIInputViewController {
     /// without opening it. Also the goodbye it writes on its way out. See
     /// `AppPresence`.
     private var presenceNote: DarwinObserver?
+    /// A new microphone level. The fastest note on this channel by an order of
+    /// magnitude — about twelve a second while someone is speaking, none at all
+    /// while nobody is — so its handler is deliberately the cheapest in this
+    /// file: one small file read and two multiplies. See `MicLevelReading`.
+    private var levelNote: DarwinObserver?
 
     /// Watches the session this keyboard is showing for signs that nobody is
     /// serving it any more — see `checkLiveness`. One at a time; re-armed on
@@ -130,7 +135,7 @@ final class KeyboardViewController: UIInputViewController {
         armChannelObservers()
     }
 
-    /// Subscribe to the four notes the app sends, once Full Access allows it.
+    /// Subscribe to the five notes the app sends, once Full Access allows it.
     ///
     /// Called from `viewDidLoad` *and* from every `viewWillAppear`, because
     /// `hasFullAccess` is not a fact about the installation — it is a fact about
@@ -149,7 +154,7 @@ final class KeyboardViewController: UIInputViewController {
     /// next appearance and ⏹ looked like it did nothing for up to the liveness
     /// watchdog's ~25 s.
     ///
-    /// Idempotent on `down`: the four are armed and dropped together, so one of
+    /// Idempotent on `down`: the five are armed and dropped together, so one of
     /// them being present means all of them are.
     private func armChannelObservers() {
         guard hasFullAccess, down == nil else { return }
@@ -178,6 +183,13 @@ final class KeyboardViewController: UIInputViewController {
         presenceNote = DarwinObserver(DictationChannel.presenceNote) { [weak self] in
             DispatchQueue.main.async { self?.readPresence() }
         }
+        // Twelve a second while somebody is speaking, and nothing at all while
+        // nobody is — the one note here that is a stream rather than an event.
+        // It is what makes the record button swell with the voice instead of
+        // pulsing on a loop that has nothing to do with it.
+        levelNote = DarwinObserver(DictationChannel.levelNote) { [weak self] in
+            DispatchQueue.main.async { self?.readMicLevel() }
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -205,6 +217,10 @@ final class KeyboardViewController: UIInputViewController {
         readReadiness()
         readPresence()
         readWindow()
+        // Before the drain, which is what decides whether the pane is live at
+        // all: a keyboard coming back mid-sentence should find the button
+        // already the right size rather than growing into it.
+        readMicLevel()
         drainDownlink()
         // Warm the Taptic Engine while the keyboard is coming up, so the thump
         // lands with the first press on the record button rather than a beat
@@ -476,6 +492,133 @@ final class KeyboardViewController: UIInputViewController {
         bridge.ready = DictationChannel.readReadiness()?.canDictate ?? false
     }
 
+    // MARK: the microphone level
+
+    /// How fast the drawn level chases the published one, per reading.
+    ///
+    /// The mailbox arrives at ~12 Hz and a raw sample is not something to draw:
+    /// speech is spiky at that resolution, so the button would twitch between
+    /// consecutive readings of the same word, and a meter that twitches reads
+    /// as broken rather than as responsive. So each reading moves the drawn
+    /// value a fraction of the way towards it — a one-pole filter, two
+    /// multiplies, no history and no buffer.
+    ///
+    /// **Asymmetric on purpose.** The rise is fast (0.6: within ~90 % of a new
+    /// level in three readings, a quarter of a second) because the swell has to
+    /// land *with* the syllable; a slow attack is exactly the lag that makes a
+    /// meter feel disconnected from the voice. The fall is slower (0.25, ~90 %
+    /// in half a second) because the gaps between words are shorter than the
+    /// gaps between sentences: matching them would strobe the button on every
+    /// consonant, and what the eye should see between words is a settle, not a
+    /// collapse. A voice that actually stops still reaches rest well inside a
+    /// second.
+    private static let levelAttack: Float = 0.6
+    private static let levelRelease: Float = 0.25
+    /// The same filter, slower, applied to the already-smoothed level to make
+    /// the outer ring — see `KeyboardBridge.MicMeter.trail`. A lagged copy of a
+    /// signal *is* a wavefront when it is drawn further out, which is how the
+    /// ripple emanates without a repeating animation anywhere in it.
+    private static let trailAttack: Float = 0.25
+    private static let trailRelease: Float = 0.22
+
+    /// Watches for the app going quiet without saying so — see
+    /// `armLevelWatchdog`. At most one, and it ends itself once the meter is at
+    /// rest.
+    private var levelWatchdog: Task<Void, Never>?
+
+    /// Read the published level and move the meter towards it.
+    private func readMicLevel() {
+        guard hasFullAccess else { return }
+        // `current()` rather than the raw field: a reading nobody has refreshed
+        // for `MicLevelReading.staleAfter`, one from a build that did not stamp
+        // it, and a missing file all mean silence rather than "whatever was
+        // last seen".
+        applyMicLevel(DictationChannel.readMicLevel()?.current() ?? 0)
+    }
+
+    private func applyMicLevel(_ target: Float) {
+        let was = bridge.mic
+        let level = Self.chase(
+            was.level, towards: target, up: Self.levelAttack, down: Self.levelRelease)
+        let trail = Self.chase(
+            was.trail, towards: level, up: Self.trailAttack, down: Self.trailRelease)
+        let next = KeyboardBridge.MicMeter(level: level, trail: trail)
+        // Only when it actually moved. Twelve readings a second is twelve
+        // SwiftUI invalidations a second if every one of them publishes, and
+        // the values converge on *exactly* zero (see `chase`), so a keyboard
+        // sitting in silence redraws nothing at all rather than redrawing the
+        // same flat button twelve times.
+        if next != was { bridge.mic = next }
+        armLevelWatchdog()
+    }
+
+    /// One reading's worth of movement towards `target`.
+    ///
+    /// Snapped to zero at the bottom because an exponential approach never
+    /// arrives: without it the meter would idle at a denormal forever, which
+    /// costs nothing to draw but means `applyMicLevel` never stops publishing
+    /// and the watchdog below never stops looping. Silence has to be reachable,
+    /// not approached.
+    private static func chase(_ value: Float, towards target: Float, up: Float, down: Float)
+        -> Float
+    {
+        let next = value + (target - value) * (target > value ? up : down)
+        return next < 0.002 ? 0 : min(1, next)
+    }
+
+    /// Bring the meter to rest when the app stops publishing altogether.
+    ///
+    /// Staleness alone cannot do it. The keyboard only re-reads the mailbox
+    /// when a note arrives, and a process that has been jetsammed, suspended by
+    /// an audio interruption or swiped out of the app switcher posts no notes —
+    /// so the last level published would be the last level drawn, and the
+    /// button would hold a half-swell until the liveness watchdog gave up on
+    /// the session ~25 s later. That is precisely the "frozen mid-swell" this
+    /// mailbox's staleness rule exists to prevent, and something has to *ask*.
+    ///
+    /// Cheap by construction: one task at a time, waking once per
+    /// `staleAfter` (about 1.6 times a second) and only while the meter is off
+    /// its rest, which outside a live session is never. It returns the moment
+    /// the meter reaches zero, so a keyboard on an idle pane runs no timer at
+    /// all — and a keyboard in a live session runs exactly one, against the
+    /// twelve notes a second it is backstopping.
+    private func armLevelWatchdog() {
+        guard levelWatchdog == nil, bridge.mic != .rest else { return }
+        levelWatchdog = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(MicLevelReading.staleAfter))
+                guard !Task.isCancelled, let self else { return }
+                // Re-reading rather than assuming silence: the app may simply
+                // have gone quiet for a beat and stopped writing, in which case
+                // the file still holds a fresh-enough reading and the meter
+                // should keep chasing it. `applyMicLevel` cannot re-arm us — it
+                // finds this task still in place — so there is no recursion
+                // here, only the loop.
+                self.applyMicLevel(DictationChannel.readMicLevel()?.current() ?? 0)
+                guard self.bridge.mic == .rest else { continue }
+                // Clearing the handle only on *this* exit, and not in a
+                // `defer`, because the other way out is a cancel — and a cancel
+                // comes from `restMicLevel`, which has already put the handle
+                // down and may have armed a replacement since. A defer would
+                // have let a dying task erase its successor, leaving two of
+                // these looping with nothing tracking either.
+                self.levelWatchdog = nil
+                return
+            }
+        }
+    }
+
+    /// Put the meter down now, without waiting for it to decay.
+    ///
+    /// For the moments the keyboard itself ends a session: there is no voice to
+    /// settle from, and a button still coasting down from the last word would
+    /// be animating something that is over.
+    private func restMicLevel() {
+        levelWatchdog?.cancel()
+        levelWatchdog = nil
+        if bridge.mic != .rest { bridge.mic = .rest }
+    }
+
     // MARK: the microphone window (called from SwiftUI)
 
     /// Read what the app says about the microphone window.
@@ -566,6 +709,10 @@ final class KeyboardViewController: UIInputViewController {
         // slot goes back to the idle invitation to speak.
         bridge.errorText = nil
         bridge.micTaken = false
+        // The button goes back to its resting size under the finger, with the
+        // rest of the pane. Letting it coast down from the last word would be
+        // the one part of this still animating a session the user just ended.
+        restMicLevel()
     }
 
     /// How old a downlink may be and still get adopted by a keyboard that
@@ -690,6 +837,11 @@ final class KeyboardViewController: UIInputViewController {
         // happened to insert: a keyboard that was killed mid-session and came
         // back still shows the sentence in progress.
         bridge.tail = String(d.committed.suffix(Self.tailLimit))
+        // Remembered before the line below throws it away: the `.micTaken`
+        // branch has to be able to tell the microphone *being* taken from the
+        // app republishing a state it is already in, and the flag is the only
+        // record of which. See there.
+        let wasMicTaken = bridge.micTaken
         // Cleared before the switch below sets it again, so every state that is
         // not "the microphone is gone" takes the notice down — a resumed session
         // included, which is the whole point of it being recoverable.
@@ -744,6 +896,23 @@ final class KeyboardViewController: UIInputViewController {
             bridge.partial = ""
             bridge.errorText = nil
             bridge.micTaken = true
+            // The one moment on this pane the user is most likely to keep
+            // talking into nothing, and until now the copy in the slot was the
+            // only thing that said so — copy on a keyboard the user is not
+            // looking at, because they are looking at the field they are
+            // dictating into or at the system dictation key they just pressed.
+            //
+            // Once per transition, not once per drain. The app republishes
+            // `micTaken` on every heartbeat for as long as the microphone is
+            // gone, and `drainDownlink` also runs on every appearance, so
+            // firing on the state rather than on entering it would buzz for
+            // seconds. `wasMicTaken` is that edge — captured above, before the
+            // unconditional clear that precedes this switch.
+            //
+            // Full Access is the guard at the top of this method, the same one
+            // `dictationDelivered` relies on: without it there is no App Group
+            // to read this state from and no haptics to play anyway.
+            if !wasMicTaken { Haptics.micTakenBySystem() }
         case .error:
             bridge.listening = false
             bridge.reconnecting = false
@@ -753,6 +922,12 @@ final class KeyboardViewController: UIInputViewController {
             // it (the old behavior) read as "the mic button does nothing".
             bridge.errorText = d.errorMessage ?? String(localized: "Couldn't start. Try again.")
         }
+        // Nothing that is not live has a level. One line here rather than the
+        // same line in each of the four terminal branches above: whatever took
+        // the pane out of its listening shape, the meter goes with it. Idle
+        // drains cost nothing — `restMicLevel` publishes only if something
+        // moved, and a `done` being republished moves nothing.
+        if !bridge.listening { restMicLevel() }
         // Every drain is a sign of life or the end of one; either way the
         // watchdog's deadline moved.
         checkLiveness()
@@ -933,6 +1108,38 @@ final class KeyboardBridge: ObservableObject {
     /// and by any other downlink state, including the app publishing `listening`
     /// again for the same session when the microphone comes back.
     @Published var micTaken = false
+
+    /// What the record button is doing with the user's voice, smoothed and
+    /// ready to draw. Two `Float`s, published together.
+    ///
+    /// One property rather than two `@Published` fields because they always
+    /// move together and two would invalidate the view twice for one reading —
+    /// twelve times a second, in a process running against a jetsam limit.
+    /// `Equatable` for the other half of the same economy: `applyMicLevel`
+    /// drops a reading that did not move anything, which in silence is every
+    /// reading.
+    struct MicMeter: Equatable {
+        /// How loud it is now, 0…1, already smoothed
+        /// (`KeyboardViewController.chase`). Drives the button's swell.
+        var level: Float
+        /// The same voice a beat ago: `level` put through a slower filter, so
+        /// it is always a little behind. Drives the outer ring, and being
+        /// behind is the whole point — a lagged copy drawn further out is a
+        /// wavefront, which is how the ripple travels outward without a
+        /// repeating animation to carry it.
+        var trail: Float
+
+        /// Nothing is being said, and nothing is being drawn. Both halves have
+        /// to be exactly zero: `level` at rest is a button at its normal size,
+        /// and `trail` at rest is the ripple *gone* rather than merely faint.
+        static let rest = MicMeter(level: 0, trail: 0)
+
+        /// There is a voice to draw. In silence this is false and the pane
+        /// leaves the rings out of the tree entirely.
+        var isAudible: Bool { level > 0 || trail > 0 }
+    }
+
+    @Published var mic = MicMeter.rest
 
     /// Parley is set up far enough for a tap to actually transcribe: an account
     /// on this device, and microphone permission granted. False when the

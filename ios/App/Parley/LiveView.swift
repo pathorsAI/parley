@@ -76,8 +76,7 @@ struct LiveView: View {
                 Button("Cancel", role: .cancel) {}
                 Button("Everyone has agreed") {
                     Task {
-                        await recorder.start(
-                            token: KeychainStore.get(AppState.tokenKey), app: app)
+                        await recorder.start(token: KeychainStore.get(AppState.tokenKey))
                     }
                 }
             } message: {
