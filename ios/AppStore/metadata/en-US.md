@@ -85,31 +85,32 @@ Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
 ## What's New — 1.15
 
-The microphone now says so on the Lock Screen.
+Voice typing now says so on the Lock Screen, and the record button listens.
 
-Start a meeting and a card appears on the Lock Screen and in the Dynamic
-Island, with the elapsed time running and a Stop button on it. Lock the phone,
-put it face down, switch to another app — the recording is still visible, and
-still stoppable, without unlocking. Recording no longer means trusting a small
-orange dot and your memory.
+Swipe the keyboard away mid-sentence and Parley is still listening — which
+until now was something you could only find out by bringing the keyboard back.
+Now it moves to the Dynamic Island and the Lock Screen, with the time running,
+so you can see it without unlocking.
 
-The same card covers voice typing. Swipe the keyboard away mid-sentence and
-Parley is still listening, which until now was something you could only find
-out by bringing the keyboard back. Now it moves to the Dynamic Island, with
-Finish and Discard right there.
+It also covers the quiet state that was hardest to explain: when you have asked
+Parley to keep the microphone ready between dictations, the card says the
+microphone is open, says plainly that nothing is being recorded, counts down how
+long is left, and lets you end it in one tap.
 
-It also covers the quiet state that was hardest to explain: when you have
-asked Parley to keep the microphone ready between dictations, the card says
-the microphone is open, says plainly that nothing is being recorded, counts
-down how long is left, and lets you end it in one tap.
+None of your words appear on the card, in either state. A Lock Screen is a
+public surface, and what you are dictating stays inside the app.
 
-Nothing from the meeting appears on the card. A Lock Screen is a public
-surface, and what is said in the room stays inside the app.
+The record button follows your voice. It used to pulse on a loop whether or not
+anyone was speaking; now it swells with what you actually say and rings ripple
+out from it, and in silence it is completely still.
 
-And you can feel it now. Opening the microphone is a rising two-beat rather
-than a single tap that got lost against the keyclick, and swiping the keyboard
-away while a dictation is still running has its own falling one — so you know
-the microphone stayed behind without looking.
+And you can feel more of it. Opening the microphone is a rising two-beat rather
+than a single tap that got lost against the keyclick. Swiping the keyboard away
+while a dictation is still running has its own falling one, so you know the
+microphone stayed behind without looking. Stopping a recording has a beat that
+comes to rest. And if iOS takes the microphone — its own dictation key sits just
+below this keyboard, and it is easy to hit by mistake — you feel that too,
+instead of talking on into nothing.
 
 ## What's New — 1.14
 
