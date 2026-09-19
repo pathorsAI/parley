@@ -115,7 +115,7 @@ alive at the right moments.
 
 ### App Group channel
 
-`DictationChannel` (in ParleyKit, so both targets share it) is six
+`DictationChannel` (in ParleyKit, so both targets share it) is seven
 single-writer mailboxes, each with its own Darwin notification, so the two
 processes never contend on a file:
 
@@ -134,6 +134,10 @@ processes never contend on a file:
   updatedAt}`, the app's heartbeat: the process is there, and whether a start
   request would be served without opening Parley. See *Knowing whether the app
   is there* below.
+- `dictation-level.json` — app → keyboard: `{level, updatedAt}`, how loud the
+  microphone is right now, normalised to 0…1. Written ~12 times a second while
+  a session is live and somebody is speaking, and not at all otherwise. See
+  *A record button that swells with the voice* below.
 
 The window pair is separate from the session pair because a window outlives any
 one dictation, and most of what it has to say happens when no session exists.
@@ -876,12 +880,65 @@ which one you're on.
 
 The record button is one of exactly two places the keyboard is allowed to look
 like Parley rather than iOS: idle it carries Pathors' brand gradient (`#1469D4`
-→ `#2DB6F3`); listening it goes flat recording red inside two rings breathing
-outward, so "armed" is never something you have to read out of a gradient — and
-never needs a second element saying "Listening…" beside it. The other is the
-wordmark (`#1469D4` light, `#2DB6F3` dark). Nothing else on the pane carries a
-colour, including `⏎` when the host has asked for an action and `✕` when a
-session is running.
+→ `#2DB6F3`); listening it goes flat recording red and swells with the voice
+inside two rings the voice pushes outward, so "armed" is never something you
+have to read out of a gradient — and never needs a second element saying
+"Listening…" beside it. The other is the wordmark (`#1469D4` light, `#2DB6F3`
+dark). Nothing else on the pane carries a colour, including `⏎` when the host
+has asked for an action and `✕` when a session is running.
+
+#### A record button that swells with the voice
+
+The rings used to breathe on a 1.2 s `repeatForever`, and the note beside them
+said a real meter would cost more than the reassurance was worth — the audio is
+in the app, and streaming levels across the App Group at frame rate is not a
+thing a keyboard extension should be doing. Both halves of that were wrong in
+the same way. A canned pulse is reassuring in the precise way that is a lie: it
+looks identical over a microphone that has stopped hearing anything, which is a
+state this feature genuinely reaches (see *When the system takes the
+microphone*). And a level is not frame-rate streaming — it is **one `Float`,
+twelve times a second, in a mailbox of its own**.
+
+- **Its own mailbox, not a field on the downlink.** The downlink is re-stamped
+  only when the transcript moves, and that stamp is the liveness watchdog's
+  only input (`Downlink.presumedDeadAt`). A value that moves whether or not a
+  word does would refresh it forever, which does not weaken the watchdog but
+  switches it off — and several bugs were spent getting it right.
+- **12 Hz.** Below ~10 Hz the swell visibly trails the syllable that caused it.
+  Above it, each write is a file write plus a Darwin post in a process that is
+  usually *backgrounded* while dictating. 12 is also the rate the measurement
+  arrives at — `AudioCapture` taps 4096 frames, ~85 ms at 48 kHz — so a faster
+  mailbox would mostly republish readings that had not changed.
+- **One number, not a trace.** A ring of recent values would let the keyboard
+  draw a scrolling waveform; nothing on this pane draws one. The lag the ripple
+  needs is derived in the keyboard (a slower copy of the same smoothed value)
+  rather than carried on the wire.
+- **Silence is the resting state, and it is representable.** A reading at or
+  below the floor, a reading older than 0.6 s, an unstamped one and a missing
+  file all read as zero. Staleness is what stops a killed app leaving the button
+  frozen mid-swell — the keyboard only re-reads on a note, and a dead process
+  posts none, so the keyboard also runs one cheap watchdog (waking once per
+  stale period, and only while the meter is off its rest) to ask.
+- **Smoothed, asymmetrically.** A raw 12 Hz sample twitches, and a meter that
+  twitches reads as broken. Each reading moves the drawn value a fraction of the
+  way towards it — fast up (~0.25 s to full), slower down (~0.5 s) — so the
+  swell lands with the syllable and what happens between words is a settle
+  rather than a collapse.
+- **The ripple travels because it is late.** The outer ring is driven by the
+  same value put through a slower filter, so a syllable pushes the inner ring
+  out first and the outer one after it. In silence there is no ripple at all:
+  the rings leave the view tree, and inside it every opacity is multiplied by
+  the value driving it.
+
+Reduce Motion rests the button and drops the rings, which is exactly what
+shipped before this change.
+
+The keyboard also has one haptic for the pane's worst moment: the system taking
+the microphone is `.heavy` → `.heavy`, a two-beat pattern that deliberately goes
+nowhere. Every other beat in `Haptics` moves, and the direction is what says
+which way the session went — all of them answer a press. This one answers
+nothing the user did, so it has no direction to borrow. Once per transition into
+the state, not on every drain that republishes it.
 
 #### Four states, and only one of them is a microphone
 

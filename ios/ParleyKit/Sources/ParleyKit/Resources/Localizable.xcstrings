@@ -1,23 +1,6 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "Discard": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Discard"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "丟掉"
-          }
-        }
-      }
-    },
     "End Standby": {
       "extractionState": "manual",
       "localizations": {
@@ -31,23 +14,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "結束待命"
-          }
-        }
-      }
-    },
-    "Finish": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Finish"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "完成"
           }
         }
       }
@@ -150,23 +116,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "講者 %@"
-          }
-        }
-      }
-    },
-    "Stop Recording": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Stop Recording"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "停止錄音"
           }
         }
       }

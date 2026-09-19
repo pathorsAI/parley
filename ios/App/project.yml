@@ -134,22 +134,24 @@ targets:
     platform: iOS
     sources: [../Activities]
     dependencies:
-      # For MicActivityAttributes, MicActivityState and the four
-      # LiveActivityIntents. The widget cannot import the app target, so the
-      # only way it and the app agree on what the card says — down to the red —
-      # is that both link this package.
+      # For MicActivityAttributes and MicActivityState. The widget cannot
+      # import the app target, so the only way it and the app agree on what the
+      # card says — down to the blue — is that both link this package.
       - package: ParleyKit
     entitlements:
       path: ../Activities/ParleyActivities.entitlements
       properties:
         # The same App Group as the app and the keyboard, and it is worth being
         # explicit about why an extension that never reads the container needs
-        # it. `LiveActivityIntent.perform()` runs in the *app's* process, so the
-        # mailbox writes in MicActivityIntents happen on the app's entitlement.
-        # But this target compiles that code and links it, and an extension
-        # holding a build of `DictationChannel` it is not entitled to use is a
-        # discrepancy that would only surface the day someone moves one line of
-        # it. Both halves declare the same group so neither can drift.
+        # it. This target links ParleyKit, and ParleyKit contains
+        # `DictationChannel`; an extension holding a build of that which it is
+        # not entitled to use is a discrepancy that would only surface the day
+        # someone calls one line of it. Both halves declare the same group so
+        # neither can drift. It mattered more when the card carried buttons —
+        # a `LiveActivityIntent` is declared here and performed in the app's
+        # process, writing exactly those mailboxes — and it is kept now that
+        # they are gone because the link is what creates the hazard, not the
+        # call.
         com.apple.security.application-groups: [group.com.pathors.parley.ios]
     info:
       path: ../Activities/Info.plist

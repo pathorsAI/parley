@@ -141,7 +141,17 @@ final class DictationCoordinator: ObservableObject {
     /// with nothing on screen to show a level to, and hopping to the main actor
     /// a dozen times a second to set a number nobody reads is exactly the kind
     /// of background wakeup that shows up as battery.
+    ///
+    /// The same gate now decides whether the *keyboard* is told (see
+    /// `publishKeyboardLevel`), and the reasoning carries across unchanged —
+    /// with the bill larger rather than smaller, because a keyboard reading is
+    /// a file write and a Darwin post on top of the hop. The keyboard's record
+    /// button only swells while a session is live; while a window is open with
+    /// no session there is nothing on either screen for a level to move.
     private let reportsLevel = LevelGate()
+    /// When the keyboard's level mailbox was last written, so the throttle in
+    /// `publishKeyboardLevel` has something to measure against.
+    private var levelPublishedAt = Date.distantPast
     /// Keeps the process awake ~30 s after a session ends — and after any trip
     /// to the background (see `armLifecycleLinger`) — so the keyboard's next
     /// mic tap starts over the Darwin channel with no app switch. `.invalid`
@@ -486,11 +496,76 @@ final class DictationCoordinator: ObservableObject {
             onChunk: { [weak self, audio, reportsLevel] samples, level in
                 audio.send(samples)
                 guard reportsLevel.isOpen else { return }
-                Task { @MainActor in self?.micLevel = level }
+                // One measurement, two readers. `level` is the RMS this chunk
+                // already computed for the dictation screen's meter; the
+                // keyboard gets the same number normalised, and nothing here
+                // measures the audio a second time.
+                //
+                // Published from the main-actor hop rather than from this
+                // audio-thread callback, and that is not tidiness: writing a
+                // file from an `AVAudioEngine` tap is exactly the kind of
+                // blocking work that costs dropped buffers. The hop is one the
+                // in-app meter already pays for, so the keyboard's mailbox
+                // costs no extra wake-up — only the write, which
+                // `publishKeyboardLevel` rations.
+                Task { @MainActor in
+                    self?.micLevel = level
+                    self?.publishKeyboardLevel(.init(rms: level))
+                }
             },
             onStatus: { [weak self] status in
                 Task { @MainActor in self?.handle(capture: status, from: generation) }
             })
+    }
+
+    // MARK: the keyboard's level meter
+
+    /// Hand the keyboard a microphone level, at most `publishInterval` apart.
+    ///
+    /// The throttle is here rather than inside `DictationChannel` because it
+    /// has to be suspendable: `force` is how the end of a session writes its
+    /// one final silence, and that write is the whole guarantee that a record
+    /// button is never left mid-swell. A rate limiter that swallowed it would
+    /// turn the guarantee into a race with `MicLevelReading.staleAfter`.
+    ///
+    /// **Silence is written once and then left to go stale.** Someone pausing
+    /// mid-sentence is the common case, not the exception, and there is no
+    /// reason to spend twelve writes a second saying nothing is happening: a
+    /// stale reading and a fresh silent one draw the same flat button (see
+    /// `MicLevelReading.current(at:)`), so stopping is not a shortcut, it is
+    /// the same answer for free. Writing resumes on the first chunk that is
+    /// loud enough to say something new.
+    private func publishKeyboardLevel(_ reading: MicLevelReading, force: Bool = false) {
+        if !force {
+            let now = Date()
+            guard now.timeIntervalSince(levelPublishedAt) >= MicLevelReading.publishInterval,
+                !reading.isSilent
+            else { return }
+            levelPublishedAt = now
+        } else {
+            levelPublishedAt = Date()
+        }
+        DictationChannel.writeMicLevel(reading)
+    }
+
+    /// Both meters to rest — the dictation screen's and the keyboard's.
+    ///
+    /// The keyboard's write is unconditional: it is the last thing the mailbox
+    /// will say until someone speaks again, and it has to be true the instant
+    /// it lands rather than `staleAfter` later.
+    private func restLevel() {
+        micLevel = 0
+        publishKeyboardLevel(.silent, force: true)
+    }
+
+    /// Stop measuring for anybody, and leave both meters flat.
+    ///
+    /// Every ending calls this — ⏹, ✕, an error, the cap, the microphone being
+    /// taken, the window closing — because every ending is a moment where the
+    /// alternative is a level that stops moving without ever saying why.
+    private func stopReportingLevel() {
+        reportsLevel.set(false)
+        restLevel()
     }
 
     /// One relay leg. `feature: "voice_typing"` is the cloud's whitelisted tag
@@ -696,7 +771,7 @@ final class DictationCoordinator: ObservableObject {
                 publishLive(.listening)
             }
         case .interrupted:
-            micLevel = 0
+            restLevel()
             micTaken = true
             // The window goes now rather than when the recovery gives up. It is
             // a promise that the *next* tap will be served in place, and the
@@ -757,8 +832,7 @@ final class DictationCoordinator: ObservableObject {
         foldPartialIn()
         let cap = capture
         capture = nil
-        reportsLevel.set(false)
-        micLevel = 0
+        stopReportingLevel()
         // Detached for the same reason `fail` does it: closing an audio session
         // is slow and nothing below depends on it. It really does close now — a
         // capture that had given up used to make `stop()` a no-op, which left
@@ -1012,8 +1086,7 @@ final class DictationCoordinator: ObservableObject {
         // also drops anything held for a leg that will never exist; the
         // finalize below drains what actually reached the relay.
         audio.discard()
-        reportsLevel.set(false)
-        micLevel = 0
+        stopReportingLevel()
         state = .finishing
         publish()
         if let relay {
@@ -1050,8 +1123,7 @@ final class DictationCoordinator: ObservableObject {
         capTimer?.cancel()
         capTimer = nil
         audio.discard()
-        reportsLevel.set(false)
-        micLevel = 0
+        stopReportingLevel()
         let dying = relay
         relay = nil
         dying?.cancel()
@@ -1099,7 +1171,7 @@ final class DictationCoordinator: ObservableObject {
         reconnectTask = nil
         audio.discard()
         micTaken = false
-        reportsLevel.set(false)
+        stopReportingLevel()
         // Fold the last partial into the committed text so nothing said right
         // before the endpoint is dropped from what the keyboard inserts.
         foldPartialIn()
@@ -1227,7 +1299,7 @@ final class DictationCoordinator: ObservableObject {
         dying?.cancel()
         let cap = capture
         capture = nil
-        reportsLevel.set(false)
+        stopReportingLevel()
         // Detached because `fail` is the sync tail of half a dozen paths and
         // closing the audio session is slow; nothing after this depends on it.
         Task { await cap?.stop() }
@@ -1292,8 +1364,7 @@ final class DictationCoordinator: ObservableObject {
     private func closeMicrophone() async {
         let cap = capture
         capture = nil
-        reportsLevel.set(false)
-        micLevel = 0
+        stopReportingLevel()
         await cap?.stop()
         // No microphone to borrow any more: a backgrounded tap now has to open
         // Parley, and the keyboard's button should say so at once.

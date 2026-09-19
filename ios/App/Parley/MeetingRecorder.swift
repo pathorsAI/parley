@@ -53,10 +53,7 @@ final class MeetingRecorder: ObservableObject {
     }
 
     @Published private(set) var phase: Phase = .idle {
-        didSet {
-            Self.holdsTheMicrophone = Self.holdsMic(phase)
-            publishMicActivity()
-        }
+        didSet { Self.holdsTheMicrophone = Self.holdsMic(phase) }
     }
 
     /// Whether *any* meeting anywhere in the app currently has the microphone.
@@ -97,27 +94,13 @@ final class MeetingRecorder: ObservableObject {
     /// A `Date` rather than a ticking count: the view hands it to
     /// `Text(_:style:.timer)` and the system redraws the digits, so nothing here
     /// publishes once a second.
-    ///
-    /// Carries a `didSet` for the same reason `phase` does: it is the second
-    /// half of what the lock-screen card is about, and `start()` sets it
-    /// *after* moving `phase`, so the phase's own notification is one that has
-    /// not heard about this meeting yet.
-    @Published private(set) var startedAt: Date? {
-        didSet { publishMicActivity() }
-    }
+    @Published private(set) var startedAt: Date?
     /// One line under the transcript. `nil` when there is nothing to say.
     @Published private(set) var status: String?
     /// The microphone could not be recovered. The view watches this and ends
     /// the meeting, which is what gets the audio captured so far onto disk and
     /// into the cloud instead of leaving a dead recording on screen.
-    ///
-    /// The third `didSet`, because losing the microphone changes neither
-    /// `phase` nor `startedAt` — the meeting is still running, it has just
-    /// stopped hearing anything — and a card that kept animating through it
-    /// would be exactly the lie the card exists to prevent.
-    @Published private(set) var lostMicrophone = false {
-        didSet { publishMicActivity() }
-    }
+    @Published private(set) var lostMicrophone = false
     /// How the live transcript is doing, separately from `status`, so the view
     /// can draw "reconnecting" as the temporary state it is instead of styling
     /// it like the sentence that says the transcript is over.
@@ -188,60 +171,12 @@ final class MeetingRecorder: ObservableObject {
     /// where in the recording the audio it held was spoken.
     private static let reconnect = ReconnectPolicy()
 
-    /// The Live Activity's ⏹, arriving as a Darwin note (see
-    /// `MeetingControlChannel`). Same shape as
-    /// `DictationCoordinator.windowControlObserver`, and held for the same
-    /// reason: `DarwinObserver` unregisters itself in `deinit`, so the property
-    /// *is* the lifetime.
-    private var stopObserver: DarwinObserver?
-
-    /// The `AppState` the running meeting was started from, weakly.
-    ///
-    /// `stop(app:)` needs one — the upload reads the account, the default save
-    /// destination and the org list off it — and this object has no other way
-    /// to reach one. Everywhere else that is fine, because every caller is
-    /// `LiveView`, which holds it from the environment and passes it in;
-    /// `FilingSuggestionModel.consider(_:app:)` is handed it the same way, and
-    /// `DictationCoordinator` answers the same problem by owning nothing and
-    /// building its own `CloudClient` off the Keychain. Neither answer works
-    /// here: a stop has to reach *this* meeting's uploader, with this user's
-    /// filing settings.
-    ///
-    /// The card's ⏹ is the one caller that does not arrive through a view, and
-    /// it arrives with the app in the background — where SwiftUI is under no
-    /// obligation to evaluate a body. So routing it back out through a
-    /// `@Published` flag and an `.onChange`, the way `lostMicrophone` is
-    /// routed, would make stopping a recording from a locked phone depend on
-    /// the view layer running while the screen is off.
-    ///
-    /// Weak, so it is a reference and not a second owner — `ParleyApp` holds
-    /// the process's only `AppState` — and re-pointed by each `start`. Nil
-    /// means the app that started the meeting is gone, and so is the meeting.
-    private weak var host: AppState?
-
-    /// Arming here rather than from the view, and the claim that makes it safe
-    /// is worth checking rather than assuming: this object is a `@StateObject`
-    /// of `LiveView`, `LiveView` is the Record tab of `MainTabs`, and `start()`
-    /// is reachable from nowhere else — so a recording cannot exist without
-    /// this object existing, and this object cannot exist without having run
-    /// `init`. The observer is therefore armed for exactly as long as there is
-    /// anything it could stop, which is a tighter and more honest lifetime than
-    /// `DictationCoordinator`'s process-long observers get to have (that object
-    /// is a singleton, and its notes can arrive for a session it has not
-    /// started yet).
-    init() {
-        armStopObserver()
-    }
-
     // MARK: control
 
     /// Begin recording. A second call while a meeting is live is a no-op — the
     /// guard that makes the double-tap harmless.
-    func start(token: String?, app: AppState) async {
+    func start(token: String?) async {
         guard phase == .idle else { return }
-        // Before anything can go wrong, and before the card exists: this is the
-        // `AppState` the card's ⏹ will stop the meeting with. See `host`.
-        host = app
         // The dictation keyboard may be holding the microphone open for its
         // window. There is one microphone: take it before opening a meeting's
         // own capture, rather than leaving two `AudioCapture`s to rebuild the
@@ -406,66 +341,6 @@ final class MeetingRecorder: ObservableObject {
         startedAt = nil
         status = nil
         phase = .idle
-    }
-
-    // MARK: the card
-
-    /// The Live Activity's ⏹ — `StopMeetingRecordingIntent` writing
-    /// `MeetingControlChannel` from the widget's process and posting its note.
-    ///
-    /// It runs the in-app Stop button's path and nothing else: `stop(app:)`, so
-    /// the microphone closes, the relay drains its last utterance, and the
-    /// recording is saved and uploaded exactly as it would be from a tap on the
-    /// Record tab. A lock screen must not have its own way of ending a meeting.
-    ///
-    /// The three guards are each a different "no":
-    ///
-    /// - `applies(toRecordingStartedAt:)` — a stop request is a timestamp, not a
-    ///   flag, so a control file left behind by a crash cannot stop the *next*
-    ///   recording. Neither side ever clears it.
-    /// - `isRecording` — and this is the case worth being deliberate about. A
-    ///   note can wake an app that iOS relaunched *into the background* for the
-    ///   intent, and what it finds there is an idle recorder: the recording
-    ///   really did die with the process, because nothing brings a stopped
-    ///   `AVAudioSession` back on its own. Doing nothing is the correct and
-    ///   complete answer — the card will stop being vouched for, and the widget
-    ///   says so on its own.
-    /// - `host` — no `AppState` means no app around the recording either.
-    private func armStopObserver() {
-        stopObserver = DarwinObserver(MeetingControlChannel.note) { [weak self] in
-            Task { @MainActor in
-                guard let self, self.isRecording, let app = self.host,
-                    MeetingControlChannel.read()?
-                        .applies(toRecordingStartedAt: self.startedAt) == true
-                else { return }
-                await self.stop(app: app)
-            }
-        }
-    }
-
-    /// The meeting's half of what the microphone card says (the other half is
-    /// `DictationCoordinator`'s). Driven from the `didSet` of the three
-    /// properties that can change it rather than from the twelve transitions
-    /// that set them — the same reason `holdsTheMicrophone` is derived there.
-    ///
-    /// `holdsMic` and not `startedAt != nil`: `.uploading` must produce no card.
-    /// The microphone is already closed by then, and a card is a claim about the
-    /// microphone — the same line `holdsTheMicrophone` draws so that playback
-    /// can start while an upload finishes.
-    ///
-    /// The title is `nil`, and that is the answer rather than a gap to fill
-    /// later. A recording has no name while it runs: `MeetingUploader` creates
-    /// the pending record with `title: nil` and `displayTitle` falls back to
-    /// `title(for:)` — a date — at upload time, which is after the card is gone.
-    /// Sending an English "Recording" here would be worse than sending nothing,
-    /// because nothing is what tells the widget to supply its own localized
-    /// default, and the widget is the only side that knows what language the
-    /// reader is looking at.
-    private func publishMicActivity() {
-        MicActivityController.shared.meetingChanged(
-            startedAt: Self.holdsMic(phase) ? startedAt : nil,
-            title: nil,
-            trouble: lostMicrophone)
     }
 
     // MARK: relay

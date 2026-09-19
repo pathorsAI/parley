@@ -4,22 +4,22 @@ import ParleyKit
 import os
 
 /// The app's one handle on the microphone card: the Live Activity that says
-/// Parley is holding the microphone while the screen is off or another app is
-/// in front of this one.
+/// Parley is holding the microphone for voice typing while the screen is off or
+/// another app is in front of this one.
 ///
-/// ## Two halves, one card
+/// ## One teller, one card
 ///
-/// There is one card and two objects that know whether it should exist.
-/// `MeetingRecorder` owns the meeting; `DictationCoordinator` owns the
-/// dictation session and the microphone window. Neither can see the other's
-/// half and neither should have to — a recorder that had to ask about
-/// microphone windows before it could say "I am recording" would be a second
-/// place the precedence rule is written, and the two would eventually disagree.
-/// So each pushes only what it knows, this object holds the two halves side by
-/// side, and `MicActivityState.derive` decides which of them the card is about.
-/// That function is a free function in ParleyKit for exactly this reason: the
-/// rule is worth testing, and it cannot be tested through a `@MainActor` object
-/// that needs a microphone and a device.
+/// `DictationCoordinator` owns the dictation session and the microphone window,
+/// and it is the only object that pushes anything in here. It used to be two:
+/// `MeetingRecorder` pushed a meeting half, this object held both side by side,
+/// and `MicActivityState.derive` arbitrated between them — because neither
+/// object could see the other's half and neither should have had to. The
+/// meeting half was removed after a release on device
+/// (`docs/design/ios-live-activity.md`), which is why this now reads as a thin
+/// forwarder into a function that still looks like it is deciding something.
+/// It is: `derive` remains the one place "dictation, standby, or no card" is
+/// written down, and it remains a free function in ParleyKit so the rule can be
+/// tested without a `@MainActor` object that needs a microphone and a device.
 ///
 /// ## Nothing here is load-bearing
 ///
@@ -65,11 +65,7 @@ final class MicActivityController {
     private var cardStartedAt: Date?
     private var refresh: Task<Void, Never>?
 
-    /// `MeetingRecorder`'s half.
-    private var meetingStartedAt: Date?
-    private var meetingTitle: String?
-    private var meetingTrouble = false
-    /// `DictationCoordinator`'s half.
+    /// Everything `DictationCoordinator` has told us.
     private var dictationStartedAt: Date?
     private var window: MicWindowState?
     private var dictationTrouble = false
@@ -80,19 +76,10 @@ final class MicActivityController {
         adoptExisting()
     }
 
-    // MARK: the two halves
+    // MARK: what the coordinator says
 
-    /// `MeetingRecorder`'s half of the story. `startedAt` is nil whenever the
-    /// recorder does not hold the microphone.
-    func meetingChanged(startedAt: Date?, title: String?, trouble: Bool) {
-        meetingStartedAt = startedAt
-        meetingTitle = title
-        meetingTrouble = trouble
-        sync()
-    }
-
-    /// `DictationCoordinator`'s half. `startedAt` is nil unless a session is
-    /// live; `window` is the microphone window as it stands, open or not.
+    /// `startedAt` is nil unless a session is live; `window` is the microphone
+    /// window as it stands, open or not.
     func dictationChanged(startedAt: Date?, window: MicWindowState?, trouble: Bool) {
         dictationStartedAt = startedAt
         self.window = window
@@ -102,16 +89,13 @@ final class MicActivityController {
 
     // MARK: the card
 
-    /// Re-derive from both halves and do the one thing that follows: start,
-    /// update, or end.
+    /// Re-derive and do the one thing that follows: start, update, or end.
     private func sync() {
         let now = Date()
         let next = MicActivityState.derive(
-            meetingStartedAt: meetingStartedAt,
-            meetingTitle: meetingTitle,
             dictationStartedAt: dictationStartedAt,
             window: window,
-            trouble: troubleOfWhicheverHalfWins,
+            trouble: dictationTrouble,
             at: now)
 
         guard let next else {
@@ -127,29 +111,12 @@ final class MicActivityController {
         }
     }
 
-    /// `derive` takes one `trouble` because the card has one, but the app has
-    /// two sources for it and only the half that wins the card may set it.
-    ///
-    /// Mirroring `derive`'s precedence here rather than OR-ing the two is not
-    /// pedantry: `MeetingRecorder.start` calls
-    /// `DictationCoordinator.yieldMicrophone()`, so a meeting beginning while a
-    /// dictation is up is *the* sequence that leaves a dictation in a terminal
-    /// state next to a healthy recording. OR-ing would put the dictation's
-    /// obituary on the meeting's card every single time.
-    private var troubleOfWhicheverHalfWins: Bool {
-        if meetingStartedAt != nil { return meetingTrouble }
-        // Dictation owns the standby window too — it is the object that opened
-        // it and the only one that can tell you the microphone is gone.
-        return dictationTrouble
-    }
-
     /// Start a card.
     ///
     /// **This only works in the foreground**, and ActivityKit says so by
     /// throwing rather than by letting us ask first. That is survivable because
-    /// of where the foreground moments are: a meeting is started by a tap on
-    /// the Record tab, and a microphone window "never starts; it continues" —
-    /// it is always opened with the app in front (see
+    /// of where the foreground moments are: a microphone window "never starts;
+    /// it continues" — it is always opened with the app in front (see
     /// `docs/design/ios-voice-keyboard.md`), because iOS will not let a
     /// backgrounded process open a microphone either. So every state that
     /// deserves a card is born in the foreground, the card is born with it, and
@@ -159,7 +126,7 @@ final class MicActivityController {
     /// There is deliberately no retry. A request that failed failed because the
     /// app was not in front, and it will still not be in front a second later;
     /// a loop would spend battery discovering that. The breadcrumb names the
-    /// mode so the next person to read Console knows which of the three paths
+    /// mode so the next person to read Console knows which of the two paths
     /// found itself in the background.
     private func begin(_ state: MicActivityState, at now: Date) {
         // The gate is on starting only. A user who turns Live Activities off
@@ -280,10 +247,10 @@ final class MicActivityController {
     /// Re-push the current content on a slow beat.
     ///
     /// The dedupe in `sync()` is right about content and wrong about time: a
-    /// meeting that runs for an hour changes its derived state perhaps three
-    /// times, so without this the last `staleDate` written would fall three
-    /// minutes into the recording and the widget would spend the other
-    /// fifty-seven saying the recording may have stopped. The content really is
+    /// microphone window held open for an hour changes its derived state
+    /// perhaps twice, so without this the last `staleDate` written would fall
+    /// three minutes in and the widget would spend the other fifty-seven
+    /// saying the microphone may already be closed. The content really is
     /// unchanged — every clock on the card is a `Text(timerInterval:)` the
     /// system ticks on its own — so this pushes the same state again purely to
     /// move the horizon.
@@ -312,9 +279,10 @@ final class MicActivityController {
         guard let activity, let pushed else { return }
         // Past the system's own limit the card is gone whatever we do, and
         // pushing into it forever would be the app pretending there is one to
-        // update. Let go of the handle instead: the Record tab is still right,
-        // which is the honest interim the design settles for until "what should
-        // a nine-hour recording do" is actually answered.
+        // update. Let go of the handle instead. Unreachable in practice now
+        // that the card is voice typing only — see
+        // `MicActivityPolicy.systemLimit` — but this is the loop that would do
+        // the pretending, so this is where the check belongs.
         if let cardStartedAt,
             MicActivityPolicy.outlivesSystemLimit(since: cardStartedAt, at: Date())
         {
@@ -331,12 +299,13 @@ final class MicActivityController {
     // MARK: ordering
 
     /// ActivityKit's `update` and `end` are `async`, and the calls into this
-    /// object are not: a `didSet` cannot await. Two changes landing in the same
-    /// turn — `MeetingRecorder.start` moves `phase` and then `startedAt` — would
-    /// otherwise become two unordered tasks, and the loser would write the
-    /// older state last. Chaining each onto the previous one keeps them in the
-    /// order they were asked for, which is the only order that is ever right
-    /// here: the last thing the app said is what is true.
+    /// object are not — `dictationChanged` is reached from `publish()` and from
+    /// property observers, none of which can await. Two changes landing in the
+    /// same turn — a session ending and the window it leaves behind being
+    /// republished — would otherwise become two unordered tasks, and the loser
+    /// would write the older state last. Chaining each onto the previous one
+    /// keeps them in the order they were asked for, which is the only order
+    /// that is ever right here: the last thing the app said is what is true.
     private var work: Task<Void, Never> = Task {}
 
     private func enqueue(_ body: @escaping @Sendable () async -> Void) {

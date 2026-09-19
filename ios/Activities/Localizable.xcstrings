@@ -19,24 +19,6 @@
         }
       }
     },
-    "meeting.untitled.title" : {
-      "comment" : "Title line for a recording with no name. Keyed rather than written as a source string because in English it is the same word as the state label above it, and a String Catalog keyed by the source string cannot hold both 錄音 and 錄音中.",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Recording"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "錄音"
-          }
-        }
-      }
-    },
     "Mic ready" : {
       "comment" : "Standby state label. Matches the keyboard's mode-strip chip word for word, because it is the same fact.",
       "extractionState" : "manual",
@@ -69,24 +51,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "麥克風開著，沒有錄任何東西"
-          }
-        }
-      }
-    },
-    "Recording" : {
-      "comment" : "Meeting state label — the thing that is happening, not the recording's name.",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Recording"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "錄音中"
           }
         }
       }

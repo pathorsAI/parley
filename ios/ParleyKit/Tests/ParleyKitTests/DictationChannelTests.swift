@@ -135,6 +135,91 @@ final class DictationChannelTests: XCTestCase {
         XCTAssertEqual(value.insertedCount, 7)
     }
 
+    // MARK: microphone level
+
+    func testMicLevelRoundTrips() throws {
+        let stamped = Date(timeIntervalSince1970: 1_700_000_000)
+        let value = MicLevelReading(level: 0.42, updatedAt: stamped)
+        let back = try roundTrip(value)
+        XCTAssertEqual(back, value)
+        XCTAssertEqual(back.level, 0.42, accuracy: 0.0001)
+        XCTAssertEqual(back.updatedAt, stamped)
+    }
+
+    func testMicLevelNormalisesTheCapturesRMS() {
+        // The keyboard is handed "how full is the meter", not something it has
+        // to know about RMS to use. Speech sits around 0.05–0.25 raw.
+        XCTAssertEqual(MicLevelReading(rms: 0.1).level, 0.5, accuracy: 0.0001)
+        // Clamped at the top, so a shout cannot ask for a button bigger than
+        // the pane, and at the bottom, which is also what disposes of the NaN
+        // an empty chunk would produce.
+        XCTAssertEqual(MicLevelReading(rms: 4).level, 1)
+        XCTAssertEqual(MicLevelReading(rms: -1).level, 0)
+        XCTAssertEqual(MicLevelReading(rms: .nan).level, 0)
+    }
+
+    func testMicLevelGoesStaleIntoSilenceRatherThanTheLastValueSeen() {
+        // The rule this mailbox exists to get right. A level file left behind
+        // by a killed app must not leave the record button frozen mid-swell:
+        // the keyboard hears about levels through a Darwin note, and a process
+        // that is gone posts none, so an expiry is the only thing that ever
+        // takes the last reading down.
+        let now = Date()
+        let loud = MicLevelReading(level: 0.8, updatedAt: now)
+        XCTAssertTrue(loud.isFresh(at: now))
+        XCTAssertEqual(loud.current(at: now), 0.8, accuracy: 0.0001)
+
+        let justInTime = now.addingTimeInterval(MicLevelReading.staleAfter - 0.01)
+        XCTAssertEqual(loud.current(at: justInTime), 0.8, accuracy: 0.0001)
+
+        let tooLate = now.addingTimeInterval(MicLevelReading.staleAfter + 0.01)
+        XCTAssertFalse(loud.isFresh(at: tooLate))
+        XCTAssertEqual(loud.current(at: tooLate), 0)
+    }
+
+    func testMicLevelWithoutAStampIsSilence() throws {
+        // Unlike readiness, an unstamped level is not a fact that outlives the
+        // process that wrote it — it is a claim about this instant, and a claim
+        // nobody dated cannot be believed. A file from a build before this
+        // mailbox existed reads as silence rather than as a frozen meter.
+        let json = Data(#"{"level":0.9}"#.utf8)
+        let value = try JSONDecoder().decode(MicLevelReading.self, from: json)
+        XCTAssertNil(value.updatedAt)
+        XCTAssertFalse(value.isFresh())
+        XCTAssertEqual(value.current(), 0)
+    }
+
+    func testSilenceIsRepresentableAndIsTheRestingState() {
+        // Silence has to be something the app can *say*, not only something a
+        // reader infers from an absence: the final write at the end of every
+        // session is what stops the button being left mid-swell for the stale
+        // period, and it has to be a value.
+        XCTAssertEqual(MicLevelReading.silent.level, 0)
+        XCTAssertTrue(MicLevelReading.silent.isSilent)
+        XCTAssertEqual(MicLevelReading(level: 0, updatedAt: Date()).current(), 0)
+
+        // And the floor: room tone through a phone microphone normalises to a
+        // few hundredths, so a reading under it is nothing rather than a
+        // shimmer. A meter that answers room tone is never flat.
+        let roomTone = MicLevelReading(level: MicLevelReading.silence, updatedAt: Date())
+        XCTAssertTrue(roomTone.isSilent)
+        XCTAssertEqual(roomTone.current(), 0)
+        let aWord = MicLevelReading(level: MicLevelReading.silence + 0.01, updatedAt: Date())
+        XCTAssertFalse(aWord.isSilent)
+        XCTAssertGreaterThan(aWord.current(), 0)
+    }
+
+    func testMicLevelStaysOffTheDownlink() {
+        // The reason this is a mailbox of its own, pinned so a later
+        // "simplification" that folds the level into the transcript file has to
+        // delete a test that says why not: the downlink's stamp is the liveness
+        // watchdog's only input (`presumedDeadAt`), and a value that moves
+        // twelve times a second would refresh it forever.
+        let mirror = Mirror(reflecting: DictationChannel.Downlink(session: "s"))
+        XCTAssertFalse(mirror.children.contains { $0.label == "level" })
+        XCTAssertNotEqual(DictationChannel.levelNote, DictationChannel.downNote)
+    }
+
     // MARK: URLs
 
     func testStartURLRoundTripsTheSession() {
