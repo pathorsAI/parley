@@ -446,8 +446,9 @@ public enum DictationChannel {
 ///    with Parley in the foreground hosting the keyboard. `servesInPlace` is
 ///    the app's own answer: it is in the foreground, or it is backgrounded but
 ///    holding a running microphone (a window) that the next session can borrow.
-///    A backgrounded app with no microphone says no, because iOS refuses to let
-///    it *start* one — so the keyboard's tap opens Parley, where it can.
+///    A backgrounded app with no microphone says no, because it cannot know
+///    whether iOS will let it *start* one. It still tries when the tap comes,
+///    and only a refused activation sends the keyboard's tap through Parley.
 ///
 /// 2. **Is the session I am showing still being served?** A `listening`
 ///    downlink is re-stamped only when the transcript moves. If the app is

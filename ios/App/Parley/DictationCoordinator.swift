@@ -2,6 +2,7 @@ import Foundation
 import ParleyKit
 import SwiftUI
 import UIKit
+import os
 
 /// Drives a keyboard-triggered dictation session inside the app, and hands the
 /// transcript back to the keyboard through the App Group.
@@ -24,9 +25,8 @@ import UIKit
 /// which keeps this process resident for minutes instead of the ~30 seconds a
 /// background task buys, and the next session **borrows the running capture**
 /// rather than opening one. That is what lets a keyboard tap be served where
-/// the user already is instead of throwing them into Parley — and it is also
-/// the only way it can work at all, because iOS refuses to let a backgrounded
-/// process *start* recording. A window never starts; it continues.
+/// the user already is instead of throwing them into Parley. A window never
+/// starts; it continues.
 ///
 /// The cost is that the orange microphone indicator is lit for the whole
 /// window, which is why the window is a setting, is bounded, is announced in
@@ -630,20 +630,9 @@ final class DictationCoordinator: ObservableObject {
                     guard AudioCapture.permission == .granted
                         || UIApplication.shared.applicationState == .active
                     else { return }
-                    // And only if there is a microphone to serve it with. A
-                    // backgrounded process cannot *start* recording — iOS
-                    // refuses the activation — so a start honored here with
-                    // no running capture to borrow could only end in
-                    // "Couldn't open the microphone. Open Parley…", which is a
-                    // round trip through the app with an error in front of
-                    // it. Declining makes the keyboard take the round trip
-                    // directly, and is what its record button promised: it
-                    // draws the microphone only while `AppPresence` says a
-                    // start would be served in place, which is this same
-                    // condition read from the other side.
-                    guard UIApplication.shared.applicationState == .active
-                        || self.capture?.isCapturing == true
-                    else { return }
+                    if !self.canServeInPlace {
+                        guard await self.openMicrophoneInBackground() else { return }
+                    }
                     await self.begin(session: up.session)
                 }
             }
@@ -1361,6 +1350,37 @@ final class DictationCoordinator: ObservableObject {
         await closeMicrophone()
     }
 
+    /// Open the microphone for a start request that reached this process in
+    /// the background with nothing running to borrow. `false` means iOS
+    /// refused the activation and the request should go unanswered.
+    private func openMicrophoneInBackground() async -> Bool {
+        if let stale = capture {
+            capture = nil
+            await stale.stop()
+        }
+        let fresh = makeCapture()
+        let started = Date()
+        do {
+            try await fresh.start()
+        } catch {
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            Self.log.notice(
+                "background mic start refused after \(ms, privacy: .public) ms: \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+        // The keyboard waits `startAckWindow` (700 ms) for the `starting`
+        // downlink, which `launch()` writes after this returns. Above that the
+        // keyboard opens `parley://dictate` over a microphone already running,
+        // and `begin(session:)` restarts the session in the foreground.
+        let ms = Int(Date().timeIntervalSince(started) * 1000)
+        Self.log.notice("background mic start took \(ms, privacy: .public) ms")
+        capture = fresh
+        return true
+    }
+
+    private static let log = Logger(subsystem: "com.pathors.parley", category: "Dictation")
+
     private func closeMicrophone() async {
         let cap = capture
         capture = nil
@@ -1650,16 +1670,20 @@ final class DictationCoordinator: ObservableObject {
     /// foregrounding, the microphone opening or closing — so the keyboard
     /// never waits out a heartbeat to learn something the app knew at once.
     ///
-    /// `servesInPlace` is the same condition `armRequestObserver` applies
-    /// before honoring a start, read from this side: the foreground can open a
-    /// microphone, and a running capture can be borrowed; a backgrounded
-    /// process with neither has to bring the app forward.
+    /// `servesInPlace` is `canServeInPlace`, the same predicate
+    /// `armRequestObserver` reads before honoring a start. The observer goes
+    /// one step further when it is false and tries to open a microphone; the
+    /// heartbeat only reports, so the keyboard's promise stays the pessimistic
+    /// one.
     private func publishPresence() {
-        DictationChannel.writePresence(
-            .init(
-                awake: true,
-                servesInPlace: UIApplication.shared.applicationState == .active
-                    || capture?.isCapturing == true))
+        DictationChannel.writePresence(.init(awake: true, servesInPlace: canServeInPlace))
+    }
+
+    /// A start request would be served without Parley coming forward: the app
+    /// is in front, where it can open a microphone, or it holds a running one
+    /// to borrow.
+    private var canServeInPlace: Bool {
+        UIApplication.shared.applicationState == .active || capture?.isCapturing == true
     }
 
     /// A session that outlived its process.
