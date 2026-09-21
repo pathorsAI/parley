@@ -786,6 +786,18 @@ key is never read as a swipe but a real drag shows the next pane arriving. The
 previous gesture only committed on release — nothing moved while the finger did,
 which is why nobody found it.
 
+The track reads the touch *alongside* the keys (`simultaneousGesture`) rather
+than competing with them, and disables the panes for as long as its drag is in
+flight. A plain `.gesture` on the track lost to whatever the finger landed on: a
+`Button` holds the touch until it lifts, so a swipe that began on a key only
+registered at release and never followed the finger, and the zero-distance drag
+behind ⌫ took the touch outright — which on the voice pane, where the record
+button is the one big target, read as "only the record button swipes". Once the
+track has engaged, the key under the finger is cancelled the way a scroll view
+cancels a button's touch when it starts to scroll, so the swipe neither types
+the key nor leaves ⌫ repeating (`RepeatingKey` keeps its press in a
+`@GestureState`, which resets on that cancellation).
+
 A swipe moves **one pane**, clamped rather than wrapped, with the track rubber-
 banding at both ends. Clamped because the rubber band is a promise that there is
 nothing further that way, and a swipe that jumped from 注音 back to the mic

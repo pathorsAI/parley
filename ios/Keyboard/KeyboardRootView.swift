@@ -37,6 +37,9 @@ struct KeyboardRootView: View {
     /// Live horizontal travel of the pane track while a drag is in flight.
     @GestureState private var drag: CGFloat = 0
 
+    /// The track has taken the touch; the key it began on is cancelled.
+    private var swiping: Bool { drag != 0 }
+
     var body: some View {
         VStack(spacing: 0) {
             modeStrip
@@ -47,6 +50,7 @@ struct KeyboardRootView: View {
                         paneView(pane).frame(width: width)
                     }
                 }
+                .disabled(swiping)
                 .frame(width: width * CGFloat(bridge.panes.count), alignment: .leading)
                 // Follow the finger. Every pane is the same height, so the
                 // track can slide without the keyboard resizing under it. The
@@ -59,7 +63,7 @@ struct KeyboardRootView: View {
                 // real travel before it engages — otherwise a fat-fingered tap
                 // on `g` would throw the user into the next pane.
                 .contentShape(Rectangle())
-                .gesture(
+                .simultaneousGesture(
                     DragGesture(minimumDistance: 24)
                         .updating($drag) { value, state, _ in
                             state = rubberBanded(value.translation.width, width: width)
