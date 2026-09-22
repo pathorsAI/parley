@@ -8,8 +8,8 @@ import SwiftUI
 /// that only exists while a session does — followed
 /// by the typing keyboards the user has enabled, QWERTY and 注音. The panes sit
 /// side by side on a track that follows the finger, so a horizontal drag moves
-/// one pane either way and the strip's dots are a signpost rather than the only
-/// way across.
+/// one pane either way and the strip's tabs are a second way across rather than
+/// the only one.
 ///
 /// The voice pane is drawn as a **control panel, not a keyboard**. Nothing on
 /// it types a letter, so it borrows none of UIKit's key-cap treatment: flat
@@ -36,6 +36,10 @@ struct KeyboardRootView: View {
 
     /// Live horizontal travel of the pane track while a drag is in flight.
     @GestureState private var drag: CGFloat = 0
+
+    /// Lets the selected tab's capsule slide between tabs instead of blinking
+    /// from one to the next.
+    @Namespace private var paneTabStrip
 
     /// The track has taken the touch; the key it began on is cancelled.
     private var swiping: Bool { drag != 0 }
@@ -101,16 +105,22 @@ struct KeyboardRootView: View {
 
     // MARK: mode strip — wordmark + where you are, or the candidate bar
 
-    /// The wordmark, and the current pane named next to one dot per pane.
+    /// The wordmark, and the panes as named tabs on the right.
     ///
-    /// It used to be a segmented control, which read as the *only* way across
-    /// and hid the fact that the pane swipes at all. Dots say "there is another
-    /// one of these, sideways" — and they stay tappable, so nothing is lost.
+    /// The tabs were dots for a while — one per pane, long for the current one —
+    /// on the theory that a segmented control would read as the only way across
+    /// and hide the swipe. In use the dots simply weren't discoverable: they
+    /// were tappable the whole time and nobody took them for a control, so the
+    /// panes are named again. The swipe is unchanged and stays the primary way
+    /// across — the track still follows the finger — and the tabs are the second
+    /// way, for the user who never thinks to drag.
     ///
-    /// While a 注音 syllable is being typed the whole row is given over to the
-    /// composition and its candidates. It is the one row the keyboard has to
-    /// spare, and the alternative — a bar of its own above the keys — would make
-    /// the pane taller than its neighbours every time someone started a word.
+    /// While a 注音 composition is pending the whole row is given over to it and
+    /// its candidates. It is the one row the keyboard has to spare, and the
+    /// alternative — a bar of its own above the keys — would make the pane
+    /// taller than its neighbours every time someone started a word. The
+    /// composition can be several syllables; the two of them share the row, so
+    /// the chip is capped and the bar keeps the rest.
     private var modeStrip: some View {
         HStack(spacing: 0) {
             if bridge.composition.isEmpty {
@@ -122,14 +132,7 @@ struct KeyboardRootView: View {
                     windowChip
                     Spacer(minLength: 8)
                 }
-                paneName(bridge.pane)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(KBTheme.inkSoft(dark))
-                    .padding(.trailing, 8)
-                    .accessibilityHidden(true)
-                HStack(spacing: 5) {
-                    ForEach(bridge.panes, id: \.self) { dot($0) }
-                }
+                paneTabs
             } else {
                 compositionChip
                 candidateBar
@@ -159,14 +162,89 @@ struct KeyboardRootView: View {
         }
     }
 
+    /// The panes, named, as a segmented control.
+    ///
+    /// Sized to the 38pt strip rather than to UIKit's own segmented control,
+    /// which is 32pt tall before its margins and would leave the wordmark
+    /// floating: caption text in a 2pt trough is ~22pt, which sits in the strip
+    /// with air above and below. The selected segment is drawn in the *key-cap*
+    /// colour over the control wash, so it reads as the raised one by the same
+    /// rule the keys on the next pane are read by.
+    ///
+    /// Widths at the narrowest keyboard the app runs on — 320pt, less the
+    /// strip's 12pt gutters, so 296pt: wordmark 41 + 8 + chip 92 + 8 + tabs 144
+    /// = 293. The tabs' horizontal padding is 7 rather than the 9 the rest of
+    /// the strip would suggest, and the mic chip's minutes are gone, because at
+    /// 9pt and with them the row wanted 335pt and the chip's label would have
+    /// truncated. Every wider phone has 30pt or more to spare.
+    private var paneTabs: some View {
+        HStack(spacing: 0) {
+            ForEach(bridge.panes, id: \.self) { paneTab($0) }
+        }
+        .padding(2)
+        .background(Capsule().fill(KBTheme.control(dark)))
+        // On the pane, not on the tab: the selected capsule is one view moving
+        // between two positions, so both ends of the move have to be inside the
+        // same animation. It is deliberately shorter than the track's spring —
+        // the tab has arrived by the time the pane is still settling, which is
+        // the right order for a control and its effect.
+        .animation(.easeInOut(duration: 0.2), value: bridge.pane)
+        // SwiftUI has no tab-bar trait to give the container, so the most it can
+        // say is that these belong together.
+        .accessibilityElement(children: .contain)
+    }
+
+    private func paneTab(_ pane: KeyboardPane) -> some View {
+        let selected = bridge.pane == pane
+        return Button(action: { bridge.setPane(pane) }) {
+            paneName(pane)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(selected ? KBTheme.ink(dark) : KBTheme.inkSoft(dark))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background {
+                    if selected {
+                        Capsule()
+                            .fill(KBTheme.key(dark))
+                            .matchedGeometryEffect(id: "selectedPaneTab", in: paneTabStrip)
+                    }
+                }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(paneLabel(pane))
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
     // MARK: 注音 composition
 
-    /// The syllable being typed, in the accent so it reads as pending rather
-    /// than as text that has landed somewhere.
+    /// About 45% of the strip on every phone the keyboard runs on — 320pt to
+    /// 440pt wide — which is the most the chip can take before the candidate bar
+    /// stops being able to show a candidate the user would have picked anyway.
+    private static let compositionChipWidth: CGFloat = 170
+
+    /// What is being typed but has not landed anywhere yet — up to six syllables,
+    /// space-separated — in the accent so it reads as pending rather than as
+    /// text in the document.
+    ///
+    /// It is capped at roughly the left half of the strip and truncated from the
+    /// *head*, because the row is shared with the candidate bar: a long
+    /// composition must not push the candidates off the end, and the syllable
+    /// the next keystroke edits is the newest one, on the right. It is fixed to
+    /// its natural width up to that cap, so the bar can neither squeeze it nor
+    /// hand it room it has no text for.
     private var compositionChip: some View {
         Text(verbatim: bridge.composition)
             .font(.system(size: 17))
             .foregroundStyle(KBTheme.accent)
+            .lineLimit(1)
+            .truncationMode(.head)
+            .frame(maxWidth: Self.compositionChipWidth, alignment: .trailing)
+            // Hug the text: a flexible frame beside a scroll view is offered
+            // the whole cap and takes it, which drew a 170pt chip around two
+            // symbols. Fixed to its ideal width the chip is as wide as the
+            // reading, and the cap still truncates a six-syllable one.
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 7)
             .padding(.vertical, 1)
             .background(
@@ -177,18 +255,31 @@ struct KeyboardRootView: View {
             .accessibilityValue(Text(verbatim: bridge.composition))
     }
 
-    /// The characters that reading could be, most frequent first, scrollable
-    /// because some readings have dozens. Tapping one commits it; space commits
-    /// the first, which is why it is worth having it be the first.
+    /// What the front of the buffer could be — phrases first, then the first
+    /// syllable's characters — most likely first, scrollable because some
+    /// readings have dozens. Tapping one commits as many syllables as it has
+    /// characters and the bar moves on to what is left.
+    ///
+    /// Each candidate sits between hairlines with a wide gutter, because the
+    /// bar mixes one- and two-character candidates and a run of them with
+    /// nothing between reads as one long string: 會出好處會場 is three words,
+    /// and at 2pt spacing nobody could tell. The system keyboard leaves about a
+    /// character's width between candidates for the same reason.
     private var candidateBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                ForEach(Array(bridge.candidates.enumerated()), id: \.offset) { _, candidate in
+            HStack(spacing: 0) {
+                ForEach(Array(bridge.candidates.enumerated()), id: \.offset) { index, candidate in
+                    if index > 0 {
+                        Rectangle()
+                            .fill(KBTheme.inkSoft(dark).opacity(0.3))
+                            .frame(width: 1, height: KBMetrics.strip - 18)
+                    }
                     Button(action: { bridge.pickCandidate(candidate) }) {
                         Text(verbatim: candidate)
                             .font(.system(size: 22))
                             .foregroundStyle(KBTheme.ink(dark))
-                            .frame(minWidth: 32, minHeight: KBMetrics.strip - 4)
+                            .padding(.horizontal, 11)
+                            .frame(minWidth: 44, minHeight: KBMetrics.strip - 4)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -219,20 +310,21 @@ struct KeyboardRootView: View {
     /// else a keyboard could usefully do to one, and a chip that says the
     /// microphone is open without a way to close it is a notice rather than a
     /// control.
+    ///
+    /// It used to carry the minutes left as well. The named tabs took the right
+    /// of the strip back from the dots, and on a 320pt keyboard the two cannot
+    /// both have what they want — so the countdown went, because the chip is
+    /// about *whether* the next tap stays put, which is the part a keyboard can
+    /// act on. How long the window has left is Parley's to say, and it does.
     private var windowChip: some View {
         Button(action: { bridge.endWindow() }) {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Circle()
                     .fill(KBTheme.micWindow)
                     .frame(width: 6, height: 6)
                 Text("Mic ready")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(KBTheme.ink(dark))
-                if let minutes = bridge.windowMinutesLeft {
-                    Text(verbatim: "\(minutes)m")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(KBTheme.inkSoft(dark))
-                }
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(KBTheme.inkSoft(dark))
@@ -244,21 +336,6 @@ struct KeyboardRootView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text("The microphone is ready. Tap to close it."))
-    }
-
-    private func dot(_ pane: KeyboardPane) -> some View {
-        let selected = bridge.pane == pane
-        return Button(action: { bridge.setPane(pane) }) {
-            Capsule()
-                .fill(selected ? KBTheme.accent : KBTheme.inkSoft(dark).opacity(0.35))
-                .frame(width: selected ? 14 : 5, height: 5)
-                // Keep a finger-sized target around a deliberately small mark.
-                .contentShape(Rectangle().inset(by: -12))
-                .animation(.easeInOut(duration: 0.2), value: selected)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(paneLabel(pane))
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
     // MARK: the voice pane

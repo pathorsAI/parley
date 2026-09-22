@@ -71,7 +71,7 @@ final class KeyboardViewController: UIInputViewController {
     /// 傳統注音 input for the 注音 pane. Cheap to hold: the dictionary behind it
     /// does not touch its resource until the first syllable is finalized, so a
     /// keyboard that only ever dictates never pays for it.
-    private var zhuyin = ZhuyinComposer(dictionary: .bundled)
+    private var zhuyin = ZhuyinComposer(dictionary: .bundled, phrases: ZhuyinPhrases.bundled)
 
     /// A keyboard has no intrinsic height — without one it collapses to the
     /// system minimum and the layout looks broken. Every pane is measured to the
@@ -296,6 +296,14 @@ final class KeyboardViewController: UIInputViewController {
         // it: the user swiped away, they didn't press delete.
         apply(zhuyin.confirm())
         applyHeight(animated: true)
+        // Arriving on it starts the tables loading off the main thread, so the
+        // ~100 ms the phrase table costs is spent while the pane is still
+        // sliding in rather than on the keystroke that finishes the second
+        // syllable.
+        if bridge.pane == .zhuyin {
+            ZhuyinDictionary.bundled.warm()
+            ZhuyinPhrases.bundled.warm()
+        }
     }
 
     private func applyHeight(animated: Bool) {
@@ -638,12 +646,6 @@ final class KeyboardViewController: UIInputViewController {
         // the headline and on the button, so there is nothing left to decide.
         let window = DictationChannel.readWindow()
         bridge.windowIsOpen = window?.isOpen() ?? false
-        // Rounded up, so "1m" never means "already gone": the number is there
-        // to say roughly how much room is left, and rounding down would let the
-        // chip read 0.
-        bridge.windowMinutesLeft = bridge.windowIsOpen
-            ? max(1, Int(((window?.remaining() ?? 0) / 60).rounded(.up)))
-            : nil
     }
 
     /// The keyboard's half of "end it early". A timestamp rather than a flag,
@@ -656,7 +658,6 @@ final class KeyboardViewController: UIInputViewController {
         // may be suspended, in which case the window died with it and the chip
         // was already wrong.
         bridge.windowIsOpen = false
-        bridge.windowMinutesLeft = nil
     }
 
     /// Ask the app to stop and flush the tail. The app is running during
@@ -991,7 +992,14 @@ final class KeyboardViewController: UIInputViewController {
         apply(zhuyin.delete()) { textDocumentProxy.deleteBackward() }
     }
 
-    func insert(_ text: String) { textDocumentProxy.insertText(text) }
+    /// Type a character from the symbol planes, committing any pending 注音
+    /// composition first. That is what the system keyboard does: punctuation
+    /// after a reading ends the reading rather than landing in front of it, and
+    /// `confirm()` on an empty composer is a `passThrough` that does nothing.
+    func insert(_ text: String) {
+        apply(zhuyin.confirm())
+        textDocumentProxy.insertText(text)
+    }
 
     /// Return always types a line break. A keyboard extension cannot submit a
     /// form — there is no public way to fire the host's return action — so a
@@ -1154,9 +1162,6 @@ final class KeyboardBridge: ObservableObject {
     /// The microphone window is open: the next tap will be served where the
     /// user already is, with no trip through Parley.
     @Published var windowIsOpen = false
-    /// Roughly how long the open window has left, in whole minutes. Refreshed
-    /// by the app's heartbeat rather than by a timer in this process.
-    @Published var windowMinutesLeft: Int?
     /// The app itself says a tap would be served without opening it: it is in
     /// the foreground (this keyboard is typing into Parley), or it is holding a
     /// running microphone. From its presence heartbeat, so it goes false on its

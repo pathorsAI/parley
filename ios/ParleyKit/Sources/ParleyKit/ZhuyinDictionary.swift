@@ -3,17 +3,25 @@ import Foundation
 /// The 注音 pane's candidate list: reading → the characters that read that way,
 /// most frequent first.
 ///
-/// Single characters only, on purpose. Phrase conversion is a different program
-/// — a lattice over a phrase lexicon, plus a user dictionary to keep it honest —
-/// and v1 of this pane does per-syllable input done properly instead. See
+/// Two kinds of key live in the one table. A plain key is a reading **with** its
+/// tone mark, which is what the user has once a tone key is pressed. A key
+/// prefixed `~` is the same reading with no tone at all — the union of its five
+/// tone rows — because the pane has to offer candidates while a syllable is
+/// still being typed, and the first tone is written with no mark, so `ㄋㄧ`
+/// already means ㄋㄧˉ and cannot also stand for "ㄋㄧ, tone not typed yet". The
+/// prefix is not a 注音 symbol, so the two kinds cannot collide.
+///
+/// Single characters only. Phrases live in `ZhuyinPhrases`, which answers first
+/// when two or more syllables are pending; this table is the per-syllable
+/// fallback behind it and the whole answer for a lone syllable. See
 /// `docs/design/ios-voice-keyboard.md`.
 ///
 /// **Loaded lazily and once.** This runs inside a keyboard extension, which iOS
 /// jetsams far sooner than an app, so the resource is not touched until the user
-/// actually finalizes a syllable: a keyboard opened on the voice or QWERTY pane
-/// never pays for it. The table it builds is ~1,400 readings over ~27,000
-/// characters — a few hundred kilobytes — and the file's own string is dropped
-/// as soon as it is parsed.
+/// types into the 注音 pane: a keyboard opened on the voice or QWERTY pane never
+/// pays for it. The table it builds is ~1,400 readings plus ~430 toneless rows
+/// over ~52,000 characters — a few hundred kilobytes — and the file's own string
+/// is dropped as soon as it is parsed.
 ///
 /// Not thread-safe, and it doesn't need to be: keys arrive on the main thread.
 public final class ZhuyinDictionary {
@@ -30,6 +38,12 @@ public final class ZhuyinDictionary {
 
     private var url: URL?
     private var table: [String: String]?
+    /// A background build is on its way back to the main queue.
+    private var warming = false
+
+    /// Whether the table is in memory. Internal for the tests, which is where
+    /// "did the warm arrive" is a question worth asking.
+    var isWarm: Bool { table != nil }
 
     /// Build from an already-parsed table. This is how tests get a fixture, and
     /// how a caller with its own data source stays out of the bundle.
@@ -43,8 +57,48 @@ public final class ZhuyinDictionary {
         self.url = url
     }
 
+    /// Build the table off the main thread, if it isn't built already.
+    ///
+    /// Same bargain as `ZhuyinPhrases.warm()`, and the keyboard calls them
+    /// together when the 注音 pane becomes current: the cost of the first read
+    /// belongs to a moment the user is not waiting on a key. A lookup that
+    /// arrives first still loads synchronously.
+    ///
+    /// Main thread, like everything else here: the guard and the store both run
+    /// there, so two warms cannot race and a warm cannot overwrite a load.
+    public func warm() {
+        guard table == nil, !warming, let url else { return }
+        warming = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // Nothing on `self` is touched off the main queue — the parse is a
+            // function of the URL alone.
+            let built = Self.parse(url)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.warming = false
+                // A synchronous load may have beaten this here; that table is
+                // the same table.
+                if self.table == nil { self.table = built }
+            }
+        }
+    }
+
     public func candidates(for syllable: ZhuyinSyllable) -> [String] {
         candidates(for: syllable.text)
+    }
+
+    /// The characters for a syllable **ignoring its tone**, which is what the
+    /// bar shows while the user is still typing one. The key is built from the
+    /// slots rather than from `text`, so a syllable that already carries a tone
+    /// answers the toneless row too — re-toning is allowed, and asking "what
+    /// could this still become" has to survive it.
+    public func tonelessCandidates(for syllable: ZhuyinSyllable) -> [String] {
+        var key = "~"
+        if let initial = syllable.initial { key.append(initial) }
+        if let medial = syllable.medial { key.append(medial) }
+        if let final = syllable.final { key.append(final) }
+        guard key.count > 1 else { return [] }
+        return candidates(for: key)
     }
 
     /// The characters for a reading, most frequent first. Empty for a reading
@@ -70,22 +124,30 @@ public final class ZhuyinDictionary {
 
     private func load() -> [String: String] {
         if let table { return table }
-        var entries: [String: String] = [:]
-        if let url, let text = try? String(contentsOf: url, encoding: .utf8) {
-            entries.reserveCapacity(1500)
-            for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-                guard !line.hasPrefix("#") else { continue }
-                guard let tab = line.firstIndex(of: "\t") else { continue }
-                let reading = String(line[line.startIndex..<tab])
-                let row = String(line[line.index(after: tab)...])
-                guard !reading.isEmpty, !row.isEmpty else { continue }
-                entries[reading] = row
-            }
-        }
-        // The file's string goes out of scope here. A failed read caches the
-        // empty table too, so a missing resource costs one attempt rather than
-        // one per keystroke.
+        // A failed read caches the empty table too, so a missing resource costs
+        // one attempt rather than one per keystroke.
+        let entries = url.map(Self.parse) ?? [:]
         table = entries
+        return entries
+    }
+
+    /// Read the resource. Static, and a function of the URL alone, so `warm`
+    /// can run it on a background queue without touching this instance.
+    private static func parse(_ url: URL) -> [String: String] {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
+        var entries: [String: String] = [:]
+        entries.reserveCapacity(2000)
+        // `~` rows need no special case: the key is read verbatim and the prefix
+        // is not a 注音 symbol, so nothing else can claim it.
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard !line.hasPrefix("#") else { continue }
+            guard let tab = line.firstIndex(of: "\t") else { continue }
+            let reading = String(line[line.startIndex..<tab])
+            let row = String(line[line.index(after: tab)...])
+            guard !reading.isEmpty, !row.isEmpty else { continue }
+            entries[reading] = row
+        }
+        // The file's string goes out of scope here.
         return entries
     }
 }

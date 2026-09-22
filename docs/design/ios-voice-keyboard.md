@@ -310,9 +310,11 @@ then jump anyway.
 
 So the app re-stamps the file every `MicWindowState.heartbeat` (20 s) for as long
 as the window is really open, and a reader disbelieves a stamp older than
-`staleAfter` (55 s). One mechanism, two jobs: the same heartbeat is what ticks the
-chip's countdown without the extension running a timer of its own. Expiry is
-still punctual — the app's loop sleeps the *shorter* of a heartbeat and whatever
+`staleAfter` (55 s). One mechanism, two jobs: the same heartbeat is what keeps the
+chip honest without the extension running a timer of its own. (The chip used to
+carry the minutes left as well; that went when the pane tabs took the right of
+the strip — the Record tab, Settings and the Live Activity still count down.)
+Expiry is still punctual — the app's loop sleeps the *shorter* of a heartbeat and whatever
 is left, because five minutes has to mean five minutes.
 
 Ending early is a **timestamp, not a flag**: the keyboard writes
@@ -792,16 +794,21 @@ knowing about:
 
 ### Mode strip
 
-Across the top: the **Parley wordmark** on the left, and on the right the
-current pane named beside one dot per pane — a long one for where you are, short
-ones for the panes you haven't got to. The dots stay tappable, so nothing is
-lost. The names are *Voice*, *English*, and *注音* — which keeps its own name in
-both localizations, because the keys on that pane are 注音 and no English word
+Across the top: the **Parley wordmark** on the left, and on the right the panes
+as **named tabs** — a small segmented control sized to the 38pt strip, the
+current pane on a key-cap-coloured capsule that slides when the pane changes.
+The names are *Voice*, *English*, and *注音* — which keeps its own name in both
+localizations, because the keys on that pane are 注音 and no English word
 identifies it faster.
 
-This replaced a two-segment control, which read as the *only* way across and
-hid the fact that the pane swipes at all. **The panes sit side by side on a
-track that follows the finger**: a `DragGesture` with a 24pt minimum distance
+The tabs have been three things. A two-segment control first, dropped because it
+read as the *only* way across and hid the fact that the pane swipes at all. Then
+one dot per pane, long for the current one, on the theory that dots say "there
+is another one of these, sideways" — and in use nobody took the dots for a
+control, so the switch was invisible to exactly the user who never thinks to
+drag. So the panes are named again, and the two ways across now coexist: **the
+panes sit side by side on a track that follows the finger**, and the tabs are
+the second door, not the first. A `DragGesture` with a 24pt minimum distance
 drives the track's offset live and commits past a 56pt threshold, so a mistyped
 key is never read as a swipe but a real drag shows the next pane arriving. The
 previous gesture only committed on release — nothing moved while the finger did,
@@ -827,10 +834,11 @@ would contradict it two panes later.
 The strip defaults to the first typing pane when there is no Full Access,
 because that is the pane that still works in that state.
 
-While a 注音 syllable is being typed the strip gives its whole row over to the
-composition and its candidates — see below. It is the one row the keyboard has
-to spare, and a candidate bar of its own above the keys would make that pane
-taller than its neighbours every time somebody started a word.
+While 注音 is being typed the strip gives its whole row over to the
+composition — every syllable still pending, space-separated — and the candidates
+for the oldest of them; see below. It is the one row the keyboard has to spare,
+and a candidate bar of its own above the keys would make that pane taller than
+its neighbours every time somebody started a word.
 
 ### English pane
 
@@ -1045,33 +1053,106 @@ own" was true about a full IME and beside the point about the pane actually
 needed: per-syllable 注音 with a frequency-ordered candidate bar is a week of
 work, not a product.
 
-**v1 is 傳統注音, one syllable at a time.**
+**Measured against the system keyboard, not against a memory of it.** On
+iOS 26.5 the system 注音 keyboard does not ask for a tone before it will take the
+next syllable. Typing ㄋㄧㄏㄠ straight through leaves a buffer reading
+`ㄋㄧ ㄏㄠ` — segmented by the keyboard itself, shown space-separated, with
+candidates for it above the keys. SPACE there is not a confirm key: it applies
+the **first tone** to the syllable being typed, after which the buffer reads
+`ㄋㄧ ㄏㄠˉ`. Tapping a candidate commits, and so does return. Punctuation
+commits what was pending before the punctuation itself lands. Its delete key is
+not in the function row at all: it sits at the right end of the fourth symbol
+row, an eleventh column under `ㄦ`. Rows 2 and 3 are not centred under row 1
+either — they are staggered rightwards by roughly one and two thirds of a key
+pitch — and `123` and return are about 2.5 keys wide.
+
+The pane now does all of that. Where 1.15 differed, the difference was the
+composer's limit rather than a position anybody argued for.
+
+**v1 is 傳統注音: typed continuously, predicted by phrase, converted greedily.**
 
 - **大千 layout**, as it is actually defined: a mapping onto a QWERTY board. So
-  the top row is *eleven* keys (`1234567890-`) and the three below it are ten,
-  centred by the same half-key inset QWERTY's home row uses. A tidy 4×10 grid
-  would have to drop `ㄦ`, and 兒/二/而/耳 are not optional. 37 symbols + 4 tone
-  marks = 41 keys, which is the whole block.
-- **Slots, not a string.** `ZhuyinSyllable` is at most one 聲母, one 介音, one
-  韻母 and one tone, so a symbol *replaces* whatever is in its slot. Typing
-  `ㄅㄆ` leaves `ㄆ`. An out-of-order or doubled reading is unrepresentable
-  rather than something to validate after the fact — and the slots are what give
-  delete a definition: it clears the last slot filled.
-- **Tones finalize.** 大千 has no first-tone key, so **space is the first tone**;
-  `ˊˇˋ˙` finalize with theirs. A finalized syllable queries the dictionary and
-  its candidates take over the strip. A second tone key re-tones and re-queries,
-  because `ㄕˋ` for `ㄕˊ` is the mistake everyone makes.
-- **Space confirms; the next syllable auto-confirms.** Once candidates are up,
-  space commits the first one and starting the next syllable commits it too.
-  That second rule is what makes a sentence typeable without ever looking at the
-  bar.
-- **Delete edits the buffer before the document**: out of the candidate bar,
-  then the syllable slot by slot, and only then does it reach the field.
-- **Return** commits a pending syllable and otherwise types a line break, the
-  way the system keyboard behaves.
+  the top row is *eleven* keys (`1234567890-`) and the three below it are ten
+  symbols each. A tidy 4×10 grid would have to drop `ㄦ`, and 兒/二/而/耳 are not
+  optional. 37 symbols + 4 tone marks = 41 keys, which is the whole block.
+- **Delete lives in the symbol block, not in the function row.** It used to sit
+  between space and return; it is now an eleventh column at the right end of row
+  4, under `ㄦ` — where the system's 注音 keyboard keeps it, and where a right
+  thumb already is. Rows 2 and 3 are staggered rightwards by one and two thirds
+  of a key pitch rather than centred, for the same reason: the shape of the block
+  is the thing a 注音 typist has learned, and ours differing from it bought
+  nothing. The function row is then `123`, the globe where the system asks for
+  one, space and return, with `123` and return at 2.5 units each. The pane is
+  still five rows and still measures 213pt — none of this moved a height, and it
+  could not, because the panes are one swipe apart.
+- **Slots inside a syllable, an ordered list of syllables above them.**
+  `ZhuyinSyllable` is unchanged: at most one 聲母, one 介音, one 韻母 and one
+  tone, so an out-of-order or doubled reading stays unrepresentable rather than
+  something to validate after the fact. What changed is the layer above it.
+  `ZhuyinComposer` now holds up to `maxPending` (6) syllables in order. A symbol
+  extends the last syllable when its slot is empty *and* later than the last slot
+  filled; otherwise — the slot is taken, the symbol is out of order, or the last
+  syllable already carries a tone — it **starts a new syllable**. The old rule
+  that a symbol replaces whatever is in its slot is gone at the composer level,
+  because that rule is exactly what made continuous typing impossible: `ㄋㄧ`
+  followed by `ㄏ` used to become `ㄏㄧ`. When a seventh syllable starts, the
+  first one commits itself at its best guess.
+- **A toneless reading is a reading, not an unfinished one.** A syllable carrying
+  no tone is matched across all five tones at once, so ㄋㄧㄏㄠ has candidates
+  without anyone pressing a tone key. The generated dictionary carries that as
+  `~`-prefixed rows: `~ㄋㄧ` is the union of ㄋㄧ / ㄋㄧˊ / ㄋㄧˇ / ㄋㄧˋ / ㄋㄧ˙,
+  ordered by each character's corpus frequency across the five. The prefix is not
+  decoration. First tone is written with **no** mark, so `ㄋㄧ` already means
+  "ㄋㄧ, first tone" and cannot also mean "ㄋㄧ, tone not given"; one of the two
+  needs a key of its own, and the toneless one is the one that is new.
+- **Tones sharpen the guess; they no longer gate the next syllable.** A tone
+  applies to the **last** syllable — `ˊˇˋ˙` with theirs, space with the first,
+  since 大千 has no first-tone key — and a second tone key re-tones and
+  re-queries, because `ㄕˋ` for `ㄕˊ` is the mistake everyone makes. What a tone
+  is no longer is the price of moving on.
+- **The bar belongs to the front of the buffer**, not to the syllable under the
+  finger. With two or more syllables pending it opens with the **phrases** the
+  buffer could still become (see *The phrase table*), then the single characters
+  of the oldest syllable not yet converted. Tapping a candidate commits as many
+  syllables as it has characters — one character is one syllable, so no span has
+  to be carried — and the bar moves on to what is left. **Return** commits every
+  pending syllable at its best guess, and otherwise types a line break. **Space**
+  is the first tone while the last syllable has no tone, and commits everything
+  once it has one. So a sentence stays typeable without ever looking at the bar,
+  and choosing one word does not cost the syllables behind it.
+- **Two lone 聲母 already predict.** `ㄋㄏ` offers 你好 before a vowel or a tone
+  has been typed, because a phrase is matched **by prefix within each
+  syllable**: the slots the user has filled must agree with the phrase's
+  syllable, `nil` included (`ㄧㄡ` has no 聲母 and does not match `ㄌㄧㄡˊ`), the
+  slots they have not filled are wildcards, and a tone is a wildcard until it is
+  typed. This is the behaviour the product owner named as the gap — "就算只打
+  幾個字的第一個注音，它還是猜得出來" — and it is what the system keyboard does.
+- **Delete unwinds the buffer before it reaches the document**: the last
+  syllable's tone, then its slots, then the empty syllable itself, and on into
+  the syllable before it. Only with nothing pending does it reach the field.
+- **Punctuation commits first.** A mark typed from the symbol planes flushes the
+  pending syllables and then lands, rather than arriving in front of the word
+  that was being typed.
+- **The composition is drawn in the mode strip**, space-separated, rather than as
+  marked text in the host's field. `UITextDocumentProxy` does offer
+  `setMarkedText(_:selectedRange:)`, and the system keyboard uses exactly that;
+  it is not used here because how a host renders and commits marked text is the
+  host's business, and a composition that the keyboard cannot see cannot be
+  guaranteed to end the way the composer thinks it did. The strip is ours. Six
+  syllables and a candidate bar do not both fit in one row, so the composition
+  truncates at the **head**: the newest syllable is the one being typed and has
+  to stay visible, and the candidates keep most of the row.
 - Leaving the pane commits what was pending — the user swiped, they didn't press
   delete. Coming back to a *different* field drops it, the same rule the
   transcript tail follows and for the same reason.
+
+**Nothing commits itself on the way past.** The rule that starting a syllable
+confirmed the one before it went with one-at-a-time: starting the next syllable
+only appends. Every commit is one of five deliberate things — tapping a
+candidate (the first pending syllable), return, space on a last syllable that
+already carries a tone, punctuation from the symbol planes, leaving the pane
+(all of them) — plus the one the buffer forces, a seventh syllable pushing the
+oldest out at its best guess.
 
 Everything above is `ZhuyinComposer` in ParleyKit, which never touches the
 document: it answers `handled` / `insert(_)` / `passThrough` and the keyboard
@@ -1082,23 +1163,26 @@ exists.
 
 #### The dictionary
 
-`zhuyin-dict.txt` (~93 KiB, in ParleyKit's resources) is reading → characters,
-most frequent first, generated by `scripts/gen-zhuyin-dict.mjs` from
+`zhuyin-dict.txt` (in ParleyKit's resources) is reading → characters, most
+frequent first, generated by `scripts/gen-zhuyin-dict.mjs` from
 **McBopomofo's MIT-licensed data**: `BPMFBase.txt` for the readings and
-`phrase.occ` for the ordering. `BPMFMappings.txt` is deliberately skipped — it
-is the file their README marks as simplified from libtabe's `tsi.src`, so it
-carries a second license's provenance, and it is phrases, which v1 does not
-convert. Attribution is in `ios/THIRD-PARTY.md`; the generator pins the download
-to a commit and stamps it into the resource's header, so the committed file names
-what it was built from.
+`phrase.occ` for the ordering. Since 1.16 it also carries the `~`-prefixed
+toneless rows described above: 1,413 toned rows and 429 toneless ones, about
+52,000 characters in all, which takes the file from 94 KiB to 172 KiB. Every
+character in a toneless row already appears in a toned one, so what the second
+copy buys is one lookup instead of five merged and re-sorted on every keystroke,
+in the process that can least afford to do the work. Attribution is in
+`ios/THIRD-PARTY.md`; the generator pins the download to a commit and stamps it
+into the resource's header, so the committed file names what it was built from.
 
-It is loaded **lazily and once**, on the first finalized syllable, because this
-process runs against a jetsam limit far tighter than an app's — a keyboard opened
-on the voice or QWERTY pane never pays for it. ~1,400 readings over ~27,000
-characters is a few hundred kilobytes resident, and the file's own string is
-dropped as soon as it is parsed. Rows are stored with no separator between
-characters because every character in the source is exactly one Unicode scalar,
-including the ones outside the BMP.
+It is loaded **lazily and once**, on the **first 注音 symbol typed** — a syllable
+with no tone already has candidates, so there is no later moment to wait for —
+because this process runs against a jetsam limit far tighter than an app's, and a
+keyboard opened on the voice or QWERTY pane still never pays for it. Those
+~52,000 characters are a few hundred kilobytes resident, and the file's own
+string is dropped as soon as it is parsed. Rows are stored with no separator
+between characters because every character in the source is exactly one Unicode
+scalar, including the ones outside the BMP.
 
 The 大千 table was checked, not eyeballed: McBopomofo's data carries a 大千
 keystroke column beside every reading, and the table in `ZhuyinDachen` agrees
@@ -1106,19 +1190,80 @@ with 26,648 of their 26,652 rows (the four misses are typos in their key column,
 e.g. `公 ㄍㄨㄥ˙ … ej/5`). That is why the table is written out in Swift rather
 than derived from the data.
 
+#### The phrase table
+
+`zhuyin-phrases.txt` (`ZhuyinPhrases`, generated by
+`scripts/gen-zhuyin-phrases.mjs`) is what turns the pane from a transcriber into
+a predictor. It comes from McBopomofo's `BPMFMappings.txt` — phrase → toned
+syllables — which their README marks as simplified from **libtabe's `tsi.src`
+(BSD)**; an earlier version of this file skipped it for that second provenance,
+and the reason it is in now is that the owner's test against the system keyboard
+made the gap concrete: no per-syllable data can answer `ㄋㄏ`, because neither
+syllable is finished. libtabe's notice sits beside McBopomofo's in
+`ios/THIRD-PARTY.md`.
+
+- **2–4 character phrases only**, one row per (phrase, reading), about 61,000
+  rows in 1.7 MB: everything with a corpus count of ten or more, plus every
+  zero-count two-character phrase (upstream order is alphabetical, so a prefix of
+  the zero-count rows would be a biased slice, and the two-character ones are
+  the words). Keeping every count > 0 row was 3 MB and 102,000 rows, which is a
+  lot to hold in a keyboard extension for phrases that occur nine times in a
+  corpus.
+- **Ordered once, at generation time.** The file's order is the ranking and the
+  class does no sorting. The score is not raw occurrence: the corpus is written
+  news, and by raw count `ㄋㄏ` puts 女孩, 年後, 男孩, 南韓 and 內涵 ahead of 你好
+  (12th). So the score is `ln(occ + 1)` plus the mean `ln(charOcc + 1)` of the
+  phrase's characters — a phrase built of common characters is more likely to be
+  the word somebody is typing into a message than one built of rare ones — and a
+  short list of everyday words (你好, 謝謝, 請問, 不好意思, 沒問題 …) is given a
+  floor of 3,000 occurrences before scoring, because this keyboard types
+  messages and the corpus never did. That list is in the generator with its
+  reason, and it is the one place in the data where an opinion was written down.
+- **Indexed by the first symbol of each of the first two syllables** — 你好
+  lives under `ㄋㄏ` — because two first symbols is the least a user can have
+  typed and still be asking a question. A lookup is that bucket filtered
+  syllable by syllable with the prefix rule above, split into three groups in
+  frequency order: phrases exactly as long as the buffer, longer ones (the
+  predictions — `ㄋㄧㄏㄠ` offers 你好嗎 after 你好, and picking it takes the
+  whole buffer), and shorter ones covering a prefix of it. Forty at most.
+- **`best` is greedy, not a lattice.** Return, space-on-a-toned-syllable,
+  punctuation and leaving the pane all commit `best`, which walks the buffer
+  left to right taking the longest phrase that exactly covers the syllables in
+  front of it (four, then three, then two) and otherwise that syllable's top
+  character. Deterministic and explainable, and wrong in ways the user can see
+  in the bar and fix by tapping instead. A viterbi over the same table is the
+  obvious next step and is not this one.
+- **Loaded lazily, and warmed early.** Parsing and indexing 61,000 rows is about
+  100 ms on a current phone, which is not a hitch to spend on the user's second
+  syllable. So both tables are warmed on a background queue the moment the 注音
+  pane becomes current, and a lookup that arrives before the warm has landed
+  loads synchronously as before — at worst the work is done twice, never a torn
+  table. Readings are parsed at match time rather than up front: only one
+  bucket is ever looked at, and pre-parsing 61,000 readings would cost memory
+  for rows the user will never type. It is the largest thing this process
+  holds, and a keyboard opened on the voice or QWERTY pane still never pays for
+  it.
+
 #### What v1 does not do
 
 Named here so nobody has to guess whether it was forgotten:
 
-- **No phrase conversion.** No lattice, no viterbi, no 2–6 character lexicon. A
-  sentence is typed one character at a time with a frequency-ordered bar. This is
-  the deliberate line: per-syllable done well before phrases done adequately.
+- **No lattice.** Phrases are predicted and committed greedily (above); there is
+  no viterbi over segmentations, and no 5–6 character phrases.
 - **No user dictionary and no learning.** The bar's order is the corpus's, not
   yours. A keyboard extension that accumulated a per-user model would be holding
   state this process is deliberately kept free of.
 - **No 漢語拼音 or 倚天 layouts**, and no half-width/full-width punctuation
   switch — punctuation comes from the symbol planes shared with QWERTY.
 - **No associated-phrase prompts** after a commit.
+- **No unbounded buffer.** Six syllables may be pending; a seventh commits the
+  oldest at its best guess. A sentence-length buffer would be a sentence this
+  process has to hold, redraw and unwind, and phrases are four syllables at
+  most anyway.
+
+What is *not* on this list any more is having to finish a syllable before
+starting the next. Until 1.16 a tone key was the only way to move on; that was
+the composer's limit, and it read as a rule.
 
 #### The globe, and why it is still not on every device
 
@@ -1177,8 +1322,9 @@ more tap.
   that draw one, and ours on the devices that don't — `needsInputModeSwitchKey`
   decides, on every pane. See the 注音 section above.
 - **Third-party data**: the 注音 dictionary is generated from McBopomofo's
-  MIT-licensed lexicon and attributed in `ios/THIRD-PARTY.md`. No phrase data
-  with murkier provenance is shipped; see that section.
+  MIT-licensed lexicon, and the phrase table from their `BPMFMappings.txt`,
+  which descends from libtabe's BSD-licensed `tsi.src`; both notices are in
+  `ios/THIRD-PARTY.md`. Nothing with an unclear licence is shipped.
 - **2.5.1** (private APIs): the only private code in the project is the
   pre-26.4 auto-return — reading the host's bundle id, and asking
   `LSApplicationWorkspace` to open it — version-gated to where it works. Every
