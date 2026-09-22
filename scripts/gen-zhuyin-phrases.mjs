@@ -8,25 +8,15 @@
 // already offer 你好, the way the system 注音 keyboard does, and no amount of
 // per-syllable data can answer that. It needs a phrase lexicon.
 //
-// Source: the McBopomofo project's Traditional Chinese lexicon data.
-//   https://github.com/openvanilla/McBopomofo  —  Source/Data/
-//   BPMFMappings.txt  phrase → one 注音 reading per character (2–6 characters,
-//                     a phrase repeated once per alternative reading)
-//   phrase.occ        phrase → corpus occurrence count
-//
-// **Two licenses.** McBopomofo ships under the MIT license, and their own data
-// README marks `BPMFMappings.txt` as "Originally simplified from tsi.src of
-// libtabe (BSD Licensed) with modifications" — so the phrase table carries
-// libtabe's BSD notice as well. Both are reproduced in `ios/THIRD-PARTY.md`,
-// which is the file to update if this ever pulls in a third source.
+// Where the data comes from, why the download is pinned to a commit, and the
+// **two licenses** the phrase readings carry — MIT for McBopomofo, BSD for the
+// libtabe `tsi.src` their `BPMFMappings.txt` was simplified from — are all
+// written up once in `zhuyin-data.mjs`, which both generators share. This one
+// reads `BPMFMappings.txt` (phrase → one reading per character, a phrase
+// repeated once per alternative reading) and `phrase.occ` (corpus counts).
 //
 // Regenerate:
 //   node scripts/gen-zhuyin-phrases.mjs
-//
-// Like the dictionary generator it resolves the branch to a commit, downloads
-// from that commit, and stamps it into the output header — so re-running it on
-// an unchanged upstream rewrites a byte-identical file, and a real upstream
-// change shows up as a diff naming the commit it came from.
 //
 // Output format, one row per line:
 //   <phrase>\t<syllable> <syllable> …     tone marks written, first tone bare
@@ -63,13 +53,16 @@
 //     a 2-character word missing from the corpus is usually a word the corpus
 //     is too old for, which is exactly what prediction is for.
 
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { writeFile } from "node:fs/promises";
 
-const REPO = "openvanilla/McBopomofo";
-const BRANCH = "master";
+import {
+  downloadData,
+  parseOccurrences,
+  provenance,
+  resourcePath,
+  validateSyllable,
+} from "./zhuyin-data.mjs";
+
 const FILES = ["Source/Data/BPMFMappings.txt", "Source/Data/phrase.occ"];
 
 /// The corpus count below which a phrase is dropped. Ten rather than one is a
@@ -99,41 +92,24 @@ const CONVERSATIONAL = new Set([
   "抱歉", "了解",
 ]);
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const OUT = join(
-  root,
-  "ios/ParleyKit/Sources/ParleyKit/Resources/zhuyin-phrases.txt"
-);
-
-/** The tone marks 注音 writes as a suffix. First tone carries no mark. */
-const TONES = new Set(["ˊ", "ˇ", "ˋ", "˙"]);
-const INITIALS = "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙ";
-const MEDIALS = "ㄧㄨㄩ";
-const FINALS = "ㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ";
-const SYMBOLS = new Set([...INITIALS, ...MEDIALS, ...FINALS, ...TONES]);
+const OUT = resourcePath("zhuyin-phrases.txt");
 
 async function main() {
-  const commit = await resolveCommit();
-  const dir = await mkdtemp(join(tmpdir(), "zhuyin-phrases-"));
-  const [mappings, occ] = await Promise.all(
-    FILES.map((path) => download(commit, path, dir))
-  );
+  const { commit, texts } = await downloadData(FILES, "zhuyin-phrases-");
+  const [mappings, occ] = texts;
 
+  // Every row of `phrase.occ` is wanted here, single characters included: the
+  // phrase rows rank a phrase against its rivals, and the character rows are
+  // the second half of `score`. One-character *rows* are never written to the
+  // resource — that is the dictionary's job — but their counts are read.
   const frequency = parseOccurrences(occ);
   const rows = parseMappings(mappings);
-  // A phrase listed with several readings shares one count: the corpus counted
-  // the characters, which is all it can see.
   for (const row of rows) {
-    const counted = frequency.get(row.phrase) ?? 0;
-    row.count = CONVERSATIONAL.has(row.phrase)
-      ? Math.max(counted, CONVERSATIONAL_OCCURRENCES)
-      : counted;
+    row.count = countOf(row.phrase, frequency);
     row.score = score(row, frequency);
   }
 
-  const kept = rows.filter(
-    (row) => row.count >= MIN_OCCURRENCES || (row.count === 0 && row.length === 2)
-  );
+  const kept = rows.filter(keep);
   // Score first, file order as the tiebreak — the same rule the dictionary
   // generator uses, and for the same reason: a stable tiebreak is what makes
   // the output reproducible. The zero-count rows fall to the end on their own.
@@ -142,14 +118,17 @@ async function main() {
   const header = [
     "# 注音 phrase candidates — the table that lets the pane predict from the",
     "#   first symbol of each syllable: ㄋㄏ already offers 你好.",
-    "# One row per (phrase, reading) pair: <phrase>\\t<syllables, space separated>.",
+    String.raw`# One row per (phrase, reading) pair: <phrase>\t<syllables, space separated>.`,
     "# Ordered by corpus frequency, most frequent first — the reader keeps file",
     "#   order and has no counts of its own.",
-    "# GENERATED — run scripts/gen-zhuyin-phrases.mjs to rebuild; do not hand-edit.",
-    `# Source: https://github.com/${REPO} @ ${commit}`,
-    "#   Source/Data/BPMFMappings.txt + Source/Data/phrase.occ. MIT (McBopomofo),",
-    "#   and BSD (libtabe) for the readings BPMFMappings.txt was simplified from.",
-    "# See ios/THIRD-PARTY.md.",
+    ...provenance({
+      script: "gen-zhuyin-phrases.mjs",
+      commit,
+      sources: [
+        "#   Source/Data/BPMFMappings.txt + Source/Data/phrase.occ. MIT (McBopomofo),",
+        "#   and BSD (libtabe) for the readings BPMFMappings.txt was simplified from.",
+      ],
+    }),
   ];
   const lines = kept.map((row) => `${row.phrase}\t${row.reading}`);
   await writeFile(OUT, `${[...header, ...lines].join("\n")}\n`, "utf8");
@@ -163,6 +142,23 @@ async function main() {
       (bytes / 1024 / 1024).toFixed(2)
     } MiB, of ${rows.length} candidate rows upstream`
   );
+}
+
+/// A phrase listed with several readings shares one count: the corpus counted
+/// the characters, which is all it can see. The conversational floor is applied
+/// here, before anything filters on the count, so a word on that list is never
+/// dropped for being rare in the news.
+function countOf(phrase, frequency) {
+  const counted = frequency.get(phrase) ?? 0;
+  if (!CONVERSATIONAL.has(phrase)) return counted;
+  return Math.max(counted, CONVERSATIONAL_OCCURRENCES);
+}
+
+/// Common enough to earn its row, or one of the 2-character phrases the corpus
+/// never saw at all — see the note at the top on why those are kept whole.
+function keep(row) {
+  if (row.count >= MIN_OCCURRENCES) return true;
+  return row.count === 0 && row.length === 2;
 }
 
 /// How a row is ranked: the phrase's own count, damped, plus how ordinary its
@@ -179,42 +175,25 @@ function score(row, frequency) {
   return Math.log(row.count + 1) + characters / row.length;
 }
 
-/// Pin the download to a commit rather than a moving branch, so the header can
-/// name exactly what the committed resource was built from.
-async function resolveCommit() {
-  const res = await fetch(
-    `https://api.github.com/repos/${REPO}/commits/${BRANCH}`,
-    { headers: { accept: "application/vnd.github.sha" } }
-  );
-  if (!res.ok) throw new Error(`resolving ${BRANCH}: HTTP ${res.status}`);
-  return (await res.text()).trim();
-}
-
-async function download(commit, path, dir) {
-  const url = `https://raw.githubusercontent.com/${REPO}/${commit}/${path}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
-  const file = join(dir, path.replaceAll("/", "_"));
-  await writeFile(file, Buffer.from(await res.arrayBuffer()));
-  return readFile(file, "utf8");
-}
-
-/// `phrase.occ` is `<phrase> <count>`, single characters included. Both are
-/// wanted: the phrase rows rank a phrase against its rivals, and the character
-/// rows are the second half of `score`. One-character *rows* are never written
-/// to the resource — that is the dictionary's job — but their counts are read.
-function parseOccurrences(text) {
-  const frequency = new Map();
-  for (const line of text.split("\n")) {
-    const [phrase, count] = line.split(/\s+/);
-    if (!phrase) continue;
-    frequency.set(phrase, Number(count) || 0);
-  }
-  return frequency;
-}
-
 /// `BPMFMappings.txt` is `<phrase> <syllable> <syllable> …`, one reading per
 /// character, repeated for a phrase with more than one reading.
+function parseMappings(text) {
+  const rows = [];
+  const seen = new Set();
+  for (const line of text.split("\n")) {
+    const row = parseRow(line);
+    if (!row) continue;
+    // A phrase listed twice with the same reading would be shown twice in the
+    // bar; upstream has none today, and this is what keeps it that way.
+    const key = `${row.phrase}\t${row.reading}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({ ...row, rank: rows.length });
+  }
+  return rows;
+}
+
+/// One line of `BPMFMappings.txt`, or null for a line this table has no use for.
 ///
 /// Everything in range is validated rather than trusted: a row the keyboard
 /// could never type — a syllable it cannot spell, a character that is more than
@@ -222,47 +201,16 @@ function parseOccurrences(text) {
 /// would sit in the resource unreachable, so it is an error here instead. Rows
 /// outside 2..MAX_LENGTH are *skipped*, which is a size decision and not a
 /// complaint about the data.
-function parseMappings(text) {
-  const rows = [];
-  const seen = new Set();
-  let rank = 0;
-  for (const line of text.split("\n")) {
-    if (!line.trim() || line.startsWith("#")) continue;
-    const [phrase, ...syllables] = line.trim().split(/\s+/);
-    const characters = [...phrase];
-    if (characters.length < 2 || characters.length > MAX_LENGTH) continue;
-    if (characters.length !== syllables.length) {
-      throw new Error(`one reading per character, please: ${line}`);
-    }
-    for (const syllable of syllables) {
-      for (const symbol of syllable) {
-        if (!SYMBOLS.has(symbol)) throw new Error(`stray symbol in: ${line}`);
-      }
-      if (!wellFormed(syllable)) throw new Error(`not a syllable: ${line}`);
-    }
-    const reading = syllables.join(" ");
-    // A phrase listed twice with the same reading would be shown twice in the
-    // bar; upstream has none today, and this is what keeps it that way.
-    const key = `${phrase}\t${reading}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    rows.push({ phrase, reading, length: characters.length, rank: rank++ });
+function parseRow(line) {
+  if (!line.trim() || line.startsWith("#")) return null;
+  const [phrase, ...syllables] = line.trim().split(/\s+/);
+  const characters = [...phrase];
+  if (characters.length < 2 || characters.length > MAX_LENGTH) return null;
+  if (characters.length !== syllables.length) {
+    throw new Error(`one reading per character, please: ${line}`);
   }
-  return rows;
-}
-
-/// The same shape `ZhuyinSyllable` enforces on the Swift side: at most one
-/// symbol per slot, in slot order, tone last.
-function wellFormed(reading) {
-  const slot = (c) =>
-    INITIALS.includes(c) ? 0 : MEDIALS.includes(c) ? 1 : FINALS.includes(c) ? 2 : 3;
-  let previous = -1;
-  for (const c of reading) {
-    const s = slot(c);
-    if (s <= previous) return false;
-    previous = s;
-  }
-  return true;
+  for (const syllable of syllables) validateSyllable(syllable, line);
+  return { phrase, reading: syllables.join(" "), length: characters.length };
 }
 
 await main();
