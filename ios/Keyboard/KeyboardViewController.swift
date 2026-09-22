@@ -87,6 +87,12 @@ final class KeyboardViewController: UIInputViewController {
         bridge.controller = self
         bridge.hasFullAccess = hasFullAccess
         bridge.showsGlobe = needsInputModeSwitchKey
+        // On Face ID phones iOS draws its own dictation key under a third-party
+        // keyboard, a thumb's length from our record button and starting
+        // Apple's dictation into the same field. Claiming a dictation key of
+        // our own is the documented way to have the system leave its out; the
+        // globe beside it stays.
+        hasDictationKey = true
         let typing = TypingKeyboards.enabled().map(KeyboardPane.init)
         bridge.setPanes([.voice] + typing)
         // Without Full Access there is nothing to dictate with, so open on the

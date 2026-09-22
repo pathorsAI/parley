@@ -376,7 +376,7 @@ struct KeyboardRootView: View {
                     GlobeKey(controller: bridge.controller, dark: dark, round: true)
                         .frame(width: KBMetrics.roundKey, height: KBMetrics.roundKey)
                 } else {
-                    atKey
+                    resting(atKey)
                 }
             }
             .animation(.easeInOut(duration: 0.16), value: bridge.listening)
@@ -384,11 +384,26 @@ struct KeyboardRootView: View {
             recordButton
             Spacer(minLength: 0)
             VStack(spacing: KBMetrics.deckRowGap) {
-                deleteKey
-                returnKey
+                resting(deleteKey)
+                resting(returnKey)
             }
+            .animation(.easeInOut(duration: 0.16), value: bridge.listening)
         }
         .frame(height: KBMetrics.deckHeight)
+    }
+
+    /// A control that only exists between sessions. While the microphone is
+    /// open nothing has landed in the field yet — insertion is one shot at
+    /// `done` — so ⌫ would eat text typed *before* the dictation, ⏎ would
+    /// break a line under words that have not arrived, and `@` is a shortcut
+    /// nobody reaches for mid-sentence. The disc keeps its slot and goes
+    /// invisible and inert rather than leaving, so the record button and ✕
+    /// never move under the finger.
+    private func resting<V: View>(_ control: V) -> some View {
+        control
+            .opacity(bridge.listening ? 0 : 1)
+            .disabled(bridge.listening)
+            .accessibilityHidden(bridge.listening)
     }
 
     @ViewBuilder
@@ -396,7 +411,7 @@ struct KeyboardRootView: View {
         if bridge.listening {
             cancelKey.transition(.opacity)
         } else if bridge.showsGlobe {
-            atKey
+            resting(atKey)
         } else {
             Color.clear.frame(width: KBMetrics.roundKey, height: KBMetrics.roundKey)
         }
