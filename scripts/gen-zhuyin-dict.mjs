@@ -12,10 +12,11 @@
 //   BPMFBase.txt  single character → 注音 reading (McBopomofo's own data)
 //   phrase.occ    phrase → corpus occurrence count (their frequency corpus)
 //
-// `BPMFMappings.txt` is deliberately **not** used. It is the file their README
-// marks as simplified from libtabe's `tsi.src`, so it carries a second
-// license's provenance — and it is multi-character phrases, which v1 of the
-// pane does not do anyway (see docs/design/ios-voice-keyboard.md).
+// `BPMFMappings.txt`, their multi-character phrase file, belongs to the other
+// generator: `gen-zhuyin-phrases.mjs` builds the phrase table from it. It is
+// kept out of this one because it carries a second license's provenance —
+// their README marks it as simplified from libtabe's `tsi.src` — and because
+// the two resources are loaded independently at runtime.
 //
 // Regenerate:
 //   node scripts/gen-zhuyin-dict.mjs

@@ -17,8 +17,17 @@ import Foundation
 /// `maxPending`, which is a bound on a keyboard's worth of state rather than a
 /// feature.
 ///
-/// Per-syllable conversion, not phrase conversion: no lattice and no phrase
-/// lexicon. See `docs/design/ios-voice-keyboard.md`.
+/// A phrase table sits in front of the per-syllable one. Matching is by prefix
+/// *within* each syllable — the slots the user filled must agree, the ones they
+/// have not are wildcards — so two lone 聲母 `ㄋㄏ` already offer 你好, which is
+/// what the system keyboard does and what per-syllable data alone cannot answer.
+/// Phrases longer than the buffer are offered too: they are the prediction. The
+/// single characters of the first syllable follow them, so nothing the old bar
+/// could do is lost.
+///
+/// Still no user learning — the order is the corpus's, not yours — and still no
+/// lattice: `best` walks the buffer greedily, longest phrase first, rather than
+/// scoring whole segmentations. See `docs/design/ios-voice-keyboard.md`.
 ///
 /// The composer never touches the document. It answers with an `Outcome` and
 /// lets the keyboard do the inserting, which is what keeps it testable off a
@@ -53,19 +62,29 @@ public struct ZhuyinComposer {
     /// of keys cannot grow without bound.
     public static let maxPending = 6
 
+    /// The longest phrase the table holds, which is therefore the longest step
+    /// `best` can take. Kept in step with `scripts/gen-zhuyin-phrases.mjs`.
+    private static let maxPhrase = 4
+
     private let dictionary: ZhuyinDictionary
+    /// Absent is a composer that behaves exactly as it did before phrases: the
+    /// bar is the first syllable's characters and `best` is one per syllable.
+    private let phrases: ZhuyinPhrases?
 
     /// Everything pending, oldest first. Never holds an empty syllable: delete
     /// drops one the moment its last slot goes.
     public private(set) var syllables: [ZhuyinSyllable] = []
 
-    /// Candidates for the **first** pending syllable — the one a tap on the bar
-    /// converts. Possibly empty even with something pending, for a reading
-    /// nothing is pronounced as.
+    /// Candidates for the front of the buffer — what a tap on the bar converts.
+    /// Phrases first, longest-matching order as `ZhuyinPhrases` returns them,
+    /// then the single characters of the **first** pending syllable. Possibly
+    /// empty even with something pending, for a reading nothing is pronounced
+    /// as.
     public private(set) var candidates: [String] = []
 
-    public init(dictionary: ZhuyinDictionary) {
+    public init(dictionary: ZhuyinDictionary, phrases: ZhuyinPhrases? = nil) {
         self.dictionary = dictionary
+        self.phrases = phrases
     }
 
     /// The syllable the keys are landing in. Kept for callers written against
@@ -84,12 +103,41 @@ public struct ZhuyinComposer {
         syllables.map(\.text).joined(separator: " ")
     }
 
-    /// What confirm commits: every pending syllable's top candidate, in order.
+    /// What confirm commits, read left to right: at each position the longest
+    /// phrase that covers exactly the syllables in front of it, four down to
+    /// two, and otherwise that one syllable's top character. Greedy rather than
+    /// a lattice — deterministic, explainable, and wrong in ways a user can see
+    /// and fix by picking from the bar instead.
+    ///
     /// Falls back to a syllable's own reading — a syllable with no characters is
     /// still something the user typed, and eating it would be worse than
     /// inserting `ㄍㄧ`.
     public var best: String {
-        syllables.map(top(of:)).joined()
+        guard let phrases else { return syllables.map(top(of:)).joined() }
+        var out = ""
+        var index = 0
+        while index < syllables.count {
+            let remaining = syllables.count - index
+            var taken = 0
+            if remaining >= 2 {
+                for span in stride(from: min(Self.maxPhrase, remaining), through: 2, by: -1) {
+                    let window = Array(syllables[index..<(index + span)])
+                    // Only an exact cover: a prediction longer than what is left
+                    // would put characters in the document the user never typed.
+                    guard let match = phrases.matches(window).first(where: { $0.span == span })
+                    else { continue }
+                    out += match.phrase
+                    taken = span
+                    break
+                }
+            }
+            if taken == 0 {
+                out += top(of: syllables[index])
+                taken = 1
+            }
+            index += taken
+        }
+        return out
     }
 
     // MARK: keys
@@ -150,11 +198,15 @@ public struct ZhuyinComposer {
         return .handled
     }
 
-    /// Commit a candidate the user tapped. It answers the **first** pending
-    /// syllable, so only that one leaves the buffer and the bar moves on to the
-    /// next — which is what makes a multi-syllable buffer convertible at all.
+    /// Commit a candidate the user tapped. It answers the **front** of the
+    /// buffer, so as many syllables leave it as the candidate has characters —
+    /// one Chinese character is one syllable, which is why this needs no span
+    /// argument — and the bar moves on to what is left. A prediction longer than
+    /// the buffer takes all of it: the user asked for a word they had not
+    /// finished typing.
     public mutating func pick(_ candidate: String) -> Outcome {
-        if !syllables.isEmpty { syllables.removeFirst() }
+        let span = min(candidate.unicodeScalars.count, syllables.count)
+        syllables.removeFirst(span)
         refreshCandidates()
         return .insert(candidate)
     }
@@ -195,9 +247,17 @@ public struct ZhuyinComposer {
         return committed.map(Outcome.insert) ?? .handled
     }
 
-    /// The bar follows the first syllable, not the one under the fingers.
+    /// The bar follows the front of the buffer, not the syllable under the
+    /// fingers: phrases the whole buffer could still become, then the characters
+    /// of its first syllable. A phrase is at least two characters and the tail
+    /// is single characters, so the two halves cannot collide.
     private mutating func refreshCandidates() {
-        candidates = syllables.first.map(row(of:)) ?? []
+        var bar: [String] = []
+        if syllables.count >= 2, let phrases {
+            bar = phrases.matches(syllables).map(\.phrase)
+        }
+        if let first = syllables.first { bar += row(of: first) }
+        candidates = bar
     }
 
     /// An untoned syllable is looked up toneless, which is the only way a bar
