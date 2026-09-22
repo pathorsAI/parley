@@ -255,19 +255,31 @@ struct KeyboardRootView: View {
             .accessibilityValue(Text(verbatim: bridge.composition))
     }
 
-    /// The characters the **first** (oldest) pending syllable could be, most
-    /// frequent first, scrollable because some readings have dozens. Tapping one
-    /// commits that syllable and the bar moves on to the next one; space commits
-    /// the first candidate, which is why it is worth having it be the first.
+    /// What the front of the buffer could be — phrases first, then the first
+    /// syllable's characters — most likely first, scrollable because some
+    /// readings have dozens. Tapping one commits as many syllables as it has
+    /// characters and the bar moves on to what is left.
+    ///
+    /// Each candidate sits between hairlines with a wide gutter, because the
+    /// bar mixes one- and two-character candidates and a run of them with
+    /// nothing between reads as one long string: 會出好處會場 is three words,
+    /// and at 2pt spacing nobody could tell. The system keyboard leaves about a
+    /// character's width between candidates for the same reason.
     private var candidateBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                ForEach(Array(bridge.candidates.enumerated()), id: \.offset) { _, candidate in
+            HStack(spacing: 0) {
+                ForEach(Array(bridge.candidates.enumerated()), id: \.offset) { index, candidate in
+                    if index > 0 {
+                        Rectangle()
+                            .fill(KBTheme.inkSoft(dark).opacity(0.3))
+                            .frame(width: 1, height: KBMetrics.strip - 18)
+                    }
                     Button(action: { bridge.pickCandidate(candidate) }) {
                         Text(verbatim: candidate)
                             .font(.system(size: 22))
                             .foregroundStyle(KBTheme.ink(dark))
-                            .frame(minWidth: 32, minHeight: KBMetrics.strip - 4)
+                            .padding(.horizontal, 11)
+                            .frame(minWidth: 44, minHeight: KBMetrics.strip - 4)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
