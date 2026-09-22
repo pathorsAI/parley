@@ -144,13 +144,18 @@ final class KeyRepeater: ObservableObject {
 /// the system delete key. It can't be a `Button`: a button only reports on
 /// touch-up, so a hold would be silent until the finger left. The drag gesture
 /// with a zero minimum distance is the standard way to get touch-down and
-/// touch-up out of SwiftUI, and it also lets go of the touch cleanly when the
-/// pane's swipe gesture takes over.
+/// touch-up out of SwiftUI.
+///
+/// `@GestureState` rather than `@State`, because it also resets when the
+/// gesture is *cancelled* — which is what happens when the pane track takes
+/// the touch over mid-swipe. A cancelled drag never reaches `onEnded`, so the
+/// repeater is started and stopped from the state itself, and a swipe that
+/// began on ⌫ cannot leave it deleting.
 struct RepeatingKey<Content: View>: View {
     let action: () -> Void
     @ViewBuilder var content: (Bool) -> Content
 
-    @State private var pressed = false
+    @GestureState private var pressed = false
     @StateObject private var repeater = KeyRepeater()
 
     var body: some View {
@@ -159,17 +164,16 @@ struct RepeatingKey<Content: View>: View {
             .animation(.easeOut(duration: 0.08), value: pressed)
             .gesture(
                 DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        guard !pressed else { return }
-                        pressed = true
-                        action()
-                        repeater.start(action)
-                    }
-                    .onEnded { _ in
-                        pressed = false
-                        repeater.stop()
-                    }
+                    .updating($pressed) { _, state, _ in state = true }
             )
+            .onChange(of: pressed) { _, down in
+                if down {
+                    action()
+                    repeater.start(action)
+                } else {
+                    repeater.stop()
+                }
+            }
             .onDisappear { repeater.stop() }
     }
 }
