@@ -191,15 +191,18 @@ milliseconds. The problem was how briefly the app stayed awake:
 of those roughly **30 seconds**. Pause to think mid-sentence and the window is
 gone — so in practice every tap took the round trip.
 
-There is also a second, harder reason, and it is the one that makes "keep the
-process awake longer" insufficient on its own: **iOS refuses to let a
-backgrounded process start recording.** Activating a record session from the
-background returns `AVAudioSessionErrorCodeCannotStartRecording` with
-`Client … is in the background and doesn't have the entitlement to start
-recording in the background` in the log. Apple has never published exactly how
-this interacts with `UIBackgroundModes: audio`, and we cannot settle it from a
-simulator. A resident process that still could not open the microphone would
-have had to come forward anyway.
+There is also a second reason, and it turned out to be a fact about some phones
+rather than a rule: **a backgrounded process can be refused when it starts
+recording.** Activating a record session from the background has returned
+`AVAudioSessionErrorCodeCannotStartRecording` with `Client … is in the
+background and doesn't have the entitlement to start recording in the
+background` in the log. On other phones, with the same `UIBackgroundModes:
+audio`, the activation succeeds, and the linger had been buying in-place starts
+there since #222. Apple has never published exactly how this interacts with the
+background mode, and we cannot settle it from a simulator. So the app assumes
+neither answer: a lingering process with nothing to borrow opens the microphone
+*before* acknowledging a start, and a refusal goes unanswered (see *Knowing
+whether the app is there*). A window sidesteps the question entirely.
 
 ### What a window is
 
@@ -468,12 +471,30 @@ The app now writes its own answer every ten seconds while it runs:
 capture (a window) is there to borrow, and false otherwise. The keyboard draws
 the microphone glyph and *Tap to speak* when the window is open **or** a fresh
 presence says the app can answer in place (`KeyboardBridge.staysPut`), and the
-jump glyph otherwise. And `armRequestObserver` applies the same condition
-before honoring a start, so the glyph is not merely accurate but causal: a
-backgrounded app with no microphone declines the note, the keyboard's 700 ms
-fallback opens the app, and the microphone is opened in the foreground where it
-can be. The linger still matters — a ⏹ or ✕ has to reach a process that is
-awake — but it no longer buys an in-place *start*, which it never really could.
+jump glyph otherwise.
+
+`armRequestObserver` used to apply the same condition before honoring a start:
+a backgrounded app with no microphone declined the note outright, on the premise
+that iOS never lets a backgrounded process start recording. That premise came
+from one phone's log and is false on others, where the linger had been buying
+in-place starts since #222, and the guard turned every one of those into a trip
+through Parley: the "every dictation jumps to Parley once" regression. So the
+app now *tries*: a lingering process with nothing to borrow opens a microphone
+before acknowledging, and only a refused activation goes unanswered, at which
+point the keyboard's 700 ms fallback opens the app and the microphone is opened
+in the foreground where it can be. The glyph stays pessimistic on purpose. A tap
+promised as a jump that stays put is a surprise in the right direction; the
+reverse is the one the user notices.
+
+Trying costs the ack its speed on this one path: `starting` is written after
+`AudioCapture.start()` rather than milliseconds after the note, and the keyboard
+only waits `startAckWindow` (700 ms). A background activation slower than that
+makes the keyboard open `parley://dictate` over a microphone that is already
+running; `begin(session:)` then stops that session and relaunches it in the
+foreground, so the user gets the jump they would have had anyway plus a restart,
+and nothing worse. How long the activation takes on a given phone is unmeasured;
+the app logs it (`subsystem com.pathors.parley`, category `Dictation`, "background
+mic start took N ms") so a phone can answer.
 
 **Whether the session on screen is still being served.** The downlink says
 `listening` and keeps saying it whatever happens to the app. A backgrounded

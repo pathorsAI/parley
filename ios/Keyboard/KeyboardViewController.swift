@@ -1178,11 +1178,7 @@ final class KeyboardBridge: ObservableObject {
     /// This tap leaves for Parley rather than recording here: the app is not set
     /// up, or nothing says it could answer where the user is.
     ///
-    /// It is what the record button draws instead of a microphone. A mic glyph
-    /// that cannot open a mic is the whole bug: a backgrounded Parley with no
-    /// microphone open cannot start one (iOS refuses), so the honest promise
-    /// there is "this opens Parley" — and the app declines the no-jump start
-    /// in that state so that the promise is also what happens.
+    /// It is what the record button draws instead of a microphone.
     var opensApp: Bool { hasFullAccess && !staysPut }
 
     /// The track, in order: the voice pane, then the typing keyboards the user
