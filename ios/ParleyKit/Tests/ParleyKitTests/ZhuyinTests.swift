@@ -176,16 +176,26 @@ final class ZhuyinSyllableTests: XCTestCase {
     func testParsingRoundTripsEveryReadingInTheBundledDictionary() {
         // The strongest available check on the model: ~1,400 real readings, none
         // of which may fall outside what the keyboard can type.
-        let readings = Self.bundledReadings()
-        XCTAssertGreaterThan(readings.count, 1000, "the resource didn't load")
-        for reading in readings {
+        let keys = Self.bundledReadings()
+        XCTAssertGreaterThan(keys.count, 1000, "the resource didn't load")
+        var toneless = 0
+        for key in keys {
+            // A `~` key is the toneless lookup, not a reading. Its remainder is
+            // one — and must carry no tone mark, which `parse` reports as the
+            // first tone. A `~` row keyed with a mark would be unreachable.
+            let reading = key.hasPrefix("~") ? String(key.dropFirst()) : key
+            if key.hasPrefix("~") { toneless += 1 }
             guard let syllable = ZhuyinSyllable.parse(reading) else {
-                XCTFail("cannot parse \"\(reading)\"")
+                XCTFail("cannot parse \"\(key)\"")
                 continue
             }
             XCTAssertEqual(syllable.text, reading)
-            XCTAssertTrue(syllable.isPronounceable || !syllable.isEmpty, "\(reading)")
+            XCTAssertTrue(syllable.isPronounceable || !syllable.isEmpty, "\(key)")
+            if key.hasPrefix("~") {
+                XCTAssertEqual(syllable.tone, .first, "\(key) is keyed with a tone")
+            }
         }
+        XCTAssertGreaterThan(toneless, 300, "the resource has no toneless rows")
     }
 
     static func bundledReadings() -> [String] {
@@ -205,11 +215,28 @@ final class ZhuyinDictionaryTests: XCTestCase {
         "ㄉㄜ˙": "的得地",
         "ㄨㄛˇ": "我婐",
         "ㄕˋ": "是事",
+        "~ㄉㄜ": "的得地德",
     ])
 
     func testCandidatesComeBackInFileOrder() {
         XCTAssertEqual(fixture.candidates(for: "ㄉㄜ˙"), ["的", "得", "地"])
         XCTAssertEqual(fixture.top(for: ZhuyinSyllable.parse("ㄨㄛˇ")!), "我")
+    }
+
+    func testTonelessCandidatesIgnoreTheTone() {
+        // Built from the slots, so a syllable that already carries a tone still
+        // answers the toneless row — re-toning is allowed, and the question
+        // "what could this still become" has to survive it.
+        XCTAssertEqual(
+            fixture.tonelessCandidates(for: ZhuyinSyllable(initial: "ㄉ", final: "ㄜ")),
+            ["的", "得", "地", "德"])
+        XCTAssertEqual(
+            fixture.tonelessCandidates(
+                for: ZhuyinSyllable(initial: "ㄉ", final: "ㄜ", tone: .neutral)),
+            ["的", "得", "地", "德"])
+        XCTAssertEqual(fixture.tonelessCandidates(for: ZhuyinSyllable()), [])
+        XCTAssertEqual(
+            fixture.tonelessCandidates(for: ZhuyinSyllable(initial: "ㄍ", medial: "ㄧ")), [])
     }
 
     func testAnUnknownReadingHasNoCandidates() {
@@ -243,6 +270,20 @@ final class ZhuyinDictionaryTests: XCTestCase {
         }
     }
 
+    func testTheBundledDictionaryAnswersTonelessSyllables() {
+        // 你好 typed with no tone key at all — the sequence the pane has to
+        // convert, and the reason the `~` rows exist.
+        let ni = ZhuyinDictionary.bundled.tonelessCandidates(
+            for: ZhuyinSyllable(initial: "ㄋ", medial: "ㄧ"))
+        let hao = ZhuyinDictionary.bundled.tonelessCandidates(
+            for: ZhuyinSyllable(initial: "ㄏ", final: "ㄠ"))
+        XCTAssertEqual(ni.first, "你")
+        XCTAssertEqual(hao.first, "好")
+        // The union of the five tone rows, so it is longer than any one of them.
+        XCTAssertGreaterThan(ni.count, ZhuyinDictionary.bundled.candidates(for: "ㄋㄧˇ").count)
+        XCTAssertEqual(Set(ni).count, ni.count, "a character appears twice")
+    }
+
     func testTheBundledDictionaryIsSplitIntoWholeCharacters() {
         // Rows are stored with no separator because every character in the
         // source is one Unicode scalar — including the ones outside the BMP,
@@ -258,6 +299,8 @@ final class ZhuyinDictionaryTests: XCTestCase {
 
 /// The composer: what a sequence of taps does to the buffer and to the document.
 final class ZhuyinComposerTests: XCTestCase {
+    /// A hand-written stand-in, toneless `~` rows included, so the ordering the
+    /// assertions rely on is this file's rather than the corpus's.
     private func composer() -> ZhuyinComposer {
         ZhuyinComposer(
             dictionary: ZhuyinDictionary(entries: [
@@ -266,6 +309,15 @@ final class ZhuyinComposerTests: XCTestCase {
                 "ㄇㄣ˙": "們",
                 "ㄕˊ": "十時實",
                 "ㄕˋ": "是事",
+                "ㄏㄠˇ": "好郝",
+                "~ㄉㄜ": "的得地德",
+                "~ㄨㄛ": "我窩",
+                "~ㄇㄣ": "們悶",
+                "~ㄋㄧ": "你尼",
+                "~ㄏㄠ": "好號",
+                "~ㄏ": "厂",
+                "~ㄅ": "不把",
+                "~ㄆ": "怕拍",
             ]))
     }
 
@@ -276,7 +328,8 @@ final class ZhuyinComposerTests: XCTestCase {
         XCTAssertEqual(c.symbol("ㄜ"), .handled)
         XCTAssertEqual(c.stage, .composing)
         XCTAssertEqual(c.reading, "ㄉㄜ")
-        XCTAssertTrue(c.candidates.isEmpty, "no candidates until there is a tone")
+        XCTAssertEqual(c.syllables.count, 1)
+        XCTAssertEqual(c.candidates, ["的", "得", "地", "德"], "the toneless bar")
     }
 
     func testAToneFinalizesAndProducesCandidates() {
@@ -286,9 +339,94 @@ final class ZhuyinComposerTests: XCTestCase {
         XCTAssertEqual(c.tone(.neutral), .handled)
         XCTAssertEqual(c.stage, .choosing)
         XCTAssertEqual(c.reading, "ㄉㄜ˙")
-        XCTAssertEqual(c.candidates, ["的", "得", "地"])
+        XCTAssertEqual(c.candidates, ["的", "得", "地"], "narrowed to the toned row")
         XCTAssertEqual(c.best, "的")
     }
+
+    // MARK: typing without tones
+
+    func testAWholeWordTypesWithoutASingleToneKey() {
+        // The bug this buffer exists for: ㄋㄧ then ㄏ used to overwrite the
+        // 聲母 and leave ㄏㄧ. The system keyboard segments instead, and shows
+        // the segments space-separated.
+        var c = ZhuyinComposer(dictionary: .bundled)
+        for symbol in "ㄋㄧㄏㄠ" {
+            XCTAssertEqual(c.symbol(symbol), .handled, "\(symbol)")
+        }
+        XCTAssertEqual(c.syllables.count, 2)
+        XCTAssertEqual(c.reading, "ㄋㄧ ㄏㄠ")
+        XCTAssertEqual(c.stage, .composing)
+        XCTAssertEqual(c.candidates.first, "你", "the bar answers the first syllable")
+        XCTAssertEqual(c.best, "你好")
+        XCTAssertEqual(c.confirm(), .insert("你好"))
+        XCTAssertEqual(c.stage, .idle)
+    }
+
+    func testASymbolWhoseSlotIsTakenStartsTheNextSyllable() {
+        var c = composer()
+        XCTAssertEqual(c.symbol("ㄅ"), .handled)
+        XCTAssertEqual(c.symbol("ㄆ"), .handled)
+        XCTAssertEqual(c.syllables.count, 2, "two 聲母 cannot share a syllable")
+        XCTAssertEqual(c.reading, "ㄅ ㄆ")
+    }
+
+    func testAnInitialAfterAFinalStartsTheNextSyllable() {
+        var c = composer()
+        _ = c.symbol("ㄉ")
+        _ = c.symbol("ㄜ")
+        XCTAssertEqual(c.symbol("ㄇ"), .handled)
+        XCTAssertEqual(c.syllables.count, 2, "a 聲母 can only begin a syllable")
+        XCTAssertEqual(c.reading, "ㄉㄜ ㄇ")
+        // Same rule one slot up: a 介音 after a 韻母 is the next syllable too.
+        _ = c.symbol("ㄣ")
+        XCTAssertEqual(c.symbol("ㄧ"), .handled)
+        XCTAssertEqual(c.reading, "ㄉㄜ ㄇㄣ ㄧ")
+    }
+
+    func testAToneAppliesToTheLastSyllableWhileTheBarShowsTheFirst() {
+        var c = composer()
+        for symbol in "ㄋㄧㄏㄠ" { _ = c.symbol(symbol) }
+        XCTAssertEqual(c.tone(.third), .handled)
+        XCTAssertEqual(c.reading, "ㄋㄧ ㄏㄠˇ", "the tone lands on what is being typed")
+        XCTAssertEqual(c.stage, .choosing)
+        XCTAssertEqual(c.candidates, ["你", "尼"], "the bar is still the first syllable")
+    }
+
+    func testDeleteWalksBackAcrossASyllableBoundary() {
+        var c = composer()
+        for symbol in "ㄋㄧㄏ" { _ = c.symbol(symbol) }
+        XCTAssertEqual(c.reading, "ㄋㄧ ㄏ")
+        XCTAssertEqual(c.delete(), .handled)
+        XCTAssertEqual(c.reading, "ㄋㄧ", "an emptied syllable leaves the buffer")
+        XCTAssertEqual(c.syllables.count, 1)
+    }
+
+    func testPickCommitsTheFirstSyllableAndLeavesTheRest() {
+        var c = composer()
+        for symbol in "ㄋㄧㄏㄠ" { _ = c.symbol(symbol) }
+        XCTAssertEqual(c.pick("妳"), .insert("妳"))
+        XCTAssertEqual(c.syllables.count, 1, "the rest stays pending")
+        XCTAssertEqual(c.reading, "ㄏㄠ")
+        XCTAssertEqual(c.candidates, ["好", "號"], "the bar moves on")
+        XCTAssertEqual(c.pick("好"), .insert("好"))
+        XCTAssertEqual(c.stage, .idle)
+    }
+
+    func testOverflowingTheBufferCommitsTheOldestSyllable() {
+        // Six is a keyboard's worth of pending state, not a feature. Past it the
+        // user is still typing rather than choosing, so the best guess is the
+        // only answer available.
+        var c = composer()
+        for _ in 0..<ZhuyinComposer.maxPending {
+            XCTAssertEqual(c.symbol("ㄅ"), .handled)
+        }
+        XCTAssertEqual(c.syllables.count, ZhuyinComposer.maxPending)
+        XCTAssertEqual(c.symbol("ㄅ"), .insert("不"))
+        XCTAssertEqual(
+            c.syllables.count, ZhuyinComposer.maxPending, "the new syllable still arrived")
+    }
+
+    // MARK: space, delete, confirm
 
     func testSpaceIsTheFirstToneAndThenTheConfirmKey() {
         var c = composer()
@@ -301,22 +439,33 @@ final class ZhuyinComposerTests: XCTestCase {
         XCTAssertEqual(c.stage, .idle)
     }
 
+    func testSpaceOnATonedSyllableCommitsTheWholeBuffer() {
+        var c = composer()
+        for symbol in "ㄋㄧㄏㄠ" { _ = c.symbol(symbol) }
+        _ = c.tone(.third)
+        // `best` mixes the two lookups: the untoned ㄋㄧ answers its `~` row and
+        // the toned ㄏㄠˇ answers its own.
+        XCTAssertEqual(c.space(), .insert("你好"), "confirm takes everything pending")
+        XCTAssertEqual(c.stage, .idle)
+    }
+
     func testSpaceWithNothingPendingIsJustASpace() {
         var c = composer()
         XCTAssertEqual(c.space(), .passThrough)
     }
 
-    func testStartingTheNextSyllableCommitsTheBestGuess() {
-        // The rule that makes a sentence typeable without touching the bar.
+    func testStartingTheNextSyllableJoinsTheBufferRatherThanCommitting() {
+        // This used to auto-commit, which is what forced a tone after every
+        // character. Now the syllables queue up and one confirm takes them all.
         var c = composer()
         _ = c.symbol("ㄨ")
         _ = c.symbol("ㄛ")
         _ = c.tone(.third)
-        XCTAssertEqual(c.symbol("ㄇ"), .insert("我"))
-        XCTAssertEqual(c.reading, "ㄇ", "the new symbol starts the next syllable")
+        XCTAssertEqual(c.symbol("ㄇ"), .handled)
+        XCTAssertEqual(c.reading, "ㄨㄛˇ ㄇ", "the new symbol starts the next syllable")
         _ = c.symbol("ㄣ")
         _ = c.tone(.neutral)
-        XCTAssertEqual(c.space(), .insert("們"))
+        XCTAssertEqual(c.space(), .insert("我們"))
     }
 
     func testPickingACandidateCommitsIt() {
@@ -353,7 +502,7 @@ final class ZhuyinComposerTests: XCTestCase {
         _ = c.symbol("ㄜ")
         _ = c.tone(.neutral)
         XCTAssertEqual(c.delete(), .handled)
-        XCTAssertEqual(c.stage, .composing, "delete backs out of the candidate bar first")
+        XCTAssertEqual(c.stage, .composing, "delete clears the tone first")
         XCTAssertEqual(c.reading, "ㄉㄜ")
         XCTAssertEqual(c.delete(), .handled)
         XCTAssertEqual(c.reading, "ㄉ")
@@ -384,6 +533,7 @@ final class ZhuyinComposerTests: XCTestCase {
         c.clear()
         XCTAssertEqual(c.stage, .idle)
         XCTAssertEqual(c.reading, "")
+        XCTAssertTrue(c.syllables.isEmpty)
         XCTAssertTrue(c.candidates.isEmpty)
     }
 
@@ -397,7 +547,7 @@ final class ZhuyinComposerTests: XCTestCase {
     func testTypingAWordThroughTheDachenKeys() {
         var c = composer()
         var typed = ""
-        // 我 = ㄨㄛˇ = j i 3, 們 = ㄇㄣ˙ = a p 7, then space to take 們.
+        // 我 = ㄨㄛˇ = j i 3, 們 = ㄇㄣ˙ = a p 7, then space to take both.
         for key in "ji3ap7 " {
             var outcome = ZhuyinComposer.Outcome.passThrough
             if key == " " {

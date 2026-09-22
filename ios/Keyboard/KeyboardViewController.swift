@@ -991,7 +991,14 @@ final class KeyboardViewController: UIInputViewController {
         apply(zhuyin.delete()) { textDocumentProxy.deleteBackward() }
     }
 
-    func insert(_ text: String) { textDocumentProxy.insertText(text) }
+    /// Type a character from the symbol planes, committing any pending 注音
+    /// composition first. That is what the system keyboard does: punctuation
+    /// after a reading ends the reading rather than landing in front of it, and
+    /// `confirm()` on an empty composer is a `passThrough` that does nothing.
+    func insert(_ text: String) {
+        apply(zhuyin.confirm())
+        textDocumentProxy.insertText(text)
+    }
 
     /// Return always types a line break. A keyboard extension cannot submit a
     /// form — there is no public way to fire the host's return action — so a

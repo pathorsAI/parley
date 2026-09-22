@@ -107,10 +107,12 @@ struct KeyboardRootView: View {
     /// and hid the fact that the pane swipes at all. Dots say "there is another
     /// one of these, sideways" — and they stay tappable, so nothing is lost.
     ///
-    /// While a 注音 syllable is being typed the whole row is given over to the
-    /// composition and its candidates. It is the one row the keyboard has to
-    /// spare, and the alternative — a bar of its own above the keys — would make
-    /// the pane taller than its neighbours every time someone started a word.
+    /// While a 注音 composition is pending the whole row is given over to it and
+    /// its candidates. It is the one row the keyboard has to spare, and the
+    /// alternative — a bar of its own above the keys — would make the pane
+    /// taller than its neighbours every time someone started a word. The
+    /// composition can be several syllables; the two of them share the row, so
+    /// the chip is capped and the bar keeps the rest.
     private var modeStrip: some View {
         HStack(spacing: 0) {
             if bridge.composition.isEmpty {
@@ -161,25 +163,43 @@ struct KeyboardRootView: View {
 
     // MARK: 注音 composition
 
-    /// The syllable being typed, in the accent so it reads as pending rather
-    /// than as text that has landed somewhere.
+    /// About 45% of the strip on every phone the keyboard runs on — 320pt to
+    /// 440pt wide — which is the most the chip can take before the candidate bar
+    /// stops being able to show a candidate the user would have picked anyway.
+    private static let compositionChipWidth: CGFloat = 170
+
+    /// What is being typed but has not landed anywhere yet — up to six syllables,
+    /// space-separated — in the accent so it reads as pending rather than as
+    /// text in the document.
+    ///
+    /// It is capped at roughly the left half of the strip and truncated from the
+    /// *head*, because the row is shared with the candidate bar: a long
+    /// composition must not push the candidates off the end, and the syllable
+    /// the next keystroke edits is the newest one, on the right. The layout
+    /// priority keeps the chip at its natural width until it hits that cap,
+    /// rather than letting the bar squeeze it first.
     private var compositionChip: some View {
         Text(verbatim: bridge.composition)
             .font(.system(size: 17))
             .foregroundStyle(KBTheme.accent)
+            .lineLimit(1)
+            .truncationMode(.head)
+            .frame(maxWidth: Self.compositionChipWidth, alignment: .trailing)
             .padding(.horizontal, 7)
             .padding(.vertical, 1)
             .background(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .fill(KBTheme.control(dark)))
             .padding(.trailing, 8)
+            .layoutPriority(1)
             .accessibilityLabel(Text("Composing"))
             .accessibilityValue(Text(verbatim: bridge.composition))
     }
 
-    /// The characters that reading could be, most frequent first, scrollable
-    /// because some readings have dozens. Tapping one commits it; space commits
-    /// the first, which is why it is worth having it be the first.
+    /// The characters the **first** (oldest) pending syllable could be, most
+    /// frequent first, scrollable because some readings have dozens. Tapping one
+    /// commits that syllable and the bar moves on to the next one; space commits
+    /// the first candidate, which is why it is worth having it be the first.
     private var candidateBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 2) {

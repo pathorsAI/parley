@@ -5,8 +5,17 @@ import SwiftUI
 ///
 /// The keys are 大千 as it is actually defined — a mapping onto a QWERTY board —
 /// so the top row is **eleven** wide (`1234567890-`) and the three below it are
-/// ten, centred under it by the same half-key inset QWERTY's home row uses. A
-/// tidy 4×10 grid would have to drop `ㄦ`, and 兒/二/而/耳 are not optional.
+/// ten. A tidy 4×10 grid would have to drop `ㄦ`, and 兒/二/而/耳 are not optional.
+///
+/// The two middle rows are **staggered rather than centred**: a third of a key
+/// pitch in, then two thirds, which is the offset a physical keyboard has and
+/// the one the system 注音 keyboard copies. Centring them (half a key each, the
+/// way QWERTY's home row is inset) put the rows a sixth of a key off from where
+/// a 注音 typist's thumb expects them.
+///
+/// The fourth row's eleventh column is **delete**, an ordinary single-width key
+/// sitting directly under `ㄦ`, because that is where the system keyboard puts
+/// it and muscle memory for ⌫ is the one thing a 注音 typist brings with them.
 ///
 /// Five rows where QWERTY has four, in the same 213pt: `KBMetrics.zhuyinKeyHeight`
 /// is derived rather than chosen so the pane cannot come out a different height
@@ -33,14 +42,21 @@ struct ZhuyinPane: View {
         GeometryReader { geo in
             let m = KeyRowMetrics(
                 width: geo.size.width, columns: ZhuyinDachen.rows[0].count)
+            // One column, key to matching key: what the stagger is measured in.
+            let pitch = m.unit + KBMetrics.keyGap
             VStack(spacing: KBMetrics.zhuyinRowSpacing) {
-                ForEach(Array(ZhuyinDachen.rows.enumerated()), id: \.offset) { index, keys in
-                    row {
-                        ForEach(keys, id: \.self) { key in
-                            symbolKey(key, width: m.unit)
-                        }
+                symbolRow(ZhuyinDachen.rows[0], unit: m.unit)
+                symbolRow(ZhuyinDachen.rows[1], unit: m.unit, leading: pitch / 3)
+                symbolRow(ZhuyinDachen.rows[2], unit: m.unit, leading: 2 * pitch / 3)
+                row {
+                    ForEach(ZhuyinDachen.rows[3], id: \.self) { key in
+                        symbolKey(key, width: m.unit)
                     }
-                    .padding(.horizontal, index == 0 ? 0 : m.halfKey)
+                    DeleteKey(
+                        dark: dark, width: m.unit, height: KBMetrics.zhuyinKeyHeight
+                    ) {
+                        bridge.backspace()
+                    }
                 }
                 functionRow(m)
             }
@@ -50,14 +66,34 @@ struct ZhuyinPane: View {
         }
     }
 
-    /// `123`, the globe where the system asks for one, space, delete, return.
+    /// One row of 大千 symbols, pushed `leading` points to the right of the row
+    /// above and then left-aligned — the keys keep the eleven-column unit width,
+    /// so a staggered row is the same keys as the top row's, just offset. The
+    /// trailing `Spacer` is what makes it an offset rather than a stretch: a row
+    /// of ten fixed-width keys would otherwise be free to spread itself out.
+    private func symbolRow(
+        _ keys: [Character], unit: CGFloat, leading: CGFloat = 0
+    ) -> some View {
+        row {
+            ForEach(keys, id: \.self) { key in
+                symbolKey(key, width: unit)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, leading)
+    }
+
+    /// `123`, the globe where the system asks for one, space, return.
     ///
-    /// Delete lives here rather than beside the symbols, because all 41 大千 keys
-    /// are spoken for — there is no shift row to borrow a corner from.
+    /// No delete: it sits in the symbol block's eleventh column, under `ㄦ`,
+    /// where the system 注音 keyboard has it. `123` and return are two and a
+    /// half keys each rather than the one and a half QWERTY gives them, which
+    /// is what the system keyboard leaves for a row with no shift in it.
     private func functionRow(_ m: KeyRowMetrics) -> some View {
         row {
             KeyButton(
-                dark: dark, tint: .alt, width: m.wide, height: KBMetrics.zhuyinKeyHeight,
+                dark: dark, tint: .alt, width: m.extraWide,
+                height: KBMetrics.zhuyinKeyHeight,
                 action: { symbols = true }
             ) {
                 Text(verbatim: "123").font(.system(size: 16, weight: .regular))
@@ -79,11 +115,8 @@ struct ZhuyinPane: View {
                 Text("Space").font(.system(size: 15))
             }
             .accessibilityLabel(Text("Space"))
-            DeleteKey(dark: dark, width: m.wide, height: KBMetrics.zhuyinKeyHeight) {
-                bridge.backspace()
-            }
             ReturnKey(
-                bridge: bridge, dark: dark, width: m.wide,
+                bridge: bridge, dark: dark, width: m.extraWide,
                 height: KBMetrics.zhuyinKeyHeight)
         }
     }

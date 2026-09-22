@@ -30,15 +30,18 @@ struct KeyRowMetrics {
     /// Shift, delete, `123`, `ABC`, return — one and a half keys, which is what
     /// falls out of asking three keys and a gap to cover two of them.
     let wide: CGFloat
+    /// Two and a half keys: what the system 注音 keyboard gives `123` and return
+    /// on a bottom row that has no delete key to make room for.
+    let extraWide: CGFloat
 
     init(width: CGFloat, columns: Int = 10) {
         let content = max(width - KBMetrics.sideInset * 2, 1)
         unit = (content - KBMetrics.keyGap * CGFloat(columns - 1)) / CGFloat(columns)
         wide = (3 * unit + KBMetrics.keyGap) / 2
+        extraWide = (5 * unit + 3 * KBMetrics.keyGap) / 2
     }
 
-    /// The half-key iOS insets the QWERTY home row by — and exactly what centres
-    /// a ten-key 注音 row under the eleven-key one above it.
+    /// The half-key iOS insets the QWERTY home row by.
     var halfKey: CGFloat { (unit + KBMetrics.keyGap) / 2 }
 }
 

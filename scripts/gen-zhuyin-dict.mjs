@@ -25,12 +25,19 @@
 // an unchanged upstream produces a byte-identical file, and a real upstream
 // change shows up as a diff with the commit it came from.
 //
-// Output format, one syllable per line, sorted by syllable:
-//   <reading>\t<candidates>
-// where `candidates` is the characters for that reading concatenated with no
-// separator, most frequent first. Every character in the source is exactly one
-// Unicode scalar, so the reader splits on scalars rather than parsing — see
-// `ZhuyinDictionary`.
+// Output format, one row per line, sorted by key:
+//   <reading>\t<candidates>     a reading *with* its tone mark
+//   ~<reading>\t<candidates>    the same reading with no tone at all
+// where `candidates` is the characters concatenated with no separator, most
+// frequent first. Every character in the source is exactly one Unicode scalar,
+// so the reader splits on scalars rather than parsing — see `ZhuyinDictionary`.
+//
+// The `~` rows are what the pane shows while a syllable is still being typed:
+// the native 注音 keyboard segments a run of toneless symbols and offers
+// candidates before any tone key is pressed. They need a prefix rather than a
+// key of their own because **the first tone is written with no mark**, so
+// `ㄋㄧ` already means ㄋㄧˉ and cannot double as "ㄋㄧ, tone unknown". Each `~`
+// row is the union of that reading's five tone rows, deduped by character.
 
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -78,8 +85,34 @@ async function main() {
     lines.push(`${reading}\t${entries.map((e) => e.char).join("")}`);
   }
 
+  // Toneless rows, after the toned ones so the first half of the file stays a
+  // plain rhyme table. A character read with several tones appears once, at the
+  // rank of its first appearance — the merged row is still ordered by corpus
+  // frequency, which is what the bar wants.
+  const toneless = new Map();
+  for (const [reading, entries] of readings) {
+    const key = [...reading].filter((c) => !TONES.has(c)).join("");
+    if (!toneless.has(key)) toneless.set(key, new Map());
+    const merged = toneless.get(key);
+    for (const { char, rank } of entries) {
+      const seen = merged.get(char);
+      if (seen === undefined || rank < seen) merged.set(char, rank);
+    }
+  }
+  for (const key of [...toneless.keys()].sort(compare)) {
+    const chars = [...toneless.get(key)].sort(
+      ([aChar, aRank], [bChar, bRank]) =>
+        (frequency.get(bChar) ?? 0) - (frequency.get(aChar) ?? 0) ||
+        aRank - bRank
+    );
+    lines.push(`~${key}\t${chars.map(([char]) => char).join("")}`);
+  }
+
   const header = [
     "# 注音 single-character candidates, most frequent first.",
+    "# A `~` key is the toneless lookup for that reading — every character across",
+    "#   its five tones, deduped — because the first tone is written with no mark",
+    "#   and so cannot also stand for \"tone not typed yet\".",
     "# GENERATED — run scripts/gen-zhuyin-dict.mjs to rebuild; do not hand-edit.",
     `# Source: https://github.com/${REPO} @ ${commit}`,
     "#   Source/Data/BPMFBase.txt + Source/Data/phrase.occ, MIT licensed.",
@@ -89,7 +122,9 @@ async function main() {
 
   const chars = lines.reduce((n, l) => n + [...l.split("\t")[1]].length, 0);
   console.log(
-    `${OUT}\n  ${lines.length} syllables, ${chars} characters, ${
+    `${OUT}\n  ${lines.length - toneless.size} syllables + ${
+      toneless.size
+    } toneless, ${chars} characters, ${
       Buffer.byteLength(lines.join("\n"), "utf8") / 1024 | 0
     } KiB`
   );
