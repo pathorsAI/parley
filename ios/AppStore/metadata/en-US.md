@@ -83,6 +83,30 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.16
+
+Typing 注音 now works the way the system keyboard does.
+
+Type a whole sentence without stopping. The keyboard tells one syllable from
+the next on its own, so ㄋㄧㄏㄠ comes out as 你好 with no tone key in between.
+Tones still work — space is the first tone, as before — and they sharpen the
+guess rather than being the price of moving on. The characters for each
+syllable line up above the keys as you go: tap one to choose it, or press
+return to take the best guess for everything still pending. Punctuation from
+the 123 plane commits what you were typing first instead of landing in front
+of it.
+
+Delete moved to where your thumb expects it: the right end of the bottom
+symbol row, where the system's 注音 keyboard keeps it.
+
+Swiping between the voice, English and 注音 panes works from anywhere on the
+keyboard, not only from a blank spot. Start on a key and the pane follows your
+finger, and the key under it is not typed.
+
+And dictation stops taking a detour through Parley on every tap. A Parley that
+is still awake in the background answers the keyboard's mic where you are, and
+only comes forward when iOS will not let it record from the background.
+
 ## What's New — 1.15
 
 Voice typing now says so on the Lock Screen, and the record button listens.
