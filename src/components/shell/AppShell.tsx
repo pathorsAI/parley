@@ -61,7 +61,7 @@ export function AppShell() {
   if (focused || collapsed) {
     return (
       <>
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col bg-background">
           <RouteContent mode={appMode} tree={tree} />
         </div>
         {/* ⌘K outlives a collapsed tree, and matters more there: with no rows
@@ -90,7 +90,7 @@ export function AppShell() {
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel id="route" defaultSize="81%" minSize="480px">
-          <div className="flex h-full min-h-0 flex-col">
+          <div className="flex h-full min-h-0 flex-col bg-background">
             <RouteContent mode={appMode} tree={tree} />
           </div>
         </ResizablePanel>

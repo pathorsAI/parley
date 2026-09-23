@@ -39,10 +39,10 @@ const STATUS_UI: Record<
   StudyArtifactDisplay,
   { icon?: LucideIcon; spin?: boolean; className: string; label: TranslationKey }
 > = {
-  queued: { icon: Clock, className: "text-amber-600 dark:text-amber-400", label: "studyGen.status.queued" },
-  running: { icon: Loader2, spin: true, className: "text-violet-600 dark:text-violet-400", label: "studyGen.status.running" },
+  queued: { icon: Clock, className: "text-warning-foreground", label: "studyGen.status.queued" },
+  running: { icon: Loader2, spin: true, className: "text-primary", label: "studyGen.status.running" },
   done: { icon: Check, className: "text-muted-foreground", label: "common.done" },
-  error: { icon: AlertTriangle, className: "text-red-600 dark:text-red-400", label: "studyGen.status.error" },
+  error: { icon: AlertTriangle, className: "text-danger-foreground", label: "studyGen.status.error" },
   idle: { className: "text-muted-foreground", label: "studyGen.status.idle" },
 };
 
@@ -93,7 +93,7 @@ export function StudyGenerationChip() {
             className="z-[80] w-72 rounded-lg border bg-popover p-0 text-popover-foreground shadow-md"
           >
             <div className="flex items-center justify-between border-b px-3 py-2">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <span className="text-[11px] font-semibold text-muted-foreground">
                 {t("studyGen.panel.title")}
               </span>
               <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
@@ -174,9 +174,9 @@ type Pipeline = ReturnType<typeof useStudyPipeline>;
 
 /** Chip tone, in priority order: missing key → running → errors → idle. */
 function chipTone(p: Pipeline): string {
-  if (!p.hasDeepKey) return "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400";
-  if (p.active) return "border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400";
-  if (p.errors > 0) return "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400";
+  if (!p.hasDeepKey) return "border-warning-border bg-warning text-warning-foreground";
+  if (p.active) return "border-primary/30 bg-primary/10 text-primary";
+  if (p.errors > 0) return "border-danger-border bg-danger text-danger-foreground";
   return "border-transparent text-muted-foreground hover:border-border hover:text-foreground";
 }
 

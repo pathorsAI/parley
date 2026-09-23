@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useI18n } from "../../i18n";
-import { speakerBadgeClass } from "../../lib/speakerColors";
 import { modChordCap } from "../../lib/commands/format";
 import { speakerLabel, speakerKey, defaultSpeakerLabel, formatClock, isTrimmed, useStore, type ReplayTrim } from "../../lib/store";
 import { cn } from "@/lib/utils";
@@ -190,7 +189,7 @@ export function ReplayTranscript({
             {trimmedQuery && (
               <span
                 className={cn(
-                  "select-none whitespace-nowrap px-1 font-mono text-[10px] tabular-nums",
+                  "select-none whitespace-nowrap px-1 text-[10px] tabular-nums",
                   matchIds.length === 0 ? "text-destructive" : "text-muted-foreground"
                 )}
               >
@@ -260,8 +259,8 @@ export function ReplayTranscript({
                 className={cn(
                   "group flex w-full cursor-pointer select-text gap-2.5 rounded-md px-2 py-1.5 text-left text-sm leading-6 transition-colors",
                   "hover:bg-muted/60",
-                  active && "bg-primary/10 ring-1 ring-primary/30",
-                  isCurrentMatch && "ring-1 ring-amber-400/70",
+                  active && "bg-primary/10",
+                  isCurrentMatch && "ring-1 ring-warning-border",
                   masked && "opacity-35",
                   trimmed && "opacity-50"
                 )}
@@ -269,11 +268,11 @@ export function ReplayTranscript({
                 <button
                   type="button"
                   onClick={() => onSeek(seg.startMs)}
-                  className="mt-0.5 w-9 shrink-0 select-none text-right font-mono text-[10px] tabular-nums text-muted-foreground"
+                  className="mt-0.5 w-9 shrink-0 select-none text-right text-[11px] tabular-nums text-muted-foreground"
                 >
                   {formatClock(seg.startMs)}
                 </button>
-                <span className="flex min-w-0 flex-1 items-start">
+                <span className="flex min-w-0 flex-1 flex-col items-start">
                   {showBadge &&
                     (editingKey === key ? (
                       <SpeakerNameInput
@@ -294,10 +293,7 @@ export function ReplayTranscript({
                           e.stopPropagation();
                           setEditingKey(key);
                         }}
-                        className={cn(
-                          "mr-1.5 inline-flex translate-y-[-1px] cursor-text items-center rounded-md px-1.5 py-0.5 align-middle text-[10px] font-medium uppercase tracking-wide ring-1 hover:ring-2",
-                          speakerBadgeClass(seg)
-                        )}
+                        className="cursor-text text-left text-xs font-semibold text-muted-foreground hover:text-foreground"
                       >
                         {speakerLabel(seg, speakerNames)}
                       </button>
@@ -306,7 +302,7 @@ export function ReplayTranscript({
                     type="button"
                     onClick={() => onSeek(seg.startMs)}
                     className={cn(
-                      "min-w-0 flex-1 text-left",
+                      "w-full min-w-0 text-left",
                       active ? "text-foreground" : "text-foreground/90",
                       trimmed && "line-through"
                     )}
@@ -325,7 +321,7 @@ export function ReplayTranscript({
 
 /**
  * Wrap every case-insensitive occurrence of `query` in a <mark>. Marks on the
- * current match row are stronger (amber) than on the other matching rows, the
+ * current match row are stronger than on the other matching rows, the
  * same current-vs-rest convention as a browser's find bar.
  */
 function highlightMatches(text: string, query: string, current: boolean): ReactNode {
@@ -342,7 +338,7 @@ function highlightMatches(text: string, query: string, current: boolean): ReactN
         key={at}
         className={cn(
           "rounded-[2px] text-inherit",
-          current ? "bg-amber-400/80 dark:bg-amber-400/50" : "bg-yellow-300/50 dark:bg-yellow-400/25"
+          current ? "bg-warning-border" : "bg-warning"
         )}
       >
         {text.slice(at, from)}
@@ -387,7 +383,7 @@ function SpeakerNameInput({
         else if (e.key === "Escape") onCancel();
       }}
       onBlur={(e) => onCommit(e.currentTarget.value)}
-      className="mr-1.5 inline-flex h-5 w-28 translate-y-[-1px] rounded-md border border-input bg-background px-1.5 align-middle text-[11px] focus:outline-none focus:ring-1 focus:ring-ring"
+      className="mb-0.5 h-5 w-28 rounded-md border border-input bg-background px-1.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-ring"
     />
   );
 }

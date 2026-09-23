@@ -55,12 +55,12 @@ import {
 import { missingProviderRequirement } from "../lib/ai/settings";
 import { runConnectionTest, type ConnectionTestResult } from "../lib/ai/connectionTest";
 
-/** Tailwind classes for each provider tag tone (dark + light). */
+/** Tailwind classes for each provider tag tone (status tokens adapt to light/dark). */
 const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
-  smart: "bg-violet-500/15 text-violet-600 dark:text-violet-300",
-  fast: "bg-amber-500/15 text-amber-600 dark:text-amber-300",
-  local: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
-  value: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
+  smart: "bg-primary/10 text-primary",
+  fast: "bg-warning text-warning-foreground",
+  local: "bg-success text-success-foreground",
+  value: "bg-info text-info-foreground",
   default: "bg-muted text-muted-foreground",
 };
 import type { AppLanguage, AppTheme, EvalDef, LlmProvider,
@@ -343,7 +343,7 @@ export function SettingsApp() {
             type="button"
             onClick={() => setCat(n.id)}
             className={`cursor-pointer rounded-md px-2.5 py-1.5 text-left text-sm transition-colors ${
-              cat === n.id ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              cat === n.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
           >
             {t(n.labelKey)}
@@ -415,7 +415,7 @@ export function SettingsApp() {
                   />
                   <p className="text-[11px] text-muted-foreground">{t("settings.account.defaultSave.desc")}</p>
                   {!settings.syncEnabled && (
-                    <p className="text-[11px] text-amber-500">{t("settings.account.defaultSave.syncOffHint")}</p>
+                    <p className="text-[11px] text-warning-foreground">{t("settings.account.defaultSave.syncOffHint")}</p>
                   )}
                 </div>
               </Field>
@@ -694,7 +694,7 @@ export function SettingsApp() {
               </Field>
             )}
             {!sttInfo.diarization && (
-              <p className="max-w-md rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+              <p className="max-w-md rounded-md border border-warning-border bg-warning px-3 py-2 text-[11px] leading-relaxed text-warning-foreground">
                 {t("settings.transcription.noDiarizationWarning")}
               </p>
             )}
@@ -949,8 +949,8 @@ export function SettingsApp() {
                   <span
                     className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
                       mcpInfo?.running
-                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                        : "bg-amber-500/15 text-amber-600 dark:text-amber-300"
+                        ? "bg-success text-success-foreground"
+                        : "bg-warning text-warning-foreground"
                     }`}
                   >
                     {mcpInfo?.running ? t("settings.mcp.running") : t("settings.mcp.starting")}
@@ -980,7 +980,7 @@ export function SettingsApp() {
                 <span
                   className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
                     ["active", "connected"].includes(connState(mcpActivity, Date.now()))
-                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                      ? "bg-success text-success-foreground"
                       : "bg-muted text-muted-foreground"
                   }`}
                 >
@@ -997,7 +997,7 @@ export function SettingsApp() {
                   : "—"}
               </div>
               <div className="mt-2 border-t pt-2">
-                <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                <div className="mb-1 text-[11px] font-semibold text-muted-foreground">
                   {t("mcp.panel.activity")}
                 </div>
                 {mcpActivity?.recent?.length ? (
@@ -1007,8 +1007,8 @@ export function SettingsApp() {
                         <span
                           className={`w-6 shrink-0 rounded px-1 text-center text-[9.5px] font-semibold ${
                             e.kind === "write"
-                              ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                              : "bg-sky-500/15 text-sky-600 dark:text-sky-400"
+                              ? "bg-warning text-warning-foreground"
+                              : "bg-info text-info-foreground"
                           }`}
                         >
                           {t(`mcp.kind.${e.kind}`)}
@@ -1519,7 +1519,7 @@ function CustomEndpointFields({
           <p className="text-[11px] text-muted-foreground">{t("settings.provider.test.needsConfig")}</p>
         )}
         {outcome?.ok && (
-          <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
+          <p className="text-[11px] text-success-foreground">
             {t("settings.provider.test.ok", {
               model: outcome.model,
               ms: String(outcome.ms),
@@ -1702,7 +1702,7 @@ function DiarizeModelField() {
   return (
     <div className="flex max-w-md flex-col gap-2">
       {present === true ? (
-        <span className="flex items-center gap-1.5 text-sm text-emerald-500">
+        <span className="flex items-center gap-1.5 text-sm text-success-foreground">
           <Check className="size-4" />
           {t("settings.transcription.speakerModelInstalled")}
         </span>
@@ -1730,11 +1730,11 @@ function DiarizeModelField() {
           </div>
           {status === "downloading" && (
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
             </div>
           )}
           {error && (
-            <p className="rounded-md bg-orange-500/10 px-2.5 py-1.5 text-[11px] text-orange-400">
+            <p className="rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
               {t("settings.transcription.speakerModelFailed", { error })}
             </p>
           )}

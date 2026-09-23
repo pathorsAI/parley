@@ -40,7 +40,7 @@ export function StudyLinkBar() {
   const [contextOpen, setContextOpen] = useState(false);
 
   return (
-    <div className="mb-6 flex items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2">
+    <div className="mb-6 flex items-center gap-2 border-b border-border pb-3">
       <Folder className="size-4 shrink-0 text-muted-foreground" />
       {folder ? (
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
@@ -51,7 +51,7 @@ export function StudyLinkBar() {
             <button
               type="button"
               onClick={() => setPickerOpen(true)}
-              className="cursor-pointer text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+              className="cursor-pointer text-xs text-primary underline-offset-2 transition-colors hover:underline"
             >
               {t("study.link.change")}
             </button>

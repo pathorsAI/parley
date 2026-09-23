@@ -9,17 +9,17 @@ import { useEvalNames } from "./useAnalysis";
 
 const SEVERITIES = ["info", "warn", "critical"] as const;
 
-/** Severity → dot fill. Mirrors the info/warn/critical conventions used elsewhere. */
+/** Severity → dot fill. Same info/warning/danger mapping as FindingRow. */
 const SEVERITY_DOT: Record<TimelineEvent["severity"], string> = {
-  info: "bg-sky-400",
-  warn: "bg-amber-500",
-  critical: "bg-red-500",
+  info: "bg-info-foreground",
+  warn: "bg-warning-foreground",
+  critical: "bg-danger-foreground",
 };
 
-/** Moment ME already defused → green, overriding the severity colour. */
-const RESOLVED_DOT = "bg-emerald-500";
+/** Moment ME already defused → success, overriding the severity colour. */
+const RESOLVED_DOT = "bg-success-foreground";
 
-/** Dot colour for a finding: green when ME already handled it, else by severity. */
+/** Dot colour for a finding: success when ME already handled it, else by severity. */
 const dotClass = (e: TimelineEvent) => (e.resolved ? RESOLVED_DOT : SEVERITY_DOT[e.severity]);
 
 /** A marker is "near" the playhead within this window (ms). */
@@ -98,7 +98,7 @@ function FindingHoverCard({
       }}
     >
       <div className="flex items-center gap-1.5">
-        <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+        <span className="text-[10px] tabular-nums text-muted-foreground">
           {timeLabel} {formatClock(event.atMs)}
         </span>
         {event.source === "extra" && (
@@ -124,7 +124,7 @@ function FindingHoverCard({
        *  resolution are one click away in the findings list beside it. */}
       <div className="mt-0.5 line-clamp-3 text-muted-foreground">{event.detail}</div>
       {event.resolved && event.resolution && (
-        <div className="mt-0.5 line-clamp-2 text-emerald-500">
+        <div className="mt-0.5 line-clamp-2 text-success-foreground">
           {t("timeline.resolvedHow")}: {event.resolution}
         </div>
       )}
@@ -201,7 +201,7 @@ export function AnalysisTimeline({
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {stale && (
-            <span className="flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-500">
+            <span className="flex items-center gap-1 rounded bg-warning px-1.5 py-0.5 text-[10px] text-warning-foreground">
               <RefreshCw className="size-3" />
               {t("timeline.stale")}
             </span>
@@ -229,7 +229,7 @@ export function AnalysisTimeline({
           )}
           {status === "error" && (
             <>
-              <span className="max-w-[200px] truncate text-[10px] text-orange-500" title={error ?? undefined}>
+              <span className="max-w-[200px] truncate text-[10px] text-destructive" title={error ?? undefined}>
                 {t("timeline.failed", { error: error ?? "—" })}
               </span>
               {onReanalyze && (
@@ -371,7 +371,7 @@ function Lane({
   return (
     <div className="flex items-center gap-2">
       <span className="w-16 shrink-0 truncate text-right text-[10px] text-muted-foreground">{label}</span>
-      <div className="relative h-5 min-w-0 flex-1 rounded bg-muted/40">
+      <div className="relative h-5 min-w-0 flex-1 rounded bg-muted">
         {/* Playhead marker — keeps the audio/scrubber position visible on the band. */}
         {playheadPct !== null && (
           <span

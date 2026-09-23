@@ -40,7 +40,7 @@ function SystemAudioBanner() {
     isWindows() && isMeetingActive(meetingStatus) && dismissedFor !== meetingStartedAt;
   if (!warning && !micOnlyPlatform) return null;
   return (
-    <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-400">
+    <div className="flex shrink-0 items-center gap-2 border-b border-warning-border bg-warning px-3 py-1.5 text-xs text-warning-foreground">
       <MicOff className="size-3.5 shrink-0" />
       <span className="min-w-0 flex-1">
         {t(warning ? "meeting.warning.systemAudioBanner" : "meeting.warning.systemAudioBanner.windows")}
@@ -52,7 +52,7 @@ function SystemAudioBanner() {
           setSystemAudioWarning(false);
           setDismissedFor(meetingStartedAt);
         }}
-        className="grid size-5 shrink-0 place-items-center rounded hover:bg-amber-500/20"
+        className="grid size-5 shrink-0 place-items-center rounded hover:bg-warning-border/40"
       >
         <X className="size-3.5" />
       </button>

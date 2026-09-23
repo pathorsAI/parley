@@ -27,6 +27,8 @@ import {
 } from "../ui/context-menu";
 import { buildOwnershipIndex, countByNode, nodeKey, type LibraryNode } from "../../lib/library/scope";
 import { beginMeeting } from "../../lib/meeting/start";
+import { command } from "../../lib/commands/registry";
+import { formatChordLabel } from "../../lib/commands/format";
 import { useStore, type LibrarySelection } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import type { LibraryTree } from "./useLibraryTree";
@@ -98,15 +100,29 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
     }
   };
 
+  // The same chord the binder listens for, spelled for this OS — read from the
+  // registry so the hint can never promise a key that does nothing.
+  const startChord = command("meeting.start").keys.find((c) => !c.alias);
+
   const nav = (
-    <nav className="flex h-full min-h-0 w-full flex-col overflow-y-auto border-r bg-background/60 px-2 py-2">
+    // `bg-sidebar`, not `bg-background`: on macOS the token is translucent so
+    // the window's native sidebar material shows through.
+    <nav className="flex h-full min-h-0 w-full flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar px-2 py-2 text-sidebar-foreground">
+      {/* Blue text, not a blue fill: the titlebar already carries the filled
+          start button and Home repeats it as its hero, so a third filled
+          control here would spend the whole accent budget on one action. */}
       <button
         type="button"
         onClick={() => void beginMeeting()}
-        className="mb-1 flex shrink-0 items-center gap-2 rounded-md border border-dashed px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:border-solid hover:bg-muted hover:text-foreground"
+        className="mb-1 flex shrink-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-primary transition-colors hover:bg-sidebar-foreground/5"
       >
         <Mic className="size-3.5 shrink-0" />
-        {t("titlebar.startMeeting")}
+        <span className="min-w-0 flex-1 truncate">{t("titlebar.startMeeting")}</span>
+        {startChord && (
+          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+            {formatChordLabel(startChord)}
+          </span>
+        )}
       </button>
 
       <Row
@@ -202,7 +218,7 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
             return (
               <Fragment key={o.id}>
                 <Row
-                  icon={<UsersRound className="size-3.5 text-sky-500" />}
+                  icon={<UsersRound className="size-3.5" />}
                   label={o.name}
                   expandable
                   expanded={open}
@@ -372,7 +388,7 @@ function GroupLabel({
   action,
 }: Readonly<{ children: ReactNode; action?: ReactNode }>) {
   return (
-    <div className="group/label mt-3 flex shrink-0 items-center px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+    <div className="group/label mt-3 flex shrink-0 items-center px-2 pb-1 text-[11px] font-semibold text-muted-foreground">
       <span className="min-w-0 flex-1 truncate">{children}</span>
       {action}
     </div>
@@ -487,8 +503,8 @@ function Row({
     <div
       className={`group/row flex shrink-0 items-center rounded-md transition-colors ${
         active
-          ? "bg-muted font-medium text-foreground"
-          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+          : "hover:bg-sidebar-foreground/5"
       }`}
       style={pad}
     >
@@ -519,7 +535,8 @@ function Row({
         onKeyDown={actionable ? openMenuFromKeyboard : undefined}
         className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-1 pr-1 text-left text-sm"
       >
-        <span className="shrink-0">{icon}</span>
+        {/* Unselected icons recede; the selected row's icon takes its colour. */}
+        <span className={`shrink-0 ${active ? "" : "text-muted-foreground"}`}>{icon}</span>
         <span className="min-w-0 flex-1 truncate">{label}</span>
         {badge}
         {typeof count === "number" && count > 0 && (

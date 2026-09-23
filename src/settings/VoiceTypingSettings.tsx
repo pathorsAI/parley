@@ -505,7 +505,7 @@ export const VoiceTypingSettings = () => {
           </Button>
         </div>
         {settings.voiceTypingPolish && !polishHasProvider && (
-          <p className="text-[11px] text-amber-600 dark:text-amber-500">
+          <p className="text-[11px] text-warning-foreground">
             {t("settings.voiceTyping.polishNoProvider")}
           </p>
         )}
@@ -551,8 +551,8 @@ export const VoiceTypingSettings = () => {
           <span
             className={`flex shrink-0 items-center gap-1 text-[11px] font-medium ${
               active
-                ? "text-emerald-600 dark:text-emerald-400"
-                : "text-amber-600 dark:text-amber-400"
+                ? "text-success-foreground"
+                : "text-warning-foreground"
             }`}
           >
             {active ? (
@@ -643,17 +643,17 @@ export const VoiceTypingSettings = () => {
           {recording ? t("settings.voiceTyping.recorder.cancelHint") : t(recorderHelpKey)}
         </p>
         {recordHint && (
-          <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+          <p className="text-[11px] font-medium text-warning-foreground">
             {t(recordHint)}
           </p>
         )}
         {comboConflict && (
-          <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+          <p className="text-[11px] font-medium text-warning-foreground">
             {t("settings.voiceTyping.recorder.conflict")}
           </p>
         )}
         {needsPermission && (
-          <p className="text-[11px] text-amber-600 dark:text-amber-400">
+          <p className="text-[11px] text-warning-foreground">
             {t("settings.voiceTyping.needsInputMonitoring")}{" "}
             <button
               type="button"
@@ -674,7 +674,7 @@ export const VoiceTypingSettings = () => {
           </p>
         )}
         {mac && settings.voiceTypingEnabled && axTrusted === false && (
-          <p className="text-[11px] text-amber-600 dark:text-amber-400">
+          <p className="text-[11px] text-warning-foreground">
             {t("settings.voiceTyping.needsAccessibility")}{" "}
             <button
               type="button"

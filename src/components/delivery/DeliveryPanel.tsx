@@ -22,11 +22,11 @@ function toneClass(tone: ToneVerdict): string {
   switch (tone) {
     case "rude":
     case "aggressive":
-      return "text-red-400";
+      return "text-danger-foreground";
     case "sharp":
-      return "text-amber-400";
+      return "text-warning-foreground";
     case "warm":
-      return "text-emerald-400";
+      return "text-success-foreground";
     default:
       return "text-foreground";
   }
@@ -42,7 +42,7 @@ const TONE_KEY: Record<ToneVerdict, TranslationKey> = {
 };
 
 /** Map a live speaking rate (syllables/sec ≈ value × 60 字/分) to a band label +
- *  whether it warrants a watch (amber) accent. Reference points for Mandarin:
+ *  whether it warrants a watch (warning) accent. Reference points for Mandarin:
  *  ~180 字/分 normal conversation, ~240–300 presentation, 300+ fast. The single
  *  tuning knob is `FAST_HZ`: lower it to make "too fast" trigger sooner.
  *  4.0/s ≈ 240 字/分 (upper-presentation — deliberately on the sensitive side). */
@@ -67,7 +67,7 @@ function MeterGroup({ children }: Readonly<{ children: ReactNode }>) {
 
 /** One labeled meter row: name on the left, a bar in the middle, a number on the
  *  right. Must render inside a {@link MeterGroup}. Unifies the gauges that used to
- *  float unlabeled in the title bar — green reads "fine", amber reads "worth a
+ *  float unlabeled in the title bar — primary reads "fine", warning reads "worth a
  *  look", muted grey reads "no signal yet". */
 function MeterRow({
   label,
@@ -82,11 +82,11 @@ function MeterRow({
   muted: boolean;
   value: string;
 }>) {
-  let bar = "bg-emerald-500";
+  let bar = "bg-primary";
   if (muted) {
     bar = "bg-muted-foreground/30";
   } else if (watch) {
-    bar = "bg-amber-400";
+    bar = "bg-warning-foreground";
   }
   return (
     <div className="col-span-3 grid grid-cols-subgrid items-center">
@@ -99,7 +99,7 @@ function MeterRow({
       </span>
       <span
         className={`whitespace-nowrap text-right tabular-nums ${
-          watch ? "font-medium text-amber-400" : "text-foreground/80"
+          watch ? "font-medium text-warning-foreground" : "text-foreground/80"
         }`}
       >
         {value}
@@ -126,7 +126,7 @@ function LiveFillerCount({
   count: number;
   t: TFn;
 }>) {
-  const className = count >= 5 ? "font-medium text-amber-400" : "tabular-nums text-foreground/80";
+  const className = count >= 5 ? "font-medium text-warning-foreground" : "tabular-nums text-foreground/80";
   return (
     <div className="flex items-baseline justify-between gap-2">
       <span className="text-muted-foreground">{t("delivery.card.fillerSounds")}</span>
@@ -175,7 +175,7 @@ function DeliveryReadout({
 
         <div className="flex items-baseline justify-between gap-2">
           <span className="text-muted-foreground">{t("delivery.card.fillers")}</span>
-          <span className={frequentFillers ? "font-medium text-amber-400" : "text-muted-foreground"}>
+          <span className={frequentFillers ? "font-medium text-warning-foreground" : "text-muted-foreground"}>
             {t(fillerKey)}
             {frequentFillers && assessment.fillers.examples.length > 0 && (
               <span className="ml-1 font-normal opacity-80">
@@ -211,14 +211,14 @@ function StatTile({
 }: Readonly<{ label: string; value: string; sub?: string; watch?: boolean }>) {
   return (
     <div className="rounded-lg border bg-muted/20 px-3 py-2">
-      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="text-[11px] font-semibold text-muted-foreground">
         {label}
       </div>
-      <div className={`mt-0.5 truncate text-base font-semibold tabular-nums ${watch ? "text-amber-400" : ""}`}>
+      <div className={`mt-0.5 truncate text-base font-semibold tabular-nums ${watch ? "text-warning-foreground" : ""}`}>
         {value}
       </div>
       {sub && (
-        <div className={`truncate text-[10px] ${watch ? "text-amber-400" : "text-muted-foreground"}`}>
+        <div className={`truncate text-[10px] ${watch ? "text-warning-foreground" : "text-muted-foreground"}`}>
           {sub}
         </div>
       )}
@@ -260,7 +260,7 @@ function TalkVolumeStrip({ buckets, title }: Readonly<{ buckets: TalkBucket[]; t
   const max = Math.max(...buckets.map((b) => b.voicedMs), 1);
   return (
     <div className="rounded-lg border bg-muted/20 p-3">
-      <div className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="mb-2 text-[11px] font-semibold text-muted-foreground">
         {title}
       </div>
       <div className="flex h-10 items-end gap-px">
@@ -320,7 +320,7 @@ function toneTileValue(t: TFn, assessment: DeliveryAssessment | null, running: b
   return running ? "…" : "—";
 }
 
-/** Sharp and above warrants an amber tile. */
+/** Sharp and above warrants a warning tile. */
 function toneNeedsWatch(assessment: DeliveryAssessment | null): boolean {
   if (!assessment) return false;
   return assessment.tone === "sharp" || assessment.tone === "aggressive" || assessment.tone === "rude";
@@ -526,7 +526,7 @@ function shouldShow(
  * rolling LLM read (tone + over-frequent fillers). The meters used to be three
  * unlabeled bars crammed next to the mic level in the title bar, indistinguishable
  * from each other; they live here now with labels, numbers, and one consistent
- * green/amber language.
+ * primary/warning language.
  *
  * REPLAY: the pace number is an acoustically MEASURED articulation rate (from
  * Rust), not an LLM guess from STT-timed text — plus the post-call tone/filler

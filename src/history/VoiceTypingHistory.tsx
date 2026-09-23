@@ -119,9 +119,9 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
     );
   } else {
     content = (
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col">
         {filtered.map((e) => (
-          <div key={e.id} className="group/row flex items-start gap-3 rounded-lg border p-3">
+          <div key={e.id} className="group/row flex items-start gap-3 border-b border-border py-3 last:border-b-0">
             <div className="flex min-w-0 flex-1 flex-col gap-1">
               {editingId === e.id ? (
                 <Input
@@ -166,7 +166,7 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
-                    className="inline-flex items-center gap-1 rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-700 transition-colors hover:bg-sky-500/20 dark:text-sky-300"
+                    className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
                     onClick={() => {
                       addEntry({
                         phrase: learn.to,
@@ -248,7 +248,7 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
     <>
       <header className="flex shrink-0 items-center gap-2 border-b px-4 py-3">
         <h1 className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
-          <Mic className="size-4 text-sky-500" />
+          <Mic className="size-4 text-muted-foreground" />
           {t("history.voiceTyping.title")}
         </h1>
         {entries && (

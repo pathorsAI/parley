@@ -139,10 +139,12 @@ export function FilingSuggestionCard() {
   if (!showTitle && chips.length === 0) return null;
 
   return (
-    <div className="mb-3 rounded-lg border border-violet-500/30 bg-violet-500/5 px-3 py-2">
+    // Plain text on the page above a hairline — no tinted box; blue marks
+    // only what can be clicked.
+    <div className="mb-3 border-b border-border pb-3">
       <div className="flex items-center gap-2">
-        <Sparkles className="size-4 shrink-0 text-violet-600 dark:text-violet-400" />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium text-violet-700 dark:text-violet-300">
+        <Sparkles className="size-4 shrink-0 text-primary" />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
           {t("study.filing.heading")}
         </span>
         <button
@@ -166,8 +168,8 @@ export function FilingSuggestionCard() {
           </span>
           <Button
             size="sm"
-            variant="outline"
-            className="h-7 shrink-0 text-xs"
+            variant="ghost"
+            className="h-7 shrink-0 text-xs text-primary hover:bg-primary/10 hover:text-primary"
             onClick={applyTitle}
           >
             {t("study.filing.apply")}
@@ -189,8 +191,8 @@ export function FilingSuggestionCard() {
                   type="button"
                   title={chip.reason || undefined}
                   onClick={() => applyFolder(chip)}
-                  className={`flex max-w-full cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-colors hover:bg-muted ${
-                    isNew ? "border-dashed text-muted-foreground" : "bg-background"
+                  className={`flex max-w-full cursor-pointer items-center gap-1 rounded-full border border-primary/30 px-2 py-0.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10 ${
+                    isNew ? "border-dashed" : ""
                   }`}
                 >
                   {isNew && <Plus className="size-3 shrink-0" />}

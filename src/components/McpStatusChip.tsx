@@ -38,8 +38,8 @@ export function connState(info: McpActivityInfo | null, now: number): McpConnSta
 
 /** Status-dot classes per connection state. */
 const DOT_CLASS: Record<McpConnState, string> = {
-  active: "bg-emerald-500 animate-pulse",
-  connected: "bg-emerald-500",
+  active: "bg-success-foreground animate-pulse",
+  connected: "bg-success-foreground",
   idle: "bg-muted-foreground/50",
   none: "bg-muted-foreground/25",
 };
@@ -61,8 +61,9 @@ export function relativeTime(t: ReturnType<typeof useI18n>["t"], at: number, now
 }
 
 /**
- * Titlebar MCP indicator: a plug icon with a status dot (pulsing green = a
- * client is actively calling tools, green = recent traffic, grey = idle/none).
+ * Titlebar MCP indicator: a plug icon with a status dot (pulsing success
+ * dot = a client is actively calling tools, success = recent traffic,
+ * grey = idle/none).
  * Clicking opens a popover with who's connected (clientInfo from initialize),
  * the endpoint, and the recent read/write tool calls — so MCP data access is
  * never invisible.
@@ -165,7 +166,7 @@ export function McpStatusChip() {
           </div>
 
           <div className="mt-3 border-t pt-2">
-            <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            <div className="mb-1 text-[11px] font-semibold text-muted-foreground">
               {t("mcp.panel.activity")}
             </div>
             {info?.recent?.length ? (
@@ -176,8 +177,8 @@ export function McpStatusChip() {
                       className={cn(
                         "w-6 shrink-0 rounded px-1 text-center text-[9.5px] font-semibold",
                         e.kind === "write"
-                          ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                          : "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+                          ? "bg-warning text-warning-foreground"
+                          : "bg-info text-info-foreground",
                       )}
                     >
                       {t(`mcp.kind.${e.kind}`)}

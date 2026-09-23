@@ -44,7 +44,7 @@ function AutoAnalyzeMenu() {
         >
           <ChevronDown className="size-3" />
           {autoAnalyze && (
-            <span className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-emerald-500" />
+            <span className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-primary" />
           )}
         </Button>
       </PopoverTrigger>
@@ -119,9 +119,9 @@ function FeedPlaceholder() {
       <line x1="82" y1="8" x2="94" y2="8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" opacity=".25" />
       <line x1="104" y1="8" x2="118" y2="8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" opacity=".35" />
       <line x1="128" y1="8" x2="136" y2="8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" opacity=".25" />
-      {/* front card with the coach's accent dot */}
+      {/* front card with the coach's accent dot (primary) */}
       <rect x="40" y="22" width="120" height="28" rx="7" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <circle cx="54" cy="36" r="4.5" className="text-emerald-500/70" fill="currentColor" />
+      <circle cx="54" cy="36" r="4.5" className="text-primary/60" fill="currentColor" />
       <line x1="64" y1="31" x2="140" y2="31" stroke="currentColor" strokeWidth="3" strokeLinecap="round" opacity=".55" />
       <line x1="64" y1="41" x2="120" y2="41" stroke="currentColor" strokeWidth="3" strokeLinecap="round" opacity=".3" />
       {/* middle card, gently tilted */}
@@ -134,7 +134,7 @@ function FeedPlaceholder() {
         <rect x="52" y="94" width="96" height="16" rx="6" fill="none" stroke="currentColor" strokeWidth="1.5" opacity=".35" />
       </g>
       {/* the whistle: your coach, standing by (bottom-right, clear of the stack) */}
-      <g className="text-emerald-500/70" transform="translate(188 118) rotate(-15)">
+      <g className="text-primary/60" transform="translate(188 118) rotate(-15)">
         <circle cx="0" cy="0" r="9" fill="none" stroke="currentColor" strokeWidth="2" />
         <circle cx="0" cy="0" r="2.4" fill="currentColor" />
         <path d="M6 -6 L26 -13 L27.8 -7.6 L9 -1" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
@@ -228,10 +228,14 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Feed header: the analyze action (the feed's manual refresh). */}
+      {/* Feed header: title + muted count, and the analyze action (the feed's
+          manual refresh). */}
       <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {t("feed.title")}
+        <span className="flex items-baseline gap-2">
+          <span className="text-xs font-semibold text-foreground">{t("feed.title")}</span>
+          {findings.length > 0 && (
+            <span className="text-[11px] tabular-nums text-muted-foreground">{findings.length}</span>
+          )}
         </span>
         <div className="flex items-center">
           <Button
@@ -269,17 +273,23 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
               )}
             </div>
           )}
-          {findings.map((f) => (
-            <FindingRow
-              key={f.id}
-              event={f}
-              selected={f.id === selectedId}
-              onSelect={(ev) => selectAndSeek(ev, onSeek)}
-              onOpenSolution={(ev) => openSolution(ev, onSeek)}
-            />
-          ))}
+          {/* Findings are hairline-separated rows, not boxed cards — bled to the
+              pane edges so hover/selection spans the full width. */}
+          {findings.length > 0 && (
+            <ul className="-mx-3 flex flex-col">
+              {findings.map((f) => (
+                <FindingRow
+                  key={f.id}
+                  event={f}
+                  selected={f.id === selectedId}
+                  onSelect={(ev) => selectAndSeek(ev, onSeek)}
+                  onOpenSolution={(ev) => openSolution(ev, onSeek)}
+                />
+              ))}
+            </ul>
+          )}
           {askCards.map((c) => (
-            <div key={c.id} className="rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+            <div key={c.id} className="rounded-lg bg-muted/50 px-3 py-2 text-sm">
               <p className="mb-1 flex items-start gap-1.5 text-xs font-medium text-muted-foreground">
                 <MessageCircle className="mt-0.5 size-3.5 shrink-0" />
                 <span className="min-w-0">{c.question}</span>
