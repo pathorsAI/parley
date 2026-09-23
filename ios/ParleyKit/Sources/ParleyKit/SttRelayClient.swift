@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Events surfaced by the relay session.
 public enum SttRelayEvent: Sendable {
@@ -126,6 +127,7 @@ public actor SttRelayClient {
     /// `nonisolated` on purpose: `enqueue(pcm:)` is called from the audio
     /// render thread and must not hop onto the actor to do it.
     private nonisolated let sink: AsyncStream<[Int16]>.Continuation
+    private nonisolated let spent = OSAllocatedUnfairLock(initialState: false)
 
     public init(options: Options, onEvent: @escaping @Sendable (SttRelayEvent) -> Void) {
         self.options = options
@@ -138,6 +140,7 @@ public actor SttRelayClient {
 
     /// Connect, send the config frame, and start the read + keepalive loops.
     public func start() async throws {
+        guard !spent.withLock({ $0 }) else { throw Spent() }
         var comps = URLComponents(url: options.relayURL, resolvingAgainstBaseURL: false)!
         comps.queryItems = [URLQueryItem(name: "feature", value: options.feature)]
         var req = URLRequest(url: comps.url!)
@@ -159,6 +162,7 @@ public actor SttRelayClient {
         let encoder = JSONEncoder()
         let frame = String(data: try encoder.encode(config), encoding: .utf8)!
         try await task.send(.string(frame))
+        guard !spent.withLock({ $0 }) else { throw Spent() }
 
         lastProof = Date()
         startKeepalive()
@@ -177,6 +181,7 @@ public actor SttRelayClient {
     /// relay drain the tail. The socket stays open until the server closes it
     /// (or `finished` arrives).
     public func finish() async {
+        spent.withLock { $0 = true }
         guard let task, !finalizeSent else { return }
         finalizeSent = true
         sink.finish()
@@ -192,6 +197,7 @@ public actor SttRelayClient {
     /// queue is synchronous, so a caller that abandons this client knows no
     /// further audio can reach it even before the socket has finished dying.
     public nonisolated func cancel() {
+        spent.withLock { $0 = true }
         sink.finish()
         Task { await self.tearDown() }
     }
