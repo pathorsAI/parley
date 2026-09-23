@@ -28,8 +28,11 @@
 import {
   downloadData as downloadPinned,
   provenance as provenanceBlock,
-  resourcePath as generatedResourcePath,
 } from "./resource-data.mjs";
+
+/// Where a generated table lives. Re-exported so the two 注音 generators keep
+/// importing everything they need from one module.
+export { resourcePath } from "./resource-data.mjs";
 
 export const REPO = "openvanilla/McBopomofo";
 export const BRANCH = "master";
@@ -40,10 +43,6 @@ export const INITIALS = "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖ�
 export const MEDIALS = "ㄧㄨㄩ";
 export const FINALS = "ㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ";
 export const SYMBOLS = new Set([...INITIALS, ...MEDIALS, ...FINALS, ...TONES]);
-
-/// Where a generated table lives. Re-exported so the two 注音 generators keep
-/// importing everything they need from one module.
-export const resourcePath = generatedResourcePath;
 
 /// Fetch the McBopomofo data files at one pinned commit — see
 /// `resource-data.mjs` for why the download is pinned rather than taken from a

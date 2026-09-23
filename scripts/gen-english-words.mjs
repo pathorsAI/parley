@@ -84,7 +84,7 @@ const MAX_LENGTH = 20;
 
 /// The one-letter words English actually has. Everything else of length one in
 /// the corpus is an initial, a unit or an OCR artefact.
-const SINGLE_LETTER_WORDS = ["a", "i"];
+const SINGLE_LETTER_WORDS = new Set(["a", "i"]);
 
 /// The synthetic corpus count a supplement word is scored with. 50 million is
 /// the count at about rank 3,000 in this corpus — common company, not the head
@@ -180,7 +180,7 @@ function acceptable(word) {
   if (!/^[a-z]+$/.test(word)) return false;
   if (word.length > MAX_LENGTH) return false;
   if (word.length >= MIN_LENGTH) return true;
-  return SINGLE_LETTER_WORDS.includes(word);
+  return SINGLE_LETTER_WORDS.has(word);
 }
 
 /// One row per word, supplement included, each carrying the rank that breaks
