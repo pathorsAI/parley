@@ -336,6 +336,27 @@ A background task is never held while a window is open. `beginBackgroundTask` is
 worth nothing next to an active audio session, and ending an assertion in the
 background is a documented way to get suspended anyway.
 
+### With the window off: a 30-second hold
+
+The window being off used to mean the microphone closed with the dictation and
+only the ~30 s background-task linger was left. That linger could not deliver
+what it was for. A second tap within those seconds either reached a process
+iOS had already suspended, or reached a live one that then had to *start* a
+microphone from the background, which iOS can refuse (see *The jump that is
+left*). The owner hit it on 1.17: first tap opens Parley, back to the host,
+dictate, tap again, and Parley opens again.
+
+So the end of a dictation with no window now keeps the running capture for
+`holdAfterDictation` (30 s) in `DictationCoordinator.holdMicrophone`, the same
+way a window keeps it, and the next tap borrows it. Nothing is published as a
+window: no chip, no Record-tab bar, no Live Activity, because the hold is not
+something the user set and ends before any of those would be read. The orange
+dot is on for those 30 seconds, and the Settings footer under *Keeping the
+microphone ready* says so even when the picker is off. Sound during the hold is
+dropped exactly as in a window. A new session, a window opening, a meeting
+taking the microphone, or the microphone closing for any other reason ends the
+hold, and the linger is not armed on top of it.
+
 ### When the system takes the microphone: iOS's own dictation
 
 The report this section exists for: *"If I turn on voice typing and then press the
