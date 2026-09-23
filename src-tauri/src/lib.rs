@@ -122,6 +122,8 @@ pub fn run() {
             // unlock — Carbon hotkey registrations and CGEventTaps can come
             // back dead from a sleep cycle.
             hotkey::install_wake_observer(app.handle().clone());
+            // Follow the user across Spaces while the voice-typing overlay is up.
+            voice_typing::install_space_observer(app.handle().clone());
             log::info!("app: starting up (parley {})", env!("CARGO_PKG_VERSION"));
             Ok(())
         })
