@@ -135,6 +135,88 @@ The following license applies to major parts of the software.
  */
 ```
 
+## gwordlist (Google Books Ngram) English word list
+
+The English pane's word-suggestion list
+(`ParleyKit/Sources/ParleyKit/Resources/english-words.txt`) — 40,000 lowercase
+words, frequency ordered — is generated from the **gwordlist** frequency
+tables:
+
+- Source: <https://github.com/hackerb9/gwordlist>,
+  `frequency-alpha-alldicts.txt`
+- What that file is: the 246,591 alphabetic words of Google's Books Ngram
+  corpus that could be verified against a dictionary (GCIDE/Webster's 1913,
+  WordNet, OED v2), sorted by corpus frequency
+- License: **CC-BY 3.0** — for the data
+
+That licence line is the whole reason this section exists, so it is worth
+stating precisely. The *programs* in that repository are GPL-3.0-or-later; its
+README separately grants the derived **data** under Creative Commons
+Attribution 3.0 — "the same license as Google granted me", Google's Books Ngram
+datasets themselves being CC-BY 3.0. Parley uses only the data file and never
+the programs, so the GPL does not reach the app. CC-BY is attribution-only,
+with no share-alike and no non-commercial clause, so the data can ship inside a
+proprietary binary as long as it is credited.
+
+This section is that credit. The upstream corpus is **Google Books Ngram**; the
+derivation — dictionary verification and frequency ordering — is
+**hackerb9/gwordlist**.
+
+Regenerate with `node scripts/gen-english-words.mjs`. The script pins the
+download to a commit and stamps it into the resource's header, the same
+convention as the 注音 tables, so the committed file names exactly what it was
+built from — currently `5e9902468ab09802474884c3df00d77463e5cb24`.
+
+The generator also adds a short hand-written supplement: contractions such as
+`don't`, which Google's tokenizer splits so that the corpus contains no
+apostrophe at all, and a handful of everyday words a corpus of books scanned
+from 1880 onward is too old for. That supplement is Parley's own and carries no
+third-party claim.
+
+The CC-BY 3.0 deed's own summary, reproduced from
+<https://creativecommons.org/licenses/by/3.0/>. The full legal code is long and
+is not reproduced here; it is the governing text and lives at
+<https://creativecommons.org/licenses/by/3.0/legalcode>.
+
+```
+Creative Commons Attribution 3.0 Unported (CC BY 3.0)
+
+Canonical URL:   https://creativecommons.org/licenses/by/3.0/
+Full legal code: https://creativecommons.org/licenses/by/3.0/legalcode
+
+You are free to:
+
+  Share — copy and redistribute the material in any medium or format for any
+  purpose, even commercially.
+
+  Adapt — remix, transform, and build upon the material for any purpose, even
+  commercially.
+
+  The licensor cannot revoke these freedoms as long as you follow the license
+  terms.
+
+Under the following terms:
+
+  Attribution — You must give appropriate credit, provide a link to the
+  license, and indicate if changes were made. You may do so in any reasonable
+  manner, but not in any way that suggests the licensor endorses you or your
+  use.
+
+  No additional restrictions — You may not apply legal terms or technological
+  measures that legally restrict others from doing anything the license
+  permits.
+
+Notices:
+
+  You do not have to comply with the license for elements of the material in
+  the public domain or where your use is permitted by an applicable exception
+  or limitation.
+
+  No warranties are given. The license may not give you all of the permissions
+  necessary for your intended use. For example, other rights such as publicity,
+  privacy, or moral rights may limit how you use the material.
+```
+
 ## Fonts
 
 DM Sans and Alexandria (`App/Parley/Resources/Fonts/`) ship under the **SIL Open

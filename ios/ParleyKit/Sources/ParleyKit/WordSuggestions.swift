@@ -1,0 +1,101 @@
+import Foundation
+
+/// The text rules behind the English pane's suggestion bar: which letters count
+/// as the word being typed, what the user's own dictionary contributes, and how
+/// a lowercase list entry is given the case the user is typing in.
+///
+/// Pure functions over strings, deliberately: the keyboard extension is not
+/// testable — there is no host app, no field, no proxy on a machine running
+/// `swift test` — so everything that could be wrong about this lives here, on
+/// this side of the `textDocumentProxy`, where it has tests.
+///
+/// **Nothing here ever rewrites the user's text.** These functions answer "what
+/// could this become", and the only thing that acts on the answer is a tap. A
+/// keyboard that silently replaces a word it thinks is wrong is worse than one
+/// that suggests nothing, which is why there is no autocorrect anywhere in this
+/// file and no space-commits-the-suggestion rule.
+public enum WordSuggestions {
+    /// The word the user is in the middle of typing: the run of letters and
+    /// apostrophes immediately before the cursor.
+    ///
+    /// `context` is `textDocumentProxy.documentContextBeforeInput`, a clipped
+    /// run of text ending at the cursor. Empty whenever the character before
+    /// the cursor is not part of a word — after a space, after punctuation, at
+    /// the start of a field — which is exactly when the strip should go back to
+    /// showing the wordmark.
+    ///
+    /// "Letter" is `Character.isLetter`, so it is Unicode's answer rather than
+    /// ASCII's: someone typing `café` on this keyboard is typing one word, and
+    /// clipping it at the `é` would ask the list about `caf`. Both apostrophes
+    /// count, because a field with smart quotes on turns the one the keyboard
+    /// typed into the other.
+    public static func partialWord(before context: String?) -> String {
+        guard let context, !context.isEmpty else { return "" }
+        var start = context.endIndex
+        while start > context.startIndex {
+            let previous = context.index(before: start)
+            guard isWordCharacter(context[previous]) else { break }
+            start = previous
+        }
+        return String(context[start...])
+    }
+
+    /// Whether a character belongs to the word being typed.
+    private static func isWordCharacter(_ character: Character) -> Bool {
+        character.isLetter || character == "'" || character == "\u{2019}"
+    }
+
+    /// The suggestion written in the case the user is typing in.
+    ///
+    /// Two rules and no more, both of them things the user has already said out
+    /// loud with the shift key: an ALL-CAPS partial of two letters or more asks
+    /// for an all-caps word, and a capitalised first letter asks for a
+    /// capitalised word. One uppercase letter alone is not evidence of caps
+    /// lock — it is the far commoner case of a sentence starting — so it takes
+    /// the second rule.
+    ///
+    /// A word that already carries case of its own (a name out of the user's
+    /// lexicon) is left alone by a lowercase partial, which is what makes
+    /// `kub` able to offer `Kubernetes`.
+    public static func matchingCase(of word: String, like partial: String) -> String {
+        let letters = partial.filter(\.isLetter)
+        guard let first = letters.first else { return word }
+        if letters.count >= 2, letters.allSatisfy(\.isUppercase) { return word.uppercased() }
+        guard first.isUppercase, let head = word.first else { return word }
+        return head.uppercased() + word.dropFirst()
+    }
+
+    /// What to offer for a part-typed word: the user's own terms first, then the
+    /// bundled list, cased to match what they typed.
+    ///
+    /// The lexicon comes first because it is the one source that knows something
+    /// the corpus cannot — the names, jargon and product words this particular
+    /// person types — and because there are only ever a handful of them, so they
+    /// cost the bar almost nothing. It may be **empty**, and that is a supported
+    /// state rather than a failure: `LexiconStore` lives in the App Group, which
+    /// a keyboard without Full Access cannot open, and the pane has to keep
+    /// suggesting in exactly that state (App Review 4.4.1 judges it there).
+    ///
+    /// Deduplicated case-insensitively, so a term the user typed in themselves
+    /// does not appear twice because the word list has it too.
+    public static func suggestions(
+        for partial: String,
+        in words: EnglishWords,
+        lexiconTerms: [String] = [],
+        limit: Int = EnglishWords.suggestionLimit
+    ) -> [String] {
+        guard !partial.isEmpty, limit > 0 else { return [] }
+        let needle = partial.lowercased()
+
+        var out: [String] = []
+        var seen = Set<String>()
+        for candidate in lexiconTerms.filter({ $0.lowercased().hasPrefix(needle) })
+            + words.completions(for: partial, limit: limit)
+        {
+            guard seen.insert(candidate.lowercased()).inserted else { continue }
+            out.append(matchingCase(of: candidate, like: partial))
+            if out.count == limit { break }
+        }
+        return out
+    }
+}

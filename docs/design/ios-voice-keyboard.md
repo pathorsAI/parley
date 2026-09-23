@@ -274,14 +274,15 @@ the point where adding an element moves the record button. It is hidden during a
 session — the record button already says the microphone is live, and the chip is
 about the *next* tap.
 
-The negative signal cannot be the mere absence of the chip. It used to be a
-second line under *Tap to speak* — *This tap opens Parley first* — shown only to
-someone who had turned a window on, on the grounds that without the setting
-every tap had always opened Parley and saying so would be noise. That reasoning
-was wrong in the one way that mattered: the headline still said *Tap to speak*,
-which is a promise about this keyboard, and the button still drew a microphone.
-The fix is in the state list below — the promise now lives in the headline and on
-the button's own glyph, so the caption has nothing left to add and is gone.
+There used to be a negative signal too, and there no longer is. First a second
+line under *Tap to speak* — *This tap opens Parley first* — then, when that read
+backwards, a headline that changed to *Dictation starts in Parley* with the jump
+glyph on the button. Both were the keyboard answering "will this tap jump", and
+#404 took the question away: a lingering Parley serves the tap in place, so the
+jump is the exception rather than the rule, and the owner ruled that a first tap
+opening the app once is expected behaviour and not a warning's worth of screen.
+The button now follows **readiness** — see the state list below — and the chip is
+the only thing in the strip that talks about windows at all.
 
 ### Bounded on purpose: there is no "until I turn it off"
 
@@ -470,10 +471,11 @@ time, for as long as the linger lasted.
 
 The app now writes its own answer every ten seconds while it runs:
 `servesInPlace` is true in the foreground, or in the background while a running
-capture (a window) is there to borrow, and false otherwise. The keyboard draws
-the microphone glyph and *Tap to speak* when the window is open **or** a fresh
-presence says the app can answer in place (`KeyboardBridge.staysPut`), and the
-jump glyph otherwise.
+capture (a window) is there to borrow, and false otherwise. `staysPut` — a
+window being open **or** a fresh presence saying the app can answer in place —
+is what the app reasons with. It used to drive the record button's glyph as well;
+it no longer does, because a tap that opens Parley once is not worth a warning.
+See *Three states, and only one of them is a microphone*.
 
 `armRequestObserver` used to apply the same condition before honoring a start:
 a backgrounded app with no microphone declined the note outright, on the premise
@@ -875,6 +877,77 @@ The behaviours that make it feel like a keyboard rather than a grid of buttons:
   action, and a key labelled Send that quietly did nothing would be worse than
   one that visibly types.
 
+#### Word suggestions
+
+The 注音 pane has predicted as you type since 1.16; the English pane made you
+spell every word out, which is how the owner put it — 「中文有 auto complete 英文
+卻沒有」 — and it was the one thing the system QWERTY had that ours did not.
+
+**While the cursor is inside a word, the mode strip is given over to a
+suggestion bar**: up to five completions of the run of letters before the cursor,
+most frequent first, on the same terms the 注音 composition takes the strip. The
+argument is the same one, too — the strip is the one row this keyboard has to
+spare, and a bar of its own above the keys would make the English pane taller
+than its neighbours every time somebody started a word, which shoves the host
+app's content up and down mid-swipe. When the partial word is empty the strip is
+the wordmark and the tabs again. A pending 注音 composition wins the row, though
+it cannot arise while the English pane is current.
+
+The partial word is the run of letters and apostrophes immediately before the
+cursor in `textDocumentProxy.documentContextBeforeInput`, recomputed after every
+key this keyboard types and on `textDidChange` — because the cursor can also move
+without us, and a bar describing a word that is no longer there would replace the
+wrong letters on a tap. "Letter" is Unicode's answer, so `café` is one word.
+`WordSuggestions` (ParleyKit) owns that rule and the case rule as pure functions,
+because a keyboard extension cannot be unit-tested and a string function can.
+
+**Nothing is ever rewritten without a tap.** Space and punctuation type exactly
+what was typed; there is no autocorrect, and no space-commits-the-suggestion
+rule. A keyboard that silently replaces a word it thinks is wrong is worse than
+one that suggests nothing — and this keyboard already asks for a lot of trust,
+since the personal dictionary learns from what the user retypes. Tapping a
+suggestion deletes one scalar per scalar of the partial and inserts the word plus
+a space. Case comes from what the user already said with the shift key: a
+capitalised partial gets a capitalised word, an ALL-CAPS partial of two letters
+or more gets an all-caps word, and one uppercase letter alone is read as a
+sentence starting rather than as caps lock.
+
+The user's own `Lexicon` terms are offered ahead of the bundled list — they are
+the one source that knows the names and jargon this particular person types. They
+live in the App Group, so a keyboard without Full Access simply has none of them
+and the list answers alone; that is a supported state, not a failure, and it is
+the state App Review 4.4.1 judges the keyboard in. The suggestions themselves
+need no network and no App Group at all.
+
+**The data** is `english-words.txt` in ParleyKit: 40,000 lowercase words, 338 KiB,
+frequency ordered, generated by `scripts/gen-english-words.mjs` from
+hackerb9/gwordlist's `frequency-alpha-alldicts.txt` — the alphabetic words of
+Google's Books Ngram corpus verified against dictionaries, sorted by corpus
+frequency. **CC-BY 3.0** for the data (that repository's *programs* are GPL and
+are not used); the notice is in `ios/THIRD-PARTY.md`, and the download is pinned
+to a commit stamped into the resource's header, exactly as the 注音 tables are.
+Lists that were rejected on licensing, so nobody re-litigates it: Norvig's
+`count_1w` (LDC-derived, terms unclear), hermitdave/FrequencyWords (CC-BY-**SA**),
+SUBTLEX (non-commercial), google-10000-english (LDC-derived).
+
+A corpus of books from 1880 onward has two blind spots a keyboard cannot live
+with: Google's tokenizer splits every contraction, so there is not one apostrophe
+in 246,591 rows, and it is too old for words like `app` and `wifi`. The generator
+adds a short hand-written supplement for both, scored as if the corpus had seen
+each word 50 million times — the same device, for the same reason, as
+`CONVERSATIONAL` in `gen-zhuyin-phrases.mjs`.
+
+`EnglishWords` reads the file the way `ZhuyinPhrases` reads its table: **lazily,
+once, and warmed off the main thread** when the English pane becomes current (and
+in `viewDidLoad` when the keyboard opens on it, which every keyboard without Full
+Access does). Rank is the file's order and nothing else. What it builds at load
+is the other order — the same words sorted alphabetically with each word's rank
+beside it — so a prefix is a contiguous range found by binary search and the
+answer is the lowest-ranked few in that range. A linear pass over 40,000 words
+per keystroke is the kind of cost that turns into dropped keys on an old phone;
+the only expensive case left is a one-letter prefix, and by the third letter the
+range is a handful. A missing resource answers nothing rather than crashing.
+
 ### Voice pane
 
 **A control panel, not a keyboard.** Nothing on this pane types a letter, so it
@@ -981,7 +1054,7 @@ which way the session went — all of them answer a press. This one answers
 nothing the user did, so it has no direction to borrow. Once per transition into
 the state, not on every drain that republishes it.
 
-#### Four states, and only one of them is a microphone
+#### Three states, and only one of them is a microphone
 
 The pane used to draw the mic button and *Tap to speak* in every state, so a
 keyboard that could not transcribe a word looked identical to one that could —
@@ -993,12 +1066,19 @@ but a **microphone is only drawn when speaking here would actually work.**
 |---|---|---|
 | no Full Access | dimmed, mic | *Voice typing needs Full Access* + the Settings path |
 | not set up (`!ready`) | gradient, `arrow.up.forward.app` | *Set up voice typing in Parley* / *Tap to open the app* |
-| set up, tap would open Parley | gradient, `arrow.up.forward.app` | *Dictation starts in Parley* |
-| set up, tap stays put | gradient, `mic.fill` | *Tap to speak* |
+| set up (`ready`) | gradient, `mic.fill` | *Tap to speak* |
 
-"Stays put" (`KeyboardBridge.staysPut`) is a microphone window being open **or**
-the app's presence heartbeat saying it can answer in place — Parley in the
-foreground hosting this keyboard, or holding a running microphone. See *Knowing
+**The glyph follows readiness, not presence.** There used to be a fourth row
+between the last two: set up, but this particular tap would open Parley first,
+drawn with the jump glyph and captioned *Dictation starts in Parley*. Since #404
+a lingering Parley serves the tap where the user is, so the jump stopped being
+the common case — and the owner ruled that a first tap opening the app once is
+expected behaviour rather than something the button should warn about. Warning
+about it every time made the keyboard look less capable than it is.
+
+`KeyboardBridge.staysPut` and the presence machinery behind it are unchanged and
+still used: they are how the *app* decides whether it can answer a start note in
+place. They just no longer change what the button looks like. See *Knowing
 whether the app is there*.
 
 These are the *idle* states. A live session takes the slot ahead of all four
@@ -1285,6 +1365,19 @@ pane read as crowded.
 devices) the globe appears — bottom-left in the voice pane, in its usual place in
 the QWERTY and 注音 bottom rows. Where it is false the system's own key is the
 exit and we draw nothing.
+
+**The system's dictation key in that same strip cannot be removed.** It sits a
+thumb's length from our record button and starts Apple's dictation into the
+same field, and the owner asked for it to go. `UIInputViewController.
+hasDictationKey` is documented as "when set to YES, the system dictation key,
+if provided, will be disabled" — measured on iOS 26.5 (iPhone 17 Pro
+simulator, a fresh extension process), set in both initialisers and again in
+`viewDidLoad`, the key was still drawn and still opened Apple's dictation
+prompt. So the property is not set, and the only mitigation is the one the
+pane already makes: our record button is the large, coloured, obvious control,
+and the system's mic is a small glyph in the bezel strip. A user who wants it
+gone can turn off *Enable Dictation* in Settings, which is the system's switch,
+not ours.
 
 ### Which keyboards are on
 

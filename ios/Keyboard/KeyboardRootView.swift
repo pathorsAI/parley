@@ -123,7 +123,12 @@ struct KeyboardRootView: View {
     /// the chip is capped and the bar keeps the rest.
     private var modeStrip: some View {
         HStack(spacing: 0) {
-            if bridge.composition.isEmpty {
+            if !bridge.composition.isEmpty {
+                compositionChip
+                candidateBar
+            } else if showsSuggestions {
+                suggestionBar
+            } else {
                 Text(verbatim: "Parley")
                     .font(.footnote.weight(.bold))
                     .foregroundStyle(KBTheme.wordmark(dark))
@@ -133,13 +138,19 @@ struct KeyboardRootView: View {
                     Spacer(minLength: 8)
                 }
                 paneTabs
-            } else {
-                compositionChip
-                candidateBar
             }
         }
         .frame(height: KBMetrics.strip)
         .padding(.horizontal, 12)
+    }
+
+    /// The English pane's word suggestions take the strip on the same terms the
+    /// 注音 composition does, and behind it: a pending composition belongs to the
+    /// other pane and can only exist while that one is current, but the two
+    /// branches are ordered anyway so the rule is written down rather than
+    /// inferred.
+    private var showsSuggestions: Bool {
+        bridge.pane == .english && !bridge.suggestions.isEmpty
     }
 
     /// The pane's short name. 注音 keeps its own name in both localizations: the
@@ -266,26 +277,31 @@ struct KeyboardRootView: View {
     /// and at 2pt spacing nobody could tell. The system keyboard leaves about a
     /// character's width between candidates for the same reason.
     private var candidateBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 0) {
-                ForEach(Array(bridge.candidates.enumerated()), id: \.offset) { index, candidate in
-                    if index > 0 {
-                        Rectangle()
-                            .fill(KBTheme.inkSoft(dark).opacity(0.3))
-                            .frame(width: 1, height: KBMetrics.strip - 18)
-                    }
-                    Button(action: { bridge.pickCandidate(candidate) }) {
-                        Text(verbatim: candidate)
-                            .font(.system(size: 22))
-                            .foregroundStyle(KBTheme.ink(dark))
-                            .padding(.horizontal, 11)
-                            .frame(minWidth: 44, minHeight: KBMetrics.strip - 4)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
+        StripBar(
+            items: bridge.candidates, dark: dark, fontSize: 22,
+            label: Text("Candidates"), action: bridge.pickCandidate)
+    }
+
+    // MARK: English word suggestions
+
+    /// What the part-typed English word could still become, most frequent
+    /// first. Tapping one takes back the letters typed so far and puts the
+    /// whole word in, with the space that ends it.
+    ///
+    /// It takes the strip for exactly as long as the cursor is inside a word,
+    /// by the same argument the 注音 composition takes it: the strip is the one
+    /// row this keyboard has to spare, and a bar of its own above the keys would
+    /// make the English pane taller than its neighbours every time somebody
+    /// started a word — which would shove the host app's content up and down
+    /// mid-swipe.
+    ///
+    /// 17pt rather than the candidate bar's 22: Latin words are far wider than
+    /// the one- and two-character Chinese candidates, and five of them have to
+    /// fit across a 320pt strip.
+    private var suggestionBar: some View {
+        StripBar(
+            items: bridge.suggestions, dark: dark, fontSize: 17,
+            label: Text("Word suggestions"), action: bridge.pickSuggestion)
     }
 
     // MARK: the microphone window
@@ -376,7 +392,7 @@ struct KeyboardRootView: View {
                     GlobeKey(controller: bridge.controller, dark: dark, round: true)
                         .frame(width: KBMetrics.roundKey, height: KBMetrics.roundKey)
                 } else {
-                    atKey
+                    resting(atKey)
                 }
             }
             .animation(.easeInOut(duration: 0.16), value: bridge.listening)
@@ -384,11 +400,26 @@ struct KeyboardRootView: View {
             recordButton
             Spacer(minLength: 0)
             VStack(spacing: KBMetrics.deckRowGap) {
-                deleteKey
-                returnKey
+                resting(deleteKey)
+                resting(returnKey)
             }
+            .animation(.easeInOut(duration: 0.16), value: bridge.listening)
         }
         .frame(height: KBMetrics.deckHeight)
+    }
+
+    /// A control that only exists between sessions. While the microphone is
+    /// open nothing has landed in the field yet — insertion is one shot at
+    /// `done` — so ⌫ would eat text typed *before* the dictation, ⏎ would
+    /// break a line under words that have not arrived, and `@` is a shortcut
+    /// nobody reaches for mid-sentence. The disc keeps its slot and goes
+    /// invisible and inert rather than leaving, so the record button and ✕
+    /// never move under the finger.
+    private func resting<V: View>(_ control: V) -> some View {
+        control
+            .opacity(bridge.listening ? 0 : 1)
+            .disabled(bridge.listening)
+            .accessibilityHidden(bridge.listening)
     }
 
     @ViewBuilder
@@ -396,7 +427,7 @@ struct KeyboardRootView: View {
         if bridge.listening {
             cancelKey.transition(.opacity)
         } else if bridge.showsGlobe {
-            atKey
+            resting(atKey)
         } else {
             Color.clear.frame(width: KBMetrics.roundKey, height: KBMetrics.roundKey)
         }
@@ -548,9 +579,19 @@ struct KeyboardRootView: View {
         return 1 + Self.maxSwell * CGFloat(bridge.mic.level)
     }
 
+    /// The glyph follows **readiness, not presence**: a keyboard whose app is
+    /// signed in and holds the microphone permission shows a microphone,
+    /// whether or not this particular tap will be served in place.
+    ///
+    /// It used to switch to the jump glyph whenever the tap would open Parley
+    /// first. Since #404 a lingering Parley serves the tap where the user is,
+    /// so the common case is no longer a jump — and the owner ruled that a
+    /// first tap opening the app once is expected behaviour rather than
+    /// something the button should warn about. The jump glyph is now reserved
+    /// for the one state that really is different: not set up yet.
     private var recordGlyph: String {
         if bridge.listening { return "stop.fill" }
-        return bridge.opensApp ? "arrow.up.forward.app" : "mic.fill"
+        return bridge.ready ? "mic.fill" : "arrow.up.forward.app"
     }
 
     /// The label says what the tap does, not what the button is called — the
@@ -560,9 +601,11 @@ struct KeyboardRootView: View {
         // Without Full Access the button is dimmed and the slot explains why;
         // the label stays what it was so nothing about that state changes.
         guard bridge.hasFullAccess else { return Text("Start dictation") }
-        if !bridge.ready { return Text("Open Parley to set up voice typing") }
-        if !bridge.staysPut { return Text("Start dictation, which opens Parley first") }
-        return Text("Start dictation")
+        // Two states, matching the glyph: set up, or not set up. Whether this
+        // tap is served in place is no longer something the button says — see
+        // `recordGlyph`.
+        return bridge.ready
+            ? Text("Start dictation") : Text("Open Parley to set up voice typing")
     }
 
     /// Disabled (no Full Access) reads inert rather than inviting: the button
@@ -730,27 +773,23 @@ struct KeyboardRootView: View {
         }
     }
 
-    /// Idle and set up: what this particular tap is going to do.
+    /// Idle and set up: *Tap to speak*, in every such state.
     ///
-    /// "Tap to speak" is only true while the tap will stay put — a microphone
-    /// window is open, or the app says it can answer where the user is (see
-    /// `KeyboardBridge.staysPut`). It used to be the headline in both cases,
-    /// with a caption underneath — *This tap opens Parley first* — for the
-    /// people who had turned a window on. That was backwards: the common case
-    /// is the one that leaves, and the caption said exactly what this line now
-    /// says. So the promise moved into the headline, where it matches the
-    /// glyph on the button.
+    /// This line has been three things. A headline with a caption under it for
+    /// the people who had a microphone window on, then — when that read
+    /// backwards — a headline that switched to *Dictation starts in Parley*
+    /// whenever the tap would leave. Both were answering "will this tap jump",
+    /// and since #404 a lingering Parley serves the tap in place, so the jump is
+    /// no longer the common case. The owner ruled that a first tap opening
+    /// Parley once is expected behaviour rather than something to warn about, so
+    /// the line says the one thing that is true of every set-up state and the
+    /// glyph above it agrees. `staysPut` and the presence machinery behind it
+    /// stay exactly as they are; they are the app's to reason about.
     private var idleText: some View {
         centered {
-            Group {
-                if bridge.staysPut {
-                    Text("Tap to speak")
-                } else {
-                    Text("Dictation starts in Parley")
-                }
-            }
-            .font(.subheadline)
-            .foregroundStyle(KBTheme.inkSoft(dark))
+            Text("Tap to speak")
+                .font(.subheadline)
+                .foregroundStyle(KBTheme.inkSoft(dark))
         }
     }
 
@@ -853,5 +892,59 @@ private struct LevelRipple: View {
             // one continuous movement. Matched to the publish interval: longer
             // and the ring lags the voice, shorter and the step shows.
             .animation(.linear(duration: MicLevelReading.publishInterval), value: value)
+    }
+}
+
+/// The strip's bar of tappable words: the 注音 candidates, and the English
+/// pane's word suggestions.
+///
+/// One view for both because they are the same control — a scrolling row of
+/// words, hairlines between them, each one a tap that puts text in the field —
+/// and the only differences are the type size and what a tap means. Two copies
+/// of it drifted apart the moment one of them was adjusted.
+///
+/// Each item sits between hairlines with a wide gutter, because a run of words
+/// with nothing between them reads as one long string: 會出好處會場 is three
+/// candidates, and at 2pt spacing nobody could tell. The system keyboard leaves
+/// about a character's width between its own for the same reason, and the
+/// English bar needs it just as much — `work` `world` `working` run together
+/// otherwise.
+private struct StripBar: View {
+    var items: [String]
+    var dark: Bool
+    /// 22 for Chinese candidates, 17 for Latin words: the same point size makes
+    /// a five-word English bar about twice as wide as it can be.
+    var fontSize: CGFloat
+    /// What this row is, for VoiceOver. The words themselves are their own
+    /// labels, so this names the container.
+    var label: Text
+    var action: (String) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 0) {
+                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                    if index > 0 { separator }
+                    Button(action: { action(item) }) {
+                        Text(verbatim: item)
+                            .font(.system(size: fontSize))
+                            .foregroundStyle(KBTheme.ink(dark))
+                            .lineLimit(1)
+                            .padding(.horizontal, 11)
+                            .frame(minWidth: 44, minHeight: KBMetrics.strip - 4)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(label)
+    }
+
+    private var separator: some View {
+        Rectangle()
+            .fill(KBTheme.inkSoft(dark).opacity(0.3))
+            .frame(width: 1, height: KBMetrics.strip - 18)
     }
 }

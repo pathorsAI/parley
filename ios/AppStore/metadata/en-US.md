@@ -83,6 +83,24 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.17
+
+The English keyboard suggests words as you type.
+
+Start a word and the likeliest endings line up above the keys; tap one and it
+lands with a space after it. Nothing is ever rewritten on its own: space and
+punctuation type exactly what you typed, and a suggestion only goes in when you
+tap it. Capitalisation follows what you started.
+
+The voice pane is quieter while you speak. Delete, return and @ step aside for
+as long as the microphone is open — nothing has landed in the field yet, so
+there was nothing for them to act on — and come back the moment the words do.
+
+And once voice typing is set up, the record button is a microphone. It used to
+show an "opens Parley" arrow whenever the app was not already awake in the
+background. The first tap after a while may still bring Parley forward once,
+but that is how it starts, not something the button needs to warn about.
+
 ## What's New — 1.16
 
 Typing 注音 now works the way the system keyboard does.
