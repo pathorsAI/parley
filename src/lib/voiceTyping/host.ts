@@ -18,6 +18,7 @@ import { languageHintsFromSettings } from "../transcription/languageHints";
 import { HOSTED_VOICE_TYPING_MAX_SECONDS } from "../limits";
 import { log } from "../log";
 import { showOverlay, hideOverlay, prewarmOverlay } from "./overlay";
+import { SessionOwner, type SessionEvent, type TextReport } from "./transcript";
 import { appendVoiceEntry } from "./history";
 import { canPolish, polishTranscript, shouldPolish } from "./polish";
 import {
@@ -89,6 +90,8 @@ let down = false;
 let busy = false;
 /** The backend reported the STT session dead (voicetyping://error). */
 let failed = false;
+/** Which backend session the events we act on must come from. */
+const owner = new SessionOwner();
 /** Session generation. A finalize that was still awaiting its copy/paste when
  *  a NEW session started must not run its tail (emit "done" + schedule hide)
  *  against the new session's overlay. */
@@ -163,9 +166,15 @@ export function initVoiceTyping(): () => void {
     }),
   );
   track(
-    listen<{ text: string }>("voicetyping://text", (e) => {
+    listen<TextReport>("voicetyping://text", (e) => {
+      if (!owner.owns(e.payload)) return;
       latestText = e.payload.text;
       lastTextAt = Date.now();
+    }),
+  );
+  track(
+    listen<SessionEvent>("voicetyping://session", (e) => {
+      if (e.payload.phase === "start") owner.start(e.payload.session);
     }),
   );
   // Backend STT failure (rejected key, expired hosted session, out of
@@ -176,8 +185,8 @@ export function initVoiceTyping(): () => void {
   // explanation. The mic stays claimed until release; endSession still stops
   // it, and finalize still delivers whatever text arrived before the death.
   track(
-    listen<{ code: string }>("voicetyping://error", (e) => {
-      if (!busy) return; // stale event from an already-finished session
+    listen<{ code: string; session: number | null }>("voicetyping://error", (e) => {
+      if (!busy || !owner.owns(e.payload)) return;
       failed = true;
       log.warn("voice-typing: session failed", { code: e.payload.code });
       emit("voicetyping://session", { phase: "error", message: e.payload.code }).catch((error) =>
@@ -188,15 +197,14 @@ export function initVoiceTyping(): () => void {
   // The backend session is fully over — every final token has been emitted.
   // Re-arm the settle loop: it sees `closedAt` and finalizes after the short
   // CLOSE_DRAIN_MS instead of the SETTLE_MS quiet poll. Ignored unless we're
-  // between release and finalize: while the key is DOWN the event is either a
-  // server-side close mid-hold (which then ends on the normal release path)
-  // or — after a fast re-press — a STALE close from the previous session
-  // whose delivery slipped past startSession's `closedAt = 0` reset, and
-  // honoring that one would cut the new session's flush short. Failed
-  // sessions are finalized immediately by endSession already.
+  // between release and finalize: while the key is DOWN the event is a
+  // server-side close mid-hold, which then ends on the normal release path. A
+  // close from the previous session after a fast re-press carries that
+  // session's id and is dropped by `owner` before any of this. Failed sessions
+  // are finalized immediately by endSession already.
   track(
-    listen<{ source: string }>("stt://closed", (e) => {
-      if (e.payload.source !== "voice-typing") return;
+    listen<{ source: string; session: number | null }>("stt://closed", (e) => {
+      if (!owner.owns(e.payload)) return;
       if (!busy || down || failed) return;
       closedAt = Date.now();
       waitForSettle();
@@ -312,6 +320,7 @@ async function startSession() {
   busy = true;
   failed = false;
   gen += 1;
+  owner.begin();
   latestText = "";
   lastTextAt = Date.now();
   closedAt = 0;
@@ -328,8 +337,8 @@ async function startSession() {
   // present), and the capture used to wait behind all of them — so roughly the
   // first second of every dictation was never recorded, and any main-thread
   // work elsewhere in the app stretched that window arbitrarily. The overlay
-  // webview is prewarmed and already subscribed, so it can be told the session
-  // started before its window is on screen and simply catch up.
+  // webview is prewarmed and already subscribed, so Rust's `start` event can
+  // reset it before its window is on screen and it simply catches up.
   const starting = invoke("start_voice_typing", {
     provider,
     apiKey,
@@ -344,7 +353,6 @@ async function startSession() {
   const shown = showOverlay().catch((error) =>
     log.warn("voice-typing: overlay show failed", { error: String(error) }),
   );
-  await emit("voicetyping://session", { phase: "start" });
   try {
     await starting;
     log.info("voice-typing: session started", { provider });

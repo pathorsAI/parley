@@ -7,7 +7,12 @@ import { useI18n, type TranslationKey } from "../i18n";
 import { useThemePreference } from "../lib/theme";
 import { formatChordLabel, modChordCap } from "../lib/commands/format";
 import { log } from "../lib/log";
-import { SessionTranscript, type Segment } from "../lib/voiceTyping/transcript";
+import {
+  SessionTranscript,
+  type Segment,
+  type SessionEvent,
+  type TextReport,
+} from "../lib/voiceTyping/transcript";
 import {
   SUGGEST_ACTION_EVENT,
   SUGGEST_EVENT,
@@ -39,12 +44,7 @@ const FADE_MS = 450;
 interface LevelPayload {
   source: string;
   level: number;
-  session?: number;
-}
-interface SessionPayload {
-  phase: "start" | "stop" | "polishing" | "done" | "error" | "limit";
-  message?: string;
-  session?: number;
+  session: number | null;
 }
 
 /** Overlay message per error phase `message`: the host's own "no-key", or a
@@ -145,14 +145,26 @@ export const VoiceTypingApp = () => {
     };
   }, []);
 
-  // Render the transcript, show it, and report it to the host.
   const publish = useRef(async () => {});
   publish.current = async () => {
-    const full = await transcript.current.render(normalizeTranscriptText);
-    setText(full);
-    emit("voicetyping://text", { text: full }).catch((error) =>
+    const report = await transcript.current.report(normalizeTranscriptText);
+    if (!report) return;
+    setText(report.text);
+    emit("voicetyping://text", report satisfies TextReport).catch((error) =>
       log.warn("voice typing overlay: text publish failed", { error: String(error) }),
     );
+  };
+
+  // Back to a blank pill: the last dictation's text, verdict, and fade are
+  // gone, whatever comes next.
+  const resetPresentation = () => {
+    setText("");
+    setError(null);
+    setLimited(false);
+    setFading(false);
+    setPasteBlocked(false);
+    setSuggest(null);
+    setSuggestAdded(false);
   };
 
   useEffect(() => {
@@ -198,19 +210,20 @@ export const VoiceTypingApp = () => {
     );
 
     track(
-      listen<SessionPayload>("voicetyping://session", (e) => {
-        const { phase: p, message } = e.payload;
-        if (p === "start") {
-          transcript.current.reset(e.payload.session ?? 0);
-          setText("");
-          setError(null);
-          setLimited(false);
-          setFading(false);
-          setPasteBlocked(false);
-          setSuggest(null);
-          setSuggestAdded(false);
+      listen<SessionEvent>("voicetyping://session", (e) => {
+        if (e.payload.phase === "start") {
+          transcript.current.reset(e.payload.session);
+          resetPresentation();
           setPhase("listening");
-        } else if (p === "stop") {
+          // Tell the host the new session has no text yet, so the previous
+          // dictation's last report is not what it pastes.
+          publish.current().catch((error) =>
+            log.warn("voice typing overlay: reset publish failed", { error: String(error) }),
+          );
+          return;
+        }
+        const { phase: p, message } = e.payload;
+        if (p === "stop") {
           setPhase("finalizing");
         } else if (p === "polishing") {
           setPhase("polishing");
@@ -227,6 +240,7 @@ export const VoiceTypingApp = () => {
           setPasteBlocked(message === "clipboard-only");
           setPhase("done");
         } else if (p === "error") {
+          resetPresentation();
           setError(message || "error");
           setPhase("done");
         }
@@ -239,12 +253,8 @@ export const VoiceTypingApp = () => {
     // the question is what's on screen.
     track(
       listen<SuggestPayload>(SUGGEST_EVENT, (e) => {
+        resetPresentation();
         setSuggest(e.payload);
-        setSuggestAdded(false);
-        setText("");
-        setError(null);
-        setLimited(false);
-        setFading(false);
         setPhase("done");
       }),
     );
