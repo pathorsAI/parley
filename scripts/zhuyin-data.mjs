@@ -17,18 +17,19 @@
 //                     it carries libtabe's BSD notice as well as MIT.
 //   phrase.occ        phrase → corpus occurrence count (their frequency corpus)
 //
-// **Why a commit rather than a branch.** Each generator resolves the default
-// branch to a commit, downloads from that commit, and stamps it into the output
-// header. Re-running against an unchanged upstream therefore rewrites a
-// byte-identical file, and a real upstream change shows up as a reviewable diff
-// naming the commit it came from. Both licenses are reproduced in
-// `ios/THIRD-PARTY.md`, which is the file to update if a third source appears.
+// The download is pinned to a commit rather than taken from a branch, so a
+// re-run against an unchanged upstream rewrites a byte-identical file; that
+// machinery — and the header block that stamps the commit — lives in
+// `resource-data.mjs`, which the English word-list generator shares. Both
+// licenses are reproduced in `ios/THIRD-PARTY.md`, which is the file to update
+// if a third source appears.
 //
 
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import {
+  downloadData as downloadPinned,
+  provenance as provenanceBlock,
+  resourcePath as generatedResourcePath,
+} from "./resource-data.mjs";
 
 export const REPO = "openvanilla/McBopomofo";
 export const BRANCH = "master";
@@ -40,53 +41,20 @@ export const MEDIALS = "ㄧㄨㄩ";
 export const FINALS = "ㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ";
 export const SYMBOLS = new Set([...INITIALS, ...MEDIALS, ...FINALS, ...TONES]);
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+/// Where a generated table lives. Re-exported so the two 注音 generators keep
+/// importing everything they need from one module.
+export const resourcePath = generatedResourcePath;
 
-/// Where a generated table lives, so neither generator has to know the layout.
-export function resourcePath(name) {
-  return join(root, "ios/ParleyKit/Sources/ParleyKit/Resources", name);
+/// Fetch the McBopomofo data files at one pinned commit — see
+/// `resource-data.mjs` for why the download is pinned rather than taken from a
+/// branch.
+export function downloadData(files, prefix) {
+  return downloadPinned({ repo: REPO, branch: BRANCH, files, prefix });
 }
 
-/// Resolve the branch, then fetch every file at that one commit. Returns the
-/// commit so the caller can stamp it into its header — see the note above on
-/// why the download is pinned.
-export async function downloadData(files, prefix) {
-  const commit = await resolveCommit();
-  const dir = await mkdtemp(join(tmpdir(), prefix));
-  const texts = await Promise.all(
-    files.map((path) => download(commit, path, dir))
-  );
-  return { commit, texts };
-}
-
-async function resolveCommit() {
-  const res = await fetch(
-    `https://api.github.com/repos/${REPO}/commits/${BRANCH}`,
-    { headers: { accept: "application/vnd.github.sha" } }
-  );
-  if (!res.ok) throw new Error(`resolving ${BRANCH}: HTTP ${res.status}`);
-  return (await res.text()).trim();
-}
-
-async function download(commit, path, dir) {
-  const url = `https://raw.githubusercontent.com/${REPO}/${commit}/${path}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
-  const file = join(dir, path.replaceAll("/", "_"));
-  await writeFile(file, Buffer.from(await res.arrayBuffer()));
-  return readFile(file, "utf8");
-}
-
-/// The provenance block both headers end with: what rebuilds the file, which
-/// commit it came from, the per-generator license lines, and where the notices
-/// are kept.
+/// The provenance block both 注音 headers end with, with this repository bound.
 export function provenance({ script, commit, sources }) {
-  return [
-    `# GENERATED — run scripts/${script} to rebuild; do not hand-edit.`,
-    `# Source: https://github.com/${REPO} @ ${commit}`,
-    ...sources,
-    "# See ios/THIRD-PARTY.md.",
-  ];
+  return provenanceBlock({ repo: REPO, script, commit, sources });
 }
 
 /// `phrase.occ` is `<phrase> <count>`. The dictionary wants only the

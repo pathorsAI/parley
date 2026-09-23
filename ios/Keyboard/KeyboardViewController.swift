@@ -73,6 +73,14 @@ final class KeyboardViewController: UIInputViewController {
     /// keyboard that only ever dictates never pays for it.
     private var zhuyin = ZhuyinComposer(dictionary: .bundled, phrases: ZhuyinPhrases.bundled)
 
+    /// The user's own words, offered ahead of the bundled list on the English
+    /// pane. Read once per appearance rather than per keystroke: it is a file in
+    /// the App Group, there are at most a few hundred of them, and whoever
+    /// edited it in Parley is not typing at that moment. Empty without Full
+    /// Access — the container is not openable then — which is a supported state
+    /// rather than a failure, because the pane has to keep suggesting there.
+    private var lexiconTerms: [String] = []
+
     /// A keyboard has no intrinsic height — without one it collapses to the
     /// system minimum and the layout looks broken. Every pane is measured to the
     /// same content area (`KBMetrics.height`), but the constraint still follows
@@ -87,18 +95,21 @@ final class KeyboardViewController: UIInputViewController {
         bridge.controller = self
         bridge.hasFullAccess = hasFullAccess
         bridge.showsGlobe = needsInputModeSwitchKey
-        // On Face ID phones iOS draws its own dictation key under a third-party
-        // keyboard, a thumb's length from our record button and starting
-        // Apple's dictation into the same field. Claiming a dictation key of
-        // our own is the documented way to have the system leave its out; the
-        // globe beside it stays.
-        hasDictationKey = true
+        // Not set: `hasDictationKey`. The system draws its own dictation key
+        // under this keyboard on Face ID phones, and the property's promise to
+        // disable it does not hold on iOS 26.5 — set in the initialisers and
+        // here, the key still opened Apple's dictation. See the design doc's
+        // globe section.
         let typing = TypingKeyboards.enabled().map(KeyboardPane.init)
         bridge.setPanes([.voice] + typing)
         // Without Full Access there is nothing to dictate with, so open on the
         // first pane that still works. App Review 4.4.1 judges the keyboard in
         // exactly this state.
         bridge.setPane(hasFullAccess ? .voice : (typing.first ?? .english), notify: false)
+        // `setPane(notify: false)` deliberately skips `paneDidChange`, so a
+        // keyboard that opens straight onto the English pane — which is what
+        // every keyboard without Full Access does — has to be warmed here.
+        if bridge.pane == .english { EnglishWords.bundled.warm() }
 
         // Let the system's own input view supply the background. It is already
         // the right colour, already rounds its corners the way the host expects
@@ -213,6 +224,11 @@ final class KeyboardViewController: UIInputViewController {
         // below, and for the same reason.
         zhuyin.clear()
         publishComposition()
+        // The field may be a different one, with a different word half-typed in
+        // front of the cursor, so both the user's terms and the bar are re-read
+        // rather than carried over.
+        lexiconTerms = LexiconStore.recognitionTerms()
+        refreshSuggestions()
         // The tail belongs to the field it was dictated into. Coming back to a
         // *different* field it would read as text that is already there, so it
         // is dropped unless a session is still running — `drainDownlink` below
@@ -268,6 +284,10 @@ final class KeyboardViewController: UIInputViewController {
         super.textDidChange(textInput)
         refreshAppearance()
         refreshReturnKey()
+        // The cursor may have moved somewhere this keyboard did not put it —
+        // a tap in the field, an autofill, the host rewriting its own text — so
+        // the word in front of it is re-read rather than assumed.
+        refreshSuggestions()
     }
 
     /// The constraint measures the whole input view, but the content is pinned
@@ -310,6 +330,11 @@ final class KeyboardViewController: UIInputViewController {
             ZhuyinDictionary.bundled.warm()
             ZhuyinPhrases.bundled.warm()
         }
+        // Same bargain on the English pane: reading and sorting 40,000 words is
+        // tens of milliseconds, and it belongs on the swipe rather than on the
+        // first letter typed.
+        if bridge.pane == .english { EnglishWords.bundled.warm() }
+        refreshSuggestions()
     }
 
     private func applyHeight(animated: Bool) {
@@ -989,6 +1014,59 @@ final class KeyboardViewController: UIInputViewController {
         if bridge.candidates != zhuyin.candidates { bridge.candidates = zhuyin.candidates }
     }
 
+    // MARK: English word suggestions
+
+    /// Re-read the word in front of the cursor and publish what it could become.
+    ///
+    /// Called after every key this keyboard types and from `textDidChange`,
+    /// because the cursor can also move without us — a tap in the field, an
+    /// autofill, the host rewriting its own text — and a bar describing a word
+    /// that is no longer there would replace the wrong letters on a tap.
+    ///
+    /// **Nothing here changes the document.** The bar is a set of offers; only
+    /// `pickSuggestion` acts, and only when tapped.
+    private func refreshSuggestions() {
+        guard bridge.pane == .english else {
+            // Cheaper than computing an answer nothing draws, and it means the
+            // bar can never be showing stale words when the user swipes back.
+            publishSuggestions(partial: "", suggestions: [])
+            return
+        }
+        let partial = WordSuggestions.partialWord(
+            before: textDocumentProxy.documentContextBeforeInput)
+        publishSuggestions(
+            partial: partial,
+            suggestions: WordSuggestions.suggestions(
+                for: partial, in: EnglishWords.bundled, lexiconTerms: lexiconTerms))
+    }
+
+    /// Assign only on a real change: every one of these is an `@Published` on
+    /// the bridge, and a keystroke that changed nothing should not redraw the
+    /// strip.
+    private func publishSuggestions(partial: String, suggestions: [String]) {
+        if bridge.partialWord != partial { bridge.partialWord = partial }
+        if bridge.suggestions != suggestions { bridge.suggestions = suggestions }
+    }
+
+    /// The user tapped a word: take back the letters they typed and put the
+    /// whole word in, with the space that ends it.
+    ///
+    /// Deleting by `unicodeScalars.count` rather than by `count` because
+    /// `deleteBackward()` removes one scalar at a time, and a partial word can
+    /// contain a grapheme made of several — a combining accent typed into the
+    /// field by another keyboard, for instance. Counting graphemes would leave
+    /// the remainder of one behind.
+    ///
+    /// The suggestion already carries the case the partial asked for, so it is
+    /// inserted as it is shown.
+    func pickSuggestion(_ word: String) {
+        let partial = bridge.partialWord
+        guard !partial.isEmpty else { return }
+        for _ in 0..<partial.unicodeScalars.count { textDocumentProxy.deleteBackward() }
+        textDocumentProxy.insertText(word + " ")
+        refreshSuggestions()
+    }
+
     // MARK: keys (called from SwiftUI)
 
     /// Delete edits the 注音 buffer before it edits the document — the candidate
@@ -996,6 +1074,7 @@ final class KeyboardViewController: UIInputViewController {
     /// once there is nothing pending. See `ZhuyinComposer.delete()`.
     func deleteBackward() {
         apply(zhuyin.delete()) { textDocumentProxy.deleteBackward() }
+        refreshSuggestions()
     }
 
     /// Type a character from the symbol planes, committing any pending 注音
@@ -1005,6 +1084,7 @@ final class KeyboardViewController: UIInputViewController {
     func insert(_ text: String) {
         apply(zhuyin.confirm())
         textDocumentProxy.insertText(text)
+        refreshSuggestions()
     }
 
     /// Return always types a line break. A keyboard extension cannot submit a
@@ -1017,6 +1097,7 @@ final class KeyboardViewController: UIInputViewController {
     /// breaks the line.
     func insertReturn() {
         apply(zhuyin.confirm()) { textDocumentProxy.insertText("\n") }
+        refreshSuggestions()
     }
 
     /// How close two taps on the space bar have to be to count as the period
@@ -1032,6 +1113,13 @@ final class KeyboardViewController: UIInputViewController {
     /// On the 注音 pane space is the first tone and then the confirm key, so a
     /// pending syllable claims it first.
     func insertSpace() {
+        typeSpace()
+        refreshSuggestions()
+    }
+
+    /// The body of `insertSpace`, split out only so its three exits all pass
+    /// through one `refreshSuggestions` above.
+    private func typeSpace() {
         switch zhuyin.space() {
         case .handled:
             publishComposition()
@@ -1209,6 +1297,15 @@ final class KeyboardBridge: ObservableObject {
     /// non-empty once the syllable has a tone.
     @Published var candidates: [String] = []
 
+    /// The English word the user is part-way through typing — the run of
+    /// letters before the cursor. Empty whenever the cursor is not inside a
+    /// word, which is what puts the wordmark back. Kept beside the suggestions
+    /// rather than derived from them because it is what a tap deletes.
+    @Published var partialWord = ""
+    /// What `partialWord` could become, best first, already cased to match what
+    /// was typed. Nothing acts on these without a tap — see `WordSuggestions`.
+    @Published var suggestions: [String] = []
+
     /// What the host field wants the return key to say. It never changes what
     /// the key does.
     @Published var returnKeyType: UIReturnKeyType = .default
@@ -1296,6 +1393,9 @@ final class KeyboardBridge: ObservableObject {
     func zhuyinSymbol(_ symbol: Character) { controller?.zhuyinSymbol(symbol) }
     func zhuyinTone(_ tone: ZhuyinTone) { controller?.zhuyinTone(tone) }
     func pickCandidate(_ candidate: String) { controller?.zhuyinPick(candidate) }
+
+    /// The user tapped a word in the English suggestion bar.
+    func pickSuggestion(_ word: String) { controller?.pickSuggestion(word) }
 }
 
 /// Best-effort resolution of the app the keyboard is typing into, for the app's
