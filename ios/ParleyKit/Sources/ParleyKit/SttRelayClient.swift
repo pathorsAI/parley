@@ -87,6 +87,10 @@ public actor SttRelayClient {
         }
     }
 
+    /// `start()` was called after `finish()` or `cancel()`. The client is one
+    /// session, and that session is over.
+    public struct Spent: Error {}
+
     /// Chunks held between the audio thread and the socket. A tap chunk is
     /// ~85 ms, so this is ~45 s of slack — deep enough to cover a slow
     /// handshake or a stalled radio, shallow enough that a socket that never
