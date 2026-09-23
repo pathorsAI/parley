@@ -86,6 +86,7 @@ final class DictationCoordinator: ObservableObject {
     /// it rather than opening its own. That is the entire mechanism — see the
     /// microphone-window section below.
     private var capture: AudioCapture?
+    private var opening: Task<AudioCapture?, Never>?
     private var relay: SttRelayClient?
     /// Bumped for every `AudioCapture` this object opens. Statuses carry the
     /// capture they came from, for exactly the reason relay events carry their
@@ -254,7 +255,9 @@ final class DictationCoordinator: ObservableObject {
         // session is already running (double-delivery of the URL, or the
         // Darwin start raced the URL), ignore.
         if active && session == self.session { return }
+        let owner = leg
         if active { await stop() }
+        guard leg == owner else { return }
         self.session = session
 
         let host = DictationChannel.readUplink()?.hostBundleID
@@ -330,6 +333,7 @@ final class DictationCoordinator: ObservableObject {
         // lands during `start()`, and a pane listening to a socket that no
         // longer exists when it lands after.
         leg += 1
+        let owner = leg
         reconnectAttempts = 0
         finishRequested = false
         reconnectTask?.cancel()
@@ -384,6 +388,7 @@ final class DictationCoordinator: ObservableObject {
             // "set up voice typing" — or must start saying it. Published
             // either way, since a refusal is news too.
             AppState.publishKeyboardReadiness()
+            guard owns(owner) else { return }
             guard granted else {
                 // Re-read to name the actual situation: a refusal in the
                 // prompt is a Settings trip; a prompt that never got answered
@@ -422,67 +427,55 @@ final class DictationCoordinator: ObservableObject {
         // backgrounded process, so a session that had to open the microphone
         // here would have to bring the app forward first — which is the app
         // switch this whole feature exists to avoid.
-        //
-        // **Only if there is something running to borrow.** Holding an
-        // `AudioCapture` is not the same as having a microphone. The engine can
-        // be torn down behind this object's back — a rebuild that runs out of
-        // attempts, a media-server reset that never recovers — and the only
-        // announcement is a status push, which has paths that reach nobody in a
-        // position to act on it. What is left is a non-nil capture that will
-        // never produce another sample; borrowing it put the session into
-        // `.listening` over a dead microphone, and because the borrow happens
-        // in the background there was no way back short of force-quitting
-        // Parley. So the question is whether the capture *is capturing*, not
-        // whether it exists.
-        if let stale = capture, !stale.isCapturing {
-            capture = nil
-            // Stopped rather than dropped: it still holds an audio session that
-            // the fresh capture below is about to activate for itself.
-            await stale.stop()
+        let microphone = await openMicrophone()
+        guard owns(owner) else {
+            // An ending that ran during the open found no capture to release;
+            // this one is nobody's.
+            if !active { await closeMicrophone() }
+            return
         }
-        if capture == nil {
-            let fresh = makeCapture()
-            do {
-                try await fresh.start()
-                capture = fresh
-            } catch {
-                relay = nil
-                audio.discard()
-                client.cancel()
-                // The realistic cause is iOS refusing a backgrounded process
-                // the microphone — which is exactly where a capture that died
-                // in a window leaves us, and not something this process can
-                // argue its way out of. `fail` takes the window down with it
-                // (see there), so the keyboard's pane goes back to promising a
-                // trip through Parley, where the microphone can be opened from
-                // the foreground. Handing the user back to a path that works
-                // beats leaving them talking into a session that is listening
-                // to nothing.
-                fail(
-                    UIApplication.shared.applicationState == .active
-                        ? String(localized: "Couldn't open the microphone.")
-                        : String(
-                            localized:
-                                "Couldn't open the microphone. Open Parley and tap the mic again."
-                        ))
-                return
-            }
+        guard microphone != nil else {
+            client.cancel()
+            relay = nil
+            audio.discard()
+            // The realistic cause is iOS refusing a backgrounded process the
+            // microphone. `fail` closes the window too, so the keyboard's pane
+            // goes back to promising a trip through Parley, where the
+            // microphone can be opened from the foreground.
+            fail(
+                UIApplication.shared.applicationState == .active
+                    ? String(localized: "Couldn't open the microphone.")
+                    : String(
+                        localized:
+                            "Couldn't open the microphone. Open Parley and tap the mic again."
+                    ))
+            return
         }
 
         do {
             try await client.start()
         } catch {
+            client.cancel()
+            guard owns(owner) else { return }
             relay = nil
             audio.discard()
-            client.cancel()
             // `fail` closes the microphone and any window with it — see there
             // for why an error is not something to leave an open window behind.
             fail(String(localized: "Connection failed. Please try again."))
             return
         }
+        guard owns(owner) else { return }
 
         publishLive(.listening)
         armCap()
+    }
+
+    /// Whether the session that read `owner` off `leg` is still the one
+    /// running. Every continuation in this object that resumes after an
+    /// `await` checks it before touching shared state; a relay event checks
+    /// its leg the same way.
+    private func owns(_ owner: Int) -> Bool {
+        leg == owner && active
     }
 
     /// The microphone, wired to the bridge once and for all.
@@ -635,7 +628,10 @@ final class DictationCoordinator: ObservableObject {
                         || UIApplication.shared.applicationState == .active
                     else { return }
                     if !self.canServeInPlace {
-                        guard await self.openMicrophoneInBackground() else { return }
+                        // Ahead of `begin`, so a refusal leaves the request
+                        // unanswered and the keyboard's URL fallback brings the
+                        // app forward, instead of `launch` publishing a failure.
+                        guard await self.openMicrophone() != nil else { return }
                     }
                     await self.begin(session: up.session)
                 }
@@ -987,7 +983,7 @@ final class DictationCoordinator: ObservableObject {
             reconnectAttempts = 0
             publishLive(.listening)
         } catch {
-            guard leg == targetLeg else { return }
+            guard leg == targetLeg, active, !finishRequested else { return }
             audio.hold()
             scheduleReconnect()
         }
@@ -1082,9 +1078,11 @@ final class DictationCoordinator: ObservableObject {
         stopReportingLevel()
         state = .finishing
         publish()
+        let owner = leg
         if let relay {
-            await relay.finish()  // drain: the relay flushes the last utterance
+            await relay.finish()
         }
+        guard owns(owner) else { return }
         finishUp()  // which hands the microphone to the window, or closes it
     }
 
@@ -1378,33 +1376,42 @@ final class DictationCoordinator: ObservableObject {
         await closeMicrophone()
     }
 
-    /// Open the microphone for a start request that reached this process in
-    /// the background with nothing running to borrow. `false` means iOS
-    /// refused the activation and the request should go unanswered.
-    private func openMicrophoneInBackground() async -> Bool {
-        if let stale = capture {
-            capture = nil
-            await stale.stop()
-        }
-        let fresh = makeCapture()
-        let started = Date()
-        do {
-            try await fresh.start()
-        } catch {
+    /// Opened at most once at a time: the keyboard's URL fallback fires
+    /// `startAckWindow` (700 ms) into a background start that is still
+    /// activating the audio session, and the foreground `launch` it triggers
+    /// used to open a second capture; the loser was never stopped and both fed
+    /// the bridge. A capture that exists but is not capturing is a corpse (the
+    /// engine can be torn down with no status reaching this object) and is
+    /// replaced.
+    private func openMicrophone() async -> AudioCapture? {
+        if let capture, capture.isCapturing { return capture }
+        if let opening { return await opening.value }
+        let task = Task { () -> AudioCapture? in
+            if let stale = self.capture {
+                self.capture = nil
+                // Stopped rather than dropped: `AudioCapture.deinit` does not
+                // deactivate the audio session the fresh one is about to take.
+                await stale.stop()
+            }
+            let fresh = self.makeCapture()
+            let started = Date()
+            do {
+                try await fresh.start()
+            } catch {
+                let ms = Int(Date().timeIntervalSince(started) * 1000)
+                Self.log.notice(
+                    "mic start refused after \(ms, privacy: .public) ms: \(error.localizedDescription, privacy: .public)"
+                )
+                return nil
+            }
             let ms = Int(Date().timeIntervalSince(started) * 1000)
-            Self.log.notice(
-                "background mic start refused after \(ms, privacy: .public) ms: \(error.localizedDescription, privacy: .public)"
-            )
-            return false
+            Self.log.notice("mic start took \(ms, privacy: .public) ms")
+            self.capture = fresh
+            return fresh
         }
-        // The keyboard waits `startAckWindow` (700 ms) for the `starting`
-        // downlink, which `launch()` writes after this returns. Above that the
-        // keyboard opens `parley://dictate` over a microphone already running,
-        // and `begin(session:)` restarts the session in the foreground.
-        let ms = Int(Date().timeIntervalSince(started) * 1000)
-        Self.log.notice("background mic start took \(ms, privacy: .public) ms")
-        capture = fresh
-        return true
+        opening = task
+        defer { opening = nil }
+        return await task.value
     }
 
     private static let log = Logger(subsystem: "com.pathors.parley", category: "Dictation")
@@ -1535,15 +1542,7 @@ final class DictationCoordinator: ObservableObject {
             publishWindow()
             return
         }
-        // A dead capture would make this window a promise about a microphone
-        // that is not there — the same trap `launch` avoids, reached from the
-        // other end. Foreground is the one place a replacement can actually be
-        // opened, so this is where it is worth replacing.
-        if let stale = capture, !stale.isCapturing {
-            capture = nil
-            await stale.stop()
-        }
-        if capture == nil {
+        if capture?.isCapturing != true {
             switch AudioCapture.permission {
             case .granted:
                 break
@@ -1564,11 +1563,7 @@ final class DictationCoordinator: ObservableObject {
                     return
                 }
             }
-            let fresh = makeCapture()
-            do {
-                try await fresh.start()
-                capture = fresh
-            } catch {
+            guard await openMicrophone() != nil else {
                 windowProblem = String(localized: "Couldn't open the microphone.")
                 window = .closed(length: length)
                 publishWindow()
@@ -1755,7 +1750,6 @@ final class DictationCoordinator: ObservableObject {
     /// user came back to Parley itself rather than bouncing to a host app).
     func dismiss() async {
         if active { await stop() }
-        active = false
     }
 
     #if DEBUG
