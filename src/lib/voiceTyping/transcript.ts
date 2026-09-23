@@ -36,11 +36,11 @@ function idIndex(id: string): number {
  */
 export class SessionTranscript {
   private session: number | null = null;
-  private finals = new Map<string, string>();
+  private readonly finals = new Map<string, string>();
   private interim = "";
   // Final segments are converted once and cached; only the live tail is
   // converted every token, so cost stays flat no matter how long the dictation.
-  private converted = new Map<string, { raw: string; conv: string }>();
+  private readonly converted = new Map<string, { raw: string; conv: string }>();
 
   /** Start over for `session`. */
   reset(session: number): void {
@@ -82,7 +82,7 @@ export class SessionTranscript {
     for (const [id, raw] of entries) {
       const cached = this.converted.get(id);
       let conv: string;
-      if (cached && cached.raw === raw) {
+      if (cached?.raw === raw) {
         conv = cached.conv;
       } else {
         conv = await normalize(raw);
