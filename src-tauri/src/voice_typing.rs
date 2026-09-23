@@ -431,6 +431,15 @@ pub fn present_voice_overlay(app: AppHandle) {
     let _ = app;
 }
 
+/// Keep a visible overlay in front of the user as they swipe between Spaces
+/// (macOS Spaces; a no-op elsewhere). Installed once at setup.
+pub fn install_space_observer(app: AppHandle) {
+    #[cfg(target_os = "macos")]
+    imp::install_space_observer(app);
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+}
+
 /// Hide the overlay (`orderOut:` on macOS, `SW_HIDE` on Windows), the
 /// counterpart to `present_voice_overlay`.
 #[tauri::command]
@@ -621,8 +630,216 @@ mod imp {
             let _: () = msg_send![w, setCollectionBehavior: OVERLAY_COLLECTION_BEHAVIOR];
             let _: () = msg_send![w, setLevel: OVERLAY_WINDOW_LEVEL];
             let _: () = msg_send![w, orderFrontRegardless];
+            // canJoinAllSpaces alone isn't enough over a long-running session:
+            // see spaces::rejoin_all for why the flag and the window server's
+            // actual placement drift apart.
+            spaces::rejoin_all(w);
         }
         log::info!("voice-typing: overlay presented (panel)");
+    }
+
+    /// Re-home the overlay whenever the active Space changes (a trackpad swipe,
+    /// Ctrl+←/→, Mission Control) while it is on screen. The present-time
+    /// rejoin covers every Space that existed when the dictation began; this
+    /// covers the rest, e.g. an app entering full screen mid-dictation, so
+    /// swiping to any Space mid-sentence keeps the overlay in front of the user.
+    pub fn install_space_observer(app: tauri::AppHandle) {
+        use block2::RcBlock;
+        use tauri::Manager;
+        unsafe {
+            let ws: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let nc: *mut Object = msg_send![ws, notificationCenter];
+            let queue: *mut Object = msg_send![class!(NSOperationQueue), mainQueue];
+            let block = RcBlock::<dyn Fn(*mut c_void)>::new(move |_note| {
+                let Some(win) = app.get_webview_window("voice-typing") else {
+                    return;
+                };
+                let Ok(ns) = win.ns_window() else {
+                    return;
+                };
+                let w = ns as *mut Object;
+                let visible: bool = msg_send![w, isVisible];
+                if !visible {
+                    return; // idle — the next present rejoins anyway
+                }
+                spaces::rejoin_all(w);
+                let _: () = msg_send![w, orderFrontRegardless];
+            });
+            let name = CFString::new("NSWorkspaceActiveSpaceDidChangeNotification");
+            let name_obj = name.as_concrete_TypeRef() as *const Object;
+            let nil: *mut Object = std::ptr::null_mut();
+            let _observer: *mut Object = msg_send![nc, addObserverForName: name_obj object: nil queue: queue usingBlock: &*block];
+            // Never removed — the center keeps the observer + block alive for
+            // the app's lifetime; forget our handle so it isn't dropped under it.
+            std::mem::forget(block);
+        }
+    }
+
+    /// Keeping the overlay a member of every Space.
+    ///
+    /// `canJoinAllSpaces` is supposed to make the window server show the
+    /// overlay on every Space. It does when the flag is first applied, but in a
+    /// long-running session the window server's actual placement drifts away
+    /// from it: a Parley that had been up for days had its overlay attached to
+    /// just the desktop Space and the one full-screen Space it was last shown
+    /// on, while the flag still read canJoinAllSpaces. Swiping to any other
+    /// full-screen app then left the overlay behind on Parley's Space. Nothing
+    /// public repairs that in place — re-applying the same collection
+    /// behaviour, clearing and re-setting it, round-tripping it through
+    /// moveToActiveSpace, re-ordering the window or changing its level all
+    /// leave the placement as it is — and recreating the window mid-dictation
+    /// would lose the transcript the overlay has already rendered.
+    ///
+    /// So we reconcile the placement directly: ask the window server which
+    /// Spaces exist and which ones the overlay is on, and add it to the rest.
+    /// These are SkyLight's private CGS calls (the same ones window managers
+    /// use), so they are looked up at runtime with `dlsym` rather than linked:
+    /// if a future macOS drops or renames one, the lookup fails and this
+    /// becomes a no-op, rather than dyld refusing to launch the app over a
+    /// missing symbol.
+    mod spaces {
+        use core_foundation::array::{CFArray, CFArrayRef};
+        use core_foundation::base::{CFType, TCFType};
+        use core_foundation::dictionary::CFDictionary;
+        use core_foundation::number::CFNumber;
+        use core_foundation::string::CFString;
+        use objc::runtime::Object;
+        use objc::{msg_send, sel, sel_impl};
+        use std::collections::BTreeSet;
+        use std::ffi::{c_char, c_void};
+        use std::sync::OnceLock;
+
+        extern "C" {
+            fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+        }
+        /// `RTLD_DEFAULT` on Darwin: search every image already loaded (AppKit
+        /// pulls in SkyLight, which exports the CGS symbols).
+        const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
+        /// kCGSAllSpacesMask — user, full-screen and system Spaces alike.
+        const ALL_SPACES_MASK: i32 = 0x7;
+
+        type MainConnectionFn = unsafe extern "C" fn() -> i32;
+        type CopyManagedDisplaySpacesFn = unsafe extern "C" fn(i32) -> CFArrayRef;
+        type CopySpacesForWindowsFn = unsafe extern "C" fn(i32, i32, CFArrayRef) -> CFArrayRef;
+        type AddWindowsToSpacesFn = unsafe extern "C" fn(i32, CFArrayRef, CFArrayRef);
+
+        struct Api {
+            main_connection: MainConnectionFn,
+            copy_managed_display_spaces: CopyManagedDisplaySpacesFn,
+            copy_spaces_for_windows: CopySpacesForWindowsFn,
+            add_windows_to_spaces: AddWindowsToSpacesFn,
+        }
+
+        fn api() -> Option<&'static Api> {
+            static API: OnceLock<Option<Api>> = OnceLock::new();
+            API.get_or_init(|| unsafe {
+                let sym = |name: &[u8]| dlsym(RTLD_DEFAULT, name.as_ptr() as *const c_char);
+                let main = sym(b"CGSMainConnectionID\0");
+                let managed = sym(b"CGSCopyManagedDisplaySpaces\0");
+                let for_windows = sym(b"CGSCopySpacesForWindows\0");
+                let add = sym(b"CGSAddWindowsToSpaces\0");
+                if [main, managed, for_windows, add].iter().any(|p| p.is_null()) {
+                    log::warn!("voice-typing: CGS Spaces API unavailable; overlay Space repair disabled");
+                    return None;
+                }
+                Some(Api {
+                    main_connection: std::mem::transmute::<*mut c_void, MainConnectionFn>(main),
+                    copy_managed_display_spaces: std::mem::transmute::<
+                        *mut c_void,
+                        CopyManagedDisplaySpacesFn,
+                    >(managed),
+                    copy_spaces_for_windows: std::mem::transmute::<
+                        *mut c_void,
+                        CopySpacesForWindowsFn,
+                    >(for_windows),
+                    add_windows_to_spaces: std::mem::transmute::<*mut c_void, AddWindowsToSpacesFn>(
+                        add,
+                    ),
+                })
+            })
+            .as_ref()
+        }
+
+        /// Items of a CF array we got under the create rule, as owned CFTypes.
+        unsafe fn items(raw: CFArrayRef) -> Vec<CFType> {
+            if raw.is_null() {
+                return Vec::new();
+            }
+            let arr: CFArray<*const c_void> = CFArray::wrap_under_create_rule(raw);
+            arr.iter().map(|p| CFType::wrap_under_get_rule(*p)).collect()
+        }
+
+        /// `dict[key]` for an untyped CF dictionary.
+        fn value(dict: &CFType, key: &CFString) -> Option<CFType> {
+            let dict = dict.downcast::<CFDictionary>()?;
+            let v = dict.find(key.as_CFTypeRef())?;
+            Some(unsafe { CFType::wrap_under_get_rule(*v) })
+        }
+
+        fn as_i64(v: &CFType) -> Option<i64> {
+            v.downcast::<CFNumber>()?.to_i64()
+        }
+
+        /// Every Space the window server manages, across all displays
+        /// (`[{ "Spaces": [{ "ManagedSpaceID": n, … }], … }]`).
+        unsafe fn all_space_ids(api: &Api, cid: i32) -> BTreeSet<i64> {
+            let spaces_key = CFString::from_static_string("Spaces");
+            let id_key = CFString::from_static_string("ManagedSpaceID");
+            let mut ids = BTreeSet::new();
+            for display in items((api.copy_managed_display_spaces)(cid)) {
+                let Some(spaces) = value(&display, &spaces_key) else {
+                    continue;
+                };
+                let Some(spaces) = spaces.downcast::<CFArray>() else {
+                    continue;
+                };
+                for space in spaces.iter() {
+                    let space = CFType::wrap_under_get_rule(*space);
+                    if let Some(id) = value(&space, &id_key).as_ref().and_then(as_i64) {
+                        ids.insert(id);
+                    }
+                }
+            }
+            ids
+        }
+
+        /// Add the window to any Space it's missing from. Cheap when nothing is
+        /// missing (two window-server queries), so it can run on every present.
+        pub unsafe fn rejoin_all(w: *mut Object) {
+            let Some(api) = api() else {
+                return;
+            };
+            let wid: i64 = msg_send![w, windowNumber];
+            if wid <= 0 {
+                return; // no window-server window yet
+            }
+            let cid = (api.main_connection)();
+            let all = all_space_ids(api, cid);
+            if all.is_empty() {
+                return;
+            }
+            let wids = CFArray::from_CFTypes(&[CFNumber::from(wid)]);
+            let on: BTreeSet<i64> = items((api.copy_spaces_for_windows)(
+                cid,
+                ALL_SPACES_MASK,
+                wids.as_concrete_TypeRef(),
+            ))
+            .iter()
+            .filter_map(as_i64)
+            .collect();
+            let missing: Vec<CFNumber> = all.difference(&on).map(|&id| CFNumber::from(id)).collect();
+            if missing.is_empty() {
+                return;
+            }
+            log::info!(
+                "voice-typing: overlay was on {} of {} Spaces; rejoining the other {}",
+                on.len(),
+                all.len(),
+                missing.len()
+            );
+            let missing = CFArray::from_CFTypes(&missing);
+            (api.add_windows_to_spaces)(cid, wids.as_concrete_TypeRef(), missing.as_concrete_TypeRef());
+        }
     }
 
     pub fn dismiss_overlay(ns_window: *mut std::ffi::c_void) {
