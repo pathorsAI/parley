@@ -34,29 +34,81 @@ const FLUSH_ABORT_GRACE: std::time::Duration = std::time::Duration::from_secs(8)
 /// so it must not race the normal frontend stop.
 const CAP_BACKEND_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// Singleton guard for the voice-typing STT session task. [`MicCoordinator`]
-/// already guarantees at most one CAPTURE, but the session task it feeds (the
-/// provider WebSocket) used to be fire-and-forget: after release it lingers to
-/// flush the final tokens, and a server that never closes leaves it parked
-/// forever with an open socket. Each new press then opened ANOTHER socket
-/// while the old session kept emitting into the same `voice-typing-{n}` /
-/// `voice-typing-tail` segment-id namespace — the overlay showed both
-/// sessions' tokens interleaved (transcript "stacking"). This state pins the
-/// one live task so a new start aborts the old socket first and a stop bounds
-/// its flush.
-#[derive(Default)]
+/// The one live voice-typing session. [`MicCoordinator`] already guarantees at
+/// most one CAPTURE, but the session task it feeds (the provider WebSocket)
+/// lingers after release to flush the final tokens, and a server that never
+/// closes leaves it parked with an open socket. This state pins that task so
+/// the next start retires it before opening a new one, and a stop bounds its
+/// flush.
+#[derive(Default, Clone)]
 pub struct VoiceTypingState(Arc<Mutex<VtInner>>);
 
 #[derive(Default)]
 struct VtInner {
-    /// Bumped on every start; stale backstops/starts compare against it so
-    /// they can never abort a NEWER session than the one they belong to.
-    seq: u64,
+    /// Id of the newest session, bumped on every start. Every event the
+    /// session task emits carries it, so the overlay and the host can tell a
+    /// previous session's late output from the current one's. Backstops
+    /// compare against it so they can never abort a NEWER session than the
+    /// one they belong to.
+    session: u64,
     task: Option<tauri::async_runtime::JoinHandle<()>>,
     /// The current session's audio cutoff. `stop_voice_typing` sets it to hard
     /// cut the stream on release so nothing said after the key is let go is
     /// transcribed (see `run_metered_session`). Replaced each start.
     cutoff: Option<Arc<AtomicBool>>,
+}
+
+impl VoiceTypingState {
+    /// Retire the running session task and hand out the next session id.
+    /// Aborting a finished task is a no-op; a task still flushing is cut off,
+    /// which also drops its `usage://stt` emit for that session's last
+    /// seconds (acceptable: relay billing is server-side).
+    async fn open_session(&self) -> u64 {
+        let (session, previous) = {
+            let mut vt = self.0.lock().unwrap();
+            vt.session += 1;
+            (vt.session, vt.task.take())
+        };
+        if let Some(task) = previous {
+            task.abort();
+        }
+        session
+    }
+
+    /// Pin `task` as `session`'s. If a newer start won the race while the
+    /// task was being spawned, ours is the stale one: kill it instead of
+    /// clobbering the newer handle (the newer start already stopped our
+    /// capture and owns the mic claim).
+    fn adopt(
+        &self,
+        session: u64,
+        task: tauri::async_runtime::JoinHandle<()>,
+        cutoff: Arc<AtomicBool>,
+    ) {
+        let mut vt = self.0.lock().unwrap();
+        if vt.session == session {
+            vt.task = Some(task);
+            vt.cutoff = Some(cutoff);
+        } else {
+            task.abort();
+        }
+    }
+
+    fn is_current(&self, session: u64) -> bool {
+        self.0.lock().unwrap().session == session
+    }
+
+    /// Cancel `session`'s task if it is still the current one. The handle
+    /// stays in place: only the next start takes it, so that start can wait
+    /// for the task to be gone.
+    fn abort_if_current(&self, session: u64) {
+        let vt = self.0.lock().unwrap();
+        if vt.session == session {
+            if let Some(task) = vt.task.as_ref() {
+                task.abort();
+            }
+        }
+    }
 }
 
 /// Start a mic-only streaming transcription. Idempotent while already running.
@@ -114,23 +166,12 @@ pub async fn start_voice_typing(
         return Err("hosted transcription requires the cloud relay URL".into());
     }
     // A press must always yield a FRESH session. Release any voice-typing mic
-    // claim left by a desynced frontend (no-op when idle), and abort the
-    // previous session task outright — if it is still flushing, its late
-    // tokens would interleave with the new session's in the overlay, and its
-    // socket must close before we open the next one. Aborting a finished task
-    // is a no-op. Trade-off: aborting a mid-flush session also drops its
-    // `usage://stt` emit, undercounting the local cost display for that
-    // session's last seconds — acceptable (relay billing is server-side, and
-    // the alternative is the transcript stacking this fixes).
+    // claim left by a desynced frontend (no-op when idle), and retire the
+    // previous session task: if it is still flushing, its late tokens would
+    // interleave with the new session's in the overlay, and its socket must
+    // close before we open the next one.
     coord.stop(MicUser::VoiceTyping);
-    let my_seq = {
-        let mut vt = state.0.lock().unwrap();
-        vt.seq += 1;
-        if let Some(task) = vt.task.take() {
-            task.abort();
-        }
-        vt.seq
-    };
+    let session = state.open_session().await;
     let Some(rx) = acquire_mic(&coord, &tap, input_device)? else {
         // Unreachable in practice: the host serializes press/release, so no
         // second voice-typing start can land between the stop above and this
@@ -165,26 +206,15 @@ pub async fn start_voice_typing(
         // meeting (whose mic it taps) is paused.
         None,
     );
-    // Pin the session task so the next start (or stop's backstop) can abort
-    // it. If a newer start won the race while we were spawning, ours is the
-    // stale one — kill our own task instead of clobbering the newer handle
-    // (the newer start already stopped our capture and owns the mic claim).
-    let mut vt = state.0.lock().unwrap();
-    if vt.seq == my_seq {
-        vt.task = Some(task);
-        vt.cutoff = Some(cutoff);
-    } else {
-        task.abort();
-    }
-    drop(vt);
+    state.adopt(session, task, cutoff);
 
     // Backend safety net for the hosted single-session cap: if the frontend
     // never stops this session (webview hung/crashed), tear the mic down after
-    // the cap + grace so the paid relay stops streaming. Guarded by `seq` so it
-    // can never stop a newer session started in the meantime. No-op if that
-    // session already ended (mic not owned, task already taken).
+    // the cap + grace so the paid relay stops streaming. Guarded by the
+    // session id so it can never stop a newer session started in the
+    // meantime. No-op if that session already ended (mic not owned).
     if let Some(secs) = max_duration_secs.filter(|s| *s > 0) {
-        arm_cap_watchdog(&app, state.0.clone(), my_seq, secs);
+        arm_cap_watchdog(&app, state.inner().clone(), session, secs);
     }
     Ok(())
 }
@@ -228,24 +258,18 @@ fn acquire_mic(
 }
 
 /// Force-stop the mic once the hosted per-dictation cap (+ grace) has passed,
-/// unless the session identified by `my_seq` already ended or was superseded.
-fn arm_cap_watchdog(app: &AppHandle, inner: Arc<Mutex<VtInner>>, my_seq: u64, secs: u64) {
+/// unless `session` already ended or was superseded.
+fn arm_cap_watchdog(app: &AppHandle, state: VoiceTypingState, session: u64, secs: u64) {
     let app = app.clone();
     let deadline = std::time::Duration::from_secs(secs) + CAP_BACKEND_GRACE;
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(deadline).await;
-        let still_current = { inner.lock().unwrap().seq == my_seq };
-        if !still_current {
+        if !state.is_current(session) {
             return;
         }
         log::warn!("voice-typing: hosted session exceeded {secs}s cap; backend safety-stop");
         app.state::<MicCoordinator>().stop(MicUser::VoiceTyping);
-        let mut vt = inner.lock().unwrap();
-        if vt.seq == my_seq {
-            if let Some(task) = vt.task.take() {
-                task.abort();
-            }
-        }
+        state.abort_if_current(session);
     });
 }
 
@@ -290,8 +314,8 @@ pub fn write_voice_history(app: AppHandle, content: String) -> Result<(), String
 /// Backstop: a provider/relay that never closes the socket would leave the
 /// session task parked on its read half forever. Mirror `stop_meeting`'s
 /// direct-cancel safety net — abort the task once the flush window has long
-/// passed. Guarded by `seq` so a backstop from THIS session can never abort a
-/// newer one started during the grace.
+/// passed. Guarded by the session id so a backstop from THIS session can never
+/// abort a newer one started during the grace.
 ///
 /// `async` for the same reason as [`start_voice_typing`], with one extra: the
 /// `coord.stop` below joins the capture threads with a bounded grace, and doing
@@ -309,16 +333,11 @@ pub async fn stop_voice_typing(
         cutoff.store(true, Ordering::SeqCst);
     }
     coord.stop(MicUser::VoiceTyping);
-    let my_seq = state.0.lock().unwrap().seq;
-    let inner = state.0.clone();
+    let session = state.0.lock().unwrap().session;
+    let state = state.inner().clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(FLUSH_ABORT_GRACE).await;
-        let mut vt = inner.lock().unwrap();
-        if vt.seq == my_seq {
-            if let Some(task) = vt.task.take() {
-                task.abort();
-            }
-        }
+        state.abort_if_current(session);
     });
     Ok(())
 }
@@ -1221,5 +1240,48 @@ mod imp {
     }
     pub fn accessibility_trusted(_prompt: bool) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod session_gate_tests {
+    use super::VoiceTypingState;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::mpsc::unbounded_channel;
+
+    /// The previous session's task must be gone, not merely told to stop, by
+    /// the time the next session id is handed out. A task mid-poll when
+    /// `abort()` is called finishes that poll, so a stale final can follow the
+    /// new session's reset into the overlay unless the handover waits for it.
+    #[tokio::test]
+    async fn a_new_session_opens_only_after_the_previous_task_stops_emitting() {
+        let state = VoiceTypingState::default();
+        let first = state.open_session().await;
+        let (entered_tx, mut entered_rx) = unbounded_channel::<()>();
+        let (emit_tx, mut emit_rx) = unbounded_channel::<&'static str>();
+        let task = tauri::async_runtime::spawn(async move {
+            loop {
+                let _ = entered_tx.send(());
+                // A poll that is still running when the next start aborts it.
+                std::thread::sleep(Duration::from_millis(30));
+                let _ = emit_tx.send("tail final");
+                tokio::task::yield_now().await;
+            }
+        });
+        state.adopt(first, task, Arc::new(AtomicBool::new(false)));
+        entered_rx.recv().await;
+
+        let second = state.open_session().await;
+        assert_eq!(second, first + 1);
+
+        while emit_rx.try_recv().is_ok() {}
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            emit_rx.try_recv().ok(),
+            None,
+            "the previous session's task emitted after the new session opened"
+        );
     }
 }

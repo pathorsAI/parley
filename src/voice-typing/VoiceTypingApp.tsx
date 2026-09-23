@@ -7,6 +7,7 @@ import { useI18n, type TranslationKey } from "../i18n";
 import { useThemePreference } from "../lib/theme";
 import { formatChordLabel, modChordCap } from "../lib/commands/format";
 import { log } from "../lib/log";
+import { SessionTranscript, type Segment } from "../lib/voiceTyping/transcript";
 import {
   SUGGEST_ACTION_EVENT,
   SUGGEST_EVENT,
@@ -35,19 +36,15 @@ const WAVE_PROFILE = [
 const DONE_DWELL_MS = 2150;
 const FADE_MS = 450;
 
-interface SegPayload {
-  id: string;
-  source: string;
-  text: string;
-  is_final: boolean;
-}
 interface LevelPayload {
   source: string;
   level: number;
+  session?: number;
 }
 interface SessionPayload {
   phase: "start" | "stop" | "polishing" | "done" | "error" | "limit";
   message?: string;
+  session?: number;
 }
 
 /** Overlay message per error phase `message`: the host's own "no-key", or a
@@ -68,12 +65,6 @@ const ERROR_KEYS: Record<string, TranslationKey> = {
  *  of the pipeline the user waits a noticeable beat for, and a spinner that
  *  does not say why reads as a hang. */
 type Phase = "listening" | "finalizing" | "polishing" | "done";
-
-/** Numeric index from a "voice-typing-{n}" segment id (tail sorts last). */
-function idIndex(id: string): number {
-  const m = /-(\d+)$/.exec(id);
-  return m ? Number.parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
-}
 
 /** Report a bubble button back to the host, which owns every decision. */
 function suggestAct(action: SuggestActionPayload["action"]): void {
@@ -134,11 +125,7 @@ export const VoiceTypingApp = () => {
     Array.from({ length: BAR_COUNT }, () => BAR_FLOOR),
   );
 
-  const finalsRef = useRef<Map<string, string>>(new Map());
-  const interimRef = useRef("");
-  // Cache the Simplified→Traditional conversion per final segment so a long
-  // dictation doesn't re-convert the whole transcript on every incoming token.
-  const convertedRef = useRef<Map<string, { raw: string; conv: string }>>(new Map());
+  const transcript = useRef(new SessionTranscript());
   // Stable per-position keys for the waveform bars (values shift, positions don't).
   const barKeys = useRef(Array.from({ length: BAR_COUNT }, (_, i) => `bar-${i}`));
 
@@ -158,26 +145,10 @@ export const VoiceTypingApp = () => {
     };
   }, []);
 
-  // Recompute display text from the raw refs, convert, and publish to the host.
-  // Final segments are converted once and cached; only the live interim tail is
-  // converted every token, so cost stays flat no matter how long the dictation.
+  // Render the transcript, show it, and report it to the host.
   const publish = useRef(async () => {});
   publish.current = async () => {
-    const entries = [...finalsRef.current.entries()].sort((a, b) => idIndex(a[0]) - idIndex(b[0]));
-    let finals = "";
-    for (const [id, raw] of entries) {
-      const cached = convertedRef.current.get(id);
-      let conv: string;
-      if (cached && cached.raw === raw) {
-        conv = cached.conv;
-      } else {
-        conv = await normalizeTranscriptText(raw);
-        convertedRef.current.set(id, { raw, conv });
-      }
-      finals += conv;
-    }
-    const interim = interimRef.current ? await normalizeTranscriptText(interimRef.current) : "";
-    const full = (finals + interim).trim();
+    const full = await transcript.current.render(normalizeTranscriptText);
     setText(full);
     emit("voicetyping://text", { text: full }).catch((error) =>
       log.warn("voice typing overlay: text publish failed", { error: String(error) }),
@@ -207,15 +178,9 @@ export const VoiceTypingApp = () => {
     preloadZhConverter();
 
     track(
-      listen<SegPayload>("transcript://segment", (e) => {
+      listen<Segment>("transcript://segment", (e) => {
         const p = e.payload;
-        if (p.source !== "voice-typing") return;
-        if (p.is_final) {
-          finalsRef.current.set(p.id, p.text);
-          interimRef.current = ""; // the committed run supersedes the tail
-        } else {
-          interimRef.current = p.text;
-        }
+        if (!transcript.current.accept(p)) return;
         publish.current().catch((error) =>
           log.warn("voice typing overlay: transcript publish failed", {
             segmentId: p.id,
@@ -227,7 +192,7 @@ export const VoiceTypingApp = () => {
 
     track(
       listen<LevelPayload>("audio://level", (e) => {
-        if (e.payload.source !== "voice-typing") return;
+        if (!transcript.current.owns(e.payload)) return;
         setBars(instantWaveform(e.payload.level));
       }),
     );
@@ -236,9 +201,7 @@ export const VoiceTypingApp = () => {
       listen<SessionPayload>("voicetyping://session", (e) => {
         const { phase: p, message } = e.payload;
         if (p === "start") {
-          finalsRef.current.clear();
-          convertedRef.current.clear();
-          interimRef.current = "";
+          transcript.current.reset(e.payload.session ?? 0);
           setText("");
           setError(null);
           setLimited(false);
