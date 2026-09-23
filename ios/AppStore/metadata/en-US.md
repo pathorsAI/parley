@@ -83,6 +83,20 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.18
+
+Dictating twice in a row stays where you are.
+
+After a dictation, Parley now keeps the microphone for 30 seconds, even with
+"Keep the microphone ready" off. Tap the mic again within that time and it
+records right in the app you are typing in, instead of bringing Parley forward a
+second time. iOS shows the orange microphone dot for those 30 seconds, because
+Parley really is holding the microphone; nothing is recorded, transcribed, or
+sent until you tap.
+
+While you dictate, delete, return and @ now stay in place, dimmed, instead of
+disappearing, so the voice pane no longer looks like it emptied out.
+
 ## What's New — 1.17
 
 The English keyboard suggests words as you type.
