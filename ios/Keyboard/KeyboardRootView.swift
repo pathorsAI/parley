@@ -412,14 +412,13 @@ struct KeyboardRootView: View {
     /// open nothing has landed in the field yet — insertion is one shot at
     /// `done` — so ⌫ would eat text typed *before* the dictation, ⏎ would
     /// break a line under words that have not arrived, and `@` is a shortcut
-    /// nobody reaches for mid-sentence. The disc keeps its slot and goes
-    /// invisible and inert rather than leaving, so the record button and ✕
-    /// never move under the finger.
+    /// nobody reaches for mid-sentence. The disc stays where it is, dimmed and
+    /// inert, rather than vanishing: a deck that empties out the moment ✕
+    /// appears reads as the keyboard breaking, not as keys that are resting.
     private func resting<V: View>(_ control: V) -> some View {
         control
-            .opacity(bridge.listening ? 0 : 1)
+            .opacity(bridge.listening ? 0.35 : 1)
             .disabled(bridge.listening)
-            .accessibilityHidden(bridge.listening)
     }
 
     @ViewBuilder
