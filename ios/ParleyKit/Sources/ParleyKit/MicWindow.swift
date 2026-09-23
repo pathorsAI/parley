@@ -28,8 +28,9 @@ import Foundation
 /// One hour is kept because it is bounded, self-terminating, and matches a
 /// stretch of writing; the copy next to it says plainly what it costs.
 public enum MicWindowLength: String, Codable, CaseIterable, Sendable, Identifiable {
-    /// No window. The microphone closes with the dictation, exactly as it did
-    /// before this setting existed, and every keyboard tap opens Parley.
+    /// No window. The app still holds the microphone for 30 seconds after a
+    /// dictation so an immediate second tap stays put; past that, a tap opens
+    /// Parley.
     case off
     case fiveMinutes
     case fifteenMinutes

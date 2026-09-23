@@ -359,19 +359,19 @@
         }
       }
     },
-    "After you dictate, Parley can hold the microphone open for a while, so the next tap on the keyboard's mic types where you already are instead of opening Parley.\n\niOS shows the orange microphone dot for the whole time, because Parley really is holding the microphone. It is not listening through it: nothing is recorded, transcribed, or sent until you tap the mic, and sound that arrives before then is thrown away as it comes in. The window ends on its own, and you can end it early here or from the keyboard.": {
+    "After you dictate, Parley can hold the microphone open for a while, so the next tap on the keyboard's mic types where you already are instead of opening Parley. Even when this is off, Parley keeps the microphone for 30 seconds after each dictation, so dictating again right away stays where you are too.\n\niOS shows the orange microphone dot for the whole time, because Parley really is holding the microphone. It is not listening through it: nothing is recorded, transcribed, or sent until you tap the mic, and sound that arrives before then is thrown away as it comes in. The window ends on its own, and you can end it early here or from the keyboard.": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "After you dictate, Parley can hold the microphone open for a while, so the next tap on the keyboard's mic types where you already are instead of opening Parley.\n\niOS shows the orange microphone dot for the whole time, because Parley really is holding the microphone. It is not listening through it: nothing is recorded, transcribed, or sent until you tap the mic, and sound that arrives before then is thrown away as it comes in. The window ends on its own, and you can end it early here or from the keyboard."
+            "value": "After you dictate, Parley can hold the microphone open for a while, so the next tap on the keyboard's mic types where you already are instead of opening Parley. Even when this is off, Parley keeps the microphone for 30 seconds after each dictation, so dictating again right away stays where you are too.\n\niOS shows the orange microphone dot for the whole time, because Parley really is holding the microphone. It is not listening through it: nothing is recorded, transcribed, or sent until you tap the mic, and sound that arrives before then is thrown away as it comes in. The window ends on its own, and you can end it early here or from the keyboard."
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "聽寫結束後，Parley 可以先把麥克風留著一段時間。在這段時間內按鍵盤上的麥克風，就會直接在你正在打字的 App 裡開始聽寫，不會跳到 Parley。\n\n這段時間內 iOS 會一直顯示橘色的麥克風指示點，因為 Parley 確實佔用著麥克風。但它不會透過麥克風聽你說話：在你按下麥克風之前，不會錄音、不會轉錄、也不會送出任何東西，期間收到的聲音會邊收邊丟掉。時間到會自動結束，你也可以在這裡或在鍵盤上提前結束。"
+            "value": "聽寫結束後，Parley 可以先把麥克風留著一段時間。在這段時間內按鍵盤上的麥克風，就會直接在你正在打字的 App 裡開始聽寫，不會跳到 Parley。即使這裡設為關閉，每次聽寫後 Parley 仍會留著麥克風 30 秒，讓你馬上再聽寫時也不必跳到 Parley。\n\n這段時間內 iOS 會一直顯示橘色的麥克風指示點，因為 Parley 確實佔用著麥克風。但它不會透過麥克風聽你說話：在你按下麥克風之前，不會錄音、不會轉錄、也不會送出任何東西，期間收到的聲音會邊收邊丟掉。時間到會自動結束，你也可以在這裡或在鍵盤上提前結束。"
           }
         }
       }

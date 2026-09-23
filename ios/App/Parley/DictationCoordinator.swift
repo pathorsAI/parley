@@ -133,6 +133,8 @@ final class DictationCoordinator: ObservableObject {
     private var windowControlObserver: DarwinObserver?
     /// Heartbeat + expiry for the open window, in one loop (see `runWindow`).
     private var windowTask: Task<Void, Never>?
+    private var holdTask: Task<Void, Never>?
+    private static let holdAfterDictation: Duration = .seconds(30)
     /// A meeting recording has taken the microphone (see `yieldMicrophone`).
     private var yieldedToMeeting = false
     /// Whether the microphone's level is still worth reporting. Read on the
@@ -300,6 +302,8 @@ final class DictationCoordinator: ObservableObject {
 
     private func launch() async {
         endLinger()  // the live audio session keeps the process awake from here
+        holdTask?.cancel()
+        holdTask = nil
         reportsLevel.set(true)
         yieldedToMeeting = false
         errorMessage = nil
@@ -1331,8 +1335,32 @@ final class DictationCoordinator: ObservableObject {
             openWindow(opened)
             return
         }
+        if !yieldedToMeeting, capture?.isCapturing == true {
+            holdMicrophone()
+            return
+        }
         await closeMicrophone()
         beginLinger()
+    }
+
+    /// With no window, the microphone still stays open for `holdAfterDictation`
+    /// after a dictation ends, so the next tap borrows it instead of asking a
+    /// backgrounded process to start one. iOS can refuse that start, and a
+    /// suspended process never hears the tap at all; either way the second
+    /// dictation went through Parley. Sound that arrives during the hold is
+    /// dropped exactly as it is during a window.
+    private func holdMicrophone() {
+        endLinger()
+        publishPresence()
+        holdTask?.cancel()
+        holdTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.holdAfterDictation)
+            guard !Task.isCancelled, let self else { return }
+            self.holdTask = nil
+            guard !self.active, self.window.openedAt == nil else { return }
+            await self.closeMicrophone()
+            self.beginLinger()
+        }
     }
 
     /// A meeting is about to take the microphone. There is one microphone, so
@@ -1382,6 +1410,8 @@ final class DictationCoordinator: ObservableObject {
     private static let log = Logger(subsystem: "com.pathors.parley", category: "Dictation")
 
     private func closeMicrophone() async {
+        holdTask?.cancel()
+        holdTask = nil
         let cap = capture
         capture = nil
         stopReportingLevel()
@@ -1394,6 +1424,8 @@ final class DictationCoordinator: ObservableObject {
     /// Start (or restart) the window and the loop that heartbeats and expires
     /// it. The microphone must already be running.
     private func openWindow(_ opened: MicWindowState) {
+        holdTask?.cancel()
+        holdTask = nil
         // A background task and a window must never overlap: ending a
         // background assertion in the background can suspend a process the
         // audio session was keeping up.
@@ -1609,10 +1641,10 @@ final class DictationCoordinator: ObservableObject {
     /// background-task time covers the common "stop, think, dictate again"
     /// beat with no app switch.
     private func beginLinger() {
-        // Never alongside a window. The window's audio session is what is
+        // Never alongside a window or a hold. Their audio session is what is
         // holding the process up; a background assertion added on top buys
         // nothing and its expiry is a documented way to get suspended anyway.
-        guard window.openedAt == nil else { return }
+        guard window.openedAt == nil, holdTask == nil else { return }
         endLinger()
         lingerTask = UIApplication.shared.beginBackgroundTask(withName: "dictation-relaunch") {
             [weak self] in
