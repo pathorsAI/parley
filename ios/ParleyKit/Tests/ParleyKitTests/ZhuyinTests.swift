@@ -433,7 +433,7 @@ final class ZhuyinComposerTests: XCTestCase {
         _ = c.symbol("ㄨ")
         _ = c.symbol("ㄛ")
         XCTAssertEqual(c.space(), .handled, "the first tone has no key of its own")
-        XCTAssertEqual(c.reading, "ㄨㄛ")
+        XCTAssertEqual(c.reading, "ㄨㄛˉ")
         _ = c.tone(.third)
         XCTAssertEqual(c.space(), .insert("我"))
         XCTAssertEqual(c.stage, .idle)
@@ -535,6 +535,31 @@ final class ZhuyinComposerTests: XCTestCase {
         XCTAssertEqual(c.reading, "")
         XCTAssertTrue(c.syllables.isEmpty)
         XCTAssertTrue(c.candidates.isEmpty)
+    }
+
+    func testTheReadingIsTheMarkedTextTheHostShows() {
+        enum Key { case symbols(String), tone(ZhuyinTone), space, delete, pick(String) }
+        let cases: [(keys: [Key], reading: String)] = [
+            ([.symbols("ㄋㄏ")], "ㄋ ㄏ"),
+            ([.symbols("ㄋㄧㄏㄠ")], "ㄋㄧ ㄏㄠ"),
+            ([.symbols("ㄋㄧㄏㄠ"), .space], "ㄋㄧ ㄏㄠˉ"),
+            ([.symbols("ㄋㄧ"), .tone(.third), .symbols("ㄏ")], "ㄋㄧˇ ㄏ"),
+            ([.symbols("ㄋㄧㄏㄠ"), .pick("你")], "ㄏㄠ"),
+            ([.symbols("ㄋ"), .delete], ""),
+        ]
+        for (keys, reading) in cases {
+            var c = composer()
+            for key in keys {
+                switch key {
+                case .symbols(let symbols): for s in symbols { _ = c.symbol(s) }
+                case .tone(let tone): _ = c.tone(tone)
+                case .space: _ = c.space()
+                case .delete: _ = c.delete()
+                case .pick(let candidate): _ = c.pick(candidate)
+                }
+            }
+            XCTAssertEqual(c.reading, reading)
+        }
     }
 
     func testANonSymbolKeyFallsThrough() {
