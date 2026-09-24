@@ -21,8 +21,7 @@ public enum WordSuggestions {
     /// `context` is `textDocumentProxy.documentContextBeforeInput`, a clipped
     /// run of text ending at the cursor. Empty whenever the character before
     /// the cursor is not part of a word — after a space, after punctuation, at
-    /// the start of a field — which is exactly when the strip should go back to
-    /// showing the wordmark.
+    /// the start of a field — which is when the bar turns to `predictions`.
     ///
     /// "Letter" is `Character.isLetter`, so it is Unicode's answer rather than
     /// ASCII's: someone typing `café` on this keyboard is typing one word, and
@@ -57,7 +56,14 @@ public enum WordSuggestions {
     /// A word that already carries case of its own (a name out of the user's
     /// lexicon) is left alone by a lowercase partial, which is what makes
     /// `kub` able to offer `Kubernetes`.
+    ///
+    /// Then one rule of English's own: the pronoun `I` and its contractions are
+    /// capitalised wherever they land, so `iam` offers `I am`.
     public static func matchingCase(of word: String, like partial: String) -> String {
+        capitalizingPronounI(shiftCase(of: word, like: partial))
+    }
+
+    private static func shiftCase(of word: String, like partial: String) -> String {
         let letters = partial.filter(\.isLetter)
         guard let first = letters.first else { return word }
         if letters.count >= 2, letters.allSatisfy(\.isUppercase) { return word.uppercased() }
@@ -65,8 +71,17 @@ public enum WordSuggestions {
         return head.uppercased() + word.dropFirst()
     }
 
+    private static func capitalizingPronounI(_ text: String) -> String {
+        text.split(separator: " ", omittingEmptySubsequences: false).map { word in
+            let folded = word.replacingOccurrences(of: "\u{2019}", with: "'")
+            guard folded == "i" || folded.hasPrefix("i'") else { return String(word) }
+            return "I" + word.dropFirst()
+        }.joined(separator: " ")
+    }
+
     /// What to offer for a part-typed word: the user's own terms first, then the
-    /// bundled list, cased to match what they typed.
+    /// partial read as two words run together (`thankyou` → `thank you`, see
+    /// `split`), then the bundled list, cased to match what they typed.
     ///
     /// The lexicon comes first because it is the one source that knows something
     /// the corpus cannot — the names, jargon and product words this particular
@@ -90,6 +105,7 @@ public enum WordSuggestions {
         var out: [String] = []
         var seen = Set<String>()
         for candidate in lexiconTerms.filter({ $0.lowercased().hasPrefix(needle) })
+            + [split(partial, in: words)].compactMap({ $0 })
             + words.completions(for: partial, limit: limit)
         {
             guard seen.insert(candidate.lowercased()).inserted else { continue }
@@ -97,5 +113,61 @@ public enum WordSuggestions {
             if out.count == limit { break }
         }
         return out
+    }
+
+    /// The partial as two list words with the space the user missed, or `nil`.
+    ///
+    /// A partial that is itself a list word is never split: that is what keeps
+    /// `into`, `area`, `maybe` and `cannot` whole. Otherwise a cut whose two
+    /// halves are a known pair in the next-word table wins, the most common
+    /// such pair by the rarer half's rank. A cut that is not a known pair is
+    /// only offered when nothing completes the partial at all, so
+    /// `meetingtomorrow` still becomes `meeting tomorrow` while `someth`, one
+    /// letter short of `something`, never becomes `so meth`.
+    static func split(_ partial: String, in words: EnglishWords) -> String? {
+        let whole = EnglishWords.normalized(partial)
+        guard words.rank(of: whole) == nil else { return nil }
+        var known: (cost: Int, text: String)?
+        var unknown: (cost: Int, text: String)?
+        for cut in whole.indices.dropFirst() {
+            let left = String(whole[..<cut])
+            let right = String(whole[cut...])
+            guard let leftRank = words.rank(of: left), let rightRank = words.rank(of: right)
+            else { continue }
+            let candidate = (cost: max(leftRank, rightRank), text: left + " " + right)
+            if words.nextWords(after: left).contains(where: { $0.lowercased() == right }) {
+                if candidate.cost < known?.cost ?? .max { known = candidate }
+            } else if candidate.cost < unknown?.cost ?? .max {
+                unknown = candidate
+            }
+        }
+        if let known { return known.text }
+        guard words.completions(for: whole, limit: 1).isEmpty else { return nil }
+        return unknown?.text
+    }
+
+    /// What to offer before a letter is typed: the words that most often follow
+    /// the one just finished.
+    ///
+    /// Only right after a word and exactly one space. Two spaces, punctuation,
+    /// a new line or an empty field say the sentence moved on, and guessing
+    /// across that would be guessing about nothing.
+    ///
+    /// The data's own case is kept (`new ` offers `York`, `Thank ` offers
+    /// `you`, not `You`), except that an ALL-CAPS previous word of two letters
+    /// or more asks for all caps, the same rule `matchingCase` reads off a
+    /// partial.
+    public static func predictions(
+        after context: String?,
+        in words: EnglishWords,
+        limit: Int = EnglishWords.suggestionLimit
+    ) -> [String] {
+        guard let context, context.hasSuffix(" ") else { return [] }
+        let previous = partialWord(before: String(context.dropLast()))
+        guard !previous.isEmpty else { return [] }
+        let next = words.nextWords(after: previous, limit: limit)
+        let letters = previous.filter(\.isLetter)
+        guard letters.count >= 2, letters.allSatisfy(\.isUppercase) else { return next }
+        return next.map { $0.uppercased() }
     }
 }
