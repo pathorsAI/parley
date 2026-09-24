@@ -81,7 +81,9 @@ public enum WordSuggestions {
 
     /// What to offer for a part-typed word: the user's own terms first, then the
     /// partial read as two words run together (`thankyou` → `thank you`, see
-    /// `split`), then the bundled list, cased to match what they typed.
+    /// `split`), then the bundled list, cased to match what they typed. The
+    /// split goes second instead, behind the best completion, when that
+    /// completion is a common word (`usin` offers `using`, then `us in`).
     ///
     /// The lexicon comes first because it is the one source that knows something
     /// the corpus cannot — the names, jargon and product words this particular
@@ -102,18 +104,26 @@ public enum WordSuggestions {
         guard !partial.isEmpty, limit > 0 else { return [] }
         let needle = partial.lowercased()
 
+        var fromList = words.completions(for: partial, limit: limit)
+        if let split = split(partial, in: words) {
+            let beginsCommonWord =
+                fromList.first.flatMap(words.rank(of:)).map { $0 < commonWordRank } ?? false
+            fromList.insert(split, at: beginsCommonWord ? 1 : 0)
+        }
+
         var out: [String] = []
         var seen = Set<String>()
-        for candidate in lexiconTerms.filter({ $0.lowercased().hasPrefix(needle) })
-            + [split(partial, in: words)].compactMap({ $0 })
-            + words.completions(for: partial, limit: limit)
-        {
+        for candidate in lexiconTerms.filter({ $0.lowercased().hasPrefix(needle) }) + fromList {
             guard seen.insert(candidate.lowercased()).inserted else { continue }
             out.append(matchingCase(of: candidate, like: partial))
             if out.count == limit { break }
         }
         return out
     }
+
+    /// A partial that begins a word this common is more likely that word half
+    /// typed than two words run together.
+    static let commonWordRank = 5_000
 
     /// The partial as two list words with the space the user missed, or `nil`.
     ///

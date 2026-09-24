@@ -937,8 +937,13 @@ case is kept (`Thank ` offers `you`, `new ` offers `York`), except that an
 ALL-CAPS previous word of two letters or more asks for all caps.
 
 **Two words typed without a space are offered with it**: `thankyou` offers
-`thank you`, after the user's own terms and ahead of the completions. The rule
-was prototyped against the real data. A partial that is itself a list word is
+`thank you`, after the user's own terms and ahead of the completions. The one
+exception is a partial whose best completion is among the 5,000 most common
+words: then the split goes second, right behind that completion, because a
+partial that begins a common word is more likely that word half typed. Typing
+`usin` offers `using` then `us in`, while `iam` still offers `I am` first, since
+its best completion ranks past 34,000. The rule was prototyped against the real
+data. A partial that is itself a list word is
 never split, which keeps `into`, `area`, `maybe` and `cannot` whole. Otherwise a
 cut whose halves are a known pair in the next-word table wins, the most common
 such pair by the rarer half's rank. A cut that is not a known pair is offered
@@ -996,12 +1001,13 @@ are at least 100 times rarer than that 2-gram, minus the real words among them
 (`cannot`, `tome`, `goto`).
 
 The predictions are `english-next-words.txt`: 1,077 lines, 15 KiB, one per
-previous word with its five most frequent followers. `scripts/gen-english-next-words.mjs`
-builds it from orgtre/google-books-ngram-frequency's `2grams_english.csv`, the
-5,000 most frequent English 2-grams of Google Books Ngram (books 2010-2019),
-keeping letter-only pairs and merging pairs that differ only in case. **CC-BY
-3.0**, for that repository's content and for the corpus it counts; the notice
-is in `ios/THIRD-PARTY.md` and the download is pinned the same way.
+previous word with its five most frequent followers.
+`scripts/gen-english-next-words.mjs` builds it from
+orgtre/google-books-ngram-frequency's `2grams_english.csv`, the 5,000 most
+frequent English 2-grams of Google Books Ngram (books 2010-2019), keeping
+letter-only pairs and merging pairs that differ only in case. **CC-BY 3.0**, for
+that repository's content and for the corpus it counts; the notice is in
+`ios/THIRD-PARTY.md` and the download is pinned the same way.
 
 A corpus of books from 1880 onward has two blind spots a keyboard cannot live
 with: Google's tokenizer splits every contraction, so there is not one apostrophe
@@ -1015,9 +1021,10 @@ once, and warmed off the main thread** when the English pane becomes current (an
 in `viewDidLoad` when the keyboard opens on it, which every keyboard without Full
 Access does). The followers are parsed into the same table in the same load, so
 there is one load and one warm for both files. Rank is the word list's order and
-nothing else. What it builds at load is the other order — the same words sorted alphabetically with each word's rank
-beside it — so a prefix is a contiguous range found by binary search and the
-answer is the lowest-ranked few in that range. A linear pass over 40,000 words
+nothing else. What it builds at load is the other order — the same words sorted
+alphabetically with each word's rank beside it — so a prefix is a contiguous
+range found by binary search and the answer is the lowest-ranked few in that
+range. A linear pass over 40,000 words
 per keystroke is the kind of cost that turns into dropped keys on an old phone;
 the only expensive case left is a one-letter prefix, and by the third letter the
 range is a handful. A missing resource answers nothing rather than crashing, and
