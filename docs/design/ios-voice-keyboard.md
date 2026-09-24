@@ -943,13 +943,13 @@ words: then the split goes second, right behind that completion, because a
 partial that begins a common word is more likely that word half typed. Typing
 `usin` offers `using` then `us in`, while `iam` still offers `I am` first, since
 its best completion ranks past 34,000. The rule was prototyped against the real
-data. A partial that is itself a list word is
-never split, which keeps `into`, `area`, `maybe` and `cannot` whole. Otherwise a
-cut whose halves are a known pair in the next-word table wins, the most common
-such pair by the rarer half's rank. A cut that is not a known pair is offered
-only when nothing completes the partial, so `meetingtomorrow` becomes
-`meeting tomorrow` but `someth`, one letter short of `something`, never becomes
-`so meth`. One split only, never three words.
+data. A partial that is itself a list word is never split, which keeps `into`,
+`area`, `maybe` and `cannot` whole. Otherwise a cut whose halves are a known
+pair in the next-word table wins, the most common such pair by the rarer half's
+rank. A cut that is not a known pair is offered only when nothing completes the
+partial, so `meetingtomorrow` becomes `meeting tomorrow` but `someth`, one
+letter short of `something`, never becomes `so meth`. One split only, never
+three words.
 
 The partial word is the run of letters and apostrophes immediately before the
 cursor in `textDocumentProxy.documentContextBeforeInput`, recomputed after every
@@ -1024,11 +1024,11 @@ there is one load and one warm for both files. Rank is the word list's order and
 nothing else. What it builds at load is the other order — the same words sorted
 alphabetically with each word's rank beside it — so a prefix is a contiguous
 range found by binary search and the answer is the lowest-ranked few in that
-range. A linear pass over 40,000 words
-per keystroke is the kind of cost that turns into dropped keys on an old phone;
-the only expensive case left is a one-letter prefix, and by the third letter the
-range is a handful. A missing resource answers nothing rather than crashing, and
-each file can go missing without taking the other half with it.
+range. A linear pass over 40,000 words per keystroke is the kind of cost that
+turns into dropped keys on an old phone; the only expensive case left is a
+one-letter prefix, and by the third letter the range is a handful. A missing
+resource answers nothing rather than crashing, and each file can go missing
+without taking the other half with it.
 
 ### Voice pane
 
