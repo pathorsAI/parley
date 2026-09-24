@@ -37,14 +37,29 @@ function write(idx: SyncIndex): void {
   }
 }
 
-export function getSyncMeta(id: string): SyncMeta {
-  return read()[id] ?? {};
+/**
+ * The whole index, parsed once. Anything that walks every recording reads this
+ * instead of looking entries up one by one: each lookup re-parses the entire
+ * index, so a per-entry loop is quadratic — about 0.4 s of blocked UI per
+ * listing at 1,000 recordings, and seconds at a few thousand.
+ */
+export function readSyncIndex(): Readonly<Record<string, SyncMeta>> {
+  return read();
 }
 
 /** Record that the local copy now matches cloud `updatedAt` (and clears dirty). */
 export function setSynced(id: string, cloudUpdatedAt: number): void {
+  setSyncedMany([[id, cloudUpdatedAt]]);
+}
+
+/** {@link setSynced} for many entries in one read and one write. */
+export function setSyncedMany(
+  entries: ReadonlyArray<readonly [string, number]>,
+): void {
+  if (!entries.length) return;
   const idx = read();
-  idx[id] = { cloudUpdatedAt, dirty: false };
+  for (const [id, cloudUpdatedAt] of entries)
+    idx[id] = { cloudUpdatedAt, dirty: false };
   write(idx);
 }
 
