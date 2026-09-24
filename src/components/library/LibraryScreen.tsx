@@ -132,6 +132,15 @@ function moveTargetFolders(
   return filingChoices(scopeFolders, open);
 }
 
+/** What the open list is a list OF — the scope, the node within it, the search.
+ *  A change starts the render window (useRenderWindow) back on its first page. */
+function listKey(selection: LibrarySelection, searchQuery: string): string {
+  let where = "";
+  if (selection.kind === "org") where = `org:${selection.id}:${selection.folderId ?? ""}`;
+  else if (selection.kind === "personal") where = `personal:${nodeKey(selection.node)}`;
+  return `${where}|${searchQuery}`;
+}
+
 /**
  * The recordings library — what used to be the standalone History window's
  * right-hand pane (issue #195). The tree that selects into it lives in the app
@@ -258,14 +267,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
 
   // Mount the list a page at a time — see useRenderWindow. The count in the
   // header still reads off `visible`: it is what's in the node, not what's mounted.
-  const listKey = [
-    scopeKey,
-    selection.kind === "org" ? selection.folderId ?? "" : node ? nodeKey(node) : "",
-    searchQuery,
-  ].join("|");
-  const { limit, sentinelRef } = useRenderWindow(visible.length, listKey);
-  const shown = limit < visible.length ? visible.slice(0, limit) : visible;
-  const sentinel = limit < visible.length && <div ref={sentinelRef} className="h-px" />;
+  const { shown, sentinel } = useRenderWindow(visible, listKey(selection, searchQuery));
 
   // ── Card actions ──────────────────────────────────────────────────────────
   const openItem = useCallback(

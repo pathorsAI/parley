@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { createElement, useCallback, useState, type ReactNode } from "react";
 
 /** Rows mounted per page. Comfortably more than a tall window shows at once. */
 const PAGE = 120;
@@ -20,10 +20,10 @@ const PAGE = 120;
  * Without IntersectionObserver (tests, very old webviews) the whole list is
  * mounted, which is the old behaviour — never a list that can't be finished.
  */
-export function useRenderWindow(
-  total: number,
+export function useRenderWindow<T>(
+  items: T[],
   resetKey: string,
-): { limit: number; sentinelRef: (node: Element | null) => void } {
+): { shown: T[]; sentinel: ReactNode } {
   const [limit, setLimit] = useState(PAGE);
   const [key, setKey] = useState(resetKey);
   if (key !== resetKey) {
@@ -53,6 +53,11 @@ export function useRenderWindow(
     [limit],
   );
 
-  const supported = typeof IntersectionObserver !== "undefined";
-  return { limit: supported ? Math.min(limit, total) : total, sentinelRef };
+  if (typeof IntersectionObserver === "undefined" || limit >= items.length) {
+    return { shown: items, sentinel: null };
+  }
+  return {
+    shown: items.slice(0, limit),
+    sentinel: createElement("div", { ref: sentinelRef, className: "h-px" }),
+  };
 }
