@@ -98,13 +98,16 @@ public final class EnglishWords {
     /// must not land on the first letter the user types. The keyboard calls
     /// this when the English pane becomes current, a beat earlier and idle.
     ///
-    /// A lookup that arrives first still loads synchronously. At worst the file
-    /// is read twice and the later table is dropped, which costs some work in a
-    /// background thread and can never hand out a half-built one.
+    /// While it is in flight every lookup answers nothing rather than parsing
+    /// the same files again on the main thread: the pane refreshes its bar in
+    /// the same turn it calls this, and after a space that refresh asks for
+    /// predictions. `ready` runs on the main queue once the table has landed,
+    /// so the caller can ask again; it does not run when there was nothing to
+    /// warm.
     ///
     /// Main thread, like everything else here: the guard and the store both run
     /// there, so two warms cannot race and a warm cannot overwrite a load.
-    public func warm() {
+    public func warm(then ready: (() -> Void)? = nil) {
         guard table == nil, !warming, wordsURL != nil || followersURL != nil else { return }
         warming = true
         let (wordsURL, followersURL) = (wordsURL, followersURL)
@@ -116,6 +119,7 @@ public final class EnglishWords {
                 // A synchronous load may have beaten this here. That table is
                 // the same table; replacing it would only churn memory.
                 if self.table == nil { self.table = built }
+                ready?()
             }
         }
     }
@@ -131,8 +135,7 @@ public final class EnglishWords {
     /// suggestion; after a space, `nextWords(after:)` is.
     public func completions(for prefix: String, limit: Int = suggestionLimit) -> [String] {
         let needle = Self.normalized(prefix)
-        guard !needle.isEmpty, limit > 0 else { return [] }
-        let table = load()
+        guard !needle.isEmpty, limit > 0, let table = load() else { return [] }
 
         // Best-so-far, kept sorted by rank. `limit` is five, so an insertion
         // into a five-element array beats any heap that could replace it.
@@ -150,8 +153,7 @@ public final class EnglishWords {
     /// match, normalized the way `completions` normalizes a prefix.
     func rank(of word: String) -> Int? {
         let needle = Self.normalized(word)
-        guard !needle.isEmpty else { return nil }
-        let table = load()
+        guard !needle.isEmpty, let table = load() else { return nil }
         let index = Self.lowerBound(of: needle, in: table.words)
         guard index < table.words.count, table.words[index] == needle else { return nil }
         return Int(table.ranks[index])
@@ -160,8 +162,8 @@ public final class EnglishWords {
     /// The words that most often follow `word`, best first, in the data's own
     /// case (`I`, `York`). Empty for a word the table has no line for.
     public func nextWords(after word: String, limit: Int = suggestionLimit) -> [String] {
-        guard limit > 0 else { return [] }
-        return Array(load().followers[Self.normalized(word)]?.prefix(limit) ?? [])
+        guard limit > 0, let table = load() else { return [] }
+        return Array(table.followers[Self.normalized(word)]?.prefix(limit) ?? [])
     }
 
     /// Put a candidate into the running best-of list, if it earns a place.
@@ -209,8 +211,10 @@ public final class EnglishWords {
                 followers.map { (normalized($0.key), $0.value) }, uniquingKeysWith: { first, _ in first }))
     }
 
-    private func load() -> Table {
+    /// `nil` while a warm is in flight.
+    private func load() -> Table? {
         if let table { return table }
+        guard !warming else { return nil }
         // A failed read caches the empty table too, so a missing resource costs
         // one attempt rather than one per keystroke.
         let built = Self.parse(wordsURL: wordsURL, followersURL: followersURL)

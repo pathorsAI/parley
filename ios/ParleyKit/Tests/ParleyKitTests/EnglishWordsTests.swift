@@ -127,6 +127,20 @@ final class EnglishWordsTests: XCTestCase {
             Array(WordSuggestions.suggestions(for: "usin", in: bundled).prefix(2)),
             ["using", "us in"])
         XCTAssertEqual(WordSuggestions.suggestions(for: "ofthe", in: bundled).first, "of the")
+        XCTAssertEqual(WordSuggestions.suggestions(for: "newyork", in: bundled).first, "new York")
+        XCTAssertEqual(
+            WordSuggestions.suggestions(for: "unitedstates", in: bundled).first, "united States")
+        XCTAssertEqual(WordSuggestions.suggestions(for: "iwant", in: bundled).first, "I want")
+        XCTAssertEqual(
+            Array(WordSuggestions.suggestions(for: "stayin", in: bundled).prefix(2)),
+            ["staying", "stay in"])
+    }
+
+    func testTheBundledDataDoesNotSplitWhatIsNoKnownPair() {
+        for partial in ["iphone", "idont", "begining", "occured", "youtube"] {
+            let out = WordSuggestions.suggestions(for: partial, in: bundled)
+            XCTAssertFalse(out.contains { $0.contains(" ") }, "\(partial) was split: \(out)")
+        }
     }
 
     func testTheBundledDataLeavesRealWordsWhole() {
@@ -137,26 +151,32 @@ final class EnglishWordsTests: XCTestCase {
         }
     }
 
-    func testWarmingOffTheMainThreadYieldsTheSameTable() {
-        // Reading and sorting 40,000 words must not land on the first letter
-        // the user types, so the pane warms a beat earlier and idle. What comes
-        // back has to be the same table a keystroke would have built itself.
+    func testLookupsWaitForTheWarmInsteadOfParsingOnTheMainThread() {
+        // The pane refreshes its bar in the same turn it warms, and a refresh
+        // that parsed the files itself would put the cost the warm exists to
+        // avoid right back on the main thread.
         let warmed = EnglishWords(
             wordsURL: EnglishWords.bundledWordsURL,
             followersURL: EnglishWords.bundledFollowersURL)
-        XCTAssertFalse(warmed.isWarm)
-        warmed.warm()
+        var calls = 0
         let landed = expectation(description: "warm lands on the main queue")
-        func poll() {
-            if warmed.isWarm { return landed.fulfill() }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: poll)
+        warmed.warm {
+            calls += 1
+            landed.fulfill()
         }
-        poll()
+        warmed.warm { calls += 1 }
+        XCTAssertEqual(warmed.completions(for: "tomo"), [])
+        XCTAssertEqual(warmed.nextWords(after: "thank"), [])
+        XCTAssertNil(warmed.rank(of: "the"))
+        XCTAssertFalse(warmed.isWarm)
+
         wait(for: [landed], timeout: 5)
-        XCTAssertEqual(warmed.completions(for: "tomo"), bundled.completions(for: "tomo"))
-        XCTAssertEqual(warmed.completions(for: "wor"), bundled.completions(for: "wor"))
         XCTAssertEqual(warmed.completions(for: "tomo").first, "tomorrow")
         XCTAssertEqual(warmed.nextWords(after: "thank"), ["you"])
+        XCTAssertEqual(warmed.rank(of: "the"), 0)
+        warmed.warm { calls += 1 }
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+        XCTAssertEqual(calls, 1)
     }
 }
 
@@ -280,13 +300,28 @@ final class WordSuggestionsTests: XCTestCase {
             ["Isaac", "isabel", "is a"])
     }
 
-    func testAnUnknownPairIsOfferedOnlyWhenNothingCompletesThePartial() {
+    func testTwoListWordsThatAreNoKnownPairNeverSplit() {
         let words = EnglishWords(words: ["so", "something", "meth", "meeting", "tomorrow"])
         XCTAssertEqual(WordSuggestions.suggestions(for: "someth", in: words), ["something"])
-        XCTAssertEqual(
-            WordSuggestions.suggestions(for: "meetingtomorrow", in: words), ["meeting tomorrow"])
+        XCTAssertEqual(WordSuggestions.suggestions(for: "meetingtomorrow", in: words), [])
         let unpaired = EnglishWords(words: ["is", "a", "isabel"])
         XCTAssertEqual(WordSuggestions.suggestions(for: "isa", in: unpaired), ["isabel"])
+    }
+
+    func testAKnownPairSplitsEvenWhenTheWordListLacksAHalf() {
+        let words = EnglishWords(words: ["united"], followers: ["united": ["States"]])
+        XCTAssertEqual(
+            WordSuggestions.suggestions(for: "unitedstates", in: words), ["united States"])
+        XCTAssertEqual(
+            WordSuggestions.suggestions(for: "UnitedStates", in: words), ["United States"])
+    }
+
+    func testALongRunOfLettersIsNotSplit() {
+        let long = String(repeating: "b", count: 59)
+        let words = EnglishWords(words: ["a"], followers: ["a": [long]])
+        XCTAssertNil(WordSuggestions.split("a" + long, in: words))
+        XCTAssertEqual(WordSuggestions.split("abbb", in: EnglishWords(
+            words: ["a"], followers: ["a": ["bbb"]])), "a bbb")
     }
 
     func testAPartialThatIsItselfAWordIsNeverSplit() {
@@ -305,7 +340,7 @@ final class WordSuggestionsTests: XCTestCase {
     // MARK: next-word predictions
 
     private let followers = EnglishWords(
-        words: [], followers: ["thank": ["you"], "new": ["York", "and"]])
+        words: [], followers: ["thank": ["you"], "new": ["York", "and"], "and": ["i", "the"]])
 
     func testAWordAndASpaceOfferWhatFollowsIt() {
         XCTAssertEqual(WordSuggestions.predictions(after: "thank ", in: followers), ["you"])
@@ -316,10 +351,15 @@ final class WordSuggestionsTests: XCTestCase {
             WordSuggestions.predictions(after: "new ", in: followers, limit: 1), ["York"])
     }
 
-    func testPredictionsKeepTheDataCaseUnlessTheWordWasAllCaps() {
+    func testPredictionsKeepTheDataCaseWhateverTheWordBefore() {
+        // An all-caps word before the space is as often an acronym as caps lock.
         XCTAssertEqual(WordSuggestions.predictions(after: "Thank ", in: followers), ["you"])
-        XCTAssertEqual(WordSuggestions.predictions(after: "THANK ", in: followers), ["YOU"])
-        XCTAssertEqual(WordSuggestions.predictions(after: "NEW ", in: followers), ["YORK", "AND"])
+        XCTAssertEqual(WordSuggestions.predictions(after: "THANK ", in: followers), ["you"])
+        XCTAssertEqual(WordSuggestions.predictions(after: "NEW ", in: followers), ["York", "and"])
+    }
+
+    func testAPredictedPronounIsCapitalisedWhateverTheData() {
+        XCTAssertEqual(WordSuggestions.predictions(after: "and ", in: followers), ["I", "the"])
     }
 
     func testNothingIsPredictedOnceTheSentenceHasMovedOn() {

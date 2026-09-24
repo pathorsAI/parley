@@ -933,22 +933,35 @@ current.
 
 A prediction is offered only after exactly one U+0020 space that follows a word.
 Two spaces, punctuation or a new line say the sentence moved on. The data's own
-case is kept (`Thank ` offers `you`, `new ` offers `York`), except that an
-ALL-CAPS previous word of two letters or more asks for all caps.
+case is kept whatever the case of the word before: `Thank ` and `THANK ` both
+offer `you`, and `new ` offers `York`. An all-caps word before a space is as
+often an acronym as caps lock, and upcasing after `the US ` offered
+`TO THAT IN AND A`. The pronoun rule below still applies, so `I` is capitalised
+by code rather than by an accident of the data.
 
 **Two words typed without a space are offered with it**: `thankyou` offers
 `thank you`, after the user's own terms and ahead of the completions. The one
-exception is a partial whose best completion is among the 5,000 most common
+exception is a partial whose best completion is among the 20,000 most common
 words: then the split goes second, right behind that completion, because a
 partial that begins a common word is more likely that word half typed. Typing
-`usin` offers `using` then `us in`, while `iam` still offers `I am` first, since
-its best completion ranks past 34,000. The rule was prototyped against the real
-data. A partial that is itself a list word is never split, which keeps `into`,
-`area`, `maybe` and `cannot` whole. Otherwise a cut whose halves are a known
-pair in the next-word table wins, the most common such pair by the rarer half's
-rank. A cut that is not a known pair is offered only when nothing completes the
-partial, so `meetingtomorrow` becomes `meeting tomorrow` but `someth`, one
-letter short of `something`, never becomes `so meth`. One split only, never
+`usin` offers `using` then `us in`, and `stayin` offers `staying` then
+`stay in`, while `iam` still offers `I am` first, since its best completion
+ranks past 34,000. At 5,000, 144 prefixes of list words put a split first
+(`stayin`, `foundin`, `downto`); at 20,000, 52 do, all of rare words
+(`himalaya`, `ataxia`, `candor`).
+
+Only a **known pair** splits: the partial must be a word from the next-word
+table followed by one of its followers. The table, not the word list, is what
+proves both halves are words, so `unitedstates` offers `united States` and
+`resultsin` offers `results in` even though the list has no inflections. The
+right half keeps the table's case, so `newyork` offers `new York`. Among known
+pairs the most common wins, by the rarer half's rank. A cut that merely lands on
+two list words is not enough; allowing it produced `iphone` → `I phone`,
+`idont` → `id ont`, `begining` → `begin ing` and `occured` → `occur ed`, and no
+rank floor separated those from the real cases. So `meetingtomorrow` no longer
+splits, and that is accepted. A partial that is itself a list word is never
+split, which keeps `into`, `area`, `maybe` and `cannot` whole. A partial longer
+than 40 letters is not tried, since each cut is a lookup. One split only, never
 three words.
 
 The partial word is the run of letters and apostrophes immediately before the
@@ -998,10 +1011,12 @@ drops thirteen words that are two words the scanner ran together, such as
 `ofthe` at rank 5,864: kept, `ofthe` would be a list word and would never split.
 They are the list words that equal a top-5,000 2-gram with the space removed and
 are at least 100 times rarer than that 2-gram, minus the real words among them
-(`cannot`, `tome`, `goto`).
+(`cannot`, `tome`, `togo`, `goto`, `forme`, `goon`, `todo`, `ashe`).
 
-The predictions are `english-next-words.txt`: 1,077 lines, 15 KiB, one per
-previous word with its five most frequent followers.
+The predictions are `english-next-words.txt`: 1,077 lines, 32 KiB, one per
+previous word with every follower it has, most frequent first. The bar shows the
+first five; the split needs them all, since a cap of five dropped `i want`,
+`can you`, `a lot`, `of course` and `i think` from the known pairs.
 `scripts/gen-english-next-words.mjs` builds it from
 orgtre/google-books-ngram-frequency's `2grams_english.csv`, the 5,000 most
 frequent English 2-grams of Google Books Ngram (books 2010-2019), keeping
@@ -1020,7 +1035,12 @@ each word 50 million times — the same device, for the same reason, as
 once, and warmed off the main thread** when the English pane becomes current (and
 in `viewDidLoad` when the keyboard opens on it, which every keyboard without Full
 Access does). The followers are parsed into the same table in the same load, so
-there is one load and one warm for both files. Rank is the word list's order and
+there is one load and one warm for both files. While a warm is in flight every
+lookup answers nothing instead of parsing the files a second time on the main
+thread, because the pane refreshes its bar in the same turn it warms and after a
+space that refresh asks for predictions; the warm refreshes the bar again when
+it lands. A lookup with no warm in flight still loads synchronously. Rank is the
+word list's order and
 nothing else. What it builds at load is the other order — the same words sorted
 alphabetically with each word's rank beside it — so a prefix is a contiguous
 range found by binary search and the answer is the lowest-ranked few in that

@@ -38,9 +38,11 @@
 //     the counts summed; a follower is shown in the casing of its
 //     highest-count variant, so `I` and `York` keep their capitals and `first`
 //     stays lowercase.
-//   * The top SUGGESTION_LIMIT followers per previous word, by summed count,
-//     upstream order as the tiebreak. Lines are ordered by the previous word's
-//     first appearance upstream, so the output is reproducible.
+//   * Every follower of each previous word, by summed count, upstream order as
+//     the tiebreak. The bar shows only the first few, but the split needs them
+//     all: capped at five, `i want`, `can you` and `of course` would not be
+//     known pairs. Lines are ordered by the previous word's first appearance
+//     upstream, so the output is reproducible.
 
 import { writeFile } from "node:fs/promises";
 
@@ -49,8 +51,6 @@ import { downloadData, provenance, resourcePath } from "./resource-data.mjs";
 const REPO = "orgtre/google-books-ngram-frequency";
 const BRANCH = "main";
 const FILES = ["ngrams/2grams_english.csv"];
-
-const SUGGESTION_LIMIT = 5;
 
 const OUT = resourcePath("english-next-words.txt");
 
@@ -134,7 +134,7 @@ function group(pairs) {
   const out = new Map();
   for (const [previous, followers] of byPrevious) {
     followers.sort((a, b) => b.count - a.count || a.position - b.position);
-    out.set(previous, followers.slice(0, SUGGESTION_LIMIT).map((pair) => pair.next));
+    out.set(previous, followers.map((pair) => pair.next));
   }
   return out;
 }

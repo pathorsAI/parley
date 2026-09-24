@@ -236,7 +236,7 @@ generated from the **google-books-ngram-frequency** tables:
 The upstream corpus is **Google Books Ngram**, itself released under CC-BY 3.0.
 The cleaning and frequency tables are **orgtre/google-books-ngram-frequency**.
 Parley keeps only pairs of two letter-only words, merges pairs that differ only
-in case, and keeps the five most frequent followers of each word. This section
+in case, and keeps each word's followers in frequency order. This section
 is the credit the licence asks for. The deed's summary is reproduced once, in
 the gwordlist section above, and applies here unchanged.
 

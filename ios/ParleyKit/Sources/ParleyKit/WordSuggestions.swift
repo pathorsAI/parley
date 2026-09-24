@@ -121,37 +121,42 @@ public enum WordSuggestions {
         return out
     }
 
-    static let commonWordRank = 5_000
+    static let commonWordRank = 20_000
 
-    /// The partial as two list words with the space the user missed, or `nil`.
+    /// Twice the longest list word. `split` tries every cut, and this keeps a
+    /// long run of letters that is not English from costing more per key.
+    private static let longestSplit = 40
+
+    /// The word list has no inflections (`results in`), so a half it lacks can
+    /// still be a known pair; it just loses to a pair whose halves are listed.
+    private static let unlistedRank = 1_000_000
+
+    /// The partial as a known pair from the next-word table with the space the
+    /// user missed, or `nil`.
     ///
     /// A partial that is itself a list word is never split: that is what keeps
-    /// `into`, `area`, `maybe` and `cannot` whole. Otherwise a cut whose two
-    /// halves are a known pair in the next-word table wins, the most common
-    /// such pair by the rarer half's rank. A cut that is not a known pair is
-    /// only offered when nothing completes the partial at all, so
-    /// `meetingtomorrow` still becomes `meeting tomorrow` while `someth`, one
-    /// letter short of `something`, never becomes `so meth`.
+    /// `into`, `area`, `maybe` and `cannot` whole. Only a pair the table has
+    /// seen splits, and the table rather than the word list is what proves both
+    /// halves are words, so `unitedstates` becomes `united States`. Two list
+    /// words alone are not enough: that read `iphone` as `I phone` and
+    /// `occured` as `occur ed`. Among known pairs the most common wins, by the
+    /// rarer half's rank, and the right half keeps the table's case.
     static func split(_ partial: String, in words: EnglishWords) -> String? {
         let whole = EnglishWords.normalized(partial)
-        guard words.rank(of: whole) == nil else { return nil }
-        var known: (cost: Int, text: String)?
-        var unknown: (cost: Int, text: String)?
+        guard whole.count <= longestSplit, words.rank(of: whole) == nil else { return nil }
+        var best: (cost: Int, text: String)?
         for cut in whole.indices.dropFirst() {
             let left = String(whole[..<cut])
-            let right = String(whole[cut...])
-            guard let leftRank = words.rank(of: left), let rightRank = words.rank(of: right)
+            let rest = whole[cut...]
+            guard
+                let right = words.nextWords(after: left, limit: .max)
+                    .first(where: { $0.lowercased() == rest })
             else { continue }
-            let candidate = (cost: max(leftRank, rightRank), text: left + " " + right)
-            if words.nextWords(after: left).contains(where: { $0.lowercased() == right }) {
-                if candidate.cost < known?.cost ?? .max { known = candidate }
-            } else if candidate.cost < unknown?.cost ?? .max {
-                unknown = candidate
-            }
+            let cost = max(
+                words.rank(of: left) ?? unlistedRank, words.rank(of: right) ?? unlistedRank)
+            if cost < best?.cost ?? .max { best = (cost, left + " " + right) }
         }
-        if let known { return known.text }
-        guard words.completions(for: whole, limit: 1).isEmpty else { return nil }
-        return unknown?.text
+        return best?.text
     }
 
     /// What to offer before a letter is typed: the words that most often follow
@@ -161,10 +166,10 @@ public enum WordSuggestions {
     /// a new line or an empty field say the sentence moved on, and guessing
     /// across that would be guessing about nothing.
     ///
-    /// The data's own case is kept (`new ` offers `York`, `Thank ` offers
-    /// `you`, not `You`), except that an ALL-CAPS previous word of two letters
-    /// or more asks for all caps, the same rule `matchingCase` reads off a
-    /// partial.
+    /// The data's own case is kept whatever the previous word's case: `new `
+    /// offers `York`, and `Thank ` and `THANK ` both offer `you`, because an
+    /// all-caps word before a space is as often an acronym (`the US `) as caps
+    /// lock. The pronoun `I` is capitalised by the same rule as everywhere else.
     public static func predictions(
         after context: String?,
         in words: EnglishWords,
@@ -173,9 +178,6 @@ public enum WordSuggestions {
         guard let context, context.hasSuffix(" ") else { return [] }
         let previous = partialWord(before: String(context.dropLast()))
         guard !previous.isEmpty else { return [] }
-        let next = words.nextWords(after: previous, limit: limit)
-        let letters = previous.filter(\.isLetter)
-        guard letters.count >= 2, letters.allSatisfy(\.isUppercase) else { return next }
-        return next.map { $0.uppercased() }
+        return words.nextWords(after: previous, limit: limit).map(capitalizingPronounI)
     }
 }

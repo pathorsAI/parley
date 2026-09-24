@@ -109,7 +109,9 @@ final class KeyboardViewController: UIInputViewController {
         // `setPane(notify: false)` deliberately skips `paneDidChange`, so a
         // keyboard that opens straight onto the English pane — which is what
         // every keyboard without Full Access does — has to be warmed here.
-        if bridge.pane == .english { EnglishWords.bundled.warm() }
+        if bridge.pane == .english {
+            EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
+        }
 
         // Let the system's own input view supply the background. It is already
         // the right colour, already rounds its corners the way the host expects
@@ -332,8 +334,10 @@ final class KeyboardViewController: UIInputViewController {
         }
         // Same bargain on the English pane: reading and sorting 40,000 words is
         // tens of milliseconds, and it belongs on the swipe rather than on the
-        // first letter typed.
-        if bridge.pane == .english { EnglishWords.bundled.warm() }
+        // first letter typed. The bar is empty until it lands, then refreshed.
+        if bridge.pane == .english {
+            EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
+        }
         refreshSuggestions()
     }
 
