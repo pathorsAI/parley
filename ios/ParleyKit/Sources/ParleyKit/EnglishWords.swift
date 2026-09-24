@@ -66,7 +66,6 @@ public final class EnglishWords {
     private struct Table {
         let words: [String]
         let ranks: [Int32]
-        /// Lowercase previous word → its followers in display case, best first.
         let followers: [String: [String]]
     }
 
@@ -110,8 +109,6 @@ public final class EnglishWords {
         warming = true
         let (wordsURL, followersURL) = (wordsURL, followersURL)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            // Nothing on `self` is touched off the main queue — the parse is a
-            // function of the URLs alone.
             let built = Self.parse(wordsURL: wordsURL, followersURL: followersURL)
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -207,7 +204,9 @@ public final class EnglishWords {
         let ranked = words.enumerated().map { (word: $0.element, rank: Int32($0.offset)) }
             .sorted { $0.word < $1.word }
         return Table(
-            words: ranked.map(\.word), ranks: ranked.map(\.rank), followers: followers)
+            words: ranked.map(\.word), ranks: ranked.map(\.rank),
+            followers: Dictionary(
+                followers.map { (normalized($0.key), $0.value) }, uniquingKeysWith: { first, _ in first }))
     }
 
     private func load() -> Table {
@@ -219,9 +218,6 @@ public final class EnglishWords {
         return built
     }
 
-    /// Read and index the resources. Static, and a function of the URLs alone,
-    /// so `warm` can run it on a background queue without touching this
-    /// instance.
     private static func parse(wordsURL: URL?, followersURL: URL?) -> Table {
         var words: [String] = []
         words.reserveCapacity(48_000)
@@ -235,7 +231,6 @@ public final class EnglishWords {
         return indexed(words, followers: followers)
     }
 
-    /// A resource's lines minus the `#` header; none for a nil or unreadable url.
     private static func lines(of url: URL?) -> [Substring] {
         guard let url, let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
         return text.split(separator: "\n", omittingEmptySubsequences: true)

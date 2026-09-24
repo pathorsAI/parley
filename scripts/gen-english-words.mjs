@@ -122,7 +122,6 @@ const SUPPLEMENT = [
   "okay", "ok", "hi", "hey", "thanks", "bye", "yeah", "yep", "nope", "sorry",
 ];
 
-/// Two words the scanner ran together; see the note above.
 const RUN_TOGETHER = new Set([
   "ofthe", "forthe", "tobe", "itis", "ido", "fora", "ina", "weare", "thana",
   "ata", "bethe", "nota", "soit",

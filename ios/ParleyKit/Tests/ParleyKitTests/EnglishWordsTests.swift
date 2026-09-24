@@ -37,7 +37,6 @@ final class EnglishWordsTests: XCTestCase {
     }
 
     func testAnEmptyPrefixOffersNothing() {
-        // "Every word in the language" is not a suggestion.
         XCTAssertEqual(fixture.completions(for: ""), [])
     }
 
@@ -62,6 +61,8 @@ final class EnglishWordsTests: XCTestCase {
         XCTAssertEqual(words.nextWords(after: "New"), ["York", "and"])
         XCTAssertEqual(words.nextWords(after: "new", limit: 1), ["York"])
         XCTAssertEqual(words.nextWords(after: "old"), [])
+        let capitalisedKey = EnglishWords(words: [], followers: ["New": ["York"]])
+        XCTAssertEqual(capitalisedKey.nextWords(after: "new"), ["York"])
     }
 
     func testRankIsAnExactMatchOnly() {
@@ -122,12 +123,9 @@ final class EnglishWordsTests: XCTestCase {
         XCTAssertEqual(WordSuggestions.suggestions(for: "Thankyou", in: bundled).first, "Thank you")
         XCTAssertEqual(WordSuggestions.suggestions(for: "THANKYOU", in: bundled).first, "THANK YOU")
         XCTAssertEqual(WordSuggestions.suggestions(for: "iam", in: bundled).first, "I am")
-        // `using` is common, so the split waits one slot behind it.
         XCTAssertEqual(
             Array(WordSuggestions.suggestions(for: "usin", in: bundled).prefix(2)),
             ["using", "us in"])
-        // A scanning artefact the generator drops; kept, it would be a list
-        // word and would never split.
         XCTAssertEqual(WordSuggestions.suggestions(for: "ofthe", in: bundled).first, "of the")
     }
 
@@ -268,16 +266,14 @@ final class WordSuggestionsTests: XCTestCase {
     }
 
     func testAKnownPairComesAheadOfRareCompletions() {
-        // `isabel` at rank 5,002 is past the common words.
         let rare = EnglishWords(
-            words: ["is", "a"] + Array(repeating: "zzz", count: 5_000) + ["isabel"],
+            words: ["is", "a"]
+                + Array(repeating: "zzz", count: WordSuggestions.commonWordRank) + ["isabel"],
             followers: ["is": ["a"]])
         XCTAssertEqual(WordSuggestions.suggestions(for: "isa", in: rare), ["is a", "isabel"])
     }
 
     func testAKnownPairGoesBehindACommonCompletion() {
-        // `isabel` at rank 4 is a common word, so `isa` is more likely it half
-        // typed; the split still shows, right behind it.
         XCTAssertEqual(WordSuggestions.suggestions(for: "isa", in: pairs), ["isabel", "is a"])
         XCTAssertEqual(
             WordSuggestions.suggestions(for: "isa", in: pairs, lexiconTerms: ["Isaac"]),
@@ -286,11 +282,9 @@ final class WordSuggestionsTests: XCTestCase {
 
     func testAnUnknownPairIsOfferedOnlyWhenNothingCompletesThePartial() {
         let words = EnglishWords(words: ["so", "something", "meth", "meeting", "tomorrow"])
-        // `someth` is one letter short of `something`, not `so meth`.
         XCTAssertEqual(WordSuggestions.suggestions(for: "someth", in: words), ["something"])
         XCTAssertEqual(
             WordSuggestions.suggestions(for: "meetingtomorrow", in: words), ["meeting tomorrow"])
-        // The same run with `is a` unknown: the completion is all there is.
         let unpaired = EnglishWords(words: ["is", "a", "isabel"])
         XCTAssertEqual(WordSuggestions.suggestions(for: "isa", in: unpaired), ["isabel"])
     }
@@ -302,8 +296,6 @@ final class WordSuggestionsTests: XCTestCase {
     }
 
     func testTheMostCommonKnownPairWins() {
-        // `a tea` and `ate a` are both known; the rarer half of `ate a` is
-        // `ate` at rank 2, which beats `tea` at rank 4.
         let words = EnglishWords(
             words: ["a", "the", "ate", "at", "tea"],
             followers: ["a": ["tea"], "ate": ["a"]])

@@ -121,8 +121,6 @@ public enum WordSuggestions {
         return out
     }
 
-    /// A partial that begins a word this common is more likely that word half
-    /// typed than two words run together.
     static let commonWordRank = 5_000
 
     /// The partial as two list words with the space the user missed, or `nil`.

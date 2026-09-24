@@ -38,9 +38,9 @@
 //     the counts summed; a follower is shown in the casing of its
 //     highest-count variant, so `I` and `York` keep their capitals and `first`
 //     stays lowercase.
-//   * The top FOLLOWERS per previous word, by summed count, upstream order as
-//     the tiebreak. Lines are ordered by the previous word's first appearance
-//     upstream, so the output is reproducible.
+//   * The top SUGGESTION_LIMIT followers per previous word, by summed count,
+//     upstream order as the tiebreak. Lines are ordered by the previous word's
+//     first appearance upstream, so the output is reproducible.
 
 import { writeFile } from "node:fs/promises";
 
@@ -50,9 +50,7 @@ const REPO = "orgtre/google-books-ngram-frequency";
 const BRANCH = "main";
 const FILES = ["ngrams/2grams_english.csv"];
 
-/// Followers kept per previous word: the bar's own limit,
-/// `EnglishWords.suggestionLimit`.
-const FOLLOWERS = 5;
+const SUGGESTION_LIMIT = 5;
 
 const OUT = resourcePath("english-next-words.txt");
 
@@ -95,9 +93,7 @@ async function main() {
   );
 }
 
-/// Upstream is `ngram,freq` with a header row and no quoting. Returns one row
-/// per case-insensitive pair, counts summed, carrying the upstream position of
-/// its first variant and the casing of its highest-count follower.
+/// Upstream is `ngram,freq` with a header row and no quoting.
 function parseBigrams(text) {
   const byPair = new Map();
   const rows = text.split("\n").slice(1);
@@ -129,8 +125,6 @@ function parseBigrams(text) {
   return [...byPair.values()];
 }
 
-/// Previous word → its best FOLLOWERS, in the order previous words first
-/// appear upstream.
 function group(pairs) {
   const byPrevious = new Map();
   for (const pair of [...pairs].sort((a, b) => a.position - b.position)) {
@@ -140,7 +134,7 @@ function group(pairs) {
   const out = new Map();
   for (const [previous, followers] of byPrevious) {
     followers.sort((a, b) => b.count - a.count || a.position - b.position);
-    out.set(previous, followers.slice(0, FOLLOWERS).map((pair) => pair.next));
+    out.set(previous, followers.slice(0, SUGGESTION_LIMIT).map((pair) => pair.next));
   }
   return out;
 }

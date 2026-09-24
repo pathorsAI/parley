@@ -1052,8 +1052,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     /// The user tapped a word: take back the letters they typed and put the
-    /// whole word in, with the space that ends it. After a space the partial is
-    /// empty, so a prediction deletes nothing and is simply typed.
+    /// whole word in, with the space that ends it.
     ///
     /// Deleting by `unicodeScalars.count` rather than by `count` because
     /// `deleteBackward()` removes one scalar at a time, and a partial word can
