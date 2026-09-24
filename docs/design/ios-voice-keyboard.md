@@ -849,6 +849,18 @@ cancels a button's touch when it starts to scroll, so the swipe neither types
 the key nor leaves ⌫ repeating (`RepeatingKey` keeps its press in a
 `@GestureState`, which resets on that cancellation).
 
+That arbitration was only half of it, and the half that could be tested off
+the phone. On iOS a **fully transparent point of the keyboard never receives the
+touch at all**: the voice pane is mostly empty space over the system's own
+`UIInputView`, so a finger that landed anywhere but a drawn control went
+nowhere, and the track's `contentShape(Rectangle())` could not change that from
+inside SwiftUI. The track therefore carries a fill at 1% white, below what the
+eye can see in either appearance and above what hit-testing ignores. It covers
+the gaps between keys on the typing panes too. Measured on the iPhone 17 Pro
+simulator (iOS 26.3): before, a swipe from the voice pane's blank space did
+nothing while one from the record button switched panes; with the fill, both do,
+and so does a swipe from between two rows of English keys.
+
 A swipe moves **one pane**, clamped rather than wrapped, with the track rubber-
 banding at both ends. Clamped because the rubber band is a promise that there is
 nothing further that way, and a swipe that jumped from 注音 back to the mic
