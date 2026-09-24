@@ -1059,11 +1059,12 @@ would contradict it two panes later.
 The strip defaults to the first typing pane when there is no Full Access,
 because that is the pane that still works in that state.
 
-While 注音 is being typed the strip gives its whole row over to the
-composition — every syllable still pending, space-separated — and the candidates
-for the oldest of them; see below. It is the one row the keyboard has to spare,
-and a candidate bar of its own above the keys would make that pane taller than
-its neighbours every time somebody started a word.
+While 注音 is being typed the strip gives its whole row over to the candidates
+for the oldest pending syllable; see below. The composition itself is marked
+text in the host's field, as on the system keyboard, so the row holds only the
+candidates. It is the one row the keyboard has to spare, and a candidate bar of
+its own above the keys would make that pane taller than its neighbours every
+time somebody started a word.
 
 ### English pane
 
@@ -1108,13 +1109,13 @@ spell every word out, which is how the owner put it — 「中文有 auto comple
 
 **While the cursor is inside a word, the mode strip is given over to a
 suggestion bar**: up to five completions of the run of letters before the cursor,
-most frequent first, on the same terms the 注音 composition takes the strip. The
+most frequent first, on the same terms the 注音 candidates take the strip. The
 argument is the same one, too — the strip is the one row this keyboard has to
 spare, and a bar of its own above the keys would make the English pane taller
 than its neighbours every time somebody started a word, which shoves the host
 app's content up and down mid-swipe. When the partial word is empty the strip is
-the wordmark and the tabs again. A pending 注音 composition wins the row, though
-it cannot arise while the English pane is current.
+the wordmark and the tabs again. 注音 candidates win the row, though they
+cannot arise while the English pane is current.
 
 The partial word is the run of letters and apostrophes immediately before the
 cursor in `textDocumentProxy.documentContextBeforeInput`, recomputed after every
@@ -1478,27 +1479,38 @@ composer's limit rather than a position anybody argued for.
     `， 。 ？ ！ ： ； （ ） 「 」 、 ～ 《 》`.
   - **Double-space types 「。」** on the 注音 pane, with no trailing space — the
     full-width mark carries its own. QWERTY keeps `. `.
-- **The composition is drawn in the mode strip**, space-separated, rather than as
-  marked text in the host's field. `UITextDocumentProxy` does offer
-  `setMarkedText(_:selectedRange:)`, and the system keyboard uses exactly that;
-  it is not used here because how a host renders and commits marked text is the
-  host's business, and a composition that the keyboard cannot see cannot be
-  guaranteed to end the way the composer thinks it did. The strip is ours. Six
-  syllables and a candidate bar do not both fit in one row, so **the chip shows
-  the last two syllables**, behind a `…` when more are pending (VoiceOver still
-  reads the whole buffer): the newest syllable is the one being typed, the one
-  before it shows the segmentation, and the front of the buffer is on screen
-  anyway as the candidates. Until 1.20 the chip showed the whole buffer capped
-  at 170pt, which at six syllables left a 320pt phone two or three candidates —
-  reported as "only about three characters". The chip is also 15pt now, down
-  from 17. Measured on the simulator: the chip for `…ㄖㄣ ㄐㄧㄣ` is 100pt plus a
-  6pt gap, a one-character candidate cell 45pt, a two-character phrase 65pt,
-  and ⌄ 33pt. So at 320pt (296pt of strip) the bar has 157pt — three and a half
-  single characters, or two and a half phrases — and at 402pt (iPhone 17 Pro)
-  239pt, three and a half phrases. `ZhuyinComposer.maxPending` is unchanged.
-- Leaving the pane commits what was pending — the user swiped, they didn't press
-  delete. Coming back to a *different* field drops it, the same rule the
-  transcript tail follows and for the same reason.
+- **The composition is marked text in the host's field**, underlined and
+  provisional, as the system keyboard shows it: the pending syllables
+  space-separated, tone marks included, with `ˉ` after one toned with space
+  (`ZhuyinComposer.reading`). On iOS 26.3 the system keyboard shows `ㄋ ㄏ` and
+  `ㄋㄧˇ ㄏ` for those keys, and does not convert a toned syllable inline. It
+  shows converted text only for a candidate picked from the front (`你ㄏ`), and
+  a pick here commits at once, so that part is already committed text. The
+  strip holds only the candidates. The keyboard mirrors what it last set in
+  `markedText`, since the proxy cannot read marked text back.
+- **A keyboard-initiated end commits with `insertText`.** A candidate, return,
+  space on a toned syllable, punctuation, leaving the pane (the user swiped,
+  they didn't press delete) and buffer overflow all call `insertText`, which
+  replaces the marked text. `setMarkedText` with the committed text followed by
+  `unmarkText` looks more explicit and is wrong: when the next `setMarkedText`
+  (the rest of the reading) follows in the same turn, Reminders applied them out
+  of order, dropped the picked character and left the rest unmarked.
+- **A host-initiated end keeps what the host shows.** When the host no longer
+  holds the marked text around the caret (a different field, a host that cleared
+  or rewrote its text, a caret moved out of the marked range), the keyboard
+  calls `unmarkText` and drops the buffer. Nothing is inserted: committing the
+  best guess would put it wherever the cursor has gone. A caret moved *inside*
+  the marked range keeps composing, as on the system keyboard, which is also
+  where UIKit puts a tap in the field while marked text is showing. Coming back
+  to the keyboard drops a leftover buffer the same way, the rule the transcript
+  tail follows and for the same reason.
+- **Switching keyboards cannot commit.** The system 注音 keyboard commits its
+  best guess when the globe switches away. Ours cannot: by `viewWillDisappear`
+  the host has already stopped taking the proxy's edits, and on phones where
+  the system draws the globe there is no earlier callback. The reading stays in
+  the field, still underlined, until the next keyboard's first key finalizes it
+  as typed. Dismissing the keyboard also leaves the reading as typed, but the
+  host drops the underline itself when the field resigns.
 
 **Nothing commits itself on the way past.** The rule that starting a syllable
 confirmed the one before it went with one-at-a-time: starting the next syllable

@@ -80,6 +80,9 @@ final class KeyboardViewController: UIInputViewController {
     /// does not touch its resource until the first syllable is finalized, so a
     /// keyboard that only ever dictates never pays for it.
     private var zhuyin = ZhuyinComposer(dictionary: .bundled, phrases: ZhuyinPhrases.bundled)
+    /// What this keyboard last put in the host as marked text; empty means none.
+    /// A mirror because the proxy cannot read marked text back.
+    private var markedText = ""
 
     /// The user's own words, offered ahead of the bundled list on the English
     /// pane. Read once per appearance rather than per keystroke: it is a file in
@@ -269,8 +272,7 @@ final class KeyboardViewController: UIInputViewController {
         // A half-typed syllable belongs to the field it was started in, so it is
         // dropped rather than committed — the same rule as the transcript tail
         // below, and for the same reason.
-        zhuyin.clear()
-        publishComposition()
+        abandonComposition()
         // The field may be a different one, with a different word half-typed in
         // front of the cursor, so both the user's terms and the bar are re-read
         // rather than carried over.
@@ -324,6 +326,7 @@ final class KeyboardViewController: UIInputViewController {
         // is precisely the thing the user is walking away from.
         if hasFullAccess, bridge.listening { Haptics.dictationContinuesInBackground() }
         lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
+        abandonComposition()
     }
 
     /// A field that asks for a dark keyboard gets one — see `isDark`. The field
@@ -334,12 +337,18 @@ final class KeyboardViewController: UIInputViewController {
         // Only a field that stopped saying `.dark` is known to have been read
         // again; one still saying it may be the same stale value.
         if textDocumentProxy.keyboardAppearance != .dark { staleHostDark = false }
+        abandonCompositionIfGone()
         refreshAppearance()
         refreshReturnKey()
         // The cursor may have moved somewhere this keyboard did not put it —
         // a tap in the field, an autofill, the host rewriting its own text — so
         // the word in front of it is re-read rather than assumed.
         refreshSuggestions()
+    }
+
+    override func selectionDidChange(_ textInput: UITextInput?) {
+        super.selectionDidChange(textInput)
+        abandonCompositionIfGone()
     }
 
     /// The constraint measures the whole input view, but the content is pinned
@@ -1170,24 +1179,66 @@ final class KeyboardViewController: UIInputViewController {
     ) {
         switch outcome {
         case .handled: break
-        case .insert(let text): textDocumentProxy.insertText(text)
+        case .insert(let text): commit(text)
         case .passThrough: passThrough()
         }
         publishComposition()
     }
 
-    /// One assignment for the composition and its candidates together, and
-    /// only on a real change: a keystroke is one invalidation of the strip,
-    /// not two.
+    /// `insertText` replaces the marked text. `setMarkedText` + `unmarkText`
+    /// does not survive a `setMarkedText` in the same turn: Reminders applied
+    /// them out of order and dropped the picked candidate.
+    private func commit(_ text: String) {
+        textDocumentProxy.insertText(text)
+        markedText = ""
+    }
+
+    /// The reading goes to the host as marked text; the strip gets only the
+    /// candidates. One assignment for the strip, and only on a real change: a
+    /// keystroke is one invalidation of the strip, not two.
     private func publishComposition() {
-        let next = KeyboardBridge.ZhuyinStrip(
-            composition: zhuyin.reading, candidates: zhuyin.candidates)
+        let reading = zhuyin.reading
+        if reading != markedText {
+            if reading.isEmpty {
+                textDocumentProxy.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
+                textDocumentProxy.unmarkText()
+            } else {
+                textDocumentProxy.setMarkedText(
+                    reading,
+                    selectedRange: NSRange(location: (reading as NSString).length, length: 0))
+            }
+            markedText = reading
+        }
+        let next = KeyboardBridge.ZhuyinStrip(composition: "", candidates: zhuyin.candidates)
         if bridge.zhuyin != next { bridge.zhuyin = next }
         // The candidate grid is about a reading; once the buffer is committed or
         // cleared there is nothing left in it to choose, and the keys come back.
         // Here rather than in the view so every way the buffer empties — a pick,
         // return, space, punctuation, leaving the pane — closes it the same way.
-        if zhuyin.reading.isEmpty, bridge.candidatesExpanded { bridge.candidatesExpanded = false }
+        if reading.isEmpty, bridge.candidatesExpanded { bridge.candidatesExpanded = false }
+    }
+
+    /// End the composition without inserting anything; the host keeps what it
+    /// shows. Committing the best guess here would put it wherever the cursor
+    /// has gone.
+    private func abandonComposition() {
+        if !markedText.isEmpty { textDocumentProxy.unmarkText() }
+        markedText = ""
+        zhuyin.clear()
+        publishComposition()
+    }
+
+    /// A caret inside the marked text keeps composing, as on the system
+    /// keyboard: UIKit puts a tap in the field there, and the next key re-sets
+    /// the marked text with the caret at its end.
+    private func abandonCompositionIfGone() {
+        guard !markedText.isEmpty else { return }
+        let before = textDocumentProxy.documentContextBeforeInput ?? ""
+        let after = textDocumentProxy.documentContextAfterInput ?? ""
+        let caretInside = (markedText.indices + [markedText.endIndex]).contains {
+            before.hasSuffix(markedText[..<$0]) && after.hasPrefix(markedText[$0...])
+        }
+        if !caretInside { abandonComposition() }
     }
 
     // MARK: English word suggestions
@@ -1309,7 +1360,7 @@ final class KeyboardViewController: UIInputViewController {
             publishComposition()
             return
         case .insert(let text):
-            textDocumentProxy.insertText(text)
+            commit(text)
             publishComposition()
             return
         case .passThrough:
@@ -1483,11 +1534,16 @@ final class KeyboardBridge: ObservableObject {
     /// `MicMeter` is: every keystroke changes both, and two would invalidate the
     /// view twice for one key.
     struct ZhuyinStrip: Equatable {
-        /// The syllables part-way through being typed. Empty when nothing is
-        /// pending, which is also what puts the wordmark back.
+        /// The syllables part-way through being typed, for the strip's chip.
+        /// Empty unless the host ignores marked text: everywhere else the
+        /// reading is marked text in the field and the strip has no copy.
         var composition: String
         /// What the front of the composition could be, most likely first.
         var candidates: [String]
+
+        /// Something to show for 注音. Neither half pending is what puts the
+        /// wordmark back.
+        var isPending: Bool { !composition.isEmpty || !candidates.isEmpty }
     }
 
     @Published var zhuyin = ZhuyinStrip(composition: "", candidates: [])
