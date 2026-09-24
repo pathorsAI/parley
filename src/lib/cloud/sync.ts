@@ -15,7 +15,7 @@ import { isTauri } from "../tauriEvents";
 import { log } from "../log";
 import { CLOUD_URL, cloudFetch, cloudToken, isAuthError, syncEnabled } from "./client";
 import { buildSummary, listHistory, deleteHistoryEntry } from "../history/history";
-import { getSyncMeta, pruneSyncMeta, setSynced } from "./syncState";
+import { pruneSyncMeta, readSyncIndex, setSynced, setSyncedMany } from "./syncState";
 import type { HistoryEntry, HistoryEntrySummary } from "../history/types";
 import type { CloudRecordingSummary } from "./types";
 
@@ -161,17 +161,21 @@ export async function listMergedHistory(): Promise<HistoryCardItem[]> {
 
   const cloudById = new Map(cloud.map((c) => [c.id, c]));
   const localIds = new Set(local.map((e) => e.id));
+  // One parse of the bookkeeping for the whole list, one write for every new
+  // baseline — see readSyncIndex for why this is not a per-entry lookup.
+  const syncIndex = readSyncIndex();
+  const baselines: [string, number][] = [];
   const merged: HistoryCardItem[] = local.map((e) => {
     const c = cloudById.get(e.id);
     if (!c) return { ...e, sync: "local" as const }; // not backed up yet
-    const meta = getSyncMeta(e.id);
+    const meta = syncIndex[e.id] ?? {};
     if (meta.cloudUpdatedAt === undefined) {
       // First sight of an already-synced entry → assume the local copy matches the
       // current cloud (it was pushed/pulled from this device) and record that, so
       // only a LATER cloud bump (another device) reads as stale. But NEVER record a
       // baseline while a local change is pending (dirty) — that would drop the
       // re-push the sweep still owes; leave dirty so the sweep pushes it.
-      if (!meta.dirty) setSynced(e.id, c.updatedAt);
+      if (!meta.dirty) baselines.push([e.id, c.updatedAt]);
       return { ...e, sync: "synced", cloudUpdatedAt: c.updatedAt };
     }
     // Stale only when the cloud is strictly newer AND we have no unpushed local
@@ -179,6 +183,7 @@ export async function listMergedHistory(): Promise<HistoryCardItem[]> {
     const stale = c.updatedAt > meta.cloudUpdatedAt && !meta.dirty;
     return { ...e, sync: stale ? "stale" : "synced", cloudUpdatedAt: c.updatedAt };
   });
+  setSyncedMany(baselines);
   for (const c of cloud) {
     if (localIds.has(c.id)) continue; // already a local card above
     merged.push({
@@ -222,10 +227,12 @@ export async function pushUnsyncedToCloud(): Promise<number> {
   }
   const local = await listHistory();
   const cloudIds = new Set(cloud.map((c) => c.id));
+  // Decided up front from one snapshot (see readSyncIndex). An entry marked dirty
+  // while the sweep runs is caught by the next one, like any other late change.
+  const syncIndex = readSyncIndex();
+  const toPush = local.filter((e) => !cloudIds.has(e.id) || syncIndex[e.id]?.dirty === true);
   let pushed = 0;
-  for (const e of local) {
-    const needsPush = !cloudIds.has(e.id) || getSyncMeta(e.id).dirty === true;
-    if (!needsPush) continue;
+  for (const e of toPush) {
     try {
       await pushLocalEntry(e.id);
       pushed++;

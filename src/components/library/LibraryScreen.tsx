@@ -24,13 +24,14 @@ import {
   shareRecordingToOrg,
   type HistoryCardItem,
 } from "../../lib/cloud/sync";
-import { buildOwnershipIndex, inFolderNode, inNode } from "../../lib/library/scope";
+import { buildOwnershipIndex, inFolderNode, inNode, nodeKey } from "../../lib/library/scope";
 import { log } from "../../lib/log";
 import { isTauri } from "../../lib/tauriEvents";
 import { VoiceTypingHistory } from "../../history/VoiceTypingHistory";
 import { LibraryCard, MoveDialog } from "./LibraryCards";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { RecordingTimeline } from "./RecordingTimeline";
+import { useRenderWindow } from "./useRenderWindow";
 import type { LibraryTree } from "../shell/useLibraryTree";
 import { filingChoices, type Folder as LocalFolder } from "../../lib/history/folders";
 import type { CloudOrg, CloudRecordingSummary } from "../../lib/cloud/types";
@@ -255,6 +256,17 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     return !!node && inNode(e, node, index);
   });
 
+  // Mount the list a page at a time — see useRenderWindow. The count in the
+  // header still reads off `visible`: it is what's in the node, not what's mounted.
+  const listKey = [
+    scopeKey,
+    selection.kind === "org" ? selection.folderId ?? "" : node ? nodeKey(node) : "",
+    searchQuery,
+  ].join("|");
+  const { limit, sentinelRef } = useRenderWindow(visible.length, listKey);
+  const shown = limit < visible.length ? visible.slice(0, limit) : visible;
+  const sentinel = limit < visible.length && <div ref={sentinelRef} className="h-px" />;
+
   // ── Card actions ──────────────────────────────────────────────────────────
   const openItem = useCallback(
     async (item: HistoryCardItem) => {
@@ -433,64 +445,70 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   } else if (isAll) {
     // A different question deserves a different shape — see RecordingTimeline.
     body = (
-      <RecordingTimeline
-        entries={visible}
-        locale={locale}
-        signedIn={tree.signedIn}
-        orgs={tree.orgs}
-        orgFolders={tree.orgFolders}
-        busyId={busyId}
-        downloadingId={downloadingId}
-        sharingId={sharingId}
-        folders={moveFolders}
-        onOpen={(entry) => {
-          openItem(entry).catch((error) =>
-            log.error("library: open failed", { id: entry.id, error: String(error) })
-          );
-        }}
-        onDelete={(entry) => setPendingDelete(entry)}
-        onRename={(id, title) => {
-          rename(id, title).catch(() => {});
-        }}
-        onShare={(entry, org, folderId) => setMovePrompt({ item: entry, org, folderId })}
-        onMove={(entry, folderId) => {
-          move(entry, folderId).catch(() => {});
-        }}
-      />
+      <>
+        <RecordingTimeline
+          entries={shown}
+          locale={locale}
+          signedIn={tree.signedIn}
+          orgs={tree.orgs}
+          orgFolders={tree.orgFolders}
+          busyId={busyId}
+          downloadingId={downloadingId}
+          sharingId={sharingId}
+          folders={moveFolders}
+          onOpen={(entry) => {
+            openItem(entry).catch((error) =>
+              log.error("library: open failed", { id: entry.id, error: String(error) })
+            );
+          }}
+          onDelete={(entry) => setPendingDelete(entry)}
+          onRename={(id, title) => {
+            rename(id, title).catch(() => {});
+          }}
+          onShare={(entry, org, folderId) => setMovePrompt({ item: entry, org, folderId })}
+          onMove={(entry, folderId) => {
+            move(entry, folderId).catch(() => {});
+          }}
+        />
+        {sentinel}
+      </>
     );
   } else {
     body = (
-      <div className="flex flex-col divide-y divide-border">
-        {visible.map((entry) => (
-          <LibraryCard
-            key={entry.id}
-            entry={entry}
-            locale={locale}
-            signedIn={tree.signedIn}
-            isOrgContext={isOrg}
-            orgs={tree.orgs}
-            orgFolders={tree.orgFolders}
-            busy={busyId === entry.id}
-            downloading={downloadingId === entry.id}
-            sharing={sharingId === entry.id}
-            folders={moveFolders}
-            onOpen={() => {
-              openItem(entry).catch((error) =>
-                log.error("library: open failed", { id: entry.id, error: String(error) })
-              );
-            }}
-            onDelete={() => setPendingDelete(entry)}
-            onRename={(title) => {
-              rename(entry.id, title).catch(() => {});
-            }}
-            onShare={(org, folderId) => setMovePrompt({ item: entry, org, folderId })}
-            onMove={(folderId) => {
-              const run = isOrg ? moveInOrg(entry, folderId) : move(entry, folderId);
-              run.catch(() => {});
-            }}
-          />
-        ))}
-      </div>
+      <>
+        <div className="flex flex-col divide-y divide-border">
+          {shown.map((entry) => (
+            <LibraryCard
+              key={entry.id}
+              entry={entry}
+              locale={locale}
+              signedIn={tree.signedIn}
+              isOrgContext={isOrg}
+              orgs={tree.orgs}
+              orgFolders={tree.orgFolders}
+              busy={busyId === entry.id}
+              downloading={downloadingId === entry.id}
+              sharing={sharingId === entry.id}
+              folders={moveFolders}
+              onOpen={() => {
+                openItem(entry).catch((error) =>
+                  log.error("library: open failed", { id: entry.id, error: String(error) })
+                );
+              }}
+              onDelete={() => setPendingDelete(entry)}
+              onRename={(title) => {
+                rename(entry.id, title).catch(() => {});
+              }}
+              onShare={(org, folderId) => setMovePrompt({ item: entry, org, folderId })}
+              onMove={(folderId) => {
+                const run = isOrg ? moveInOrg(entry, folderId) : move(entry, folderId);
+                run.catch(() => {});
+              }}
+            />
+          ))}
+        </div>
+        {sentinel}
+      </>
     );
   }
 

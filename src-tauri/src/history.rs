@@ -197,11 +197,23 @@ pub async fn download_remote_audio(
 
 /// List every entry's `summary.json` (raw strings; the frontend parses + sorts).
 /// Missing/corrupt summaries are skipped rather than failing the whole list.
+///
+/// `async` + `spawn_blocking` for the same reason as [`save_history_entry`]: this
+/// opens one file per recording, and the library re-lists on every focus and
+/// every history update. On the main thread that is a stall of every window
+/// (voice typing included) that grows with the size of the library.
 #[tauri::command]
-pub fn list_history(app: AppHandle) -> Result<Vec<String>, String> {
+pub async fn list_history(app: AppHandle) -> Result<Vec<String>, String> {
     let base = history_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || read_summaries(&base))
+        .await
+        .map_err(|e| format!("history list task panicked: {e}"))?
+}
+
+/// The file-side of [`list_history`]. Synchronous; runs on a blocking worker.
+fn read_summaries(base: &Path) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
-    let entries = match std::fs::read_dir(&base) {
+    let entries = match std::fs::read_dir(base) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
         Err(e) => return Err(e.to_string()),
