@@ -818,9 +818,14 @@ knowing about:
 ### Mode strip
 
 Across the top: the **Parley wordmark** on the left, and on the right the panes
-as **named tabs** — a small segmented control sized to the 38pt strip, the
+as **tabs** — a small segmented control sized to the 38pt strip, the
 current pane on a key-cap-coloured capsule that slides when the pane changes.
-The names are *Voice*, *English*, and *注音* — which keeps its own name in both
+The voice pane's tab is a microphone, the outline `mic` symbol. It sits inside
+the tab's `Text`, so it takes the same line height, baseline and colours as the
+named tabs and the capsule keeps its height when it moves. VoiceOver still reads
+it as "Voice dictation". The filled `mic.fill` was tried and dropped, because at
+caption size its solid body reads darker than the words beside it. The other
+two tabs are named *English* and *注音*, and 注音 keeps its own name in both
 localizations, because the keys on that pane are 注音 and no English word
 identifies it faster.
 

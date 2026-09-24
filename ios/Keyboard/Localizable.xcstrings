@@ -580,23 +580,6 @@
         }
       }
     },
-    "Voice": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Voice"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "語音"
-          }
-        }
-      }
-    },
     "Voice dictation": {
       "extractionState": "manual",
       "localizations": {
