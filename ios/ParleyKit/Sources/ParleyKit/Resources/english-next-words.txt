@@ -1,0 +1,1087 @@
+# English next-word table for the keyboard's suggestion bar: after
+#   `thank ` the bar offers `you`, and `thankyou` is offered as `thank you`.
+# One line per previous word: `prev next1 next2 ...`, space-separated, prev
+#   lowercase, followers in display case, most frequent first.
+# GENERATED — run scripts/gen-english-next-words.mjs to rebuild; do not hand-edit.
+# Source: https://github.com/orgtre/google-books-ngram-frequency @ e20471c15a758be3362b16d07870b34df4f7ccc3
+#   ngrams/2grams_english.csv, the 5,000 most frequent English 2-grams of
+#   Google Books Ngram v3 (books 2010-2019). CC-BY 3.0 (the repository's
+#   content, and the Google Books Ngram corpus it is derived from).
+# See ios/THIRD-PARTY.md.
+of the a his this her
+in the a this his which
+to the be a do make
+on the a his her this
+and the a I then he
+for the a example this her
+at the least a all her
+from the a his her their
+with the a his her an
+it is was would to has
+by the a an his this
+that the is he it I
+as a the well he if
+do not you it with so
+did not you the he it
+is a the not to that
+he was had said could did
+can be not also do see
+the same first other most world
+into the a his her my
+was a not the in to
+one of who another that or
+i was do have am had
+have been to a the not
+had been to a not no
+out of the to in a
+et al
+she was had said could did
+there is was are were will
+such as a an that
+this is was time book chapter
+would be not have you like
+may be not have also
+all the of that right this
+does not the it
+will be not have you take
+not be have know to a
+has been a not to the
+if you the he I it
+they were are had have would
+could not be have see do
+through the a his her which
+about the it to a what
+part of in
+number of
+going to on
+you can are have know do
+want to you me
+should be not have
+a few little new good man
+over the to a her and
+more than of likely and to
+when the he I you they
+new York Zealand and
+but the I it he she
+need to for a not of
+be a the used able in
+able to
+between the them two a
+are not the you a in
+we have can are were will
+during the a this
+well as
+which is the was are he
+based on
+back to in and of into
+must be have not
+like a the to that this
+used to in for as by
+up to the and in with
+use of the a in it
+according to
+some of time third other people
+united States Nations Kingdom
+under the a his this
+due to
+after the a all that he
+end of up
+what is I you he the
+within the a
+order to of
+so that much I many far
+wanted to
+rather than
+kind of
+where the he they I it
+or the a in not more
+than the a that in one
+because of the it they I
+against the his a her him
+him to and in a as
+trying to
+me to and that a in
+how to the much many do
+journal of
+his own head eyes hand face
+around the her and his him
+way to of that in he
+who had was are is were
+university of Press
+across the
+most of important common likely people
+each other of
+their own lives way children work
+before the he I she you
+those who of that in with
+might be have not
+them to in and as with
+associated with
+away from and with the
+down the to and on at
+were not the in a to
+time to of and in for
+fact that
+form of a
+began to
+no one longer more matter doubt
+side of
+sense of that
+tried to
+look at like for
+enough to for
+terms of
+come to from back on in
+see the also that you what
+seemed to
+front of door
+while the he I she they
+came to from out in back
+off the to his and her
+among the them
+development of and
+looked at up like down around
+her to eyes head own face
+many of people years other times
+go to on back and out
+history of and
+along the with
+amount of
+since the it I he they
+case of
+just as a the like to
+type of
+likely to
+level of
+related to
+set of up the out in
+know what that how the you
+using the a
+even if though the more in
+upon the a
+been a the in used able
+instead of
+make a the it sure up
+value of
+lot of
+nature of and
+us to that in and a
+lack of
+types of
+rest of
+shall be not
+toward the
+try to
+less than
+same time as way thing
+then the he I she we
+ability to
+went to on out back into
+only a the one to in
+needed to
+said to that the he in
+range of
+analysis of
+shown in that to
+result of in
+right to now of and hand
+found in that a the to
+state of and University
+until the he I they it
+role of in
+members of
+sort of
+effects of on
+study of in
+seems to
+close to
+access to
+known as to
+point of in to is
+people who in to are of
+presence of
+much of more as to less
+both the of in sides
+effect of on
+say that to it
+seem to
+process of is and
+made a the it by to
+top of
+take a the it care place
+understanding of the
+idea of that
+took a the place her
+also be the a been to
+difficult to
+any of other more time one
+department of
+told me him her you the
+involved in
+changes in
+think of that about I it
+throughout the
+an important hour example old individual
+variety of
+tell me you him her the
+other hand than words side people
+focus on of
+its own
+group of
+first time of and to place
+thank you
+years of ago old later and
+too much many late
+view of
+lead to
+series of
+response to
+my own life father mother head
+percent of
+per cent
+let me us the him her
+example of
+ready to for
+next to day morning
+forms of
+important to for
+these are two things were people
+behind the her him
+aspects of
+addition to
+couple of
+patients with
+looking at for
+towards the
+turned to out and
+levels of
+attempt to
+soon as
+similar to
+means of that to
+referred to
+change in the of
+full of
+although the it he
+get a the to out it
+parts of
+importance of
+interest in
+decided to
+believe that in it
+power of to and in
+beyond the
+long as time and
+responsible for
+return to
+attention to
+thought of that it to about
+concept of
+led to
+compared to with
+necessary to for
+outside the of
+rate of
+increase in the
+source of
+subject to of
+near the
+loss of
+approach to is
+followed by the
+unable to
+hard to
+period of
+including the
+onto the
+whether the it or they
+needs to of
+none of
+respect to
+aware of that
+find the a out that it
+piece of
+list of
+deal with of
+name of is
+work of in on with and
+prior to
+knew that the it he what
+risk of
+possible to that
+tend to
+relationship between with
+far as from more away
+your own life father mind mother
+continue to
+continued to
+basis of for
+relation to
+theory of and
+act of as
+required to for
+knowledge of and
+supposed to
+man who in and of was
+two of years or days men
+account of for
+course of
+given the to by in a
+saw the a that him
+quality of
+treatment of
+above the all
+become a the more
+life and of in is
+returned to
+started to
+degree of
+control of over and
+got to a the up
+called the a
+note that
+cost of
+matter of how what
+without the a any
+waiting for
+kinds of
+better than
+context of
+purpose of
+talk to about
+interested in
+member of
+impact of on
+care of for
+place in of to where for
+create a
+half of a the
+opportunity to
+willing to
+majority of
+being a the in able
+beginning of to
+caused by
+area of
+middle of East
+left the to
+inside the
+function of
+depending on
+despite the
+having a to been the
+absence of
+structure of and
+edge of
+size of and
+system of is and
+refers to
+son of
+easy to
+version of
+review of
+designed to
+talking about to
+filled with
+refer to
+show that the
+suggests that
+nothing to but more
+capable of
+application of
+examples of
+age of
+expected to
+focused on
+understand the that
+consider the
+evidence of that for
+world War of and is
+now that I the and he
+managed to
+described in as by
+picked up
+question of is
+head and of to
+difference between in
+provide a the
+suggest that
+leads to
+men and who in of were
+seen in as the
+something that to else about like
+following the
+once again the more a
+together with in and
+though the he it I she
+ensure that
+results of in from
+wants to
+combination of
+applied to
+here is and to in are
+different from
+model of for
+definition of
+description of
+carried out
+cengage Learning
+our own lives
+why do did the I not
+wish to
+distribution of
+put the it on a in
+line of
+depends on
+regard to
+discussion of
+information about on and is to
+areas of
+appears to
+determine the
+help you me to
+reference to
+hand and on to in
+every day time
+discussed in
+eyes and were of
+third party
+clear that
+length of
+dealing with
+ought to
+light of and
+allowed to
+sound of
+cause of
+edited by
+intended to
+health and care
+possibility of
+experience of
+house of and
+production of and
+became a the
+notion of
+bit of
+influence of on
+sure that you to
+live in
+stared at
+portion of
+pair of
+consists of
+happened to
+story of
+desire to
+oxford University
+keep the
+day of and in
+very much well good different little
+shook his her
+bible Halseth
+parallel Bible
+aspect of
+accordance with
+meaning of
+image of
+thousands of
+whole or
+face of and was
+appear to in
+shows the that
+de la
+published in
+give you me the a up
+failed to
+things that to are
+center of for
+thinking about of
+social and media
+living in room
+rights Reserved of and
+young man people
+properties of
+field of
+chance to of
+existence of
+argued that
+expression of
+heard the of a
+comes to from
+included in
+advantage of
+differences in between
+begin to
+values of
+opened the
+elements of
+listen to
+closer to
+method of
+leading to
+equal to
+formation of
+last night time
+reached the
+body of and
+include the
+characteristics of
+management of and
+reason for to
+law of and
+old man
+reduce the
+regardless of
+few days minutes years of
+contact with
+derived from
+refused to
+research and on in
+human rights beings
+available to at for in
+problem of is
+provides a
+direction of
+days of
+creation of
+cambridge University
+position of
+read the
+leave the
+again and
+effort to
+sat down on in
+high school
+support for of the
+suggested that
+collection of
+door and to
+making a the it
+suppressed from
+contribute to
+regarding the
+electronic rights
+open the to and
+meant to that
+party content
+below the
+corner of
+person who to
+children and of with in
+content may of
+consistent with
+performance of
+assessment of
+city of
+present in
+apart from
+attempts to
+assume that
+water and
+death of
+sight of
+ways to of in
+provided by
+especially in when
+fear of
+greater than
+except for
+ebook and
+evaluation of
+issue of
+noted that
+am not I
+interpretation of
+entered the
+never been be seen have had
+five years
+impossible to
+hundreds of
+appeared to in
+forced to
+construction of
+determined by to
+resulted in
+defined as by in
+heart of
+principles of
+office of
+affect the
+meet the
+institute of
+food and
+gave him me a her the
+pointed out
+sign of
+bottom of
+working with on in
+attached to
+spite of
+efforts to
+science and
+relating to
+women in and who
+room and for
+features of
+states and of that
+engaged in
+added to
+sent to
+felt like the that a
+principle of
+education and
+court of
+home and to in
+three years of times days
+someone who else
+thanks to
+section of
+growth of and
+always been be
+characterized by
+moved to
+plenty of
+lived in
+supreme Court
+god is and
+regarded as
+spirit of
+school of and
+sources of
+describe the
+search for
+surface of
+implementation of
+believed that
+argue that
+practice of
+picture of
+great deal
+himself to in
+mean that to
+respond to
+hear the
+percentage of
+book of is
+supported by
+follow the
+love you and with to of
+limited to
+agreed to
+king of
+perhaps the
+lots of
+linked to
+choice of
+depend on
+emphasis on
+opposed to
+status of
+presented in
+resulting in
+produced by
+asked to him me the
+quite a
+contrast to
+consequences of
+still in be a
+feel the like that
+scope of
+remember that the
+signs of
+serve as
+measure of
+affected by
+concerning the
+click the
+studies of in have
+cases of
+family and members
+apply to
+participate in
+engage in
+concerned with
+prepared to
+accompanied by
+coming to from
+forward to
+taking the a
+thing to that I
+secretary of
+relative to
+showed that
+sought to
+groups of
+share of
+failure to of
+enter the
+south Africa
+continues to
+numbers of
+explain the
+looks like
+realized that
+san Francisco
+beneath the
+connected to
+best to of
+evolution of
+hands and of on
+turn to
+makes it the a
+date of
+rise to of
+los Angeles
+ahead of
+pick up
+cent of
+exactly what
+stood up in
+charge of
+wait for
+listening to
+introduction to of
+purposes of
+details of
+anything to else
+proceedings of
+strength of
+word of
+nineteenth century
+moment of
+argues that
+conditions of
+representation of
+ministry of
+words of
+good to for and
+product of
+responsibility for
+worry about
+doing so
+saying that
+taken to from
+character of
+proportion of
+creating a
+reasons for
+glanced at
+rely on
+president of
+sum of
+born in
+higher than education
+attempted to
+patterns of
+identify the
+copy of
+add the
+dependent on
+commitment to
+later in
+mother and
+letter to
+woman who
+answer to
+pattern of
+director of
+extent of
+improve the
+located in
+influenced by
+economic and
+speak to
+comparison of
+goal of
+composed of
+political and
+board of
+play a
+surrounded by
+tends to
+little more
+decision to
+division of
+data from and
+sides of
+held in the
+belong to
+referring to
+arrived at
+rules of
+benefits of
+twentieth century
+pay for
+pursuant to
+culture and of
+price of
+feeling of
+placed in on
+least one
+leaving the
+volume of
+appearance of
+language of and
+year of
+represents the
+methods of
+hope that
+york Times
+easier to
+indicates that
+connection with
+ten years
+mental health
+hit the
+protection of
+indicate that
+obtained by from
+weight of
+establishment of
+climate change
+focuses on
+movement of
+approaches to
+whom he
+components of
+jesus Christ
+significance of
+father and
+stage of
+thus the
+occur in
+politics of
+demand for
+past the
+pieces of
+participation in
+reach the
+combined with
+staring at
+represent the
+arms and
+consequence of
+considered to as
+author of
+assigned to
+association of
+wanting to
+lines of
+exposure to
+stages of
+concluded that
+served as
+capacity to
+divided into
+mode of
+force of
+design of and
+claim that
+amounts of
+bed and
+says that
+halseth English
+report of on
+element of
+ratio of
+millions of
+figure out
+distinction between
+component of
+identification of
+learn to
+class of
+allow the
+created by a
+requirements of
+reduction in of
+exposed to
+condition of
+rule of
+afraid of
+reported that
+friends and
+fail to
+freedom of
+already been
+written in
+rates of
+deep breath
+costs of
+plan to
+vision of
+feature of
+interests of
+key to
+contained in
+aimed at
+success of
+early in
+stay in
+six months
+brought to
+holy Spirit
+expressed in
+attempting to
+recognition of
+society of
+develop a
+students to
+war II and
+hair and
+focusing on
+behalf of
+carry out
+realize that
+replaced by
+emergence of
+happy to
+choose to
+council of
+centre of
+waited for
+concentration of
+examination of
+opportunities for
+images of
+flow of
+hours of
+voice was
+shape of
+location of
+done in to
+selection of
+consisting of
+whereas the
+table and of
+discuss the
+attributed to
+memory of
+represented by
+business and
+works of
+provisions of
+object of
+large number
+cup of
+awareness of
+conference on
+recent years
+overview of
+money to
+effectiveness of
+determination of
+mass of
+hong Kong
+benefit of
+observed in
+generation of
+potential for
+probability of
+yet the
+problems of
+wondered if
+base of
+contributed to
+sitting on in
+via the
+academy of
+familiar with
+call the
+belief that
+issues of
+gone to
+government and of
+particularly in
+soviet Union
+wide range
+causes of
+responses to
+lives of
+entitled to
+anyone else who
+address the
+stated that
+bound to
+population of
+conception of
+relevant to
+points of
+considering the
+mind and that
+happen to
+total of
+sequence of
+republic of
+free to
+received a
+four years
+pulled out
+ask for
+several times
+implications for of
+north America
+behavior of
+covered with
+begun to
+remove the
+takes place
+activity of
+examine the
+died in
+seek to
+land of
+faith in
+standing in
+statement of
+midst of
+models of
+tended to
+ever since
+african American
+laws of
+region of
+possession of
+round the
+contribution to
+talked about
+either the
+dealt with
+describes the
+frequency of
+learning and
+relate to
+directly to
+build a
+sit down
+dressed in
+art of
+provision of
+start of to
+site of
+belonging to
+starting to
+becomes a
+removal of
+pain and
+questions about
+smiled at
+origin of
+acts of
+characteristic of
+watched the
+bring the
+glad to
+additional information
+expansion of
+views of
+herself to
+extension of
+rid of
+returning to
+produce a
+themselves to
+protect the
+black and
+wife and
