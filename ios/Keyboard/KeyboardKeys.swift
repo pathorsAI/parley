@@ -193,6 +193,7 @@ struct KeyButton<Label: View>: View {
     var width: CGFloat?
     var height: CGFloat = KBMetrics.keyHeight
     var ink: Color?
+    var callout: String? = nil
     let action: () -> Void
     @ViewBuilder var label: () -> Label
 
@@ -204,6 +205,10 @@ struct KeyButton<Label: View>: View {
             }
             .frame(width: width, height: height)
             .frame(maxWidth: width == nil ? .infinity : nil)
+            .anchorPreference(key: PressedKeys.self, value: .bounds) { bounds in
+                guard pressed, let callout else { return [] }
+                return [PressedKey(label: callout, bounds: bounds)]
+            }
         }
     }
 }

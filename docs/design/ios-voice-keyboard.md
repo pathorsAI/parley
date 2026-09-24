@@ -769,6 +769,25 @@ that moment.
 `UserDefaults` rather than a `DictationChannel` mailbox for the same reason —
 the mailboxes need Full Access, and the pane list must not.
 
+**Holding a character key shows it magnified above the finger**, the way the
+system keyboard does: every letter and `@` on the English pane, and every 大千
+key on the 注音 pane, tone marks included. The callout is drawn by one
+`KeyCalloutLayer` on the root view, not by the key. A key's own overlay would
+sit under the key to its right, and the pane track is clipped at the pane's
+top, which would cut a top-row callout in half. Each held key publishes its
+label and bounds as a preference, and the root places the bubble with
+`KeyCalloutGeometry` (ParleyKit). The proportions come from the system 注音
+keyboard: a bubble 1.8 keys wide and 1.5 keys tall, a quarter of a key above
+the cap. Its headroom is the key's distance from the top of the keyboard,
+strip included. A top-row key has 46pt of it, so its bubble is shorter and
+stops at the keyboard's top edge. No row is marked as the top one. An edge
+key's bubble lines up with the key's outer edge and flares inward only, as on
+the system keyboard, which keeps it off the backdrop's rounded corner. The
+callout does not follow a finger that slides to the next key. Each key is its
+own `Button`, so sliding off ends that press and the next key never sees a
+touch-down. The system keyboard's slide-to-retarget would need one pane-level
+touch tracker in place of those buttons. The layer would stay as it is.
+
 ### Not painting a background
 
 The keyboard draws **no canvas of its own**. `view.backgroundColor` is clear,
