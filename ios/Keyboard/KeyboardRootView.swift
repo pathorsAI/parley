@@ -66,7 +66,13 @@ struct KeyboardRootView: View {
                 // The gesture lives on the track, not on a key, and demands
                 // real travel before it engages — otherwise a fat-fingered tap
                 // on `g` would throw the user into the next pane.
-                .contentShape(Rectangle())
+                // A fully transparent point in a keyboard extension never
+                // reaches it: the system hit-tests the pixels, so the voice
+                // pane's empty space and the gaps between keys passed the
+                // touch through and only drawn controls could start a swipe.
+                // `contentShape` cannot fix that from inside SwiftUI; a fill
+                // below the eye's threshold can.
+                .background(Color.white.opacity(0.01))
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 24)
                         .updating($drag) { value, state, _ in
