@@ -324,6 +324,7 @@ pub fn start_meeting(
                         Some(error_mute.clone()),
                         None,
                         Some(meeting_paused.clone()),
+                        None,
                     ));
                 }
                 // If one capture failed, transcribe + record whichever started.
@@ -339,6 +340,7 @@ pub fn start_meeting(
                         Some(error_mute.clone()),
                         None,
                         Some(meeting_paused.clone()),
+                        None,
                     ));
                 }
                 (None, Some(b)) => {
@@ -353,6 +355,7 @@ pub fn start_meeting(
                         Some(error_mute.clone()),
                         None,
                         Some(meeting_paused.clone()),
+                        None,
                     ));
                 }
                 // No capture at all: handled by the shared no-capture tail
@@ -377,6 +380,7 @@ pub fn start_meeting(
                     Some(error_mute.clone()),
                     None,
                     Some(meeting_paused.clone()),
+                    None,
                 ));
             }
             if let Ok(rx) = spawn_capture(&coord, MicUser::Meeting, sys, gate.clone(), "them") {
@@ -392,6 +396,7 @@ pub fn start_meeting(
                     Some(error_mute.clone()),
                     None,
                     Some(meeting_paused.clone()),
+                    None,
                 ));
             }
         }
@@ -420,6 +425,7 @@ pub fn start_meeting(
                 Some(error_mute.clone()),
                 None,
                 Some(meeting_paused.clone()),
+                None,
             );
             state.tasks.lock().unwrap().push(task);
         }
