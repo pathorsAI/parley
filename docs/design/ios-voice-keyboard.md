@@ -1486,24 +1486,34 @@ composer's limit rather than a position anybody argued for.
   `ㄋㄧˇ ㄏ` for those keys, and does not convert a toned syllable inline. It
   shows converted text only for a candidate picked from the front (`你ㄏ`), and
   a pick here commits at once, so that part is already committed text. The
-  strip holds only the candidates. The keyboard mirrors what it last set in
-  `markedText`, since the proxy cannot read marked text back.
+  strip holds only the candidates. The proxy cannot read marked text back, and
+  `textDidChange` reports the host's text as it was when the host answered,
+  which with fast typing is two or three keystrokes old. So the keyboard keeps
+  every marked state it has sent and the host has not yet confirmed
+  (`MarkedTextLog`), and accepts a report that matches any of them.
 - **A keyboard-initiated end commits with `insertText`.** A candidate, return,
   space on a toned syllable, punctuation, leaving the pane (the user swiped,
   they didn't press delete) and buffer overflow all call `insertText`, which
   replaces the marked text. `setMarkedText` with the committed text followed by
   `unmarkText` looks more explicit and is wrong: when the next `setMarkedText`
   (the rest of the reading) follows in the same turn, Reminders applied them out
-  of order, dropped the picked character and left the rest unmarked.
+  of order, dropped the picked character and left the rest unmarked. Deleting
+  the last symbol ends with a single `setMarkedText("")`: the proxy drops an
+  empty `insertText`, and one call has no order to lose. Text from outside the composer, a finished
+  transcript or an English suggestion, commits the composition first, so it
+  lands after the reading instead of replacing it.
 - **A host-initiated end keeps what the host shows.** When the host no longer
   holds the marked text around the caret (a different field, a host that cleared
   or rewrote its text, a caret moved out of the marked range), the keyboard
   calls `unmarkText` and drops the buffer. Nothing is inserted: committing the
   best guess would put it wherever the cursor has gone. A caret moved *inside*
   the marked range keeps composing, as on the system keyboard, which is also
-  where UIKit puts a tap in the field while marked text is showing. Coming back
-  to the keyboard drops a leftover buffer the same way, the rule the transcript
-  tail follows and for the same reason.
+  where UIKit puts a tap in the field while marked text is showing. A host that
+  reports no context at all cannot contradict anything, so it keeps composing.
+  Coming back to the keyboard drops a leftover buffer the same way, the rule the
+  transcript tail follows and for the same reason. A reading still marked from
+  the last visit is not replaced: the next key's `setMarkedText` finalizes it as
+  typed and starts a fresh underline after it (seen on Reminders).
 - **Switching keyboards cannot commit.** The system 注音 keyboard commits its
   best guess when the globe switches away. Ours cannot: by `viewWillDisappear`
   the host has already stopped taking the proxy's edits, and on phones where

@@ -80,9 +80,9 @@ final class KeyboardViewController: UIInputViewController {
     /// does not touch its resource until the first syllable is finalized, so a
     /// keyboard that only ever dictates never pays for it.
     private var zhuyin = ZhuyinComposer(dictionary: .bundled, phrases: ZhuyinPhrases.bundled)
-    /// What this keyboard last put in the host as marked text; empty means none.
+    /// The marked text this keyboard has sent and the host has not confirmed.
     /// A mirror because the proxy cannot read marked text back.
-    private var markedText = ""
+    private var marks = MarkedTextLog()
 
     /// The user's own words, offered ahead of the bundled list on the English
     /// pane. Read once per appearance rather than per keystroke: it is a file in
@@ -1017,7 +1017,7 @@ final class KeyboardViewController: UIInputViewController {
         // appearance.
         let committed = Array(d.committed)
         if d.state == .done, committed.count > insertedCount {
-            textDocumentProxy.insertText(String(committed[insertedCount...]))
+            typeOutsideComposition(String(committed[insertedCount...]))
             insertedCount = committed.count
             var up = DictationChannel.readUplink() ?? .init(session: session)
             up.insertedCount = insertedCount
@@ -1190,7 +1190,7 @@ final class KeyboardViewController: UIInputViewController {
     /// them out of order and dropped the picked candidate.
     private func commit(_ text: String) {
         textDocumentProxy.insertText(text)
-        markedText = ""
+        marks.sent("")
     }
 
     /// The reading goes to the host as marked text; the strip gets only the
@@ -1198,16 +1198,17 @@ final class KeyboardViewController: UIInputViewController {
     /// keystroke is one invalidation of the strip, not two.
     private func publishComposition() {
         let reading = zhuyin.reading
-        if reading != markedText {
+        if reading != marks.current {
             if reading.isEmpty {
+                // One call, so there is no order to lose: the proxy drops an
+                // empty insertText, and unmarkText after this is not needed.
                 textDocumentProxy.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
-                textDocumentProxy.unmarkText()
             } else {
                 textDocumentProxy.setMarkedText(
                     reading,
                     selectedRange: NSRange(location: (reading as NSString).length, length: 0))
             }
-            markedText = reading
+            marks.sent(reading)
         }
         let next = KeyboardBridge.ZhuyinStrip(composition: "", candidates: zhuyin.candidates)
         if bridge.zhuyin != next { bridge.zhuyin = next }
@@ -1220,25 +1221,31 @@ final class KeyboardViewController: UIInputViewController {
 
     /// End the composition without inserting anything; the host keeps what it
     /// shows. Committing the best guess here would put it wherever the cursor
-    /// has gone.
+    /// has gone. `unmarkText` is unconditional: the mirror is empty after a
+    /// keyboard switch even when the host still shows the reading marked.
     private func abandonComposition() {
-        if !markedText.isEmpty { textDocumentProxy.unmarkText() }
-        markedText = ""
+        textDocumentProxy.unmarkText()
+        marks.reset()
         zhuyin.clear()
         publishComposition()
     }
 
-    /// A caret inside the marked text keeps composing, as on the system
-    /// keyboard: UIKit puts a tap in the field there, and the next key re-sets
-    /// the marked text with the caret at its end.
+    /// A report a few keystrokes stale still matches a state the keyboard sent,
+    /// and a caret inside the marked text keeps composing, as on the system
+    /// keyboard: UIKit puts a tap in the field there.
     private func abandonCompositionIfGone() {
-        guard !markedText.isEmpty else { return }
-        let before = textDocumentProxy.documentContextBeforeInput ?? ""
-        let after = textDocumentProxy.documentContextAfterInput ?? ""
-        let caretInside = (markedText.indices + [markedText.endIndex]).contains {
-            before.hasSuffix(markedText[..<$0]) && after.hasPrefix(markedText[$0...])
-        }
-        if !caretInside { abandonComposition() }
+        let before = textDocumentProxy.documentContextBeforeInput
+        let after = textDocumentProxy.documentContextAfterInput
+        // A host that reports no context at all cannot contradict the log.
+        if before == nil, after == nil { return }
+        if !marks.hostReported(before: before ?? "", after: after ?? "") { abandonComposition() }
+    }
+
+    /// Text that does not come from the composer ends the composition first,
+    /// so it lands after the reading rather than replacing it.
+    private func typeOutsideComposition(_ text: String) {
+        apply(zhuyin.confirm())
+        textDocumentProxy.insertText(text)
     }
 
     // MARK: English word suggestions
@@ -1289,6 +1296,7 @@ final class KeyboardViewController: UIInputViewController {
     func pickSuggestion(_ word: String) {
         let partial = bridge.english.partialWord
         guard !partial.isEmpty else { return }
+        apply(zhuyin.confirm())
         for _ in 0..<partial.unicodeScalars.count { textDocumentProxy.deleteBackward() }
         textDocumentProxy.insertText(word + " ")
         refreshSuggestions()
@@ -1313,8 +1321,7 @@ final class KeyboardViewController: UIInputViewController {
     /// returns before its `documentContextBeforeInput` — a round trip to the
     /// host — on every pane but English.
     func insert(_ text: String) {
-        apply(zhuyin.confirm())
-        textDocumentProxy.insertText(text)
+        typeOutsideComposition(text)
         refreshSuggestions()
     }
 

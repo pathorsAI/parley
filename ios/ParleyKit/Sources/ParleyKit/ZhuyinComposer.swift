@@ -108,9 +108,11 @@ public struct ZhuyinComposer {
     /// its own, so a syllable toned with space shows `ˉ` the way the system
     /// keyboard does; otherwise it would look as untoned as one still being typed.
     public var reading: String {
-        syllables
-            .map { $0.tone == .first ? $0.text + ZhuyinTone.first.keyCap : $0.text }
-            .joined(separator: " ")
+        syllables.map(Self.marked).joined(separator: " ")
+    }
+
+    private static func marked(_ syllable: ZhuyinSyllable) -> String {
+        syllable.tone == .first ? syllable.text + "ˉ" : syllable.text
     }
 
     /// What confirm commits, read left to right: at each position the longest
