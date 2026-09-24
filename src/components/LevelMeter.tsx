@@ -52,15 +52,15 @@ export const LevelMeter = ({
   }, []);
 
   const pct = Math.min(100, Math.round(Math.sqrt(level) * 100));
-  // Green = receiving you, red = clipping (too hot). Amber is deliberately NOT
-  // used here so it reads only as "delivery worth a look" in the DeliveryPanel —
-  // one consistent colour language across the meters instead of amber-means-three-
+  // Primary = receiving you, danger = clipping (too hot). Warning is deliberately
+  // NOT used here so it reads only as "delivery worth a look" in the DeliveryPanel —
+  // one consistent colour language across the meters instead of warning-means-three-
   // things (loud vs. too-fast vs. too-flat).
   let color = "bg-muted-foreground/30";
   if (pct > 92) {
-    color = "bg-red-500";
+    color = "bg-danger-foreground";
   } else if (pct > 3) {
-    color = "bg-emerald-500";
+    color = "bg-primary";
   }
 
   return (

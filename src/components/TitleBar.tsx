@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Check, ChevronDown, Circle, Eraser, FileAudio, History, Loader2, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
+import { Check, ChevronDown, Eraser, FileAudio, History, Loader2, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
 import { useStore, meetingElapsedMs, type AppMode } from "../lib/store";
 import type { Settings as AppSettings } from "../lib/types";
 import { log } from "../lib/log";
@@ -211,8 +211,8 @@ function ReplayTitle({ t }: Readonly<{ t: TFn }>) {
 
   if (editing) {
     return (
-      <span className="flex min-w-0 items-center gap-1.5 text-xs text-violet-600 dark:text-violet-400">
-        <FileAudio className="size-3.5 shrink-0" />
+      <span className="flex min-w-0 items-center gap-1.5 text-xs text-foreground">
+        <FileAudio className="size-3.5 shrink-0 text-muted-foreground" />
         <input
           ref={inputRef}
           value={draft}
@@ -245,8 +245,8 @@ function ReplayTitle({ t }: Readonly<{ t: TFn }>) {
   }
 
   return (
-    <span className="group/rename flex min-w-0 items-center gap-1.5 text-xs text-violet-600 dark:text-violet-400">
-      <FileAudio className="size-3.5 shrink-0" />
+    <span className="group/rename flex min-w-0 items-center gap-1.5 text-xs text-foreground">
+      <FileAudio className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="max-w-44 truncate">{replayName}</span>
       {loadedHistoryId && (
         <button
@@ -302,22 +302,21 @@ function CancelMeetingDialog({
   );
 }
 
-/** One pill in the center switcher. */
+/** One segment in the center switcher — a native-looking segmented control:
+ *  the selected segment is a raised plain surface, never a colour fill. */
 function SwitchTab({
   active,
-  accent = false,
   label,
   onClick,
-}: Readonly<{ active: boolean; accent?: boolean; label: string; onClick: () => void }>) {
-  const activeClass = accent
-    ? "bg-background text-violet-600 shadow-sm dark:text-violet-400"
-    : "bg-background text-foreground shadow-sm";
+}: Readonly<{ active: boolean; label: string; onClick: () => void }>) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={`cursor-pointer rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-        active ? activeClass : "text-muted-foreground hover:text-foreground"
+        active
+          ? "bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground"
       }`}
     >
       {label}
@@ -352,7 +351,6 @@ function CenterSwitcher({
         {(["report", "replay"] as const).map((tab) => (
           <SwitchTab
             key={tab}
-            accent
             active={studyTab === tab}
             label={t(`study.${tab}`)}
             onClick={() => onStudyTab(tab)}
@@ -805,7 +803,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   return (
     <header
       data-tauri-drag-region
-      className={`relative flex h-[52px] shrink-0 items-center justify-between border-b bg-background/85 backdrop-blur ${padLeft} ${padRight}`}
+      className={`relative flex h-[52px] shrink-0 items-center justify-between border-b bg-background ${padLeft} ${padRight}`}
     >
       {/* macOS traffic lights: native sizing/colours, glyphs reveal on hover of
           the whole cluster (not per-button), and the trio dims to grey when the
@@ -821,17 +819,12 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           level). Where the meeting saves is decided by the folder picker, so a
           second folder chip here would be a silently-losing source of truth. */}
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
-        {/* LIVE is the one badge worth a fixed slot: a recording in progress is
-            state you must not miss. The study tense needs no counterpart — the
-            purple page tabs in the center already say which tense you are in,
+        {/* The recording pill (below) is the one badge worth a fixed slot: a
+            recording in progress is state you must not miss. The study tense needs no counterpart — the
+            page tabs in the center already say which tense you are in,
             and a "書房" chip in front of every meeting name only pushed the name
             it was labelling out of view. Filing likewise has ONE home, the
             report page's link bar; a second "還沒歸檔" here just nagged. */}
-        {meetingActive && (
-          <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold tracking-wider text-emerald-600 dark:text-emerald-400">
-            LIVE
-          </span>
-        )}
         {studyMode && <ReplayTitle t={t} />}
         {/* A loaded recording stays reachable while you look at something else.
             Navigating the tree away from it used to leave nothing on screen
@@ -849,16 +842,24 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
         )}
         {meetingActive && (
           <>
-            <span className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
-              {paused ? (
-                <Circle className="h-2 w-2 fill-amber-500 text-amber-500" />
-              ) : (
-                <Circle className="h-2 w-2 animate-pulse fill-red-500 text-red-500" />
-              )}
-              {elapsed}
+            {/* ONE recording pill: dot + elapsed. Red while recording; the
+                warning family while paused, so a paused meeting doesn't read
+                as a running one. */}
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 ${
+                paused ? "bg-warning text-warning-foreground" : "bg-recording/10 text-recording"
+              }`}
+            >
+              <span
+                aria-hidden
+                className={`size-2 rounded-full ${
+                  paused ? "bg-warning-foreground" : "animate-pulse bg-recording"
+                }`}
+              />
+              <span className="font-display text-[13px] font-semibold tabular-nums">{elapsed}</span>
             </span>
             {paused ? (
-              <span className="text-xs font-medium text-amber-600 dark:text-amber-400">
+              <span className="text-xs font-medium text-warning-foreground">
                 {t("titlebar.paused")}
               </span>
             ) : (
@@ -870,7 +871,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
 
       {/* Titlebar-center switcher — two tenses, one slot: live shows the
           posture switch (coach/transcript); a loaded recording swaps in the
-          study tabs (report/replay, purple accent) plus the analysis-status
+          study tabs (report/replay) plus the analysis-status
           chip (the ONE generation surface for the whole study tense). */}
       <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2">
         <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">

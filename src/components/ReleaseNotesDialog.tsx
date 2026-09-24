@@ -53,7 +53,7 @@ export function ReleaseNotesDialog({ notes, onClose }: Readonly<ReleaseNotesDial
       />
       <div className="relative flex max-h-[86vh] w-full max-w-2xl flex-col rounded-xl border bg-background shadow-xl">
         <div className="flex items-center gap-2 border-b px-4 py-3">
-          <Sparkles className="size-4 text-sky-500" />
+          <Sparkles className="size-4 text-primary" />
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-sm font-semibold">{t("releaseNotes.title", { version: notes.version })}</h2>
             <p className="text-[11px] text-muted-foreground">{t("releaseNotes.subtitle")}</p>
@@ -65,7 +65,7 @@ export function ReleaseNotesDialog({ notes, onClose }: Readonly<ReleaseNotesDial
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {body ? (
-            <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-a:text-sky-600 dark:prose-a:text-sky-300">
+            <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-a:text-primary">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{ a: MarkdownLink }}

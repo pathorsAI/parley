@@ -94,11 +94,11 @@ export function TrimBar({ durationMs, trim, onChange, startLabel, endLabel }: Re
       <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-muted" />
       {/* trimmed head + tail (dimmed) */}
       <div
-        className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-l-full bg-foreground/15"
+        className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-l-full bg-muted-foreground/20"
         style={{ left: 0, width: `${startPct}%` }}
       />
       <div
-        className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-r-full bg-foreground/15"
+        className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-r-full bg-muted-foreground/20"
         style={{ left: `${endPct}%`, right: 0 }}
       />
       {/* kept window */}

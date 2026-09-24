@@ -53,7 +53,7 @@ export function TranscriptCopyMenu({
             "hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
           )}
         >
-          {copied ? <Check className="size-3 text-emerald-400" /> : <Copy className="size-3" />}
+          {copied ? <Check className="size-3 text-success-foreground" /> : <Copy className="size-3" />}
           {copied ? t("transcript.copied") : t("transcript.copy")}
           <ChevronDown className="size-3 opacity-60" />
         </button>

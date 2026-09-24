@@ -37,7 +37,7 @@ import type { CloudOrg, CloudRecordingSummary } from "../../lib/cloud/types";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** Map a cloud org recording to the card shape the grid renders. */
+/** Map a cloud org recording to the card shape the list renders. */
 function orgCard(c: CloudRecordingSummary): HistoryCardItem {
   return {
     id: c.id,
@@ -460,7 +460,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     );
   } else {
     body = (
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
+      <div className="flex flex-col divide-y divide-border">
         {visible.map((entry) => (
           <LibraryCard
             key={entry.id}
@@ -604,7 +604,7 @@ function ScopeTitle({
   if (isOrg) {
     return (
       <span className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
-        <UsersRound className="size-4 text-sky-500" />
+        <UsersRound className="size-4 text-muted-foreground" />
         {orgName}
         {folderName && (
           <>

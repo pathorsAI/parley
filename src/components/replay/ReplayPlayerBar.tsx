@@ -83,7 +83,7 @@ export function ReplayPlayerBar({ durationMs, player, onExport, labels }: Readon
             {player.playing ? <Pause className="size-4" /> : <Play className="size-4" />}
           </Button>
 
-          <span className="w-10 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
+          <span className="w-10 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
             {formatClock(player.playheadMs)}
           </span>
 
@@ -99,7 +99,7 @@ export function ReplayPlayerBar({ durationMs, player, onExport, labels }: Readon
             />
           </div>
 
-          <span className="w-10 shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
+          <span className="w-10 shrink-0 text-[11px] tabular-nums text-muted-foreground">
             {formatClock(durationMs)}
           </span>
 

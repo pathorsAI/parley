@@ -86,7 +86,7 @@ export function MeetingView() {
         <span className="text-xs font-medium text-foreground">{t("meeting.transcript")}</span>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" disabled={!hasSegments} onClick={copy}>
-            {copied ? <Check className="size-3 text-emerald-400" /> : <Copy className="size-3" />}
+            {copied ? <Check className="size-3 text-success-foreground" /> : <Copy className="size-3" />}
             {copied ? t("meeting.copied") : t("meeting.copy")}
           </Button>
         </div>

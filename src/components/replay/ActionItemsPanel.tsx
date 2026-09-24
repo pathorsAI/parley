@@ -7,9 +7,9 @@ import { cn } from "@/lib/utils";
 import type { Severity } from "../../lib/types";
 
 const SEVERITY_DOT: Record<Severity, string> = {
-  info: "bg-sky-400",
-  warn: "bg-amber-500",
-  critical: "bg-red-500",
+  info: "bg-info-foreground",
+  warn: "bg-warning-foreground",
+  critical: "bg-danger-foreground",
 };
 
 /**
@@ -40,7 +40,7 @@ export function ActionItemsPanel({
   const running = status === "running";
 
   const body = (
-    <div className={`flex flex-col gap-2 ${embedded ? "" : "px-3 py-3"}`}>
+    <div className={`flex flex-col ${embedded ? "" : "px-3 py-3"}`}>
           {gate && (
             <p className="px-1 pt-4 text-center text-xs text-muted-foreground">{t(gate)}</p>
           )}
@@ -53,7 +53,7 @@ export function ActionItemsPanel({
             </p>
           )}
           {!gate && status === "error" && (
-            <p className="px-1 text-xs text-orange-500">{t("actionItems.failed", { error: error ?? "—" })}</p>
+            <p className="px-1 text-xs text-destructive">{t("actionItems.failed", { error: error ?? "—" })}</p>
           )}
           {!gate && status !== "error" && items.length === 0 && !running && (
             <p className="px-1 pt-4 text-center text-xs text-muted-foreground">{t("actionItems.empty")}</p>
@@ -63,7 +63,7 @@ export function ActionItemsPanel({
             // Bound to a const so the seek callback keeps the non-null narrowing.
             const atMs = a.atMs;
             return (
-            <div key={a.id} className="rounded-lg border px-2.5 py-2">
+            <div key={a.id} className="border-b border-border px-1 py-2.5 last:border-b-0">
               <label className="flex cursor-pointer items-start gap-2">
                 <input
                   type="checkbox"
@@ -85,7 +85,7 @@ export function ActionItemsPanel({
                       className="mt-1 inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
                     >
                       <span className={cn("size-2 rounded-full", a.severity ? SEVERITY_DOT[a.severity] : "bg-muted-foreground")} />
-                      <span className="font-mono tabular-nums">{formatClock(atMs)}</span>
+                      <span className="tabular-nums">{formatClock(atMs)}</span>
                     </button>
                   )}
                 </span>

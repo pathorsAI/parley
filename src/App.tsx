@@ -134,6 +134,10 @@ const App = () => {
   // CSS-drawn rounded corners only make sense over the macOS transparent
   // window; the Windows main window is opaque and DWM handles its shape.
   const rounded = isTauri() && isMac() && !fullscreen;
+  // The macOS main window sits on a native sidebar material (windowEffects in
+  // tauri.macos.conf.json). The root stays transparent so the rail can let it
+  // through; the titlebar and the route pane paint their own opaque page.
+  const vibrant = isTauri() && isMac();
   const [releaseNotes, setReleaseNotes] = useState<ReleaseNotes | null>(null);
 
   useEffect(() => {
@@ -336,9 +340,9 @@ const App = () => {
 
   return (
     <div
-      className={`flex h-screen flex-col overflow-hidden bg-background text-foreground ${
-        rounded ? "rounded-[12px]" : ""
-      }`}
+      className={`flex h-screen flex-col overflow-hidden text-foreground ${
+        vibrant ? "" : "bg-background"
+      } ${rounded ? "rounded-[12px]" : ""}`}
     >
       {!onboarded && <Onboarding />}
       <AnalysisErrorDialog />

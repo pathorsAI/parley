@@ -46,14 +46,17 @@ export function FindingsPanel({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
-        <span className="text-xs font-medium">{t("timeline.title")}</span>
+        <span className="text-xs font-semibold">{t("timeline.title")}</span>
+        {findings.length > 0 && (
+          <span className="text-[11px] tabular-nums text-muted-foreground">{findings.length}</span>
+        )}
         <MeetingKindPicker className="ml-auto h-7 w-[150px]" />
       </div>
 
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
         {mode === "live" && (
           <Button
-            variant="default"
+            variant="secondary"
             size="sm"
             className="h-7 px-2.5 text-[11px]"
             disabled={running}
@@ -86,7 +89,7 @@ export function FindingsPanel({
       </div>
 
       {gate && (
-        <div className="mx-3 mb-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-300">
+        <div className="mx-3 mb-2 rounded-md border border-warning-border bg-warning px-2.5 py-1.5 text-[11px] text-warning-foreground">
           {t(gate, { provider: PROVIDER_BY_ID[provider]?.label ?? provider })}
         </div>
       )}
@@ -102,7 +105,9 @@ export function FindingsPanel({
               {mode === "live" ? t("analysis.emptyLive") : t("timeline.empty")}
             </p>
           ) : (
-            <ul className="flex flex-col gap-1.5">
+            // Rows are hairline-separated list items, not boxed cards — bleed the
+            // list to the pane edges so the row hover/selection spans full width.
+            <ul className="-mx-3 flex flex-col">
               {findings.map((f) => (
                 <FindingRow
                   key={f.id}

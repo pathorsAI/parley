@@ -132,7 +132,7 @@ export function Onboarding() {
         <div className="flex items-center justify-between border-b px-5 py-3">
           <span className="text-sm font-semibold">{t("onboarding.title")}</span>
           <div className="flex items-center gap-3">
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-[11px] tabular-nums text-muted-foreground">
               {step + 1} / {STEP_COUNT}
             </span>
             <button
@@ -296,7 +296,7 @@ export function Onboarding() {
                         <img src={p.icon} alt="" className="size-4 rounded-sm" />
                         {p.label}
                         {!p.diarization && (
-                          <span className="rounded bg-amber-500/15 px-1.5 py-px text-[10px] text-amber-600 dark:text-amber-300">
+                          <span className="rounded bg-warning px-1.5 py-px text-[10px] text-warning-foreground">
                             {t("settings.transcription.noDiarizationTag")}
                           </span>
                         )}
@@ -466,7 +466,7 @@ export function Onboarding() {
 
           {current === "done" && (
             <div className="flex flex-col items-center gap-3 py-6 text-center">
-              <div className="flex size-12 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
+              <div className="flex size-12 items-center justify-center rounded-full bg-success text-success-foreground">
                 <Check className="size-6" />
               </div>
               <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.done.title")}</h2>
@@ -538,16 +538,16 @@ function LoginStep() {
       <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.login.body")}</p>
       <ul className="flex flex-col gap-1.5 text-sm text-muted-foreground">
         <li className="flex items-center gap-2">
-          <Check className="size-3.5 shrink-0 text-emerald-500" />
+          <Check className="size-3.5 shrink-0 text-success-foreground" />
           {t("onboarding.login.benefit1")}
         </li>
         <li className="flex items-center gap-2">
-          <Check className="size-3.5 shrink-0 text-emerald-500" />
+          <Check className="size-3.5 shrink-0 text-success-foreground" />
           {t("onboarding.login.benefit2")}
         </li>
       </ul>
       {cloudAuth ? (
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-500">
+        <div className="flex items-center gap-2 rounded-lg border border-success-border bg-success px-3 py-2.5 text-sm text-success-foreground">
           <Check className="size-4 shrink-0" />
           {t("onboarding.login.signedIn")}
         </div>
@@ -563,7 +563,7 @@ function LoginStep() {
             {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
           </Button>
           {error && (
-            <p className="rounded-md bg-orange-500/10 px-2.5 py-1.5 text-[11px] text-orange-400">
+            <p className="rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
               {t("onboarding.login.failed", { error })}
             </p>
           )}
@@ -613,7 +613,7 @@ function PermRow({
       <span className="text-muted-foreground">{icon}</span>
       <span className="flex-1 text-sm">{label}</span>
       {ok ? (
-        <span className="flex items-center gap-1 text-xs text-emerald-400">
+        <span className="flex items-center gap-1 text-xs text-success-foreground">
           <Check className="size-3.5" />
         </span>
       ) : (
@@ -679,7 +679,7 @@ function DiarizeModelStep() {
       <h2 className="text-base font-semibold tracking-tight">{t("onboarding.diarize.title")}</h2>
       <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.diarize.body")}</p>
       {status === "done" ? (
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-500">
+        <div className="flex items-center gap-2 rounded-lg border border-success-border bg-success px-3 py-2.5 text-sm text-success-foreground">
           <Check className="size-4" />
           {t("onboarding.diarize.ready")}
         </div>
@@ -702,11 +702,11 @@ function DiarizeModelStep() {
           </Button>
           {status === "downloading" && (
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
             </div>
           )}
           {error && (
-            <p className="rounded-md bg-orange-500/10 px-2.5 py-1.5 text-[11px] text-orange-400">
+            <p className="rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
               {t("onboarding.diarize.failed", { error })}
             </p>
           )}

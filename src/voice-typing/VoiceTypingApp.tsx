@@ -334,6 +334,12 @@ export const VoiceTypingApp = () => {
   } else if (phase === "done") {
     phaseIcon = <Check className="size-2.5" strokeWidth={3} />;
   }
+  let indicatorTone = "bg-primary text-primary-foreground";
+  if (phase === "listening") {
+    indicatorTone = "bg-recording text-white";
+  } else if (phase === "done") {
+    indicatorTone = "bg-success text-success-foreground";
+  }
 
   return (
     <div
@@ -341,9 +347,9 @@ export const VoiceTypingApp = () => {
       style={{ opacity: fading ? 0 : 1, transition: `opacity ${FADE_MS}ms ease-in` }}
     >
       {/* Hosted single-dictation cap note: shown above the transcript, which is
-          still delivered. Amber to read as a limit, not an error. */}
+          still delivered. Warning tone to read as a limit, not an error. */}
       {limited && !error && (
-        <div className="rounded-full bg-amber-500 px-3 py-1 text-center text-[12px] font-medium text-white shadow-md">
+        <div className="rounded-full border border-warning-border bg-warning px-3 py-1 text-center text-[12px] font-medium text-warning-foreground shadow-md">
           {t("voiceTyping.limit")}
         </div>
       )}
@@ -353,7 +359,7 @@ export const VoiceTypingApp = () => {
       {bubble && (
         <div
           className={`flex max-h-[84px] max-w-[420px] flex-col justify-end overflow-hidden rounded-[14px] px-3.5 py-1.5 text-center text-[14px] font-medium leading-snug shadow-md ${
-            error ? "bg-red-600 text-white" : "bg-foreground text-background"
+            error ? "bg-destructive text-white" : "bg-foreground text-background"
           }`}
         >
           {/* Bottom-anchored + clipped: the newest words stay visible while a
@@ -365,9 +371,9 @@ export const VoiceTypingApp = () => {
 
       {/* Polishing note. The one beat in the pipeline the user actually waits
           for, so it says what it is waiting on rather than spinning silently.
-          Same pill language as the "copied" confirmation below. */}
+          Primary: processing is what is happening now. */}
       {phase === "polishing" && !error && (
-        <div className="flex items-center gap-1 rounded-full bg-sky-500 px-2.5 py-0.5 text-[11px] font-medium text-white shadow-md">
+        <div className="flex items-center gap-1 rounded-full bg-primary px-2.5 py-0.5 text-[11px] font-medium text-primary-foreground shadow-md">
           <Sparkles className="size-2.5 animate-pulse" />
           {t("voiceTyping.polishing")}
         </div>
@@ -376,13 +382,15 @@ export const VoiceTypingApp = () => {
       {/* Copied-to-clipboard confirmation. The transcript is always on the
           clipboard, so the "done" state announces it near the overlay. When the
           auto-paste was refused as well (no Accessibility on macOS, UIPI
-          refusing an elevated window on Windows) it turns amber and names the
+          refusing an elevated window on Windows) it turns warning and names the
           paste key — otherwise the user reads "Copied", sees nothing appear
           where they were typing, and assumes the dictation was lost. */}
       {phase === "done" && !error && text && (
         <div
-          className={`flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium text-white shadow-md ${
-            pasteBlocked ? "bg-amber-500" : "bg-emerald-500"
+          className={`flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium shadow-md ${
+            pasteBlocked
+              ? "border-warning-border bg-warning text-warning-foreground"
+              : "border-success-border bg-success text-success-foreground"
           }`}
         >
           {!pasteBlocked && <Check className="size-2.5" strokeWidth={3} />}
@@ -406,7 +414,7 @@ export const VoiceTypingApp = () => {
             <button
               type="button"
               onPointerDown={() => suggestAct("add")}
-              className="flex items-center gap-1 rounded-full bg-sky-500 px-2.5 py-0.5 text-[11px] font-medium text-white"
+              className="flex items-center gap-1 rounded-full bg-primary px-2.5 py-0.5 text-[11px] font-medium text-primary-foreground"
             >
               {t("dict.suggest.add")}
               {/* The cap for host.ts's SUGGEST_SHORTCUT ("Alt+Enter"), computed
@@ -428,7 +436,7 @@ export const VoiceTypingApp = () => {
 
       {/* Accepted: confirm it landed, and keep an undo within reach for a beat. */}
       {suggest && suggestAdded && (
-        <div className="flex items-center gap-1.5 rounded-full bg-emerald-500 px-2.5 py-0.5 text-[11px] font-medium text-white shadow-md">
+        <div className="flex items-center gap-1.5 rounded-full border border-success-border bg-success px-2.5 py-0.5 text-[11px] font-medium text-success-foreground shadow-md">
           <Check className="size-2.5" strokeWidth={3} />
           {t("dict.suggest.added")}
           <span className="opacity-60">·</span>
@@ -442,13 +450,12 @@ export const VoiceTypingApp = () => {
         </div>
       )}
 
-      {/* Layer 2 — audio waver pill: same inverted bg as the transcript, blue
-          bars, with a small state indicator. */}
+      {/* Layer 2 — audio waver pill: same inverted bg as the transcript, with a
+          small state indicator. Recording red while dictation is live, primary
+          while finalizing/polishing, success once done. */}
       <div className="flex items-center gap-2 rounded-full bg-foreground px-3 py-1.5 shadow-md">
         <div
-          className={`grid size-4 place-items-center rounded-full text-white transition-colors ${
-            phase === "done" ? "bg-emerald-500" : "bg-sky-500"
-          }`}
+          className={`grid size-4 place-items-center rounded-full transition-colors ${indicatorTone}`}
         >
           {phaseIcon}
         </div>
@@ -456,7 +463,7 @@ export const VoiceTypingApp = () => {
           {bars.map((b, i) => (
             <span
               key={barKeys.current[i]}
-              className="w-[2px] rounded-full bg-sky-500"
+              className={`w-[2px] rounded-full ${phase === "listening" ? "bg-recording" : "bg-primary"}`}
               style={{ height: `${Math.max(2, Math.round(b * BAR_MAX_PX))}px` }}
             />
           ))}

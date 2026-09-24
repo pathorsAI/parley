@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { formatClock, useStore } from "../lib/store";
 import { log } from "../lib/log";
 import { useThemePreference } from "../lib/theme";
@@ -8,7 +7,6 @@ import { listenForSettings } from "../lib/settingsSync";
 import { useI18n } from "../i18n";
 import { missingProviderRequirement, providerGateKey } from "../lib/ai/settings";
 import { FindingSolutionView } from "../components/analysis/FindingSolutionView";
-import { findingTitleClass } from "../components/analysis/FindingRow";
 import {
   closeFindingSolution,
   helloFindingSolution,
@@ -130,18 +128,15 @@ export function FindingSolutionApp() {
     <div className="flex h-screen flex-col bg-background text-foreground">
       <div className="flex items-start gap-2 border-b px-3.5 py-2.5">
         <div className="min-w-0 flex-1">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+          <div className="text-[11px] font-semibold text-muted-foreground">
             {t("solution.windowTitle")}
           </div>
           <div className="mt-0.5 flex items-center gap-1.5">
-            <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+            <span className="text-[11px] tabular-nums text-muted-foreground">
               {formatClock(finding.atMs)}
             </span>
             <span
-              className={cn(
-                "truncate text-sm font-semibold",
-                findingTitleClass(finding)
-              )}
+              className="truncate text-sm font-semibold text-foreground"
               title={finding.title}
             >
               {finding.title}

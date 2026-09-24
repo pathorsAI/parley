@@ -25,7 +25,7 @@ function TodoRow({ todo }: Readonly<{ todo: TodoItem }>) {
         onClick={() => toggleTodo(todo.id)}
         className="mt-0.5 shrink-0 text-muted-foreground hover:text-foreground"
       >
-        {todo.done ? <Check className="size-4 text-emerald-500" /> : <Square className="size-4" />}
+        {todo.done ? <Check className="size-4 text-success-foreground" /> : <Square className="size-4" />}
       </button>
       <span
         className={`flex-1 text-sm leading-snug ${todo.done ? "text-muted-foreground line-through" : ""}`}

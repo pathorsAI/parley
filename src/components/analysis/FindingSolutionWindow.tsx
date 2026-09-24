@@ -1,9 +1,7 @@
 import { X } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { useStore, formatClock } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import { FindingSolutionCard } from "./FindingSolutionCard";
-import { findingTitleClass } from "./FindingRow";
 
 /**
  * Floating "how to reply" window (browser-dev fallback for the standalone OS
@@ -26,18 +24,15 @@ export function FindingSolutionWindow() {
     <div className="fixed right-4 top-1/2 z-50 flex max-h-[80vh] w-[22rem] -translate-y-1/2 flex-col rounded-xl border bg-background shadow-2xl">
       <div className="flex items-start gap-2 border-b px-3.5 py-2.5">
         <div className="min-w-0 flex-1">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+          <div className="text-[11px] font-semibold text-muted-foreground">
             {t("solution.windowTitle")}
           </div>
           <div className="mt-0.5 flex items-center gap-1.5">
-            <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+            <span className="text-[11px] tabular-nums text-muted-foreground">
               {formatClock(finding.atMs)}
             </span>
             <span
-              className={cn(
-                "truncate text-sm font-semibold",
-                findingTitleClass(finding)
-              )}
+              className="truncate text-sm font-semibold text-foreground"
               title={finding.title}
             >
               {finding.title}

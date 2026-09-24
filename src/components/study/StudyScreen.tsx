@@ -173,7 +173,7 @@ function ReportSection({
 }: Readonly<{ id: string; title: string; children: ReactNode }>) {
   return (
     <section id={id} className="scroll-mt-4">
-      <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <h2 className="mb-2.5 text-xs font-semibold text-muted-foreground">
         {title}
       </h2>
       {children}

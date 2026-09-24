@@ -231,7 +231,7 @@ export function Combobox({
                       <span className="shrink-0 text-[10px] text-muted-foreground">{o.hint}</span>
                     )}
                     {o.value === value && (
-                      <Check className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                      <Check className="size-3.5 shrink-0 text-primary" />
                     )}
                   </button>
                 ))}

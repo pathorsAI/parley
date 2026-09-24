@@ -25,9 +25,9 @@ function micStatus(raw: string): Status {
 
 /** Text colour for each status. */
 function toneFor(status: Status): string {
-  if (status === "granted") return "text-emerald-600 dark:text-emerald-400";
-  if (status === "denied") return "text-red-600 dark:text-red-400";
-  return "text-amber-600 dark:text-amber-400";
+  if (status === "granted") return "text-success-foreground";
+  if (status === "denied") return "text-danger-foreground";
+  return "text-warning-foreground";
 }
 
 /**
@@ -135,7 +135,7 @@ export function PermissionsPanel() {
         onGrant={() => grant("mic", "microphone", () => invoke("request_microphone"))}
       />
       {!isMac() && (
-        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
+        <p className="rounded-lg border border-warning-border bg-warning p-3 text-[11px] leading-relaxed text-warning-foreground">
           {t("settings.permissions.systemAudioWindows")}
         </p>
       )}
@@ -183,7 +183,7 @@ function Row({
       <div className="flex min-w-0 flex-col">
         <span className="text-sm font-medium">{label}</span>
         <span className="text-[11px] leading-relaxed text-muted-foreground">{desc}</span>
-        {help && <span className="mt-1 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">{help}</span>}
+        {help && <span className="mt-1 text-[11px] leading-relaxed text-warning-foreground">{help}</span>}
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {granted ? (

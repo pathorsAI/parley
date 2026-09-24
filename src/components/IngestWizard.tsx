@@ -323,7 +323,7 @@ export function IngestWizard() {
         }`}
       >
         <div className="flex items-center gap-2 border-b px-4 py-3">
-          <AudioLines className="size-4 text-emerald-400" />
+          <AudioLines className="size-4 text-muted-foreground" />
           <span className="text-sm font-semibold">{t("ingest.title")}</span>
           <StepDots step={step} />
         </div>
@@ -358,7 +358,7 @@ export function IngestWizard() {
                         onClick={() => setNumSpeakers(opt)}
                         className={`h-8 min-w-9 rounded-md border px-3 text-xs transition-colors ${
                           selected
-                            ? "border-emerald-500/60 bg-emerald-500/15 text-foreground"
+                            ? "border-primary bg-primary/10 text-foreground"
                             : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
@@ -373,7 +373,7 @@ export function IngestWizard() {
 
           {step === "transcribing" && (
             <Stage
-              icon={<Loader2 className="size-4 animate-spin text-sky-400" />}
+              icon={<Loader2 className="size-4 animate-spin text-primary" />}
               label={t(`replay.stage.${txStage ?? "decoding"}` as never)}
               sub={t("ingest.transcribingSub")}
             />
@@ -408,7 +408,7 @@ export function IngestWizard() {
                 >
                   {player.playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
                 </Button>
-                <span className="w-9 shrink-0 text-right font-mono text-[10px] tabular-nums text-muted-foreground">
+                <span className="w-9 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">
                   {formatClock(player.playheadMs)}
                 </span>
                 <Scrubber
@@ -420,7 +420,7 @@ export function IngestWizard() {
                   onScrubEnd={player.endScrub}
                   ariaLabel={t("replay.playhead")}
                 />
-                <span className="w-9 shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+                <span className="w-9 shrink-0 text-[10px] tabular-nums text-muted-foreground">
                   {formatClock(session.durationMs)}
                 </span>
               </div>
@@ -491,7 +491,7 @@ export function IngestWizard() {
 
           {step === "diarizing" && (
             <Stage
-              icon={<Loader2 className="size-4 animate-spin text-emerald-400" />}
+              icon={<Loader2 className="size-4 animate-spin text-primary" />}
               label={diarizeLabel(dz, t)}
               sub={t("ingest.diarizingSub")}
               progress={dz && dz.total > 0 ? dz.received / dz.total : null}
@@ -554,7 +554,7 @@ export function IngestWizard() {
                       onClick={() => chooseKind(choice)}
                       className={`flex flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left text-xs transition-colors ${
                         selected
-                          ? "border-emerald-500/60 bg-emerald-500/15 text-foreground"
+                          ? "border-primary bg-primary/10 text-foreground"
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
@@ -577,14 +577,14 @@ export function IngestWizard() {
 
           {step === "analyzing" && (
             <Stage
-              icon={<Loader2 className="size-4 animate-spin text-sky-400" />}
+              icon={<Loader2 className="size-4 animate-spin text-primary" />}
               label={t("ingest.analyzing")}
               sub={t("ingest.analyzingSub")}
             />
           )}
 
           {step === "error" && (
-            <div className="flex items-start gap-2 rounded-md bg-orange-500/10 px-3 py-2.5 text-[12px] text-orange-400">
+            <div className="flex items-start gap-2 rounded-md bg-danger px-3 py-2.5 text-[12px] text-danger-foreground">
               <Mic className="mt-0.5 size-4 shrink-0" />
               <span>{t("ingest.failed", { error: wizardError ?? "—" })}</span>
             </div>
@@ -658,10 +658,10 @@ function Stage({
       {sub && <span className="text-[11px] text-muted-foreground">{sub}</span>}
       <div className="mt-1 h-1.5 w-48 overflow-hidden rounded-full bg-muted">
         {progress == null ? (
-          <div className="h-full w-1/3 animate-pulse rounded-full bg-emerald-500/70" />
+          <div className="h-full w-1/3 animate-pulse rounded-full bg-primary/70" />
         ) : (
           <div
-            className="h-full rounded-full bg-emerald-500 transition-all"
+            className="h-full rounded-full bg-primary transition-all"
             style={{ width: `${Math.min(100, Math.round(progress * 100))}%` }}
           />
         )}
@@ -679,7 +679,7 @@ function StepDots({ step }: Readonly<{ step: string }>) {
       {order.map((s, i) => (
         <span
           key={s}
-          className={`size-1.5 rounded-full ${i <= idx && idx >= 0 ? "bg-emerald-500" : "bg-muted"}`}
+          className={`size-1.5 rounded-full ${i <= idx && idx >= 0 ? "bg-primary" : "bg-muted"}`}
         />
       ))}
     </div>
