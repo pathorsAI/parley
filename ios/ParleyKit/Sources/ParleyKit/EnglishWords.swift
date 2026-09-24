@@ -106,7 +106,7 @@ public final class EnglishWords {
     /// warm.
     ///
     /// Main thread, like everything else here: the guard and the store both run
-    /// there, so two warms cannot race and a warm cannot overwrite a load.
+    /// there, so two warms cannot race, and no load runs while one is in flight.
     public func warm(then ready: (() -> Void)? = nil) {
         guard table == nil, !warming, wordsURL != nil || followersURL != nil else { return }
         warming = true
@@ -116,9 +116,7 @@ public final class EnglishWords {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.warming = false
-                // A synchronous load may have beaten this here. That table is
-                // the same table; replacing it would only churn memory.
-                if self.table == nil { self.table = built }
+                self.table = built
                 ready?()
             }
         }
