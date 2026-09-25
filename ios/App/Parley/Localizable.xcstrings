@@ -342,6 +342,23 @@
         }
       }
     },
+    "After dictation ends, AI rewrites what you said into written text before it is inserted: filler and misheard words out, punctuation and clause order fixed, a spoken \"first, second, third\" laid out as a list. Nothing is added or summarised away, and the original language is preserved.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After dictation ends, AI rewrites what you said into written text before it is inserted: filler and misheard words out, punctuation and clause order fixed, a spoken \"first, second, third\" laid out as a list. Nothing is added or summarised away, and the original language is preserved."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聽寫結束後，AI 會先把口說重寫成書面文字再輸入：清掉贅詞、修正聽錯的字與顛倒的語序、重下標點，說「第一點、第二點、第三點」會排成條列。內容不會被增刪，也會保留原本的語言。"
+          }
+        }
+      }
+    },
     "After dictation ends, AI tidies the wording and punctuation before the text is inserted. The original language is preserved.": {
       "extractionState": "manual",
       "localizations": {
