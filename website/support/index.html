@@ -1,52 +1,108 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant-TW">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Parley — Support</title>
-    <meta name="description" content="Support, bug reports, and privacy contacts for Parley." />
+    <title>Parley — 支援</title>
+    <meta name="description" content="Parley 的支援、問題回報與隱私聯絡方式。" />
+    <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://parley.tw/support/" />
     <link rel="icon" type="image/svg+xml" href="../assets/logo.svg" />
     <link rel="stylesheet" href="../legal.css" />
   </head>
   <body>
-    <header class="topline">
-      <a class="brand" href="../" aria-label="Parley home"><img src="../assets/logo.svg" alt="" />Parley</a>
-      <a class="back" href="../">Back to home</a>
+    <header class="site-head">
+      <div class="wrap">
+        <a class="wordmark" href="../" data-home>Parley</a>
+        <a class="lang-switch" href="#en" lang="en" hreflang="en" data-lang-switch>English</a>
+      </div>
     </header>
-    <main>
-      <p class="eyebrow">Support</p>
-      <h1>Let's get your meeting notes back on track.</h1>
-      <p class="lead">For a sign-in, recording, sync, or library problem, keep the error screen, the time it happened, and your app version — those three things are usually enough for us to find the cause quickly.</p>
 
-      <h2>Get in touch</h2>
-      <ul class="support-list">
-        <li><a href="mailto:contact@pathors.com?subject=Parley%20support"><strong>Email Parley support</strong><span>Sign-in, accounts, sync, data, and general product questions.</span></a></li>
-        <li><a href="https://github.com/pathorsAI/parley/issues" target="_blank" rel="noopener"><strong>Report an open-source issue</strong><span>Include reproduction steps, your version, and non-sensitive logs. Opens GitHub in a new tab.</span></a></li>
-        <li><a href="../privacy/"><strong>Privacy policy</strong><span>What we collect, where it is stored, and how long we keep it.</span></a></li>
-        <li><a href="../account-deletion/"><strong>Delete your account</strong><span>The in-app path on iOS and Android, and how to request it by email.</span></a></li>
-      </ul>
+    <main class="wrap">
+      <article id="zh" lang="zh-Hant-TW" data-lang="zh" data-title="Parley — 支援" data-description="Parley 的支援、問題回報與隱私聯絡方式。">
+        <p class="label">支援</p>
+        <h1>讓你的會議紀錄回到正軌。</h1>
+        <p class="lead">遇到登入、錄音、同步或錄音庫的問題時，請留下錯誤畫面、發生的時間，以及你的 App 版本——通常有這三樣，我們就能很快找出原因。</p>
 
-      <h2>Desktop</h2>
-      <h3>The other side of the call is missing from the transcript</h3>
-      <p>Parley captures your microphone and the meeting's system audio as two separate streams. If only your own voice is being transcribed, grant Parley system-audio access in macOS System Settings → Privacy &amp; Security, then restart the meeting. Parley also shows a persistent banner during a call when the system-audio tap has failed, so the silence is never a surprise at the end.</p>
-      <h3>My MCP client cannot connect</h3>
-      <p>Parley must be running — the MCP server lives inside the app. Open Settings → MCP Server for the exact endpoint and a ready-to-paste command, plus a live view of which client is connected and what it has been doing.</p>
-      <h3>Analysis did not run on a finished recording</h3>
-      <p>Check Settings → <strong>Auto-analyze recordings</strong>. When it is off, recordings are deliberately left unanalyzed so an external AI can claim them over MCP. You can still analyze any single recording on demand from its report.</p>
+        <h2>聯絡我們</h2>
+        <ul class="rows">
+          <li><a href="mailto:contact@pathors.com?subject=Parley%20%E6%94%AF%E6%8F%B4"><strong>寫信給 Parley 支援</strong><span>登入、帳號、同步、資料，以及一般產品問題。</span></a></li>
+          <li><a href="https://github.com/pathorsAI/parley/issues" target="_blank" rel="noopener"><strong>回報開源專案的問題</strong><span>請附上重現步驟、你的版本，以及不含敏感資訊的記錄檔。會在新分頁開啟 GitHub。</span></a></li>
+          <li><a href="../privacy/"><strong>隱私權政策</strong><span>我們收集哪些資料、存放在哪裡、保存多久。</span></a></li>
+          <li><a href="../account-deletion/"><strong>刪除帳號</strong><span>iOS 與 Android 的 App 內刪除路徑，以及如何來信申請。</span></a></li>
+        </ul>
 
-      <h2>iPhone and Android</h2>
-      <h3>Recording won't start</h3>
-      <p>Sign in to Parley first, then allow the microphone in your phone's settings. Parley records the room through the microphone only. It cannot record phone calls, FaceTime, or audio from other apps — neither iOS nor Android provides an API for that to any third-party app.</p>
-      <h3>Does a failed sync lose the recording?</h3>
-      <p>No. A finished recording is written to the phone before anything is sent anywhere, and it is only removed once it has synced. Open the app when you are back online, or retry from Settings → Sync.</p>
-      <h3>Browsing and moving recordings</h3>
-      <p>Open Library and pick the personal or organization scope. Press and hold a recording to move it into a folder, share a copy to an organization, move it to an organization, or delete it.</p>
-      <h3>Setting up the voice keyboard, and why it needs Full Access</h3>
-      <p>Settings → General → Keyboard → Keyboards → Add New Keyboard → Parley Voice, then open it and turn on Allow Full Access. A keyboard extension cannot record audio, so Full Access is what lets it hand the work to the Parley app and get the transcript back. The keyboard itself never opens a network connection and never records or stores what you type. Without Full Access it still works as an ordinary keyboard.</p>
-      <h3>Changing the app's language</h3>
-      <p>Parley ships in English and Traditional Chinese and follows your phone's language. To change it for Parley alone on iOS, go to iPhone Settings → Parley → Language.</p>
+        <h2>桌面版</h2>
+        <h3>逐字稿裡沒有對方的聲音</h3>
+        <p>Parley 會把你的麥克風與會議的系統音訊當成兩條獨立的音訊來源收錄。如果只有你自己的聲音被轉錄，請到 macOS 的「系統設定 → 隱私權與安全性」允許 Parley 存取系統音訊，然後重新開始這場會議。通話中如果系統音訊擷取失敗，Parley 也會持續顯示一條提示橫幅，你不會到會議結束才發現對方的聲音是一片空白。</p>
+        <h3>我的 MCP 用戶端連不上</h3>
+        <p>Parley 必須正在執行——MCP 伺服器就在 App 裡面。到「設定 → MCP 伺服器」可以看到確切的端點位址與一段可直接貼上的指令，也能即時看到目前連線的是哪個用戶端、它做了哪些事。</p>
+        <h3>錄音結束後沒有進行分析</h3>
+        <p>請檢查「設定」裡的<span class="path">「自動分析錄音」</span>。關閉時，錄音會刻意保持未分析的狀態，讓外部 AI 可以透過 MCP 接手。你仍然可以在任何一場錄音的報告裡，隨時單獨分析它。</p>
+
+        <h2>iPhone 與 Android</h2>
+        <h3>無法開始錄音</h3>
+        <p>請先登入 Parley，再到手機的設定裡允許麥克風權限。Parley 只透過麥克風收錄現場的聲音，無法錄下電話、FaceTime 或其他 App 的聲音——iOS 與 Android 都沒有提供任何第三方 App 這樣的 API。</p>
+        <h3>同步失敗，錄音會不見嗎？</h3>
+        <p>不會。錄音完成後會先寫入手機，之後才會傳送到任何地方，而且要等同步成功後才會從手機上移除。回到有網路的地方時打開 App 即可，也可以到「設定 → 同步」手動重試（Android 在「帳號」面板的「同步」）。</p>
+        <h3>瀏覽與搬移錄音</h3>
+        <p>打開「錄音庫」，選擇「個人」或「組織」範圍。長按一筆錄音，就能「移到資料夾」、「分享到組織（複製）」、「搬移到組織」，或「刪除」。</p>
+        <h3>設定語音鍵盤，以及為什麼需要「完全取用」</h3>
+        <p>到「設定 → 一般 → 鍵盤 → 鍵盤 → 加入新的鍵盤」選 Parley 語音，接著點進去開啟「允許完全取用」。鍵盤擴充功能本身無法錄音，所以需要「完全取用」，才能把工作交給 Parley App、再把逐字稿拿回來。鍵盤本身從不建立任何網路連線，也從不記錄或儲存你打的字。沒有開啟「完全取用」時，它仍然可以當一般鍵盤使用。</p>
+        <h3>變更 App 的語言</h3>
+        <p>Parley 提供英文與繁體中文，並跟隨手機的語言設定。在 iOS 上，如果只想變更 Parley 的語言，請到 iPhone 的「設定 → Parley → 語言」。</p>
+      </article>
+
+      <article id="en" lang="en" data-lang="en" data-title="Parley — Support" data-description="Support, bug reports, and privacy contacts for Parley.">
+        <p class="label">Support</p>
+        <h1>Let's get your meeting notes back on track.</h1>
+        <p class="lead">For a sign-in, recording, sync, or library problem, keep the error screen, the time it happened, and your app version — those three things are usually enough for us to find the cause quickly.</p>
+
+        <h2>Get in touch</h2>
+        <ul class="rows">
+          <li><a href="mailto:contact@pathors.com?subject=Parley%20support"><strong>Email Parley support</strong><span>Sign-in, accounts, sync, data, and general product questions.</span></a></li>
+          <li><a href="https://github.com/pathorsAI/parley/issues" target="_blank" rel="noopener"><strong>Report an open-source issue</strong><span>Include reproduction steps, your version, and non-sensitive logs. Opens GitHub in a new tab.</span></a></li>
+          <li><a href="../privacy/?lang=en"><strong>Privacy policy</strong><span>What we collect, where it is stored, and how long we keep it.</span></a></li>
+          <li><a href="../account-deletion/?lang=en"><strong>Delete your account</strong><span>The in-app path on iOS and Android, and how to request it by email.</span></a></li>
+        </ul>
+
+        <h2>Desktop</h2>
+        <h3>The other side of the call is missing from the transcript</h3>
+        <p>Parley captures your microphone and the meeting's system audio as two separate streams. If only your own voice is being transcribed, grant Parley system-audio access in macOS System Settings → Privacy &amp; Security, then restart the meeting. Parley also shows a persistent banner during a call when the system-audio tap has failed, so the silence is never a surprise at the end.</p>
+        <h3>My MCP client cannot connect</h3>
+        <p>Parley must be running — the MCP server lives inside the app. Open Settings → MCP Server for the exact endpoint and a ready-to-paste command, plus a live view of which client is connected and what it has been doing.</p>
+        <h3>Analysis did not run on a finished recording</h3>
+        <p>Check Settings → <span class="path">Auto-analyze recordings</span>. When it is off, recordings are deliberately left unanalyzed so an external AI can claim them over MCP. You can still analyze any single recording on demand from its report.</p>
+
+        <h2>iPhone and Android</h2>
+        <h3>Recording won't start</h3>
+        <p>Sign in to Parley first, then allow the microphone in your phone's settings. Parley records the room through the microphone only. It cannot record phone calls, FaceTime, or audio from other apps — neither iOS nor Android provides an API for that to any third-party app.</p>
+        <h3>Does a failed sync lose the recording?</h3>
+        <p>No. A finished recording is written to the phone before anything is sent anywhere, and it is only removed once it has synced. Open the app when you are back online, or retry from Settings → Sync (on Android, the Account sheet → Sync).</p>
+        <h3>Browsing and moving recordings</h3>
+        <p>Open Library and pick the personal or organization scope. Press and hold a recording to move it into a folder, share a copy to an organization, move it to an organization, or delete it.</p>
+        <h3>Setting up the voice keyboard, and why it needs Full Access</h3>
+        <p>Settings → General → Keyboard → Keyboards → Add New Keyboard → Parley Voice, then open it and turn on Allow Full Access. A keyboard extension cannot record audio, so Full Access is what lets it hand the work to the Parley app and get the transcript back. The keyboard itself never opens a network connection and never records or stores what you type. Without Full Access it still works as an ordinary keyboard.</p>
+        <h3>Changing the app's language</h3>
+        <p>Parley ships in English and Traditional Chinese and follows your phone's language. To change it for Parley alone on iOS, go to iPhone Settings → Parley → Language.</p>
+      </article>
     </main>
-    <footer>© 2026 Pathors AI · <a href="../privacy/">Privacy</a> · <a href="../account-deletion/">Account deletion</a></footer>
+
+    <footer class="site-foot">
+      <div class="wrap">
+        <nav lang="zh-Hant-TW" data-lang="zh" aria-label="其他頁面">
+          <a href="../">Parley 首頁</a>
+          <a href="../privacy/">隱私權政策</a>
+          <a href="../account-deletion/">刪除帳號</a>
+        </nav>
+        <nav lang="en" data-lang="en" aria-label="Other pages">
+          <a href="../en/">Parley home</a>
+          <a href="../privacy/?lang=en">Privacy policy</a>
+          <a href="../account-deletion/?lang=en">Account deletion</a>
+        </nav>
+        <p class="copyright">© 2026 Pathors AI</p>
+      </div>
+    </footer>
+    <script src="../legal.js"></script>
   </body>
 </html>

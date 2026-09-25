@@ -17,12 +17,12 @@
 </p>
 
 <p align="center">
-  <img src="website/assets/showcase-hero.png" alt="Parley — live transcript, coach feed, and the agenda checklist during a call" width="900" />
+  <img src="website/assets/shots/desktop-library-en.jpg" alt="Parley on macOS: All recordings, grouped by day, with folders for Renewals, New business and Internal in the sidebar (fictional demo data)" width="900" />
 </p>
 
 Parley does four things: **record, transcribe, analyze, search**. It captures both sides of a call, gives you a speaker-labelled transcript live, writes a debrief when the meeting ends, and makes every word you have ever recorded searchable.
 
-Then it opens all of it over a local **MCP server** — 52 tools — so Claude, Claude Code, Cursor or any other MCP client can read, search, file and re-analyze your whole meeting history without a copy-paste in sight.
+Then it opens all of it over a local **MCP server** — 54 tools — so Claude, Claude Code, Cursor or any other MCP client can read, search, file and re-analyze your whole meeting history without a copy-paste in sight.
 
 - 🎙️ **Both sides, live** — your mic and the meeting's system audio, transcribed and diarized as you talk.
 - 📼 **A debrief that stays** — commitments, action items, findings on a timeline, and a delivery scorecard. Generated once, saved with the recording.
@@ -58,7 +58,7 @@ Then paste your API keys in **Settings**: one STT provider for transcription, on
 ## 🎙️ During the call
 
 <p align="center">
-  <img src="website/assets/showcase-transcript.png" alt="Live diarized transcript with speaker labels" width="820" />
+  <img src="website/assets/shots/desktop-live-en.jpg" alt="A meeting in progress: the live transcript split by speaker on the left, the coach feed in the middle, the agenda checklist on the right (fictional demo data)" width="820" />
 </p>
 
 Starting a meeting is one button. Parley captures both sides — your mic and the meeting's system audio — and transcribes them live, diarized as `me` / `them`, with editable speaker names.
@@ -72,7 +72,7 @@ Beside the transcript sits the **coach feed**: evaluation alerts from your own t
 ## 📼 After the call
 
 <p align="center">
-  <img src="website/assets/showcase-study.png" alt="The report: debrief, commitments, and action items on one scroll" width="820" />
+  <img src="website/assets/shots/desktop-report-en.jpg" alt="The report after a sales call: where it landed, commitments on both sides, what is still unknown and action items, each with a timestamp (fictional demo data)" width="820" />
 </p>
 
 Stopping a meeting lands on its debrief. Any recording — just finished, pulled from history, dragged in as an audio file, or imported as a `.txt` transcript — opens in two views:
