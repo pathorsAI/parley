@@ -36,9 +36,14 @@ export function MeetingKindPicker({
       <SelectTrigger
         size={size}
         aria-label={t("meetingKind.label")}
-        className={`text-[11px] ${className}`}
+        className={`min-w-0 text-[11px] ${className}`}
       >
-        <SelectValue placeholder={detecting ? t("meetingKind.detecting") : t("meetingKind.label")} />
+        {/* The menu items stack a hint under each name; without our own
+            children the trigger would mirror that whole block and clip the
+            hint mid-word. The trigger only ever needs the name. */}
+        <SelectValue placeholder={detecting ? t("meetingKind.detecting") : t("meetingKind.label")}>
+          {kind ? <span className="truncate">{t(`meetingKind.${kind}`)}</span> : undefined}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         {MEETING_KINDS.map((k) => (
