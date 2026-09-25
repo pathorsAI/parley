@@ -498,6 +498,7 @@ function Row({
   // a third icon in a row this narrow costs more than it is worth for something
   // you do to a folder once, when you are done with it.
   const actionable = !!(onRename ?? onArchive ?? onUnarchive ?? onDelete);
+  const hasHoverStrip = !!(onRename ?? onDelete);
 
   const row = (
     <div
@@ -540,11 +541,20 @@ function Row({
         <span className="min-w-0 flex-1 truncate">{label}</span>
         {badge}
         {typeof count === "number" && count > 0 && (
-          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{count}</span>
+          <span
+            className={`shrink-0 text-[10px] tabular-nums text-muted-foreground ${
+              hasHoverStrip ? "group-focus-within/row:hidden group-hover/row:hidden" : ""
+            }`}
+          >
+            {count}
+          </span>
         )}
       </button>
-      {(onRename ?? onDelete) && (
-        <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition group-hover/row:opacity-100">
+      {/* Out of the layout until the row is hovered or focused, then it takes
+          the count's place. An invisible strip that still held its width
+          pushed renameable rows' counts left of every other row's. */}
+      {hasHoverStrip && (
+        <div className="hidden shrink-0 items-center gap-0.5 pr-1 group-focus-within/row:flex group-hover/row:flex">
           {onRename && (
             <button
               type="button"

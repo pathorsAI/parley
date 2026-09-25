@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -347,7 +347,7 @@ function CenterSwitcher({
 }>) {
   if (mode === "study") {
     return (
-      <>
+      <SwitchTrack>
         {(["report", "replay"] as const).map((tab) => (
           <SwitchTab
             key={tab}
@@ -356,12 +356,12 @@ function CenterSwitcher({
             onClick={() => onStudyTab(tab)}
           />
         ))}
-      </>
+      </SwitchTrack>
     );
   }
   if (mode === "live") {
     return (
-      <>
+      <SwitchTrack>
         {(["coach", "transcript"] as const).map((posture) => (
           <SwitchTab
             key={posture}
@@ -370,10 +370,17 @@ function CenterSwitcher({
             onClick={() => onLayout(posture)}
           />
         ))}
-      </>
+      </SwitchTrack>
     );
   }
+  // Home and Library have no tabs, and an empty track still paints as a pill.
   return null;
+}
+
+/** The segmented control's muted track. Owned by CenterSwitcher so it only
+ *  exists when there are tabs to put in it. */
+function SwitchTrack({ children }: Readonly<{ children: ReactNode }>) {
+  return <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">{children}</div>;
 }
 
 /** Pause/resume ⇄, end (save → debrief), cancel (discard, confirm-gated). All
@@ -874,16 +881,14 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           study tabs (report/replay) plus the analysis-status
           chip (the ONE generation surface for the whole study tense). */}
       <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2">
-        <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
-          <CenterSwitcher
-            mode={appMode}
-            studyTab={studyTab}
-            layout={layout}
-            onStudyTab={setStudyTab}
-            onLayout={(v) => updateSettings({ layout: v })}
-            t={t}
-          />
-        </div>
+        <CenterSwitcher
+          mode={appMode}
+          studyTab={studyTab}
+          layout={layout}
+          onStudyTab={setStudyTab}
+          onLayout={(v) => updateSettings({ layout: v })}
+          t={t}
+        />
         {studyMode && <StudyGenerationChip />}
       </div>
 
