@@ -95,7 +95,11 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
+fun AccountSheet(
+    viewModel: HomeViewModel,
+    onDismiss: () -> Unit,
+    onSetUpVoiceTyping: () -> Unit,
+) {
     val account by viewModel.account.collectAsState()
     val library by viewModel.state.collectAsState()
     // Fully expanded, never half: there is more here than a half-height sheet can
@@ -140,6 +144,17 @@ fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
             LanguageSection()
 
             AboutSection()
+
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+            // Voice typing has no home of its own in the library, and this is the
+            // app's only settings-shaped surface. The steps themselves live on
+            // their own screen because one of them — granting the microphone —
+            // needs an Activity the keyboard does not have; see
+            // ui/VoiceTypingSetupScreen.kt.
+            TextButton(onClick = onSetUpVoiceTyping) {
+                Text(stringResource(R.string.account_voice_typing))
+            }
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
 

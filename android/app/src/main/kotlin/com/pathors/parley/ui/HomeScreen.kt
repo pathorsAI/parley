@@ -97,6 +97,7 @@ fun HomeScreen(
     onRecord: () -> Unit,
     onImport: () -> Unit,
     onOpenRecording: (String) -> Unit,
+    onSetUpVoiceTyping: () -> Unit,
 ) {
     val container = rememberContainer()
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
@@ -252,6 +253,10 @@ fun HomeScreen(
         AccountSheet(
             viewModel = viewModel,
             onDismiss = { showAccount = false },
+            onSetUpVoiceTyping = {
+                showAccount = false
+                onSetUpVoiceTyping()
+            },
         )
     }
 
