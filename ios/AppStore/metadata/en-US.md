@@ -116,7 +116,8 @@ sentence.
 
 One wrong 注音 symbol no longer empties the candidate bar.
 
-Type ㄌ for ㄋ, ㄗ for ㄓ or ㄣ for ㄥ, or catch the key next to the one you meant,
+Mix up two symbols that sound alike — n and l, a retroflex and its flat
+twin, a front and a back nasal — or catch the key next to the one you meant,
 and the 注音 keyboard still offers the word you were after, right behind the
 words that match exactly what you typed, so typing correctly works just as it
 did. A syllable no character is read as now commits its closest character on
