@@ -3,6 +3,8 @@ import { useStore, speakerKey } from "../lib/store";
 import { speakerDotClass } from "../lib/speakerColors";
 import { useI18n } from "../i18n";
 import { Input } from "@/components/ui/input";
+import { OnboardingHint } from "@/components/OnboardingHint";
+import { rememberOwnName, useWhoAmIHint } from "@/lib/onboarding/whoAmI";
 import { MeetingContextButton } from "./MeetingContextButton";
 import type { Source } from "../lib/types";
 
@@ -23,6 +25,7 @@ export function SpeakerBar() {
   const segments = useStore((s) => s.segments);
   const names = useStore((s) => s.speakerNames);
   const setSpeakerName = useStore((s) => s.setSpeakerName);
+  const whoAmI = useWhoAmIHint();
 
   function defaultLabel(sp: Pick<SpeakerEntry, "source" | "speaker">) {
     if (sp.source === "mix") return t("speaker.speaker", { number: sp.speaker || 1 });
@@ -57,12 +60,19 @@ export function SpeakerBar() {
               <span className={`size-2 shrink-0 rounded-full ${speakerDotClass(sp)}`} />
               <Input
                 value={names[sp.key] ?? ""}
-                onChange={(e) => setSpeakerName(sp.key, e.target.value)}
+                onChange={(e) => {
+                  setSpeakerName(sp.key, e.target.value);
+                  whoAmI.onRename(e.target.value);
+                }}
+                onBlur={(e) => rememberOwnName(sp, e.target.value)}
                 placeholder={defaultLabel(sp)}
                 className="h-7 w-28 text-xs"
               />
             </div>
           ))}
+          {whoAmI.visible && (
+            <OnboardingHint text={t("speakers.hintWhoAmI")} onDismiss={whoAmI.dismiss} className="basis-full" />
+          )}
         </>
       )}
     </div>
