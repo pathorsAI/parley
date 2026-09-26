@@ -1226,7 +1226,8 @@ final class KeyboardViewController: UIInputViewController {
     private var lastSpaceAt = Date.distantPast
 
     /// Space, with iOS's double-tap-for-a-period shortcut. The second tap only
-    /// becomes ". " when it is actually ending a word — after punctuation or at
+    /// becomes ". " — or 「。」 on the 注音 pane — when it is actually ending a
+    /// word — after punctuation or at
     /// the start of a line, two taps are just two spaces, which is what the
     /// system does too.
     ///
@@ -1263,7 +1264,10 @@ final class KeyboardViewController: UIInputViewController {
             previous.isLetter || previous.isNumber
         {
             textDocumentProxy.deleteBackward()
-            textDocumentProxy.insertText(". ")
+            // Chinese ends a sentence with 。 and no space after it — the mark
+            // is full-width and carries its own. See `FullWidthPunctuation`.
+            textDocumentProxy.insertText(
+                bridge.pane == .zhuyin ? FullWidthPunctuation.fullWidth(".") : ". ")
             // Reset rather than re-arm, so a third tap can't chain into "..".
             lastSpaceAt = .distantPast
             return

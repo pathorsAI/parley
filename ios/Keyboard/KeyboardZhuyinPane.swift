@@ -55,7 +55,7 @@ struct ZhuyinPane: View, Equatable {
         if symbols {
             SymbolPlanes(
                 bridge: bridge, dark: dark, showsGlobe: showsGlobe, returnKey: returnKey,
-                homeLabel: "注音", onHome: { symbols = false }
+                homeLabel: "注音", fullWidth: true, onHome: { symbols = false }
             )
             .equatable()
         } else {
@@ -109,12 +109,20 @@ struct ZhuyinPane: View, Equatable {
         .padding(.leading, leading)
     }
 
-    /// `123`, the globe where the system asks for one, space, return.
+    /// `123`, the globe where the system asks for one, `，`, space, `。`,
+    /// return.
     ///
     /// No delete: it sits in the symbol block's eleventh column, under `ㄦ`,
     /// where the system 注音 keyboard has it. `123` and return are two and a
     /// half keys each rather than the one and a half QWERTY gives them, which
     /// is what the system keyboard leaves for a row with no shift in it.
+    ///
+    /// The comma and the full stop are **not** where the system keyboard puts
+    /// them, because it puts them nowhere on this plane: on iOS 26.5 they are on
+    /// the `123` plane only, and every sentence costs two trips there. They
+    /// flank space instead, so the two marks a sentence cannot do without are
+    /// one tap away from where the thumbs already are, and the row still fits:
+    /// on a 320pt SE with the globe, space keeps about 81pt.
     private func functionRow(_ m: KeyRowMetrics) -> some View {
         row {
             KeyButton(
@@ -130,6 +138,7 @@ struct ZhuyinPane: View, Equatable {
                 GlobeKey(controller: bridge.controller, dark: dark)
                     .frame(width: m.unit, height: KBMetrics.zhuyinKeyHeight)
             }
+            punctuationKey(",", width: m.unit, label: Text("Chinese comma"))
             // Space is the first tone while a syllable is being typed and
             // "yes, that one" while candidates are showing — see
             // `ZhuyinComposer.space()`. The label stays put: a key whose
@@ -143,12 +152,27 @@ struct ZhuyinPane: View, Equatable {
             }
             .equatable()
             .accessibilityLabel(Text("Space"))
+            punctuationKey(".", width: m.unit, label: Text("Chinese period"))
             ReturnKey(
                 bridge: bridge, style: returnKey, dark: dark, width: m.extraWide,
                 height: KBMetrics.zhuyinKeyHeight
             )
             .equatable()
         }
+    }
+
+    /// A full-width mark on the function row. It goes through `bridge.type`
+    /// like any symbol-plane key, so a pending reading is committed first and
+    /// the mark lands after it rather than in front of it.
+    private func punctuationKey(_ ascii: Character, width: CGFloat, label: Text) -> some View {
+        let mark = FullWidthPunctuation.fullWidth(ascii)
+        return KeyButton(
+            dark: dark, width: width, height: KBMetrics.zhuyinKeyHeight,
+            action: { bridge.type(mark) }
+        ) {
+            Text(verbatim: mark).font(.system(size: 22))
+        }
+        .accessibilityLabel(label)
     }
 
     private func row<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {

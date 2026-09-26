@@ -52,6 +52,40 @@
         }
       }
     },
+    "Chinese comma": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chinese comma"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "逗號"
+          }
+        }
+      }
+    },
+    "Chinese period": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chinese period"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "句號"
+          }
+        }
+      }
+    },
     "Composing": {
       "extractionState": "manual",
       "localizations": {

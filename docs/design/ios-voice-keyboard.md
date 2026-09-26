@@ -1258,7 +1258,7 @@ composer's limit rather than a position anybody argued for.
   of a key pitch rather than centred, for the same reason: the shape of the block
   is the thing a 注音 typist has learned, and ours differing from it bought
   nothing. The function row is then `123`, the globe where the system asks for
-  one, space and return, with `123` and return at 2.5 units each. The pane is
+  one, `，`, space, `。` and return, with `123` and return at 2.5 units each. The pane is
   still five rows and still measures 213pt — none of this moved a height, and it
   could not, because the panes are one swipe apart.
 - **Slots inside a syllable, an ordered list of syllables above them.**
@@ -1306,9 +1306,31 @@ composer's limit rather than a position anybody argued for.
 - **Delete unwinds the buffer before it reaches the document**: the last
   syllable's tone, then its slots, then the empty syllable itself, and on into
   the syllable before it. Only with nothing pending does it reach the field.
-- **Punctuation commits first.** A mark typed from the symbol planes flushes the
-  pending syllables and then lands, rather than arriving in front of the word
-  that was being typed.
+- **Punctuation commits first.** A mark typed from the symbol planes or the
+  function row flushes the pending syllables and then lands, rather than
+  arriving in front of the word that was being typed.
+- **Punctuation is full-width.** Chinese is punctuated with 。，、？！「」, and
+  until 1.20 the 注音 pane could only type the ASCII marks it shared with
+  QWERTY. Two parts:
+  - **「，」 and 「。」 flank space on the function row**: `123`, the globe where
+    the system asks for one, `，`, space, `。`, return. This is *not* where the
+    system puts them — iOS 26.5's 注音 keyboard has no punctuation on its main
+    plane at all (screenshotted in Reminders), so every sentence costs two trips
+    to `123`. They go beside space because that is where both thumbs already
+    are. `123` and return keep their 2.5 units: on a 320pt SE with the globe,
+    space still gets about 81pt (11-column unit ≈ 23.1pt, 2.5 units ≈ 66.7pt).
+  - **The symbol planes opened from 注音 are the system 注音 keyboard's planes**
+    (`SymbolPlanes(fullWidth: true)`; the rows are in `FullWidthPunctuation`,
+    ParleyKit, with tests). Numbers: `1234567890` / `- / ： ； （ ） $ @ 「 」` /
+    `#+=` `。 ， 、 ？ ！ .` ⌫. Symbols: `[]{}#%^*+=` / `_ — \ | ～ 《 》 ¥ & ·` /
+    `123` `… ， 。 ？ ！ '` ⌫. The system's `^^` emoticon key is replaced by `。`;
+    one ASCII `.` stays on the numbers plane for decimals, as it does on the
+    system's. Marks with no full-width convention in Taiwanese writing (`$ @ & #
+    - /` …) stay ASCII — a `＠` in an email address is a broken address — and
+    digits stay half-width. The mapping itself: `, . ? ! : ; ( ) [ ] ' ~ < >` →
+    `， 。 ？ ！ ： ； （ ） 「 」 、 ～ 《 》`.
+  - **Double-space types 「。」** on the 注音 pane, with no trailing space — the
+    full-width mark carries its own. QWERTY keeps `. `.
 - **The composition is drawn in the mode strip**, space-separated, rather than as
   marked text in the host's field. `UITextDocumentProxy` does offer
   `setMarkedText(_:selectedRange:)`, and the system keyboard uses exactly that;
@@ -1533,8 +1555,10 @@ Named here so nobody has to guess whether it was forgotten:
 - **No user dictionary and no learning.** The bar's order is the corpus's, not
   yours. A keyboard extension that accumulated a per-user model would be holding
   state this process is deliberately kept free of.
-- **No 漢語拼音 or 倚天 layouts**, and no half-width/full-width punctuation
-  switch — punctuation comes from the symbol planes shared with QWERTY.
+- **No 漢語拼音 or 倚天 layouts.**
+- **No half-width/full-width toggle.** The 注音 pane types full-width marks and
+  the English pane ASCII (see *Punctuation is full-width* above); a user who
+  wants `,` in Chinese text swipes to English for it.
 - **No associated-phrase prompts** after a commit.
 - **No unbounded buffer.** Six syllables may be pending; a seventh commits the
   oldest at its best guess. A sentence-length buffer would be a sentence this
