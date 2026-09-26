@@ -205,12 +205,11 @@ struct KeyboardRootView: View {
     /// The pane's short name. 注音 keeps its own name in both localizations: the
     /// keys on that pane *are* 注音, and nothing an English word could say
     /// would identify it faster.
-    @ViewBuilder
-    private func paneName(_ pane: KeyboardPane) -> some View {
+    private func paneName(_ pane: KeyboardPane) -> Text {
         switch pane {
-        case .voice: Text("Voice")
-        case .english: Text("English")
-        case .zhuyin: Text(verbatim: "注音")
+        case .voice: return Text(Image(systemName: "mic"))
+        case .english: return Text("English")
+        case .zhuyin: return Text(verbatim: "注音")
         }
     }
 
@@ -222,7 +221,7 @@ struct KeyboardRootView: View {
         }
     }
 
-    /// The panes, named, as a segmented control.
+    /// The panes as a segmented control.
     ///
     /// Sized to the 38pt strip rather than to UIKit's own segmented control,
     /// which is 32pt tall before its margins and would leave the wordmark
@@ -232,8 +231,8 @@ struct KeyboardRootView: View {
     /// rule the keys on the next pane are read by.
     ///
     /// Widths at the narrowest keyboard the app runs on — 320pt, less the
-    /// strip's 12pt gutters, so 296pt: wordmark 41 + 8 + chip 92 + 8 + tabs 144
-    /// = 293. The tabs' horizontal padding is 7 rather than the 9 the rest of
+    /// strip's 12pt gutters, so 296pt: wordmark 41 + 8 + chip 92 + 8 + tabs 125
+    /// = 274. The tabs' horizontal padding is 7 rather than the 9 the rest of
     /// the strip would suggest, and the mic chip's minutes are gone, because at
     /// 9pt and with them the row wanted 335pt and the chip's label would have
     /// truncated. Every wider phone has 30pt or more to spare.
