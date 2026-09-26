@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Plus, Sparkles, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FolderSearch, Plus, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useStore } from "../../lib/store";
@@ -8,6 +8,7 @@ import { log } from "../../lib/log";
 import { createLocalFolder, emitFoldersUpdated } from "../../lib/history/folders";
 import { personalDestination } from "../../lib/library/destination";
 import { useRefile } from "../useRefile";
+import { markGettingStarted } from "../../lib/onboarding/gettingStarted";
 import type { FilingSuggestion, FilingFolderSuggestion } from "../../lib/types";
 
 /**
@@ -36,8 +37,20 @@ import type { FilingSuggestion, FilingFolderSuggestion } from "../../lib/types";
  * Once BOTH rows are empty the suggestion has been fully spent, so it is cleared
  * from the store and persisted as null — it must not come back on the next load,
  * and must not be regenerated.
+ *
+ * The proposed title is editable in place (click, type, Enter or click away;
+ * Esc cancels): an edit becomes the suggestion's title and is applied through
+ * the same rename path as 採用, so the row retires the same way. The last chip,
+ * "Choose another…", opens the filing bar's destination picker
+ * (`onPickAnother`) for when none of the proposals fit.
+ *
+ * Accepting either half — the title or a folder — ticks the getting-started
+ * "filed" step: it is the moment the lap's first step teaches (see
+ * lib/onboarding/lap.ts), and the guide bar advances on it.
  */
-export function FilingSuggestionCard() {
+export function FilingSuggestionCard({
+  onPickAnother,
+}: Readonly<{ onPickAnother?: () => void }> = {}) {
   const { t } = useI18n();
   const suggestion = useStore((s) => s.filingSuggestion);
   const setFilingSuggestion = useStore((s) => s.setFilingSuggestion);
@@ -89,25 +102,36 @@ export function FilingSuggestionCard() {
   // The titlebar's rename path, reused verbatim — one write, one failure toast.
   // Deliberately does NOT dismiss: the title row retires itself once the name
   // matches, and the folder chips are still worth a click.
-  const applyTitle = useCallback(() => {
-    const clean = suggestedTitle;
-    if (!clean || clean === replayName.trim() || !loadedHistoryId) return;
-    const rename = async () => {
-      const { renameHistoryEntry } = await import("../../lib/history/history");
-      await renameHistoryEntry(loadedHistoryId, clean);
-      renameReplay(clean);
-      toast.success(t("study.filing.titleApplied"));
-    };
-    // Kept synchronous so the handler can be passed to onClick directly: an
-    // `async` callback would have to be discarded at the call site, and the
-    // rejection is already handled here.
-    rename().catch((e) => {
-      log.error("filing: rename failed", { id: loadedHistoryId, error: String(e) });
-      toast.error(
-        t("replay.renameFailed", { error: e instanceof Error ? e.message : String(e) })
-      );
-    });
-  }, [suggestedTitle, replayName, loadedHistoryId, renameReplay, t]);
+  const applyTitle = useCallback(
+    (title: string = suggestedTitle) => {
+      const clean = title.trim();
+      if (!clean || clean === replayName.trim() || !loadedHistoryId) return;
+      // An in-place edit becomes the suggestion, so "name === suggestion" keeps
+      // being the one test that retires the row.
+      const edited = !!suggestion && clean !== suggestedTitle;
+      if (edited) setFilingSuggestion({ ...suggestion, title: clean });
+      const rename = async () => {
+        const history = await import("../../lib/history/history");
+        await history.renameHistoryEntry(loadedHistoryId, clean);
+        renameReplay(clean);
+        toast.success(t("study.filing.titleApplied"));
+        markGettingStarted("filed");
+        // Keep the edit across a reopen while chips are still on offer. With
+        // none left the card is spent, and the effect above persists the null.
+        if (edited && chips.length > 0) await history.persistFilingSuggestion();
+      };
+      // Kept synchronous so the handler can be passed to onClick directly: an
+      // `async` callback would have to be discarded at the call site, and the
+      // rejection is already handled here.
+      rename().catch((e) => {
+        log.error("filing: rename failed", { id: loadedHistoryId, error: String(e) });
+        toast.error(
+          t("replay.renameFailed", { error: e instanceof Error ? e.message : String(e) })
+        );
+      });
+    },
+    [suggestion, suggestedTitle, replayName, loadedHistoryId, renameReplay, setFilingSuggestion, chips.length, t]
+  );
 
   // Filing shows up in the bar immediately below, so the card has said all it
   // has to say — retire it rather than leave a redundant copy on screen.
@@ -141,7 +165,7 @@ export function FilingSuggestionCard() {
   return (
     // Plain text on the page above a hairline — no tinted box; blue marks
     // only what can be clicked.
-    <div className="mb-3 border-b border-border pb-3">
+    <div id="filing-suggestion" className="mb-3 scroll-mt-4 border-b border-border pb-3">
       <div className="flex items-center gap-2">
         <Sparkles className="size-4 shrink-0 text-primary" />
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
@@ -163,21 +187,19 @@ export function FilingSuggestionCard() {
           <span className="shrink-0 text-xs text-muted-foreground">
             {t("study.filing.titleLabel")}
           </span>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium" title={suggestedTitle}>
-            {suggestedTitle}
-          </span>
+          <EditableTitle value={suggestedTitle} onCommit={applyTitle} />
           <Button
             size="sm"
             variant="ghost"
             className="h-7 shrink-0 text-xs text-primary hover:bg-primary/10 hover:text-primary"
-            onClick={applyTitle}
+            onClick={() => applyTitle()}
           >
             {t("study.filing.apply")}
           </Button>
         </div>
       )}
 
-      {chips.length > 0 && (
+      {(chips.length > 0 || onPickAnother) && (
         <div className="mt-2 flex items-start gap-2">
           <span className="shrink-0 pt-1 text-xs text-muted-foreground">
             {t("study.filing.folderLabel")}
@@ -202,9 +224,84 @@ export function FilingSuggestionCard() {
                 </button>
               );
             })}
+            {onPickAnother && (
+              <button
+                type="button"
+                onClick={onPickAnother}
+                className="flex cursor-pointer items-center gap-1 rounded-full px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <FolderSearch className="size-3 shrink-0" />
+                {t("study.filing.pickAnother")}
+              </button>
+            )}
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The proposed title as text that turns into an input on click. Enter or
+ * clicking away applies an edit; Esc restores the proposal.
+ */
+function EditableTitle({
+  value,
+  onCommit,
+}: Readonly<{ value: string; onCommit: (title: string) => void }>) {
+  const { t } = useI18n();
+  const [draft, setDraft] = useState<string | null>(null);
+  // Esc unmounts the input, and some engines fire blur on the way out — which
+  // would commit the very edit Esc just threw away.
+  const cancelled = useRef(false);
+
+  if (draft === null) {
+    return (
+      <button
+        type="button"
+        title={t("study.filing.editTitle")}
+        aria-label={t("study.filing.editTitle")}
+        onClick={() => {
+          cancelled.current = false;
+          setDraft(value);
+        }}
+        className="min-w-0 flex-1 cursor-text truncate rounded px-1 -mx-1 text-left text-sm font-medium transition-colors hover:bg-muted/60"
+      >
+        {value}
+      </button>
+    );
+  }
+
+  // An edit applies on Enter or on clicking away. Enter on the untouched
+  // proposal is 採用 by keyboard; clicking away from it just closes the field.
+  const commit = (viaEnter: boolean) => {
+    if (cancelled.current) return;
+    cancelled.current = true;
+    const next = draft.trim();
+    setDraft(null);
+    if (next && (next !== value || viaEnter)) onCommit(next);
+  };
+
+  return (
+    <input
+      // The user just clicked to edit.
+      autoFocus
+      value={draft}
+      aria-label={t("study.filing.titleLabel")}
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={() => commit(false)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit(true);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          cancelled.current = true;
+          setDraft(null);
+        }
+      }}
+      className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1.5 text-sm font-medium outline-none focus-visible:border-ring"
+    />
   );
 }

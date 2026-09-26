@@ -13,7 +13,10 @@ vi.mock("../../lib/log", () => ({
 vi.mock("../../lib/history/history", () => ({ loadHistoryEntry: vi.fn() }));
 vi.mock("../../lib/meeting/start", () => ({ beginMeeting: vi.fn() }));
 vi.mock("../../lib/replay/ingest", () => ({ startImportFlow: vi.fn() }));
-vi.mock("../../lib/onboarding/sample", () => ({ loadSampleRecording: vi.fn() }));
+vi.mock("../../lib/onboarding/sample", () => ({
+  loadSampleRecording: vi.fn(),
+  isSampleEntry: (e: { id: string }) => e.id.startsWith("sample-"),
+}));
 
 import { DEFAULT_GETTING_STARTED, useStore } from "../../lib/store";
 import type { LibraryTree } from "../shell/useLibraryTree";
@@ -39,14 +42,17 @@ function arrange(over: Partial<Settings>, gettingStarted: Partial<GettingStarted
   useStore.setState({ settings });
 }
 
-function renderChecklist(over: Partial<GettingStartedState>): string {
+function renderChecklist(over: Partial<GettingStartedState>, lapEntryId: string | null = null): string {
   return renderToStaticMarkup(
     createElement(GettingStarted, {
       state: { ...DEFAULT_GETTING_STARTED, ...over },
-      latestId: null,
+      lapEntryId,
     }),
   );
 }
+
+/** The header's one way in. */
+const goButton = (html: string) => html.match(/data-testid="gs-go"[^>]*>(.*?)<\/button>/)?.[1] ?? null;
 
 const emptyTree = { summaries: [], personalFolders: [] } as unknown as LibraryTree;
 const renderHome = () => renderToStaticMarkup(createElement(HomeScreen, { tree: emptyTree }));
@@ -66,28 +72,38 @@ describe("GettingStarted", () => {
     expect(html).toMatch(/data-testid="gs-progress"[^>]*>1 \/ 4</);
   });
 
-  it("ticks only the steps that are done, and drops their call to action", () => {
-    const html = renderChecklist({ recorded: true, replayed: true });
+  it("ticks only the steps that are done, and the rows carry no call to action", () => {
+    const html = renderChecklist({ recorded: true, replayed: true }, "rec-1");
     expect(html).toContain('data-step="recorded" data-done="true"');
     expect(html).toContain('data-step="filed" data-done="false"');
     expect(html).toContain('data-step="replayed" data-done="true"');
-    // Done steps lose their CTA; pending ones keep theirs.
-    expect(html).not.toContain("Open replay");
-    expect(html).toContain("File it");
-    expect(html).toContain("Show me");
+    // v2: the list is an index; teaching happens in the study page's guide bar.
+    for (const cta of ["File it", "Open replay", "Show me", "Use the sample"]) expect(html).not.toContain(cta);
+    expect(html.match(/<button/g)).toHaveLength(2); // the header's way in + dismiss
   });
 
-  it("offers the sample while nothing is recorded, leaving Start meeting to Home", () => {
+  it("offers a walk through the sample while nothing is recorded, leaving Start meeting to Home", () => {
     const html = renderChecklist({});
     expect(html).not.toContain("Start meeting");
-    expect(html).toContain("Use the sample");
+    expect(goButton(html)).toContain("Walk through the sample");
     expect(html).toMatch(/data-testid="gs-progress"[^>]*>0 \/ 4</);
+  });
+
+  it("continues the lap once something is recorded", () => {
+    const html = renderChecklist({ recorded: true }, "sample-hongsheng-en-v1");
+    expect(goButton(html)).toContain("Continue");
+    expect(html).not.toContain("Walk through the sample");
+  });
+
+  it("falls back to the sample when recorded but the library has nothing to continue on", () => {
+    expect(goButton(renderChecklist({ recorded: true }, null))).toContain("Walk through the sample");
   });
 
   it("speaks zh-TW by default", () => {
     arrange({ language: "zh-TW" });
     const html = renderChecklist({});
     expect(html).toContain("先跑一輪，5 分鐘");
+    expect(html).toContain("用範例錄音走一遍");
     expect(html).toContain("不用了");
   });
 });
@@ -100,7 +116,8 @@ describe("HomeScreen checklist visibility", () => {
     const html = renderHome();
     expect(html).toContain('data-testid="getting-started"');
     // The empty-recordings box would offer the sample too — the checklist already does.
-    expect(html.match(/Use the sample/g)).toHaveLength(1);
+    expect(html.match(/Walk through the sample/g)).toHaveLength(1);
+    expect(html).not.toContain("Use the sample");
   });
 
   it("hides the checklist once dismissed, and the empty box offers the sample instead", () => {

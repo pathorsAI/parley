@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Clock, Loader2, MessageCircleQuestion, X } from "lucide-react";
-import { useStore } from "../../lib/store";
+import { DEFAULT_GETTING_STARTED, useStore } from "../../lib/store";
 import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { useBriefQueued } from "../../lib/analysis/studyPipeline";
 import { useI18n } from "../../i18n";
@@ -14,6 +14,8 @@ import { FilingSuggestionCard } from "./FilingSuggestionCard";
 import { HandoffSection } from "./HandoffSection";
 import { OnboardingHint } from "../OnboardingHint";
 import { markHintSeen, useHint } from "../../lib/onboarding/gettingStarted";
+import { LapContext, useLapContext, useLapState } from "../../lib/onboarding/lap";
+import { GuideBar } from "./GuideBar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -31,16 +33,34 @@ const SECTIONS = [
  * outcome) and the REPLAY workbench (player + transcript + findings, check
  * the evidence). Ask rides along both as a slide-over drawer.
  */
-export function StudyScreen() {
+export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: number }> = {}) {
   const tab = useStore((s) => s.studyTab);
+  const gettingStarted = useStore((s) => s.settings.gettingStarted) ?? DEFAULT_GETTING_STARTED;
+  const entryId = useStore((s) => s.loadedHistoryId);
+  const readOnly = useStore((s) => s.replayReadOnly);
+  const lap = useLapState({ gettingStarted, entryId, readOnly, libraryCount });
+  // The report's destination picker, owned here so the filing card's "Choose
+  // another…" and the guide bar open the same sheet as the filing bar.
+  const [pickerOpen, setPickerOpen] = useState(false);
+
   // The LLM pipeline (analysis → action items ∥ delivery → brief)
   // is NOT mounted here — it's a store subscription (initStudyPipeline, see
   // lib/analysis/studyPipeline.ts) that runs no matter which screen is up.
   return (
-    <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      {tab === "replay" ? <ReplayScreen /> : <ReportPage />}
-      <AskDrawer />
-    </div>
+    <LapContext.Provider value={lap}>
+      <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+        {/* Ask floats over the page, so it sits above the guide bar, not on it. */}
+        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+          {tab === "replay" ? (
+            <ReplayScreen />
+          ) : (
+            <ReportPage pickerOpen={pickerOpen} onPickerOpenChange={setPickerOpen} />
+          )}
+          <AskDrawer />
+        </div>
+        <GuideBar onOpenPicker={() => setPickerOpen(true)} />
+      </div>
+    </LapContext.Provider>
   );
 }
 
@@ -58,7 +78,10 @@ function useSeekToReplay(): (ms: number) => void {
 /** 報告: the whole post-meeting report on one scroll — brief, action items,
  *  delivery. Every piece is restored from the saved entry; only a missing
  *  brief generates (once) and is saved back. */
-function ReportPage() {
+function ReportPage({
+  pickerOpen,
+  onPickerOpenChange,
+}: Readonly<{ pickerOpen: boolean; onPickerOpenChange: (open: boolean) => void }>) {
   const { t } = useI18n();
   const seek = useSeekToReplay();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -99,8 +122,8 @@ function ReportPage() {
           {/* Above the filing suggestion when it shows, else right above the
               filing bar — either way, next to where filing happens. */}
           <FilingHint />
-          <FilingSuggestionCard />
-          <StudyLinkBar />
+          <FilingSuggestionCard onPickAnother={() => onPickerOpenChange(true)} />
+          <StudyLinkBar pickerOpen={pickerOpen} onPickerOpenChange={onPickerOpenChange} />
           <div className="flex flex-col gap-8 pb-10">
             <ReportSection id="study-brief" title={t("study.brief")}>
               <BriefSection onSeek={seek} />
@@ -178,10 +201,12 @@ function ReportToc({
 }
 
 /** One-time "one customer, one folder" line, shown while the recording is
- *  unfiled. Filing the recording counts as having taken the point. */
+ *  unfiled. Filing the recording counts as having taken the point. Quiet while
+ *  the guide bar is up — it teaches the same thing, and once is enough. */
 function FilingHint() {
   const { t } = useI18n();
   const [visible, dismiss] = useHint("report.filing");
+  const lapVisible = useLapContext().visible;
   const loadedHistoryId = useStore((s) => s.loadedHistoryId);
   // An org copy (read-only) or an unsaved session can't be filed from here.
   const fileable = useStore((s) => !s.replayReadOnly) && !!loadedHistoryId;
@@ -195,7 +220,7 @@ function FilingHint() {
     if (was.id && was.id === loadedHistoryId && !was.folderId && folderId) markHintSeen("report.filing");
   }, [loadedHistoryId, folderId]);
 
-  if (!visible || !fileable || folderId) return null;
+  if (!visible || lapVisible || !fileable || folderId) return null;
   return <OnboardingHint text={t("study.hint.filing")} onDismiss={dismiss} className="mb-3" />;
 }
 
@@ -236,7 +261,8 @@ function BriefSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
       {status === "done" && saved && !!brief && (
         <p className="mb-2 text-[11px] text-muted-foreground/70">{t("study.brief.saved")}</p>
       )}
-      {gate && <p className="text-sm text-muted-foreground">{t(gate)}</p>}
+      {/* The key only matters while there's no brief to read. */}
+      {gate && !brief && <p className="text-sm text-muted-foreground">{t(gate)}</p>}
       {queued && !brief && (
         <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
           <Clock className="size-3.5" />

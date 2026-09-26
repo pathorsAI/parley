@@ -31,6 +31,7 @@ import { runBriefGeneration } from "./briefRun";
 import { runDeliveryAnalysis } from "./deliveryRun";
 import { runFilingSuggestion } from "./filingRun";
 import { persistStudyOutputs, saveUploadToHistory } from "../history/history";
+import { isSampleEntry } from "../onboarding/sample";
 import { log } from "../log";
 
 type StoreState = ReturnType<typeof useStore.getState>;
@@ -96,8 +97,11 @@ export function factsOf(s: StoreState): StudyPipelineFacts {
     briefStatus: s.briefStatus,
     deliveryStatus: s.deliveryStatus,
     filingStatus: s.filingStatus,
+    // The bundled sample ships its analysis prewritten (onboarding/sample.ts),
+    // and a model reading its synthetic voices would only overwrite that with
+    // worse — so auto-analysis never touches it. A manual regenerate still can.
     autoAnalyze:
-      s.settings.autoStudyAnalysis ||
+      (s.settings.autoStudyAnalysis && !(replayId != null && isSampleEntry({ id: replayId }))) ||
       (replayId != null && s.studyManualForId === replayId),
   };
 }

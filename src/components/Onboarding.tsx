@@ -10,7 +10,8 @@ import { PROVIDERS, PROVIDER_BY_ID, type ProviderInfo } from "../lib/ai/provider
 import { STT_PROVIDERS, STT_BY_ID, sttApiKey } from "../lib/transcription/providers";
 import { beginMeeting } from "../lib/meeting/start";
 import { loadSampleRecording } from "../lib/onboarding/sample";
-import { loadHistoryEntry } from "../lib/history/history";
+import { openRecording } from "./home/GettingStarted";
+import { TranscribingPulse, useTranscribingPulse } from "./onboarding/TranscribingPulse";
 import { useI18n, LANGUAGE_OPTIONS } from "../i18n";
 import { Flag } from "./ui/flag";
 import { Button } from "@/components/ui/button";
@@ -118,11 +119,14 @@ export function Onboarding() {
     patch({ onboarded: true, onboardingStep: 0 });
   }
 
+  // The wizard stays up through the transcribing beat, so the button the user
+  // pressed turns into the progress bar; it closes as the report opens.
+  const samplePulse = useTranscribingPulse();
   async function walkThroughSample() {
+    const id = await samplePulse.run(loadSampleRecording);
     finish();
-    const id = await loadSampleRecording();
     if (id) {
-      await loadHistoryEntry(id);
+      await openRecording(id, "report");
     } else {
       log.warn("onboarding: sample recording unavailable");
     }
@@ -285,21 +289,26 @@ export function Onboarding() {
               <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.done.title")}</h2>
               <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">{t("onboarding.done.body")}</p>
               <div className="mt-2 flex flex-col items-center gap-2">
-                <Button
-                  size="sm"
-                  className="h-9 text-xs"
-                  onClick={() =>
-                    walkThroughSample().catch((error) =>
-                      log.error("onboarding: sample walkthrough failed", { error: String(error) }),
-                    )
-                  }
-                >
-                  {t("onboarding.done.sample")}
-                </Button>
+                {samplePulse.active ? (
+                  <TranscribingPulse className="h-9" />
+                ) : (
+                  <Button
+                    size="sm"
+                    className="h-9 text-xs"
+                    onClick={() =>
+                      walkThroughSample().catch((error) =>
+                        log.error("onboarding: sample walkthrough failed", { error: String(error) }),
+                      )
+                    }
+                  >
+                    {t("onboarding.done.sample")}
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
                   className="h-8 text-xs"
+                  disabled={samplePulse.active}
                   onClick={() => {
                     finish();
                     beginMeeting().catch((error) =>

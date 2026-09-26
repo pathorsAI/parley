@@ -7,6 +7,7 @@ import { speakerLabel, speakerKey, defaultSpeakerLabel, formatClock, isTrimmed, 
 import { cn } from "@/lib/utils";
 import { useCommandShortcut } from "../../lib/commands/bind";
 import { markGettingStarted, useHint } from "../../lib/onboarding/gettingStarted";
+import { useLapContext } from "../../lib/onboarding/lap";
 import type { TranscriptSegment } from "../../lib/types";
 
 interface ReplayTranscriptProps {
@@ -38,6 +39,9 @@ interface ReplayTranscriptProps {
  * same store action the live SpeakerBar uses, so the rename applies to every line
  * of that speaker and to the analysis context at once.
  */
+/** How long the guide bar's first-line pulse runs. */
+const FIRST_LINE_PULSE_MS = 2000;
+
 export function ReplayTranscript({
   segments,
   speakerNames,
@@ -59,7 +63,28 @@ export function ReplayTranscript({
   // First-visit hint: the transcript is a seek surface, and ⌘F searches it.
   // Not in the ingest-wizard preview, where neither is the point.
   const [seekHintVisible, dismissSeekHint] = useHint("replay.seek");
-  const showSeekHint = seekHintVisible && !preview;
+  // The guide bar teaches the same thing while it's up; saying it twice is noise.
+  const lap = useLapContext();
+  const showSeekHint = seekHintVisible && !preview && !lap.visible;
+
+  // While the guide bar is on its replay step, the first line pulses once, for
+  // about two seconds — "this, click this" — then settles.
+  const pulseDue = !preview && lap.visible && lap.phase === "replayed" && !lap.justCompleted;
+  const [pulsing, setPulsing] = useState(false);
+  const pulsed = useRef(false);
+  useEffect(() => {
+    if (!pulseDue || pulsed.current) return;
+    setPulsing(true);
+    // Spent only once it has run its course (a StrictMode re-mount restarts it).
+    const id = setTimeout(() => {
+      pulsed.current = true;
+      setPulsing(false);
+    }, FIRST_LINE_PULSE_MS);
+    return () => {
+      clearTimeout(id);
+      setPulsing(false);
+    };
+  }, [pulseDue]);
 
   // A line click is the user's seek — it ticks the checklist (not in the wizard
   // preview) and retires the hint that taught it.
@@ -292,6 +317,7 @@ export function ReplayTranscript({
                   "hover:bg-muted/60",
                   active && "bg-primary/10",
                   isCurrentMatch && "ring-1 ring-warning-border",
+                  pulsing && i === 0 && "animate-pulse bg-primary/10 ring-1 ring-primary/30",
                   masked && "opacity-35",
                   trimmed && "opacity-50"
                 )}

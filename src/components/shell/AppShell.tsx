@@ -135,7 +135,7 @@ function RouteContent({
   mode,
   tree,
 }: Readonly<{ mode: AppMode; tree: ReturnType<typeof useLibraryTree> }>) {
-  if (mode === "study") return <StudyScreen />;
+  if (mode === "study") return <StudyScreen libraryCount={tree.summaries.length} />;
   if (mode === "library") {
     return (
       <Suspense fallback={null}>
