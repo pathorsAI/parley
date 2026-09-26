@@ -57,24 +57,46 @@ struct LibraryView: View {
     @State private var handledChecklistRequest = 0
     /// The recording the folder picker is moving, while it is up.
     @State private var moving: CloudRecordingSummary?
+    /// Meetings (the cloud library, everything below) or Voice typing (what was
+    /// dictated on this phone, `DictationHistoryList`).
+    @State private var section: LibrarySection = .meetings
     #if DEBUG
         @ObservedObject private var demo = ScreenshotDemo.shared
     #endif
 
     var body: some View {
         NavigationStack(path: $path) {
-            Group {
-                if !app.signedIn {
-                    unavailable
-                } else {
-                    list
+            VStack(spacing: 0) {
+                sectionPicker
+                switch section {
+                case .meetings:
+                    Group {
+                        if !app.signedIn {
+                            unavailable
+                        } else {
+                            list
+                        }
+                    }
+                    // Here rather than on the stack: pulling the voice-typing
+                    // list must not reload the cloud library behind it.
+                    .refreshable { await load() }
+                case .voiceTyping:
+                    // Local to this phone, so it needs no account and no
+                    // network — it is drawn signed out and offline too.
+                    DictationHistoryList(search: search)
                 }
             }
             .background(Theme.background)
+            // Settings' "Show the getting-started list again" lands on the
+            // checklist, which lives in Meetings; the list itself then takes
+            // the request on appearing (`takeChecklistRequest`).
+            .onChange(of: router.checklistRequest) { _, _ in section = .meetings }
             .navigationTitle("Library")
             .toolbar {
-                importButton
-                scopeMenu
+                if section == .meetings {
+                    importButton
+                    scopeMenu
+                }
             }
             // `.audio` is the whole family — mp3, m4a, wav, aac, caf and the
             // rest — which is what the desktop's extension list adds up to.
@@ -97,8 +119,8 @@ struct LibraryView: View {
             .sheet(item: $moving) { rec in folderPicker(for: rec) }
             .searchable(
                 text: $search, isPresented: $searchPresented,
-                prompt: Text("Search titles and snippets"))
-            .refreshable { await load() }
+                prompt: section == .meetings
+                    ? Text("Search titles and snippets") : Text("Search voice typing"))
             .task(id: "\(scope ?? "personal")-\(app.signedIn)") { await load() }
             // `parley://demo/transcript` pushes the demo recording, so the
             // transcript frame is captured through the real navigation stack
@@ -109,6 +131,20 @@ struct LibraryView: View {
                 }
             #endif
         }
+    }
+
+    /// Meetings / Voice typing, above everything else on the page. Segmented
+    /// rather than a tab of its own: both are "what I said, kept", and the
+    /// Library is where someone goes looking for either.
+    private var sectionPicker: some View {
+        Picker("Library", selection: $section) {
+            Text("Meetings").tag(LibrarySection.meetings)
+            Text("Voice typing").tag(LibrarySection.voiceTyping)
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 20)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
     }
 
     /// The library is the account's cloud recordings, so it needs a confirmed
@@ -845,6 +881,11 @@ struct LibraryView: View {
 
 /// A recording on the Library's stack, and what it was opened for: `.read`
 /// from a row, `.file` or `.share` from the getting-started checklist.
+private enum LibrarySection: Hashable {
+    case meetings
+    case voiceTyping
+}
+
 private struct OpenedRecording: Hashable {
     let id: String
     /// nil = personal scope.

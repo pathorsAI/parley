@@ -27,7 +27,8 @@ still needs no extra data type, and the reason is worth being able to state:
 - The keyboard never opens a network connection. It writes a session handle into
   the App Group and opens the containing app; the app records and transcribes.
 - It does not read the document context, retain what the user types, or keep any
-  typing history. Its only writes to the text field are the finished transcript,
+  typing history — including dictation history, which only the app keeps (see
+  below). Its only writes to the text field are the finished transcript,
   a space, a newline, and backspace.
 - The dictation audio and its transcript are already covered above under
   **User Content → Audio Data** and **Other User Content**: same account, same
@@ -36,6 +37,26 @@ still needs no extra data type, and the reason is worth being able to state:
 Full Access is a capability grant, not a data type. If the keyboard ever gains
 its own network path or any keystroke persistence, this section stops being true
 and the label has to change with it.
+
+## Voice typing history does not add a row
+
+Since 1.21 the app keeps what the user dictated (Library › Voice typing), so a
+dictation that never landed in its field can be copied again. It adds no
+collected data type, because none of it is collected:
+
+- It is stored **on the device only**: one JSON file in the app's own sandbox
+  (Application Support), excluded from iCloud backup. It is **never** written to
+  the App Group, so the keyboard extension cannot read it, and it is **never**
+  sent anywhere — no upload, no sync, no server copy.
+- The hosted relay does not store it either. It meters seconds per feature and
+  relays transcript frames; it keeps no transcript text.
+- Retention is local: the most recent 200 entries, nothing older than 30 days.
+  Settings › Voice typing history turns it off and clears it.
+
+Data that never leaves the device is not "collected" in App Store terms. The
+dictation audio and transcript *in transit* are already covered above. If this
+history ever syncs to the account, it becomes **User Content → Other User
+Content** and this section has to go.
 
 ## URLs
 
