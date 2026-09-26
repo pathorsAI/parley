@@ -48,6 +48,14 @@ import kotlinx.serialization.json.putJsonObject
  * Routes: `library`, `transcript`, `record` (alias `meeting`), `account`
  * (alias `settings`), and `off`.
  *
+ * The meeting route takes an optional `?scenario=` naming a [MeetingScenario] —
+ * the states a real meeting only reaches when a microphone is taken away or the
+ * disk fills, which an emulator cannot be made to do on cue:
+ *
+ * ```
+ * adb shell am start -a android.intent.action.VIEW -d "'parley://demo/meeting?scenario=mic-lost'"
+ * ```
+ *
  * Everything below is invented. No real company, person, account, or meeting is
  * represented, the only address is in the RFC-reserved `example.com`, and the
  * copy is written separately in English and Traditional Chinese — a screenshot
@@ -60,10 +68,40 @@ object DemoMode {
     enum class Screen { LIBRARY, TRANSCRIPT, MEETING, ACCOUNT }
 
     /**
+     * What the demo meeting screen is showing. [LIVE] is the store screenshot;
+     * the rest exist so the recovery and warning states can be captured and
+     * reviewed without a device that is actually losing its microphone.
+     */
+    enum class MeetingScenario(val route: String) {
+        LIVE("live"),
+        MIC_SILENCED("mic-silenced"),
+        MIC_RECOVERING("mic-recovering"),
+
+        /** Recovering for a moment, then back — shows the "back" notice. */
+        MIC_BACK("mic-back"),
+        MIC_LOST("mic-lost"),
+        MIC_BROKEN("mic-broken"),
+        STORAGE_LOW("storage-low"),
+
+        /** Finished because the microphone was lost, not because of Stop. */
+        INTERRUPTED("interrupted"),
+        ;
+
+        companion object {
+            fun fromRoute(route: String?): MeetingScenario =
+                entries.firstOrNull { it.route == route } ?: LIVE
+        }
+    }
+
+    /**
      * A navigation request. [serial] makes each one distinct so firing the same
      * URL twice re-navigates instead of being swallowed as "no change".
      */
-    data class Navigation(val screen: Screen, val serial: Long)
+    data class Navigation(
+        val screen: Screen,
+        val serial: Long,
+        val scenario: MeetingScenario = MeetingScenario.LIVE,
+    )
 
     private val _enabled = MutableStateFlow(false)
 
@@ -102,7 +140,11 @@ object DemoMode {
         }
         _enabled.value = true
         serial += 1
-        _navigation.value = Navigation(screen, serial)
+        _navigation.value = Navigation(
+            screen = screen,
+            serial = serial,
+            scenario = MeetingScenario.fromRoute(uri.getQueryParameter(QUERY_SCENARIO)),
+        )
         return true
     }
 
@@ -535,6 +577,7 @@ object DemoMode {
     private const val SCHEME = "parley"
     private const val HOST = "demo"
     private const val ROUTE_OFF = "off"
+    private const val QUERY_SCENARIO = "scenario"
 
     /** A fixed clock, so a re-capture months later produces identical frames. */
     private const val EPOCH_MS = 1_786_498_800_000.0

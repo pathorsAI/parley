@@ -9,11 +9,11 @@ contract: if they drift, the three transcripts drift.
 Package: `com.pathors.parley.kit`.
 
 ```
-mic / decoded file ──16k mono s16le──▶ SttRelayClient ──▶ hosted STT relay ──▶ Soniox
-                                             │
-                                     SonioxStreamParser
-                                             │
-                                       SegmentBuilder ──▶ Flow<SttRelayEvent>
+mic ──16k mono s16le──▶ RelayAudioBridge ──▶ SttRelayClient (leg N) ──▶ hosted STT relay ──▶ Soniox
+decoded file ─────────────────────────────▶ SttRelayClient          │
+                                                                    SonioxStreamParser
+                                                                           │
+                                                                     SegmentBuilder ──▶ Flow<SttRelayEvent>
 ```
 
 ---
@@ -51,13 +51,15 @@ Timestamps are `Long` ms (the Swift/Rust originals use `UInt64`).
 ## `SttRelayClient`
 
 ```kotlin
-class SttRelayClient(options: Options) {
+class SttRelayClient(options: Options) : PcmSink {
     data class Options(
         val bearerToken: String,
         val relayUrl: String = DEFAULT_RELAY_URL,       // "wss://api.parley.tw/stt/stream"
         val model: String = DEFAULT_MODEL,              // "stt-rt-v5" (advisory; relay forces it)
         val languageHints: List<String>? = null,        // e.g. listOf("zh", "en")
         val feature: String = Feature.MEETING,
+        val idPrefix: String? = null,                   // segment id stem; default "mix"
+        val timeOffsetMs: Long = 0,                     // added to every emitted timestamp
     )
 
     object Feature {
@@ -68,9 +70,14 @@ class SttRelayClient(options: Options) {
 
     val events: Flow<SttRelayEvent>
     val isTerminated: Boolean
+    val droppedPcmChunks: Long
 
-    suspend fun connect()
-    suspend fun sendPcm(bytes: ByteArray)
+    fun open()                                   // returns at once; handshake in flight
+    suspend fun awaitOpen()                      // resolves on open *or* on a rejected handshake
+    suspend fun connect()                        // open() + awaitOpen()
+    override fun enqueuePcm(bytes: ByteArray)    // live capture: never waits, drop-oldest
+    fun enqueuePcm(samples: ShortArray)
+    suspend fun sendPcm(bytes: ByteArray)        // file streaming: throttled, never drops
     suspend fun sendPcm(samples: ShortArray)
     suspend fun finish()
     fun cancel()
@@ -80,18 +87,35 @@ class SttRelayClient(options: Options) {
         const val DEFAULT_MODEL = "stt-rt-v5"
         const val SOURCE = "mix"
         const val MAX_QUEUED_BYTES = 1L * 1024 * 1024
+        const val MAX_QUEUED_CHUNKS = 512        // ≈ 51 s of 100 ms chunks
     }
 }
 ```
 
 **One session per instance.** After a terminal event the client is spent;
-`connect()` a second time throws `IllegalStateException`.
+`open()`/`connect()` a second time throws `IllegalStateException`.
 
+- `idPrefix` / `timeOffsetMs` exist for a recording that reopens the relay
+  mid-meeting. Soniox numbers every session's segments from zero and times them
+  from zero, so each new leg needs its own id stem (`mix@1`, `mix@2`, …) or it
+  overwrites the opening of the meeting, and an offset or its segments land at
+  the start of the recording. Take the offset from `RelayAudioBridge.attach`
+  (below), never from the wall clock.
+- `open()` opens the socket and returns without waiting for the handshake;
+  `awaitOpen()` waits for it. Audio may be enqueued **before** `open()`: the
+  outbound queue exists from construction and OkHttp writes the config frame
+  first, which is what lets the microphone start before the socket is up.
 - `connect()` opens the socket (`Authorization: Bearer <token>`,
   `?feature=<tag>`), sends the keyless Soniox config frame, and starts the 2 s
   keepalive. It suspends until the handshake resolves. **A rejected handshake is
   not thrown** — like every other failure it arrives on `events`, so there is one
   place to watch. Only a malformed `relayUrl` throws (`IllegalArgumentException`).
+- `enqueuePcm(...)` is the live-capture entry point: it drops the chunk into a
+  bounded, **drop-oldest** queue that one writer coroutine drains, and never
+  suspends, blocks or throws. A stalled socket costs live transcript
+  (`droppedPcmChunks` counts it), never the microphone. A no-op after the
+  session ends — which is why a live recording goes through
+  `RelayAudioBridge` rather than calling it directly.
 - `sendPcm(...)` sends one binary frame of **16 kHz mono s16le** PCM. It
   **suspends while more than 1 MB sits unsent** in OkHttp's write queue, which is
   what lets a file decoder run flat out without buffering the whole file. A no-op
@@ -147,38 +171,49 @@ Message strings are otherwise byte-identical to the Swift client's.
 
 ### (a) Live mic streaming
 
+The microphone talks to a `RelayAudioBridge`, never to a client: the bridge is
+what survives a dropped socket. This is the shape `MeetingSession` uses.
+
 ```kotlin
-val relay = SttRelayClient(
-    SttRelayClient.Options(bearerToken = token, feature = SttRelayClient.Feature.MEETING)
+val bridge = RelayAudioBridge()
+var leg = 0
+
+fun newLeg(offsetMs: Long): SttRelayClient = SttRelayClient(
+    SttRelayClient.Options(
+        bearerToken = token,
+        feature = SttRelayClient.Feature.MEETING,
+        idPrefix = if (leg == 0) null else "${SttRelayClient.SOURCE}@$leg",
+        timeOffsetMs = offsetMs,
+    )
 )
 
-// Collect first — connect() does not wait for the stream to start.
-val collector = scope.launch {
-    relay.events.collect { event ->
+fun watch(client: SttRelayClient) = scope.launch {
+    client.events.collect { event ->
         when (event) {
             is SttRelayEvent.Segment -> upsert(event.segment)   // keyed by segment.id
-            is SttRelayEvent.Closed -> onStopped(event.reason)
-            is SttRelayEvent.Error -> onFailed(event.message)
-            is SttRelayEvent.QuotaExceeded -> showUpgradePrompt(event.message)
+            is SttRelayEvent.Closed, is SttRelayEvent.Error -> {
+                bridge.hold()        // from now on the mic's audio waits for the next leg
+                delay(backoff)
+                leg += 1
+                bridge.attach { offsetMs -> newLeg(offsetMs) }  // gap flushed in first
+                    ?.also { watch(it); it.open() }
+            }
+            is SttRelayEvent.QuotaExceeded -> bridge.discard()  // no leg is coming
         }
     }
 }
 
-relay.connect()
+val first = newLeg(0)
+bridge.attach(first)                 // before open(): the client queues until the upgrade
+watch(first)
+first.open()
 
-// AudioRecord at 16 kHz / MONO / ENCODING_PCM_16BIT.
-val buffer = ShortArray(1600)   // 100 ms
-while (recording) {
-    val n = audioRecord.read(buffer, 0, buffer.size)
-    if (n > 0) relay.sendPcm(buffer.copyOf(n))
-}
+// MicCapture emits 100 ms chunks of 16 kHz mono s16le.
+mic.start().collect { chunk -> encoder.append(chunk); bridge.send(chunk) }
 
-relay.finish()      // socket stays open; the tail is still coming
-collector.join()    // flow completes on the relay's close
+bridge.discard()
+current.finish()    // socket stays open; the tail is still coming
 ```
-
-`AudioRecord.read(ShortArray, …)` is blocking, so run the loop on
-`Dispatchers.IO`.
 
 ### (b) File streaming (faster than realtime)
 
@@ -202,6 +237,56 @@ collector.join()
 Bytes must be **little-endian s16le**; use `SonioxProtocol.pcmToLeBytes(...)` if
 you hold `ShortArray`s, or `sendPcm(ShortArray)` which does it for you. Do not
 throttle to wall-clock — the relay meters forwarded bytes, not elapsed time.
+
+---
+
+## `RelayAudioBridge`
+
+```kotlin
+interface PcmSink { fun enqueuePcm(bytes: ByteArray) }   // SttRelayClient implements it
+
+class RelayAudioBridge(
+    val holdLimitMs: Long = DEFAULT_HOLD_LIMIT_MS,       // 45 000
+    sampleRate: Int = SonioxProtocol.SAMPLE_RATE,
+) {
+    fun send(chunk: ByteArray)                           // capture thread; never waits on a socket
+    fun attach(leg: PcmSink)                             // first leg, nothing held
+    fun <L : PcmSink> attach(make: (timeOffsetMs: Long) -> L?): L?
+    fun hold()                                           // the leg is gone; start holding
+    fun discard()                                        // no leg is coming; drop, keep the clock
+    fun reset()                                          // new recording; forget the clock too
+
+    val capturedMilliseconds: Long
+    val heldMilliseconds: Long
+    val isHolding: Boolean
+}
+```
+
+Port of iOS `ParleyKit/Sources/ParleyKit/RelayAudioBridge.swift`; the tests
+(`RelayAudioBridgeTest`) are the Swift suite one-for-one plus two Android
+additions, and `RelayAudioBridgeRelayTest` runs two real client legs across a
+server-side close.
+
+- **Holding.** Between `hold()` and the next `attach`, chunks are kept, bounded
+  by `holdLimitMs`; overflow drops the **oldest** chunk. 45 s covers the
+  reconnect ladder plus a slow handshake and still fits one client's outbound
+  queue (`MAX_QUEUED_CHUNKS`), so a flush never makes the new leg drop what it
+  was just handed.
+- **The offset.** `attach { offsetMs -> … }` hands the factory the position of
+  the **first held sample** — or the live position when nothing is held — in
+  captured audio, not wall-clock time. That is where the new leg's first word
+  was actually said, and it stays aligned with the recording even when the
+  microphone itself paused. Dropping from the front moves it forward with the
+  buffer.
+- **The flush.** Held chunks go into the new leg before any live audio.
+  Unlike the Swift original, live chunks that arrive *during* the flush are
+  queued behind it and the leg only starts receiving directly once the hold
+  buffer is empty, so nothing can overtake the tail of the gap. Returning null
+  from the factory leaves the bridge holding with nothing lost.
+- **Threads.** One producer calls `send`; the lifecycle calls may come from any
+  thread. The lock is never held across a flush or a socket call.
+- `PcmSink` is a plain interface, not a `fun interface`, so a lambda passed to
+  `attach` cannot be SAM-converted into a sink by accident.
 
 ---
 
