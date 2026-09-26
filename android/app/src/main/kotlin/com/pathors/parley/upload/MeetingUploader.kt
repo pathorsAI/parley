@@ -8,6 +8,8 @@ import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.cloud.TranscriptSegmentDto
 import com.pathors.parley.cloud.msPrimitive
+import com.pathors.parley.library.SaveDestination
+import com.pathors.parley.library.SaveLocationStore
 import com.pathors.parley.playback.AudioRetention
 import com.pathors.parley.playback.LocalAudioStore
 import com.pathors.parley.util.deleteQuietly
@@ -47,7 +49,17 @@ data class EnqueueRequest(
     val startedAtMs: Long = System.currentTimeMillis(),
     val source: String = RecordingSource.LIVE,
     val id: String = MeetingUploader.newRecordingId(),
+    /**
+     * A personal folder chosen for this one recording. Wins over the default
+     * save location, and means "personal, here" — no org copy.
+     */
     val folderId: String? = null,
+    /**
+     * Where this recording goes, when the caller has decided. Null means the
+     * uploader's default (the "Default save location" setting) unless
+     * [folderId] was given. See [MeetingUploader.resolveDestination].
+     */
+    val destination: SaveDestination? = null,
 )
 
 /** What one [MeetingUploader.drain] pass achieved. */
@@ -83,6 +95,11 @@ data class DrainResult(
  * A summary claiming `hasAudio` must never reach the server before its blob, or
  * another device downloading it gets a 404.
  *
+ * When the recording's save destination is an organization, a third step
+ * follows the other two: `POST /recordings/{id}/share`, a server-side copy of
+ * the personal recording into the org (iOS `MeetingUploader.upload`). It only
+ * ever runs after the push, because it copies what the push wrote.
+ *
  * Call [drain] on app start and whenever connectivity returns; it is safe to call
  * concurrently (passes are serialized by an internal mutex).
  */
@@ -110,6 +127,14 @@ class MeetingUploader(
      * recording finishing and its upload finally going through.
      */
     private val keepsAudioOnPhone: suspend () -> Boolean = { false },
+    /**
+     * The "Default save location" setting, read when a recording is queued.
+     * The personal root by default, which is what every test that is not about
+     * destinations wants and what the app did before the setting existed.
+     */
+    private val defaultDestination: suspend () -> SaveDestination = {
+        SaveDestination.PERSONAL_ROOT
+    },
     /** Attempts per recording within one drain pass, including the first. */
     private val maxAttempts: Int = 3,
     /** Backoff between attempts: 1 s, 2 s, 4 s … Injectable so tests do not sleep. */
@@ -142,6 +167,7 @@ class MeetingUploader(
             request.audio.deleteQuietly()
             return@withContext null
         }
+        val destination = resolveDestination(request)
         val pending = PendingUpload(
             id = request.id,
             title = request.title,
@@ -149,11 +175,29 @@ class MeetingUploader(
             startedAtMs = request.startedAtMs,
             durationMs = request.durationMs,
             segments = request.segments.filter { it.isFinal && !it.id.endsWith(TAIL_SUFFIX) },
-            folderId = request.folderId,
+            folderId = destination.personalFolderId,
+            shareOrgId = destination.orgId,
+            shareFolderId = destination.orgFolderId,
         )
         queue.enqueue(pending, request.audio)
         request.id
     }
+
+    /**
+     * Where a queued recording goes: the caller's explicit destination, else a
+     * personal folder the caller named, else the default save location.
+     *
+     * A failed read of the setting falls back to the personal root rather than
+     * failing the enqueue — a finished meeting that could not be queued because
+     * a preference was unreadable would be the worst possible trade.
+     */
+    private suspend fun resolveDestination(request: EnqueueRequest): SaveDestination =
+        request.destination
+            ?: request.folderId?.let { SaveDestination(folderId = it) }
+            ?: runCatching { defaultDestination() }.getOrElse { error ->
+                if (error is CancellationException) throw error
+                SaveDestination.PERSONAL_ROOT
+            }
 
     /**
      * [enqueue] then immediately try to upload — what the "stop recording" path
@@ -286,10 +330,43 @@ class MeetingUploader(
         }
     }
 
-    /** Audio FIRST, then the summary+meta push — the contract's ordering. */
+    /**
+     * Audio FIRST, then the summary+meta push — the contract's ordering — and
+     * then, for an organization destination, the org copy.
+     */
     private suspend fun upload(pending: PendingUpload, audio: File) {
         cloud.uploadAudio(pending.id, audio)
         cloud.pushRecording(pending.id, buildSummary(pending), buildMeta(pending))
+        shareIfAsked(pending)
+    }
+
+    /**
+     * Copy the just-pushed recording into its organization.
+     *
+     * By the time this runs the recording is safe in the personal library, so
+     * a failure here has two very different meanings:
+     *
+     * - **Transient** (network, 5xx, 408, 429) or **signed out** (401): thrown,
+     *   so the pass stops and the whole upload is retried later. Audio and push
+     *   are idempotent upserts, so the retry repeats them harmlessly and then
+     *   makes the copy.
+     * - **Refused for good** (any other 4xx — no longer a member, the org is
+     *   gone, a folder that does not exist): swallowed. The recording stays
+     *   personal-only, which is what the setting's footer promises it always
+     *   is, and the queue moves on. Throwing would park a recording that has
+     *   *already uploaded* at the head of a stop-at-first-failure queue and
+     *   hold every meeting behind it hostage to a membership change.
+     *
+     * iOS treats 403 as a retryable stop; the phone that would be stuck behind
+     * it is the difference.
+     */
+    private suspend fun shareIfAsked(pending: PendingUpload) {
+        val orgId = pending.shareOrgId ?: return
+        try {
+            cloud.shareRecording(pending.id, orgId, pending.shareFolderId)
+        } catch (e: CloudException) {
+            if (e.isAuthExpired || e.isRetryable || e.status !in 400..499) throw e
+        }
     }
 
     companion object {
@@ -313,6 +390,7 @@ class MeetingUploader(
                 backfills = PendingBackfillQueue.default(context),
                 localAudio = LocalAudioStore.default(context),
                 keepsAudioOnPhone = retention::keepsAudioOnPhoneNow,
+                defaultDestination = SaveLocationStore.default(context)::current,
             )
         }
 

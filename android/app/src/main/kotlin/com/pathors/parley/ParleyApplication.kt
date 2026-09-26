@@ -6,6 +6,7 @@ import android.net.Uri
 import android.util.Log
 import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.cloud.CloudClient
+import com.pathors.parley.library.SaveLocationStore
 import com.pathors.parley.meeting.ImportSession
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingSession
@@ -99,12 +100,16 @@ class AppContainer(private val app: Application) {
     /** How many hand-triggered re-transcriptions each recording has spent. */
     val manualRetries: ManualRetryLedger = ManualRetryLedger.default(app)
 
+    /** "Default save location" — read by the uploader, chosen in the account sheet. */
+    val saveLocation: SaveLocationStore = SaveLocationStore.default(app)
+
     val uploader: MeetingUploader = MeetingUploader(
         cloud = cloud,
         queue = uploadQueue,
         backfills = backfillQueue,
         localAudio = localAudio,
         keepsAudioOnPhone = audioRetention::keepsAudioOnPhoneNow,
+        defaultDestination = saveLocation::current,
     )
 
     /**
