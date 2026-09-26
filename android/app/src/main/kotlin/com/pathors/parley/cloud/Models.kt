@@ -10,6 +10,7 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.addJsonObject
@@ -158,6 +159,58 @@ data class PushResponse(
     @Serializable(with = EpochMillisSerializer::class) val updatedAt: Double? = null,
 )
 
+/**
+ * A folder, personal or an organization's — iOS `CloudFolder`, desktop
+ * `CloudFolder` (`src/lib/cloud/types.ts`).
+ *
+ * Folders are one level deep and a recording is in at most one of them. A
+ * personal folder has no [orgId]; `GET /folders` can return org folders too on
+ * some backends, which is why the library filters on it rather than trusting
+ * the endpoint.
+ */
+@Serializable
+data class CloudFolder(
+    val id: String,
+    val name: String,
+    val orgId: String? = null,
+    @Serializable(with = EpochMillisSerializer::class) val createdAt: Double? = null,
+    @Serializable(with = EpochMillisSerializer::class) val updatedAt: Double? = null,
+)
+
+/** `GET /folders` and `GET /orgs/{orgId}/folders` → `{ folders: [...] }`. */
+@Serializable
+data class FoldersResponse(
+    val folders: List<CloudFolder> = emptyList(),
+)
+
+/** `POST /folders` → `{ folder }`, when the server sends the row back at all. */
+@Serializable
+data class FolderEnvelope(
+    val folder: CloudFolder,
+)
+
+/**
+ * An organization the signed-in account belongs to, with the account's own
+ * [role] in it. `role` is only present from the cloud's `GET /orgs/mine` —
+ * better-auth's own organization list drops it, which is why every client uses
+ * the former. Mirrors iOS `CloudOrg`.
+ */
+@Serializable
+data class CloudOrg(
+    val id: String,
+    val name: String,
+    val slug: String? = null,
+    /** [OrgRole.OWNER], [OrgRole.ADMIN] or [OrgRole.MEMBER]; null reads as member. */
+    val role: String? = null,
+)
+
+/** The membership roles better-auth's organization plugin hands out. */
+object OrgRole {
+    const val OWNER = "owner"
+    const val ADMIN = "admin"
+    const val MEMBER = "member"
+}
+
 /** `POST /stt/batch` → `{ id }`, the hosted transcription job to poll. */
 @Serializable
 data class BatchJobCreated(
@@ -280,11 +333,20 @@ class RecordingMeta(val raw: JsonObject) {
     /** How many action items a desktop analysis has attached. */
     val actionItemsCount: Int get() = (raw["actionItems"] as? JsonArray)?.size ?: 0
 
-    /** A copy with a different `folderId`, every other field preserved verbatim. */
+    /**
+     * A copy with a different `folderId`, every other field preserved verbatim.
+     *
+     * Moving to the personal root writes an explicit `"folderId": null` rather
+     * than dropping the key — the statement iOS (`RecordingMeta.folderId`'s
+     * setter) and the desktop (`buildSummary`) both make. An absent key is what
+     * a fresh upload with no folder says; a re-push that is *un*filing a
+     * recording has to say so out loud, or a server that merges would keep the
+     * old folder.
+     */
     fun withFolderId(folderId: String?): RecordingMeta = RecordingMeta(
         buildJsonObject {
             raw.forEach { (key, value) -> if (key != "folderId") put(key, value) }
-            if (folderId != null) put("folderId", JsonPrimitive(folderId))
+            put("folderId", if (folderId != null) JsonPrimitive(folderId) else JsonNull)
         }
     )
 

@@ -9,22 +9,28 @@ import android.os.Build
 import android.provider.Settings
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -43,15 +49,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pathors.parley.BuildConfig
 import com.pathors.parley.R
 import com.pathors.parley.auth.CustomTabsLauncher
+import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.HostedQuota
+import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.playback.AudioStorageSection
 import com.pathors.parley.ui.theme.ParleyTextStyles
 import com.pathors.parley.ui.theme.ThemePreference
@@ -98,6 +110,7 @@ import kotlinx.coroutines.launch
 fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
     val account by viewModel.account.collectAsState()
     val library by viewModel.state.collectAsState()
+    val destination by viewModel.saveDestination.collectAsState()
     // Fully expanded, never half: there is more here than a half-height sheet can
     // show, and a settings pane that opens mid-scroll reads as broken.
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -126,6 +139,13 @@ fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
             AccountIdentity(account)
 
             account.quota?.let { quota -> UsageSection(quota) }
+
+            SaveLocationSection(
+                destination = destination,
+                orgs = library.orgs,
+                targets = account.saveTargets,
+                onSelect = viewModel::setSaveDestination,
+            )
 
             SyncSection(
                 pending = library.pending.size,
@@ -344,6 +364,145 @@ private fun QuotaBar(label: String, used: Double, limit: Double?, unit: String) 
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )
         }
+    }
+}
+
+/**
+ * "Default save location": where a recording made or imported on this phone
+ * goes — the personal library or one of its folders, or an organization or one
+ * of its folders. The iOS Settings picker, the same four shapes, with its
+ * footer, because the organization case needs explaining: it still saves to the
+ * personal library and shares a copy (see [SaveDestination]).
+ *
+ * Between usage and sync, where iOS has it: it is the first thing about *where
+ * recordings go*, and sync is the second.
+ *
+ * A menu anchored to a Change button rather than a list of radio rows: an
+ * account with twenty customers has twenty-odd options, and a sheet that grew
+ * by twenty rows to show one setting would bury everything below it.
+ */
+@Composable
+private fun SaveLocationSection(
+    destination: SaveDestination,
+    orgs: List<CloudOrg>,
+    targets: HomeViewModel.SaveTargets,
+    onSelect: (SaveDestination) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val personal = stringResource(R.string.library_scope_personal)
+
+    SectionHeader(R.string.account_save_location_title)
+
+    Box {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = saveDestinationLabel(destination, orgs, targets),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { open = true }) {
+                Text(stringResource(R.string.account_save_location_change))
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            fun pick(choice: SaveDestination) {
+                open = false
+                onSelect(choice)
+            }
+            SaveLocationItem(personal, LibraryIcons.Folder, destination == SaveDestination.PERSONAL_ROOT) {
+                pick(SaveDestination.PERSONAL_ROOT)
+            }
+            targets.personalFolders.forEach { folder ->
+                val choice = SaveDestination(folderId = folder.id)
+                SaveLocationItem(
+                    title = stringResource(R.string.account_save_location_personal_folder, folder.name),
+                    icon = LibraryIcons.Folder,
+                    selected = destination == choice,
+                    indented = true,
+                ) { pick(choice) }
+            }
+            orgs.forEach { org ->
+                val root = SaveDestination(orgId = org.id)
+                SaveLocationItem(org.name, LibraryIcons.Group, destination == root) { pick(root) }
+                targets.orgFolders[org.id].orEmpty().forEach { folder ->
+                    val choice = SaveDestination(orgId = org.id, folderId = folder.id)
+                    SaveLocationItem(
+                        // Verbatim, as on iOS: two names and a separator, nothing
+                        // for a translator to say.
+                        title = "${org.name} · ${folder.name}",
+                        icon = LibraryIcons.Folder,
+                        selected = destination == choice,
+                        indented = true,
+                    ) { pick(choice) }
+                }
+            }
+        }
+    }
+
+    Text(
+        text = stringResource(R.string.account_save_location_footer),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@Composable
+private fun SaveLocationItem(
+    title: String,
+    icon: ImageVector,
+    selected: Boolean,
+    indented: Boolean = false,
+    onClick: () -> Unit,
+) {
+    DropdownMenuItem(
+        text = { Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        leadingIcon = {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier
+                    .padding(start = if (indented) 16.dp else 0.dp)
+                    .size(20.dp),
+            )
+        },
+        trailingIcon = {
+            if (selected) {
+                Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            }
+        },
+        onClick = onClick,
+        modifier = Modifier.semantics { this.selected = selected },
+    )
+}
+
+/**
+ * The setting as a line of text. A folder or an organization that is not in
+ * the loaded lists — still loading, or deleted elsewhere — degrades to its
+ * parent's name rather than to an id, the same fallback iOS's
+ * `SaveDestination.label` makes.
+ */
+@Composable
+private fun saveDestinationLabel(
+    destination: SaveDestination,
+    orgs: List<CloudOrg>,
+    targets: HomeViewModel.SaveTargets,
+): String {
+    val orgId = destination.orgId
+    if (orgId != null) {
+        val orgName = orgs.firstOrNull { it.id == orgId }?.name
+            ?: stringResource(R.string.account_save_location_org)
+        val folder = targets.orgFolders[orgId].orEmpty().firstOrNull { it.id == destination.folderId }
+        return if (folder != null) "$orgName · ${folder.name}" else orgName
+    }
+    val folder = targets.personalFolders.firstOrNull { it.id == destination.folderId }
+    return if (folder != null) {
+        stringResource(R.string.account_save_location_personal_folder, folder.name)
+    } else {
+        stringResource(R.string.library_scope_personal)
     }
 }
 

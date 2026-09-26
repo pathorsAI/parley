@@ -16,9 +16,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.pathors.parley.AppContainer
 import com.pathors.parley.R
 import com.pathors.parley.screenshot.DemoMode
@@ -28,9 +30,17 @@ private object Route {
     const val HOME = "home"
     const val MEETING = "meeting"
     const val IMPORT = "import"
-    const val RECORDING = "recording/{id}"
 
-    fun recording(id: String) = "recording/$id"
+    /**
+     * A recording, and — as an optional argument — the organization whose
+     * library it was opened from. An org recording is read through the org's
+     * endpoints under an id of its own, so the detail screen has to know.
+     */
+    const val ARG_ORG = "org"
+    const val RECORDING = "recording/{id}?$ARG_ORG={$ARG_ORG}"
+
+    fun recording(id: String, orgId: String? = null) =
+        if (orgId == null) "recording/$id" else "recording/$id?$ARG_ORG=$orgId"
 }
 
 /**
@@ -98,7 +108,9 @@ private fun ParleyNavHost(container: AppContainer) {
             HomeScreen(
                 onRecord = { navController.navigate(Route.MEETING) },
                 onImport = { picker.launch(arrayOf("audio/*")) },
-                onOpenRecording = { id -> navController.navigate(Route.recording(id)) },
+                onOpenRecording = { id, orgId ->
+                    navController.navigate(Route.recording(id, orgId))
+                },
             )
         }
         composable(Route.MEETING) {
@@ -107,9 +119,19 @@ private fun ParleyNavHost(container: AppContainer) {
         composable(Route.IMPORT) {
             ImportScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })
         }
-        composable(Route.RECORDING) { entry ->
+        composable(
+            route = Route.RECORDING,
+            arguments = listOf(
+                navArgument(Route.ARG_ORG) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) { entry ->
             RecordingDetailScreen(
                 recordingId = entry.arguments?.getString("id").orEmpty(),
+                orgId = entry.arguments?.getString(Route.ARG_ORG),
                 onBack = { navController.popBackStack() },
             )
         }
@@ -132,7 +154,8 @@ private fun DemoNavigation(navController: NavHostController) {
         navController.popBackStack(Route.HOME, inclusive = false)
         when (target.screen) {
             DemoMode.Screen.LIBRARY, DemoMode.Screen.ACCOUNT -> Unit
-            DemoMode.Screen.TRANSCRIPT -> navController.navigate(Route.recording(DemoMode.FEATURED_ID))
+            DemoMode.Screen.TRANSCRIPT, DemoMode.Screen.MOVE_TO_FOLDER ->
+                navController.navigate(Route.recording(DemoMode.FEATURED_ID))
             DemoMode.Screen.MEETING -> navController.navigate(Route.MEETING)
         }
     }

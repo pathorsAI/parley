@@ -7,8 +7,11 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pathors.parley.AppContainer
 import com.pathors.parley.cloud.BatchTranscriptionProblem
+import com.pathors.parley.cloud.CloudClient
+import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.asBatchTranscriptionProblem
+import com.pathors.parley.library.LibraryFolders
 import com.pathors.parley.playback.PlaybackController
 import com.pathors.parley.playback.PlaybackPhase
 import com.pathors.parley.playback.PlaybackState
@@ -198,6 +201,14 @@ class RecordingDetailViewModel(
     private val container: AppContainer,
     private val recordingId: String,
     /**
+     * The organization whose library this recording was opened from, or null
+     * for a personal recording. An org recording is read through the org's
+     * endpoints, and everything on this screen that writes through the
+     * *personal* ones — re-transcribing, filing, downloading the audio — is
+     * unavailable for it, as on iOS.
+     */
+    private val orgId: String? = null,
+    /**
      * Application context, for the player. Passed in rather than reached for
      * through [AppContainer]: a ViewModel that can see the whole Application is
      * a ViewModel that can leak an Activity by accident.
@@ -228,7 +239,18 @@ class RecordingDetailViewModel(
 
     fun cycleRate() = playback.cycleRate()
 
-    fun downloadAudio() = playback.download()
+    fun downloadAudio() {
+        // `GET /recordings/{id}/audio` is the personal endpoint; an org
+        // recording's audio lives behind an org path this client does not
+        // speak, and a download that would 404 is worse than none.
+        if (orgId == null) playback.download()
+    }
+
+    /** Whether this screen can file the recording: personal recordings only, as on iOS. */
+    val canMoveToFolder: Boolean get() = orgId == null
+
+    /** Whether "transcribe again" applies — it re-pushes through the personal endpoints. */
+    val canRetranscribe: Boolean get() = orgId == null
 
     override fun onCleared() {
         playback.release()
@@ -241,6 +263,20 @@ class RecordingDetailViewModel(
         val actionItems: List<ActionItemRow> = emptyList(),
         val failed: Boolean = false,
     )
+
+    /**
+     * "Move to folder" from the overflow menu: the personal folders the picker
+     * offers, and how the last move went. Its own flow, like [retranscribe], so
+     * a folder list arriving does not rebuild the transcript's state.
+     */
+    data class FilingState(
+        val folders: List<CloudFolder> = emptyList(),
+        val moving: Boolean = false,
+        val moveFailed: Boolean = false,
+    )
+
+    private val _filing = MutableStateFlow(FilingState())
+    val filing: StateFlow<FilingState> = _filing.asStateFlow()
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -257,21 +293,99 @@ class RecordingDetailViewModel(
             _state.value = fromMeta(DemoMode.meta(recordingId))
             openPlayer()
             viewModelScope.launch { syncRetranscribe() }
+            if (canMoveToFolder) _filing.update { it.copy(folders = DemoMode.pickerFolders()) }
             return
         }
         viewModelScope.launch {
             _state.value = UiState(loading = true)
-            val result = runCatching { container.cloud.recordingMeta(recordingId) }
+            val result = runCatching { fetchMeta() }
             _state.value = fromMeta(result.getOrNull())
             openPlayer()
             syncRetranscribe()
         }
+        if (canMoveToFolder) viewModelScope.launch { loadFolders() }
     }
+
+    private suspend fun fetchMeta(): RecordingMeta =
+        if (orgId == null) {
+            container.cloud.recordingMeta(recordingId)
+        } else {
+            container.cloud.orgRecordingMeta(orgId, recordingId)
+        }
+
+    // ── filing ───────────────────────────────────────────────────────────────
+
+    /** Best-effort: without the list the picker still offers Unfiled and "New folder…". */
+    private suspend fun loadFolders() {
+        val folders = runCatching {
+            LibraryFolders.personalFolders(container.cloud.listFolders())
+        }.getOrNull() ?: return
+        _filing.update { it.copy(folders = folders) }
+    }
+
+    /**
+     * The folder the recording is in, as the picker should tick it: an id that
+     * is not in the live folder list is the desktop's orphan, Unfiled
+     * everywhere else in the app.
+     */
+    fun currentFolderId(): String? =
+        LibraryFolders.liveFolderId(_state.value.meta?.folderId, _filing.value.folders)
+
+    /**
+     * File the recording, or take it back to the root — the same full re-push
+     * the library's row menu does. On success the meta on screen is updated in
+     * place; the library re-reads on the way back, so its row follows.
+     */
+    fun moveToFolder(folderId: String?) {
+        if (!canMoveToFolder || _filing.value.moving) return
+        val meta = _state.value.meta ?: return
+        if (DemoMode.isActive) {
+            _state.update { it.copy(meta = meta.withFolderId(folderId)) }
+            return
+        }
+        viewModelScope.launch {
+            _filing.update { it.copy(moving = true, moveFailed = false) }
+            val result = try {
+                container.cloud.refileRecording(recordingId, folderId)
+                true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                false
+            }
+            if (result) {
+                _state.update { current ->
+                    current.copy(meta = current.meta?.withFolderId(folderId))
+                }
+            }
+            _filing.update { it.copy(moving = false, moveFailed = !result) }
+        }
+    }
+
+    /**
+     * "New folder…": create it in the personal library, then move the
+     * recording into it. Throws when the folder could not be created, so the
+     * picker can keep the name on screen with the error.
+     */
+    suspend fun createFolderAndMove(name: String) {
+        check(canMoveToFolder) { "org recordings are not filed from this screen" }
+        val folder = if (DemoMode.isActive) {
+            CloudFolder(id = CloudClient.newCloudId(), name = name)
+        } else {
+            container.cloud.createFolder(name)
+        }
+        _filing.update { it.copy(folders = it.folders + folder) }
+        moveToFolder(folder.id)
+    }
+
+    fun clearMoveError() = _filing.update { it.copy(moveFailed = false) }
 
     // ── transcribe again ─────────────────────────────────────────────────────
 
     /** The menu item. Opens the confirmation rather than starting anything. */
-    fun askToRetranscribe() = _retranscribe.update { it.confirming() }
+    fun askToRetranscribe() {
+        if (canRetranscribe) _retranscribe.update { it.confirming() }
+    }
 
     fun dismissRetranscribe() = _retranscribe.update { it.dismissed() }
 
@@ -386,7 +500,7 @@ class RecordingDetailViewModel(
      * The player is untouched on purpose — see [openPlayer].
      */
     private suspend fun refreshMeta() {
-        val meta = runCatching { container.cloud.recordingMeta(recordingId) }.getOrNull()
+        val meta = runCatching { fetchMeta() }.getOrNull()
             ?: return
         _state.value = fromMeta(meta)
     }
@@ -464,16 +578,21 @@ class RecordingDetailViewModel(
             )
         }
 
-        fun factory(container: AppContainer, recordingId: String, context: Context) =
-            viewModelFactory {
-                initializer {
-                    RecordingDetailViewModel(
-                        container,
-                        recordingId,
-                        context.applicationContext,
-                    )
-                }
+        fun factory(
+            container: AppContainer,
+            recordingId: String,
+            orgId: String?,
+            context: Context,
+        ) = viewModelFactory {
+            initializer {
+                RecordingDetailViewModel(
+                    container = container,
+                    recordingId = recordingId,
+                    orgId = orgId,
+                    context = context.applicationContext,
+                )
             }
+        }
 
         internal fun readFindings(meta: RecordingMeta): List<FindingRow> =
             (meta.raw["findings"] as? JsonArray).orEmptyObjects().mapNotNull { obj ->
