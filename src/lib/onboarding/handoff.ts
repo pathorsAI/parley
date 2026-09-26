@@ -34,30 +34,34 @@ export interface HandoffPromptInput {
 export function buildHandoffPrompt(input: HandoffPromptInput, lang: AppLanguage): string {
   const t = (key: Parameters<typeof translate>[1], vars?: Record<string, string>) =>
     translate(lang, key, vars);
-  const lines: string[] = [t("transcript.handoffPrompt.intro")];
-  input.questions.forEach((q, i) => lines.push(`${i + 1}. ${q}`));
-  lines.push(t("transcript.handoffPrompt.cite"), "");
-
   const title = input.title.trim();
-  lines.push(
-    input.kindLabel
-      ? t("transcript.handoffPrompt.meeting", { title, date: input.dateLabel, kind: input.kindLabel })
-      : t("transcript.handoffPrompt.meetingNoKind", { title, date: input.dateLabel })
-  );
-  lines.push(
-    t("transcript.handoffPrompt.context", {
-      context: input.context.trim() || t("transcript.handoffPrompt.noContext"),
-    })
-  );
-  if (input.speakerNames.length) {
-    lines.push(
-      t("transcript.handoffPrompt.speakers", {
-        names: input.speakerNames.join(t("transcript.handoffPrompt.nameSeparator")),
-        me: input.meName,
-      })
-    );
-  }
-  lines.push("", t("transcript.handoffPrompt.transcript"), input.transcript.trim(), "");
+  const meeting = input.kindLabel
+    ? t("transcript.handoffPrompt.meeting", { title, date: input.dateLabel, kind: input.kindLabel })
+    : t("transcript.handoffPrompt.meetingNoKind", { title, date: input.dateLabel });
+  const context = t("transcript.handoffPrompt.context", {
+    context: input.context.trim() || t("transcript.handoffPrompt.noContext"),
+  });
+  const speakers = input.speakerNames.length
+    ? [
+        t("transcript.handoffPrompt.speakers", {
+          names: input.speakerNames.join(t("transcript.handoffPrompt.nameSeparator")),
+          me: input.meName,
+        }),
+      ]
+    : [];
+  const lines: string[] = [
+    t("transcript.handoffPrompt.intro"),
+    ...input.questions.map((q, i) => `${i + 1}. ${q}`),
+    t("transcript.handoffPrompt.cite"),
+    "",
+    meeting,
+    context,
+    ...speakers,
+    "",
+    t("transcript.handoffPrompt.transcript"),
+    input.transcript.trim(),
+    "",
+  ];
   return lines.join("\n");
 }
 
