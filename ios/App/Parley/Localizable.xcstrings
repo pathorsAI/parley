@@ -510,6 +510,23 @@
         }
       }
     },
+    "And share it with ChatGPT or Claude to analyse.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "And share it with ChatGPT or Claude to analyse."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再分享給 ChatGPT 或 Claude 分析。"
+          }
+        }
+      }
+    },
     "Appearance": {
       "extractionState": "manual",
       "localizations": {
@@ -1936,6 +1953,23 @@
         }
       }
     },
+    "It turns into text as you go, with who said what.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "It turns into text as you go, with who said what."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "即時轉成文字，標出誰在說話。"
+          }
+        }
+      }
+    },
     "Keep audio on this phone": {
       "extractionState": "manual",
       "localizations": {
@@ -3122,6 +3156,23 @@
         }
       }
     },
+    "Parley records both sides of the conversation.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley records both sides of the conversation."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley 把你和對方的聲音同時錄下來。"
+          }
+        }
+      }
+    },
     "Parley records here and types your words at the cursor. Answer the prompt first — dictation can't start without it.": {
       "extractionState": "manual",
       "localizations": {
@@ -3611,6 +3662,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "錄第一段"
+          }
+        }
+      }
+    },
+    "Recording now": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recording now"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "錄音中"
           }
         }
       }
@@ -5051,6 +5119,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "主題"
+          }
+        }
+      }
+    },
+    "Then one customer, one folder.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Then one customer, one folder."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "之後一個客戶一個資料夾。"
           }
         }
       }

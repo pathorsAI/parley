@@ -44,6 +44,16 @@ struct FilingSuggestionCard: View {
     @State private var editing = false
     @FocusState private var titleFocused: Bool
     @State private var choosing = false
+    /// How much of the proposed title has typed itself in, the first time the
+    /// card shows it. nil = all of it.
+    @State private var typedCount: Int?
+    /// The accept in flight: which chip the card is flying into, and which one
+    /// is popping. See `fly(into:then:)`.
+    @State private var flight: String?
+    @State private var flying = false
+    @State private var popping: String?
+    @Namespace private var motion
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     #if DEBUG
         /// ScreenshotDemo's `adjust` route opens the picker with nobody
         /// tapping; `simctl` cannot tap.
@@ -54,10 +64,17 @@ struct FilingSuggestionCard: View {
         Group {
             if model.hasSomethingToOffer {
                 block
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .asymmetric(
+                                insertion: .modifier(
+                                    active: Arrival(progress: 0), identity: Arrival(progress: 1)),
+                                removal: .opacity))
+                    .onAppear(perform: typeTitleOnce)
             }
         }
-        .animation(.easeOut(duration: 0.25), value: model.hasSomethingToOffer)
+        .animation(reduceMotion ? nil : LapMotion.spring, value: model.hasSomethingToOffer)
         .onAppear { draft = model.editableTitle }
         .onChange(of: model.editableTitle) { _, title in
             if !editing { draft = title }
@@ -103,6 +120,71 @@ struct FilingSuggestionCard: View {
         .padding(.vertical, 12)
         .background(Theme.primary.opacity(highlighted ? 0.12 : 0))
         .animation(.easeOut(duration: 0.6), value: highlighted)
+        .overlay { flightGhost }
+    }
+
+    /// The card, in miniature, on its way into a folder chip: a tinted slip
+    /// with the title on it, matched first to the title and then to the chip,
+    /// so the spring carries it from one to the other.
+    @ViewBuilder
+    private var flightGhost: some View {
+        if let flight {
+            RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
+                .fill(Theme.primary.opacity(0.12))
+                .overlay(
+                    Text(verbatim: model.editableTitle)
+                        .font(.parley.caption)
+                        .foregroundStyle(Color(.label))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                        .padding(.horizontal, 6))
+                .matchedGeometryEffect(
+                    id: flying ? "chip-\(flight)" : "title", in: motion, isSource: false)
+                .opacity(flying ? 0.35 : 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// The title types itself in once per session per suggestion — the moment
+    /// the lap is about is Parley *writing* a name, and a name that is simply
+    /// there reads as a fixture.
+    private func typeTitleOnce() {
+        let title = model.editableTitle
+        guard !reduceMotion, !title.isEmpty, !LapMotion.typedTitles.contains(title) else { return }
+        LapMotion.typedTitles.insert(title)
+        typedCount = 0
+        Task { @MainActor in
+            for count in 1...title.count {
+                try? await Task.sleep(for: .seconds(LapMotion.perCharacter))
+                typedCount = count
+            }
+            typedCount = nil
+        }
+    }
+
+    /// Fly the card into a chip, pop the chip, then write. With Reduce Motion
+    /// the write happens at once.
+    private func fly(into key: String, then write: @escaping () async -> Void) {
+        guard !reduceMotion else {
+            Task { await write() }
+            return
+        }
+        flight = key
+        flying = false
+        Task { @MainActor in
+            // A frame at the title, so the match has somewhere to start from.
+            try? await Task.sleep(for: .milliseconds(16))
+            withAnimation(LapMotion.spring) { flying = true }
+            try? await Task.sleep(for: .seconds(0.4))
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.5)) { popping = key }
+            LapMotion.success()
+            try? await Task.sleep(for: .seconds(0.18))
+            withAnimation(LapMotion.spring) { popping = nil }
+            flight = nil
+            flying = false
+            await write()
+        }
     }
 
     // MARK: the name
@@ -137,7 +219,7 @@ struct FilingSuggestionCard: View {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             // The proposed name is the model's words, never a
                             // lookup key.
-                            Text(verbatim: draft.isEmpty ? model.editableTitle : draft)
+                            Text(verbatim: shownTitle)
                                 .font(.parley.title3)
                                 .foregroundStyle(Color(.label))
                                 .multilineTextAlignment(.leading)
@@ -150,6 +232,8 @@ struct FilingSuggestionCard: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .matchedGeometryEffect(id: "title", in: motion, isSource: true)
+                    .accessibilityLabel(Text(verbatim: draft.isEmpty ? model.editableTitle : draft))
                     .accessibilityHint(Text("Edit the title"))
                 }
                 Spacer(minLength: 8)
@@ -174,6 +258,13 @@ struct FilingSuggestionCard: View {
                     .foregroundStyle(Color(.secondaryLabel))
             }
         }
+    }
+
+    /// The title as drawn: typed in part while it is typing itself in.
+    private var shownTitle: String {
+        let full = draft.isEmpty ? model.editableTitle : draft
+        guard let typedCount else { return full }
+        return LapMotion.typed(full, count: typedCount)
     }
 
     private func commitTitle() {
@@ -223,6 +314,8 @@ struct FilingSuggestionCard: View {
                 dashed: isNew, tint: Theme.primary)
         }
         .buttonStyle(.plain)
+        .matchedGeometryEffect(id: "chip-\(FilingSuggestionModel.key(for: folder))", in: motion, isSource: true)
+        .scaleEffect(popping == FilingSuggestionModel.key(for: folder) ? 1.06 : 1)
         .accessibilityHint(Text(verbatim: folder.reason))
     }
 
@@ -261,13 +354,22 @@ struct FilingSuggestionCard: View {
     private func accept() {
         commitDraftIfEditing()
         let title = currentDraft
-        Task { await model.apply(title: title, folder: model.proposedFolder, app: app) }
+        let folder = model.proposedFolder
+        guard let folder else {
+            Task { await model.apply(title: title, folder: nil, app: app) }
+            return
+        }
+        fly(into: FilingSuggestionModel.key(for: folder)) {
+            await model.apply(title: title, folder: folder, app: app)
+        }
     }
 
     /// A chip or the picker: file, and leave the name to its own answer.
     private func file(in folder: FilingFolderSuggestion) {
         commitDraftIfEditing()
-        Task { await model.apply(title: nil, folder: folder, app: app) }
+        fly(into: FilingSuggestionModel.key(for: folder)) {
+            await model.apply(title: nil, folder: folder, app: app)
+        }
     }
 
     /// The name to write with a folder: what the field says, unless the name
@@ -301,9 +403,15 @@ struct FilingSuggestionCard: View {
                 guard let folderId,
                     let folder = model.existingFolders.first(where: { $0.id == folderId })
                 else { return }
-                file(
-                    in: FilingFolderSuggestion(
-                        folderId: folder.id, name: folder.name, reason: ""))
+                // No flight from the picker: the chip it would fly into is not
+                // on screen.
+                Task {
+                    await model.apply(
+                        title: nil,
+                        folder: FilingFolderSuggestion(
+                            folderId: folder.id, name: folder.name, reason: ""),
+                        app: app)
+                }
             },
             onCreate: { name in
                 let landed = await model.apply(
@@ -316,5 +424,18 @@ struct FilingSuggestionCard: View {
 
     private struct CreateFailed: LocalizedError {
         var errorDescription: String? { String(localized: "That didn't save. Try again.") }
+    }
+}
+
+/// The card's entrance: from 16pt low, 98% and transparent to where it sits —
+/// driven by `LapMotion.spring` through the transition.
+private struct Arrival: ViewModifier {
+    let progress: Double
+
+    func body(content: Content) -> some View {
+        content
+            .offset(y: 16 * (1 - progress))
+            .scaleEffect(0.98 + 0.02 * progress)
+            .opacity(progress)
     }
 }

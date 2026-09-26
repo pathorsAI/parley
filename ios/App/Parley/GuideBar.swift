@@ -17,6 +17,8 @@ import SwiftUI
 /// on what can be tapped; the ✓ is the system green, as on the checklist.
 struct GuideBar: View {
     let display: GuidedLap.Display
+    /// For the finish's one-time burst, which is remembered per recording.
+    let recordingId: String
     /// The questions the share will ask — the sample's own, or the generic three.
     let questions: [String]
     /// The folder the recording was just filed into, for the ✓ line, and
@@ -150,6 +152,12 @@ struct GuideBar: View {
     // MARK: done
 
     private var done: some View {
+        LapFinish(recordingId: recordingId) { shown in
+            doneContent(shown: shown)
+        }
+    }
+
+    private func doneContent(shown: Int) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
@@ -160,9 +168,12 @@ struct GuideBar: View {
                     .foregroundStyle(Color(.label))
             }
             VStack(alignment: .leading, spacing: 2) {
-                doneLine(Text("Named and filed"))
-                doneLine(Text("Replayed"))
-                doneLine(Text("Handed to your AI"))
+                let lines = [Text("Named and filed"), Text("Replayed"), Text("Handed to your AI")]
+                ForEach(0..<3, id: \.self) { index in
+                    doneLine(lines[index])
+                        .opacity(index < shown ? 1 : 0)
+                        .offset(x: index < shown ? 0 : -8)
+                }
             }
             Text(
                 "That's a meeting in Parley: record → named and filed for you → replay → hand it to your AI. Next time it all happens on its own."
@@ -205,5 +216,49 @@ struct GuideBar: View {
             label.font(.parley.subheadlineEmphasized)
         }
         .buttonStyle(.borderless)
+    }
+}
+
+/// The finish of the lap: the three ✓ lines cascade in `LapMotion.cascadeStep`
+/// apart, one success haptic, then one burst of confetti — once per recording,
+/// ever. Reduce Motion, or a finish already celebrated, shows the final state
+/// at once and throws nothing.
+private struct LapFinish<Content: View>: View {
+    let recordingId: String
+    @ViewBuilder let content: (_ shownLines: Int) -> Content
+
+    @State private var shown = 0
+    @State private var confetti = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        content(shown)
+            .overlay(alignment: .top) {
+                if confetti {
+                    ConfettiBurst()
+                        .frame(height: 260)
+                        .offset(y: -250)
+                }
+            }
+            .onAppear(perform: play)
+    }
+
+    private func play() {
+        guard shown == 0 else { return }
+        guard !reduceMotion, !LapMotion.hasCelebrated(recordingId) else {
+            shown = 3
+            return
+        }
+        LapMotion.markCelebrated(recordingId)
+        Task { @MainActor in
+            for index in 1...3 {
+                try? await Task.sleep(for: .seconds(LapMotion.cascadeStep))
+                withAnimation(LapMotion.spring) { shown = index }
+            }
+            LapMotion.success()
+            confetti = true
+            try? await Task.sleep(for: .seconds(LapMotion.confettiDuration))
+            confetti = false
+        }
     }
 }

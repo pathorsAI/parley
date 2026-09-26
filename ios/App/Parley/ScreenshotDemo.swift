@@ -168,6 +168,7 @@
                     let sample = SampleRecordingStore.shared
                     sample.remove()
                     sample.load()
+                    if let id = sample.summary?.id { LapMotion.forgetCelebration(id) }
                     var state = GettingStartedState(recorded: true)
                     if step != "lap1" {
                         state.filed = true

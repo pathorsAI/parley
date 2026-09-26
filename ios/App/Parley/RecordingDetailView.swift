@@ -663,6 +663,7 @@ struct RecordingDetailView: View {
         if lap.isVisible(state: gettingStarted.state, isLapRecording: isLapRecording) {
             GuideBar(
                 display: lap.display,
+                recordingId: summary.id,
                 questions: HandoffPrompt.questions(for: summary.id),
                 filedFolder: lastFiling?.folder ?? currentFolderName,
                 renamed: lastFiling?.renamed ?? false,
@@ -1202,7 +1203,7 @@ struct RecordingDetailView: View {
     /// with the audio again.
     private func seekToTurn(_ seg: TranscriptSegment) {
         guard playback.isSeekable else { return }
-        playback.seek(to: Double(seg.startMs) / 1000)
+        playback.jump(to: Double(seg.startMs) / 1000)
         withAnimation(.easeOut(duration: 0.1)) { flashedTurn = seg.id }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(250))

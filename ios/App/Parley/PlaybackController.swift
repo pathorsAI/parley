@@ -290,6 +290,26 @@ final class PlaybackController: NSObject, ObservableObject {
     /// pressed at the end. Every other caller is a person — a tap on a turn or
     /// its timecode, the scrubber, VoiceOver's ±15 s — and the first of those
     /// ticks the checklist's "replay" item.
+    /// A discrete jump asked for from the text — a tapped turn — rather than a
+    /// scrub. The waveform watches it to glide its playhead there and ring the
+    /// spot (`LapMotion`), which a scrub, already under the finger, must not do.
+    struct Jump: Equatable {
+        var id = 0
+        var from: TimeInterval = 0
+        var to: TimeInterval = 0
+    }
+
+    @Published private(set) var lastJump = Jump()
+
+    /// `seek`, announced as a jump. See `Jump`.
+    func jump(to time: TimeInterval) {
+        guard isSeekable else { return }
+        let from = currentTime
+        seek(to: time)
+        lastJump = Jump(id: lastJump.id + 1, from: from, to: currentTime)
+        LapMotion.tap()
+    }
+
     func seek(to time: TimeInterval, byUser: Bool = true) {
         guard let engine else { return }
         let clamped = min(max(0, time), max(0, duration))
