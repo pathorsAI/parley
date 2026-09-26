@@ -170,4 +170,126 @@ public struct ZhuyinSyllable: Equatable, Hashable, Sendable {
         if syllable.tone == nil { syllable.tone = .first }
         return syllable
     }
+
+    // MARK: packed
+
+    /// The syllable as fourteen bits: the 聲母's index in `initials` plus one in
+    /// bits 0–4, the 介音's in bits 5–6, the 韻母's in bits 7–10 and the tone's
+    /// index in `ZhuyinTone.allCases` plus one in bits 11–13, with **0 meaning an
+    /// empty slot** throughout.
+    ///
+    /// This is what lets the phrase table hold 61,000 readings without holding
+    /// 61,000 strings. A reading as text is 20-odd bytes of UTF-8, past what Swift
+    /// keeps inline, so every row paid for a heap allocation — and it was then
+    /// split and re-parsed on every keystroke for every row in the bucket. Packed,
+    /// four syllables fit one `UInt64` and comparing a slot is a mask. A reading
+    /// from the data always carries a tone, so a real syllable never packs to 0,
+    /// which is what lets 0 stand for "no syllable here" in a packed reading.
+    public var packed: UInt16 {
+        var bits: UInt16 = 0
+        if let initial, let code = Self.code(of: initial) { bits |= code.code }
+        if let medial, let code = Self.code(of: medial) { bits |= code.code << 5 }
+        if let final, let code = Self.code(of: final) { bits |= code.code << 7 }
+        if let tone { bits |= Self.toneCode(tone) << 11 }
+        return bits
+    }
+
+    /// Read `packed` back. `nil` for bits no syllable packs to — an index past the
+    /// end of its slot's alphabet, a tone code past the fifth, or anything above
+    /// bit 13 — so a corrupt value cannot come back as a plausible syllable.
+    public init?(packed: UInt16) {
+        guard packed >> 14 == 0 else { return nil }
+        let i = Int(packed & Self.initialMask)
+        let m = Int((packed & Self.medialMask) >> 5)
+        let f = Int((packed & Self.finalMask) >> 7)
+        let t = Int((packed & Self.toneMask) >> 11)
+        guard i <= Self.initialList.count, m <= Self.medialList.count,
+            f <= Self.finalList.count, t <= ZhuyinTone.allCases.count
+        else { return nil }
+        self.init(
+            initial: i == 0 ? nil : Self.initialList[i - 1],
+            medial: m == 0 ? nil : Self.medialList[m - 1],
+            final: f == 0 ? nil : Self.finalList[f - 1],
+            tone: t == 0 ? nil : ZhuyinTone.allCases[t - 1])
+    }
+
+    /// Where each slot lives in `packed`. Internal so the phrase table can
+    /// compare one slot of a stored reading without unpacking the rest.
+    static let initialMask: UInt16 = 0x1F
+    static let medialMask: UInt16 = 0x3 << 5
+    static let finalMask: UInt16 = 0xF << 7
+    static let toneMask: UInt16 = 0x7 << 11
+
+    /// A symbol's slot and its one-based index within that slot's alphabet —
+    /// the number `packed` stores, unshifted. `nil` for anything that is not one
+    /// of the 37 symbols, tone marks included.
+    static func code(of symbol: Character) -> (slot: Slot, code: UInt16)? {
+        guard let scalar = symbol.unicodeScalars.first, symbol.unicodeScalars.count == 1
+        else { return nil }
+        return code(ofScalar: scalar)
+    }
+
+    static func toneCode(_ tone: ZhuyinTone) -> UInt16 {
+        UInt16(ZhuyinTone.allCases.firstIndex(of: tone)! + 1)
+    }
+
+    /// `parse(reading)?.packed` without building a syllable or a `String` on the
+    /// way — the same rules (one symbol per slot, slots in order, the tone last,
+    /// no mark meaning the first tone), read straight off the scalars. The phrase
+    /// table runs it for every syllable of every row at load, 150,000 times, so
+    /// the difference is most of the load's cost.
+    static func pack(_ reading: Substring.UnicodeScalarView) -> UInt16? {
+        var bits: UInt16 = 0
+        var lastSlot: Slot?
+        var toned = false
+        for scalar in reading {
+            if let tone = toneCodes[scalar] {
+                guard !toned, lastSlot != nil else { return nil }
+                bits |= tone << 11
+                toned = true
+                continue
+            }
+            guard !toned, let (slot, code) = code(ofScalar: scalar) else { return nil }
+            if let lastSlot, slot <= lastSlot { return nil }
+            switch slot {
+            case .initial: bits |= code
+            case .medial: bits |= code << 5
+            case .final: bits |= code << 7
+            }
+            lastSlot = slot
+        }
+        guard lastSlot != nil else { return nil }
+        if !toned { bits |= toneCode(.first) << 11 }
+        return bits
+    }
+
+    private static let initialList = Array(initials)
+    private static let medialList = Array(medials)
+    private static let finalList = Array(finals)
+
+    /// The 37 symbols are one contiguous run of the Bopomofo block, ㄅ U+3105 to
+    /// ㄩ U+3129, so a symbol's code is an array read rather than a hash. The
+    /// table is derived from the three alphabets above, not written out, so the
+    /// two cannot disagree.
+    private static let firstScalar: UInt32 = 0x3105
+    private static let codesByScalar: [(slot: Slot, code: UInt16)?] = {
+        var table = [(slot: Slot, code: UInt16)?](repeating: nil, count: 37)
+        for (slot, alphabet) in [(Slot.initial, initials), (.medial, medials), (.final, finals)] {
+            for (offset, symbol) in alphabet.unicodeScalars.enumerated() {
+                table[Int(symbol.value - firstScalar)] = (slot, UInt16(offset + 1))
+            }
+        }
+        return table
+    }()
+
+    private static let toneCodes: [Unicode.Scalar: UInt16] = Dictionary(
+        uniqueKeysWithValues: ZhuyinTone.allCases.compactMap { tone in
+            tone.rawValue.unicodeScalars.first.map { ($0, toneCode(tone)) }
+        })
+
+    private static func code(ofScalar scalar: Unicode.Scalar) -> (slot: Slot, code: UInt16)? {
+        guard scalar.value >= firstScalar else { return nil }
+        let offset = Int(scalar.value - firstScalar)
+        return offset < codesByScalar.count ? codesByScalar[offset] : nil
+    }
 }
