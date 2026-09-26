@@ -49,7 +49,7 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const delay = (ms: number) => ({ animationDelay: `${ms}ms` });
 
   const openSample = () => {
-    void openSampleRecording(t).catch((e) => {
+    void openSampleRecording().catch((e) => {
       log.error("home: sample failed", { error: String(e) });
       toast.error(String(e instanceof Error ? e.message : e));
     });

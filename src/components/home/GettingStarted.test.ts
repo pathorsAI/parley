@@ -77,9 +77,9 @@ describe("GettingStarted", () => {
     expect(html).toContain("Show me");
   });
 
-  it("offers both a meeting and the sample while nothing is recorded", () => {
+  it("offers the sample while nothing is recorded, leaving Start meeting to Home", () => {
     const html = renderChecklist({});
-    expect(html).toContain("Start meeting");
+    expect(html).not.toContain("Start meeting");
     expect(html).toContain("Use the sample");
     expect(html).toMatch(/data-testid="gs-progress"[^>]*>0 \/ 4</);
   });

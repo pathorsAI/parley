@@ -15,6 +15,9 @@ interface ScrubberProps {
   onScrubStart: () => void;
   onScrubEnd: () => void;
   ariaLabel: string;
+  /** Whether a seek here counts as the user learning replay (the Home
+   *  checklist's "replayed" item). The ingest wizard's trim bar passes false. */
+  countsAsReplay?: boolean;
 }
 
 /**
@@ -28,6 +31,7 @@ export function Scrubber({
   onScrub,
   onCommit,
   onScrubStart,
+  countsAsReplay = true,
   onScrubEnd,
   ariaLabel,
 }: Readonly<ScrubberProps>) {
@@ -52,9 +56,9 @@ export function Scrubber({
       onCommit(draftRef.current);
       onScrubEnd();
       // A drag or click on the bar is the user seeking — the checklist's replay item.
-      markGettingStarted("replayed");
+      if (countsAsReplay) markGettingStarted("replayed");
     },
-    [onCommit, onScrubEnd]
+    [onCommit, onScrubEnd, countsAsReplay]
   );
 
   // The same seek keys the replay workbench binds window-wide, answered here

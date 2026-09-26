@@ -1,9 +1,8 @@
 import type { ReactNode } from "react";
-import { ArrowRight, Check, Mic } from "lucide-react";
+import { ArrowRight, Check } from "lucide-react";
 import { toast } from "sonner";
 import { useStore } from "../../lib/store";
 import { loadHistoryEntry } from "../../lib/history/history";
-import { beginMeeting } from "../../lib/meeting/start";
 import { loadSampleRecording } from "../../lib/onboarding/sample";
 import {
   GETTING_STARTED_STEPS,
@@ -28,17 +27,13 @@ async function openRecording(id: string, tab: "report" | "replay"): Promise<void
 
 /**
  * Load the bundled sample into the library and open its report. Resolves to the
- * new entry id, or null (after a toast) when the sample isn't available. Shared
+ * new entry id, or null (the loader has already toasted) when unavailable. Shared
  * by the checklist and Home's empty-recordings box.
  */
-export async function openSampleRecording(
-  t: (key: TranslationKey) => string,
-): Promise<string | null> {
+export async function openSampleRecording(): Promise<string | null> {
+  // The loader owns the failure toast; a null here has already been reported.
   const id = await loadSampleRecording();
-  if (!id) {
-    toast.error(t("home.gs.sampleFailed"));
-    return null;
-  }
+  if (!id) return null;
   await openRecording(id, "report");
   return id;
 }
@@ -80,7 +75,7 @@ export function GettingStarted({
   };
 
   const openSample = () => {
-    void openSampleRecording(t).catch(fail("sample"));
+    void openSampleRecording().catch(fail("sample"));
   };
 
   /** Open the most recent recording on `tab` — or, with none yet, the sample. */
@@ -89,7 +84,7 @@ export function GettingStarted({
       if (latestId) {
         await openRecording(latestId, tab);
       } else {
-        const id = await openSampleRecording(t);
+        const id = await openSampleRecording();
         if (!id) return;
         if (tab !== "report") useStore.getState().setStudyTab(tab);
       }
@@ -97,23 +92,13 @@ export function GettingStarted({
     })().catch(fail("open"));
   };
 
-  const start = () =>
-    beginMeeting().catch((e) => {
-      log.error("home: start failed", { error: String(e) });
-      toast.error(errText(e));
-    });
-
   const ctas: Record<GettingStartedStep, ReactNode> = {
+    // Home's own primary "Start meeting" button sits right above the list, so
+    // this row only offers the sample — two filled buttons would compete.
     recorded: (
-      <>
-        <Button variant="ghost" size="sm" onClick={openSample}>
-          {t("home.gs.useSample")}
-        </Button>
-        <Button size="sm" onClick={() => void start()}>
-          <Mic />
-          {t("titlebar.startMeeting")}
-        </Button>
-      </>
+      <Button variant="ghost" size="sm" onClick={openSample}>
+        {t("home.gs.useSample")}
+      </Button>
     ),
     filed: <StepLink onClick={() => openLatest("report")}>{t("home.gs.filed.cta")}</StepLink>,
     replayed: <StepLink onClick={() => openLatest("replay")}>{t("home.gs.replayed.cta")}</StepLink>,
