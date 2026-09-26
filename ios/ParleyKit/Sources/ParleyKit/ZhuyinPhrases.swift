@@ -18,15 +18,17 @@ import Foundation
 /// contains) and writes them in that order, so this class carries no scores and
 /// does no sorting.
 ///
-/// **Loaded lazily and once**, like `ZhuyinDictionary` and for the same reason:
-/// this runs inside a keyboard extension, which iOS jetsams far sooner than an
-/// app, so nothing is read until the user has two syllables pending in the 注音
-/// pane. A keyboard opened on the voice or QWERTY pane never pays for it. The
-/// table is ~61,000 rows over ~1,400 index keys — a few megabytes resident, the
-/// largest thing this process holds — and the file's own string is dropped as
-/// soon as it is parsed. A missing resource answers no matches; a keyboard that
-/// crashed because a file moved would be far worse than one that stops
-/// predicting.
+/// **Loaded lazily, never twice at once, and dropped under pressure**, like
+/// `ZhuyinDictionary` and for the same reason: this runs inside a keyboard
+/// extension, which iOS jetsams far sooner than an app, so nothing is read until
+/// the 注音 pane asks for it. A keyboard opened on the voice or QWERTY pane never
+/// pays for it. The table is ~61,000 rows over ~1,400 index keys — a few
+/// megabytes resident, the largest thing this process holds, and several times
+/// that while it is being parsed — and the file's own string is dropped as soon
+/// as it is parsed. See `warm` for why only one parse may ever be in flight and
+/// `unload` for giving it back. A missing resource answers no matches; a
+/// keyboard that crashed because a file moved would be far worse than one that
+/// stops predicting.
 ///
 /// Readings are parsed **once, at load**, into `ZhuyinSyllable.packed` values —
 /// four syllables to a `UInt64` — rather than kept as text and re-parsed on every
@@ -125,10 +127,17 @@ public final class ZhuyinPhrases {
     private var index: [String: [Entry]]?
     /// A background build is on its way back to the main queue.
     private var warming = false
+    /// Everyone who asked `warm` to be told when the table lands, oldest first.
+    private var onReady: [() -> Void] = []
 
     /// Whether the table is in memory. Internal for the tests, which is where
     /// "did the warm arrive" is a question worth asking.
     var isWarm: Bool { index != nil }
+
+    /// How many times the resource has been parsed. Internal for the tests,
+    /// which is where "was a second table ever built" is a question worth
+    /// asking.
+    private(set) var parseCount = 0
 
     /// Build from rows given directly. This is how tests get a fixture whose
     /// order they control, rather than one the corpus decides.
@@ -144,22 +153,38 @@ public final class ZhuyinPhrases {
         self.url = url
     }
 
-    /// Build the table off the main thread, if it isn't built already.
+    /// Build the table off the main thread, if it isn't built already, and call
+    /// `onReady` on the main queue once it is — straight away when it already
+    /// is, or when there is no resource to wait for.
     ///
     /// The first lookup parses 61,000 rows and indexes them — about 100 ms — and
     /// that must not land on the keystroke that finishes the user's second
     /// syllable, which is the first one to ask this class anything. The keyboard
     /// calls this when the 注音 pane becomes current, a beat earlier and idle.
     ///
-    /// A lookup that arrives first still loads synchronously. At worst the file
-    /// is parsed twice and the later table is dropped, which costs some work in
-    /// a background thread and can never hand out a half-built one.
+    /// **A lookup that beats the warm answers nothing** rather than parsing a
+    /// table of its own. It used to parse synchronously, and for the length of
+    /// that parse two whole tables and their source strings coexisted — the
+    /// highest this process's memory ever went, in a process that iOS kills
+    /// without warning at its limit. No crash has been matched to it; this is
+    /// preventive. The keystroke that loses the race gets an empty bar for the
+    /// ~100 ms the warm has left, and `onReady` is how the caller puts the bar
+    /// right when it lands.
     ///
-    /// Main thread, like everything else here: the guard and the store both run
-    /// there, so two warms cannot race and a warm cannot overwrite a load.
-    public func warm() {
-        guard index == nil, !warming, let url else { return }
+    /// Main thread, like everything else here: the guard, the store and the
+    /// completions all run there, so two warms cannot race, and a lookup on the
+    /// same frame as the landing sees either no table or the whole one — never
+    /// half of one, and never a lookup that slips between the store and the
+    /// completion.
+    public func warm(onReady: (() -> Void)? = nil) {
+        guard index == nil, let url else {
+            onReady?()
+            return
+        }
+        if let onReady { self.onReady.append(onReady) }
+        guard !warming else { return }
         warming = true
+        parseCount += 1
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             // Nothing on `self` is touched off the main queue — the parse is a
             // function of the URL alone.
@@ -167,11 +192,31 @@ public final class ZhuyinPhrases {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.warming = false
-                // A synchronous load may have beaten this here. That table is
-                // the same table; replacing it would only churn memory.
+                // `load` never parses while a warm is in flight and `unload`
+                // never drops one, so nothing can have filled this meanwhile;
+                // the guard only keeps a future path from churning memory.
                 if self.index == nil { self.index = built }
+                let waiting = self.onReady
+                self.onReady = []
+                waiting.forEach { $0() }
             }
         }
+    }
+
+    /// Give the table back, so the next lookup reads the resource again.
+    ///
+    /// For memory pressure: the keyboard calls this from
+    /// `didReceiveMemoryWarning`, because the table is the largest thing the
+    /// process holds and a keyboard that re-reads a file is far better than one
+    /// iOS kills. The next lookup reloads it synchronously, which is a hitch on
+    /// one keystroke and nothing worse.
+    ///
+    /// A no-op while a warm is in flight — it would land a moment later anyway,
+    /// and dropping it here would only mean parsing again — and for a table
+    /// built from entries, which has nothing to reload from.
+    public func unload() {
+        guard !warming, url != nil else { return }
+        index = nil
     }
 
     /// The phrases the pending syllables could still become, best first.
@@ -462,8 +507,11 @@ public final class ZhuyinPhrases {
 
     private func load() -> [String: [Entry]] {
         if let index { return index }
+        // Never a second parse beside the one in flight — see `warm`.
+        if warming { return [:] }
         // A failed read caches the empty index too, so a missing resource costs
         // one attempt rather than one per keystroke.
+        if url != nil { parseCount += 1 }
         let built = url.map(Self.parse) ?? [:]
         index = built
         return built

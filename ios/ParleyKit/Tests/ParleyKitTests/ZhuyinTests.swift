@@ -813,3 +813,114 @@ final class TypingKeyboardsTests: XCTestCase {
         }
     }
 }
+
+/// How the two bundled 注音 tables come into memory and leave it: never two
+/// copies at once, a completion when the warm lands, and `unload` for memory
+/// pressure. Against the real resources, because the race only exists for a
+/// table that takes time to parse.
+final class ZhuyinTableLoadingTests: XCTestCase {
+    private func waitForMain(_ done: XCTestExpectation) {
+        wait(for: [done], timeout: 5)
+    }
+
+    func testALookupThatBeatsThePhraseWarmAnswersNothingAndParsesNothing() {
+        let table = ZhuyinPhrases(url: ZhuyinPhrases.bundledURL)
+        let landed = expectation(description: "the warm's completion runs")
+        table.warm { landed.fulfill() }
+        // The store is queued behind this test on the main queue, so this is a
+        // lookup that is guaranteed to arrive first.
+        XCTAssertEqual(table.matches(ZhuyinPhrasesTests.buffer("ㄋㄏ")), [])
+        XCTAssertFalse(table.isWarm)
+        XCTAssertEqual(table.parseCount, 1, "the lookup must not parse a second table")
+        waitForMain(landed)
+        XCTAssertTrue(table.isWarm)
+        XCTAssertEqual(table.matches(ZhuyinPhrasesTests.buffer("ㄋㄏ")).first?.phrase, "你好")
+        XCTAssertEqual(table.parseCount, 1)
+    }
+
+    func testEveryoneWaitingOnOneWarmIsCalledOnce() {
+        let table = ZhuyinPhrases(url: ZhuyinPhrases.bundledURL)
+        var calls = 0
+        let landed = expectation(description: "both completions run")
+        landed.expectedFulfillmentCount = 2
+        table.warm { calls += 1; landed.fulfill() }
+        // The keyboard warms again whenever the user swipes back to the pane.
+        table.warm { calls += 1; landed.fulfill() }
+        waitForMain(landed)
+        XCTAssertEqual(calls, 2)
+        XCTAssertEqual(table.parseCount, 1, "a second warm joins the first")
+    }
+
+    func testAWarmTableCallsBackStraightAway() {
+        let table = ZhuyinPhrases(url: ZhuyinPhrases.bundledURL)
+        _ = table.matches(ZhuyinPhrasesTests.buffer("ㄋㄏ"))  // never warmed: loads in place
+        var called = false
+        table.warm { called = true }
+        XCTAssertTrue(called, "nothing to wait for, so no trip through the queue")
+        XCTAssertEqual(table.parseCount, 1)
+    }
+
+    func testAMissingResourceCallsBackStraightAway() {
+        var called = false
+        ZhuyinPhrases(url: nil).warm { called = true }
+        XCTAssertTrue(called)
+    }
+
+    func testUnloadDropsThePhraseTableAndTheNextLookupReadsItAgain() {
+        let table = ZhuyinPhrases(url: ZhuyinPhrases.bundledURL)
+        XCTAssertFalse(table.matches(ZhuyinPhrasesTests.buffer("ㄋㄏ")).isEmpty)
+        table.unload()
+        XCTAssertFalse(table.isWarm)
+        XCTAssertEqual(table.matches(ZhuyinPhrasesTests.buffer("ㄋㄏ")).first?.phrase, "你好")
+        XCTAssertEqual(table.parseCount, 2)
+    }
+
+    func testUnloadLeavesAWarmInFlightAlone() {
+        let table = ZhuyinPhrases(url: ZhuyinPhrases.bundledURL)
+        let landed = expectation(description: "the warm still lands")
+        table.warm { landed.fulfill() }
+        table.unload()
+        waitForMain(landed)
+        XCTAssertTrue(table.isWarm)
+        XCTAssertEqual(table.parseCount, 1)
+    }
+
+    func testUnloadKeepsATableThatHasNothingToReloadFrom() {
+        let table = ZhuyinPhrases(entries: [(phrase: "你好", reading: "ㄋㄧˇ ㄏㄠˇ")])
+        table.unload()
+        XCTAssertEqual(table.matches(ZhuyinPhrasesTests.buffer("ㄋㄏ")).map(\.phrase), ["你好"])
+    }
+
+    func testTheDictionaryKeepsTheSameContract() {
+        let dictionary = ZhuyinDictionary(url: ZhuyinDictionary.bundledURL)
+        let landed = expectation(description: "the warm's completion runs")
+        dictionary.warm { landed.fulfill() }
+        XCTAssertEqual(dictionary.candidates(for: "ㄋㄧˇ"), [])
+        XCTAssertEqual(dictionary.parseCount, 1)
+        waitForMain(landed)
+        XCTAssertEqual(dictionary.candidates(for: "ㄋㄧˇ").first, "你")
+
+        dictionary.unload()
+        XCTAssertFalse(dictionary.isWarm)
+        XCTAssertEqual(dictionary.candidates(for: "ㄋㄧˇ").first, "你")
+        XCTAssertEqual(dictionary.parseCount, 2)
+    }
+
+    func testRefreshPutsTheBarRightOnceThePhrasesLand() {
+        // What the keyboard does in the warm's completion: the keys typed while
+        // the table was in flight got a bar without phrases, and `refresh`
+        // answers them again without touching what was typed.
+        let phrases = ZhuyinPhrases(url: ZhuyinPhrases.bundledURL)
+        var composer = ZhuyinComposer(
+            dictionary: ZhuyinDictionary(entries: ["~ㄋ": "你呢"]), phrases: phrases)
+        let landed = expectation(description: "the warm's completion runs")
+        phrases.warm { landed.fulfill() }
+        _ = composer.symbol("ㄋ")
+        _ = composer.symbol("ㄏ")
+        XCTAssertEqual(composer.candidates, ["你", "呢"], "no phrases yet")
+        waitForMain(landed)
+        composer.refresh()
+        XCTAssertEqual(composer.candidates.first, "你好")
+        XCTAssertEqual(composer.reading, "ㄋ ㄏ", "refresh never edits the buffer")
+    }
+}

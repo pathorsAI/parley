@@ -1,6 +1,7 @@
 import ParleyKit
 import SwiftUI
 import UIKit
+import os
 
 /// The Parley dictation keyboard.
 ///
@@ -15,6 +16,10 @@ import UIKit
 /// process only shuttles text, which keeps it well under the tight jetsam limit
 /// keyboard extensions run against.
 final class KeyboardViewController: UIInputViewController {
+    /// Where this process says what it did about memory, so a sysdiagnose from
+    /// a keyboard that later died has something to read.
+    private static let log = Logger(subsystem: "com.pathors.parley.ios.keyboard", category: "memory")
+
     private let bridge = KeyboardBridge()
     private var down: DarwinObserver?
     /// The app announcing that the microphone window opened, closed, or ticked.
@@ -109,7 +114,9 @@ final class KeyboardViewController: UIInputViewController {
         // `setPane(notify: false)` deliberately skips `paneDidChange`, so a
         // keyboard that opens straight onto the English pane — which is what
         // every keyboard without Full Access does — has to be warmed here.
-        if bridge.pane == .english { EnglishWords.bundled.warm() }
+        if bridge.pane == .english {
+            EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
+        }
 
         // Let the system's own input view supply the background. It is already
         // the right colour, already rounds its corners the way the host expects
@@ -326,15 +333,63 @@ final class KeyboardViewController: UIInputViewController {
         // ~100 ms the phrase table costs is spent while the pane is still
         // sliding in rather than on the keystroke that finishes the second
         // syllable.
+        //
+        // A key that beats a warm is answered from no table at all rather than
+        // from a second copy parsed on the spot (see `ZhuyinPhrases.warm`), so
+        // each warm is handed a completion that answers the pending syllables
+        // again once its table lands. It runs on the main queue in the same
+        // block that stores the table, and keys arrive on the main queue too,
+        // so a key is either before the landing — answered empty, then put
+        // right here — or after it, answered from the whole table. Nothing can
+        // fall between the two.
         if bridge.pane == .zhuyin {
-            ZhuyinDictionary.bundled.warm()
-            ZhuyinPhrases.bundled.warm()
+            ZhuyinDictionary.bundled.warm { [weak self] in self?.zhuyinTablesLanded() }
+            ZhuyinPhrases.bundled.warm { [weak self] in self?.zhuyinTablesLanded() }
         }
         // Same bargain on the English pane: reading and sorting 40,000 words is
         // tens of milliseconds, and it belongs on the swipe rather than on the
         // first letter typed.
-        if bridge.pane == .english { EnglishWords.bundled.warm() }
+        if bridge.pane == .english {
+            EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
+        }
         refreshSuggestions()
+    }
+
+    /// A 注音 table finished loading: whatever is pending was looked up without
+    /// it, so look it up again and put the answer in the strip. With nothing
+    /// pending this republishes nothing — `publishComposition` only assigns a
+    /// change.
+    private func zhuyinTablesLanded() {
+        zhuyin.refresh()
+        publishComposition()
+    }
+
+    /// iOS is about to start killing processes, and a keyboard extension is
+    /// among the first it kills. Give back the tables the current pane is not
+    /// using — they are by far the largest things this process holds — and say
+    /// so in the log. Preventive: no crash has been traced to memory, but the
+    /// limit is tight enough that this is the cheapest insurance there is.
+    ///
+    /// Only the idle ones. Dropping the table the user is typing against would
+    /// make the very next keystroke parse it again on the spot, and a parse
+    /// costs several times the table's own size while it runs — the worst
+    /// thing to do at the moment the system says memory is short. The 注音
+    /// dictionary is never dropped: it is a few hundred kilobytes, and every
+    /// 注音 keystroke needs it.
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        var dropped: [String] = []
+        if bridge.pane != .zhuyin {
+            ZhuyinPhrases.bundled.unload()
+            dropped.append("phrases")
+        }
+        if bridge.pane != .english {
+            EnglishWords.bundled.unload()
+            dropped.append("english")
+        }
+        Self.log.notice(
+            "memory warning on the \(self.bridge.pane.rawValue, privacy: .public) pane; dropped: \(dropped.joined(separator: ","), privacy: .public)"
+        )
     }
 
     private func applyHeight(animated: Bool) {
