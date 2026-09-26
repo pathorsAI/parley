@@ -9,13 +9,14 @@ import UIKit
 /// collection, or a host that asks for `.dark` — and the caps, the ink and the
 /// backdrop are all drawn from that one answer.
 ///
-/// That includes the canvas. The keyboard used to paint none and let the
-/// system's `UIInputView` show through, which left the backdrop to the trait
-/// collection while the caps followed the host; a host whose report disagreed
-/// got dark ink on a black backdrop (#441). See `backdrop`.
+/// The canvas is normally the system's: the keyboard lets its `UIInputView`
+/// show through, which is the only way the colour, the corner treatment and
+/// the extent line up with the system keyboard on every device and in every
+/// host app. It paints `backdrop` only when `isDark` disagrees with the style
+/// the system is painting in — see `KeyboardViewController.needsOwnBackdrop`.
 enum KBTheme {
-    /// The input view's backdrop, painted by the keyboard itself so it can
-    /// never disagree with the caps and ink drawn on it.
+    /// The backdrop the keyboard paints when the system's would disagree with
+    /// the caps and ink drawn on it (a host forcing `.dark` on a light phone).
     ///
     /// Measured, not remembered: sampled between the keys of the system
     /// keyboard on the iOS 26.5 simulator, in Reminders, light and dark —
@@ -29,7 +30,7 @@ enum KBTheme {
     /// The sub-visible fill behind the pane track and the strip that makes
     /// their empty points take touches (see `KeyboardRootView`). The backdrop's
     /// own colour at 1%, so it tints nothing: white at 1% lifted the dark
-    /// backdrop from 23 to 25 over exactly the SwiftUI area, a two-level step
+    /// keyboard from 23 to 25 over exactly the SwiftUI area, a two-level step
     /// against the home indicator's strip below it.
     static func hitFill(_ dark: Bool) -> Color {
         Color(uiColor: backdrop(dark)).opacity(0.01)

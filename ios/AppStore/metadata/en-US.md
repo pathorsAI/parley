@@ -98,10 +98,8 @@ The Parley keyboard stays readable in dark mode, Notes included.
 
 In a few apps, Apple's Notes among them, dark mode drew the candidates above
 the keys in near-black on a black keyboard, where they could not be read. The
-keyboard now paints its own background, in the same grey as the system
-keyboard, so the keys, the words above them and the background behind them
-always turn dark or light together, including when you switch dark mode while
-typing.
+keys and the words above them now follow the same dark or light setting as the
+keyboard behind them, including when you switch dark mode while typing.
 
 ## What's New — 1.20
 

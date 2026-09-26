@@ -71,7 +71,8 @@ final class KeyboardViewController: UIInputViewController {
     /// it when the text landed and when the editing is over.
     private let lexicon = KeyboardLexiconWatch()
     private var host: UIHostingController<KeyboardRootView>?
-    /// The keyboard's canvas, behind the SwiftUI root. See `viewDidLoad`.
+    /// A canvas behind the SwiftUI root, shown only when the system's would
+    /// disagree with the caps. See `needsOwnBackdrop`.
     private let backdrop = UIView()
     private var heightConstraint: NSLayoutConstraint?
 
@@ -120,20 +121,22 @@ final class KeyboardViewController: UIInputViewController {
             EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
         }
 
-        // The keyboard paints its own backdrop, from the same `dark` that
-        // picks the caps and the ink — see `KBTheme.backdrop` and
-        // `refreshAppearance`. Leaving it to the system let the backdrop follow
-        // the trait collection while the caps followed the host, and a host
-        // whose report disagreed put dark ink on a black backdrop (#441).
+        // The system's input view supplies the backdrop, exactly as before
+        // 1.21 — it is already the right colour, already the right shape on
+        // every device and already covers exactly the area the system keyboard
+        // would. `backdrop` is shown only when this keyboard has decided on the
+        // opposite appearance from the one the system is painting: see
+        // `needsOwnBackdrop`. That is the one case where caps and ink would
+        // otherwise land on a backdrop chosen by someone else (#441).
         //
-        // A view of its own rather than `view.backgroundColor`: on iOS 26 the
-        // system draws the keyboard as a card with large rounded top corners,
-        // and a full-width rectangle poked its square corners out of that
-        // curve and covered the card's rim. The backdrop is kept inside the
-        // card instead — see `KBMetrics.backdropInset` — and, being the same
-        // grey, the sliver of card it leaves uncovered cannot be told from it.
+        // When it is shown it is a view of its own rather than
+        // `view.backgroundColor`: on iOS 26 the system draws the keyboard as a
+        // card with large rounded top corners, and a full-width rectangle
+        // poked its square corners out of that curve and covered the card's
+        // rim. It is kept inside the card instead — see `KBMetrics.backdropInset`.
         view.backgroundColor = .clear
         backdrop.backgroundColor = KBTheme.backdrop(isDark)
+        backdrop.isHidden = !needsOwnBackdrop
         backdrop.isUserInteractionEnabled = false
         backdrop.layer.cornerRadius = KBMetrics.backdropCorner
         backdrop.layer.cornerCurve = .continuous
@@ -487,13 +490,28 @@ final class KeyboardViewController: UIInputViewController {
         refreshAppearance()
     }
 
-    /// Repaint whenever `dark` changes: the backdrop, and the SwiftUI root that
-    /// draws the caps and the ink. One value drives all three, which is what
-    /// keeps them from disagreeing.
+    /// Whether this keyboard has to paint its own backdrop: only when `isDark`
+    /// disagrees with the style the system paints its input view in.
+    ///
+    /// After `isDark`'s rule that can only be one way round — a host forcing
+    /// `.dark` on a light phone — because a dark trait always makes `isDark`
+    /// true. Everywhere else the system's backdrop already agrees with the caps
+    /// and the ink, and is left to show through: it is the right shape on every
+    /// device, which a painted one is only known to be on the devices it was
+    /// measured on.
+    private var needsOwnBackdrop: Bool {
+        isDark != (traitCollection.userInterfaceStyle == .dark)
+    }
+
+    /// Repaint whenever the appearance changes: the SwiftUI root that draws the
+    /// caps and the ink, and the backdrop behind them when the system's would
+    /// disagree. One answer drives all of it.
     private func refreshAppearance() {
         let dark = isDark
         let color = KBTheme.backdrop(dark)
         if backdrop.backgroundColor != color { backdrop.backgroundColor = color }
+        let hidden = !needsOwnBackdrop
+        if backdrop.isHidden != hidden { backdrop.isHidden = hidden }
         if host?.rootView.dark != dark {
             host?.rootView = makeRoot(dark: dark)
         }

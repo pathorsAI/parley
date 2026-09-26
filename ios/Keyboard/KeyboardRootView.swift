@@ -17,9 +17,9 @@ import SwiftUI
 /// the pane with caps (which it used to do) made it read as a broken keyboard
 /// rather than a place to speak.
 ///
-/// The view paints no background of its own: the controller paints the
-/// backdrop behind it, from the same `dark` this view is handed, so the caps,
-/// the ink and the canvas can never come from two different answers (#441).
+/// The view paints no background of its own. The system's `UIInputView` shows
+/// through, and the controller covers it only when the system is painting the
+/// other appearance from the one this view was handed (#441).
 ///
 /// Everything here is presentation only — no audio, no transcript history
 /// beyond the short tail shown above the button — so the extension stays well
@@ -86,8 +86,7 @@ struct KeyboardRootView: View {
                         }
                 )
                 // Hidden rather than covered while the candidate grid is up:
-                // this view has no background of its own to cover it with —
-                // the backdrop is the controller's, behind all of it. Hit-testing
+                // the keyboard has no background to cover it with. Hit-testing
                 // goes with it, so the track can't be swiped or typed on
                 // underneath the grid.
                 .opacity(showsCandidateGrid ? 0 : 1)

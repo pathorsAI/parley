@@ -6,9 +6,9 @@ import SwiftUI
 /// It takes the pane's own 213pt key area rather than growing the keyboard:
 /// the panes are one swipe apart and a keyboard that changes height shoves the
 /// host's content around (see `KBMetrics.pane`). It *replaces* the keys there
-/// rather than being painted over them, because the SwiftUI tree has no
-/// background of its own to paint — the backdrop is the controller's, behind
-/// everything — so the root view hides the track while this is up instead.
+/// rather than being painted over them, because the keyboard has no background
+/// of its own to paint — the system's input view shows through everywhere — so
+/// the root view hides the track while this is up instead.
 ///
 /// The order is exactly the composer's: phrases first, then the first
 /// syllable's characters, most likely first. The grid never re-sorts, so the
