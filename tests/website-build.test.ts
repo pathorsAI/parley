@@ -23,6 +23,16 @@ function text(html: string): string {
     .replace(/\s+/g, " ");
 }
 
+/** A throwaway copy of website/ (minus tools/) under tmp/<name>; returns the new root. */
+function copyWebsite(name: string): string {
+  const root = path.join(tmp, name);
+  fs.cpSync(path.join(REPO, "website"), path.join(root, "website"), {
+    recursive: true,
+    filter: (src) => !src.includes(`${path.sep}tools${path.sep}`) && !src.endsWith(`${path.sep}tools`),
+  });
+  return root;
+}
+
 beforeAll(() => {
   const out = path.join(tmp, "plain");
   buildWebsite({ outDir: out, config: { cloudflareWebAnalyticsToken: "" } });
@@ -160,6 +170,50 @@ describe("website build", () => {
     const file = path.join(root, "website/src/home.html");
     fs.appendFileSync(file, "<p>{{no.such.key}}</p>");
     expect(() => buildWebsite({ root, outDir: path.join(root, "_site"), config: {} })).toThrow(/no\.such\.key/);
+  });
+
+  it("still reports an unresolved placeholder the old regex caught", () => {
+    const root = copyWebsite("leftover");
+    // `{{ x }` is not a placeholder (single `}`), so the scan must move on to `{{y z}}`.
+    fs.appendFileSync(path.join(root, "website/src/home.html"), "<p>{{ x } {{y z}}</p>");
+    expect(() => buildWebsite({ root, outDir: path.join(root, "_site"), config: {} })).toThrow(
+      "unresolved placeholder {{y z}} (zh)",
+    );
+  });
+
+  it("strips tags as before, keeping an unclosed `<`", () => {
+    const root = copyWebsite("strip");
+    for (const f of ["zh-TW.json", "en.json"]) {
+      const file = path.join(root, "website/src/i18n", f);
+      const dict = JSON.parse(fs.readFileSync(file, "utf8"));
+      dict["meta.description"] = "<<b>x</b>\n\n  <i";
+      fs.writeFileSync(file, JSON.stringify(dict));
+    }
+    const out = path.join(root, "_site");
+    buildWebsite({ root, outDir: out, config: {} });
+    const html = fs.readFileSync(path.join(out, "index.html"), "utf8");
+    const raw = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1];
+    expect(JSON.parse(raw ?? "{}").description).toBe("x <i");
+  });
+
+  it("builds pathological input in linear time", () => {
+    const root = copyWebsite("pathological");
+    const unclosedTags = "<".repeat(50_000);
+    for (const f of ["zh-TW.json", "en.json"]) {
+      const file = path.join(root, "website/src/i18n", f);
+      const dict = JSON.parse(fs.readFileSync(file, "utf8"));
+      dict["meta.description"] = unclosedTags;
+      fs.writeFileSync(file, JSON.stringify(dict));
+    }
+    // 50k `{` with no closing `}}`: the old /\{\{[^}]*\}\}/ rescanned to the end from each one.
+    fs.appendFileSync(path.join(root, "website/src/home.html"), `<p>${"{".repeat(50_000)}}</p>`);
+    const out = path.join(root, "_site");
+    const start = performance.now();
+    buildWebsite({ root, outDir: out, config: {} });
+    expect(performance.now() - start).toBeLessThan(1000);
+    const html = fs.readFileSync(path.join(out, "index.html"), "utf8");
+    const raw = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1];
+    expect(JSON.parse(raw ?? "{}").description).toBe(unclosedTags);
   });
 
   it("refuses to write into website/ itself", () => {

@@ -6,76 +6,82 @@
 (function () {
   "use strict";
 
-  var KEY = "parley.lang";
-  var HTML_LANG = { zh: "zh-Hant-TW", en: "en" };
-  var SWITCH_LABEL = { zh: "English", en: "中文" };
-  var HOME = { zh: "../", en: "../en/" };
+  const KEY = "parley.lang";
+  const HTML_LANG = { zh: "zh-Hant-TW", en: "en" };
+  const SWITCH_LABEL = { zh: "English", en: "中文" };
+  const HOME = { zh: "../", en: "../en/" };
 
   function normalize(value) {
     if (!value) return null;
     value = String(value).toLowerCase();
-    if (value === "zh" || value.indexOf("zh-") === 0) return "zh";
-    if (value === "en" || value.indexOf("en-") === 0) return "en";
+    if (value === "zh" || value.startsWith("zh-")) return "zh";
+    if (value === "en" || value.startsWith("en-")) return "en";
     return null;
   }
 
+  // Storage throws in private windows and with blocked site data. Reading then
+  // counts as "nothing saved", and a failed write is reported so callers know the
+  // choice lives only in the URL.
   function readSaved() {
     try {
-      return normalize(window.localStorage.getItem(KEY));
-    } catch (e) {
+      return normalize(globalThis.localStorage.getItem(KEY));
+    } catch {
       return null;
     }
   }
 
   function save(lang) {
     try {
-      window.localStorage.setItem(KEY, lang);
-    } catch (e) {
-      /* storage unavailable (private mode, blocked site data): the URL still carries the choice */
+      globalThis.localStorage.setItem(KEY, lang);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function readQuery() {
+    try {
+      return normalize(new URLSearchParams(globalThis.location.search).get("lang"));
+    } catch {
+      return null; // very old browser without URLSearchParams: no query choice
     }
   }
 
   function initial() {
-    var fromQuery = null;
-    try {
-      fromQuery = normalize(new URLSearchParams(window.location.search).get("lang"));
-    } catch (e) {
-      /* very old browser: fall through */
-    }
+    const fromQuery = readQuery();
     if (fromQuery) return fromQuery;
-    var saved = readSaved();
+    const saved = readSaved();
     if (saved) return saved;
-    var fromHash = normalize(window.location.hash.slice(1));
+    const fromHash = normalize(globalThis.location.hash.slice(1));
     if (fromHash) return fromHash;
-    var nav = (navigator.languages && navigator.languages[0]) || navigator.language || "";
-    return String(nav).toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+    const nav = navigator.languages?.[0] || navigator.language || "";
+    return String(nav).toLowerCase().startsWith("zh") ? "zh" : "en";
   }
 
   function apply(lang) {
-    var other = lang === "zh" ? "en" : "zh";
-    var blocks = document.querySelectorAll("[data-lang]");
-    for (var i = 0; i < blocks.length; i++) {
-      if (blocks[i].getAttribute("data-lang") === lang) blocks[i].removeAttribute("hidden");
-      else blocks[i].setAttribute("hidden", "");
+    const other = lang === "zh" ? "en" : "zh";
+    for (const block of document.querySelectorAll("[data-lang]")) {
+      if (block.dataset.lang === lang) block.removeAttribute("hidden");
+      else block.setAttribute("hidden", "");
     }
 
-    var root = document.documentElement;
+    const root = document.documentElement;
     root.setAttribute("lang", HTML_LANG[lang]);
-    root.setAttribute("data-lang-active", lang);
+    root.dataset.langActive = lang;
 
-    var article = document.querySelector('article[data-lang="' + lang + '"]');
+    const article = document.querySelector('article[data-lang="' + lang + '"]');
     if (article) {
-      var title = article.getAttribute("data-title");
+      const title = article.dataset.title;
       if (title) document.title = title;
-      var description = article.getAttribute("data-description");
-      var meta = document.querySelector('meta[name="description"]');
+      const description = article.dataset.description;
+      const meta = document.querySelector('meta[name="description"]');
       if (description && meta) meta.setAttribute("content", description);
     }
 
-    var home = document.querySelector("[data-home]");
+    const home = document.querySelector("[data-home]");
     if (home) home.setAttribute("href", HOME[lang]);
 
-    var toggle = document.querySelector("[data-lang-switch]");
+    const toggle = document.querySelector("[data-lang-switch]");
     if (toggle) {
       toggle.textContent = SWITCH_LABEL[lang];
       toggle.setAttribute("lang", HTML_LANG[other]);
@@ -84,21 +90,24 @@
     }
   }
 
+  // Returns whether the address bar now carries the choice. It cannot on file://
+  // or in an old browser; the visible switch still works either way.
   function setUrl(lang) {
     try {
-      var url = new URL(window.location.href);
+      const url = new URL(globalThis.location.href);
       url.searchParams.set("lang", lang);
       if (url.hash === "#zh" || url.hash === "#en") url.hash = "";
-      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
-    } catch (e) {
-      /* file:// or an old browser: the visible switch still works */
+      globalThis.history.replaceState(null, "", url.pathname + url.search + url.hash);
+      return true;
+    } catch {
+      return false;
     }
   }
 
-  var current = initial();
+  let current = initial();
   apply(current);
 
-  var toggle = document.querySelector("[data-lang-switch]");
+  const toggle = document.querySelector("[data-lang-switch]");
   if (toggle) {
     toggle.addEventListener("click", function (event) {
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
@@ -107,7 +116,7 @@
       save(current);
       setUrl(current);
       apply(current);
-      window.scrollTo(0, 0);
+      globalThis.scrollTo(0, 0);
     });
   }
 })();

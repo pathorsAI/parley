@@ -29,24 +29,26 @@ const H = 900;
 /** name → harness query + optional post-ready action. */
 const SHOTS = [];
 for (const lang of ["zh", "en"]) {
-  SHOTS.push({ name: `live-${lang}-light`, q: { scene: "live", lang, theme: "light" } });
-  SHOTS.push({ name: `report-${lang}-light`, q: { scene: "report", lang, theme: "light" } });
-  SHOTS.push({ name: `library-${lang}-light`, q: { scene: "library", lang, theme: "light" } });
-  SHOTS.push({
-    name: `library-cmdk-${lang}-light`,
-    q: { scene: "library", lang, theme: "light" },
-    after: async (page) => {
-      // On macOS the menu bar owns ⌘K (NSMenu key equivalent) and forwards it
-      // as a `menu://command` event — the harness exposes that same event.
-      await page.evaluate(() => window.__MENU_COMMAND__("nav.jumpTo"));
-      await new Promise((r) => setTimeout(r, 250));
-      if (process.env.CMDK_QUERY !== "") {
-        await page.keyboard.type(process.env.CMDK_QUERY ?? (lang === "zh" ? "續約" : "renew"), { delay: 30 });
-      }
-      await new Promise((r) => setTimeout(r, 600));
+  SHOTS.push(
+    { name: `live-${lang}-light`, q: { scene: "live", lang, theme: "light" } },
+    { name: `report-${lang}-light`, q: { scene: "report", lang, theme: "light" } },
+    { name: `library-${lang}-light`, q: { scene: "library", lang, theme: "light" } },
+    {
+      name: `library-cmdk-${lang}-light`,
+      q: { scene: "library", lang, theme: "light" },
+      after: async (page) => {
+        // On macOS the menu bar owns ⌘K (NSMenu key equivalent) and forwards it
+        // as a `menu://command` event — the harness exposes that same event.
+        await page.evaluate(() => globalThis.__MENU_COMMAND__("nav.jumpTo"));
+        await new Promise((r) => setTimeout(r, 250));
+        if (process.env.CMDK_QUERY !== "") {
+          await page.keyboard.type(process.env.CMDK_QUERY ?? (lang === "zh" ? "續約" : "renew"), { delay: 30 });
+        }
+        await new Promise((r) => setTimeout(r, 600));
+      },
     },
-  });
-  SHOTS.push({ name: `home-${lang}-light`, q: { scene: "home", lang, theme: "light" } });
+    { name: `home-${lang}-light`, q: { scene: "home", lang, theme: "light" } },
+  );
 }
 SHOTS.push({ name: "live-zh-dark", q: { scene: "live", lang: "zh", theme: "dark" } });
 
@@ -62,6 +64,9 @@ const TYPES = {
   ".svg": "image/svg+xml",
   ".json": "application/json",
 };
+// Plain http is right here: the server binds 127.0.0.1 on an ephemeral port for
+// the length of the run only, and the one client is the headless Chrome below.
+// ("http://x" is just a base for parsing the request path; nothing is fetched.)
 const server = http.createServer((req, res) => {
   const urlPath = decodeURIComponent(new URL(req.url, "http://x").pathname);
   const file = path.join(DIST, urlPath === "/" ? "index.html" : urlPath);
@@ -113,10 +118,10 @@ try {
 
     const qs = new URLSearchParams(shot.q).toString();
     await page.goto(`${origin}/index.html?${qs}`, { waitUntil: "networkidle0" });
-    await page.waitForFunction(() => window.__SHOT_READY__ === true, { timeout: 20000 });
+    await page.waitForFunction(() => globalThis.__SHOT_READY__ === true, { timeout: 20000 });
     if (shot.after) await shot.after(page);
 
-    const log = await page.evaluate(() => window.__SHOT_LOG__ ?? []);
+    const log = await page.evaluate(() => globalThis.__SHOT_LOG__ ?? []);
     const toasts = await page.$$eval("[data-sonner-toast]", (els) => els.map((e) => e.textContent));
     const text = await page.evaluate(() => {
       const attrs = [...document.querySelectorAll("[aria-label],[title],[placeholder]")].map((el) =>
@@ -130,7 +135,8 @@ try {
     const jpgFull = path.join(OUT, `${shot.name}.full.jpg`);
     await page.screenshot({ path: jpgFull, type: "jpeg", quality: 92 });
     const jpg = path.join(OUT, `${shot.name}.jpg`);
-    execFileSync("sips", ["-s", "format", "jpeg", "-s", "formatOptions", "80", "-Z", "2000", jpgFull, "--out", jpg], {
+    // Absolute path, so the macOS system tool runs regardless of PATH.
+    execFileSync("/usr/bin/sips", ["-s", "format", "jpeg", "-s", "formatOptions", "80", "-Z", "2000", jpgFull, "--out", jpg], {
       stdio: "ignore",
     });
     fs.rmSync(jpgFull);
