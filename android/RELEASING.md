@@ -298,7 +298,7 @@ are easy to get wrong:
 
    `.github/workflows/android-release.yml` runs the tests, builds and signs the
    bundle with the upload key, attaches the `.aab` to a GitHub Release, and
-   uploads it to the Play **internal** track. When Play publishing is not
+   uploads it to the Play **production** track (§5). When Play publishing is not
    configured the run **fails** rather than publishing a half-release (§7). `workflow_dispatch` re-runs an existing tag without
    needing a new commit, matching `ios-release.yml`, and takes a
    `skip_play_upload` input for the first-bundle case.
@@ -319,36 +319,41 @@ are easy to get wrong:
 
    Verify: sign-in deep link, live meeting, file import, upload queue drain.
 5. **Which track a tag ships to is configuration, not code.** The repository
-   variable `PLAY_TRACK` (default `internal`) decides; a `workflow_dispatch`
-   run can override it with the `track` input for one run. Moving the whole
-   pipeline to production is therefore one variable, with no commit and no
-   release cut to change it.
+   variable `PLAY_TRACK` decides; a `workflow_dispatch` run can override it with
+   the `track` input for one run. When the variable is unset the workflow falls
+   back to **`production`**: a tag *is* the release, and since 2026-09-27
+   nothing about it waits for someone to open the Console and press *promote*.
+   Set `PLAY_TRACK=internal` to get the testing gate back — that was the
+   fallback before the app launched, because Play refuses a production release
+   while the store listing, content rating, data safety and target-audience
+   forms are outstanding.
 
    `PLAY_USER_FRACTION` (e.g. `0.1`) turns a production release into a staged
    rollout — worth having, because it is the only undo Play offers once a build
    is live.
 
-   **`PLAY_TRACK` stays `internal` until the app has actually launched.** Play
-   refuses a production release while the store listing, content rating, data
-   safety and target-audience forms are outstanding, so pointing at production
-   early would fail every release until someone finished them. As of 2026-08-20
-   the app dashboard reads *已完成 6 項，共 11 項*; the five outstanding ones are
-   登入詳細資料, 內容分級, 目標對象, 資料安全性, and the app category/contact
-   details. They are declarations about the app, not build config — nobody can
-   automate them, and the prepared answers are in `AppStore/`.
-
    The first bundle for the package was uploaded by hand on 2026-08-18
    (`0.1.0 (1)`, internal track), so the API can take over from `versionCode`
    2 onward. Play rejects a `versionCode` it has already seen, which is why
-   `android-v0.1.0` could never have been published over the API.
-6. **The upload commits the edit but does not send it for review.** The
-   workflow passes `changesNotSentForReview: true`, because Play rejects an
-   auto-submitting edit whenever the app already has a rejected or unreviewed
-   change outstanding — `android-v0.1.2` failed at the upload step with exactly
-   that error. For the internal track nothing more is needed. For production,
-   open Play Console → **Publishing overview** and press *Send for review*
-   after the run is green; that is the only step in the release a human still
-   has to click.
+   `android-v0.1.0` could never have been published over the API — and why a
+   build that already reached one track cannot be uploaded again to another
+   (`android-v1.14` went to internal before this default changed; it was
+   promoted by hand).
+6. **The upload sends the release for review by itself.** The workflow leaves
+   `changesNotSentForReview` at its default (`false`), so committing the edit
+   submits the production release, and Play publishes it when review passes —
+   hours to a day later. A green run therefore means *in review*, not *on
+   phones*; **Publishing overview** in the Console shows which. (The flag was
+   `true` for `android-v0.1.2`, when a rejected change was outstanding and Play
+   refused auto-submitting edits; after launch Play refuses the opposite, which
+   is what failed `android-v1.13` three runs in. Read both cases in the
+   workflow before flipping it.)
+
+   **Release notes come from `android/play/whatsnew/`** — `whatsnew-en-US` and
+   `whatsnew-zh-TW`, 500 characters each at most, shown as "What's new" on the
+   listing. Update them in the same PR as the `versionCode` bump; the workflow
+   fails before building if either is missing or too long, but it cannot tell
+   that they are last release's.
 7. Keep the R8 `mapping.txt`. Every workflow run attaches it as an artifact and
    the Play upload step sends it along, so crash reports deobfuscate; a stack
    trace from a build whose mapping was lost is unreadable.
