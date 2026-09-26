@@ -54,6 +54,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -77,6 +78,8 @@ import com.pathors.parley.cloud.TranscriptSegmentDto
 import com.pathors.parley.kit.TranscriptSearch
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.playback.PlaybackBar
+import com.pathors.parley.playback.PlaybackPhase
+import com.pathors.parley.screenshot.DemoMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -97,17 +100,36 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
+fun RecordingDetailScreen(recordingId: String, orgId: String? = null, onBack: () -> Unit) {
     val container = rememberContainer()
     val context = LocalContext.current
     val viewModel: RecordingDetailViewModel = viewModel(
-        factory = RecordingDetailViewModel.factory(container, recordingId, context),
-        key = recordingId,
+        factory = RecordingDetailViewModel.factory(container, recordingId, orgId, context),
+        key = "$recordingId@${orgId.orEmpty()}",
     )
     val state by viewModel.state.collectAsState()
     val playback by viewModel.playbackState.collectAsState()
     val retranscribe by viewModel.retranscribe.collectAsState()
+    val filing by viewModel.filing.collectAsState()
     val untitled = stringResource(R.string.recording_untitled)
+
+    // The folder picker, while it is up. `parley://demo/movetofolder` opens it
+    // over the demo transcript — a review frame for the picker, as on iOS.
+    var choosingFolder by remember { mutableStateOf(false) }
+    val demoNavigation by DemoMode.navigation.collectAsState()
+    // Once per request: the meta changes when the demo recording is moved, and
+    // that must not bring the picker straight back.
+    var handledDemoRequest by remember { mutableLongStateOf(-1L) }
+    val metaLoaded = state.meta != null
+    LaunchedEffect(demoNavigation, metaLoaded) {
+        val request = demoNavigation ?: return@LaunchedEffect
+        if (request.screen == DemoMode.Screen.MOVE_TO_FOLDER && metaLoaded &&
+            request.serial != handledDemoRequest
+        ) {
+            handledDemoRequest = request.serial
+            choosingFolder = true
+        }
+    }
 
     // Whether the search field is up. Held here rather than in [DetailBody]
     // because the toolbar is what summons it and the toolbar lives up here; what
@@ -170,7 +192,16 @@ fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
                         transcript = plainTranscript,
                         transcriptEmpty = readable.isEmpty(),
                         state = retranscribe,
-                        onRetranscribe = viewModel::askToRetranscribe,
+                        onRetranscribe = if (viewModel.canRetranscribe) {
+                            viewModel::askToRetranscribe
+                        } else {
+                            null
+                        },
+                        onMoveToFolder = if (viewModel.canMoveToFolder && state.meta != null) {
+                            { choosingFolder = true }
+                        } else {
+                            null
+                        },
                     )
                 },
             )
@@ -203,14 +234,21 @@ fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
                     .fillMaxSize()
                     .padding(padding),
             ) {
-                PlaybackBar(
-                    state = playback,
-                    onPlayPause = viewModel::togglePlayPause,
-                    onSeek = viewModel::seekTo,
-                    onSetRate = viewModel::setRate,
-                    onCycleRate = viewModel::cycleRate,
-                    onDownload = viewModel::downloadAudio,
-                )
+                // An org recording's audio cannot be fetched from here (see
+                // `downloadAudio`), so the bar is drawn only when the file is
+                // already on this phone — the case where it can actually play.
+                val playable = playback.phase == PlaybackPhase.READY ||
+                    playback.phase == PlaybackPhase.PREPARING
+                if (orgId == null || playable) {
+                    PlaybackBar(
+                        state = playback,
+                        onPlayPause = viewModel::togglePlayPause,
+                        onSeek = viewModel::seekTo,
+                        onSetRate = viewModel::setRate,
+                        onCycleRate = viewModel::cycleRate,
+                        onDownload = viewModel::downloadAudio,
+                    )
+                }
                 RetranscribeStatus(retranscribe)
                 DetailBody(
                     meta = meta,
@@ -232,6 +270,29 @@ fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
         RetranscribeConfirmation(
             onConfirm = viewModel::confirmRetranscribe,
             onDismiss = viewModel::dismissRetranscribe,
+        )
+    }
+
+    if (choosingFolder) {
+        FolderPickerSheet(
+            folders = filing.folders,
+            currentFolderId = viewModel.currentFolderId(),
+            onSelect = viewModel::moveToFolder,
+            onCreate = viewModel::createFolderAndMove,
+            onDismiss = { choosingFolder = false },
+        )
+    }
+
+    if (filing.moveFailed) {
+        AlertDialog(
+            onDismissRequest = viewModel::clearMoveError,
+            title = { Text(stringResource(R.string.library_action_error_title)) },
+            text = { Text(stringResource(R.string.library_move_failed)) },
+            confirmButton = {
+                TextButton(onClick = viewModel::clearMoveError) {
+                    Text(stringResource(R.string.action_close))
+                }
+            },
         )
     }
 }
@@ -266,7 +327,10 @@ private fun DetailOverflowMenu(
     transcript: () -> String,
     transcriptEmpty: Boolean,
     state: RetranscribeState,
-    onRetranscribe: () -> Unit,
+    /** Null for an org recording: re-transcribing writes through the personal endpoints. */
+    onRetranscribe: (() -> Unit)?,
+    /** Null for an org recording, as on iOS; see [RecordingDetailViewModel.canMoveToFolder]. */
+    onMoveToFolder: (() -> Unit)?,
 ) {
     val context = LocalContext.current
     val shareTitle = stringResource(R.string.transcript_share_title)
@@ -289,35 +353,49 @@ private fun DetailOverflowMenu(
                     }
                 },
             )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.retranscribe_action)) },
-                leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
-                enabled = state.canRequest,
-                onClick = {
-                    open = false
-                    onRetranscribe()
-                },
-            )
-            // Under the row it is about rather than above the menu, which is
-            // where iOS puts it: a Material menu is read top-down, so a sentence
-            // explaining the item above it needs no rule about which way to look.
-            // Always present, never only-when-disabled — "2 re-transcriptions
-            // left" is exactly what somebody deciding whether to spend one wants
-            // to know, and a note that appeared only on refusal would tell them
-            // after the fact.
-            Text(
-                text = state.block
-                    ?.let { stringResource(retranscribeNoteRes(it)) }
-                    ?: stringResource(
-                        R.string.retranscribe_remaining,
-                        state.retriesRemaining,
-                    ),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .width(RETRANSCRIBE_NOTE_WIDTH)
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-            )
+            if (onMoveToFolder != null) {
+                // Above the paid action, and a plain row: filing is free,
+                // reversible and frequent.
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.library_move_to_folder)) },
+                    leadingIcon = { Icon(LibraryIcons.Folder, contentDescription = null) },
+                    onClick = {
+                        open = false
+                        onMoveToFolder()
+                    },
+                )
+            }
+            if (onRetranscribe != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.retranscribe_action)) },
+                    leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                    enabled = state.canRequest,
+                    onClick = {
+                        open = false
+                        onRetranscribe()
+                    },
+                )
+                // Under the row it is about rather than above the menu, which is
+                // where iOS puts it: a Material menu is read top-down, so a sentence
+                // explaining the item above it needs no rule about which way to look.
+                // Always present, never only-when-disabled — "2 re-transcriptions
+                // left" is exactly what somebody deciding whether to spend one wants
+                // to know, and a note that appeared only on refusal would tell them
+                // after the fact.
+                Text(
+                    text = state.block
+                        ?.let { stringResource(retranscribeNoteRes(it)) }
+                        ?: stringResource(
+                            R.string.retranscribe_remaining,
+                            state.retriesRemaining,
+                        ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .width(RETRANSCRIBE_NOTE_WIDTH)
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
         }
     }
 }

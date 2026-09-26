@@ -127,6 +127,60 @@ class DemoModeTest {
         assertFalse(text.contains("parley.tw", ignoreCase = true))
     }
 
+    @Test
+    fun `folders and the organization exist in both languages`() {
+        val english = DemoMode.folders(en).map { it.name } + DemoMode.orgs(en).map { it.name } +
+            DemoMode.orgFolders(DemoMode.ORG_ID, en).map { it.name }
+        val chinese = DemoMode.folders(zh).map { it.name } + DemoMode.orgs(zh).map { it.name } +
+            DemoMode.orgFolders(DemoMode.ORG_ID, zh).map { it.name }
+        assertEquals(english.size, chinese.size)
+        english.zip(chinese).forEach { (a, b) ->
+            assertTrue(a.isNotBlank() && b.isNotBlank())
+            assertNotEquals(a, b)
+        }
+    }
+
+    /**
+     * The library shows folder chips and a folder name on the cards, so the
+     * fixtures must file some recordings and leave one at the root — every
+     * page of the chip row has something on it.
+     */
+    @Test
+    fun `the library has filed and unfiled recordings in live folders`() {
+        val folderIds = DemoMode.folders(en).map { it.id }.toSet()
+        val filed = DemoMode.recordings(en).mapNotNull { it.folderId }
+        assertTrue(filed.isNotEmpty())
+        assertTrue(filed.all { it in folderIds })
+        assertTrue(DemoMode.recordings(en).any { it.folderId == null })
+        assertEquals(
+            DemoMode.recordings(en).first { it.id == DemoMode.FEATURED_ID }.folderId,
+            DemoMode.meta(DemoMode.FEATURED_ID, en)?.folderId,
+        )
+    }
+
+    /** Enough folders that the picker scrolls, with the library's own among them. */
+    @Test
+    fun `the picker folders are many, distinct, and include the library's`() {
+        listOf(en, zh).forEach { locale ->
+            val picker = DemoMode.pickerFolders(locale)
+            assertEquals(15, picker.size)
+            assertEquals(picker.size, picker.map { it.id }.toSet().size)
+            assertEquals(picker.size, picker.map { it.name }.toSet().size)
+            assertTrue(picker.map { it.id }.containsAll(DemoMode.folders(locale).map { it.id }))
+        }
+    }
+
+    @Test
+    fun `the org library is filed into the org's own folders`() {
+        val orgFolderIds = DemoMode.orgFolders(DemoMode.ORG_ID, en).map { it.id }.toSet()
+        val shared = DemoMode.orgRecordings(DemoMode.ORG_ID, en)
+        assertTrue(shared.isNotEmpty())
+        assertTrue(shared.mapNotNull { it.folderId }.all { it in orgFolderIds })
+        assertTrue(DemoMode.orgRecordings("someone-else", en).isEmpty())
+        assertEquals(DemoMode.ORG_ID, DemoMode.saveDestination().orgId)
+        assertTrue(DemoMode.saveDestination().folderId in orgFolderIds)
+    }
+
     private fun assertNotEquals(a: Any?, b: Any?) {
         assertFalse("expected $a and $b to differ", a == b)
     }
