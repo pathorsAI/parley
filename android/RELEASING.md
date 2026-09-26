@@ -318,6 +318,16 @@ are easy to get wrong:
    ```
 
    Verify: sign-in deep link, live meeting, file import, upload queue drain.
+
+   **The live meeting must be walked on a real phone with a working
+   microphone, not the emulator.** The emulator host has no microphone, so a
+   meeting that silently records nothing looks exactly like a meeting that
+   works — a blank transcript is what the emulator always shows. That is how
+   `android-v1.13` shipped without a single transcribable meeting (see the
+   gotchas below). The pass criteria are: transcript text appears while you
+   speak, and `adb logcat -s MicCapture` shows **one** `capturing at … Hz`
+   line for the meeting and **no** repeated `microphone recovered` lines. Do
+   this with earbuds paired and connected to the phone as well as without.
 5. **Which track a tag ships to is configuration, not code.** The repository
    variable `PLAY_TRACK` decides; a `workflow_dispatch` run can override it with
    the `track` input for one run. When the variable is unset the workflow falls
@@ -385,3 +395,33 @@ are easy to get wrong:
   `app/proguard-rules.pro`; the lesson is the checklist item above it: **every
   flow in the review notes gets walked on `assembleRelease`, signed with any
   key, before a bundle goes to Play.** A throwaway keystore is enough for that.
+- **A meeting that records but never transcribes** (`1.13 (6)`, 2026-09-16 →
+  fixed in `1.14 (7)`, PR #440, ten days later — every meeting recorded on 1.13
+  has no live transcript). Two causes, both in the microphone-recovery port
+  from iOS that release introduced, and neither visible on the emulator:
+  1. `MeetingSession` forwarded every `AudioRecordingCallback` delivery to
+     `MicCapture.notePlatformSilenced`. Android fires that callback for the
+     app's **own** `AudioRecord` starting and stopping too, so our own start
+     read as "interruption ended", `CaptureRecovery` answered with a rebuild,
+     the rebuild stopped and restarted the record, and the callback fired
+     again — every ~350 ms for the whole meeting. The relay got 100–300 ms
+     fragments with holes between them. `audio/PlatformSilenceEdge.kt` now
+     lets only a *change* in `isClientSilenced` on a live recording through;
+     an empty configuration list (our record stopping) is not an event. iOS
+     never had this problem because `AVAudioSession` interruption
+     notifications are real edges; the Android signal is not, and a port has
+     to know that.
+  2. `AudioRouteChoice.preferred` ranked classic Bluetooth (SCO) above the
+     built-in microphone and `MicCapture.claimRecord` pinned the record to it.
+     The app never opens a SCO audio link (`startBluetoothSco` /
+     `setCommunicationDevice`), and a record pinned to a SCO input without one
+     captures silence. Merely having earbuds, a watch or a car kit connected
+     was enough. SCO is now excluded from pinning, like telephony; LE Audio
+     stays.
+
+  Why testing missed it: the release walk-through ran on the emulator, whose
+  host has no microphone, so "no transcript" was indistinguishable from
+  "working". Step 4 of the per-release loop above is the fix for the process:
+  a real phone, with and without earbuds, and the `MicCapture` logcat check.
+  Any change to `MicCapture`, `CaptureRecovery` or `AudioRouteChoice` gets
+  that walk before it is tagged, no matter how small.

@@ -15,6 +15,7 @@ public entry points, one shared converter:
 | `StorageHeadroom` | free bytes → a verdict | deciding whether to start or stop |
 | `CaptureWatchdog` | a clock → "has capture stalled?" | the capture's own backstop |
 | `AudioRouteChoice` | input devices → the best one | reacting to a headset |
+| `PlatformSilenceEdge` | `AudioRecordingCallback` deliveries → "taken" / "given back" | between the callback and `notePlatformSilenced` |
 
 The last four are **pure JVM and unit-tested**; the recovery state machine that
 drives them lives in `:parleykit` as `CaptureRecovery`.
@@ -114,8 +115,19 @@ them is reliable alone:
 | `AudioDeviceCallback` | a headset arriving or leaving |
 | `CaptureWatchdog` | reads that simply stop, which the platform never announces |
 
-Call `notePlatformSilenced` from an `AudioManager.AudioRecordingCallback` and
-`noteAppForegrounded` from the activity lifecycle; `MeetingSession` does both.
+Call `notePlatformSilenced` from an `AudioManager.AudioRecordingCallback` —
+**through `PlatformSilenceEdge`, never directly** — and `noteAppForegrounded`
+from the activity lifecycle; `MeetingSession` does both. The callback fires for
+the app's own `AudioRecord` starting and stopping as well as for another app
+silencing it, and only the latter is an event: forwarding every delivery made
+1.13 rebuild the microphone in a loop for the whole meeting (see
+`RELEASING.md` → review gotchas). `PlatformSilenceEdge` passes a change in
+`isClientSilenced` on a live recording and swallows everything else.
+
+`AudioRouteChoice` never picks classic Bluetooth (SCO). Capturing through it
+needs a SCO audio link the app does not open, and a record pinned to it without
+one records silence; LE Audio (`TYPE_BLE_HEADSET`) needs no link and stays
+ranked.
 Watch `micRecovery` to tell "recording" from "trying to get the microphone
 back" — and note that giving up does **not** end the flow: the file stays open
 and the next foreground trip tries again.
