@@ -41,6 +41,7 @@
   --signal: #1469D4;
   --signal-hover: #0F5BBD;
   --signal-soft: #D9E8FA; /* 2px tracks only */
+  --chip-bg: #EAF2FC; /* timestamp chips */
   --on-signal: #FFFFFF;
   --recording: #E5322D;
   --bezel: #1C1F24;
@@ -69,6 +70,7 @@
     --signal: #2DB6F3;
     --signal-hover: #5CC6F6;
     --signal-soft: #143650;
+    --chip-bg: #14314A;
     --on-signal: #06121C;
     --recording: #FF453A;
     --bezel: #2A3440;
@@ -185,7 +187,7 @@ kbd {
 /* ---------- Hero ---------- */
 .hero {
   display: grid; grid-template-columns: 1.05fr 1fr; gap: 56px; align-items: center;
-  padding-top: 72px; padding-bottom: 88px;
+  padding-top: 72px; padding-bottom: 64px;
 }
 .plats { font-size: 13px; font-weight: 600; color: var(--secondary); }
 h1 {
@@ -224,121 +226,135 @@ h1 {
   font-variant-numeric: tabular-nums; letter-spacing: .01em;
 }
 .rec canvas { width: 100%; height: 34px; color: var(--signal); }
-.ask { border-top: 1px solid var(--hairline); margin-top: 16px; padding-top: 14px; }
-.ask__label { font-size: 12.5px; font-weight: 600; color: var(--secondary); }
-.ask__q { font-size: 16px; font-weight: 600; margin-top: 4px; }
-.ask__a {
-  font-size: 15px; line-height: 1.6; color: var(--secondary);
-  margin-top: 6px; padding-left: 12px; border-left: 2px solid var(--ink);
-}
-/* Timestamp chips: blue, as in the app, where they play back that moment. */
-.ask__a .ts, .asks__a .ts {
-  color: var(--signal); font-size: 13px; font-weight: 600; margin-left: 6px; white-space: nowrap;
-}
+/* ---------- Screenshots: light even in dark mode, framed by a hairline and a soft shadow ---------- */
+.winshot { border-radius: 12px; overflow: hidden; background: #FFFFFF; box-shadow: var(--win-shadow); }
+.winshot img { width: 100%; height: auto; }
+/* Right under the hero: the whole desktop window mid-meeting, full width, never cropped. */
+.bigshot { padding-bottom: 96px; }
 
 /* ---------- Sections ---------- */
 .sec { border-top: 1px solid var(--hairline); padding: 88px 0; }
 .k { font-size: 13px; font-weight: 600; color: var(--secondary); }
 h2 {
   font-size: 34px; font-weight: 700; line-height: 1.3; letter-spacing: -.01em;
-  margin-top: 10px; max-width: 700px;
+  margin-top: 10px; max-width: 700px; text-wrap: balance;
 }
 :lang(zh) h2 { letter-spacing: 0; }
-.p { font-size: 16.5px; color: var(--secondary); max-width: 640px; margin-top: 14px; }
+.p { font-size: 16.5px; color: var(--secondary); max-width: 640px; margin-top: 14px; text-wrap: pretty; }
 h3 { font-size: 18px; font-weight: 600; line-height: 1.4; }
-.xrow { display: flex; flex-wrap: wrap; gap: 10px 32px; margin-top: 24px; font-size: 14px; color: var(--secondary); }
-.xrow b { color: var(--ink); font-weight: 600; margin-right: 4px; }
-.xrow a { font-weight: 600; white-space: nowrap; margin-left: 4px; }
 
-/* Three places a meeting happens */
-.rooms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 36px; margin-top: 40px; }
-.room__im {
-  height: 320px; overflow: hidden;
-  display: flex; justify-content: center; align-items: flex-start;
-  padding-top: 28px;
+/* ---------- Rows: a label, one H2, one sentence — and a visual larger than the words ----------
+   The copy is first in the source; .row--rev moves the visual to the left on wide screens. */
+.row__in {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 56px; align-items: center;
+}
+.row--rev .row__in { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+.row--rev .row__vis { order: -1; }
+.row h2 { font-size: 32px; }
+.panel { background: var(--page-2); border-radius: 12px; }
+/* Find it: the palette floats on the panel the way it floats over the library in the app. */
+.cmdk { display: flex; align-items: center; justify-content: center; padding: 56px 40px; }
+.cmdk picture { display: block; width: 100%; max-width: 620px; }
+.cmdk img { width: 100%; height: auto; border-radius: 12px; box-shadow: var(--win-shadow); }
+
+/* In the room: two phones on the panel, cropped by its bottom edge. */
+.phones {
+  display: flex; justify-content: center; gap: 28px;
+  height: 440px; padding: 40px 28px 0; overflow: hidden;
   background: var(--page-2); border-radius: 12px;
 }
-/* Phones: the whole App Store screenshot, in an ink bezel, cropped by the panel.
-   The <picture> is the flex child, so it spans the panel and centres the phone. */
-.room__im:not(.room__im--desk) picture { display: flex; justify-content: center; width: 100%; }
-.room__im img {
-  width: 62%; height: auto;
-  border-radius: 26px 26px 0 0;
-  box-shadow: 0 0 0 5px var(--bezel);
-}
-/* Desktop: the window at a readable size, anchored top-left and cropped the same way. */
-.room__im--desk { justify-content: flex-start; padding: 28px 0 0 24px; }
-.room__im--desk picture { flex: none; width: 280%; }
-.room__im--desk img { width: 100%; border-radius: 8px; box-shadow: var(--shot-shadow); }
-.pf { font-size: 12.5px; font-weight: 600; color: var(--secondary); margin-top: 16px; }
-.room h3 { margin-top: 6px; }
-.room p:last-child { font-size: 15px; color: var(--secondary); margin-top: 6px; }
+.phones picture { flex: 0 1 42%; max-width: 236px; }
+.phones img { width: 100%; height: auto; border-radius: 30px 30px 0 0; box-shadow: 0 0 0 5px var(--bezel); }
 
-/* After the meeting: the report, big, in a window frame */
-.winshot { margin-top: 36px; border-radius: 12px; overflow: hidden; box-shadow: var(--win-shadow); }
-.winshot img { width: 100%; height: auto; }
-
-/* For your AI */
-.asks { margin-top: 30px; max-width: 760px; }
-.asks__it { padding: 12px 0; }
-.asks__q { font-size: 17px; font-weight: 600; }
-.asks__a {
-  font-size: 15.5px; color: var(--secondary);
-  margin-top: 6px; padding-left: 14px; border-left: 2px solid var(--ink);
+/* For your AI: a neutral chat client drawn in HTML. */
+.chat { display: flex; flex-direction: column; min-height: 360px; padding: 40px 40px 28px; }
+.chat__q {
+  align-self: flex-end; max-width: 80%;
+  padding: 10px 16px; border: 1px solid var(--hairline); border-radius: 16px 16px 4px 16px;
+  background: var(--page); font-size: 16px; font-weight: 600;
 }
+.chat__tool { margin-top: 26px; font-family: var(--mono); font-size: 12.5px; color: var(--secondary); overflow-wrap: anywhere; }
+.chat__a { margin: 8px 0 32px; font-size: 17px; line-height: 1.8; }
+/* Timestamp chips: blue, as in the app, where they play back that moment. */
+.chip {
+  display: inline-block; margin-left: 6px; padding: 0 7px;
+  border-radius: 6px; background: var(--chip-bg); color: var(--signal);
+  font-size: 13px; font-weight: 600; line-height: 1.65; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.chat__box {
+  display: flex; align-items: center; gap: 12px; margin-top: auto;
+  height: 46px; padding: 0 7px 0 18px;
+  border: 1px solid var(--hairline-2); border-radius: 23px; background: var(--page);
+}
+.chat__box span { flex: 0 1 38%; height: 8px; border-radius: 4px; background: var(--hairline); }
+.chat__box i { width: 32px; height: 32px; margin-left: auto; border-radius: 50%; background: var(--hairline-2); }
+/* Played once by script.js: question, tool call, then the answer types itself. */
+.chat.is-pending .chat__q, .chat.is-pending .chat__tool, .chat.is-pending .chat__a { opacity: 0; }
+.chat.is-play .chat__q { transition: opacity .25s ease-out; }
+.chat.is-play .chat__tool { transition: opacity .25s ease-out .35s; }
+.chat__a .chip.is-off { display: none; }
+
+/* Code: the MCP command, small, under the row's sentence. */
 .code {
-  position: relative; margin-top: 28px; max-width: 640px;
+  position: relative; margin-top: 26px; max-width: 460px;
   background: var(--code-bg); color: var(--code-ink);
   border-radius: 10px; border: 1px solid var(--code-bg);
 }
 .code pre {
-  margin: 0; padding: 18px 20px; overflow-x: auto;
-  font-family: var(--mono); font-size: 13.5px; line-height: 1.7;
+  margin: 0; padding: 14px 16px; overflow-x: auto;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
 }
 .code__c { color: var(--code-dim); }
 .code__copy {
-  position: absolute; top: 12px; right: 12px;
-  height: 28px; padding: 0 10px;
-  font: inherit; font-size: 12.5px; font-weight: 600;
+  position: absolute; top: 10px; right: 10px;
+  height: 26px; padding: 0 9px;
+  font: inherit; font-size: 12px; font-weight: 600;
   color: var(--code-ink); background: transparent;
   border: 1px solid rgba(220, 230, 240, .22); border-radius: 7px; cursor: pointer;
 }
 .code__copy:hover { border-color: rgba(220, 230, 240, .5); }
 .code__copy.is-done { color: #7FD3F8; border-color: rgba(127, 211, 248, .5); }
+.more { margin-top: 14px; font-size: 14.5px; font-weight: 600; }
 
-/* One account */
-.acct { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
-.acct__fig svg { width: 100%; max-width: 520px; height: auto; margin-left: auto; }
-.fig-dev { fill: none; stroke: var(--secondary); stroke-width: 1.4; }
-.fig-soft { fill: none; stroke: var(--hairline-2); stroke-width: 3; stroke-linecap: round; }
-.fig-path { fill: none; stroke: var(--hairline-2); stroke-width: 1.4; stroke-dasharray: 3 5; }
-.fig-rec { fill: var(--recording); }
-.fig-sig { fill: var(--signal); stroke: var(--signal); }
-.fig-sig rect { stroke: none; }
-.fig-t { fill: var(--secondary); font-family: var(--font); font-size: 16px; font-weight: 600; }
-.points { display: grid; grid-template-columns: repeat(3, 1fr); gap: 36px; margin-top: 44px; }
-.points h3 { font-size: 16.5px; }
-.points p { font-size: 15px; color: var(--secondary); margin-top: 6px; }
+/* One account: the desktop library, the phone's library overlapping its lower left. */
+.combo { position: relative; aspect-ratio: 100 / 64; }
+.combo__win { position: absolute; top: 0; right: 0; width: 84%; }
+.combo__phone {
+  position: absolute; left: 5px; bottom: 0; width: 27%; height: 80%; overflow: hidden;
+  border-radius: 26px 26px 0 0;
+  box-shadow: 0 0 0 5px var(--bezel), 0 18px 40px rgba(17, 20, 24, .18);
+  clip-path: inset(-60px -60px 0 -60px); /* no bezel along the cut edge */
+}
+.combo__phone img { width: 100%; height: auto; }
 
-/* Voice typing: what you said → what gets typed */
-.polish { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 36px; align-items: start; }
-.polish__lab { font-size: 12.5px; font-weight: 600; color: var(--secondary); margin-bottom: 8px; }
-.polish__lab--out { color: var(--signal); }
-.polish__raw { font-size: 17px; line-height: 1.7; color: var(--secondary); }
-.polish__raw s { color: var(--tertiary); text-decoration-color: var(--tertiary); }
+/* Beyond the meeting: what you said → what gets typed. */
+.polish { display: flex; flex-direction: column; justify-content: center; min-height: 400px; padding: 40px; }
+.polish__raw { font-size: 17px; line-height: 1.8; color: var(--secondary); }
+/* Filler words: a drawn strike (so it can be animated), then greyed out. */
+.polish__raw s {
+  text-decoration: none; color: var(--tertiary);
+  background: linear-gradient(var(--secondary), var(--secondary)) no-repeat 0 58% / 100% 1.5px;
+}
+.polish__lab { margin: 22px 0 12px; font-size: 13px; font-weight: 600; color: var(--signal); }
 .polish__out { font-size: 17px; line-height: 1.7; border-left: 2px solid var(--ink); padding-left: 16px; }
 .polish__out ol { margin: 6px 0 0; padding-left: 22px; }
+.polish.is-pending s { color: var(--secondary); background-size: 0 1.5px; }
+.polish.is-pending .polish__lab, .polish.is-pending .polish__out, .polish.is-pending li { opacity: 0; }
+.polish.is-play s { transition: background-size .35s ease-out .1s, color .3s ease-out .45s; }
+.polish.is-play .polish__lab { transition: opacity .25s ease-out .6s; }
+.polish.is-play .polish__out { transition: opacity .25s ease-out .85s; }
+.polish.is-play li { transition: opacity .25s ease-out 1.05s; }
+.polish.is-play li:nth-child(2) { transition-delay: 1.25s; }
+.polish.is-play li:nth-child(3) { transition-delay: 1.45s; }
 
-/* Trust */
-.trust { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 36px; border-top: 1px solid var(--ink); }
-.trust li { padding: 18px 24px 0 0; }
+/* Trust: four short facts, then one row of provider marks. */
+.trust { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 32px; border-top: 1px solid var(--ink); }
+.trust li { padding: 16px 20px 0 0; }
 .trust h3 { font-size: 15.5px; }
-.trust p { font-size: 14px; color: var(--secondary); margin-top: 4px; }
-.prov { margin-top: 48px; display: grid; gap: 14px; }
-.prov__row { display: grid; grid-template-columns: 120px 1fr; gap: 16px; align-items: baseline; }
-.prov__k { font-size: 13px; font-weight: 600; color: var(--secondary); }
-.prov ul { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 15px; }
-.prov li { display: inline-flex; align-items: center; gap: 7px; color: var(--ink); }
+.trust p { font-size: 14px; color: var(--secondary); margin-top: 2px; }
+.prov { display: flex; flex-wrap: wrap; gap: 10px 26px; margin-top: 40px; font-size: 15px; }
+.prov li { display: inline-flex; align-items: center; gap: 7px; color: var(--secondary); }
 /* Provider marks are drawn in the text colour: no brand colours on this page. */
 .logo {
   width: 16px; height: 16px; flex: none;
@@ -352,8 +368,7 @@ h3 { font-size: 18px; font-weight: 600; line-height: 1.4; }
 /* The Play badge: unmodified, 48px tall, with clear space on every side. */
 .badge-play { display: inline-block; margin: 0 6px; border-radius: 8px; line-height: 0; }
 .badge-play img { height: 48px; width: auto; }
-#download .fine { margin-top: 12px; }
-#download .fine:first-of-type { margin-top: 26px; }
+#download .fine { margin-top: 24px; }
 
 /* ---------- Footer ---------- */
 .foot { border-top: 1px solid var(--hairline); padding: 56px 0 44px; font-size: 14.5px; }
@@ -375,6 +390,10 @@ h3 { font-size: 18px; font-weight: 600; line-height: 1.4; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .js .fade { opacity: 1; transition: none; }
+  /* The demos show their final state. */
+  .chat.is-pending :is(.chat__q, .chat__tool, .chat__a),
+  .polish.is-pending :is(.polish__lab, .polish__out, li) { opacity: 1; }
+  .polish.is-pending s { color: var(--tertiary); background-size: 100% 1.5px; }
 }
 @media print {
   .js .fade { opacity: 1; }
@@ -386,6 +405,7 @@ h3 { font-size: 18px; font-weight: 600; line-height: 1.4; }
   .hero { gap: 40px; }
   h1 { font-size: 44px; }
   :lang(zh) h1 { font-size: 42px; }
+  .row__in { gap: 44px; }
 }
 @media (max-width: 980px) {
   :root { --gutter: 24px; }
@@ -403,35 +423,43 @@ h3 { font-size: 18px; font-weight: 600; line-height: 1.4; }
   .nav.is-open { border-bottom-color: var(--hairline); }
   .nav__lang { margin-left: auto; }
   .nav__menu { display: grid; }
-  .hero { grid-template-columns: 1fr; gap: 44px; padding-top: 44px; padding-bottom: 64px; }
+  .hero { grid-template-columns: 1fr; gap: 44px; padding-top: 44px; padding-bottom: 48px; }
+  .bigshot { padding-bottom: 72px; }
   .sec { padding: 64px 0; }
-  .rooms, .polish { grid-template-columns: 1fr; }
-  .rooms { gap: 44px; max-width: 520px; }
-  .acct { grid-template-columns: 1fr; gap: 28px; }
-  .acct__fig svg { margin-left: 0; }
-  .points { grid-template-columns: 1fr; gap: 20px; margin-top: 32px; }
   .trust { grid-template-columns: 1fr 1fr; }
   .trust li { padding-bottom: 8px; }
   .foot__top { grid-template-columns: 1fr 1fr 1fr; }
   .foot__top .wm { grid-column: 1 / -1; }
 }
+/* Rows stack: the words first, then the visual at full width. */
+@media (max-width: 860px) {
+  .row__in, .row--rev .row__in { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  .row--rev .row__vis { order: 0; }
+}
 @media (max-width: 760px) {
   h1, :lang(zh) h1 { font-size: 34px; }
-  h2 { font-size: 26px; }
+  h2, .row h2 { font-size: 26px; }
   .sub { font-size: 16.5px; }
   .lines { height: 250px; }
-  .prov__row { grid-template-columns: 1fr; gap: 6px; }
+  .bigshot { padding-bottom: 56px; }
+  .winshot { border-radius: 8px; }
+  .phones { height: 380px; gap: 16px; padding: 28px 16px 0; }
+  .phones img { border-radius: 22px 22px 0 0; box-shadow: 0 0 0 4px var(--bezel); }
+  .chat, .polish { min-height: 0; padding: 28px 22px 22px; }
+  .chat__a, .polish__raw, .polish__out { font-size: 16px; }
+  .combo__phone { border-radius: 16px 16px 0 0; box-shadow: 0 0 0 3px var(--bezel), 0 12px 28px rgba(17, 20, 24, .18); }
 }
 @media (max-width: 600px) {
   :root { --gutter: 20px; }
   .ctas .b1, .ctas .b2 { flex: 1 1 auto; }
-  .room__im { height: 300px; }
-  .trust { grid-template-columns: 1fr; }
-  .code pre { font-size: 12px; padding: 16px; padding-top: 50px; }
+  .phones { height: 330px; }
+  .trust { grid-template-columns: 1fr 1fr; }
   .foot__top { grid-template-columns: 1fr 1fr; }
-  .xrow { flex-direction: column; gap: 10px; }
   /* The whole report window is unreadable at phone width: zoom into its content
      column (roughly 37–82% of the screenshot's width) and crop the rest. */
-  .winshot { max-height: 520px; }
-  .winshot picture { display: block; width: 220%; margin-left: -78%; }
+  .winshot--report { max-height: 520px; }
+  .cmdk { padding: 28px 12px; }
+  .cmdk img { border-radius: 8px; }
+  .winshot--report picture { display: block; width: 220%; margin-left: -78%; }
+  /* The ⌘K crop: zoom in until the palette spans the width. */
 }

@@ -148,6 +148,20 @@ describe("website build", () => {
     }
   });
 
+  it("keeps the home page short: the screenshots carry it, not the copy", () => {
+    // Visible text inside <main> only (nav, footer and metadata don't count).
+    const main = (html: string) => text(html.slice(html.indexOf("<main"), html.indexOf("</main>")));
+    const cjk = main(zh).match(/\p{Script=Han}/gu)?.length ?? 0;
+    const words = main(en)
+      .split(" ")
+      .filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+    // Lower bounds only prove the counters see the page.
+    expect(cjk).toBeGreaterThan(200);
+    expect(words).toBeGreaterThan(200);
+    expect(cjk, "zh <main> CJK characters").toBeLessThanOrEqual(700);
+    expect(words, "en <main> words").toBeLessThanOrEqual(450);
+  });
+
   it("fails on a key that only one dictionary has", () => {
     const root = path.join(tmp, "broken");
     fs.cpSync(path.join(REPO, "website"), path.join(root, "website"), {

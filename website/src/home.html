@@ -118,177 +118,150 @@
         <p>{{demo.speakerA}} — {{demo.line1}}</p>
         <p>{{demo.speakerB}} — {{demo.line2}}</p>
       </div>
-      <div class="ask">
-        <p class="ask__label">{{ask.label}}</p>
-        <p class="ask__q">{{ask.q}}</p>
-        <p class="ask__a">{{ask.a}}<span class="ts">{{ask.cite}}</span></p>
-      </div>
     </div>
   </section>
 
-  <!-- ============ Meetings: three places a meeting happens ============ -->
-  <section class="sec" id="meetings">
-    <div class="wrap">
-      <p class="k fade">{{meetings.kicker}}</p>
-      <h2 class="fade">{{meetings.h2}}</h2>
-      <div class="rooms">
-        <div class="room fade">
-          <div class="room__im room__im--desk">
-            <picture>
-              <source type="image/webp" srcset="{{@base}}assets/shots/desktop-live-{{@lang}}.webp">
-              <img src="{{@base}}assets/shots/desktop-live-{{@lang}}.jpg" width="2000" height="1250" loading="lazy" decoding="async" alt="{{room1.alt|attr}}">
-            </picture>
-          </div>
-          <p class="pf">{{room1.platforms}}</p>
-          <h3>{{room1.h}}</h3>
-          <p>{{room1.p}}</p>
-        </div>
-        <div class="room fade">
-          <div class="room__im">
-            <picture>
-              <source type="image/webp" srcset="{{@base}}assets/shots/iphone-record-{{@lang}}.webp">
-              <img src="{{@base}}assets/shots/iphone-record-{{@lang}}.jpg" width="600" height="1304" loading="lazy" decoding="async" alt="{{room2.alt|attr}}">
-            </picture>
-          </div>
-          <p class="pf">{{room2.platforms}}</p>
-          <h3>{{room2.h}}</h3>
-          <p>{{room2.p}}</p>
-        </div>
-        <div class="room fade">
-          <div class="room__im">
-            <picture>
-              <source type="image/webp" srcset="{{@base}}assets/shots/iphone-library-{{@lang}}.webp">
-              <img src="{{@base}}assets/shots/iphone-library-{{@lang}}.jpg" width="600" height="1304" loading="lazy" decoding="async" alt="{{room3.alt|attr}}">
-            </picture>
-          </div>
-          <p class="pf">{{room3.platforms}}</p>
-          <h3>{{room3.h}}</h3>
-          <p>{{room3.p}}</p>
-        </div>
+  <!-- ============ The desktop app mid-meeting: the whole window, full width ============ -->
+  <div class="wrap bigshot">
+    <div class="winshot">
+      <picture>
+        <source type="image/webp" srcset="{{@base}}assets/shots/desktop-live-{{@lang}}.webp">
+        <img src="{{@base}}assets/shots/desktop-live-{{@lang}}.jpg" width="2000" height="1250" decoding="async" alt="{{shot.liveAlt|attr}}">
+      </picture>
+    </div>
+  </div>
+
+  <!--#
+    Every row below is a section label, one H2, one sentence and a large visual.
+    The copy comes first in the source (it stacks first on phones); .row--rev puts
+    the visual on the left on wide screens.
+  -->
+
+  <!-- ============ In the room ============ -->
+  <section class="sec row" id="meetings">
+    <div class="wrap row__in">
+      <div class="row__tx fade">
+        <p class="k">{{meetings.kicker}}</p>
+        <h2>{{meetings.h2}}</h2>
+        <p class="p">{{meetings.p}}</p>
+      </div>
+      <div class="row__vis phones fade">
+        <picture>
+          <source type="image/webp" srcset="{{@base}}assets/shots/iphone-record-{{@lang}}.webp">
+          <img src="{{@base}}assets/shots/iphone-record-{{@lang}}.jpg" width="600" height="1304" loading="lazy" decoding="async" alt="{{meetings.altRecord|attr}}">
+        </picture>
+        <picture>
+          <source type="image/webp" srcset="{{@base}}assets/shots/iphone-transcript-{{@lang}}.webp">
+          <img src="{{@base}}assets/shots/iphone-transcript-{{@lang}}.jpg" width="600" height="1304" loading="lazy" decoding="async" alt="{{meetings.altTranscript|attr}}">
+        </picture>
       </div>
     </div>
   </section>
 
   <!-- ============ After the meeting ============ -->
-  <section class="sec" id="after">
-    <div class="wrap">
-      <p class="k fade">{{after.kicker}}</p>
-      <h2 class="fade">{{after.h2}}</h2>
-      <p class="p fade">{{after.p}}</p>
-      <div class="winshot fade">
+  <section class="sec row row--rev" id="after">
+    <div class="wrap row__in">
+      <div class="row__tx fade">
+        <p class="k">{{after.kicker}}</p>
+        <h2>{{after.h2}}</h2>
+        <p class="p">{{after.p}}</p>
+      </div>
+      <div class="row__vis winshot winshot--report fade">
         <picture>
           <source type="image/webp" srcset="{{@base}}assets/shots/desktop-report-{{@lang}}.webp">
           <img src="{{@base}}assets/shots/desktop-report-{{@lang}}.jpg" width="2000" height="1250" loading="lazy" decoding="async" alt="{{after.alt|attr}}">
         </picture>
       </div>
-      <ul class="xrow fade">
-        <li>{{after.x1}}</li>
-        <li>{{after.x2}}</li>
-        <li>{{after.x3}}</li>
-      </ul>
+    </div>
+  </section>
+
+  <!-- ============ Find it ============ -->
+  <section class="sec row" id="find">
+    <div class="wrap row__in">
+      <div class="row__tx fade">
+        <p class="k">{{find.kicker}}</p>
+        <h2>{{find.h2}}</h2>
+        <p class="p">{{find.p}}</p>
+      </div>
+      <!--# The ⌘K palette alone, cropped to its own edges from the library capture. The
+           app dims the library behind it; cropping the palette out keeps the shot real
+           without turning the row into a grey slab. -->
+      <div class="row__vis panel cmdk fade">
+        <picture>
+          <source type="image/webp" srcset="{{@base}}assets/shots/desktop-cmdk-{{@lang}}.webp">
+          <img src="{{@base}}assets/shots/desktop-cmdk-{{@lang}}.jpg" width="1083" height="282" loading="lazy" decoding="async" alt="{{find.alt|attr}}">
+        </picture>
+      </div>
     </div>
   </section>
 
   <!-- ============ For your AI ============ -->
-  <section class="sec" id="ai">
-    <div class="wrap">
-      <p class="k fade">{{ai.kicker}}</p>
-      <h2 class="fade">{{ai.h2}}</h2>
-      <p class="p fade">{{ai.p}}</p>
-      <div class="asks fade">
-        <div class="asks__it"><p class="asks__q">{{ai.q1}}</p><p class="asks__a">{{ai.a1}}</p></div>
-        <div class="asks__it"><p class="asks__q">{{ai.q2}}</p><p class="asks__a">{{ai.a2}}</p></div>
-        <div class="asks__it"><p class="asks__q">{{ai.q3}}</p><p class="asks__a">{{ai.a3}}</p></div>
-      </div>
-      <figure class="code fade" aria-label="{{ai.codeLabel|attr}}">
-        <button type="button" class="code__copy" data-copy="claude mcp add --transport http parley http://127.0.0.1:3011/mcp" data-done="{{ai.copied|attr}}">{{ai.copy}}</button>
-        <pre><code><span class="code__c">{{ai.codeComment}}</span>
+  <section class="sec row row--rev" id="ai">
+    <div class="wrap row__in">
+      <div class="row__tx fade">
+        <p class="k">{{ai.kicker}}</p>
+        <h2>{{ai.h2}}</h2>
+        <p class="p">{{ai.p}}</p>
+        <figure class="code" aria-label="{{ai.codeLabel|attr}}">
+          <button type="button" class="code__copy" data-copy="claude mcp add --transport http parley http://127.0.0.1:3011/mcp" data-done="{{ai.copied|attr}}">{{ai.copy}}</button>
+          <pre><code><span class="code__c">{{ai.codeComment}}</span>
 claude mcp add --transport http parley \
   http://127.0.0.1:3011/mcp</code></pre>
-      </figure>
-      <p class="fine fade">{{ai.fine}}</p>
-      <ul class="xrow fade">
-        <li>{{ai.x1}} <a href="https://github.com/pathorsAI/parley#-the-mcp-server">{{ai.x1link}} →</a></li>
-        <li>{{ai.x2}}</li>
-        <li>{{ai.x3}}</li>
-      </ul>
+        </figure>
+        <p class="more"><a href="https://github.com/pathorsAI/parley#-the-mcp-server">{{ai.tools}} →</a></p>
+      </div>
+      <!--#
+        A neutral chat client drawn in HTML (no vendor's UI or marks). script.js plays it
+        once when it scrolls into view; without JS or with reduced motion it is the final state.
+      -->
+      <div class="row__vis panel chat fade" role="img" aria-label="{{ai.chatAlt|attr}}">
+        <p class="chat__q">{{ai.chatQ}}</p>
+        <p class="chat__tool">{{ai.chatTool}}</p>
+        <p class="chat__a">{{ai.chatA}}</p>
+        <div class="chat__box"><span></span><i></i></div>
+      </div>
     </div>
   </section>
 
   <!-- ============ One account ============ -->
-  <section class="sec" id="account">
-    <div class="wrap">
-      <div class="acct">
-        <div class="acct__copy">
-          <p class="k fade">{{account.kicker}}</p>
-          <h2 class="fade">{{account.h2}}</h2>
-          <p class="p fade">{{account.p}}</p>
-        </div>
-        <figure class="acct__fig fade">
-          <svg viewBox="0 0 520 220" role="img" aria-label="{{account.figLabel|attr}}">
-            <!-- phone -->
-            <rect class="fig-dev" x="40" y="34" width="78" height="142" rx="14"/>
-            <line class="fig-dev" x1="68" y1="46" x2="90" y2="46"/>
-            <line class="fig-soft" x1="54" y1="70" x2="104" y2="70"/>
-            <line class="fig-soft" x1="54" y1="80" x2="96" y2="80"/>
-            <line class="fig-soft" x1="54" y1="94" x2="104" y2="94"/>
-            <line class="fig-soft" x1="54" y1="104" x2="88" y2="104"/>
-            <circle class="fig-rec" cx="79" cy="150" r="7"/>
-            <!-- phone → account → desktop -->
-            <path class="fig-path" d="M126 105 H218"/>
-            <path class="fig-path" d="M302 105 H358"/>
-            <!-- the recording on its way: the only blue in the figure -->
-            <g class="fig-sig">
-              <rect x="146" y="98" width="3" height="14" rx="1.5"/>
-              <rect x="152" y="94" width="3" height="22" rx="1.5"/>
-              <rect x="158" y="100" width="3" height="10" rx="1.5"/>
-              <rect x="164" y="91" width="3" height="28" rx="1.5"/>
-              <rect x="170" y="97" width="3" height="16" rx="1.5"/>
-              <rect x="176" y="101" width="3" height="8" rx="1.5"/>
-              <path d="M196 99 L204 105 L196 111" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-            </g>
-            <!-- account -->
-            <circle class="fig-dev" cx="260" cy="105" r="40"/>
-            <circle class="fig-dev" cx="260" cy="94" r="10"/>
-            <path class="fig-dev" d="M240 124 C244 112 276 112 280 124"/>
-            <!-- desktop -->
-            <rect class="fig-dev" x="366" y="46" width="130" height="86" rx="8"/>
-            <line class="fig-dev" x1="366" y1="60" x2="496" y2="60"/>
-            <line class="fig-soft" x1="380" y1="76" x2="470" y2="76"/>
-            <line class="fig-soft" x1="380" y1="88" x2="452" y2="88"/>
-            <line class="fig-soft" x1="380" y1="104" x2="476" y2="104"/>
-            <line class="fig-soft" x1="380" y1="116" x2="440" y2="116"/>
-            <path class="fig-dev" d="M350 150 H512 L504 142 H358 Z"/>
-            <text class="fig-t" x="79" y="206" text-anchor="middle">{{account.figPhone}}</text>
-            <text class="fig-t" x="260" y="206" text-anchor="middle">{{account.figAccount}}</text>
-            <text class="fig-t" x="431" y="206" text-anchor="middle">{{account.figDesktop}}</text>
-          </svg>
-        </figure>
+  <section class="sec row" id="account">
+    <div class="wrap row__in">
+      <div class="row__tx fade">
+        <p class="k">{{account.kicker}}</p>
+        <h2>{{account.h2}}</h2>
+        <p class="p">{{account.p}}</p>
       </div>
-      <ul class="points fade">
-        <li><h3>{{account.i1h}}</h3><p>{{account.i1p}}</p></li>
-        <li><h3>{{account.i2h}}</h3><p>{{account.i2p}}</p></li>
-        <li><h3>{{account.i3h}}</h3><p>{{account.i3p}}</p></li>
-      </ul>
+      <div class="row__vis combo fade">
+        <div class="winshot combo__win">
+          <picture>
+            <source type="image/webp" srcset="{{@base}}assets/shots/desktop-library-{{@lang}}.webp">
+            <img src="{{@base}}assets/shots/desktop-library-{{@lang}}.jpg" width="2000" height="1250" loading="lazy" decoding="async" alt="{{account.altDesktop|attr}}">
+          </picture>
+        </div>
+        <div class="combo__phone">
+          <picture>
+            <source type="image/webp" srcset="{{@base}}assets/shots/iphone-library-{{@lang}}.webp">
+            <img src="{{@base}}assets/shots/iphone-library-{{@lang}}.jpg" width="600" height="1304" loading="lazy" decoding="async" alt="{{account.altPhone|attr}}">
+          </picture>
+        </div>
+      </div>
     </div>
   </section>
 
   <!-- ============ Beyond the meeting: voice typing ============ -->
-  <section class="sec" id="voice">
-    <div class="wrap">
-      <p class="k fade">{{voice.kicker}}</p>
-      <h2 class="fade">{{voice.h2}}</h2>
-      <p class="p fade">{{voice.p}}</p>
-      <div class="polish fade">
-        <div><p class="polish__lab">{{voice.rawLabel}}</p><p class="polish__raw">{{voice.raw}}</p></div>
-        <div><p class="polish__lab polish__lab--out">{{voice.outLabel}}</p><div class="polish__out">{{voice.out}}</div></div>
+  <section class="sec row row--rev" id="voice">
+    <div class="wrap row__in">
+      <div class="row__tx fade">
+        <p class="k">{{voice.kicker}}</p>
+        <h2>{{voice.h2}}</h2>
+        <p class="p">{{voice.p}}</p>
       </div>
-      <ul class="xrow fade">
-        <li>{{voice.kIphone}}</li>
-        <li>{{voice.kMac}}</li>
-        <li>{{voice.kWin}}</li>
-        <li>{{voice.kDict}}</li>
-      </ul>
+      <!--# What you said → what gets typed. Played once in view by script.js; static otherwise. -->
+      <div class="row__vis panel polish fade">
+        <p class="polish__raw">{{voice.raw}}</p>
+        <p class="polish__lab">↓ {{voice.polishLabel}}</p>
+        <div class="polish__out">{{voice.out}}</div>
+      </div>
     </div>
   </section>
 
@@ -303,32 +276,19 @@ claude mcp add --transport http parley \
         <li><h3>{{trust.t3}}</h3><p>{{trust.t3p}}</p></li>
         <li><h3>{{trust.t4}}</h3><p>{{trust.t4p}}</p></li>
       </ul>
-      <div class="prov fade">
-        <div class="prov__row">
-          <p class="prov__k">{{trust.transcription}}</p>
-          <ul>
-            <li>Soniox</li>
-            <li><span class="logo" style="--m:url('{{@base}}assets/logos/deepgram.svg')"></span>Deepgram</li>
-            <li><span class="logo" style="--m:url('{{@base}}assets/logos/assemblyai.svg')"></span>AssemblyAI</li>
-            <li><span class="logo" style="--m:url('{{@base}}assets/logos/openai.svg')"></span>OpenAI</li>
-            <li><span class="logo" style="--m:url('{{@base}}assets/logos/gemini.svg')"></span>Gemini</li>
-          </ul>
-        </div>
-        <div class="prov__row">
-          <p class="prov__k">{{trust.models}}</p>
-          <ul>
-            <li><span class="logo" style="--m:url('{{@base}}assets/logos/claude.svg')"></span>Claude</li>
-            <li><span class="logo" style="--m:url('{{@base}}assets/logos/openai.svg')"></span>OpenAI</li>
-            <li><span class="logo" style="--m:url('{{@base}}assets/logos/gemini.svg')"></span>Gemini</li>
-            <li><span class="logo" style="--m:url('{{@base}}assets/logos/groq.svg')"></span>Groq</li>
-            <li><span class="logo" style="--m:url('{{@base}}assets/logos/qwen.svg')"></span>Qwen</li>
-            <li><span class="logo" style="--m:url('{{@base}}assets/logos/kimi.svg')"></span>Kimi</li>
-            <li><span class="logo" style="--m:url('{{@base}}assets/logos/ollama.svg')"></span>Ollama</li>
-            <li><span class="logo" style="--m:url('{{@base}}assets/logos/openrouter.svg')"></span>OpenRouter</li>
-            <li>{{trust.custom}}</li>
-          </ul>
-        </div>
-      </div>
+      <ul class="prov fade" aria-label="{{trust.providers|attr}}">
+        <li>Soniox</li>
+        <li><span class="logo" style="--m:url('{{@base}}assets/logos/deepgram.svg')"></span>Deepgram</li>
+        <li><span class="logo" style="--m:url('{{@base}}assets/logos/assemblyai.svg')"></span>AssemblyAI</li>
+        <li><span class="logo" style="--m:url('{{@base}}assets/logos/openai.svg')"></span>OpenAI</li>
+        <li><span class="logo" style="--m:url('{{@base}}assets/logos/gemini.svg')"></span>Gemini</li>
+        <li><span class="logo" style="--m:url('{{@base}}assets/logos/claude.svg')"></span>Claude</li>
+        <li><span class="logo" style="--m:url('{{@base}}assets/logos/groq.svg')"></span>Groq</li>
+        <li><span class="logo" style="--m:url('{{@base}}assets/logos/qwen.svg')"></span>Qwen</li>
+        <li><span class="logo" style="--m:url('{{@base}}assets/logos/kimi.svg')"></span>Kimi</li>
+        <li><span class="logo" style="--m:url('{{@base}}assets/logos/ollama.svg')"></span>Ollama</li>
+        <li><span class="logo" style="--m:url('{{@base}}assets/logos/openrouter.svg')"></span>OpenRouter</li>
+      </ul>
     </div>
   </section>
 
@@ -336,7 +296,6 @@ claude mcp add --transport http parley \
   <section class="sec" id="download">
     <div class="wrap">
       <h2 class="fade">{{dl.h2}}</h2>
-      <p class="p fade">{{dl.p}}</p>
       <!-- script.js reorders this row for the visitor's OS and fills the first button. -->
       <div class="dl fade" id="dl-row">
         <a class="b1 b--lg" data-os="mac" href="https://api.parley.tw/download?platform=macos">
@@ -362,7 +321,6 @@ claude mcp add --transport http parley \
         </a>
         <a class="b2 b--lg" data-os="source" href="https://github.com/pathorsAI/parley">{{dl.github}}</a>
       </div>
-      <p class="fine fade">{{dl.free}}</p>
       <p class="fine fade">{{dl.windowsNote}}</p>
     </div>
   </section>
