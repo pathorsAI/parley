@@ -37,8 +37,6 @@ final class EnglishWordsTests: XCTestCase {
     }
 
     func testAnEmptyPrefixOffersNothing() {
-        // "Every word in the language" is not a suggestion; the strip goes back
-        // to the wordmark instead.
         XCTAssertEqual(fixture.completions(for: ""), [])
     }
 
@@ -57,42 +55,128 @@ final class EnglishWordsTests: XCTestCase {
             contractions.completions(for: "don't"))
     }
 
+    func testFollowersComeBackBestFirstInTheirOwnCase() {
+        let words = EnglishWords(words: [], followers: ["new": ["York", "and"]])
+        XCTAssertEqual(words.nextWords(after: "new"), ["York", "and"])
+        XCTAssertEqual(words.nextWords(after: "New"), ["York", "and"])
+        XCTAssertEqual(words.nextWords(after: "new", limit: 1), ["York"])
+        XCTAssertEqual(words.nextWords(after: "old"), [])
+        let capitalisedKey = EnglishWords(words: [], followers: ["New": ["York"]])
+        XCTAssertEqual(capitalisedKey.nextWords(after: "new"), ["York"])
+    }
+
+    func testRankIsAnExactMatchOnly() {
+        XCTAssertEqual(fixture.rank(of: "tomorrow"), 2)
+        XCTAssertEqual(fixture.rank(of: "Tomorrow"), 2)
+        XCTAssertNil(fixture.rank(of: "tomo"))
+        XCTAssertNil(fixture.rank(of: ""))
+    }
+
     func testAMissingResourceIsSilentRatherThanFatal() {
         // A keyboard extension that crashed because a file moved would be far
         // worse than one that stops suggesting.
-        let missing = EnglishWords(url: nil)
+        let missing = EnglishWords(wordsURL: nil, followersURL: nil)
         XCTAssertEqual(missing.completions(for: "to"), [])
         XCTAssertEqual(missing.completions(for: "a"), [])
+        XCTAssertEqual(missing.nextWords(after: "thank"), [])
+        XCTAssertNil(missing.rank(of: "the"))
+        XCTAssertEqual(WordSuggestions.suggestions(for: "thankyou", in: missing), [])
+        XCTAssertEqual(WordSuggestions.predictions(after: "thank ", in: missing), [])
+    }
+
+    func testOneMissingFileLeavesTheOtherHalfWorking() {
+        let noFollowers = EnglishWords(
+            wordsURL: EnglishWords.bundledWordsURL, followersURL: nil)
+        XCTAssertEqual(noFollowers.completions(for: "tomo").first, "tomorrow")
+        XCTAssertEqual(noFollowers.nextWords(after: "thank"), [])
+        let noWords = EnglishWords(
+            wordsURL: nil, followersURL: EnglishWords.bundledFollowersURL)
+        XCTAssertEqual(noWords.completions(for: "tomo"), [])
+        XCTAssertEqual(noWords.nextWords(after: "thank"), ["you"])
     }
 
     // MARK: the bundled resource
 
+    private let bundled = EnglishWords(
+        wordsURL: EnglishWords.bundledWordsURL, followersURL: EnglishWords.bundledFollowersURL)
+
     func testTheBundledListLoadsAndAnswersTheCaseItExistsFor() {
-        XCTAssertNotNil(EnglishWords.bundledURL, "the resource didn't load")
-        let words = EnglishWords(url: EnglishWords.bundledURL)
+        XCTAssertNotNil(EnglishWords.bundledWordsURL, "the resource didn't load")
         // The example in the file's own header: `tomo` must already offer
         // `tomorrow` rather than the far rarer `tomography`.
-        XCTAssertEqual(words.completions(for: "tomo", limit: 5).first, "tomorrow")
-        XCTAssertFalse(words.completions(for: "wor").isEmpty)
+        XCTAssertEqual(bundled.completions(for: "tomo", limit: 5).first, "tomorrow")
+        XCTAssertFalse(bundled.completions(for: "wor").isEmpty)
     }
 
-    func testWarmingOffTheMainThreadYieldsTheSameTable() {
-        // Reading and sorting 40,000 words must not land on the first letter
-        // the user types, so the pane warms a beat earlier and idle. What comes
-        // back has to be the same table a keystroke would have built itself.
-        let cold = EnglishWords(url: EnglishWords.bundledURL)
-        let warmed = EnglishWords(url: EnglishWords.bundledURL)
-        XCTAssertFalse(warmed.isWarm)
-        warmed.warm()
-        let landed = expectation(description: "warm lands on the main queue")
-        func poll() {
-            if warmed.isWarm { return landed.fulfill() }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: poll)
+    func testTheBundledFollowersAnswerTheCasesTheyExistFor() {
+        XCTAssertNotNil(EnglishWords.bundledFollowersURL, "the resource didn't load")
+        XCTAssertEqual(WordSuggestions.predictions(after: "thank ", in: bundled), ["you"])
+        XCTAssertEqual(
+            WordSuggestions.predictions(after: "i ", in: bundled),
+            ["was", "do", "have", "am", "had"])
+        XCTAssertEqual(
+            WordSuggestions.predictions(after: "new ", in: bundled), ["York", "Zealand", "and"])
+    }
+
+    func testTheBundledDataSplitsTheRunTogetherPhrasesItShould() {
+        XCTAssertEqual(WordSuggestions.suggestions(for: "thankyou", in: bundled).first, "thank you")
+        XCTAssertEqual(WordSuggestions.suggestions(for: "Thankyou", in: bundled).first, "Thank you")
+        XCTAssertEqual(WordSuggestions.suggestions(for: "THANKYOU", in: bundled).first, "THANK YOU")
+        XCTAssertEqual(WordSuggestions.suggestions(for: "iam", in: bundled).first, "I am")
+        XCTAssertEqual(
+            Array(WordSuggestions.suggestions(for: "usin", in: bundled).prefix(2)),
+            ["using", "us in"])
+        XCTAssertEqual(WordSuggestions.suggestions(for: "ofthe", in: bundled).first, "of the")
+        XCTAssertEqual(WordSuggestions.suggestions(for: "newyork", in: bundled).first, "new York")
+        XCTAssertEqual(
+            WordSuggestions.suggestions(for: "unitedstates", in: bundled).first, "united States")
+        XCTAssertEqual(WordSuggestions.suggestions(for: "iwant", in: bundled).first, "I want")
+        XCTAssertEqual(
+            Array(WordSuggestions.suggestions(for: "stayin", in: bundled).prefix(2)),
+            ["staying", "stay in"])
+    }
+
+    func testTheBundledDataDoesNotSplitWhatIsNoKnownPair() {
+        for partial in ["iphone", "idont", "begining", "occured", "youtube"] {
+            let out = WordSuggestions.suggestions(for: partial, in: bundled)
+            XCTAssertFalse(out.contains { $0.contains(" ") }, "\(partial) was split: \(out)")
         }
-        poll()
+    }
+
+    func testTheBundledDataLeavesRealWordsWhole() {
+        for word in ["into", "area", "cannot", "maybe"] {
+            let out = WordSuggestions.suggestions(for: word, in: bundled)
+            XCTAssertEqual(out.first, word)
+            XCTAssertFalse(out.contains { $0.contains(" ") }, "\(word) was split: \(out)")
+        }
+    }
+
+    func testLookupsWaitForTheWarmInsteadOfParsingOnTheMainThread() {
+        // The pane refreshes its bar in the same turn it warms, and a refresh
+        // that parsed the files itself would put the cost the warm exists to
+        // avoid right back on the main thread.
+        let warmed = EnglishWords(
+            wordsURL: EnglishWords.bundledWordsURL,
+            followersURL: EnglishWords.bundledFollowersURL)
+        var calls = 0
+        let landed = expectation(description: "warm lands on the main queue")
+        warmed.warm {
+            calls += 1
+            landed.fulfill()
+        }
+        warmed.warm { calls += 1 }
+        XCTAssertEqual(warmed.completions(for: "tomo"), [])
+        XCTAssertEqual(warmed.nextWords(after: "thank"), [])
+        XCTAssertNil(warmed.rank(of: "the"))
+        XCTAssertFalse(warmed.isWarm)
+
         wait(for: [landed], timeout: 5)
-        XCTAssertEqual(warmed.completions(for: "tomo"), cold.completions(for: "tomo"))
-        XCTAssertEqual(warmed.completions(for: "wor"), cold.completions(for: "wor"))
+        XCTAssertEqual(warmed.completions(for: "tomo").first, "tomorrow")
+        XCTAssertEqual(warmed.nextWords(after: "thank"), ["you"])
+        XCTAssertEqual(warmed.rank(of: "the"), 0)
+        warmed.warm { calls += 1 }
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+        XCTAssertEqual(calls, 1)
     }
 }
 
@@ -129,6 +213,16 @@ final class WordSuggestionsTests: XCTestCase {
         // A word that carries case of its own is left alone by a lowercase
         // partial, which is what lets `kub` offer `Kubernetes`.
         XCTAssertEqual(WordSuggestions.matchingCase(of: "Kubernetes", like: "kub"), "Kubernetes")
+    }
+
+    func testThePronounIIsAlwaysCapitalised() {
+        XCTAssertEqual(WordSuggestions.matchingCase(of: "i", like: "i"), "I")
+        XCTAssertEqual(WordSuggestions.matchingCase(of: "i am", like: "iam"), "I am")
+        XCTAssertEqual(WordSuggestions.matchingCase(of: "i'm", like: "i"), "I'm")
+        XCTAssertEqual(WordSuggestions.matchingCase(of: "i\u{2019}ll", like: "i"), "I\u{2019}ll")
+        XCTAssertEqual(WordSuggestions.matchingCase(of: "so i am", like: "soia"), "so I am")
+        XCTAssertEqual(WordSuggestions.matchingCase(of: "in", like: "i"), "in")
+        XCTAssertEqual(WordSuggestions.matchingCase(of: "it's", like: "i"), "it's")
     }
 
     // MARK: the bar itself
@@ -171,5 +265,111 @@ final class WordSuggestionsTests: XCTestCase {
     func testNothingIsSuggestedForNothingTyped() {
         XCTAssertEqual(
             WordSuggestions.suggestions(for: "", in: fixture, lexiconTerms: ["Tomohiro"]), [])
+    }
+
+    // MARK: missing spaces
+
+    private let pairs = EnglishWords(
+        words: ["thank", "you", "is", "a", "isabel"],
+        followers: ["thank": ["you"], "is": ["a"]])
+
+    func testTwoWordsRunTogetherAreOfferedWithTheSpace() {
+        XCTAssertEqual(WordSuggestions.suggestions(for: "thankyou", in: pairs), ["thank you"])
+        XCTAssertEqual(WordSuggestions.suggestions(for: "Thankyou", in: pairs), ["Thank you"])
+    }
+
+    func testTheLexiconStillComesAheadOfASplit() {
+        XCTAssertEqual(
+            WordSuggestions.suggestions(
+                for: "thankyou", in: pairs, lexiconTerms: ["ThankYouNote"]),
+            ["ThankYouNote", "thank you"])
+    }
+
+    func testAKnownPairComesAheadOfRareCompletions() {
+        let rare = EnglishWords(
+            words: ["is", "a"]
+                + Array(repeating: "zzz", count: WordSuggestions.commonWordRank) + ["isabel"],
+            followers: ["is": ["a"]])
+        XCTAssertEqual(WordSuggestions.suggestions(for: "isa", in: rare), ["is a", "isabel"])
+    }
+
+    func testAKnownPairGoesBehindACommonCompletion() {
+        XCTAssertEqual(WordSuggestions.suggestions(for: "isa", in: pairs), ["isabel", "is a"])
+        XCTAssertEqual(
+            WordSuggestions.suggestions(for: "isa", in: pairs, lexiconTerms: ["Isaac"]),
+            ["Isaac", "isabel", "is a"])
+    }
+
+    func testTwoListWordsThatAreNoKnownPairNeverSplit() {
+        let words = EnglishWords(words: ["so", "something", "meth", "meeting", "tomorrow"])
+        XCTAssertEqual(WordSuggestions.suggestions(for: "someth", in: words), ["something"])
+        XCTAssertEqual(WordSuggestions.suggestions(for: "meetingtomorrow", in: words), [])
+        let unpaired = EnglishWords(words: ["is", "a", "isabel"])
+        XCTAssertEqual(WordSuggestions.suggestions(for: "isa", in: unpaired), ["isabel"])
+    }
+
+    func testAKnownPairSplitsEvenWhenTheWordListLacksAHalf() {
+        let words = EnglishWords(words: ["united"], followers: ["united": ["States"]])
+        XCTAssertEqual(
+            WordSuggestions.suggestions(for: "unitedstates", in: words), ["united States"])
+        XCTAssertEqual(
+            WordSuggestions.suggestions(for: "UnitedStates", in: words), ["United States"])
+    }
+
+    func testALongRunOfLettersIsNotSplit() {
+        let long = String(repeating: "b", count: 59)
+        let words = EnglishWords(words: ["a"], followers: ["a": [long]])
+        XCTAssertNil(WordSuggestions.split("a" + long, in: words))
+        XCTAssertEqual(WordSuggestions.split("abbb", in: EnglishWords(
+            words: ["a"], followers: ["a": ["bbb"]])), "a bbb")
+    }
+
+    func testAPartialThatIsItselfAWordIsNeverSplit() {
+        let words = EnglishWords(
+            words: ["in", "to", "into"], followers: ["in": ["to"]])
+        XCTAssertEqual(WordSuggestions.suggestions(for: "into", in: words), ["into"])
+    }
+
+    func testTheMostCommonKnownPairWins() {
+        let words = EnglishWords(
+            words: ["a", "the", "ate", "at", "tea"],
+            followers: ["a": ["tea"], "ate": ["a"]])
+        XCTAssertEqual(WordSuggestions.split("atea", in: words), "ate a")
+    }
+
+    // MARK: next-word predictions
+
+    private let followers = EnglishWords(
+        words: [], followers: ["thank": ["you"], "new": ["York", "and"], "and": ["i", "the"]])
+
+    func testAWordAndASpaceOfferWhatFollowsIt() {
+        XCTAssertEqual(WordSuggestions.predictions(after: "thank ", in: followers), ["you"])
+        XCTAssertEqual(
+            WordSuggestions.predictions(after: "I said thank ", in: followers), ["you"])
+        XCTAssertEqual(WordSuggestions.predictions(after: "new ", in: followers), ["York", "and"])
+        XCTAssertEqual(
+            WordSuggestions.predictions(after: "new ", in: followers, limit: 1), ["York"])
+    }
+
+    func testPredictionsKeepTheDataCaseWhateverTheWordBefore() {
+        // An all-caps word before the space is as often an acronym as caps lock.
+        XCTAssertEqual(WordSuggestions.predictions(after: "Thank ", in: followers), ["you"])
+        XCTAssertEqual(WordSuggestions.predictions(after: "THANK ", in: followers), ["you"])
+        XCTAssertEqual(WordSuggestions.predictions(after: "NEW ", in: followers), ["York", "and"])
+    }
+
+    func testAPredictedPronounIsCapitalisedWhateverTheData() {
+        XCTAssertEqual(WordSuggestions.predictions(after: "and ", in: followers), ["I", "the"])
+    }
+
+    func testNothingIsPredictedOnceTheSentenceHasMovedOn() {
+        XCTAssertEqual(WordSuggestions.predictions(after: "thank", in: followers), [])
+        XCTAssertEqual(WordSuggestions.predictions(after: "thank  ", in: followers), [])
+        XCTAssertEqual(WordSuggestions.predictions(after: "thank. ", in: followers), [])
+        XCTAssertEqual(WordSuggestions.predictions(after: "thank\n", in: followers), [])
+        XCTAssertEqual(WordSuggestions.predictions(after: " ", in: followers), [])
+        XCTAssertEqual(WordSuggestions.predictions(after: "", in: followers), [])
+        XCTAssertEqual(WordSuggestions.predictions(after: nil, in: followers), [])
+        XCTAssertEqual(WordSuggestions.predictions(after: "old ", in: followers), [])
     }
 }

@@ -1,0 +1,1087 @@
+# English next-word table for the keyboard's suggestion bar: after
+#   `thank ` the bar offers `you`, and `thankyou` is offered as `thank you`.
+# One line per previous word: `prev next1 next2 ...`, space-separated, prev
+#   lowercase, followers in display case, most frequent first.
+# GENERATED — run scripts/gen-english-next-words.mjs to rebuild; do not hand-edit.
+# Source: https://github.com/orgtre/google-books-ngram-frequency @ e20471c15a758be3362b16d07870b34df4f7ccc3
+#   ngrams/2grams_english.csv, the 5,000 most frequent English 2-grams of
+#   Google Books Ngram v3 (books 2010-2019). CC-BY 3.0 (the repository's
+#   content, and the Google Books Ngram corpus it is derived from).
+# See ios/THIRD-PARTY.md.
+of the a his this her their these an them my course all it its our that your what which those God us any life time such one being each him people you new some human two other how social water both me information many different state women interest self power men view things work public three knowledge money data others light Jesus Christ war political Israel children action high America law American every death more another love whom food patients having several government various research man energy age blood individual good nature California international land local economic mind years business England society modern non control China great making about language living something individuals paper natural small national education four Chicago production history thought art health certain
+in the a this his which her their order an my fact that addition its some your our front all terms any other one particular these many Figure such part and general both it each Chapter turn contrast relation time New place mind two those Fig accordance what whole most every case response different love Table Europe patients to another England spite London life more China America practice India recent English early various with public France charge short on no them question there Section line South several him three human common children high Germany for so bed detail here writing
+to the be a do make have get see her his take me go him say find their keep this know give use help my you an work come tell look think them provide that which meet understand your it create leave its show put talk all one avoid move live bring our become ask determine ensure those pay speak hear stay change what us develop learn stop let support achieve protect prevent play each identify some any explain another produce read try follow hold believe improve other call consider start build write reduce feel maintain obtain reach run turn increase establish these eat return allow as form deal carry set buy kill describe accept save perform address join God electronic control share face continue act serve sleep walk answer stand pass open offer include sit remove fight break check receive begin enter spend send watch wait and add remain such study promote prove remember draw gain discuss visit cover himself die catch assess focus pick apply lose engage death grow explore both sell choose raise complete bed happen recognize teach express escape whom pull solve examine hide respond define fall others drive seek treat marry prepare fill end decide more measure manage evaluate life win listen represent admit attend love where report lead participate mention generate realize demonstrate test assist present place worry further discover handle note secure investigate enjoy date suggest deliver
+on the a his her this their my to your an it one that its which our top him how what me and all them in each both earth these behalf with some you any
+and the a I then he that in to it his she other they their its so you we was is not her there all for more how as when this of what with had even if an are said social my on one by now at have some thus also can no has your therefore do yet from will others looked were went let make those took made put who after be most many two would only political get see may did New which women down began take our out over turned found left again gave economic could saw use asked where why colleagues walked sometimes set pulled every cultural still started just often go told non without development perhaps finally another me these self should give into children held any water very time sat services well hence high later never local white control forth tried family less work public because through got support John three early each while
+for the a example this her you me his all an their him each it instance some that them more your my any us which one its those many what our these both two such several another years every most he I other use three being now in
+at the least a all her this him his that me first home once any last one my an each night it which their times work some its your them
+from the a his her their this one an my which that him its all other me your it our being what those them these any each behind
+with the a his her an him their me you this my them its all it your that respect one other no some which each us our two those such these regard more what any another both others whom different God many
+it is was would to has had will can in may does did and as all could seems should with might also seemed must out for a on up were took from into be came comes takes that the at back made means makes appears down became off over by just felt again not
+by the a an his this their which using her any one its means some all that now my
+that the is he it I they was you she we are a there this of would had can in were has will have his if all one could time these may their when no her way for some might an day my night which any such made does many God to our your people what at even only did most as moment makes each both do should
+as a the well he if an I she they it we to you in much soon possible though long one follows far his part shown for such many being their with is her that this of those my its opposed was
+do not you it with so the that this I we to anything something what a
+did not you the he it I she
+is a the not to that an no also in it one more used important very still often now only what this so called possible based at going of given always there true made usually necessary about on just my as required being for all known likely shown your much why less too defined available considered clear quite something difficult most nothing found well another he then like needed generally good said because essential done how therefore associated where seen probably by
+he was had said could did would is has knew looked will wanted asked took saw thought does felt went can says told turned might also and made came should got found gave must never or began stood needed heard left held wrote pulled walked called may tried put sat reached spoke just smiled seemed wants still continued started
+can be not also do see you only I get have help make use take we find tell
+the same first other most world time way two following new United end next last door second right only case best house one state whole fact man number old room people use main rest day city more past great Lord ground back process country middle top very idea government water court National table body early king work church air question problem three public general night future development American entire name front latter floor company patient system word present power family point truth original war child presence book subject car current British role form earth law road third beginning results need data woman story words final field person men moment term place value result left light basis sun total young local amount children individual area human long side kitchen group wall morning surface land West social previous South nature window north head author effect situation real police study key French late bottom relationship others importance information little bed street high ability small concept year context heart International European face course potential white project extent difference sound possibility University river president former line sea various market purpose text phone spirit school Federal edge girl highest political risk center good initial building fire average level town dark community lower primary life four major business majority effects boy central model cost issue money history reason above size actual English matter impact years full east greatest different region sky image overall kind big game period poor wind upper organization father basic hospital population corner application answer age German party news absence women research blood common sense largest opposite direction nation product thought opportunity decision brain death distance large quality production Holy standard part things doctor type enemy dead material job least notion order office event structure price existence natural meaning ship source client crowd UK scene physical position Bible film open mind authors living object reader eBook environment black evening many program village language design base stairs heat treatment team worst rate site test remaining Internet baby creation energy path EU traditional paper Commission walls evidence true pain Soviet date self task lack service hall island letter analysis property rules hell military loss specific influence list mother global change Chinese maximum cause economic user correct eyes food summer control performance action target bar range home formation girls principal students modern terms space wrong degree experience hands Department appropriate streets audience skin trees construction stage core start mid music financial usual goal proposed bank fourth ones knowledge theory relative length plan boys army chief view picture set focus sample solution growth title better thing media movement principle class cell economy voice message hand ways screen corresponding parties short boat legal cold son tree low post darkness eye centre universe Indian soul literature firm mean larger scope outside distribution ball method practice Christian hotel normal higher strength Secretary report expression contrary glass probability student garden problems red opening necessary conditions introduction steps function chapter driver forest board content ancient five pressure relevant resulting dog teacher Japanese underlying rule beach conversation box details Roman non battle owner values existing inner sight act Russian temperature so meeting train greater discussion Royal passage definition sum contract bathroom status far few nineteenth flow establishment network weight cross requirements choice moon exact proper Council benefits internal days chair Jews reasons chance figure private defendant rise ultimate well outcome condition background kids entrance play older members location Supreme Greek needs management mass argument health latest biggest particular computer capital bridge consequences historical art shape conclusion novel Gospels twentieth afternoon volume lowest feeling horse gate guy woods reality midst Western roof success force names security camera facts plane hill operation capacity vast single dominant soil park character free counter press mountain disease events call Spanish memory policy love balance means rain laws minimum rights critical authority fall weather inside circumstances outer help interest Jewish perfect benefit trial official questions fundamental victim output changes
+into the a his her my account an their it two this
+was a not the in to no an going that still so also just one on only very about too at all more as now it his there made already able born always like being used something nothing right found doing my almost never he her looking gone trying given for quite probably taken then over getting really done of with out coming this
+one of who another that or day can hand is to thing in side was and way could more would has for with
+i was do have am had can could did will think would know said want thought knew should saw just felt got told wanted need asked mean say see never went shall believe hope feel love guess must heard found took suppose looked remember get might really wish like came made tried still also may were tell needed ask started always understand take find look go put left used turned wonder began
+have been to a the not no you an had seen done any made some come also already become taken it found never more shown gone their in
+had been to a not no the never come already made taken gone an just become done seen left given said happened ever always had in only told he some his
+out of the to in a and that on for with from there his by into at what as
+et al
+she was had said could did would is knew looked has felt asked wanted thought saw turned took told went does might and can will says should got smiled needed gave found made heard came tried must
+there is was are were will would has had and in to may for
+such as a an that
+this is was time book chapter section case way point one would will can study means morning may process work has kind type approach to new paper in place man world question day period part volume and area
+would be not have you like never take make do come go say
+may be not have also
+all the of that right this over these Rights I his those about my in three other things day he their her
+does not the it
+will be not have you take make never also help do see come need find give
+not be have know to a only the want even you been think in just get see like do that going yet so believe need really make as sure take go say always mean help understand let all seem necessarily tell for an come it care at look give quite feel much find stop matter worry one work enough seen being remember too mind very what on allow
+has been a not to the no become also an made
+if you the he I it they we she a there not this that one any your only
+they were are had have would can could do will did may should also all might must want came went both found need say said
+could not be have see do get only hear feel make tell
+through the a his her which
+about the it to a what her this how that his their him you your my me them
+part of in
+number of
+going to on
+you can are have know do will to want were think need and may should could would must see did might get had in a like for mean say that go feel the just look all really got said ever find with come going make doing tell take
+want to you me
+should be not have
+a few little new good man lot small long very large great single number more moment way bit result person woman second time couple certain different particular high child big year whole group while major series short variety strong place day similar significant young better week sense part set deep specific matter common wide simple given full real word special problem hand low state half kind general chance huge friend third case smile minute member clear key family higher system look point book letter piece much hundred positive function change bad thing form quick question range pair well brief job process world period total month list life study complete white black local greater public girl human model two means nice and company social larger thousand story car sudden fine position patient dozen business direct critical non natural combination beautiful separate hard powerful light step right one line house sign first private further party relatively constant complex serious national broad political sort role strange decision country central boy picture copy plan regular source voice review message dark typical unique situation consequence free perfect table product slight personal baby lack glass
+over the to a her and his time my
+more than of likely and to important about or information like difficult time complex
+when the he I you they she we it a there his one
+new York Zealand and
+but the I it he she also not they that in you there a this we if to as when then what for his now with rather no at only is was one even by her still do did are my
+need to for a not of
+be a the used able in seen made more found an considered done taken so no sure copied suppressed very to given on that as at of obtained said there called with applied expected one here better understood too treated
+able to
+between the them two a
+are not the you a in also more used to often all no still very going now two many so some we available being at usually of made given likely able they only as shown required those
+we have can are were will do had need could should must would know may did all shall see might want find get also got use go went
+during the a this
+well as
+which is the was are he they I had we can it has were would a may she have will you in to of could means
+based on
+back to in and of into on at from the
+must be have not
+like a the to that this it you an I he
+used to in for as by the
+up to the and in with a at on for his from of by her as into
+use of the a in it to
+according to
+some of time third other people kind cases sort
+united States Nations Kingdom
+under the a his this
+due to
+after the a all that he his
+end of up
+what is I you he the was they we it are do she to a happened would had did about if does can has happens kind
+within the a
+order to of
+so that much I many far the he it you we they on long she as what
+wanted to
+rather than
+kind of
+where the he they I it you she we a there is are
+or the a in not more other to even two her by at duplicated less eChapter any so she that an if as something of for three is on
+than the a that in one to I he any those it they you
+because of the it they I he she you we there
+against the his a her him
+him to and in a as with that the for on from out at up into
+trying to
+me to and that a in the with as for about on from out what
+how to the much many do they it can you he could long I did we she does are
+journal of
+his own head eyes hand face hands father wife life mother voice mouth mind arms way body or feet heart lips name family arm back chest son brother fingers first work shoulder gaze neck death friend right throat words hair
+around the her and his him to a
+way to of that in he for the out
+who had was are is were have has would can could did will do
+university of Press
+across the
+most of important common likely people
+each other of
+their own lives way children work
+before the he I she you they it we him
+those who of that in with
+might be have not
+them to in and as with all from on for into that a the out
+associated with
+away from and with the
+down the to and on at in a her from
+were not the in a to all also still no going so more on made used able at
+time to of and in for I the he when that with is she you as
+fact that
+form of a
+began to
+no one longer more matter doubt idea way other need reason time
+side of
+sense of that
+tried to
+look at like for
+enough to for
+terms of
+come to from back on in up out and into
+see the also that you what if how a it him her Chapter Figure
+seemed to
+front of door
+while the he I she they it
+came to from out in back up into
+off the to his and her
+among the them
+development of and
+looked at up like down around
+her to eyes head own face and hand mother husband hands father in a body life voice mouth back heart mind hair with arms as that lips feet for fingers the way from family on sister up legs
+many of people years other times
+go to on back and out through into home with
+history of and
+along the with
+amount of
+since the it I he they
+case of
+just as a the like to one before in
+type of
+likely to
+level of
+related to
+set of up the out in
+know what that how the you it about I if where
+using the a
+even if though the more in when a as to
+upon the a
+been a the in used able made so to shown found an
+instead of
+make a the it sure up you them me
+value of
+lot of
+nature of and
+us to that in and a
+lack of
+types of
+rest of
+shall be not
+toward the
+try to
+less than
+same time as way thing
+then the he I she we it you they a there
+ability to
+went to on out back into
+only a the one to in be for by if when two
+needed to
+said to that the he in as with it she
+range of
+analysis of
+shown in that to
+result of in
+right to now of and hand in
+found in that a the to it out
+state of and University
+until the he I they it she you
+role of in
+members of
+sort of
+effects of on
+study of in
+seems to
+close to
+access to
+known as to
+point of in to is
+people who in to are of and with were have
+presence of
+much of more as to less
+both the of in sides
+effect of on
+say that to it
+seem to
+process of is and
+made a the it by to her in of up him me his for
+top of
+take a the it care place
+understanding of the
+idea of that
+took a the place her
+also be the a been to in have
+difficult to
+any of other more time one
+department of
+told me him her you the them
+involved in
+changes in
+think of that about I it you he we the
+throughout the
+an important hour example old individual increase end open opportunity attempt alternative early object additional excellent idea
+variety of
+tell me you him her the us
+other hand than words side people things
+focus on of
+its own
+group of
+first time of and to place
+thank you
+years of ago old later and after in
+too much many late
+view of
+lead to
+series of
+response to
+my own life father mother head eyes mind heart hand face dear hands friend brother wife way body parents first family name husband dad sister son
+percent of
+per cent
+let me us the him her it them you go
+example of
+ready to for
+next to day morning
+forms of
+important to for
+these are two things were people
+behind the her him
+aspects of
+addition to
+couple of
+patients with
+looking at for
+towards the
+turned to out and
+levels of
+attempt to
+soon as
+similar to
+means of that to
+referred to
+change in the of
+full of
+although the it he
+get a the to out it back in up you
+parts of
+importance of
+interest in
+decided to
+believe that in it
+power of to and in
+beyond the
+long as time and
+responsible for
+return to
+attention to
+thought of that it to about I he you
+concept of
+led to
+compared to with
+necessary to for
+outside the of
+rate of
+increase in the
+source of
+subject to of
+near the
+loss of
+approach to is
+followed by the
+unable to
+hard to
+period of
+including the
+onto the
+whether the it or they
+needs to of
+none of
+respect to
+aware of that
+find the a out that it
+piece of
+list of
+deal with of
+name of is
+work of in on with and for is to
+prior to
+knew that the it he what she
+risk of
+possible to that
+tend to
+relationship between with
+far as from more away
+your own life father mind mother
+continue to
+continued to
+basis of for
+relation to
+theory of and
+act of as
+required to for
+knowledge of and
+supposed to
+man who in and of was with is to
+two of years or days men weeks
+account of for
+course of
+given the to by in a that
+saw the a that him
+quality of
+treatment of
+above the all
+become a the more
+life and of in is
+returned to
+started to
+degree of
+control of over and
+got to a the up
+called the a
+note that
+cost of
+matter of how what
+without the a any
+waiting for
+kinds of
+better than
+context of
+purpose of
+talk to about
+interested in
+member of
+impact of on
+care of for
+place in of to where for and the
+create a
+half of a the
+opportunity to
+willing to
+majority of
+being a the in able
+beginning of to
+caused by
+area of
+middle of East
+left the to
+inside the
+function of
+depending on
+despite the
+having a to been the
+absence of
+structure of and
+edge of
+size of and
+system of is and
+refers to
+son of
+easy to
+version of
+review of
+designed to
+talking about to
+filled with
+refer to
+show that the
+suggests that
+nothing to but more
+capable of
+application of
+examples of
+age of
+expected to
+focused on
+understand the that
+consider the
+evidence of that for
+world War of and is
+now that I the and he it you
+managed to
+described in as by
+picked up
+question of is
+head and of to
+difference between in
+provide a the
+suggest that
+leads to
+men and who in of were
+seen in as the
+something that to else about like of in
+following the
+once again the more a
+together with in and
+though the he it I she they
+ensure that
+results of in from
+wants to
+combination of
+applied to
+here is and to in are for
+different from
+model of for
+definition of
+description of
+carried out
+cengage Learning
+our own lives
+why do did the I not he are would you
+wish to
+distribution of
+put the it on a in his her
+line of
+depends on
+regard to
+discussion of
+information about on and is to
+areas of
+appears to
+determine the
+help you me to
+reference to
+hand and on to in
+every day time
+discussed in
+eyes and were of
+third party
+clear that
+length of
+dealing with
+ought to
+light of and
+allowed to
+sound of
+cause of
+edited by
+intended to
+health and care
+possibility of
+experience of
+house of and
+production of and
+became a the
+notion of
+bit of
+influence of on
+sure that you to
+live in
+stared at
+portion of
+pair of
+consists of
+happened to
+story of
+desire to
+oxford University
+keep the
+day of and in
+very much well good different little important
+shook his her
+bible Halseth
+parallel Bible
+aspect of
+accordance with
+meaning of
+image of
+thousands of
+whole or
+face of and was
+appear to in
+shows the that
+de la
+published in
+give you me the a up him it them
+failed to
+things that to are
+center of for
+thinking about of
+social and media
+living in room
+rights Reserved of and
+young man people
+properties of
+field of
+chance to of
+existence of
+argued that
+expression of
+heard the of a
+comes to from
+included in
+advantage of
+differences in between
+begin to
+values of
+opened the
+elements of
+listen to
+closer to
+method of
+leading to
+equal to
+formation of
+last night time
+reached the
+body of and
+include the
+characteristics of
+management of and
+reason for to
+law of and
+old man
+reduce the
+regardless of
+few days minutes years of
+contact with
+derived from
+refused to
+research and on in
+human rights beings
+available to at for in
+problem of is
+provides a
+direction of
+days of
+creation of
+cambridge University
+position of
+read the
+leave the
+again and
+effort to
+sat down on in
+high school
+support for of the
+suggested that
+collection of
+door and to
+making a the it
+suppressed from
+contribute to
+regarding the
+electronic rights
+open the to and
+meant to that
+party content
+below the
+corner of
+person who to
+children and of with in
+content may of
+consistent with
+performance of
+assessment of
+city of
+present in
+apart from
+attempts to
+assume that
+water and
+death of
+sight of
+ways to of in
+provided by
+especially in when
+fear of
+greater than
+except for
+ebook and
+evaluation of
+issue of
+noted that
+am not I
+interpretation of
+entered the
+never been be seen have had
+five years
+impossible to
+hundreds of
+appeared to in
+forced to
+construction of
+determined by to
+resulted in
+defined as by in
+heart of
+principles of
+office of
+affect the
+meet the
+institute of
+food and
+gave him me a her the
+pointed out
+sign of
+bottom of
+working with on in
+attached to
+spite of
+efforts to
+science and
+relating to
+women in and who
+room and for
+features of
+states and of that
+engaged in
+added to
+sent to
+felt like the that a
+principle of
+education and
+court of
+home and to in
+three years of times days
+someone who else
+thanks to
+section of
+growth of and
+always been be
+characterized by
+moved to
+plenty of
+lived in
+supreme Court
+god is and
+regarded as
+spirit of
+school of and
+sources of
+describe the
+search for
+surface of
+implementation of
+believed that
+argue that
+practice of
+picture of
+great deal
+himself to in
+mean that to
+respond to
+hear the
+percentage of
+book of is
+supported by
+follow the
+love you and with to of
+limited to
+agreed to
+king of
+perhaps the
+lots of
+linked to
+choice of
+depend on
+emphasis on
+opposed to
+status of
+presented in
+resulting in
+produced by
+asked to him me the
+quite a
+contrast to
+consequences of
+still in be a
+feel the like that
+scope of
+remember that the
+signs of
+serve as
+measure of
+affected by
+concerning the
+click the
+studies of in have
+cases of
+family and members
+apply to
+participate in
+engage in
+concerned with
+prepared to
+accompanied by
+coming to from
+forward to
+taking the a
+thing to that I
+secretary of
+relative to
+showed that
+sought to
+groups of
+share of
+failure to of
+enter the
+south Africa
+continues to
+numbers of
+explain the
+looks like
+realized that
+san Francisco
+beneath the
+connected to
+best to of
+evolution of
+hands and of on
+turn to
+makes it the a
+date of
+rise to of
+los Angeles
+ahead of
+pick up
+cent of
+exactly what
+stood up in
+charge of
+wait for
+listening to
+introduction to of
+purposes of
+details of
+anything to else
+proceedings of
+strength of
+word of
+nineteenth century
+moment of
+argues that
+conditions of
+representation of
+ministry of
+words of
+good to for and
+product of
+responsibility for
+worry about
+doing so
+saying that
+taken to from
+character of
+proportion of
+creating a
+reasons for
+glanced at
+rely on
+president of
+sum of
+born in
+higher than education
+attempted to
+patterns of
+identify the
+copy of
+add the
+dependent on
+commitment to
+later in
+mother and
+letter to
+woman who
+answer to
+pattern of
+director of
+extent of
+improve the
+located in
+influenced by
+economic and
+speak to
+comparison of
+goal of
+composed of
+political and
+board of
+play a
+surrounded by
+tends to
+little more
+decision to
+division of
+data from and
+sides of
+held in the
+belong to
+referring to
+arrived at
+rules of
+benefits of
+twentieth century
+pay for
+pursuant to
+culture and of
+price of
+feeling of
+placed in on
+least one
+leaving the
+volume of
+appearance of
+language of and
+year of
+represents the
+methods of
+hope that
+york Times
+easier to
+indicates that
+connection with
+ten years
+mental health
+hit the
+protection of
+indicate that
+obtained by from
+weight of
+establishment of
+climate change
+focuses on
+movement of
+approaches to
+whom he
+components of
+jesus Christ
+significance of
+father and
+stage of
+thus the
+occur in
+politics of
+demand for
+past the
+pieces of
+participation in
+reach the
+combined with
+staring at
+represent the
+arms and
+consequence of
+considered to as
+author of
+assigned to
+association of
+wanting to
+lines of
+exposure to
+stages of
+concluded that
+served as
+capacity to
+divided into
+mode of
+force of
+design of and
+claim that
+amounts of
+bed and
+says that
+halseth English
+report of on
+element of
+ratio of
+millions of
+figure out
+distinction between
+component of
+identification of
+learn to
+class of
+allow the
+created by a
+requirements of
+reduction in of
+exposed to
+condition of
+rule of
+afraid of
+reported that
+friends and
+fail to
+freedom of
+already been
+written in
+rates of
+deep breath
+costs of
+plan to
+vision of
+feature of
+interests of
+key to
+contained in
+aimed at
+success of
+early in
+stay in
+six months
+brought to
+holy Spirit
+expressed in
+attempting to
+recognition of
+society of
+develop a
+students to
+war II and
+hair and
+focusing on
+behalf of
+carry out
+realize that
+replaced by
+emergence of
+happy to
+choose to
+council of
+centre of
+waited for
+concentration of
+examination of
+opportunities for
+images of
+flow of
+hours of
+voice was
+shape of
+location of
+done in to
+selection of
+consisting of
+whereas the
+table and of
+discuss the
+attributed to
+memory of
+represented by
+business and
+works of
+provisions of
+object of
+large number
+cup of
+awareness of
+conference on
+recent years
+overview of
+money to
+effectiveness of
+determination of
+mass of
+hong Kong
+benefit of
+observed in
+generation of
+potential for
+probability of
+yet the
+problems of
+wondered if
+base of
+contributed to
+sitting on in
+via the
+academy of
+familiar with
+call the
+belief that
+issues of
+gone to
+government and of
+particularly in
+soviet Union
+wide range
+causes of
+responses to
+lives of
+entitled to
+anyone else who
+address the
+stated that
+bound to
+population of
+conception of
+relevant to
+points of
+considering the
+mind and that
+happen to
+total of
+sequence of
+republic of
+free to
+received a
+four years
+pulled out
+ask for
+several times
+implications for of
+north America
+behavior of
+covered with
+begun to
+remove the
+takes place
+activity of
+examine the
+died in
+seek to
+land of
+faith in
+standing in
+statement of
+midst of
+models of
+tended to
+ever since
+african American
+laws of
+region of
+possession of
+round the
+contribution to
+talked about
+either the
+dealt with
+describes the
+frequency of
+learning and
+relate to
+directly to
+build a
+sit down
+dressed in
+art of
+provision of
+start of to
+site of
+belonging to
+starting to
+becomes a
+removal of
+pain and
+questions about
+smiled at
+origin of
+acts of
+characteristic of
+watched the
+bring the
+glad to
+additional information
+expansion of
+views of
+herself to
+extension of
+rid of
+returning to
+produce a
+themselves to
+protect the
+black and
+wife and

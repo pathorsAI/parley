@@ -171,7 +171,8 @@ The generator also adds a short hand-written supplement: contractions such as
 `don't`, which Google's tokenizer splits so that the corpus contains no
 apostrophe at all, and a handful of everyday words a corpus of books scanned
 from 1880 onward is too old for. That supplement is Parley's own and carries no
-third-party claim.
+third-party claim. It also drops thirteen words that are two words the scanner
+ran together, such as `ofthe`.
 
 The CC-BY 3.0 deed's own summary, reproduced from
 <https://creativecommons.org/licenses/by/3.0/>. The full legal code is long and
@@ -216,6 +217,32 @@ Notices:
   necessary for your intended use. For example, other rights such as publicity,
   privacy, or moral rights may limit how you use the material.
 ```
+
+## google-books-ngram-frequency (Google Books Ngram) English next-word table
+
+The English pane's next-word table
+(`ParleyKit/Sources/ParleyKit/Resources/english-next-words.txt`), which offers
+`you` after `thank ` and tells the pane that `thankyou` is `thank you`, is
+generated from the **google-books-ngram-frequency** tables:
+
+- Source: <https://github.com/orgtre/google-books-ngram-frequency>,
+  `ngrams/2grams_english.csv`
+- What that file is: the 5,000 most frequent English 2-grams of Google Books
+  Ngram v3 (20200217), counted over books from 2010-2019, cleaned
+- License: **CC-BY 3.0** for the repository's content, whose README states
+  "The content of this repository is licensed under the Creative Commons
+  Attribution 3.0 Unported License"
+
+The upstream corpus is **Google Books Ngram**, itself released under CC-BY 3.0.
+The cleaning and frequency tables are **orgtre/google-books-ngram-frequency**.
+Parley keeps only pairs of two letter-only words, merges pairs that differ only
+in case, and keeps each word's followers in frequency order. This section
+is the credit the licence asks for. The deed's summary is reproduced once, in
+the gwordlist section above, and applies here unchanged.
+
+Regenerate with `node scripts/gen-english-next-words.mjs`. The script pins the
+download to a commit and stamps it into the resource's header, currently
+`e20471c15a758be3362b16d07870b34df4f7ccc3`.
 
 ## Fonts
 

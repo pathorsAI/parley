@@ -922,9 +922,47 @@ most frequent first, on the same terms the 注音 composition takes the strip. T
 argument is the same one, too — the strip is the one row this keyboard has to
 spare, and a bar of its own above the keys would make the English pane taller
 than its neighbours every time somebody started a word, which shoves the host
-app's content up and down mid-swipe. When the partial word is empty the strip is
-the wordmark and the tabs again. A pending 注音 composition wins the row, though
-it cannot arise while the English pane is current.
+app's content up and down mid-swipe. Right after a word and a single space the
+bar holds **next-word predictions** instead: `thank ` offers `you`. So the
+wordmark and the tabs come back only when nothing is predicted, which is at the
+start of a field, after punctuation, and after a word the data has no line for.
+That costs the strip its wordmark for most of a sentence, and it is the right
+trade: the swipe, not the tabs, is the primary way across panes. A pending 注音
+composition wins the row, though it cannot arise while the English pane is
+current.
+
+A prediction is offered only after exactly one U+0020 space that follows a word.
+Two spaces, punctuation or a new line say the sentence moved on. The data's own
+case is kept whatever the case of the word before: `Thank ` and `THANK ` both
+offer `you`, and `new ` offers `York`. An all-caps word before a space is as
+often an acronym as caps lock, and upcasing after `the US ` offered
+`TO THAT IN AND A`. The pronoun rule below still applies, so `I` is capitalised
+by code rather than by an accident of the data.
+
+**Two words typed without a space are offered with it**: `thankyou` offers
+`thank you`, after the user's own terms and ahead of the completions. The one
+exception is a partial whose best completion is among the 20,000 most common
+words: then the split goes second, right behind that completion, because a
+partial that begins a common word is more likely that word half typed. Typing
+`usin` offers `using` then `us in`, and `stayin` offers `staying` then
+`stay in`, while `iam` still offers `I am` first, since its best completion
+ranks past 34,000. At 5,000, 144 prefixes of list words put a split first
+(`stayin`, `foundin`, `downto`); at 20,000, 52 do, all of rare words
+(`himalaya`, `ataxia`, `candor`).
+
+Only a **known pair** splits: the partial must be a word from the next-word
+table followed by one of its followers. The table, not the word list, is what
+proves both halves are words, so `unitedstates` offers `united States` and
+`resultsin` offers `results in` even though the list has no inflections. The
+right half keeps the table's case, so `newyork` offers `new York`. Among known
+pairs the most common wins, by the rarer half's rank. A cut that merely lands on
+two list words is not enough; allowing it produced `iphone` → `I phone`,
+`idont` → `id ont`, `begining` → `begin ing` and `occured` → `occur ed`, and no
+rank floor separated those from the real cases. So `meetingtomorrow` no longer
+splits, and that is accepted. A partial that is itself a list word is never
+split, which keeps `into`, `area`, `maybe` and `cannot` whole. A partial longer
+than 40 letters is not tried, since each cut is a lookup. One split only, never
+three words.
 
 The partial word is the run of letters and apostrophes immediately before the
 cursor in `textDocumentProxy.documentContextBeforeInput`, recomputed after every
@@ -940,10 +978,17 @@ rule. A keyboard that silently replaces a word it thinks is wrong is worse than
 one that suggests nothing — and this keyboard already asks for a lot of trust,
 since the personal dictionary learns from what the user retypes. Tapping a
 suggestion deletes one scalar per scalar of the partial and inserts the word plus
-a space. Case comes from what the user already said with the shift key: a
-capitalised partial gets a capitalised word, an ALL-CAPS partial of two letters
-or more gets an all-caps word, and one uppercase letter alone is read as a
-sentence starting rather than as caps lock.
+a space; a prediction has an empty partial, so it deletes nothing. Case comes
+from what the user already said with the shift key: a capitalised partial gets a
+capitalised word, an ALL-CAPS partial of two letters or more gets an all-caps
+word, and one uppercase letter alone is read as a sentence starting rather than
+as caps lock. On top of that the pronoun is always `I`: any word that is `i` or
+starts with `i'` is capitalised, so `iam` offers `I am` and `i'm` offers `I'm`.
+
+There is **no quoted literal in the first slot**, the `"thankyou"` iOS puts
+there. It exists on iOS to undo autocorrect on space, and this keyboard has no
+autocorrect: space already keeps exactly what was typed, and a finished word is
+already offered as itself.
 
 The user's own `Lexicon` terms are offered ahead of the bundled list — they are
 the one source that knows the names and jargon this particular person types. They
@@ -961,7 +1006,23 @@ are not used); the notice is in `ios/THIRD-PARTY.md`, and the download is pinned
 to a commit stamped into the resource's header, exactly as the 注音 tables are.
 Lists that were rejected on licensing, so nobody re-litigates it: Norvig's
 `count_1w` (LDC-derived, terms unclear), hermitdave/FrequencyWords (CC-BY-**SA**),
-SUBTLEX (non-commercial), google-10000-english (LDC-derived).
+SUBTLEX (non-commercial), google-10000-english (LDC-derived). The generator also
+drops thirteen words that are two words the scanner ran together, such as
+`ofthe` at rank 5,864: kept, `ofthe` would be a list word and would never split.
+They are the list words that equal a top-5,000 2-gram with the space removed and
+are at least 100 times rarer than that 2-gram, minus the real words among them
+(`cannot`, `tome`, `togo`, `goto`, `forme`, `goon`, `todo`, `ashe`).
+
+The predictions are `english-next-words.txt`: 1,077 lines, 32 KiB, one per
+previous word with every follower it has, most frequent first. The bar shows the
+first five; the split needs them all, since a cap of five dropped `i want`,
+`can you`, `a lot`, `of course` and `i think` from the known pairs.
+`scripts/gen-english-next-words.mjs` builds it from
+orgtre/google-books-ngram-frequency's `2grams_english.csv`, the 5,000 most
+frequent English 2-grams of Google Books Ngram (books 2010-2019), keeping
+letter-only pairs and merging pairs that differ only in case. **CC-BY 3.0**, for
+that repository's content and for the corpus it counts; the notice is in
+`ios/THIRD-PARTY.md` and the download is pinned the same way.
 
 A corpus of books from 1880 onward has two blind spots a keyboard cannot live
 with: Google's tokenizer splits every contraction, so there is not one apostrophe
@@ -973,13 +1034,21 @@ each word 50 million times — the same device, for the same reason, as
 `EnglishWords` reads the file the way `ZhuyinPhrases` reads its table: **lazily,
 once, and warmed off the main thread** when the English pane becomes current (and
 in `viewDidLoad` when the keyboard opens on it, which every keyboard without Full
-Access does). Rank is the file's order and nothing else. What it builds at load
-is the other order — the same words sorted alphabetically with each word's rank
-beside it — so a prefix is a contiguous range found by binary search and the
-answer is the lowest-ranked few in that range. A linear pass over 40,000 words
-per keystroke is the kind of cost that turns into dropped keys on an old phone;
-the only expensive case left is a one-letter prefix, and by the third letter the
-range is a handful. A missing resource answers nothing rather than crashing.
+Access does). The followers are parsed into the same table in the same load, so
+there is one load and one warm for both files. While a warm is in flight every
+lookup answers nothing instead of parsing the files a second time on the main
+thread, because the pane refreshes its bar in the same turn it warms and after a
+space that refresh asks for predictions; the warm refreshes the bar again when
+it lands. A lookup with no warm in flight still loads synchronously. Rank is the
+word list's order and
+nothing else. What it builds at load is the other order — the same words sorted
+alphabetically with each word's rank beside it — so a prefix is a contiguous
+range found by binary search and the answer is the lowest-ranked few in that
+range. A linear pass over 40,000 words per keystroke is the kind of cost that
+turns into dropped keys on an old phone; the only expensive case left is a
+one-letter prefix, and by the third letter the range is a handful. A missing
+resource answers nothing rather than crashing, and each file can go missing
+without taking the other half with it.
 
 ### Voice pane
 

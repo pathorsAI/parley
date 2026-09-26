@@ -109,7 +109,9 @@ final class KeyboardViewController: UIInputViewController {
         // `setPane(notify: false)` deliberately skips `paneDidChange`, so a
         // keyboard that opens straight onto the English pane — which is what
         // every keyboard without Full Access does — has to be warmed here.
-        if bridge.pane == .english { EnglishWords.bundled.warm() }
+        if bridge.pane == .english {
+            EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
+        }
 
         // Let the system's own input view supply the background. It is already
         // the right colour, already rounds its corners the way the host expects
@@ -332,8 +334,10 @@ final class KeyboardViewController: UIInputViewController {
         }
         // Same bargain on the English pane: reading and sorting 40,000 words is
         // tens of milliseconds, and it belongs on the swipe rather than on the
-        // first letter typed.
-        if bridge.pane == .english { EnglishWords.bundled.warm() }
+        // first letter typed. The bar is empty until it lands, then refreshed.
+        if bridge.pane == .english {
+            EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
+        }
         refreshSuggestions()
     }
 
@@ -1016,7 +1020,8 @@ final class KeyboardViewController: UIInputViewController {
 
     // MARK: English word suggestions
 
-    /// Re-read the word in front of the cursor and publish what it could become.
+    /// Re-read the word in front of the cursor and publish what it could become,
+    /// or, right after a word and a space, what usually follows that word.
     ///
     /// Called after every key this keyboard types and from `textDidChange`,
     /// because the cursor can also move without us — a tap in the field, an
@@ -1032,12 +1037,14 @@ final class KeyboardViewController: UIInputViewController {
             publishSuggestions(partial: "", suggestions: [])
             return
         }
-        let partial = WordSuggestions.partialWord(
-            before: textDocumentProxy.documentContextBeforeInput)
+        let context = textDocumentProxy.documentContextBeforeInput
+        let partial = WordSuggestions.partialWord(before: context)
         publishSuggestions(
             partial: partial,
-            suggestions: WordSuggestions.suggestions(
-                for: partial, in: EnglishWords.bundled, lexiconTerms: lexiconTerms))
+            suggestions: partial.isEmpty
+                ? WordSuggestions.predictions(after: context, in: EnglishWords.bundled)
+                : WordSuggestions.suggestions(
+                    for: partial, in: EnglishWords.bundled, lexiconTerms: lexiconTerms))
     }
 
     /// Assign only on a real change: every one of these is an `@Published` on
@@ -1061,7 +1068,6 @@ final class KeyboardViewController: UIInputViewController {
     /// inserted as it is shown.
     func pickSuggestion(_ word: String) {
         let partial = bridge.partialWord
-        guard !partial.isEmpty else { return }
         for _ in 0..<partial.unicodeScalars.count { textDocumentProxy.deleteBackward() }
         textDocumentProxy.insertText(word + " ")
         refreshSuggestions()
@@ -1299,11 +1305,13 @@ final class KeyboardBridge: ObservableObject {
 
     /// The English word the user is part-way through typing — the run of
     /// letters before the cursor. Empty whenever the cursor is not inside a
-    /// word, which is what puts the wordmark back. Kept beside the suggestions
-    /// rather than derived from them because it is what a tap deletes.
+    /// word, when the suggestions are predictions and a tap deletes nothing.
+    /// Kept beside the suggestions rather than derived from them because it is
+    /// what a tap deletes.
     @Published var partialWord = ""
-    /// What `partialWord` could become, best first, already cased to match what
-    /// was typed. Nothing acts on these without a tap — see `WordSuggestions`.
+    /// What `partialWord` could become, or what could follow the word before
+    /// it, best first, already cased. Nothing acts on these without a tap —
+    /// see `WordSuggestions`.
     @Published var suggestions: [String] = []
 
     /// What the host field wants the return key to say. It never changes what
