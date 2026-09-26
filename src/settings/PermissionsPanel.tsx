@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RefreshCw } from "lucide-react";
 import { useI18n } from "../i18n";
-import { isMac } from "../lib/platform";
+import { isMac, isWindows } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
 import { log } from "../lib/log";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,8 @@ import { Button } from "@/components/ui/button";
 interface Perms {
   microphone: string;
   // The Rust struct serializes camelCase (#[serde(rename_all = "camelCase")]).
-  // unknown | granted | denied | unsupported (macOS < 14.2).
+  // unknown | granted | denied | unsupported (macOS < 14.2). Windows reports
+  // granted when there is a default output device to loop back, else unknown.
   systemAudio: string;
 }
 
@@ -33,12 +34,12 @@ function toneFor(status: Status): string {
 /**
  * The meeting-critical permissions, with live grant status.
  *
- * macOS shows two: microphone and System Audio Recording. Windows shows only
- * the microphone — its consent is a real setting the backend reads out of the
- * registry and can deep-link to (ms-settings:privacy-microphone), whereas
- * system audio has no row to show: WASAPI loopback capture isn't implemented,
- * so there is no permission to grant. Hiding the row on its own would leave
- * the absence invisible, so a plain note takes its place.
+ * Both platforms show two rows: the microphone and system audio (the other
+ * party). On Windows the microphone's consent is a real setting the backend
+ * reads out of the registry and can deep-link to
+ * (ms-settings:privacy-microphone); system audio is WASAPI loopback, which
+ * needs no consent — its row is granted whenever there is a default output
+ * device to capture, and otherwise links to Sound settings.
  *
  * Feature-scoped permissions are NOT listed here — Input Monitoring is
  * requested by the voice-typing key picker and Accessibility by enabling voice
@@ -134,10 +135,17 @@ export function PermissionsPanel() {
         actionLabel={t(isMac() ? "settings.voiceTyping.grant" : "settings.permissions.openSettings")}
         onGrant={() => grant("mic", "microphone", () => invoke("request_microphone"))}
       />
-      {!isMac() && (
-        <p className="rounded-lg border border-warning-border bg-warning p-3 text-[11px] leading-relaxed text-warning-foreground">
-          {t("settings.permissions.systemAudioWindows")}
-        </p>
+      {isWindows() && (
+        <Row
+          label={t("settings.permissions.systemAudio.windows")}
+          desc={t("settings.permissions.systemAudioDesc.windows")}
+          status={systemAudio}
+          // Nothing to grant: the only thing that can be missing is an output
+          // device, and that is chosen in Sound settings.
+          actionLabel={t("settings.permissions.openSettings")}
+          onGrant={() => grant("system-audio", "system-audio", async () => {})}
+          help={systemAudio === "granted" ? undefined : t("settings.permissions.systemAudioHelp.windows")}
+        />
       )}
       {isMac() && systemAudioSupported && (
         <Row
