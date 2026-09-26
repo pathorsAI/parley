@@ -30,8 +30,9 @@ struct KeyboardRootView: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// The host field's appearance, not the system's: a dark-themed app puts a
-    /// dark keyboard on screen even in light mode.
+    /// The host field's appearance when it names one — a dark-themed app puts
+    /// a dark keyboard on screen even in light mode — and the trait collection's
+    /// when it leaves it at `.default`. See `KeyboardViewController.isDark`.
     var dark: Bool
 
     /// Live horizontal travel of the pane track while a drag is in flight.

@@ -808,6 +808,40 @@ the area the system keyboard would. A canvas painted over it is a slightly wrong
 grey that seams against whatever sits below the keyboard and a top-left corner
 that doesn't line up — which is precisely how the bug reported as 跑版 looked.
 
+Not painting the backdrop has one consequence the caps have to follow: **the
+backdrop's colour is the system's decision, so the caps' has to be made the same
+way.** Until 1.20 the keyboard read only `keyboardAppearance == .dark`, and most
+third-party hosts — Claude and LINE among them — leave that property at
+`.default` while the system paints the backdrop from the *trait collection*. In
+Dark Mode those hosts got white caps with black glyphs on a black backdrop.
+
+The rule is now `KeyboardViewController.isDark`, and it has to cover three kinds
+of host, measured on the iOS 26.5 simulator:
+
+- **`.default`** follows `traitCollection.userInterfaceStyle`, as the backdrop
+  does.
+- **A value that mirrors the system.** Reminders and Safari report `.light` in
+  light mode and `.dark` in dark mode. Flipping Dark Mode with the keyboard on
+  screen repaints the backdrop at once, but the proxy keeps reporting the old
+  value until the field is activated again — a stale `.light` over a dark
+  backdrop. So when the value is read fresh (`viewWillAppear`) and matches the
+  trait, the host is taken to *follow the system*, and a later trait change
+  (`registerForTraitChanges([UITraitUserInterfaceStyle.self])`) is believed over
+  the unchanged proxy.
+- **A value that contradicts the system** — a dark-themed app on a light phone —
+  is the host forcing its appearance, and is kept across a flip.
+
+`textDidChange` re-learns only from a *changed* value, because an unchanged one
+after a flip is exactly the stale case. The one case this cannot tell apart is a
+host that forces `.dark` while the phone is already dark and then sees the phone
+go light; it is corrected on the next appearance.
+
+The dark caps are measured against the same backdrop: iOS 26.5 draws every key
+at sRGB 61/255 over a backdrop of about 24, so `KBTheme.key(true)` is
+`Color(white: 0.24)`. iOS 26 no longer draws the non-letter keys a different
+grey; ours keep a darker `keyAlt` (0.17) anyway, because an engaged shift is
+shown by borrowing the letter cap and would otherwise have no way to look armed.
+
 Two more pieces of the same recipe:
 
 - `inputView?.allowsSelfSizing = true`, with the height constraint at

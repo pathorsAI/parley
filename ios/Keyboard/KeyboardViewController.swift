@@ -129,6 +129,7 @@ final class KeyboardViewController: UIInputViewController {
         // the other half of the same misalignment.
         inputView?.allowsSelfSizing = true
 
+        readHostAppearance(force: true)
         let root = UIHostingController(rootView: makeRoot())
         root.view.backgroundColor = .clear
         addChild(root)
@@ -155,6 +156,15 @@ final class KeyboardViewController: UIInputViewController {
         height.priority = UILayoutPriority(999)
         height.isActive = true
         heightConstraint = height
+
+        // The backdrop follows the trait collection for a host that follows
+        // the system, so the caps have to follow it too — including when the
+        // user flips Dark Mode with the keyboard on screen, which neither
+        // `viewWillAppear` nor `textDidChange` hears about. See `isDark`.
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) {
+            (self: Self, _: UITraitCollection) in
+            self.refreshAppearance()
+        }
 
         armChannelObservers()
     }
@@ -241,6 +251,7 @@ final class KeyboardViewController: UIInputViewController {
         // is dropped unless a session is still running — `drainDownlink` below
         // puts it straight back when one is.
         if !bridge.listening { bridge.tail = "" }
+        readHostAppearance(force: true)
         refreshAppearance()
         refreshReturnKey()
         readReadiness()
@@ -283,12 +294,13 @@ final class KeyboardViewController: UIInputViewController {
         lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
     }
 
-    /// A keyboard follows the appearance of the *field* it is typing into, not
-    /// the system's: a dark-themed host app asks for a dark keyboard even while
-    /// iOS is in light mode. `textInputMode` changes as the user moves between
-    /// fields, so this is re-read whenever the keyboard comes back.
+    /// A keyboard follows the appearance of the *field* it is typing into when
+    /// the field names one — see `isDark`. `textInputMode` changes as the user
+    /// moves between fields, so this is re-read whenever the keyboard comes
+    /// back.
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
+        readHostAppearance(force: false)
         refreshAppearance()
         refreshReturnKey()
         // The cursor may have moved somewhere this keyboard did not put it —
@@ -399,8 +411,52 @@ final class KeyboardViewController: UIInputViewController {
         UIView.animate(withDuration: 0.18) { self.view.superview?.layoutIfNeeded() }
     }
 
+    /// The last `keyboardAppearance` read off the host field, and whether that
+    /// value was the host forcing an appearance or merely mirroring the
+    /// system's. See `isDark`.
+    private var hostAppearance: UIKeyboardAppearance = .default
+    private var hostFollowsSystem = true
+
+    /// Whether to draw dark caps.
+    ///
+    /// The system paints the input view's backdrop — see `viewDidLoad` — so the
+    /// caps have to make the same call it does. Three kinds of host:
+    ///
+    /// - Most third-party hosts (Claude, LINE) leave `keyboardAppearance` at
+    ///   `.default`, and the backdrop follows the trait collection. Reading
+    ///   `.default` as light drew white caps on a black backdrop, which is the
+    ///   bug 1.19 shipped with.
+    /// - System apps (Reminders, Safari) report `.dark` or `.light` *matching*
+    ///   the system style. That value goes stale the moment the user flips
+    ///   Dark Mode: the proxy keeps the old one until the field is activated
+    ///   again, while the backdrop repaints at once. So a value that matched
+    ///   the trait when it was read is taken to mean "follows the system".
+    /// - A host that forces the opposite of the system — a dark-themed app on
+    ///   a light phone — is believed, and keeps its appearance across a flip.
+    private var isDark: Bool {
+        hostFollowsSystem
+            ? traitCollection.userInterfaceStyle == .dark
+            : hostAppearance == .dark
+    }
+
+    /// Re-read the host's appearance. `force` on a fresh appearance, where the
+    /// proxy is known to be current; otherwise only a *changed* value is
+    /// learned from, because an unchanged one after a Dark Mode flip is the
+    /// stale value described on `isDark`, not a host that forces it.
+    private func readHostAppearance(force: Bool) {
+        let appearance = textDocumentProxy.keyboardAppearance ?? .default
+        guard force || appearance != hostAppearance else { return }
+        hostAppearance = appearance
+        let systemDark = traitCollection.userInterfaceStyle == .dark
+        switch appearance {
+        case .dark: hostFollowsSystem = systemDark
+        case .light: hostFollowsSystem = !systemDark
+        default: hostFollowsSystem = true
+        }
+    }
+
     private func refreshAppearance() {
-        let dark = textDocumentProxy.keyboardAppearance == .dark
+        let dark = isDark
         if host?.rootView.dark != dark {
             host?.rootView = makeRoot(dark: dark)
         }
@@ -418,9 +474,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func makeRoot(dark: Bool? = nil) -> KeyboardRootView {
-        KeyboardRootView(
-            bridge: bridge,
-            dark: dark ?? (textDocumentProxy.keyboardAppearance == .dark))
+        KeyboardRootView(bridge: bridge, dark: dark ?? isDark)
     }
 
     // MARK: dictation control (called from SwiftUI)

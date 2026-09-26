@@ -172,7 +172,9 @@ struct ZhuyinPane: View, Equatable {
                 }
             }
         ) {
-            Text(verbatim: String(symbol)).font(.system(size: 19))
+            // 22pt, the system 注音 keyboard's size: the glyphs are dense, and
+            // at the 19pt this started at ㄅ and ㄉ were hard to tell apart.
+            Text(verbatim: String(symbol)).font(.system(size: 22))
         }
         .equatable()
         .accessibilityLabel(Self.label(symbol: symbol, tone: tone))
