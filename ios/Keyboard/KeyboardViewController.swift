@@ -127,12 +127,11 @@ final class KeyboardViewController: UIInputViewController {
         // whose report disagreed put dark ink on a black backdrop (#441).
         //
         // A view of its own rather than `view.backgroundColor`: on iOS 26 the
-        // system draws the keyboard as a card with rounded top corners that
-        // begin above this view, and a full-width rectangle poked its square
-        // corners out of that curve and covered the card's rim. The backdrop
-        // is kept inside the card instead — see `KBMetrics.backdropInset` —
-        // and, being the same grey, the strip of card it leaves uncovered
-        // cannot be told from it.
+        // system draws the keyboard as a card with large rounded top corners,
+        // and a full-width rectangle poked its square corners out of that
+        // curve and covered the card's rim. The backdrop is kept inside the
+        // card instead — see `KBMetrics.backdropInset` — and, being the same
+        // grey, the sliver of card it leaves uncovered cannot be told from it.
         view.backgroundColor = .clear
         backdrop.backgroundColor = KBTheme.backdrop(isDark)
         backdrop.isUserInteractionEnabled = false
@@ -142,8 +141,10 @@ final class KeyboardViewController: UIInputViewController {
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(backdrop)
         NSLayoutConstraint.activate([
-            // The whole input view vertically, home indicator strip included.
-            backdrop.topAnchor.constraint(equalTo: view.topAnchor, constant: KBMetrics.backdropInset),
+            // Down to the bottom of the input view, home indicator strip
+            // included; 1pt in at the top and sides (see `KBMetrics`).
+            backdrop.topAnchor.constraint(
+                equalTo: view.topAnchor, constant: KBMetrics.backdropInset),
             backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             backdrop.leadingAnchor.constraint(
                 equalTo: view.leadingAnchor, constant: KBMetrics.backdropInset),

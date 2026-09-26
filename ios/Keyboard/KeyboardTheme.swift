@@ -140,12 +140,13 @@ enum KBMetrics {
     /// How the painted backdrop stays inside the system's keyboard card.
     ///
     /// On iOS 26.5 (iPhone 17 Pro) the system draws a card whose continuous
-    /// top corners begin 16pt above this keyboard's view and only reach the
-    /// screen edge about 37pt down, with a 2px rim down the sides in light
-    /// mode. A backdrop that is 1pt narrower on each side, with 10pt corners of
-    /// its own, lies inside that curve everywhere; the sliver of card it leaves
-    /// is the same grey, so nothing shows. A square full-width backdrop did
-    /// show: its corners stuck out of the card's curve.
+    /// top corners begin at the top of this keyboard's view and only reach the
+    /// screen edge about 37pt down, with a 2px rim along the top and down the
+    /// sides in light mode. A backdrop 1pt in from the top and both sides, with
+    /// 32pt corners of its own, lies inside that curve everywhere; the sliver of
+    /// card it leaves is the same grey, so nothing shows. A square full-width
+    /// backdrop did show: its corners stuck out of the card's curve and it
+    /// covered the rim.
     static let backdropInset: CGFloat = 1
     static let backdropCorner: CGFloat = 32
 
