@@ -35,6 +35,9 @@ struct PlaybackBar: View {
     /// own (see `LibraryView.downloadAction`), so the absent state there offers
     /// nothing rather than a button that would 404.
     let orgId: String?
+    /// Moments worth finding on the timeline — the analysis's findings — drawn
+    /// as small dots on the waveform. Tapping one seeks there.
+    var markers: [TimeInterval] = []
 
     enum Layout {
         /// Half of the 72pt it started at. Still the whole scrub target, and
@@ -157,7 +160,7 @@ struct PlaybackBar: View {
 
     private var player: some View {
         VStack(spacing: 0) {
-            ScrubbableWaveform(controller: controller)
+            ScrubbableWaveform(controller: controller, markers: markers)
                 .frame(height: Layout.waveformHeight)
             PlaybackControls(controller: controller)
                 .frame(height: Layout.controlsHeight)
@@ -191,6 +194,7 @@ struct PlaybackBar: View {
 ///   directions count.
 private struct ScrubbableWaveform: View {
     @ObservedObject var controller: PlaybackController
+    let markers: [TimeInterval]
 
     /// Tier boundaries in points of vertical travel, and what each does to the
     /// horizontal scale. 1× is "full width = full duration".
@@ -230,6 +234,7 @@ private struct ScrubbableWaveform: View {
             }
             .contentShape(Rectangle())
             .gesture(drag(width: size.width))
+            .overlay(alignment: .topLeading) { markerDots(in: size) }
             .overlay(alignment: .topLeading) { timeLabel(in: size) }
         }
         .accessibilityElement()
@@ -301,6 +306,39 @@ private struct ScrubbableWaveform: View {
                 cornerSize: CGSize(
                     width: Self.playheadWidth / 2, height: Self.playheadWidth / 2))
             context.fill(playhead, with: .color(Color(.label)))
+        }
+    }
+
+    // MARK: finding markers
+
+    /// A dot per finding along the top edge of the strip, in ink with a ring
+    /// of page colour so it reads over a loud bar as well as over silence.
+    ///
+    /// Each dot is its own button with a thumb-sized target. Laid over the
+    /// waveform, the targets take a tap that lands on a dot before the scrub
+    /// can, which is the point — and nothing else: a drag that starts on one is
+    /// still a tap-sized area in a strip that is otherwise all scrub.
+    @ViewBuilder
+    private func markerDots(in size: CGSize) -> some View {
+        if controller.duration > 0, size.width > 0 {
+            ForEach(Array(markers.enumerated()), id: \.offset) { _, time in
+                let x = size.width * CGFloat(min(1, max(0, time / controller.duration)))
+                Button {
+                    controller.seek(to: time)
+                } label: {
+                    Circle()
+                        .fill(Color(.label))
+                        .frame(width: 6, height: 6)
+                        .overlay(Circle().stroke(Theme.background, lineWidth: 1.5))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                // Centred on the moment, riding the strip's top edge.
+                .offset(x: x - 12, y: -9)
+                .accessibilityLabel(
+                    Text("Highlight at \(PlaybackClock.string(time))"))
+            }
         }
     }
 

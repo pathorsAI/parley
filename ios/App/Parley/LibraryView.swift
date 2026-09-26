@@ -105,7 +105,7 @@ struct LibraryView: View {
             // (back chevron and all) rather than as a detached view.
             #if DEBUG
                 .navigationDestination(isPresented: $demo.showTranscript) {
-                    RecordingDetailView(summary: ScreenshotDemo.featured, orgId: nil)
+                    RecordingDetailView(summary: ScreenshotDemo.pushed, orgId: nil)
                 }
             #endif
         }

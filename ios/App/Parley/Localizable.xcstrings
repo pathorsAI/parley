@@ -19,41 +19,6 @@
         }
       }
     },
-    "%lld findings": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "variations": {
-            "plural": {
-              "one": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "%lld finding"
-                }
-              },
-              "other": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "%lld findings"
-                }
-              }
-            }
-          }
-        },
-        "zh-Hant": {
-          "variations": {
-            "plural": {
-              "other": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "%lld 項發現"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "%lld of %lld": {
       "extractionState": "manual",
       "localizations": {
@@ -116,41 +81,6 @@
                 "stringUnit": {
                   "state": "translated",
                   "value": "%lld 筆錄音等待同步"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "%lld speakers": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "variations": {
-            "plural": {
-              "one": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "%lld speaker"
-                }
-              },
-              "other": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "%lld speakers"
-                }
-              }
-            }
-          }
-        },
-        "zh-Hant": {
-          "variations": {
-            "plural": {
-              "other": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "%lld 人"
                 }
               }
             }
@@ -272,6 +202,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "動作按鈕（選用）"
+          }
+        }
+      }
+    },
+    "Action items": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Action items"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "後續行動"
           }
         }
       }
@@ -1565,6 +1512,23 @@
         }
       }
     },
+    "Generate a summary with AI": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generate a summary with AI"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用 AI 產生摘要"
+          }
+        }
+      }
+    },
     "Getting ready…": {
       "extractionState": "manual",
       "localizations": {
@@ -1582,19 +1546,70 @@
         }
       }
     },
-    "Highlights": {
+    "Go to %@ in the transcript": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Highlights"
+            "value": "Go to %@ in the transcript"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "重點"
+            "value": "到逐字稿的 %@"
+          }
+        }
+      }
+    },
+    "Highlight at %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Highlight at %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 的重點"
+          }
+        }
+      }
+    },
+    "Highlight: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Highlight: %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重點：%@"
+          }
+        }
+      }
+    },
+    "Highlights %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Highlights %lld"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重點 %lld"
           }
         }
       }
@@ -2492,6 +2507,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "這裡還沒有錄音。"
+          }
+        }
+      }
+    },
+    "No summary yet.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No summary yet."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "還沒有摘要。"
           }
         }
       }
@@ -4074,6 +4106,23 @@
         }
       }
     },
+    "Speakers": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Speakers"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "講者"
+          }
+        }
+      }
+    },
     "Speakers: %@": {
       "extractionState": "manual",
       "localizations": {
@@ -4240,6 +4289,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "建議"
+          }
+        }
+      }
+    },
+    "Summary": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Summary"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "摘要"
           }
         }
       }
@@ -4751,6 +4817,23 @@
         }
       }
     },
+    "Transcript": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transcript"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "逐字稿"
+          }
+        }
+      }
+    },
     "Transcription didn't finish. Check your network and try the import again.": {
       "extractionState": "manual",
       "localizations": {
@@ -4916,6 +4999,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "版本"
+          }
+        }
+      }
+    },
+    "View": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "檢視"
           }
         }
       }

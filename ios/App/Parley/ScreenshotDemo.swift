@@ -35,10 +35,12 @@
     /// argument never leaves the process.
     ///
     /// Routes: `record`, `settled`, `adjust`, `library`, `transcript`,
-    /// `keyboard`, `settings`, `dictation`, and two that are not store frames
+    /// `keyboard`, `settings`, `dictation`, and some that are not store frames
     /// but review frames: `movetofolder` (the transcript with the folder
-    /// picker open over fifteen folders) and `resetchecklist` (Settings'
-    /// "Show the getting-started list again", pressed, landing on the Library).
+    /// picker open over fifteen folders), `resetchecklist` (Settings'
+    /// "Show the getting-started list again", pressed, landing on the Library),
+    /// `summary` / `jump` / `nosummary` (the recording page's two faces — see
+    /// `docs/design/ios-recording-page.md`).
     @MainActor
     final class ScreenshotDemo: ObservableObject {
         static let shared = ScreenshotDemo()
@@ -64,6 +66,17 @@
         /// The Library draws the checklist even though it is serving fixtures.
         /// Off for every store frame, which must not carry it.
         @Published var allowsChecklist = false
+        /// Which fixture `showTranscript` pushes. The featured one unless a
+        /// route asks for the unanalysed one.
+        @Published var recordingID = "demo-renewal"
+        /// The face the pushed recording opens on, overriding the "summary when
+        /// analysed" rule — the store's transcript frame has to stay a
+        /// transcript, and the empty summary is only reachable by force.
+        var forcedFace: RecordingDetailView.Face?
+        /// A summary timestamp the pushed recording "taps" once it is up, and
+        /// whether the lit turn stays lit so the frame can be taken.
+        var jumpOnOpen: UInt64?
+        var holdsLitTurn = false
         /// `adjust` asks for the sheet; `seedSettled` is what grants it.
         private var wantsFilingAdjust = false
 
@@ -111,6 +124,10 @@
             openFolderPicker = false
             pressResetChecklist = false
             allowsChecklist = false
+            recordingID = Self.featured.id
+            forcedFace = nil
+            jumpOnOpen = nil
+            holdsLitTurn = false
             switch route {
             case "record": tab = .record
             case "settled":
@@ -123,6 +140,24 @@
             case "library": tab = .library
             case "transcript":
                 tab = .library
+                forcedFace = .transcript
+                showTranscript = true
+            case "summary":
+                tab = .library
+                forcedFace = .summary
+                showTranscript = true
+            case "jump":
+                // The summary's first highlight, tapped: the transcript with
+                // that turn lit and the 💡 notes beside it.
+                tab = .library
+                forcedFace = .summary
+                jumpOnOpen = 44_000
+                holdsLitTurn = true
+                showTranscript = true
+            case "nosummary":
+                tab = .library
+                recordingID = "demo-review"
+                forcedFace = .summary
                 showTranscript = true
             case "keyboard":
                 tab = .settings
@@ -130,6 +165,7 @@
             case "settings": tab = .settings
             case "movetofolder":
                 tab = .library
+                forcedFace = .transcript
                 showTranscript = true
                 openFolderPicker = true
             case "resetchecklist":
@@ -270,6 +306,11 @@
 
         static var featured: CloudRecordingSummary { recordings[0] }
 
+        /// The fixture `showTranscript` pushes.
+        static var pushed: CloudRecordingSummary {
+            recordings.first { $0.id == shared.recordingID } ?? featured
+        }
+
         /// Which fixtures count as "audio is on this phone".
         ///
         /// Only the featured one, which is the state worth showing: a library
@@ -371,6 +412,42 @@
             ]
         }
 
+        /// The meta the detail screen reads for a fixture: the featured
+        /// recording's, analysed, or a bare transcript for any other — which is
+        /// what the "no summary yet" frame needs.
+        static func meta(for id: String) -> RecordingMeta {
+            guard id != featured.id else { return meta }
+            var bare = meta
+            bare.raw["id"] = id
+            bare.raw["findings"] = [Any]()
+            bare.raw["actionItems"] = [Any]()
+            bare.raw["brief"] = nil
+            return bare
+        }
+
+        /// The analysis's short read, with the moments it cites as links.
+        private static var brief: String {
+            t(
+                "**Renewal held at forty seats, the enterprise floor.** The client budgeted forty against an eighty-seat quote [0:12]; forty is the minimum, so the lever became a price hold through the next renewal [0:27].\n\n**Next:** onboarding is two weeks because SSO is already on Okta [0:58]. The revised quote goes out tomorrow with the security questionnaire [1:32].",
+                "**續約鎖在四十席，企業版的底線。** 客戶編了四十席、報價是八十席 [0:12]；四十席已是最低門檻，可談的變成把價格鎖到下一次續約 [0:27]。\n\n**接下來：** SSO 已在 Okta 上，導入兩週 [0:58]。修訂報價明天寄出，附資安問卷 [1:32]。")
+        }
+
+        private static var actionItems: [[String: Any]] {
+            [
+                [
+                    "id": "a-quote", "done": false, "atMs": 92_000.0,
+                    "text": t(
+                        "Send the revised quote with the price hold in writing",
+                        "寄出含鎖價條款的修訂報價"),
+                ],
+                [
+                    "id": "a-security", "done": false, "atMs": 92_000.0,
+                    "text": t(
+                        "Attach the security questionnaire", "附上資安問卷"),
+                ],
+            ]
+        }
+
         static var meta: RecordingMeta {
             RecordingMeta(raw: [
                 "id": featured.id,
@@ -389,7 +466,7 @@
                     "mix-1": t("Client lead", "客戶窗口"),
                     "mix-2": t("You", "我"),
                 ],
-                "findings": findings, "actionItems": [Any](),
+                "findings": findings, "actionItems": actionItems, "brief": brief,
                 "audio": "audio.ogg", "analyzed": true,
             ])
         }
