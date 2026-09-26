@@ -154,6 +154,12 @@
     <string name="import_failure_no_audio">這個檔案沒有音訊軌。</string>
     <string name="import_failure_unsupported">這台裝置無法解碼這種音訊格式。</string>
     <string name="import_failure_decode">這個檔案無法完整解碼。</string>
+    <string name="import_failure_session_expired">登入已過期，請重新登入。</string>
+    <string name="import_failure_upload_refused">Parley Cloud 拒絕了這份錄音，所以沒有存下來。請重新匯入檔案再試一次。</string>
+    <string name="import_action_sign_in_again">重新登入</string>
+    <string name="import_phase_saved">已儲存</string>
+    <string name="import_transcript_in_background">轉錄在中途停止了。錄音已儲存，逐字稿會在背景自動補齊。</string>
+    <string name="import_queued_quota">額度已用完。錄音已安全保留在手機上，額度恢復後會自動同步。</string>
 
     <!-- Recording detail -->
     <string name="detail_title">錄音</string>

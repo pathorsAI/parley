@@ -148,16 +148,36 @@ val queuedId = uploader.finishAndUpload(
   importing it was explicit.
 - Segments are filtered to finals, minus the tentative `"-tail"` segment.
 - `drain(): DrainResult` uploads everything waiting, oldest first, 3 attempts per
-  recording with 1 s / 2 s / 4 s backoff for transient failures. A non-retryable
-  failure stops the pass (iOS breaks out rather than spinning a failing loop over
-  the whole queue); the next drain picks up in order. Passes are serialized by an
-  internal mutex, so calling it from several places is safe.
-- Files are deleted **only** after both cloud steps succeed. Call `drain()` on app
-  start, after sign-in, and when connectivity returns.
-- `DrainResult(uploaded, remaining, discarded, failure)` — `signedOut` and
-  `quotaExhausted` are convenience reads of `failure`. `discarded` counts
-  manifests whose blob had vanished (unuploadable forever; they would otherwise
-  block the queue head).
+  recording with 1 s / 2 s / 4 s backoff for transient failures (transport, 5xx,
+  408, 429). What happens after that is iOS `MeetingUploader.syncPending`'s rule
+  (`MeetingUploader.dispositionOf`), except for 402:
+  - **401, 402, 403, 408, 425, 429, 5xx, transport** — something later clears it
+    (signing in, the quota resetting, access, waiting, the network): the pass
+    **stops** with the queue untouched, and the next drain picks up in order.
+    402 is not retried within the pass either — one request, then stop.
+  - **any other 4xx** (400, 404, 413, …) — the server will refuse the identical
+    request forever: that recording is **dropped**, audio and all, and the pass
+    carries on. Left in place it would jam every recording behind it.
+  - **missing or empty audio file** — dropped without a request, pass carries on.
+
+  iOS `isTerminal` drops a 402'd recording. Android deliberately keeps it: iOS's
+  own importer promises the recording "will sync once the quota resets", and a
+  drop breaks that promise, so the drop is treated as an iOS bug rather than a
+  contract to mirror.
+
+  Passes are serialized by an internal mutex, so calling it from several places
+  is safe.
+- Files are otherwise deleted **only** after both cloud steps succeed. Drains run
+  on app start, after sign-in, at the end of a meeting or an import, from "Upload
+  now", and from `AutoSync` whenever a validated network comes back or the app
+  returns to the foreground (debounced by `SyncDebouncer`: a network must hold
+  for 3 s, and passes start at least 30 s apart). Nothing drains once the process
+  is gone — a WorkManager job is the follow-up for that.
+- `DrainResult(uploaded, remaining, discarded, failure, refused)` — `signedOut`
+  and `quotaExhausted` are convenience reads of `failure`. `discarded` counts
+  every recording the pass dropped (vanished blob or permanent refusal);
+  `refused` maps the ids the server refused to the refusal, so a caller that just
+  queued a recording can tell "dropped" from "uploaded" before saying "saved".
 - `pendingCount()` backs a "N waiting to upload" badge.
 
 `PendingUploadQueue` is the durable store on its own if you need it directly
@@ -264,5 +284,6 @@ user-assigned name, or null.
 | Queue manifest | `{id, startedAt, durationMs, segments, defaultSave}` | `{id, title, source, startedAtMs, durationMs, segments, folderId}` — the title is carried (an import is named after its file, and copy belongs to the UI); `defaultSave` is org-sharing, which Android does not surface |
 | Short recordings | dropped under 2 s | dropped under 2 s **for live capture only** — silently discarding a file the user deliberately imported would be a bug |
 | Audio upload | whole file in memory | streamed from disk |
-| Retries | one attempt per drain | 3 attempts with backoff, then the pass stops (same "don't spin" rule) |
+| Retries | one attempt per drain | 3 attempts with backoff for transient failures, then iOS's stop-or-drop rule |
+| 402 on upload | dropped (`isTerminal`) | **kept**, pass stops — iOS's importer promises it "will sync once the quota resets"; the iOS drop is a bug |
 | Segment type | `ParleyKit.TranscriptSegment` | `cloud.TranscriptSegmentDto` — a wire DTO, deliberately separate from the `:parleykit` STT type so the on-the-wire names stay pinned. Map at the call site. |

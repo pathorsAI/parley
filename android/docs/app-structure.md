@@ -19,7 +19,7 @@ com.pathors.parley
     HomeViewModel.kt     library state, account state, sign-out
     AccountSheet.kt      email, plan usage (GET /me/usage), sign out
     MeetingScreen.kt     permission gate, live transcript, level meter, stop
-    ImportScreen.kt      progress + phase label + cancel
+    ImportScreen.kt      progress + phase label + cancel; the failure / partial endings
     RecordingDetail*.kt  read-only transcript, findings, action items
     Format.kt            duration/clock/date/speaker-label formatting
     theme/Theme.kt       Material 3, dynamic color on API 31+
@@ -35,8 +35,19 @@ Composables reach it through `rememberContainer()`; the service through
 `context.parleyContainer`.
 
 `AppContainer.appScope` exists for work that must outlive whoever asked for it:
-the pending-upload drain on launch, and the tail end of stopping a meeting (which
-finalizes the Ogg file and uploads it *while the service is stopping itself*).
+the queue drains, and the tail end of stopping a meeting (which finalizes the Ogg
+file and uploads it *while the service is stopping itself*).
+
+The queues — pending uploads, then pending re-transcriptions — drain at launch,
+after sign-in, at the end of a meeting or an import, and from `upload/AutoSync`,
+which `Application.onCreate` starts: a `ConnectivityManager.NetworkCallback` for
+networks with *validated* internet, and a `ProcessLifecycleOwner` observer for
+the app coming back to the foreground (iOS drains its backfill queue on
+`scenePhase == .active` for the same reason — a re-transcription killed by the
+screen locking is otherwise only retried at the next cold start). Both go through
+`SyncDebouncer`, so a flapping network cannot stack passes. All of this needs a
+live process; draining from the background is a WorkManager job nobody has
+written yet.
 
 ## Who owns a recording
 
@@ -67,6 +78,21 @@ A relay failure mid-session (quota, error, unexpected close) does **not** stop a
 meeting: the mic keeps running, the audio is still saved and uploaded, and the UI
 shows a `TranscriptionIssue` banner. Only microphone and encoder failures produce
 a `MeetingState.Failed`.
+
+An import splits the same failures differently (`meeting/ImportRelayOutcome.kt`),
+because the user still holds the source file:
+
+| Relay says | Import does | Screen says |
+|---|---|---|
+| out of quota (`QuotaExceeded`) | stops, deletes its partial Ogg | `Failed(QUOTA_EXHAUSTED)` — iOS's quota copy |
+| handshake 401 (`Error.isUnauthorized`) | stops, deletes its partial Ogg | `Failed(SESSION_EXPIRED)` + "Sign in again", which clears the dead token |
+| any other error, a close before `finalize`, a tail that never arrives | keeps decoding, uploads the full audio with the partial transcript | `Finished(transcript = COMPLETES_IN_BACKGROUND)` when the transcript's coverage means the uploader queues a backfill; plain "Done" otherwise |
+
+Only a clean `Finished` closes the screen by itself; one still waiting to upload,
+or with a transcript being redone, stays up until it is dismissed. An upload the
+cloud refuses for good (see `api-cloud.md`) is `Failed(UPLOAD_REFUSED)`, not
+"Done". A 402 on upload is not a refusal: the recording stays queued and the
+screen says it will sync once the quota resets (`Finished.waitingForQuota`).
 
 ## The service
 
@@ -133,6 +159,10 @@ adb shell am start -a android.intent.action.VIEW -d "'parley://demo/library'"
 | `parley://demo/transcript` | The featured recording: transcript, findings, action items |
 | `parley://demo/record` | The live meeting, mid-transcript (alias: `meeting`) |
 | `parley://demo/account` | The library with the account sheet open (alias: `settings`) |
+| `parley://demo/import-partial` | Import saved, transcript completing in the background (alias: `import`) |
+| `parley://demo/import-offline` | The same, still waiting for the network |
+| `parley://demo/import-quota` | Import stopped: out of transcription quota |
+| `parley://demo/import-signed-out` | Import stopped: session expired, with "Sign in again" |
 | `parley://demo/off` | Leave demo mode |
 
 Three invariants, all worth keeping: **no network** (every call site is guarded,

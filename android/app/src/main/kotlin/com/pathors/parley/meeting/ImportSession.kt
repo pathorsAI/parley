@@ -16,6 +16,8 @@ import com.pathors.parley.kit.SttRelayEvent
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.upload.EnqueueRequest
 import com.pathors.parley.upload.MeetingUploader
+import com.pathors.parley.upload.PendingUpload
+import com.pathors.parley.upload.TranscriptBackfiller
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -50,7 +52,19 @@ sealed interface ImportState {
 
     data object Uploading : ImportState
 
-    data class Finished(val recordingId: String, val pendingUpload: Boolean) : ImportState
+    /**
+     * Saved. [pendingUpload] means it is still on this phone waiting to upload;
+     * [waitingForQuota] narrows that to "the cloud said 402", which a quota
+     * reset clears rather than the network coming back. [transcript] says
+     * whether the transcript it went up with is the whole story or is being
+     * redone in the background.
+     */
+    data class Finished(
+        val recordingId: String,
+        val pendingUpload: Boolean,
+        val transcript: ImportTranscript = ImportTranscript.COMPLETE,
+        val waitingForQuota: Boolean = false,
+    ) : ImportState
 
     data class Failed(val reason: ImportFailure, val detail: String? = null) : ImportState
 
@@ -61,12 +75,25 @@ sealed interface ImportState {
 /** Why an import ended badly. The UI owns the (bilingual) copy for each case. */
 enum class ImportFailure {
     NOT_SIGNED_IN,
+
+    /** The relay refused the session token (HTTP 401): sign in again. */
+    SESSION_EXPIRED,
+
+    /** The account's hosted transcription allowance is spent. */
+    QUOTA_EXHAUSTED,
     UNREADABLE,
     NO_AUDIO_TRACK,
     UNSUPPORTED_CODEC,
     DECODE_FAILED,
     ENCODER_UNAVAILABLE,
     UPLOAD_FAILED,
+
+    /**
+     * The cloud refused the upload in a way it will repeat forever (a 4xx other
+     * than the ones a later event clears — 402 is not one of these), so the
+     * uploader dropped it from the queue.
+     */
+    UPLOAD_REFUSED,
     UNKNOWN,
 }
 
@@ -100,6 +127,11 @@ private fun defaultImportScope(): CoroutineScope = CoroutineScope(
  * - **an imported file is never dropped for being short.** Discarding a file the
  *   user deliberately picked would be a bug (see `docs/api-cloud.md`).
  *
+ * What the relay does along the way is not ignored: running out of quota or
+ * losing the session stops the import, and any other relay failure keeps the
+ * recording but says the transcript is being finished in the background —
+ * see [ImportRelayOutcome] for why the line falls there.
+ *
  * No foreground service: an import is a foreground task the user is watching. If
  * the process is killed mid-import the partial upload never enqueues and the
  * temporary files are cache, so nothing is left behind.
@@ -111,6 +143,12 @@ class ImportSession(
     val uri: Uri,
     /** Display title — the picked file's name, chosen by the UI layer. */
     val title: String,
+    /**
+     * Run the backfill queue. Called once the recording has been handed to the
+     * uploader, so a transcript that came up short starts being redone now
+     * rather than at the next launch.
+     */
+    private val drainBackfills: () -> Unit = {},
     private val scope: CoroutineScope = defaultImportScope(),
 ) {
     private val _state = MutableStateFlow<ImportState>(ImportState.Idle)
@@ -125,6 +163,15 @@ class ImportSession(
     private var eventsJob: Job? = null
 
     private val byId = LinkedHashMap<String, TranscriptSegment>()
+
+    /**
+     * The worst thing the relay has said so far. Written from the event
+     * collector, read by the decode loop, hence volatile.
+     */
+    @Volatile private var relayVerdict: ImportRelayVerdict = ImportRelayVerdict.Healthy
+
+    /** Set just before `finalize` goes out; a close after it is the normal end. */
+    @Volatile private var finishSent = false
     private var transcribedMs = 0L
     private var durationMs = -1L
     private var decodeProgress = 0f
@@ -197,6 +244,9 @@ class ImportSession(
                     }
 
                     is DecodeEvent.Chunk -> {
+                        // Stop decoding the moment the relay says no amount of
+                        // audio will be transcribed — see [ImportRelayOutcome].
+                        failIfRelayFatal()
                         encoder.append(event.pcm)
                         client.sendPcm(event.pcm)
                         decodeProgress = event.progress
@@ -220,12 +270,28 @@ class ImportSession(
             abandon()
             _state.value = ImportState.Failed(ImportFailure.ENCODER_UNAVAILABLE, e.message)
             return
+        } catch (e: RelayFatalException) {
+            abandon()
+            _state.value = ImportState.Failed(e.verdict.failure, e.verdict.detail)
+            return
         }
 
+        finishSent = true
         runCatching { client.finish() }
-        withTimeoutOrNull(TAIL_TIMEOUT_MS) { eventsJob?.join() }
+        val tailArrived = withTimeoutOrNull(TAIL_TIMEOUT_MS) { eventsJob?.join(); true } ?: false
         client.cancel()
         eventsJob?.cancel()
+        if (!tailArrived) {
+            // The relay never finished flushing: whatever it was still holding
+            // is missing from the transcript.
+            noteRelay(ImportRelayVerdict.Degraded("relay tail timed out"))
+        }
+        // The quota can run out, or the session die, while the tail drains.
+        (relayVerdict as? ImportRelayVerdict.Fatal)?.let { fatal ->
+            abandon()
+            _state.value = ImportState.Failed(fatal.failure, fatal.detail)
+            return
+        }
 
         val audio = try {
             withContext(Dispatchers.IO) { encoder.finish() }
@@ -235,6 +301,12 @@ class ImportSession(
         }
         if (decodedMs <= 0L) decodedMs = encoder.durationMs
 
+        val segments = finalSegments()
+        val transcript = transcriptOutcome(segments, decodedMs)
+        (relayVerdict as? ImportRelayVerdict.Degraded)?.let {
+            Log.w(TAG, "relay stopped short (${it.detail}); transcript=$transcript")
+        }
+
         _state.value = ImportState.Uploading
         val id = try {
             uploader.enqueue(
@@ -242,7 +314,7 @@ class ImportSession(
                     audio = audio,
                     title = title,
                     durationMs = decodedMs.toDouble(),
-                    segments = finalSegments(),
+                    segments = segments,
                     source = RecordingSource.UPLOAD,
                 )
             )
@@ -256,11 +328,61 @@ class ImportSession(
             return
         }
         val result = runCatching { uploader.drain() }.getOrNull()
+        result?.refused?.get(id)?.let { refusal ->
+            // Dropped, not queued: saying "saved" here would be the lie.
+            _state.value = ImportState.Failed(ImportFailure.UPLOAD_REFUSED, refusal.message)
+            return
+        }
+        // A short transcript was just handed to the backfill queue by that
+        // drain (or will be, by whichever drain finally uploads it). Start the
+        // queue now instead of leaving it for the next launch.
+        drainBackfills()
+        val pending = result == null || result.remaining > 0
         _state.value = ImportState.Finished(
             recordingId = id,
-            pendingUpload = result == null || result.remaining > 0,
+            pendingUpload = pending,
+            transcript = transcript,
+            // A 402 keeps the recording queued (see MeetingUploader.dispositionOf);
+            // say it waits for the quota, not for a network that is fine.
+            waitingForQuota = pending && result?.quotaExhausted == true,
         )
     }
+
+    /**
+     * The same coverage question the uploader asks before it decides whether to
+     * queue a backfill, asked here so the screen can say what is about to happen.
+     */
+    private fun transcriptOutcome(
+        segments: List<TranscriptSegmentDto>,
+        durationMs: Long,
+    ): ImportTranscript {
+        val coverage = TranscriptBackfiller.coverage(
+            PendingUpload(
+                id = "",
+                title = title,
+                source = RecordingSource.UPLOAD,
+                startedAtMs = 0L,
+                durationMs = durationMs.toDouble(),
+                segments = segments,
+            )
+        )
+        return ImportRelayOutcome.transcript(relayVerdict, coverage)
+    }
+
+    /** Both the event collector and [runImport] report here, hence the lock. */
+    @Synchronized
+    private fun noteRelay(verdict: ImportRelayVerdict) {
+        relayVerdict = ImportRelayOutcome.merge(relayVerdict, verdict)
+    }
+
+    private fun failIfRelayFatal() {
+        val fatal = relayVerdict as? ImportRelayVerdict.Fatal ?: return
+        throw RelayFatalException(fatal)
+    }
+
+    /** Unwinds the decode loop when the relay has ended the import. */
+    private class RelayFatalException(val verdict: ImportRelayVerdict.Fatal) :
+        RuntimeException(verdict.detail)
 
     private fun publishRunning() {
         _state.value = ImportState.Running(
@@ -277,10 +399,13 @@ class ImportSession(
                 if (event.segment.endMs > transcribedMs) transcribedMs = event.segment.endMs
                 if (_state.value is ImportState.Running) publishRunning()
             }
-            // A relay failure does not throw away the file: the audio still
-            // uploads, just with a shorter transcript than the user expected.
-            is SttRelayEvent.QuotaExceeded, is SttRelayEvent.Error -> Unit
-            is SttRelayEvent.Closed -> Unit
+            // Terminal events: remembered, and acted on by the decode loop and
+            // the tail of [runImport] — never silently dropped.
+            is SttRelayEvent.QuotaExceeded, is SttRelayEvent.Error, is SttRelayEvent.Closed -> {
+                val verdict = ImportRelayOutcome.classify(event, finishSent)
+                if (verdict != ImportRelayVerdict.Healthy) Log.w(TAG, "relay: $event")
+                noteRelay(verdict)
+            }
         }
     }
 
