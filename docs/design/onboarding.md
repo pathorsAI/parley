@@ -33,9 +33,9 @@ The four beats are *record* (live, import, or the sample) → *file* (a folder i
 
 ## Decisions
 
-### D1 — The wizard shrinks to three steps
+### D1 — The wizard shrinks to four steps
 
-`lang+welcome` → `account` → `perms` → a closing screen. The closing screen offers two ways out: **Walk through the sample** (loads the sample recording, D4) and **Start a meeting**.
+`intro` (language + welcome) → `account` → `perms` → `done`. The counter reads "n / 4". The closing screen offers two ways out: **Walk through the sample** (loads the sample recording, D4) and **Start a meeting**.
 
 - *Language + welcome* are one screen. The welcome copy carries the current positioning ("Record it, then hand it to the AI you already use") instead of "realtime meeting copilot".
 - *Permissions* stays on both platforms: macOS walks the TCC prompts (microphone, system audio recording); Windows has no runtime prompt but this is still the only place that shows whether the mic is allowed and links to `ms-settings:privacy-microphone`.
