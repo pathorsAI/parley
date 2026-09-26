@@ -22,17 +22,42 @@ import SwiftUI
 /// from its neighbours on the track. Everything about how a keystroke turns into
 /// a character lives in `ZhuyinComposer` (ParleyKit), which is why this file has
 /// no state beyond which plane is showing.
-struct ZhuyinPane: View {
-    @ObservedObject var bridge: KeyboardBridge
+///
+/// **It does not observe the bridge.** The bridge is one `ObservableObject`, and
+/// every keystroke publishes on it — the composition and the candidates, and
+/// while dictating the microphone level twelve times a second. A pane that held
+/// it as `@ObservedObject` was invalidated by every one of those, and so was
+/// every pane beside it on the track: each 注音 key re-evaluated some seventy
+/// key bodies across this pane and the off-screen QWERTY one, to draw keys
+/// none of which had changed. So the bridge is held for its actions only, the
+/// three things the keys actually draw from it arrive as plain values, and the
+/// pane is `Equatable` on them — `KeyboardRootView` wraps it in `.equatable()`
+/// and SwiftUI skips its body whenever they are unchanged, which on a keystroke
+/// is always.
+struct ZhuyinPane: View, Equatable {
+    /// Actions only. Holding it as `@ObservedObject` is what this type exists
+    /// not to do; see above.
+    let bridge: KeyboardBridge
     var dark: Bool
+    var showsGlobe: Bool
+    var returnKey: ReturnKeyStyle
 
     @State private var symbols = false
+
+    /// What the pane draws. The bridge is the same object for the process's
+    /// life, and every key's action is a function of that key alone, so
+    /// neither needs comparing.
+    static func == (a: Self, b: Self) -> Bool {
+        a.dark == b.dark && a.showsGlobe == b.showsGlobe && a.returnKey == b.returnKey
+    }
 
     var body: some View {
         if symbols {
             SymbolPlanes(
-                bridge: bridge, dark: dark, homeLabel: "注音",
-                onHome: { symbols = false })
+                bridge: bridge, dark: dark, showsGlobe: showsGlobe, returnKey: returnKey,
+                homeLabel: "注音", onHome: { symbols = false }
+            )
+            .equatable()
         } else {
             zhuyinPlane
         }
@@ -57,6 +82,7 @@ struct ZhuyinPane: View {
                     ) {
                         bridge.backspace()
                     }
+                    .equatable()
                 }
                 functionRow(m)
             }
@@ -98,8 +124,9 @@ struct ZhuyinPane: View {
             ) {
                 Text(verbatim: "123").font(.system(size: 16, weight: .regular))
             }
+            .equatable()
             .accessibilityLabel(Text(verbatim: "123"))
-            if bridge.showsGlobe {
+            if showsGlobe {
                 GlobeKey(controller: bridge.controller, dark: dark)
                     .frame(width: m.unit, height: KBMetrics.zhuyinKeyHeight)
             }
@@ -114,10 +141,13 @@ struct ZhuyinPane: View {
             ) {
                 Text("Space").font(.system(size: 15))
             }
+            .equatable()
             .accessibilityLabel(Text("Space"))
             ReturnKey(
-                bridge: bridge, dark: dark, width: m.extraWide,
-                height: KBMetrics.zhuyinKeyHeight)
+                bridge: bridge, style: returnKey, dark: dark, width: m.extraWide,
+                height: KBMetrics.zhuyinKeyHeight
+            )
+            .equatable()
         }
     }
 
@@ -144,6 +174,7 @@ struct ZhuyinPane: View {
         ) {
             Text(verbatim: String(symbol)).font(.system(size: 19))
         }
+        .equatable()
         .accessibilityLabel(Self.label(symbol: symbol, tone: tone))
     }
 
