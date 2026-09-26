@@ -35,16 +35,15 @@
     /// argument never leaves the process.
     ///
     /// Routes: `record`, `settled`, `adjust`, `library`, `transcript`,
-    /// `keyboard`, `settings`, `dictation`, and one that is not a store frame
-    /// but a review frame: `movetofolder` (the transcript with the folder
-    /// picker open over fifteen folders).
+    /// `keyboard`, `settings`, `dictation`, and two that are not store frames
+    /// but review frames: `movetofolder` (the transcript with the folder
+    /// picker open over fifteen folders) and `resetchecklist` (Settings'
+    /// "Show the getting-started list again", pressed, landing on the Library).
     @MainActor
     final class ScreenshotDemo: ObservableObject {
         static let shared = ScreenshotDemo()
 
-        enum Tab: Hashable { case record, library, settings }
-
-        @Published var tab: Tab = .record
+        @Published var tab: AppTab = .record
         /// Library pushes the demo transcript when this flips.
         @Published var showTranscript = false
         /// Settings scrolls the voice-keyboard section into view.
@@ -59,6 +58,12 @@
         @Published var openFilingAdjust = false
         /// The transcript opens the folder picker over `pickerFolders`.
         @Published var openFolderPicker = false
+        /// Settings runs its "Show the getting-started list again" action, the
+        /// same function the button calls.
+        @Published var pressResetChecklist = false
+        /// The Library draws the checklist even though it is serving fixtures.
+        /// Off for every store frame, which must not carry it.
+        @Published var allowsChecklist = false
         /// `adjust` asks for the sheet; `seedSettled` is what grants it.
         private var wantsFilingAdjust = false
 
@@ -104,6 +109,8 @@
             openFilingAdjust = false
             wantsFilingAdjust = false
             openFolderPicker = false
+            pressResetChecklist = false
+            allowsChecklist = false
             switch route {
             case "record": tab = .record
             case "settled":
@@ -125,6 +132,10 @@
                 tab = .library
                 showTranscript = true
                 openFolderPicker = true
+            case "resetchecklist":
+                tab = .settings
+                allowsChecklist = true
+                pressResetChecklist = true
             case "dictation":
                 // The keyboard hand-off screen in its stranded-listening state
                 // (manual swipe-back, the iOS 26.4+ regime). Deferred a turn

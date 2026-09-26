@@ -14,6 +14,8 @@ struct SettingsView: View {
     /// ready is settings, but *whether it is open right now* is live state that
     /// belongs to the thing holding it.
     @ObservedObject private var dictation = DictationCoordinator.shared
+    /// For "Show the getting-started list again", which ends on the Library.
+    @EnvironmentObject private var router: TabRouter
     /// The keyboard's typing panes. Read once here and written straight through
     /// to the App Group's defaults, which is where the extension looks for them
     /// on every appearance — there is no live binding across a process boundary.
@@ -96,6 +98,14 @@ struct SettingsView: View {
                         // bar's safe-area inset, so a top anchor slides the
                         // section header under the blur.
                         if focus { proxy.scrollTo(Self.keyboardSectionID, anchor: .center) }
+                    }
+                    .onReceive(ScreenshotDemo.shared.$pressResetChecklist) { press in
+                        guard press else { return }
+                        // A beat on Settings first, the way a person gets there.
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(600))
+                            showGettingStartedAgain()
+                        }
                     }
                 #endif
             }
@@ -666,11 +676,27 @@ struct SettingsView: View {
             // Brings the Library's checklist back, unticked — for someone who
             // closed it with "Not now" and wants the lap after all.
             Button("Show the getting-started list again") {
-                GettingStartedStore.shared.reset()
+                showGettingStartedAgain()
             }
         } footer: {
             sectionFooter("Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code can also read your whole recording library over MCP.")
         }
+    }
+
+    /// Reset the checklist and go and show it.
+    ///
+    /// Resetting alone was the bug: the list lives on another tab, so the tap
+    /// changed nothing anyone could see, and the owner concluded the button did
+    /// nothing. The reset now ends where its result is — the Library, scrolled
+    /// to the list — with a success haptic for the tap itself.
+    ///
+    /// Nothing to pop on this side: the button is on Settings' root page, so
+    /// Settings has no pushed screen when it is pressed. The Library pops its
+    /// own stack when it takes the request (`LibraryView.revealChecklist`).
+    private func showGettingStartedAgain() {
+        GettingStartedStore.shared.reset()
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        router.showGettingStarted()
     }
 
     #if DEBUG

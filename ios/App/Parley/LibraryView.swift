@@ -14,6 +14,9 @@ struct LibraryView: View {
     /// Shared with the recording screen, so a download started from a row is the
     /// same download the detail toolbar is showing.
     @EnvironmentObject private var downloads: AudioDownloadModel
+    /// Settings sends the user here to see the getting-started list it just
+    /// brought back; see `takeChecklistRequest`.
+    @EnvironmentObject private var router: TabRouter
 
     /// nil = personal scope; else an org id.
     @State private var scope: String?
@@ -27,6 +30,9 @@ struct LibraryView: View {
     @State private var error: String?
     @State private var busyId: String?
     @State private var search = ""
+    /// Whether the search field is active, so a request to show the checklist
+    /// can close it — the checklist is not drawn while searching.
+    @State private var searchPresented = false
     /// One importer for the whole screen, so every door — the toolbar button
     /// and the empty state — drives the same single in-flight import.
     @StateObject private var importer = RecordingImporter()
@@ -42,8 +48,13 @@ struct LibraryView: View {
     /// waits for it, so it never flashes up over a library still on its way
     /// from the cloud — and so the existing-user check has run first.
     @State private var personalLoaded = false
-    /// A recording the checklist opened, and what for.
-    @State private var opened: OpenedRecording?
+    /// What is pushed on the Library's stack: the recording a row or the
+    /// checklist opened, and what for. A path rather than destination-closure
+    /// links, so the stack can be popped from here — the checklist request has
+    /// to land on the list, not on whatever recording was left open.
+    @State private var path: [OpenedRecording] = []
+    /// The last `TabRouter.checklistRequest` acted on.
+    @State private var handledChecklistRequest = 0
     /// The recording the folder picker is moving, while it is up.
     @State private var moving: CloudRecordingSummary?
     #if DEBUG
@@ -51,7 +62,7 @@ struct LibraryView: View {
     #endif
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if !app.signedIn {
                     unavailable
@@ -76,15 +87,17 @@ struct LibraryView: View {
             ) { result in
                 Task { await runImport(result) }
             }
-            .navigationDestination(item: $opened) { target in
+            .navigationDestination(for: OpenedRecording.self) { target in
                 if let rec = allRecordings.first(where: { $0.id == target.id }) {
                     RecordingDetailView(
-                        summary: rec, orgId: nil, intent: target.intent,
+                        summary: rec, orgId: target.orgId, intent: target.intent,
                         onFolderChange: folderChanged(rec.id))
                 }
             }
             .sheet(item: $moving) { rec in folderPicker(for: rec) }
-            .searchable(text: $search, prompt: Text("Search titles and snippets"))
+            .searchable(
+                text: $search, isPresented: $searchPresented,
+                prompt: Text("Search titles and snippets"))
             .refreshable { await load() }
             .task(id: "\(scope ?? "personal")-\(app.signedIn)") { await load() }
             // `parley://demo/transcript` pushes the demo recording, so the
@@ -124,17 +137,55 @@ struct LibraryView: View {
         return recordings + [entry]
     }
 
-    /// Personal scope, not searching, loaded — and then the checklist's own
-    /// rule, plus one more: an empty library shows it even with all four done,
-    /// because an empty library is exactly where someone needs the way in.
-    /// "Not now" still wins.
+    /// Personal scope, not searching — and then the checklist's own rule
+    /// (`GettingStartedState.showsInLibrary`, unit-tested in ParleyKit).
+    ///
+    /// The list used to wait for the personal library to come back from the
+    /// cloud every time the screen was built, so after "Show the
+    /// getting-started list again" the Library came up with a spinner and the
+    /// list arrived a network round trip later — or never, offline. It now
+    /// waits only while the once-per-install existing-user check is pending;
+    /// after that it is local state, drawn at once, and the recordings fill in
+    /// underneath.
     private var showsChecklist: Bool {
         #if DEBUG
-            if ScreenshotDemo.servesFixtures { return false }
+            if ScreenshotDemo.servesFixtures && !demo.allowsChecklist { return false }
         #endif
-        guard scope == nil, search.isEmpty, personalLoaded else { return false }
-        if gettingStarted.isVisible { return true }
-        return allRecordings.isEmpty && gettingStarted.dismissedAt == nil
+        guard scope == nil, search.isEmpty else { return false }
+        return gettingStarted.state.showsInLibrary(
+            libraryLoaded: personalLoaded,
+            existingUserChecked: gettingStarted.existingUserChecked,
+            libraryIsEmpty: allRecordings.isEmpty)
+    }
+
+    private static let checklistID = "getting-started"
+
+    /// Settings asked for the checklist ("Show the getting-started list
+    /// again"). Everything that would keep it off screen goes: a pushed
+    /// recording, an org scope, a folder page, a search. Then the list is
+    /// scrolled to the top of the page.
+    ///
+    /// Called from the list's `onAppear` as well as on the change, because the
+    /// Library may not have been built when the request was made — a tab is
+    /// built on its first visit — and the counter is compared rather than
+    /// consumed, so neither path can act twice.
+    private func takeChecklistRequest(_ proxy: ScrollViewProxy) {
+        guard router.checklistRequest != handledChecklistRequest else { return }
+        handledChecklistRequest = router.checklistRequest
+        path = []
+        searchPresented = false
+        search = ""
+        if scope != nil {
+            scope = nil
+            importNotice = nil
+        }
+        folderFilter = nil
+        // A beat for the pop and the tab switch to settle: a scroll issued
+        // mid-transition is dropped.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            withAnimation { proxy.scrollTo(Self.checklistID, anchor: .top) }
+        }
     }
 
     /// What rows 2–4 open: the newest recording, the sample included.
@@ -156,7 +207,7 @@ struct LibraryView: View {
             case .sharedToAI: .share
             case .recorded, .replayed: .read
             }
-        opened = OpenedRecording(id: latest.id, intent: intent)
+        path.append(OpenedRecording(id: latest.id, orgId: nil, intent: intent))
     }
 
     /// Keeps a row's folder in step with a move made inside the recording, so
@@ -267,7 +318,16 @@ struct LibraryView: View {
     /// One folder's worth of the library.
     private func folderList(_ folder: String?) -> some View {
         let items = filtered(folder)
-        return List {
+        let checklist = folder == nil && showsChecklist
+        return ScrollViewReader { proxy in
+            folderRows(items, checklist: checklist)
+                .onAppear { takeChecklistRequest(proxy) }
+                .onChange(of: router.checklistRequest) { _, _ in takeChecklistRequest(proxy) }
+        }
+    }
+
+    private func folderRows(_ items: [CloudRecordingSummary], checklist: Bool) -> some View {
+        List {
             if importer.isRunning || importNotice != nil {
                 importStatus
                     .listRowInsets(EdgeInsets(top: 10, leading: 20, bottom: 10, trailing: 20))
@@ -281,7 +341,7 @@ struct LibraryView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             }
-            if folder == nil && showsChecklist {
+            if checklist {
                 GettingStartedList(
                     state: gettingStarted.state,
                     canLoadSample: SampleRecordingStore.isBundled,
@@ -292,12 +352,19 @@ struct LibraryView: View {
                     .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
+                    .id(Self.checklistID)
+                // The list is drawn before the first load lands; the spinner
+                // goes under it rather than over it.
+                if loading && recordings.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                }
             }
             ForEach(items) { rec in
-                NavigationLink {
-                    RecordingDetailView(
-                        summary: rec, orgId: scope, onFolderChange: folderChanged(rec.id))
-                } label: {
+                NavigationLink(value: OpenedRecording(id: rec.id, orgId: scope, intent: .read)) {
                     RecordingCard(
                         summary: rec, folders: folders, audio: downloads.state(for: rec.id))
                 }
@@ -323,7 +390,7 @@ struct LibraryView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .overlay { if loading && recordings.isEmpty { ProgressView() } }
+        .overlay { if loading && recordings.isEmpty && !checklist { ProgressView() } }
     }
 
     /// An import in flight, or the one that just landed.
@@ -776,9 +843,12 @@ struct LibraryView: View {
     }
 }
 
-/// A recording the getting-started checklist opened, and what for.
+/// A recording on the Library's stack, and what it was opened for: `.read`
+/// from a row, `.file` or `.share` from the getting-started checklist.
 private struct OpenedRecording: Hashable {
     let id: String
+    /// nil = personal scope.
+    let orgId: String?
     let intent: RecordingDetailView.Intent
 }
 
@@ -1178,5 +1248,6 @@ private struct RecordingCard: View {
         LibraryView()
             .environmentObject(AppState())
             .environmentObject(AudioDownloadModel())
+            .environmentObject(TabRouter())
     }
 #endif
