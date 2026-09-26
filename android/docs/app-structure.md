@@ -91,7 +91,8 @@ because the user still holds the source file:
 Only a clean `Finished` closes the screen by itself; one still waiting to upload,
 or with a transcript being redone, stays up until it is dismissed. An upload the
 cloud refuses for good (see `api-cloud.md`) is `Failed(UPLOAD_REFUSED)`, not
-"Done".
+"Done". A 402 on upload is not a refusal: the recording stays queued and the
+screen says it will sync once the quota resets (`Finished.waitingForQuota`).
 
 ## The service
 

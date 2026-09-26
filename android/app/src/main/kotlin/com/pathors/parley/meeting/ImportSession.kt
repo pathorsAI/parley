@@ -53,14 +53,17 @@ sealed interface ImportState {
     data object Uploading : ImportState
 
     /**
-     * Saved. [pendingUpload] means it is still on this phone waiting for the
-     * network; [transcript] says whether the transcript it went up with is the
-     * whole story or is being redone in the background.
+     * Saved. [pendingUpload] means it is still on this phone waiting to upload;
+     * [waitingForQuota] narrows that to "the cloud said 402", which a quota
+     * reset clears rather than the network coming back. [transcript] says
+     * whether the transcript it went up with is the whole story or is being
+     * redone in the background.
      */
     data class Finished(
         val recordingId: String,
         val pendingUpload: Boolean,
         val transcript: ImportTranscript = ImportTranscript.COMPLETE,
+        val waitingForQuota: Boolean = false,
     ) : ImportState
 
     data class Failed(val reason: ImportFailure, val detail: String? = null) : ImportState
@@ -87,7 +90,8 @@ enum class ImportFailure {
 
     /**
      * The cloud refused the upload in a way it will repeat forever (a 4xx other
-     * than the ones waiting clears), so the uploader dropped it from the queue.
+     * than the ones a later event clears — 402 is not one of these), so the
+     * uploader dropped it from the queue.
      */
     UPLOAD_REFUSED,
     UNKNOWN,
@@ -326,17 +330,21 @@ class ImportSession(
         val result = runCatching { uploader.drain() }.getOrNull()
         result?.refused?.get(id)?.let { refusal ->
             // Dropped, not queued: saying "saved" here would be the lie.
-            _state.value = ImportState.Failed(ImportRelayOutcome.uploadRefusal(refusal), refusal.message)
+            _state.value = ImportState.Failed(ImportFailure.UPLOAD_REFUSED, refusal.message)
             return
         }
         // A short transcript was just handed to the backfill queue by that
         // drain (or will be, by whichever drain finally uploads it). Start the
         // queue now instead of leaving it for the next launch.
         drainBackfills()
+        val pending = result == null || result.remaining > 0
         _state.value = ImportState.Finished(
             recordingId = id,
-            pendingUpload = result == null || result.remaining > 0,
+            pendingUpload = pending,
             transcript = transcript,
+            // A 402 keeps the recording queued (see MeetingUploader.dispositionOf);
+            // say it waits for the quota, not for a network that is fine.
+            waitingForQuota = pending && result?.quotaExhausted == true,
         )
     }
 

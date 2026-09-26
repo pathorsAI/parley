@@ -160,6 +160,7 @@
     <string name="import_action_sign_in_again">Sign in again</string>
     <string name="import_phase_saved">Saved</string>
     <string name="import_transcript_in_background">Transcription stopped partway through. The recording is saved, and the transcript will be completed in the background.</string>
+    <string name="import_queued_quota">You\'re out of quota. The recording is safe on this phone and will sync once the quota resets.</string>
 
     <!-- Recording detail -->
     <string name="detail_title">Recording</string>

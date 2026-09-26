@@ -1,10 +1,8 @@
 package com.pathors.parley.meeting
 
-import com.pathors.parley.cloud.CloudException
 import com.pathors.parley.kit.SttRelayEvent
 import com.pathors.parley.kit.TranscriptCoverage
 import com.pathors.parley.kit.TranscriptSegment
-import java.io.IOException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -143,20 +141,5 @@ class ImportRelayOutcomeTest {
             ImportTranscript.COMPLETE,
             ImportRelayOutcome.transcript(ImportRelayVerdict.Healthy, coverage(0, 600_000)),
         )
-    }
-
-    // ── an upload the cloud refused for good ─────────────────────────────────
-
-    @Test
-    fun `a refused upload names quota separately from everything else`() {
-        assertEquals(
-            ImportFailure.QUOTA_EXHAUSTED,
-            ImportRelayOutcome.uploadRefusal(CloudException(402, "quota")),
-        )
-        assertEquals(
-            ImportFailure.UPLOAD_REFUSED,
-            ImportRelayOutcome.uploadRefusal(CloudException(413, "too large")),
-        )
-        assertEquals(ImportFailure.UPLOAD_REFUSED, ImportRelayOutcome.uploadRefusal(IOException("?")))
     }
 }

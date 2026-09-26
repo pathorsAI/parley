@@ -149,15 +149,21 @@ val queuedId = uploader.finishAndUpload(
 - Segments are filtered to finals, minus the tentative `"-tail"` segment.
 - `drain(): DrainResult` uploads everything waiting, oldest first, 3 attempts per
   recording with 1 s / 2 s / 4 s backoff for transient failures (transport, 5xx,
-  408, 429). What happens after that is iOS `MeetingUploader.syncPending`'s rule,
-  status for status (`MeetingUploader.dispositionOf`):
-  - **401, 403, 408, 425, 429, 5xx, transport** — something later clears it
-    (signing in, access, waiting, the network): the pass **stops** with the queue
-    untouched, and the next drain picks up in order.
-  - **any other 4xx** (400, 402, 413, …) — the server will refuse the identical
+  408, 429). What happens after that is iOS `MeetingUploader.syncPending`'s rule
+  (`MeetingUploader.dispositionOf`), except for 402:
+  - **401, 402, 403, 408, 425, 429, 5xx, transport** — something later clears it
+    (signing in, the quota resetting, access, waiting, the network): the pass
+    **stops** with the queue untouched, and the next drain picks up in order.
+    402 is not retried within the pass either — one request, then stop.
+  - **any other 4xx** (400, 404, 413, …) — the server will refuse the identical
     request forever: that recording is **dropped**, audio and all, and the pass
     carries on. Left in place it would jam every recording behind it.
   - **missing or empty audio file** — dropped without a request, pass carries on.
+
+  iOS `isTerminal` drops a 402'd recording. Android deliberately keeps it: iOS's
+  own importer promises the recording "will sync once the quota resets", and a
+  drop breaks that promise, so the drop is treated as an iOS bug rather than a
+  contract to mirror.
 
   Passes are serialized by an internal mutex, so calling it from several places
   is safe.
@@ -278,5 +284,6 @@ user-assigned name, or null.
 | Queue manifest | `{id, startedAt, durationMs, segments, defaultSave}` | `{id, title, source, startedAtMs, durationMs, segments, folderId}` — the title is carried (an import is named after its file, and copy belongs to the UI); `defaultSave` is org-sharing, which Android does not surface |
 | Short recordings | dropped under 2 s | dropped under 2 s **for live capture only** — silently discarding a file the user deliberately imported would be a bug |
 | Audio upload | whole file in memory | streamed from disk |
-| Retries | one attempt per drain | 3 attempts with backoff for transient failures, then the same stop-or-drop rule as iOS |
+| Retries | one attempt per drain | 3 attempts with backoff for transient failures, then iOS's stop-or-drop rule |
+| 402 on upload | dropped (`isTerminal`) | **kept**, pass stops — iOS's importer promises it "will sync once the quota resets"; the iOS drop is a bug |
 | Segment type | `ParleyKit.TranscriptSegment` | `cloud.TranscriptSegmentDto` — a wire DTO, deliberately separate from the `:parleykit` STT type so the on-the-wire names stay pinned. Map at the call site. |

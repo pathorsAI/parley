@@ -1,6 +1,5 @@
 package com.pathors.parley.meeting
 
-import com.pathors.parley.cloud.CloudException
 import com.pathors.parley.kit.SttRelayEvent
 import com.pathors.parley.kit.TranscriptCoverage
 
@@ -93,19 +92,6 @@ object ImportRelayOutcome {
         current is ImportRelayVerdict.Degraded -> current
         else -> next
     }
-
-    /**
-     * Why the uploader dropped an imported recording instead of queueing it —
-     * see `MeetingUploader.dispositionOf`. Out of quota gets its own copy
-     * because it names a different next step (wait or upgrade) from every
-     * other refusal.
-     */
-    fun uploadRefusal(refusal: Throwable): ImportFailure =
-        if ((refusal as? CloudException)?.isQuotaExhausted == true) {
-            ImportFailure.QUOTA_EXHAUSTED
-        } else {
-            ImportFailure.UPLOAD_REFUSED
-        }
 
     /**
      * What to tell the user about the transcript once the recording is saved.

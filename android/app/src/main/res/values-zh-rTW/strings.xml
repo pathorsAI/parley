@@ -159,6 +159,7 @@
     <string name="import_action_sign_in_again">重新登入</string>
     <string name="import_phase_saved">已儲存</string>
     <string name="import_transcript_in_background">轉錄在中途停止了。錄音已儲存，逐字稿會在背景自動補齊。</string>
+    <string name="import_queued_quota">額度已用完。錄音已安全保留在手機上，額度恢復後會自動同步。</string>
 
     <!-- Recording detail -->
     <string name="detail_title">錄音</string>

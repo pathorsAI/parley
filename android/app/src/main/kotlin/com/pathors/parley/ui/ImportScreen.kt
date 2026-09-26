@@ -297,6 +297,7 @@ private fun phaseLabel(state: ImportState): String = when (state) {
     is ImportState.Running -> stringResource(R.string.import_phase_transcribing)
     ImportState.Uploading -> stringResource(R.string.import_phase_uploading)
     is ImportState.Finished -> when {
+        state.waitingForQuota -> stringResource(R.string.import_queued_quota)
         state.pendingUpload -> stringResource(R.string.meeting_queued)
         state.transcript == ImportTranscript.COMPLETES_IN_BACKGROUND ->
             stringResource(R.string.import_phase_saved)

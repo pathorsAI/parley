@@ -184,15 +184,18 @@ class MeetingUploader(
      * Each recording gets [maxAttempts] tries with exponential backoff for
      * transient failures (network drop, 5xx, 408, 429). What happens when those
      * are spent, or on a failure retrying cannot fix, is iOS
-     * `MeetingUploader.syncPending`'s rule exactly — see [dispositionOf]:
+     * `MeetingUploader.syncPending`'s rule with one deliberate exception (402,
+     * below) — see [dispositionOf]:
      *
      * - a refusal the server will repeat forever (most 4xx) **drops that
      *   recording** and the pass carries on with the next one. Leaving it at the
      *   head of an oldest-first queue would jam every recording behind it on
      *   every future pass;
-     * - anything a later event can clear (sign in again, wait, the network
-     *   coming back, the server recovering) **stops the pass** with the queue
-     *   untouched, because the next recording would fail the same way.
+     * - anything a later event can clear (sign in again, the quota resetting,
+     *   wait, the network coming back, the server recovering) **stops the pass**
+     *   with the queue untouched, because the next recording would fail the same
+     *   way. Nothing in that class is retried within the pass beyond what
+     *   [CloudException.isRetryable] allows — a 402 gets exactly one request.
      */
     suspend fun drain(): DrainResult = drainMutex.withLock {
         val pending = withContext(Dispatchers.IO) { queue.list() }
@@ -325,20 +328,28 @@ class MeetingUploader(
     companion object {
         /**
          * What a failed upload means for the recording it was carrying — iOS
-         * `MeetingUploader.isTerminal`, status for status.
+         * `MeetingUploader.isTerminal`, with one deliberate difference.
          *
-         * A 4xx is the server objecting to the request itself — too large (413),
-         * out of credit (402), malformed (400) — and the identical request is
-         * refused identically on every future pass. The exceptions are the 4xx
-         * somebody's later action clears: signing in again (401), being granted
-         * access (403), and waiting (408, 425, 429). Those, 5xx, and failures
-         * that never reached HTTP (status 0, a bare [IOException]) stop the pass
-         * instead.
+         * | Status | Disposition | Why |
+         * |---|---|---|
+         * | 401 | stop the pass | signing in again clears it |
+         * | 402 | stop the pass | the quota resets; the recording must survive until it does |
+         * | 403 | stop the pass | being granted access clears it |
+         * | 408, 425, 429 | stop the pass | waiting clears it |
+         * | any other 4xx (400, 404, 413, …) | **drop** the recording | refused identically forever |
+         * | 5xx, 0, a bare [IOException], anything else | stop the pass | the server or the network recovers |
+         *
+         * The difference is 402. iOS drops it — while its own importer tells the
+         * user "the recording is safe on this phone and will sync once the quota
+         * resets". That promise is the contract; the drop is the bug (iOS should
+         * get the same fix). Out of quota is a wait measured in weeks, not a
+         * refusal, so the recording stays queued, manifest and audio, and the
+         * pass stops rather than failing every recording behind it.
          */
         fun dispositionOf(failure: Throwable): UploadFailureDisposition {
             val status = (failure as? CloudException)?.status ?: return UploadFailureDisposition.STOP_PASS
             return when (status) {
-                401, 403, 408, 425, 429 -> UploadFailureDisposition.STOP_PASS
+                401, 402, 403, 408, 425, 429 -> UploadFailureDisposition.STOP_PASS
                 in 400..499 -> UploadFailureDisposition.DROP
                 else -> UploadFailureDisposition.STOP_PASS
             }

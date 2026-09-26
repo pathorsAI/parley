@@ -18,7 +18,8 @@ import org.junit.rules.TemporaryFolder
 
 /**
  * What one failed upload does to the rest of the queue — iOS
- * `MeetingUploader.syncPending` / `isTerminal`, status for status.
+ * `MeetingUploader.syncPending` / `isTerminal`, except that a 402 is kept
+ * (iOS drops it, contradicting its own "will sync once the quota resets").
  *
  * Before this, any failure stopped the pass. A recording the server will refuse
  * forever (too large, malformed) therefore sat at the head of an oldest-first
@@ -40,7 +41,7 @@ class MeetingUploaderDrainTest {
 
     @Test
     fun `the 4xx that a later action clears stop the pass`() {
-        listOf(401, 403, 408, 425, 429).forEach { status ->
+        listOf(401, 402, 403, 408, 425, 429).forEach { status ->
             assertEquals(
                 "HTTP $status",
                 UploadFailureDisposition.STOP_PASS,
@@ -51,7 +52,7 @@ class MeetingUploaderDrainTest {
 
     @Test
     fun `every other 4xx drops the recording`() {
-        listOf(400, 402, 404, 409, 410, 413, 415, 422, 499).forEach { status ->
+        listOf(400, 404, 409, 410, 413, 415, 422, 499).forEach { status ->
             assertEquals(
                 "HTTP $status",
                 UploadFailureDisposition.DROP,
@@ -146,6 +147,25 @@ class MeetingUploaderDrainTest {
         assertTrue(queue.audioFile("first").exists())
         // Stopped at the head: the second recording was never tried.
         assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `out of quota keeps the recording and stops after one request`() = runBlocking {
+        // iOS drops a 402'd recording while telling the user it "will sync once
+        // the quota resets". Android keeps the promise: a quota reset is a wait.
+        val queue = queue("first", "second")
+        respond(402, """{"error":"quota_exhausted"}""")
+
+        val result = uploader(queue).drain()
+
+        assertEquals(0, result.uploaded)
+        assertEquals(0, result.discarded)
+        assertEquals(2, result.remaining)
+        assertTrue(result.quotaExhausted)
+        assertTrue("not a refusal", result.refused.isEmpty())
+        assertTrue(queue.audioFile("first").exists())
+        assertTrue(queue.manifestFile("first").exists())
+        assertEquals("no retries, and the second recording is not tried", 1, server.requestCount)
     }
 
     @Test
