@@ -374,10 +374,88 @@
     else size();
   }
 
+  /* ---------- Row demos: the AI chat and voice-typing polish ----------
+     Each plays once, the first time it is mostly in view. The HTML is the final
+     state, so without JS, without IntersectionObserver or with reduced motion the
+     visitor simply sees the finished demo. */
+
+  function onceInView(el, play) {
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        io.disconnect();
+        play(el);
+      },
+      { threshold: 0.35 },
+    );
+    io.observe(el);
+  }
+
+  // The answer's direct children: text runs are typed out, timestamp chips pop in whole.
+  function blankParts(el) {
+    const parts = [...el.childNodes].map((node) => ({
+      node,
+      text: node.nodeType === Node.TEXT_NODE ? node.textContent : null,
+    }));
+    showParts(parts, 0);
+    return parts;
+  }
+
+  function showParts(parts, count) {
+    let left = count;
+    for (const part of parts) {
+      if (part.text === null) {
+        part.node.classList?.toggle("is-off", left < 1);
+        left -= 1;
+      } else {
+        part.node.textContent = part.text.slice(0, Math.max(0, left));
+        left -= part.text.length;
+      }
+    }
+  }
+
+  function typeParts(parts, duration) {
+    const total = parts.reduce((n, part) => n + (part.text === null ? 1 : part.text.length), 0);
+    const TICK = 30;
+    const step = Math.max(1, Math.ceil(total / (duration / TICK)));
+    let shown = 0;
+    const timer = setInterval(() => {
+      shown = Math.min(total, shown + step);
+      showParts(parts, shown);
+      if (shown >= total) clearInterval(timer);
+    }, TICK);
+  }
+
+  function playChat(chat) {
+    const answer = chat.querySelector(".chat__a");
+    const parts = answer ? blankParts(answer) : [];
+    chat.classList.replace("is-pending", "is-play");
+    // Question at once, the tool call at 0.35s, the answer typed from 0.7s to 1.5s.
+    setTimeout(() => typeParts(parts, 800), 700);
+  }
+
+  function playPolish(polish) {
+    polish.classList.replace("is-pending", "is-play");
+  }
+
+  function setupDemos() {
+    if (reduceMotion.matches || !("IntersectionObserver" in globalThis)) return;
+    const demos = [
+      [document.querySelector(".chat"), playChat],
+      [document.querySelector(".polish"), playPolish],
+    ];
+    for (const [el, play] of demos) {
+      if (!el) continue;
+      el.classList.add("is-pending");
+      onceInView(el, play);
+    }
+  }
+
   setupLangBar();
   setupNav();
   setupDownloads(detectOS());
   setupCopy();
   setupFades();
   setupHero();
+  setupDemos();
 })();

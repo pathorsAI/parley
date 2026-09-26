@@ -77,10 +77,20 @@ hero transcript is shown in full and every section is visible. With it:
 - **Hero demo** — the transcript types itself in time with a canvas waveform, speakers resolve
   from "…" to 講者 A/B (Speaker A/B), unsettled words stay grey. The demo is `aria-hidden`; a
   visually hidden copy of the two lines is there for screen readers.
+- **Row demos** — the "Your AI" chat (question, tool call, then the answer types itself) and
+  the voice-typing polish (fillers struck out, then the tidy list) each play once, the first
+  time they scroll into view. The HTML is their final state.
 - **A 160ms fade** as sections scroll into view (opacity only), the copy button on the MCP
   command, the small-screen menu.
 
-`prefers-reduced-motion` gets the full transcript, a static waveform and no fades.
+`prefers-reduced-motion` gets the full transcript, a static waveform, the demos in their final
+state and no fades.
+
+## Keeping it short
+
+The home page is one large visual per section with a label, one H2 and one sentence under it.
+`tests/website-build.test.ts` fails if the visible text inside `<main>` grows past 700 CJK
+characters (zh) or 450 words (en): add a screenshot before you add a paragraph.
 
 ## Hero waveform
 
@@ -111,17 +121,26 @@ cd website/tools/desktop-shots && (cd shooter && bun install) \
 
 # 2. publish web versions (each file must stay under 250 KB)
 O=website/tools/desktop-shots/out; A=website/assets/shots
-for l in zh en; do for s in live report; do
-  cwebp -q 82 -m 6 -resize 2000 0 $O/$s-$l-light.png -o $A/desktop-$s-$l.webp
-  cp $O/$s-$l-light.jpg $A/desktop-$s-$l.jpg
-done; done
-cp $O/library-en-light.jpg $A/desktop-library-en.jpg     # used by the repo README
+for l in zh en; do
+  for s in live report library; do
+    cwebp -q 82 -m 6 -resize 2000 0 $O/$s-$l-light.png -o $A/desktop-$s-$l.webp
+    cp $O/$s-$l-light.jpg $A/desktop-$s-$l.jpg
+  done
+  # ⌘K: the palette alone, cropped to its own edges (2880×1800 capture coordinates).
+  # The dimmed library behind it would read as a grey slab; the page's panel stands in for it.
+  sips -c 282 1083 --cropOffset 272 898 $O/library-cmdk-$l-light.png --out /tmp/cmdk-$l.png
+  cwebp -q 86 -m 6 /tmp/cmdk-$l.png -o $A/desktop-cmdk-$l.webp
+  sips -s format jpeg -s formatOptions 85 /tmp/cmdk-$l.png --out $A/desktop-cmdk-$l.jpg
+done
 
-for l in zh:zh-Hant en:en-US; do for s in record:02-record library:03-library; do
+for l in zh:zh-Hant en:en-US; do for s in record:02-record library:03-library transcript:04-transcript; do
   cwebp -q 82 -m 6 -resize 600 0 ios/AppStore/screenshots/${l#*:}/${s#*:}.png -o $A/iphone-${s%%:*}-${l%%:*}.webp
   sips -s format jpeg -s formatOptions 80 -Z 1304 ios/AppStore/screenshots/${l#*:}/${s#*:}.png --out $A/iphone-${s%%:*}-${l%%:*}.jpg
 done; done
 ```
+
+`desktop-library-en.jpg`, `desktop-live-en.jpg` and `desktop-report-en.jpg` are also used by the
+repository README.
 
 Screenshots stay light in the site's dark mode; they are framed with a hairline and a soft
 shadow. The desktop harness uses fictional demo data (北風工業 / Northwind, 晴光實驗室 /
