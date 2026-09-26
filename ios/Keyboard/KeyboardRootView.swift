@@ -87,6 +87,21 @@ struct KeyboardRootView: View {
                             bridge.stepPane(by: dx < 0 ? 1 : -1)
                         }
                 )
+                // Hidden rather than covered while the candidate grid is up:
+                // the keyboard has no background to cover it with. Hit-testing
+                // goes with it, so the track can't be swiped or typed on
+                // underneath the grid.
+                .opacity(showsCandidateGrid ? 0 : 1)
+                .allowsHitTesting(!showsCandidateGrid)
+            }
+            // The same content area the panes have, so opening the grid cannot
+            // change the keyboard's height.
+            .overlay {
+                if showsCandidateGrid {
+                    CandidateGrid(
+                        candidates: bridge.candidates, dark: dark,
+                        pick: bridge.pickCandidate, backspace: bridge.backspace)
+                }
             }
             .clipped()
         }
@@ -147,7 +162,14 @@ struct KeyboardRootView: View {
         HStack(spacing: 0) {
             if !bridge.zhuyin.composition.isEmpty {
                 compositionChip
-                candidateBar
+                if bridge.candidatesExpanded {
+                    // The grid below has the candidates; the strip keeps the
+                    // reading and the way back.
+                    Spacer(minLength: 8)
+                } else {
+                    candidateBar
+                }
+                if showsExpandKey { expandKey }
             } else if showsSuggestions {
                 suggestionBar
             } else {
@@ -164,6 +186,11 @@ struct KeyboardRootView: View {
         }
         .frame(height: KBMetrics.strip)
         .padding(.horizontal, 12)
+        // The same sub-visible fill the pane track has, for the same reason: a
+        // fully transparent point in a keyboard extension never receives the
+        // touch, so without it only the drawn pixels of ⌄ — two thin strokes —
+        // and of each candidate's glyphs were tappable.
+        .background(Color.white.opacity(0.01))
     }
 
     /// The English pane's word suggestions take the strip on the same terms the
@@ -304,6 +331,41 @@ struct KeyboardRootView: View {
             label: Text("Candidates"), action: bridge.pickCandidate
         )
         .equatable()
+    }
+
+    /// The grid replaces the 注音 keys only while there is a reading to choose
+    /// for. The controller collapses it when the buffer empties; the pane test
+    /// is a second guard, so the grid can never sit over another pane's keys.
+    private var showsCandidateGrid: Bool {
+        bridge.candidatesExpanded && bridge.pane == .zhuyin && !bridge.composition.isEmpty
+    }
+
+    /// Only with something to show, or with the grid already open so it can be
+    /// closed again.
+    private var showsExpandKey: Bool {
+        bridge.candidatesExpanded || !bridge.candidates.isEmpty
+    }
+
+    /// ⌄ at the end of the candidate bar, as on the system keyboard: the bar
+    /// shows what fits in one row, this opens all of them over the keys.
+    /// Flips to ⌃ while the grid is open. A hairline sets it off from the last
+    /// candidate, so it doesn't read as one.
+    private var expandKey: some View {
+        let expanded = bridge.candidatesExpanded
+        return HStack(spacing: 0) {
+            Rectangle()
+                .fill(KBTheme.inkSoft(dark).opacity(0.3))
+                .frame(width: 1, height: KBMetrics.strip - 18)
+            Button(action: { bridge.candidatesExpanded.toggle() }) {
+                Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(KBTheme.ink(dark))
+                    .frame(width: 36, height: KBMetrics.strip - 4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(expanded ? Text("Fewer candidates") : Text("Show more candidates"))
+        }
     }
 
     // MARK: English word suggestions

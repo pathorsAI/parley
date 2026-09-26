@@ -1296,6 +1296,26 @@ composer's limit rather than a position anybody argued for.
   is the first tone while the last syllable has no tone, and commits everything
   once it has one. So a sentence stays typeable without ever looking at the bar,
   and choosing one word does not cost the syllables behind it.
+- **⌄ opens every candidate as a grid.** The bar shows what fits in one row;
+  the ⌄ at its end (only while there are candidates) opens all of them as a
+  grid in the 注音 pane's own 213pt key area — `CandidateGrid`, 22pt key-cap
+  cells, `max(4, width ÷ 64)` columns, scrolling vertically — in exactly the
+  composer's order, never re-sorted. The keyboard's height does not change: the
+  grid takes the keys' place rather than growing the keyboard. It *replaces*
+  them rather than covering them, because the keyboard paints no background
+  (see *Not painting a background*): the pane track is hidden and stops taking
+  touches while the grid is up. The strip keeps the reading and flips ⌄ to ⌃ to
+  close it; the grid carries its own ⌫ (bottom right, hold-to-repeat), because
+  the pane's is hidden with the keys and delete still unwinds the buffer. The
+  open state lives on the bridge (`candidatesExpanded`) because the controller
+  closes it: whenever the reading empties — a pick that used the last
+  syllables, return, space, punctuation, leaving the pane — the grid goes and
+  the keys come back. A pick that leaves syllables pending keeps it open with
+  their candidates.
+- **The strip takes touches everywhere.** A fully transparent point in a
+  keyboard extension never receives a touch, and the strip had no fill, so only
+  the drawn pixels of a candidate's glyphs were tappable — and of ⌄, just two
+  thin strokes. It now carries the same sub-visible fill the pane track does.
 - **Two lone 聲母 already predict.** `ㄋㄏ` offers 你好 before a vowel or a tone
   has been typed, because a phrase is matched **by prefix within each
   syllable**: the slots the user has filled must agree with the phrase's

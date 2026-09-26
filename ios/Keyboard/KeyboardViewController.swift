@@ -1128,6 +1128,11 @@ final class KeyboardViewController: UIInputViewController {
         let next = KeyboardBridge.ZhuyinStrip(
             composition: zhuyin.reading, candidates: zhuyin.candidates)
         if bridge.zhuyin != next { bridge.zhuyin = next }
+        // The candidate grid is about a reading; once the buffer is committed or
+        // cleared there is nothing left in it to choose, and the keys come back.
+        // Here rather than in the view so every way the buffer empties — a pick,
+        // return, space, punctuation, leaving the pane — closes it the same way.
+        if zhuyin.reading.isEmpty, bridge.candidatesExpanded { bridge.candidatesExpanded = false }
     }
 
     // MARK: English word suggestions
@@ -1431,6 +1436,10 @@ final class KeyboardBridge: ObservableObject {
     }
 
     @Published var zhuyin = ZhuyinStrip(composition: "", candidates: [])
+    /// The candidate grid is open over the 注音 keys. The strip's ⌄ toggles it;
+    /// the controller closes it when the composition empties, which is why it
+    /// lives here rather than in the view.
+    @Published var candidatesExpanded = false
 
     /// What the strip shows while an English word is being typed. One value
     /// for the same reason as `ZhuyinStrip`.

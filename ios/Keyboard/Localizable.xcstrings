@@ -35,6 +35,23 @@
         }
       }
     },
+    "Candidates": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Candidates"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "候選字"
+          }
+        }
+      }
+    },
     "Caps lock": {
       "extractionState": "manual",
       "localizations": {
@@ -216,6 +233,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "英文鍵盤"
+          }
+        }
+      }
+    },
+    "Fewer candidates": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fewer candidates"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收合候選字"
           }
         }
       }
@@ -479,6 +513,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "大寫切換"
+          }
+        }
+      }
+    },
+    "Show more candidates": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show more candidates"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顯示更多候選字"
           }
         }
       }
