@@ -5,7 +5,7 @@ import { analyzeTimeline } from "../ai/timeline";
 import { detectMeetingKind } from "../ai/meetingKind";
 import { analysisSignature, lensOf } from "./lens";
 import { applyKindTemplate } from "./kindTemplate";
-import { readJsonCache, writeJsonCache, clearCacheByPrefix } from "../cache";
+import { readJsonCache, writeJsonCache, clearCacheByPrefix, ANALYSIS_CACHE_PREFIX } from "../cache";
 import { clearStudyCache } from "../history/studyCache";
 import { makeRunGuard } from "./runGuard";
 import { translate } from "../../i18n";
@@ -60,12 +60,12 @@ function analysisCacheKey(
   // to it must invalidate the cache and re-analyze.
   const profile = `${settings.userName}|${settings.userRole}|${settings.userCompany}|${settings.userBackground}`;
   const raw = `${ANALYSIS_CACHE_VERSION} ${model} ${kind ?? "?"} ${profile} ${meetingContext} ${JSON.stringify(names)} ${evalSig} ${segSig}`;
-  return `parley:analysis:${fnv1a(raw)}`;
+  return `${ANALYSIS_CACHE_PREFIX}${fnv1a(raw)}`;
 }
 
 /** Drop every cached analysis (all `parley:analysis:*` localStorage entries). */
 export function clearAnalysisCache(): number {
-  return clearCacheByPrefix("parley:analysis:");
+  return clearCacheByPrefix(ANALYSIS_CACHE_PREFIX);
 }
 
 /**

@@ -8,8 +8,9 @@
 // includes the names). Lives in localStorage, like the analysis cache.
 
 import { isTauri } from "../tauriEvents";
+import { SPEAKER_NAMES_CACHE_PREFIX } from "../cache";
 
-const PREFIX = "parley:speakers:";
+const PREFIX = SPEAKER_NAMES_CACHE_PREFIX;
 
 /** Deterministic 32-bit FNV-1a hash → hex (same as the analysis cache). */
 function fnv1a(s: string): string {

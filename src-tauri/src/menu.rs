@@ -23,12 +23,11 @@
 //!
 //! Diagnostics is unchanged: "View Logs" emits `menu://view-logs`, which the
 //! frontend turns into a standalone, movable log-viewer window (like Settings).
-//! The on-disk caches (transcription, diarization) are cleared directly. The
-//! webview-side caches live in localStorage, so those are cleared via events
-//! the frontend listens for: the analysis cache via `cache://clear-analysis`,
-//! and the saved speaker names (part of the diarization result) via
-//! `cache://clear-speakers`.
+//! Clear Cache runs [`crate::cache::clear`], the same code as the Caches block
+//! in Settings (the only way to clear them on Windows, which draws no menu
+//! bar) — see cache.rs for what each cache is and where it lives.
 
+use crate::cache::{self, CacheKind};
 use tauri::menu::{
     AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID,
 };
@@ -336,25 +335,19 @@ pub fn on_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
             let _ = app.emit("menu://view-logs", ());
         }
         "clear_cache_transcription" => {
-            clear_cache_dir(app, "transcriptions");
+            cache::clear(app, CacheKind::Transcription);
             notify(app, "Transcription cache cleared.");
         }
         "clear_cache_diarization" => {
-            clear_cache_dir(app, "diarizations");
-            // The cluster cache is on disk; the speaker NAMES live in the webview's
-            // localStorage, so clear those via an event too.
-            let _ = app.emit("cache://clear-speakers", ());
+            cache::clear(app, CacheKind::Diarization);
             notify(app, "Diarization cache cleared.");
         }
         "clear_cache_analysis" => {
-            let _ = app.emit("cache://clear-analysis", ());
+            cache::clear(app, CacheKind::Analysis);
             notify(app, "Analysis cache cleared.");
         }
         "clear_cache_all" => {
-            clear_cache_dir(app, "transcriptions");
-            clear_cache_dir(app, "diarizations");
-            let _ = app.emit("cache://clear-analysis", ());
-            let _ = app.emit("cache://clear-speakers", ());
+            cache::clear(app, CacheKind::All);
             notify(app, "All caches cleared.");
         }
         _ => {}
@@ -408,18 +401,6 @@ fn route_command<R: Runtime>(app: &AppHandle<R>, rest: &str) {
 
     if let Err(e) = app.emit_to(label.as_str(), CMD_EVENT, command) {
         log::warn!("menu: emit {command} to {label} failed: {e}");
-    }
-}
-
-/// Remove a subdirectory of the OS app-cache dir (recreated lazily on next write).
-fn clear_cache_dir<R: Runtime>(app: &AppHandle<R>, name: &str) {
-    if let Ok(cache) = app.path().app_cache_dir() {
-        let dir = cache.join(name);
-        match std::fs::remove_dir_all(&dir) {
-            Ok(()) => log::info!("menu: cleared cache {}", dir.display()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => log::warn!("menu: clear cache {} failed: {e}", dir.display()),
-        }
     }
 }
 

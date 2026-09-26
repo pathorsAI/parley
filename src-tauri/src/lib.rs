@@ -1,5 +1,6 @@
 mod audio;
 mod ax_observe;
+mod cache;
 mod capture;
 mod commands;
 mod diarize;
@@ -189,7 +190,9 @@ pub fn run() {
             diarize::download_diarize_model,
             diarize::diarize_model_status,
             mcp::get_mcp_server_info,
-            mcp::get_mcp_activity
+            mcp::get_mcp_activity,
+            cache::clear_cache,
+            cache::cache_sizes
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

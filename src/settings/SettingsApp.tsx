@@ -33,6 +33,7 @@ import { clientLabel, connState, relativeTime, type McpActivityInfo } from "../c
 import { claudeCodeCommand, mcpClientConfigJson, type McpServerInfo } from "../lib/mcp/connect";
 import { ReleaseNotesDialog } from "../components/ReleaseNotesDialog";
 import { UsagePanel } from "./UsagePanel";
+import { CachesPanel } from "./CachesPanel";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/CopyButton";
@@ -1155,6 +1156,12 @@ export function SettingsApp() {
               </Button>
               {logPath && <CopyButton value={logPath} label={t("settings.logs.copyPath")} />}
             </div>
+          </Section>
+        )}
+
+        {cat === "mcp" && (
+          <Section title={t("settings.caches.title")}>
+            <CachesPanel />
           </Section>
         )}
 

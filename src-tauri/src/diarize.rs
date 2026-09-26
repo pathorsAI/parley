@@ -239,7 +239,7 @@ fn diarize_cache_path(app: &AppHandle, key: &str) -> Option<PathBuf> {
         app.path()
             .app_cache_dir()
             .ok()?
-            .join("diarizations")
+            .join(crate::cache::DIARIZATIONS_DIR)
             .join(format!("{key}.json")),
     )
 }
