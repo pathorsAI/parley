@@ -44,6 +44,8 @@ struct LibraryView: View {
     @State private var personalLoaded = false
     /// A recording the checklist opened, and what for.
     @State private var opened: OpenedRecording?
+    /// The recording the folder picker is moving, while it is up.
+    @State private var moving: CloudRecordingSummary?
     #if DEBUG
         @ObservedObject private var demo = ScreenshotDemo.shared
     #endif
@@ -81,6 +83,7 @@ struct LibraryView: View {
                         onFolderChange: folderChanged(rec.id))
                 }
             }
+            .sheet(item: $moving) { rec in folderPicker(for: rec) }
             .searchable(text: $search, prompt: Text("Search titles and snippets"))
             .refreshable { await load() }
             .task(id: "\(scope ?? "personal")-\(app.signedIn)") { await load() }
@@ -592,13 +595,12 @@ struct LibraryView: View {
     @ViewBuilder
     private func actions(for rec: CloudRecordingSummary) -> some View {
         downloadAction(for: rec)
-        if !folders.isEmpty {
-            Menu("Move to folder") {
-                Button("Unfiled (top level)") { Task { await moveToFolder(rec, folderId: nil) } }
-                ForEach(folders) { f in
-                    Button(f.name) { Task { await moveToFolder(rec, folderId: f.id) } }
-                }
-            }
+        // The picker sheet rather than a submenu of every folder: a submenu
+        // has no search and no way to add the customer you have just met.
+        // Personal scope can create a folder, so it always has somewhere to
+        // go; an org scope has no create endpoint here, so it needs folders.
+        if scope == nil || !folders.isEmpty {
+            Button("Move to folder…", systemImage: "folder") { moving = rec }
         }
         // Not for the sample: sharing is a server-side copy of something the
         // server does not have.
@@ -617,6 +619,25 @@ struct LibraryView: View {
         Button("Delete", systemImage: "trash", role: .destructive) {
             Task { await remove(rec) }
         }
+    }
+
+    /// The same picker the recording screen uses, over this scope's folders.
+    private func folderPicker(for rec: CloudRecordingSummary) -> some View {
+        // The orphan→root rule the list renders by, so the tick agrees with
+        // the page the row is on.
+        let current = rec.folderId.flatMap { id in folders.contains { $0.id == id } ? id : nil }
+        let create: ((String) async throws -> Void)? =
+            scope == nil
+            ? { name in
+                let folder = try await app.cloud.createFolder(name: name)
+                folders.append(folder)
+                await moveToFolder(rec, folderId: folder.id)
+            } : nil
+        return FolderPickerSheet(
+            folders: folders,
+            currentFolderId: current,
+            onSelect: { folderId in Task { await moveToFolder(rec, folderId: folderId) } },
+            onCreate: create)
     }
 
     // MARK: data ops

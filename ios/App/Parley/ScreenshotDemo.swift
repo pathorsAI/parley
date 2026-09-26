@@ -35,7 +35,9 @@
     /// argument never leaves the process.
     ///
     /// Routes: `record`, `settled`, `adjust`, `library`, `transcript`,
-    /// `keyboard`, `settings`, `dictation`.
+    /// `keyboard`, `settings`, `dictation`, and one that is not a store frame
+    /// but a review frame: `movetofolder` (the transcript with the folder
+    /// picker open over fifteen folders).
     @MainActor
     final class ScreenshotDemo: ObservableObject {
         static let shared = ScreenshotDemo()
@@ -55,6 +57,8 @@
         /// know which of the two `task`s SwiftUI ran first — set from the route
         /// it can open onto a model that has not been seeded yet.
         @Published var openFilingAdjust = false
+        /// The transcript opens the folder picker over `pickerFolders`.
+        @Published var openFolderPicker = false
         /// `adjust` asks for the sheet; `seedSettled` is what grants it.
         private var wantsFilingAdjust = false
 
@@ -99,6 +103,7 @@
             showSettledFiling = false
             openFilingAdjust = false
             wantsFilingAdjust = false
+            openFolderPicker = false
             switch route {
             case "record": tab = .record
             case "settled":
@@ -116,6 +121,10 @@
                 tab = .settings
                 focusKeyboardSection = true
             case "settings": tab = .settings
+            case "movetofolder":
+                tab = .library
+                showTranscript = true
+                openFolderPicker = true
             case "dictation":
                 // The keyboard hand-off screen in its stranded-listening state
                 // (manual swipe-back, the iOS 26.4+ regime). Deferred a turn
@@ -190,6 +199,27 @@
                 id: "f-new", name: t("New business", "新客戶"),
                 orgId: nil, createdAt: nil, updatedAt: nil),
         ]
+
+        /// Enough folders that the picker has to scroll and the search earns its
+        /// place — the account the action sheet failed. The first two are the
+        /// library's own, so the featured recording's folder is ticked.
+        static var pickerFolders: [CloudFolder] {
+            let more: [(String, String)] = [
+                ("Halcyon Labs", "晴光實驗室"), ("Meridian", "子午線"),
+                ("Acme Logistics", "頂峰物流"), ("Blue Harbor Hotels", "藍港酒店"),
+                ("Café Luna", "月光咖啡"), ("Evergreen Clinics", "長青診所"),
+                ("Foxglove Retail", "毛地黃零售"), ("Granite Insurance", "磐石保險"),
+                ("Harbourline Freight", "港線貨運"), ("Ironwood Motors", "鐵木汽車"),
+                ("Juniper Schools", "杜松教育"), ("Kestrel Energy", "紅隼能源"),
+                ("Lumen Dental", "流明牙醫"),
+            ]
+            return folders
+                + more.enumerated().map { i, names in
+                    CloudFolder(
+                        id: "f-picker-\(i)", name: t(names.0, names.1),
+                        orgId: nil, createdAt: nil, updatedAt: nil)
+                }
+        }
 
         // MARK: library fixtures
 
