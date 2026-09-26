@@ -2,12 +2,16 @@ package com.pathors.parley.screenshot
 
 import android.net.Uri
 import com.pathors.parley.BuildConfig
+import com.pathors.parley.cloud.CloudFolder
+import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.CloudUser
 import com.pathors.parley.cloud.HostedQuota
+import com.pathors.parley.cloud.OrgRole
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.kit.TranscriptSegment
+import com.pathors.parley.library.SaveDestination
 import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -46,7 +50,9 @@ import kotlinx.serialization.json.putJsonObject
  * ```
  *
  * Routes: `library`, `transcript`, `record` (alias `meeting`), `account`
- * (alias `settings`), and `off`.
+ * (alias `settings`), `movetofolder` (the transcript with the folder picker
+ * open over fifteen folders — a review frame, not a store frame, the same one
+ * iOS has), and `off`.
  *
  * Everything below is invented. No real company, person, account, or meeting is
  * represented, the only address is in the RFC-reserved `example.com`, and the
@@ -57,7 +63,7 @@ import kotlinx.serialization.json.putJsonObject
 object DemoMode {
 
     /** The screens the listing needs, each addressable by its own URL. */
-    enum class Screen { LIBRARY, TRANSCRIPT, MEETING, ACCOUNT }
+    enum class Screen { LIBRARY, TRANSCRIPT, MEETING, ACCOUNT, MOVE_TO_FOLDER }
 
     /**
      * A navigation request. [serial] makes each one distinct so firing the same
@@ -98,6 +104,7 @@ object DemoMode {
             "transcript", "recording" -> Screen.TRANSCRIPT
             "record", "meeting" -> Screen.MEETING
             "account", "settings" -> Screen.ACCOUNT
+            "movetofolder" -> Screen.MOVE_TO_FOLDER
             else -> return false
         }
         _enabled.value = true
@@ -141,6 +148,87 @@ object DemoMode {
         periodResetTs = EPOCH_MS + 18 * DAY_MS,
     )
 
+    // ── organization and folder fixtures ─────────────────────────────────────
+
+    /** The one organization the demo account belongs to, as an admin. */
+    const val ORG_ID = "demo-org"
+
+    private const val RENEWALS_FOLDER_ID = "f-renewals"
+    private const val NEW_BUSINESS_FOLDER_ID = "f-new"
+    private const val PIPELINE_FOLDER_ID = "of-pipeline"
+
+    fun orgs(locale: Locale = Locale.getDefault()): List<CloudOrg> = listOf(
+        CloudOrg(
+            id = ORG_ID,
+            name = t(locale, "Sales team", "業務團隊"),
+            slug = "sales",
+            role = OrgRole.ADMIN,
+        ),
+    )
+
+    /** The personal folders the library's chip row shows — iOS `ScreenshotDemo.folders`. */
+    fun folders(locale: Locale = Locale.getDefault()): List<CloudFolder> = listOf(
+        CloudFolder(id = RENEWALS_FOLDER_ID, name = t(locale, "Renewals", "續約")),
+        CloudFolder(id = NEW_BUSINESS_FOLDER_ID, name = t(locale, "New business", "新客戶")),
+    )
+
+    /**
+     * Enough folders that the picker has to scroll and its search earns its
+     * place. The first two are the library's own, so the featured recording's
+     * folder is ticked. Same names as iOS `ScreenshotDemo.pickerFolders`.
+     */
+    fun pickerFolders(locale: Locale = Locale.getDefault()): List<CloudFolder> {
+        val more = listOf(
+            "Halcyon Labs" to "晴光實驗室", "Meridian" to "子午線",
+            "Acme Logistics" to "頂峰物流", "Blue Harbor Hotels" to "藍港酒店",
+            "Café Luna" to "月光咖啡", "Evergreen Clinics" to "長青診所",
+            "Foxglove Retail" to "毛地黃零售", "Granite Insurance" to "磐石保險",
+            "Harbourline Freight" to "港線貨運", "Ironwood Motors" to "鐵木汽車",
+            "Juniper Schools" to "杜松教育", "Kestrel Energy" to "紅隼能源",
+            "Lumen Dental" to "流明牙醫",
+        )
+        return folders(locale) + more.mapIndexed { index, (en, zh) ->
+            CloudFolder(id = "f-picker-$index", name = t(locale, en, zh))
+        }
+    }
+
+    /** The organization's own folders. */
+    fun orgFolders(orgId: String, locale: Locale = Locale.getDefault()): List<CloudFolder> =
+        if (orgId != ORG_ID) {
+            emptyList()
+        } else {
+            listOf(
+                CloudFolder(
+                    id = PIPELINE_FOLDER_ID,
+                    name = t(locale, "Pipeline", "商機追蹤"),
+                    orgId = ORG_ID,
+                ),
+                CloudFolder(
+                    id = "of-accounts",
+                    name = t(locale, "Key accounts", "重點客戶"),
+                    orgId = ORG_ID,
+                ),
+            )
+        }
+
+    /** What the team library holds: two of the recordings, shared in. */
+    fun orgRecordings(orgId: String, locale: Locale = Locale.getDefault()): List<RecordingSummary> =
+        if (orgId != ORG_ID) {
+            emptyList()
+        } else {
+            recordings(locale)
+                .filter { it.id != FEATURED_ID }
+                .map { it.copy(folderId = if (it.id == DISCOVERY_ID) PIPELINE_FOLDER_ID else null) }
+        }
+
+    /**
+     * What the account sheet's "Default save location" shows in demo mode —
+     * the organization, into one of its folders, because that is the choice the
+     * section's footer exists to explain.
+     */
+    fun saveDestination(): SaveDestination =
+        SaveDestination(orgId = ORG_ID, folderId = PIPELINE_FOLDER_ID)
+
     // ── library fixtures ─────────────────────────────────────────────────────
 
     /** The recording the `transcript` route opens: the fully analyzed one. */
@@ -160,6 +248,7 @@ object DemoMode {
             findingsCount = 3,
             actionItemsCount = 2,
             hasAudio = true,
+            folderId = RENEWALS_FOLDER_ID,
             snippet = t(
                 locale,
                 "Forty seats against an eighty-seat quote; price held through the next renewal.",
@@ -176,6 +265,7 @@ object DemoMode {
             findingsCount = 2,
             actionItemsCount = 1,
             hasAudio = true,
+            folderId = NEW_BUSINESS_FOLDER_ID,
             snippet = t(
                 locale,
                 "Security questionnaire due Friday; invoicing split across two cost centres.",
@@ -212,6 +302,7 @@ object DemoMode {
                 put("durationMs", summary.durationMs.toLong())
                 put("audio", "audio.ogg")
                 put("analyzed", summary.findingsCount != 0)
+                summary.folderId?.let { put("folderId", it) }
                 putJsonObject("speakerNames") {
                     speakerNames(id, locale).forEach { (key, name) -> put(key, name) }
                 }

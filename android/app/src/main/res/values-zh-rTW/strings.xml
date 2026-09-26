@@ -260,4 +260,47 @@
     <string name="notification_channel_description">Parley 正在錄製會議時顯示。</string>
     <string name="notification_title">正在錄製會議</string>
     <string name="notification_text">點一下回到 Parley。</string>
+
+    <!-- Library scope and folders (see HomeScreen, LibraryFolders) -->
+    <string name="library_scope_personal">個人</string>
+    <string name="library_scope_choose">切換個人與團隊的錄音</string>
+    <string name="org_role_owner">擁有者</string>
+    <string name="org_role_admin">管理員</string>
+    <string name="org_role_member">成員</string>
+    <string name="library_folder_all">全部</string>
+    <string name="library_folder_unfiled">未歸檔</string>
+    <string name="library_empty_here">這裡還沒有錄音。</string>
+    <string name="library_folder_meta">資料夾</string>
+    <string name="home_error_forbidden_org">你已沒有權限查看這個組織的錄音。</string>
+    <!-- Library row actions -->
+    <string name="library_move_to_folder">移到資料夾…</string>
+    <string name="library_share_to_org">分享到組織（複製）</string>
+    <string name="library_move_to_org">搬移到組織</string>
+    <string name="library_menu_back">返回</string>
+    <string name="library_working">更新中…</string>
+    <string name="library_action_error_title">操作沒有完成</string>
+    <string name="library_move_failed">錄音沒有搬移。請檢查網路連線後再試一次。</string>
+    <string name="library_move_forbidden">你沒有權限在「%1$s」裡搬移錄音。</string>
+    <string name="library_share_forbidden">沒有權限分享到「%1$s」。</string>
+    <string name="library_share_failed">錄音沒有分享出去。請檢查網路連線後再試一次。</string>
+    <string name="library_share_original_kept">已有一份複本在「%1$s」，但個人空間裡的原始錄音沒能刪除。恢復連線後，請到個人空間自行刪除。</string>
+    <string name="home_delete_error_forbidden_org">只有上傳者或管理員可以刪除這筆錄音。</string>
+    <string name="home_delete_confirm_body_org">這會從「%2$s」永久刪除「%1$s」，組織裡的每個人都將看不到。此動作無法復原。</string>
+    <!-- Folder picker (FolderPickerSheet) -->
+    <string name="folder_picker_title">移到資料夾</string>
+    <string name="folder_picker_subtitle">一個客戶一個資料夾。</string>
+    <string name="folder_picker_search">搜尋資料夾</string>
+    <string name="folder_picker_new">新增資料夾…</string>
+    <string name="folder_picker_create_named">新增「%1$s」</string>
+    <string name="folder_picker_name_hint">資料夾名稱</string>
+    <string name="folder_picker_create">建立</string>
+    <string name="folder_picker_no_match">沒有符合的資料夾。</string>
+    <string name="folder_picker_current">目前的資料夾</string>
+    <string name="folder_picker_create_failed">無法建立資料夾。請檢查網路連線後再試一次。</string>
+    <!-- Default save location (AccountSheet) -->
+    <string name="account_save_location_title">預設儲存位置</string>
+    <string name="account_save_location_personal_folder">個人 · %1$s</string>
+    <string name="account_save_location_org">組織</string>
+    <string name="account_save_location_change">變更</string>
+    <string name="account_save_location_footer">選擇組織時，錄音仍會保存在個人空間，並自動分享一份到該組織——與桌面版行為一致。</string>
 </resources>

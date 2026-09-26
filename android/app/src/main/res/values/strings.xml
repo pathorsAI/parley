@@ -262,4 +262,47 @@
     <string name="notification_channel_description">Shows while Parley is recording a meeting.</string>
     <string name="notification_title">Recording a meeting</string>
     <string name="notification_text">Tap to return to Parley.</string>
+
+    <!-- Library scope and folders (see HomeScreen, LibraryFolders) -->
+    <string name="library_scope_personal">Personal</string>
+    <string name="library_scope_choose">Switch between your personal and team recordings</string>
+    <string name="org_role_owner">Owner</string>
+    <string name="org_role_admin">Admin</string>
+    <string name="org_role_member">Member</string>
+    <string name="library_folder_all">All</string>
+    <string name="library_folder_unfiled">Unfiled</string>
+    <string name="library_empty_here">No recordings here yet.</string>
+    <string name="library_folder_meta">Folder</string>
+    <string name="home_error_forbidden_org">You don\'t have access to this organization\'s recordings any more.</string>
+    <!-- Library row actions -->
+    <string name="library_move_to_folder">Move to folder…</string>
+    <string name="library_share_to_org">Share to organization (copy)</string>
+    <string name="library_move_to_org">Move to organization</string>
+    <string name="library_menu_back">Back</string>
+    <string name="library_working">Updating…</string>
+    <string name="library_action_error_title">That didn\'t go through</string>
+    <string name="library_move_failed">The recording wasn\'t moved. Check your connection and try again.</string>
+    <string name="library_move_forbidden">You don\'t have permission to move recordings in “%1$s”.</string>
+    <string name="library_share_forbidden">You don\'t have permission to share to “%1$s”.</string>
+    <string name="library_share_failed">The recording wasn\'t shared. Check your connection and try again.</string>
+    <string name="library_share_original_kept">A copy is now in “%1$s”, but the original couldn\'t be removed from your personal library. Delete it there when you\'re back online.</string>
+    <string name="home_delete_error_forbidden_org">Only the uploader or an admin can delete this recording.</string>
+    <string name="home_delete_confirm_body_org">This permanently deletes “%1$s” from “%2$s” for everyone in the organization. It cannot be undone.</string>
+    <!-- Folder picker (FolderPickerSheet) -->
+    <string name="folder_picker_title">Move to folder</string>
+    <string name="folder_picker_subtitle">One customer, one folder.</string>
+    <string name="folder_picker_search">Search folders</string>
+    <string name="folder_picker_new">New folder…</string>
+    <string name="folder_picker_create_named">Create “%1$s”</string>
+    <string name="folder_picker_name_hint">Folder name</string>
+    <string name="folder_picker_create">Create</string>
+    <string name="folder_picker_no_match">No folders match.</string>
+    <string name="folder_picker_current">Current folder</string>
+    <string name="folder_picker_create_failed">Couldn\'t create the folder. Check your connection and try again.</string>
+    <!-- Default save location (AccountSheet) -->
+    <string name="account_save_location_title">Default save location</string>
+    <string name="account_save_location_personal_folder">Personal · %1$s</string>
+    <string name="account_save_location_org">Organization</string>
+    <string name="account_save_location_change">Change</string>
+    <string name="account_save_location_footer">Picking an organization still saves the recording to your personal space and shares a copy there — same as the desktop app.</string>
 </resources>
