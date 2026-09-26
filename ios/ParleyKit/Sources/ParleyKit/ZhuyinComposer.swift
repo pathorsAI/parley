@@ -25,6 +25,11 @@ import Foundation
 /// single characters of the first syllable follow them, so nothing the old bar
 /// could do is lost.
 ///
+/// Both tables forgive one wrong symbol per syllable (`ZhuyinFuzzy`), always
+/// after every exact answer, so the composer needs no rule of its own for it:
+/// the bar is the tables' order, and a syllable's top is exact whenever it has
+/// an exact row.
+///
 /// Still no user learning — the order is the corpus's, not yours — and still no
 /// lattice: `best` walks the buffer greedily, longest phrase first, rather than
 /// scoring whole segmentations. See `docs/design/ios-voice-keyboard.md`.
@@ -109,6 +114,20 @@ public struct ZhuyinComposer {
     /// a lattice — deterministic, explainable, and wrong in ways a user can see
     /// and fix by picking from the bar instead.
     ///
+    /// Error tolerance is **more conservative here than in the bar**, because
+    /// the bar is a list to choose from and this is text that lands unasked. An
+    /// exact cover of any length beats a forgiven one of any length, so a
+    /// correctly typed run commits exactly what it did before. A forgiven cover
+    /// is taken only for a window holding a syllable that has **no exact row**
+    /// in the dictionary — one that cannot be right as typed — and then the
+    /// fewest forgiven symbols win, length breaking a tie. So `ㄓㄨㄡ ㄨㄣˊ`
+    /// commits 中文, while `ㄗㄨㄥ ㄨㄣˊ`, both of whose syllables are real
+    /// readings, commits one character per syllable and leaves 中文 at the front
+    /// of the bar. Letting any forgiven cover beat per-syllable characters was
+    /// tried and turned 他說的人 into 他說到任 and 吃飯了麼 into 吃飯老馬: two
+    /// correctly typed syllables that happen not to be a phrase are exactly
+    /// where a one-symbol-off phrase is always waiting.
+    ///
     /// Falls back to a syllable's own reading — a syllable with no characters is
     /// still something the user typed, and eating it would be worse than
     /// inserting `ㄍㄧ`.
@@ -120,15 +139,26 @@ public struct ZhuyinComposer {
             let remaining = syllables.count - index
             var taken = 0
             if remaining >= 2 {
+                var chosen: ZhuyinPhrases.Match?
                 for span in stride(from: min(Self.maxPhrase, remaining), through: 2, by: -1) {
                     let window = Array(syllables[index..<(index + span)])
                     // Only an exact cover: a prediction longer than what is left
                     // would put characters in the document the user never typed.
+                    // The bar ranks fewest errors first, so the first of this
+                    // span is this span's best.
                     guard let match = phrases.matches(window).first(where: { $0.span == span })
                     else { continue }
-                    out += match.phrase
-                    taken = span
-                    break
+                    if match.errors == 0 {
+                        chosen = match
+                        break
+                    }
+                    guard window.contains(where: { exactRow(of: $0).isEmpty }) else { continue }
+                    // Longest first, so a shorter span only wins on fewer errors.
+                    if match.errors < chosen?.errors ?? .max { chosen = match }
+                }
+                if let chosen {
+                    out += chosen.phrase
+                    taken = chosen.span
                 }
             }
             if taken == 0 {
@@ -266,6 +296,14 @@ public struct ZhuyinComposer {
         syllable.tone == nil
             ? dictionary.tonelessCandidates(for: syllable)
             : dictionary.candidates(for: syllable)
+    }
+
+    /// The syllable's own row with nothing forgiven — empty exactly when no
+    /// character reads the way it was typed.
+    private func exactRow(of syllable: ZhuyinSyllable) -> [String] {
+        syllable.tone == nil
+            ? dictionary.tonelessCandidates(for: syllable, fuzzy: false)
+            : dictionary.candidates(for: syllable, fuzzy: false)
     }
 
     private func top(of syllable: ZhuyinSyllable) -> String {
