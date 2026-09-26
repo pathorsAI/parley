@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { log } from "../lib/log";
 import { Check, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, Plus, ScrollText, Sun, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
+import { resetGettingStarted } from "../lib/onboarding/gettingStarted";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings, SETTINGS_NAVIGATE_EVENT } from "../lib/settingsSync";
 import { signInWithGoogle, signOut, CloudError } from "../lib/cloud/client";
@@ -200,6 +201,19 @@ export function SettingsApp() {
     }
   }
   const sttInfo = STT_BY_ID[settings.transcriptionProvider];
+
+  /** Bring the main window forward and close Settings so it isn't hidden behind it. */
+  async function focusMainWindow() {
+    if (!isTauri()) return;
+    try {
+      const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await (await WebviewWindow.getByLabel("main"))?.setFocus();
+      await getCurrentWindow().close();
+    } catch {
+      /* ignore */
+    }
+  }
 
   function patch(p: Partial<Settings>) {
     updateSettings(p);
@@ -507,27 +521,36 @@ export function SettingsApp() {
               </div>
             </Field>
             <Field label={t("settings.basic.setup")}>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 w-fit text-xs"
-                onClick={async () => {
-                  patch({ onboarded: false, onboardingStep: 0 });
-                  // The onboarding renders on the MAIN window — bring it forward
-                  // and close this Settings window so it isn't hidden behind it.
-                  if (!isTauri()) return;
-                  try {
-                    const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-                    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-                    await (await WebviewWindow.getByLabel("main"))?.setFocus();
-                    await getCurrentWindow().close();
-                  } catch {
-                    /* ignore */
-                  }
-                }}
-              >
-                {t("settings.basic.rerunSetup")}
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 w-fit text-xs"
+                  onClick={async () => {
+                    patch({ onboarded: false, onboardingStep: 0 });
+                    // The onboarding renders on the MAIN window — bring it forward
+                    // and close this Settings window so it isn't hidden behind it.
+                    await focusMainWindow();
+                  }}
+                >
+                  {t("settings.basic.rerunSetup")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 w-fit text-xs"
+                  onClick={async () => {
+                    // The checklist lives on the main window's Home — same hand-off.
+                    resetGettingStarted();
+                    await broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
+                      log.warn("settings: broadcast failed", { error: String(error) }),
+                    );
+                    await focusMainWindow();
+                  }}
+                >
+                  {t("settings.basic.showGettingStarted")}
+                </Button>
+              </div>
             </Field>
             <Field label={t("settings.update.title")}>
               {appVersion && (

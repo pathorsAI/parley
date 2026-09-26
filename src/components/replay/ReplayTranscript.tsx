@@ -6,6 +6,7 @@ import { modChordCap } from "../../lib/commands/format";
 import { speakerLabel, speakerKey, defaultSpeakerLabel, formatClock, isTrimmed, useStore, type ReplayTrim } from "../../lib/store";
 import { cn } from "@/lib/utils";
 import { useCommandShortcut } from "../../lib/commands/bind";
+import { markGettingStarted, useHint } from "../../lib/onboarding/gettingStarted";
 import type { TranscriptSegment } from "../../lib/types";
 
 interface ReplayTranscriptProps {
@@ -55,6 +56,19 @@ export function ReplayTranscript({
   const seekNonce = useStore((s) => s.replaySeekNonce);
   // Which speaker key is being edited inline (null = none).
   const [editingKey, setEditingKey] = useState<string | null>(null);
+  // First-visit hint: the transcript is a seek surface, and ⌘F searches it.
+  // Not in the ingest-wizard preview, where neither is the point.
+  const [seekHintVisible, dismissSeekHint] = useHint("replay.seek");
+  const showSeekHint = seekHintVisible && !preview;
+
+  // A line click is the user's seek — it ticks the checklist (not in the wizard
+  // preview) and retires the hint that taught it.
+  function seekToLine(ms: number) {
+    onSeek(ms);
+    if (preview) return;
+    markGettingStarted("replayed");
+    if (seekHintVisible) dismissSeekHint();
+  }
 
   // Ctrl/⌘F-style find: a floating bar over the transcript. A "match" is a LINE
   // (segment) whose text contains the query — Enter/arrows jump line-to-line and
@@ -241,6 +255,23 @@ export function ReplayTranscript({
         ))}
       <ScrollArea className="h-full">
         <div className="mx-auto flex max-w-3xl flex-col gap-1 px-4 py-4">
+          {showSeekHint && (
+            // pr-10 keeps the × clear of the floating search button.
+            <div className="mb-1 flex items-center gap-2 border-b border-border pb-2 pl-2 pr-10 text-xs text-muted-foreground">
+              <span className="min-w-0 flex-1">
+                {t("replay.seekHint", { shortcut: modChordCap("F") })}
+              </span>
+              <button
+                type="button"
+                aria-label={t("common.dismiss")}
+                title={t("common.dismiss")}
+                onClick={dismissSeekHint}
+                className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          )}
           {rows.map((seg, i) => {
             const masked = !preview && seg.startMs > playheadMs;
             const trimmed = isTrimmed(seg, trim);
@@ -267,7 +298,7 @@ export function ReplayTranscript({
               >
                 <button
                   type="button"
-                  onClick={() => onSeek(seg.startMs)}
+                  onClick={() => seekToLine(seg.startMs)}
                   className="mt-0.5 w-9 shrink-0 select-none text-right text-[11px] tabular-nums text-muted-foreground"
                 >
                   {formatClock(seg.startMs)}
@@ -300,7 +331,7 @@ export function ReplayTranscript({
                     ))}
                   <button
                     type="button"
-                    onClick={() => onSeek(seg.startMs)}
+                    onClick={() => seekToLine(seg.startMs)}
                     className={cn(
                       "w-full min-w-0 text-left",
                       active ? "text-foreground" : "text-foreground/90",
