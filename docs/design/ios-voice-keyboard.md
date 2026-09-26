@@ -113,6 +113,58 @@ transcript* below — and that the transcript now depends on the keyboard coming
 back within the downlink's adoption window (150 s) rather than on it having been
 alive at the right moments.
 
+#### Where the words go when they don't land: voice-typing history
+
+One insertion has a cost the paragraph above only half states: when the
+insertion does not happen, the words exist nowhere. The keyboard's
+`drainDownlink` has four ways of ending without typing anything, all silent by
+design:
+
+1. **The adoption window runs out.** A relaunched keyboard adopts a foreign
+   downlink only within 150 s of its last stamp; come back later and a `done`
+   transcript is never inserted.
+2. **`looksDead`.** A live state nobody has vouched for is abandoned — the app
+   was suspended, jetsammed or swiped away mid-session.
+3. **`error`.** Never inserted, whatever had settled before the failure.
+4. **The wrong field.** `insertText` goes to whatever is focused when `done`
+   arrives; if the user moved, the text lands somewhere else or nowhere.
+
+So since 1.21 the app keeps what was dictated (pathorsAI/parley#290).
+`DictationHistoryStore` (ParleyKit, Foundation only, unit-tested) is one JSON
+file, `dictation-history.json`, and `DictationCoordinator` writes to it from the
+three endings that carry words: `settle` (`done`, after the personal
+dictionary, so the entry is exactly what the keyboard was handed), `fail`
+(`error`) and `endSessionWithMicTaken`, each only when `committed` is non-empty.
+**Never from ✕**: `cancel` is the user throwing the words away, and it clears
+`committed` before it publishes. Entries carry the text, when, how long, the
+entry point (keyboard or Action Button) and the host bundle id when the keyboard
+could resolve one. Retention is the most recent 200 **and** nothing older than
+30 days, pruned on every write and every load. Settings › Voice typing history
+switches it off (the store refuses writes; existing entries stay until "Clear
+all") and clears it.
+
+**App side, on purpose.** The file lives in the app's own sandbox (Application
+Support, excluded from backup), not the App Group. The App Group is shared with
+the keyboard, and the keyboard is the one process that must never hold
+transcript history: it runs inside every app the user types into. The keyboard
+target does not reference the type at all. The relay was checked before building
+this: it meters seconds per feature and relays frames, and stores no transcript
+text, so there was nothing server-side to fetch instead.
+
+**Error is the case worth saving.** A `done` that inserted is already in a
+field; history is merely convenient for it. An `error` — and exits 1 and 4,
+where the app did reach `done` but nothing landed — is where the words would
+otherwise be gone, and it happens precisely when something already went wrong.
+Exit 2 is covered when the app survives to end the session itself; when the
+process was killed outright, the words die with it. The stale downlink that
+`reapOrphanedSession` rewrites on the next launch still carries them, and
+keeping that too is a possible follow-up (it has no reliable start time or
+duration, which is why it is not in the first cut). That is also why there is no
+"paste last" key on the keyboard: rescuing words is the app's job, reading
+history back into a keyboard is exactly what the sandbox choice rules out, and
+copy is the primary row action in Library › Voice typing — one tap from the
+list, not behind the detail sheet.
+
 ### App Group channel
 
 `DictationChannel` (in ParleyKit, so both targets share it) is seven

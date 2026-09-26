@@ -83,6 +83,17 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.21
+
+What you dictate is kept, so words that never landed are one tap away.
+
+If a dictation didn't make it into the app you were typing in, open Parley and
+go to Library › Voice typing. Everything you dictated in the last 30 days is
+there, newest first; tap the copy button beside it and paste it where it
+belongs. Tap an entry to read it in full, share it, or delete it. The history
+stays on your phone and never leaves it. Settings › Voice typing history turns
+it off or clears it.
+
 ## What's New — 1.20
 
 The Parley keyboard looks right in dark mode, in every app.

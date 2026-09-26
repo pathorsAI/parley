@@ -260,6 +260,23 @@
         }
       }
     },
+    "Action Button": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Action Button"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "動作按鈕"
+          }
+        }
+      }
+    },
     "Action Button (optional)": {
       "localizations": {
         "en": {
@@ -682,6 +699,23 @@
         }
       }
     },
+    "Clear all": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear all"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部清除"
+          }
+        }
+      }
+    },
     "Clear everything": {
       "extractionState": "manual",
       "localizations": {
@@ -712,6 +746,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "清空詞庫"
+          }
+        }
+      }
+    },
+    "Clear voice typing history?": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear voice typing history?"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要清除語音輸入紀錄嗎？"
           }
         }
       }
@@ -1124,6 +1175,23 @@
         }
       }
     },
+    "Delete this entry?": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete this entry?"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要刪除這筆紀錄嗎？"
+          }
+        }
+      }
+    },
     "Delete your account permanently?": {
       "extractionState": "manual",
       "localizations": {
@@ -1480,6 +1548,23 @@
         }
       }
     },
+    "Everything you have dictated is removed from this phone. This can't be undone.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Everything you have dictated is removed from this phone. This can't be undone."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你說過的所有內容都會從這支手機上刪除，而且無法復原。"
+          }
+        }
+      }
+    },
     "Fine": {
       "extractionState": "manual",
       "localizations": {
@@ -1633,6 +1718,23 @@
         }
       }
     },
+    "How long": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How long"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "長度"
+          }
+        }
+      }
+    },
     "Import an audio file": {
       "extractionState": "manual",
       "localizations": {
@@ -1764,6 +1866,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "麥克風待命時間"
+          }
+        }
+      }
+    },
+    "Keep voice typing history": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep voice typing history"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留語音輸入紀錄"
           }
         }
       }
@@ -2072,6 +2191,23 @@
         }
       }
     },
+    "Mail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mail"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "郵件"
+          }
+        }
+      }
+    },
     "Map it to Parley Voice Typing and dictation starts without leaving the app you are in — no round trip at all.": {
       "localizations": {
         "en": {
@@ -2122,6 +2258,23 @@
         }
       }
     },
+    "Meetings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Meetings"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "會議"
+          }
+        }
+      }
+    },
     "Member": {
       "extractionState": "manual",
       "localizations": {
@@ -2135,6 +2288,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "成員"
+          }
+        }
+      }
+    },
+    "Messages": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Messages"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "訊息"
           }
         }
       }
@@ -2564,6 +2734,23 @@
         }
       }
     },
+    "Notes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notes"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "備忘錄"
+          }
+        }
+      }
+    },
     "Nothing is being recorded or transcribed.": {
       "extractionState": "manual",
       "localizations": {
@@ -2831,6 +3018,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Parley 會忘掉學到的每一項更正，以及你加入的每一個詞，並從下一次聽寫重新開始學。"
+          }
+        }
+      }
+    },
+    "Parley keyboard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley keyboard"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley 鍵盤"
           }
         }
       }
@@ -3413,6 +3617,23 @@
         }
       }
     },
+    "Reminders": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reminders"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提醒事項"
+          }
+        }
+      }
+    },
     "Remove all": {
       "extractionState": "manual",
       "localizations": {
@@ -3668,6 +3889,23 @@
         }
       }
     },
+    "Search voice typing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search voice typing"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜尋語音輸入"
+          }
+        }
+      }
+    },
     "Set up in Settings": {
       "localizations": {
         "en": {
@@ -3713,6 +3951,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "設定"
+          }
+        }
+      }
+    },
+    "Share": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分享"
           }
         }
       }
@@ -4172,6 +4427,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "開始錄音"
+          }
+        }
+      }
+    },
+    "Started from": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Started from"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "啟動方式"
           }
         }
       }
@@ -4954,6 +5226,57 @@
         }
       }
     },
+    "Voice typing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voice typing"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "語音輸入"
+          }
+        }
+      }
+    },
+    "Voice typing history": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voice typing history"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "語音輸入紀錄"
+          }
+        }
+      }
+    },
+    "Voice typing history is off. Turn it on in Settings › Voice typing history.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voice typing history is off. Turn it on in Settings › Voice typing history."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "語音輸入紀錄已關閉。可到「設定 › 語音輸入紀錄」開啟。"
+          }
+        }
+      }
+    },
     "Waiting to re-transcribe. It last tried %@, and tries again when you open Parley or bring it back to the front.": {
       "extractionState": "manual",
       "localizations": {
@@ -5005,6 +5328,23 @@
         }
       }
     },
+    "Went to": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Went to"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "輸入到"
+          }
+        }
+      }
+    },
     "What did I fail to ask, or should follow up on next time?": {
       "extractionState": "manual",
       "localizations": {
@@ -5052,6 +5392,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "這場會議談了什麼、結論是什麼？五句以內。"
+          }
+        }
+      }
+    },
+    "What you dictate is kept on this phone for 30 days, up to 200 entries, so you can copy it again from Library › Voice typing if it didn't land. It never leaves the phone. Turning this off keeps what is already there until you clear it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What you dictate is kept on this phone for 30 days, up to 200 entries, so you can copy it again from Library › Voice typing if it didn't land. It never leaves the phone. Turning this off keeps what is already there until you clear it."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "說過的話會在這支手機上保留 30 天、最多 200 筆，沒有成功輸入時，可以到「錄音庫 › 語音輸入」再複製一次。這些內容不會離開手機。關閉後，已經保留的紀錄會留著，直到你清除為止。"
+          }
+        }
+      }
+    },
+    "What you dictate with the Parley keyboard shows up here, so you can copy it again if it didn't land.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What you dictate with the Parley keyboard shows up here, so you can copy it again if it didn't land."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用 Parley 鍵盤說的話會留在這裡，沒有成功輸入的話，可以在這裡再複製一次。"
+          }
+        }
+      }
+    },
+    "When": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "時間"
           }
         }
       }

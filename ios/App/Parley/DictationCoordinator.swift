@@ -81,6 +81,16 @@ final class DictationCoordinator: ObservableObject {
     /// keyboard reads, and a resumed `micTaken` session deliberately picks the
     /// original start back up rather than restarting the clock.
     private var sessionStartedAt: Date?
+    /// Which door the running session came in through, and the app it was
+    /// dictating into when the keyboard could tell — both only for the entry
+    /// `recordHistory()` keeps. Set by the entry point before `launch()`.
+    private var sessionSource: DictationHistoryEntry.Source = .keyboard
+    private var sessionHost: String?
+    /// This session's transcript is already in the history. One session ends
+    /// once, but it has three endings that keep it (`settle`, `fail`,
+    /// `endSessionWithMicTaken`) and nothing else stops a late `fail` from
+    /// keeping it twice.
+    private var historyRecorded = false
     /// The microphone. Not a session's: once the user has chosen a window it
     /// outlives the dictation that opened it, and the *next* dictation borrows
     /// it rather than opening its own. That is the entire mechanism — see the
@@ -261,6 +271,8 @@ final class DictationCoordinator: ObservableObject {
         self.session = session
 
         let host = DictationChannel.readUplink()?.hostBundleID
+        sessionSource = .keyboard
+        sessionHost = host
         await launch()
 
         // Only try the jump-back when the host resolved, the policy allows it
@@ -298,6 +310,8 @@ final class DictationCoordinator: ObservableObject {
         session = "ab-" + UUID().uuidString
         DictationChannel.writeUplink(.init(session: session))
         returnableHost = nil
+        sessionSource = .actionButton
+        sessionHost = nil
         await launch()
     }
 
@@ -314,6 +328,7 @@ final class DictationCoordinator: ObservableObject {
         committed = ""
         partial = ""
         sessionStartedAt = Date()
+        historyRecorded = false
         state = .starting
         micTaken = false
         active = true
@@ -832,6 +847,9 @@ final class DictationCoordinator: ObservableObject {
         micTaken = false
         state = .micTaken
         publish()
+        // Nothing is inserted from `micTaken`, so like `fail` this is a session
+        // whose words would otherwise exist nowhere.
+        recordHistory()
         active = false
         // The answer to "will the next tap stay put" just became no, and the
         // keyboard draws that answer on the record button. Said now rather than
@@ -1237,6 +1255,10 @@ final class DictationCoordinator: ObservableObject {
         // the person who typed it.
         applyLexicon()
         publish()
+        // After the lexicon and after the publish: what is kept is exactly the
+        // text the keyboard was just handed, and the keyboard is not kept
+        // waiting on a file write to get it.
+        recordHistory()
         active = false
         // No haptic here, deliberately. `done` is not delivery — it is this
         // process saying the text is *ready* — and the transcript is only ever
@@ -1301,8 +1323,28 @@ final class DictationCoordinator: ObservableObject {
         // visibly off.
         closeWindowState()
         publish()
+        // The case the history exists for: the keyboard never inserts from
+        // `error`, so whatever had settled is lost unless it is kept here.
+        recordHistory()
         active = false
         beginLinger()
+    }
+
+    /// Keep this session's transcript in the app's voice-typing history
+    /// (pathorsAI/parley#290), if it has one.
+    ///
+    /// Called from the three endings the keyboard either inserts from or never
+    /// will: `settle` (`done`), `fail` (`error`) and `endSessionWithMicTaken`.
+    /// **Never from `cancel`**: ✕ is the user throwing the words away, and
+    /// `cancel` clears `committed` before it publishes for that reason. The
+    /// switch in Settings and blank text are the store's to refuse.
+    private func recordHistory() {
+        guard !historyRecorded, let startedAt = sessionStartedAt else { return }
+        guard !committed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        historyRecorded = true
+        DictationHistory.shared.record(
+            text: committed, startedAt: startedAt, source: sessionSource,
+            hostBundleID: sessionHost)
     }
 
     // MARK: the microphone window
@@ -1775,6 +1817,11 @@ final class DictationCoordinator: ObservableObject {
                     tail = ""
                 }
                 committed = settled
+                // `committed` is rebuilt from `runs` at the fold, so the fake
+                // stream has to keep one too — without it `foldPartialIn` threw
+                // the settled text away and a stopped demo delivered only its
+                // last few characters.
+                runs = settled.isEmpty ? [] : [(id: "demo", text: settled)]
                 partial = tail
                 micLevel = Float.random(in: 0.08...0.45)
                 publish()
