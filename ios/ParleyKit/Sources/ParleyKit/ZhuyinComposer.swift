@@ -252,6 +252,16 @@ public struct ZhuyinComposer {
         return .insert(committed)
     }
 
+    /// Look the pending syllables up again without changing them.
+    ///
+    /// For when the tables behind the composer change under it: a keystroke
+    /// that beat `ZhuyinPhrases.warm(onReady:)` was answered from no table at
+    /// all, and once the table lands the bar it drew is stale. The keyboard
+    /// calls this from the warm's completion and republishes.
+    public mutating func refresh() {
+        refreshCandidates()
+    }
+
     /// Drop everything without touching the document. Used when the keyboard
     /// comes back to a *different* field, where a half-typed syllable from the
     /// last one has no business being committed.

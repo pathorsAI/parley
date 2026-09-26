@@ -92,12 +92,27 @@ struct KeyboardRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// The typing panes are handed values rather than the bridge to observe,
+    /// and `.equatable()` is what lets SwiftUI skip them: this view re-evaluates
+    /// on every publish — every keystroke, every microphone reading — and the
+    /// forty-odd keys on each pane have nothing to redraw for any of them. See
+    /// `ZhuyinPane`.
     @ViewBuilder
     private func paneView(_ pane: KeyboardPane) -> some View {
         switch pane {
         case .voice: voicePane
-        case .english: LetterPane(bridge: bridge, dark: dark)
-        case .zhuyin: ZhuyinPane(bridge: bridge, dark: dark)
+        case .english:
+            LetterPane(
+                bridge: bridge, dark: dark, showsGlobe: bridge.showsGlobe,
+                returnKey: bridge.returnKeyStyle
+            )
+            .equatable()
+        case .zhuyin:
+            ZhuyinPane(
+                bridge: bridge, dark: dark, showsGlobe: bridge.showsGlobe,
+                returnKey: bridge.returnKeyStyle
+            )
+            .equatable()
         }
     }
 
@@ -129,7 +144,7 @@ struct KeyboardRootView: View {
     /// the chip is capped and the bar keeps the rest.
     private var modeStrip: some View {
         HStack(spacing: 0) {
-            if !bridge.composition.isEmpty {
+            if !bridge.zhuyin.composition.isEmpty {
                 compositionChip
                 candidateBar
             } else if showsSuggestions {
@@ -156,7 +171,7 @@ struct KeyboardRootView: View {
     /// branches are ordered anyway so the rule is written down rather than
     /// inferred.
     private var showsSuggestions: Bool {
-        bridge.pane == .english && !bridge.suggestions.isEmpty
+        bridge.pane == .english && !bridge.english.suggestions.isEmpty
     }
 
     /// The pane's short name. 注音 keeps its own name in both localizations: the
@@ -251,7 +266,7 @@ struct KeyboardRootView: View {
     /// its natural width up to that cap, so the bar can neither squeeze it nor
     /// hand it room it has no text for.
     private var compositionChip: some View {
-        Text(verbatim: bridge.composition)
+        Text(verbatim: bridge.zhuyin.composition)
             .font(.system(size: 17))
             .foregroundStyle(KBTheme.accent)
             .lineLimit(1)
@@ -269,7 +284,7 @@ struct KeyboardRootView: View {
                     .fill(KBTheme.control(dark)))
             .padding(.trailing, 8)
             .accessibilityLabel(Text("Composing"))
-            .accessibilityValue(Text(verbatim: bridge.composition))
+            .accessibilityValue(Text(verbatim: bridge.zhuyin.composition))
     }
 
     /// What the front of the buffer could be — phrases first, then the first
@@ -284,8 +299,10 @@ struct KeyboardRootView: View {
     /// character's width between candidates for the same reason.
     private var candidateBar: some View {
         StripBar(
-            items: bridge.candidates, dark: dark, fontSize: 22,
-            label: Text("Candidates"), action: bridge.pickCandidate)
+            items: bridge.zhuyin.candidates, dark: dark, fontSize: 22,
+            label: Text("Candidates"), action: bridge.pickCandidate
+        )
+        .equatable()
     }
 
     // MARK: English word suggestions
@@ -306,8 +323,10 @@ struct KeyboardRootView: View {
     /// fit across a 320pt strip.
     private var suggestionBar: some View {
         StripBar(
-            items: bridge.suggestions, dark: dark, fontSize: 17,
-            label: Text("Word suggestions"), action: bridge.pickSuggestion)
+            items: bridge.english.suggestions, dark: dark, fontSize: 17,
+            label: Text("Word suggestions"), action: bridge.pickSuggestion
+        )
+        .equatable()
     }
 
     // MARK: the microphone window
@@ -914,7 +933,12 @@ private struct LevelRipple: View {
 /// about a character's width between its own for the same reason, and the
 /// English bar needs it just as much — `work` `world` `working` run together
 /// otherwise.
-private struct StripBar: View {
+///
+/// `Equatable` on what it shows, so the publishes that do not touch it — the
+/// return key, the microphone chip — leave it alone. Ids stay positional:
+/// nothing guarantees a bar's words are distinct, and `\.element` would give
+/// two of them one identity.
+private struct StripBar: View, Equatable {
     var items: [String]
     var dark: Bool
     /// 22 for Chinese candidates, 17 for Latin words: the same point size makes
@@ -924,6 +948,11 @@ private struct StripBar: View {
     /// labels, so this names the container.
     var label: Text
     var action: (String) -> Void
+
+    /// The action is always the same bridge method for a given bar.
+    static func == (a: Self, b: Self) -> Bool {
+        a.items == b.items && a.dark == b.dark && a.fontSize == b.fontSize && a.label == b.label
+    }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {

@@ -94,6 +94,37 @@ final class EnglishWordsTests: XCTestCase {
         XCTAssertEqual(warmed.completions(for: "tomo"), cold.completions(for: "tomo"))
         XCTAssertEqual(warmed.completions(for: "wor"), cold.completions(for: "wor"))
     }
+
+    func testALookupThatBeatsTheWarmAnswersNothingAndReadsNothing() {
+        // Reading a second copy beside the one being built is exactly the
+        // memory spike the warm exists to avoid; the letter that loses the race
+        // gets a blank bar and the completion fills it in.
+        let words = EnglishWords(url: EnglishWords.bundledURL)
+        let landed = expectation(description: "the warm's completion runs")
+        words.warm { landed.fulfill() }
+        XCTAssertEqual(words.completions(for: "tomo"), [])
+        XCTAssertEqual(words.parseCount, 1)
+        wait(for: [landed], timeout: 5)
+        XCTAssertEqual(words.completions(for: "tomo").first, "tomorrow")
+        XCTAssertEqual(words.parseCount, 1)
+
+        var immediately = false
+        words.warm { immediately = true }
+        XCTAssertTrue(immediately, "already warm: no trip through the queue")
+    }
+
+    func testUnloadDropsTheListAndTheNextLookupReadsItAgain() {
+        let words = EnglishWords(url: EnglishWords.bundledURL)
+        XCTAssertEqual(words.completions(for: "tomo").first, "tomorrow")
+        words.unload()
+        XCTAssertFalse(words.isWarm)
+        XCTAssertEqual(words.completions(for: "tomo").first, "tomorrow")
+        XCTAssertEqual(words.parseCount, 2)
+
+        let fixture = EnglishWords(words: ["the", "tomorrow"])
+        fixture.unload()
+        XCTAssertEqual(fixture.completions(for: "to"), ["tomorrow"], "nothing to reload from")
+    }
 }
 
 /// The text rules around the bar. Pure functions over strings, which is the

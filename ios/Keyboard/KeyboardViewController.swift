@@ -1,6 +1,7 @@
 import ParleyKit
 import SwiftUI
 import UIKit
+import os
 
 /// The Parley dictation keyboard.
 ///
@@ -15,6 +16,10 @@ import UIKit
 /// process only shuttles text, which keeps it well under the tight jetsam limit
 /// keyboard extensions run against.
 final class KeyboardViewController: UIInputViewController {
+    /// Where this process says what it did about memory, so a sysdiagnose from
+    /// a keyboard that later died has something to read.
+    private static let log = Logger(subsystem: "com.pathors.parley.ios.keyboard", category: "memory")
+
     private let bridge = KeyboardBridge()
     private var down: DarwinObserver?
     /// The app announcing that the microphone window opened, closed, or ticked.
@@ -109,7 +114,9 @@ final class KeyboardViewController: UIInputViewController {
         // `setPane(notify: false)` deliberately skips `paneDidChange`, so a
         // keyboard that opens straight onto the English pane — which is what
         // every keyboard without Full Access does — has to be warmed here.
-        if bridge.pane == .english { EnglishWords.bundled.warm() }
+        if bridge.pane == .english {
+            EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
+        }
 
         // Let the system's own input view supply the background. It is already
         // the right colour, already rounds its corners the way the host expects
@@ -326,15 +333,63 @@ final class KeyboardViewController: UIInputViewController {
         // ~100 ms the phrase table costs is spent while the pane is still
         // sliding in rather than on the keystroke that finishes the second
         // syllable.
+        //
+        // A key that beats a warm is answered from no table at all rather than
+        // from a second copy parsed on the spot (see `ZhuyinPhrases.warm`), so
+        // each warm is handed a completion that answers the pending syllables
+        // again once its table lands. It runs on the main queue in the same
+        // block that stores the table, and keys arrive on the main queue too,
+        // so a key is either before the landing — answered empty, then put
+        // right here — or after it, answered from the whole table. Nothing can
+        // fall between the two.
         if bridge.pane == .zhuyin {
-            ZhuyinDictionary.bundled.warm()
-            ZhuyinPhrases.bundled.warm()
+            ZhuyinDictionary.bundled.warm { [weak self] in self?.zhuyinTablesLanded() }
+            ZhuyinPhrases.bundled.warm { [weak self] in self?.zhuyinTablesLanded() }
         }
         // Same bargain on the English pane: reading and sorting 40,000 words is
         // tens of milliseconds, and it belongs on the swipe rather than on the
         // first letter typed.
-        if bridge.pane == .english { EnglishWords.bundled.warm() }
+        if bridge.pane == .english {
+            EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
+        }
         refreshSuggestions()
+    }
+
+    /// A 注音 table finished loading: whatever is pending was looked up without
+    /// it, so look it up again and put the answer in the strip. With nothing
+    /// pending this republishes nothing — `publishComposition` only assigns a
+    /// change.
+    private func zhuyinTablesLanded() {
+        zhuyin.refresh()
+        publishComposition()
+    }
+
+    /// iOS is about to start killing processes, and a keyboard extension is
+    /// among the first it kills. Give back the tables the current pane is not
+    /// using — they are by far the largest things this process holds — and say
+    /// so in the log. Preventive: no crash has been traced to memory, but the
+    /// limit is tight enough that this is the cheapest insurance there is.
+    ///
+    /// Only the idle ones. Dropping the table the user is typing against would
+    /// make the very next keystroke parse it again on the spot, and a parse
+    /// costs several times the table's own size while it runs — the worst
+    /// thing to do at the moment the system says memory is short. The 注音
+    /// dictionary is never dropped: it is a few hundred kilobytes, and every
+    /// 注音 keystroke needs it.
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        var dropped: [String] = []
+        if bridge.pane != .zhuyin {
+            ZhuyinPhrases.bundled.unload()
+            dropped.append("phrases")
+        }
+        if bridge.pane != .english {
+            EnglishWords.bundled.unload()
+            dropped.append("english")
+        }
+        Self.log.notice(
+            "memory warning on the \(self.bridge.pane.rawValue, privacy: .public) pane; dropped: \(dropped.joined(separator: ","), privacy: .public)"
+        )
     }
 
     private func applyHeight(animated: Bool) {
@@ -356,7 +411,10 @@ final class KeyboardViewController: UIInputViewController {
     /// see `KeyboardBridge.newline()`.
     private func refreshReturnKey() {
         let type: UIReturnKeyType? = textDocumentProxy.returnKeyType
-        bridge.returnKeyType = type ?? .default
+        // Only on a change: this runs on every `textDidChange`, and an
+        // `@Published` assignment invalidates the whole keyboard even when the
+        // value is the one it already had.
+        if bridge.returnKeyType != type ?? .default { bridge.returnKeyType = type ?? .default }
     }
 
     private func makeRoot(dark: Bool? = nil) -> KeyboardRootView {
@@ -1009,9 +1067,13 @@ final class KeyboardViewController: UIInputViewController {
         publishComposition()
     }
 
+    /// One assignment for the composition and its candidates together, and
+    /// only on a real change: a keystroke is one invalidation of the strip,
+    /// not two.
     private func publishComposition() {
-        if bridge.composition != zhuyin.reading { bridge.composition = zhuyin.reading }
-        if bridge.candidates != zhuyin.candidates { bridge.candidates = zhuyin.candidates }
+        let next = KeyboardBridge.ZhuyinStrip(
+            composition: zhuyin.reading, candidates: zhuyin.candidates)
+        if bridge.zhuyin != next { bridge.zhuyin = next }
     }
 
     // MARK: English word suggestions
@@ -1040,12 +1102,12 @@ final class KeyboardViewController: UIInputViewController {
                 for: partial, in: EnglishWords.bundled, lexiconTerms: lexiconTerms))
     }
 
-    /// Assign only on a real change: every one of these is an `@Published` on
-    /// the bridge, and a keystroke that changed nothing should not redraw the
-    /// strip.
+    /// One assignment, and only on a real change: a keystroke that changed
+    /// nothing should not redraw the strip, and one that did should redraw it
+    /// once.
     private func publishSuggestions(partial: String, suggestions: [String]) {
-        if bridge.partialWord != partial { bridge.partialWord = partial }
-        if bridge.suggestions != suggestions { bridge.suggestions = suggestions }
+        let next = KeyboardBridge.EnglishStrip(partialWord: partial, suggestions: suggestions)
+        if bridge.english != next { bridge.english = next }
     }
 
     /// The user tapped a word: take back the letters they typed and put the
@@ -1060,7 +1122,7 @@ final class KeyboardViewController: UIInputViewController {
     /// The suggestion already carries the case the partial asked for, so it is
     /// inserted as it is shown.
     func pickSuggestion(_ word: String) {
-        let partial = bridge.partialWord
+        let partial = bridge.english.partialWord
         guard !partial.isEmpty else { return }
         for _ in 0..<partial.unicodeScalars.count { textDocumentProxy.deleteBackward() }
         textDocumentProxy.insertText(word + " ")
@@ -1081,6 +1143,10 @@ final class KeyboardViewController: UIInputViewController {
     /// composition first. That is what the system keyboard does: punctuation
     /// after a reading ends the reading rather than landing in front of it, and
     /// `confirm()` on an empty composer is a `passThrough` that does nothing.
+    ///
+    /// No read of the document here on the 注音 pane: `refreshSuggestions`
+    /// returns before its `documentContextBeforeInput` — a round trip to the
+    /// host — on every pane but English.
     func insert(_ text: String) {
         apply(zhuyin.confirm())
         textDocumentProxy.insertText(text)
@@ -1111,7 +1177,10 @@ final class KeyboardViewController: UIInputViewController {
     /// system does too.
     ///
     /// On the 注音 pane space is the first tone and then the confirm key, so a
-    /// pending syllable claims it first.
+    /// pending syllable claims it first — and returns before the double-space
+    /// check reads the document, so a space inside a composition costs no round
+    /// trip to the host. `refreshSuggestions` reads it on the English pane
+    /// only.
     func insertSpace() {
         typeSpace()
         refreshSuggestions()
@@ -1290,21 +1359,36 @@ final class KeyboardBridge: ObservableObject {
     /// plain assignment.
     @Published private(set) var pane: KeyboardPane = .voice
 
-    /// A 注音 syllable part-way through being typed, shown in the strip. Empty
-    /// when nothing is pending, which is also what puts the wordmark back.
-    @Published var composition = ""
-    /// The characters the composition could be, most frequent first. Only
-    /// non-empty once the syllable has a tone.
-    @Published var candidates: [String] = []
+    /// What the strip shows while 注音 is being typed.
+    ///
+    /// One published value rather than two `@Published` fields, for the reason
+    /// `MicMeter` is: every keystroke changes both, and two would invalidate the
+    /// view twice for one key.
+    struct ZhuyinStrip: Equatable {
+        /// The syllables part-way through being typed. Empty when nothing is
+        /// pending, which is also what puts the wordmark back.
+        var composition: String
+        /// What the front of the composition could be, most likely first.
+        var candidates: [String]
+    }
 
-    /// The English word the user is part-way through typing — the run of
-    /// letters before the cursor. Empty whenever the cursor is not inside a
-    /// word, which is what puts the wordmark back. Kept beside the suggestions
-    /// rather than derived from them because it is what a tap deletes.
-    @Published var partialWord = ""
-    /// What `partialWord` could become, best first, already cased to match what
-    /// was typed. Nothing acts on these without a tap — see `WordSuggestions`.
-    @Published var suggestions: [String] = []
+    @Published var zhuyin = ZhuyinStrip(composition: "", candidates: [])
+
+    /// What the strip shows while an English word is being typed. One value
+    /// for the same reason as `ZhuyinStrip`.
+    struct EnglishStrip: Equatable {
+        /// The run of letters before the cursor. Empty whenever the cursor is
+        /// not inside a word, which is what puts the wordmark back. Kept beside
+        /// the suggestions rather than derived from them because it is what a
+        /// tap deletes.
+        var partialWord: String
+        /// What `partialWord` could become, best first, already cased to match
+        /// what was typed. Nothing acts on these without a tap — see
+        /// `WordSuggestions`.
+        var suggestions: [String]
+    }
+
+    @Published var english = EnglishStrip(partialWord: "", suggestions: [])
 
     /// What the host field wants the return key to say. It never changes what
     /// the key does.
@@ -1332,42 +1416,15 @@ final class KeyboardBridge: ObservableObject {
         setPane(panes[target])
     }
 
-    var returnKeyLabel: LocalizedStringKey {
-        switch returnKeyType {
-        case .go: return "Go"
-        case .send: return "Send"
-        case .search: return "Search"
-        case .done: return "Done"
-        case .next: return "Next"
-        default: return "return"
-        }
-    }
+    /// The return key's word, glyph and tint, as one value a pane can be
+    /// handed without observing the bridge — see `ReturnKeyStyle`.
+    var returnKeyStyle: ReturnKeyStyle { ReturnKeyStyle(type: returnKeyType) }
 
-    /// The same meaning as `returnKeyLabel`, as a glyph.
-    ///
-    /// The voice pane's return is a 44pt disc with no room for "Search", and
-    /// the pane keeps its only colour on the record button — so it says what
-    /// the key does with a symbol instead of a word. The letter pane, which has
-    /// a wide key and follows the system's look, still uses the label.
-    var returnKeyGlyph: String {
-        switch returnKeyType {
-        case .go: return "arrow.right"
-        case .send: return "paperplane.fill"
-        case .search: return "magnifyingglass"
-        case .done: return "checkmark"
-        case .next: return "arrow.right.to.line"
-        default: return "return"
-        }
-    }
+    var returnKeyLabel: LocalizedStringKey { returnKeyStyle.label }
 
-    /// iOS tints the return key when the host has asked for an action rather
-    /// than a line break, so the key reads as the way forward.
-    var returnKeyIsAccented: Bool {
-        switch returnKeyType {
-        case .go, .send, .search, .done: return true
-        default: return false
-        }
-    }
+    /// The same meaning as `returnKeyLabel`, as a glyph. See
+    /// `ReturnKeyStyle.glyph` for why the voice pane wants one.
+    var returnKeyGlyph: String { returnKeyStyle.glyph }
 
     /// Start a session. `completion` fires only when the app has to be opened
     /// (the no-jump Darwin start wasn't acknowledged) with the URL for the

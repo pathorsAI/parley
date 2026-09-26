@@ -22,12 +22,12 @@ import Foundation
 /// 從, 總 and 宗 first and 中 after them. The table itself is unchanged: the
 /// variants are more lookups into it, not more rows.
 ///
-/// **Loaded lazily and once.** This runs inside a keyboard extension, which iOS
-/// jetsams far sooner than an app, so the resource is not touched until the user
-/// types into the 注音 pane: a keyboard opened on the voice or QWERTY pane never
-/// pays for it. The table it builds is ~1,400 readings plus ~430 toneless rows
-/// over ~52,000 characters — a few hundred kilobytes — and the file's own string
-/// is dropped as soon as it is parsed.
+/// **Loaded lazily, and never twice at once.** This runs inside a keyboard
+/// extension, which iOS jetsams far sooner than an app, so the resource is not
+/// touched until the user types into the 注音 pane: a keyboard opened on the
+/// voice or QWERTY pane never pays for it. The table it builds is ~1,400
+/// readings plus ~430 toneless rows over ~52,000 characters — a few hundred
+/// kilobytes — and the file's own string is dropped as soon as it is parsed.
 ///
 /// Not thread-safe, and it doesn't need to be: keys arrive on the main thread.
 public final class ZhuyinDictionary {
@@ -46,10 +46,17 @@ public final class ZhuyinDictionary {
     private var table: [String: String]?
     /// A background build is on its way back to the main queue.
     private var warming = false
+    /// Everyone who asked `warm` to be told when the table lands, oldest first.
+    private var onReady: [() -> Void] = []
 
     /// Whether the table is in memory. Internal for the tests, which is where
     /// "did the warm arrive" is a question worth asking.
     var isWarm: Bool { table != nil }
+
+    /// How many times the resource has been parsed. Internal for the tests,
+    /// which is where "was a second table ever built" is a question worth
+    /// asking.
+    private(set) var parseCount = 0
 
     /// Build from an already-parsed table. This is how tests get a fixture, and
     /// how a caller with its own data source stays out of the bundle.
@@ -63,18 +70,31 @@ public final class ZhuyinDictionary {
         self.url = url
     }
 
-    /// Build the table off the main thread, if it isn't built already.
+    /// Build the table off the main thread, if it isn't built already, and call
+    /// `onReady` on the main queue once it is — straight away when it already
+    /// is, or when there is no resource to wait for.
     ///
-    /// Same bargain as `ZhuyinPhrases.warm()`, and the keyboard calls them
-    /// together when the 注音 pane becomes current: the cost of the first read
-    /// belongs to a moment the user is not waiting on a key. A lookup that
-    /// arrives first still loads synchronously.
+    /// Same bargain as `ZhuyinPhrases.warm(onReady:)`, and the keyboard calls
+    /// them together when the 注音 pane becomes current: the cost of the first
+    /// read belongs to a moment the user is not waiting on a key. And the same
+    /// rule: a lookup that arrives while the warm is in flight answers nothing
+    /// rather than parsing a second copy beside it. This table parses about
+    /// twenty times faster than the phrase table — well inside the pane's
+    /// slide-in — so in practice no key gets there first; the rule is kept
+    /// identical so there is one contract to remember.
     ///
-    /// Main thread, like everything else here: the guard and the store both run
-    /// there, so two warms cannot race and a warm cannot overwrite a load.
-    public func warm() {
-        guard table == nil, !warming, let url else { return }
+    /// Main thread, like everything else here: the guard, the store and the
+    /// completions all run there, so two warms cannot race and a lookup can
+    /// never see half a table.
+    public func warm(onReady: (() -> Void)? = nil) {
+        guard table == nil, let url else {
+            onReady?()
+            return
+        }
+        if let onReady { self.onReady.append(onReady) }
+        guard !warming else { return }
         warming = true
+        parseCount += 1
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             // Nothing on `self` is touched off the main queue — the parse is a
             // function of the URL alone.
@@ -82,11 +102,28 @@ public final class ZhuyinDictionary {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.warming = false
-                // A synchronous load may have beaten this here; that table is
-                // the same table.
+                // Nothing can have filled this meanwhile — `load` does not parse
+                // while a warm is in flight — so the guard is only a backstop.
                 if self.table == nil { self.table = built }
+                let waiting = self.onReady
+                self.onReady = []
+                waiting.forEach { $0() }
             }
         }
+    }
+
+    /// Give the table back, so the next lookup reads the resource again.
+    ///
+    /// The keyboard keeps this one under memory pressure — it is a few hundred
+    /// kilobytes against the phrase table's megabytes, and every 注音 keystroke
+    /// needs it — but the call exists so the three tables share one contract.
+    ///
+    /// A no-op while a warm is in flight — it would land a moment later anyway,
+    /// and dropping it here would only mean parsing again — and for a table
+    /// built from entries, which has nothing to reload from.
+    public func unload() {
+        guard !warming, url != nil else { return }
+        table = nil
     }
 
     /// The characters for a toned syllable: its own row, then — unless `fuzzy`
@@ -178,8 +215,11 @@ public final class ZhuyinDictionary {
 
     private func load() -> [String: String] {
         if let table { return table }
+        // Never a second parse beside the one in flight — see `warm`.
+        if warming { return [:] }
         // A failed read caches the empty table too, so a missing resource costs
         // one attempt rather than one per keystroke.
+        if url != nil { parseCount += 1 }
         let entries = url.map(Self.parse) ?? [:]
         table = entries
         return entries

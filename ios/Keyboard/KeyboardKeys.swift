@@ -187,6 +187,12 @@ struct RepeatingKey<Content: View>: View {
 /// which is how space ends up at roughly its system width without anyone naming
 /// a number for it. `height` is a parameter because the 注音 plane fits five
 /// rows into the four rows' worth of space QWERTY uses.
+///
+/// The label is built once, when the key is, rather than kept as a closure, so
+/// that a key whose label is a `Text` — nearly all of them — can be compared.
+/// Wrapped in `.equatable()` it is skipped whenever its pane redraws for a
+/// reason that did not touch it: shift re-cases the letters, and the other
+/// eleven keys on that row need not be re-evaluated to find that out.
 struct KeyButton<Label: View>: View {
     let dark: Bool
     var tint: KeyTint = .letter
@@ -194,13 +200,27 @@ struct KeyButton<Label: View>: View {
     var height: CGFloat = KBMetrics.keyHeight
     var ink: Color?
     let action: () -> Void
-    @ViewBuilder var label: () -> Label
+    let label: Label
+
+    init(
+        dark: Bool, tint: KeyTint = .letter, width: CGFloat? = nil,
+        height: CGFloat = KBMetrics.keyHeight, ink: Color? = nil,
+        action: @escaping () -> Void, @ViewBuilder label: () -> Label
+    ) {
+        self.dark = dark
+        self.tint = tint
+        self.width = width
+        self.height = height
+        self.ink = ink
+        self.action = action
+        self.label = label()
+    }
 
     var body: some View {
         PressableButton(action: action) { pressed in
             ZStack {
                 KeyCap(dark: dark, tint: tint, pressed: pressed)
-                label().foregroundStyle(ink ?? KBTheme.ink(dark))
+                label.foregroundStyle(ink ?? KBTheme.ink(dark))
             }
             .frame(width: width, height: height)
             .frame(maxWidth: width == nil ? .infinity : nil)
@@ -208,13 +228,31 @@ struct KeyButton<Label: View>: View {
     }
 }
 
+/// Everything a key draws. The action is deliberately left out: on every key
+/// in this keyboard it is a function of what the key shows (a letter types the
+/// letter its label shows) or of state read when it fires (shift, the plane,
+/// the bridge), so two keys that look the same do the same thing.
+extension KeyButton: Equatable where Label: Equatable {
+    static func == (a: Self, b: Self) -> Bool {
+        a.dark == b.dark && a.tint == b.tint && a.width == b.width && a.height == b.height
+            && a.ink == b.ink && a.label == b.label
+    }
+}
+
 /// Delete, with the system key's hold-to-repeat. Its own type rather than a
 /// `KeyButton` because a `Button` only reports on touch-up — see `RepeatingKey`.
-struct DeleteKey: View {
+///
+/// `Equatable` on its looks, like `KeyButton`; every delete key's action is
+/// the same backspace.
+struct DeleteKey: View, Equatable {
     let dark: Bool
     var width: CGFloat?
     var height: CGFloat = KBMetrics.keyHeight
     let action: () -> Void
+
+    static func == (a: Self, b: Self) -> Bool {
+        a.dark == b.dark && a.width == b.width && a.height == b.height
+    }
 
     var body: some View {
         RepeatingKey(action: action) { pressed in
