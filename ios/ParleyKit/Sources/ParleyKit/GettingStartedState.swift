@@ -90,6 +90,33 @@ public struct GettingStartedState: Codable, Equatable, Sendable {
         dismissedAt == nil && !isComplete
     }
 
+    /// Whether the Library draws the list, given what it knows so far.
+    ///
+    /// - `libraryLoaded`: the personal library has come back from the cloud
+    ///   at least once since the screen was built.
+    /// - `existingUserChecked`: the once-per-install existing-user check
+    ///   (`shouldDismissForExistingLibrary`) has already run on this phone, or
+    ///   the user asked for the list back from Settings — either way nothing
+    ///   the load brings back can dismiss it any more.
+    /// - `libraryIsEmpty`: no recordings, the sample included.
+    ///
+    /// A visible list waits for the load only while that check is still
+    /// pending, so it cannot flash up and then vanish under an existing user.
+    /// Once the check is behind it, the list is local state and is drawn at
+    /// once, with the recordings filling in underneath — which is what makes
+    /// "Show the getting-started list again" land on a list rather than on a
+    /// spinner.
+    ///
+    /// One more rule, and it does need the load: an empty library shows the
+    /// list even with all four done, because an empty library is exactly where
+    /// someone needs the way in. "Not now" still wins.
+    public func showsInLibrary(
+        libraryLoaded: Bool, existingUserChecked: Bool, libraryIsEmpty: Bool
+    ) -> Bool {
+        if isVisible { return libraryLoaded || existingUserChecked }
+        return libraryLoaded && libraryIsEmpty && dismissedAt == nil
+    }
+
     // MARK: existing users
 
     /// The state a phone starts with the first time a build that has the

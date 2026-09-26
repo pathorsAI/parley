@@ -132,9 +132,8 @@ struct RecordingDetailView: View {
     /// Where the recording is filed now. Seeded from the library row and moved
     /// by this screen; the row's own `summary` is a `let`.
     @State private var currentFolderId: String?
+    /// The folder picker is up. See `FolderPickerSheet`.
     @State private var choosingFolder = false
-    @State private var creatingFolder = false
-    @State private var newFolderName = ""
     @State private var moveError: String?
 
     init(
@@ -198,31 +197,27 @@ struct RecordingDetailView: View {
             .presentationDetents([.medium, .large])
             .ignoresSafeArea()
         }
-        .confirmationDialog(
-            "Move to folder", isPresented: $choosingFolder, titleVisibility: .visible
-        ) {
-            ForEach(folders) { folder in
-                Button(folder.id == currentFolderId ? "\(folder.name) ✓" : folder.name) {
-                    Task { await moveToFolder(folder.id) }
-                }
-            }
-            if currentFolderId != nil {
-                Button("Unfiled (top level)") { Task { await moveToFolder(nil) } }
-            }
-            Button("New folder…") {
-                newFolderName = ""
-                creatingFolder = true
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("One customer, one folder.")
-        }
-        .alert("New folder", isPresented: $creatingFolder) {
-            TextField("Folder name", text: $newFolderName)
-            Button("Cancel", role: .cancel) {}
-            Button("Create and move") { Task { await createFolderAndMove() } }
+        // A sheet, not the action sheet it used to be: a folder is a customer,
+        // and forty customers as a scrolling wall of buttons with no search
+        // was the complaint. See `FolderPickerSheet`.
+        .sheet(isPresented: $choosingFolder) {
+            FolderPickerSheet(
+                folders: folders,
+                currentFolderId: liveFolderId,
+                onSelect: { folderId in Task { await moveToFolder(folderId) } },
+                onCreate: { name in try await createFolderAndMove(name) })
         }
         .task { await loadFolders() }
+        #if DEBUG
+            .onReceive(ScreenshotDemo.shared.$openFolderPicker) { open in
+                guard open, ScreenshotDemo.servesFixtures else { return }
+                folders = ScreenshotDemo.pickerFolders
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(800))
+                    choosingFolder = true
+                }
+            }
+        #endif
         .confirmationDialog(
             "Re-transcribe this recording?",
             isPresented: $confirmingReTranscribe,
@@ -1259,19 +1254,24 @@ struct RecordingDetailView: View {
         if folderId != nil { GettingStartedStore.shared.mark(.filed) }
     }
 
+    /// The folder the recording is in, as the picker should mark it: an id
+    /// that is not in the live folder list is the desktop's orphan, and
+    /// renders as Unfiled everywhere else in the app.
+    private var liveFolderId: String? {
+        guard let currentFolderId, folders.contains(where: { $0.id == currentFolderId })
+        else { return nil }
+        return currentFolderId
+    }
+
     /// "New folder…": the folder is created in the cloud — it is a real folder,
-    /// the user named it — and the recording moves into it.
-    private func createFolderAndMove() async {
-        let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
+    /// the user named it — and the recording moves into it. A failed create
+    /// throws back to the picker, which keeps the name on screen with the
+    /// error; a failed move after it lands inline here, like any other move.
+    private func createFolderAndMove(_ name: String) async throws {
         moveError = nil
-        do {
-            let folder = try await app.cloud.createFolder(name: name)
-            folders.append(folder)
-            await moveToFolder(folder.id)
-        } catch {
-            moveError = String(localized: "Couldn't create the folder: \(error.localizedDescription)")
-        }
+        let folder = try await app.cloud.createFolder(name: name)
+        folders.append(folder)
+        await moveToFolder(folder.id)
     }
 
     static func duration(_ ms: Double) -> String {

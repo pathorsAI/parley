@@ -445,6 +445,23 @@
         }
       }
     },
+    "All folders": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All folders"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所有資料夾"
+          }
+        }
+      }
+    },
     "Allow Full Access": {
       "localizations": {
         "en": {
@@ -971,19 +988,36 @@
         }
       }
     },
-    "Create and move": {
+    "Create": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Create and move"
+            "value": "Create"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "建立並移入"
+            "value": "建立"
+          }
+        }
+      }
+    },
+    "Create “%@”": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Create “%@”"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新增「%@」"
           }
         }
       }
@@ -2355,7 +2389,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "新資料夾…"
+            "value": "新增資料夾…"
           }
         }
       }
@@ -2390,6 +2424,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "這筆錄音沒有音檔"
+          }
+        }
+      }
+    },
+    "No folders match.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No folders match."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒有符合的資料夾。"
           }
         }
       }
@@ -3549,6 +3600,23 @@
         }
       }
     },
+    "Search folders": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search folders"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜尋資料夾"
+          }
+        }
+      }
+    },
     "Search this transcript": {
       "extractionState": "manual",
       "localizations": {
@@ -4138,6 +4206,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "停止錄音"
+          }
+        }
+      }
+    },
+    "Suggested": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suggested"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "建議"
           }
         }
       }
@@ -4762,24 +4847,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "未分類"
-          }
-        }
-      }
-    },
-    "Unfiled (top level)": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unfiled (top level)"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "未分類（根目錄）"
+            "value": "未歸檔"
           }
         }
       }

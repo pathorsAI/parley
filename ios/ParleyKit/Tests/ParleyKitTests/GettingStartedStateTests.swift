@@ -71,6 +71,58 @@ final class GettingStartedStateTests: XCTestCase {
         XCTAssertEqual(state.done, 0)
     }
 
+    // MARK: in the library
+
+    func testAVisibleListWaitsForTheLoadWhileTheExistingUserCheckIsPending() {
+        let state = GettingStartedState()
+
+        XCTAssertFalse(
+            state.showsInLibrary(
+                libraryLoaded: false, existingUserChecked: false, libraryIsEmpty: true))
+        XCTAssertTrue(
+            state.showsInLibrary(
+                libraryLoaded: true, existingUserChecked: false, libraryIsEmpty: false))
+    }
+
+    /// The reset-from-Settings case: the list is back, and it must be on screen
+    /// before the library has finished reloading from the cloud.
+    func testAVisibleListShowsBeforeTheLoadOnceTheCheckHasRun() {
+        XCTAssertTrue(
+            GettingStartedState().showsInLibrary(
+                libraryLoaded: false, existingUserChecked: true, libraryIsEmpty: true))
+    }
+
+    func testAVisibleListShowsWhateverTheRecordingCount() {
+        for empty in [true, false] {
+            XCTAssertTrue(
+                GettingStartedState().showsInLibrary(
+                    libraryLoaded: true, existingUserChecked: true, libraryIsEmpty: empty))
+        }
+    }
+
+    func testAFinishedListComesBackOnlyForALoadedEmptyLibrary() {
+        var state = GettingStartedState()
+        for step in GettingStartedStep.allCases { state.mark(step) }
+
+        XCTAssertTrue(
+            state.showsInLibrary(libraryLoaded: true, existingUserChecked: true, libraryIsEmpty: true))
+        XCTAssertFalse(
+            state.showsInLibrary(
+                libraryLoaded: false, existingUserChecked: true, libraryIsEmpty: true),
+            "an empty library before the load is not known to be empty")
+        XCTAssertFalse(
+            state.showsInLibrary(
+                libraryLoaded: true, existingUserChecked: true, libraryIsEmpty: false))
+    }
+
+    func testADismissedListStaysClosed() {
+        var state = GettingStartedState()
+        state.dismiss()
+
+        XCTAssertFalse(
+            state.showsInLibrary(libraryLoaded: true, existingUserChecked: true, libraryIsEmpty: true))
+    }
+
     // MARK: existing users
 
     func testASessionFromAnEarlierBuildStartsDismissed() {

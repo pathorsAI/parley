@@ -87,15 +87,31 @@ final class GettingStartedStore: ObservableObject {
 
     /// Settings → "Show the getting-started list again": everything unticked,
     /// nothing dismissed.
+    ///
+    /// Also settles the once-per-install existing-user check, if it has not run
+    /// yet. That check dismisses a list with nothing done over a library that
+    /// has recordings in it — which is precisely what a freshly reset list over
+    /// an existing user's library looks like. Left pending, the first library
+    /// load after the reset would take back what the user just asked for.
     func reset() {
+        defaults.set(true, forKey: Self.libraryCheckedKey)
         state = GettingStartedState()
         save()
     }
 
+    /// Whether the existing-user check below has run on this install (or been
+    /// settled by `reset()`). Until it has, the Library waits for its first
+    /// load before drawing the list; after, the list is drawn from local state
+    /// at once. See `GettingStartedState.showsInLibrary`.
+    ///
+    /// Not published: it only ever flips alongside something that is (`state`
+    /// in `reset`, the Library's own `personalLoaded` after a load).
+    var existingUserChecked: Bool { defaults.bool(forKey: Self.libraryCheckedKey) }
+
     /// The second existing-user check — see the type doc. `recordingCount`
     /// must exclude the sample. Runs once per install; later loads are no-ops.
     func noteLibraryLoaded(recordingCount: Int) {
-        guard !defaults.bool(forKey: Self.libraryCheckedKey) else { return }
+        guard !existingUserChecked else { return }
         defaults.set(true, forKey: Self.libraryCheckedKey)
         if state.shouldDismissForExistingLibrary(recordingCount: recordingCount) {
             dismiss()
