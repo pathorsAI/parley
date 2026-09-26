@@ -695,6 +695,10 @@ struct SettingsView: View {
     /// own stack when it takes the request (`LibraryView.revealChecklist`).
     private func showGettingStartedAgain() {
         GettingStartedStore.shared.reset()
+        // The lap starts over from the sample: out of the Library with its
+        // rename, its folder and its ticks, back to "Walk through it with the
+        // sample recording". The bundle keeps the files.
+        SampleRecordingStore.shared.remove()
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         router.showGettingStarted()
     }

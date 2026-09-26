@@ -24,6 +24,8 @@ struct RecordingDetailView: View {
     /// The same model the library row drives, so a download started from either
     /// place is visible in both.
     @EnvironmentObject private var downloads: AudioDownloadModel
+    /// "Start your first real meeting" at the end of the guided lap.
+    @EnvironmentObject private var router: TabRouter
     let summary: CloudRecordingSummary
     /// nil = personal scope; set = org scope.
     let orgId: String?
@@ -35,6 +37,11 @@ struct RecordingDetailView: View {
     /// Called after the recording moves folder here, so the Library row it was
     /// opened from can show the new folder without a reload.
     let onFolderChange: ((String?) -> Void)?
+    /// Called after a rename here, for the same reason.
+    let onTitleChange: ((String) -> Void)?
+    /// The recording the guided lap is about — the sample, or the user's only
+    /// recording. The guide bar is drawn only on it. See `GuidedLap`.
+    let isLapRecording: Bool
 
     enum Intent {
         case read
@@ -162,14 +169,35 @@ struct RecordingDetailView: View {
     @State private var choosingFolder = false
     @State private var moveError: String?
 
+    /// The pending filing suggestion, if the recording carries one — shown above
+    /// the face switcher. See `FilingSuggestionCard`.
+    @StateObject private var filing = FilingSuggestionModel()
+    /// The offer has been answered on this screen; do not present it again
+    /// when the folder list lands.
+    @State private var suggestionRetired = false
+    /// The card's "look here" wash, asked for by the guide bar.
+    @State private var cardHighlighted = false
+
+    @ObservedObject private var gettingStarted = GettingStartedStore.shared
+    /// The guide bar's step and its ✓ hold. See `GuideBar`.
+    @State private var lap = GuidedLap(state: GettingStartedStore.shared.state)
+    /// Bumped when a ✓ hold ends, so the bar redraws on the next step.
+    @State private var lapTick = 0
+    /// What the last filing on this screen did, for the bar's ✓ line.
+    @State private var lastFiling: (folder: String, renamed: Bool)?
+
     init(
         summary: CloudRecordingSummary, orgId: String?, intent: Intent = .read,
-        onFolderChange: ((String?) -> Void)? = nil
+        isLapRecording: Bool = false,
+        onFolderChange: ((String?) -> Void)? = nil,
+        onTitleChange: ((String) -> Void)? = nil
     ) {
         self.summary = summary
         self.orgId = orgId
         self.intent = intent
+        self.isLapRecording = isLapRecording
         self.onFolderChange = onFolderChange
+        self.onTitleChange = onTitleChange
         _playback = StateObject(wrappedValue: PlaybackController(recordingId: summary.id))
         _currentFolderId = State(initialValue: summary.folderId)
         _displayTitle = State(initialValue: summary.title)
@@ -234,7 +262,15 @@ struct RecordingDetailView: View {
                 onSelect: { folderId in Task { await moveToFolder(folderId) } },
                 onCreate: { name in try await createFolderAndMove(name) })
         }
-        .task { await loadFolders() }
+        .task {
+            wireFiling()
+            await loadFolders()
+            presentSuggestion()
+        }
+        .onChange(of: gettingStarted.state) { _, state in
+            lap.observe(state)
+            scheduleLapRedraw()
+        }
         #if DEBUG
             .onReceive(ScreenshotDemo.shared.$openFolderPicker) { open in
                 guard open, ScreenshotDemo.servesFixtures else { return }
@@ -600,15 +636,131 @@ struct RecordingDetailView: View {
                 PlaybackBar(
                     controller: playback, summary: summary, orgId: orgId,
                     markers: meta.findings.map { Double($0.atMs) / 1000 })
+                // Above the switch: the suggestion is about the whole
+                // recording, not about either face.
+                if orgId == nil {
+                    FilingSuggestionCard(model: filing, highlighted: cardHighlighted)
+                }
                 faceSwitcher
                 if searching && face == .transcript { searchField }
             }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            guideBar
         }
         // Search belongs to the transcript. Leaving the face closes it, which
         // also clears the query (see `onChange(of: searching)`).
         .onChange(of: face) { _, now in
             if now == .summary { searching = false }
         }
+    }
+
+    // MARK: the guided lap
+
+    @ViewBuilder
+    private var guideBar: some View {
+        let _ = lapTick
+        if lap.isVisible(state: gettingStarted.state, isLapRecording: isLapRecording) {
+            GuideBar(
+                display: lap.display,
+                questions: HandoffPrompt.questions(for: summary.id),
+                filedFolder: lastFiling?.folder ?? currentFolderName,
+                renamed: lastFiling?.renamed ?? false,
+                hasSuggestion: filing.hasSomethingToOffer,
+                showSuggestion: showSuggestion,
+                openTranscript: {
+                    face = .transcript
+                    if let first = readable.first {
+                        jumpTarget = first.id
+                        jumpRequest += 1
+                        light(first.id)
+                    }
+                },
+                share: { sharingToAI = true },
+                copy: {
+                    let text = handoffText()
+                    guard !text.isEmpty else { return }
+                    TranscriptClipboard.write(text)
+                    GettingStartedStore.shared.mark(.sharedToAI)
+                },
+                startMeeting: { router.tab = .record },
+                notNow: { withAnimation { gettingStarted.dismiss() } },
+                close: { withAnimation { lap.close() } })
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    /// Step 1's action: point at the card, or — a recording with no
+    /// suggestion pending — open the folder picker, which is the same lesson.
+    private func showSuggestion() {
+        guard filing.hasSomethingToOffer else {
+            choosingFolder = true
+            return
+        }
+        cardHighlighted = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.2))
+            cardHighlighted = false
+        }
+    }
+
+    /// One redraw when a ✓ hold ends, rather than a timer.
+    private func scheduleLapRedraw() {
+        guard let end = lap.holdEndsAt else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(max(0, end.timeIntervalSinceNow) + 0.05))
+            lapTick += 1
+        }
+    }
+
+    private var currentFolderName: String? {
+        guard let currentFolderId else { return nil }
+        return folders.first { $0.id == currentFolderId }?.name
+    }
+
+    // MARK: the suggestion
+
+    /// What an accepted suggestion changes on this screen, and what it
+    /// retires.
+    private func wireFiling() {
+        filing.onApplied = { title, folderId, created in
+            if let created, !folders.contains(where: { $0.id == created.id }) {
+                folders.append(created)
+            }
+            if let title {
+                displayTitle = title
+                meta?.title = title
+                onTitleChange?(title)
+            }
+            if let folderId {
+                currentFolderId = folderId
+                meta?.folderId = folderId
+                onFolderChange?(folderId)
+                let name = folders.first { $0.id == folderId }?.name ?? created?.name ?? ""
+                lastFiling = (name, title != nil)
+            }
+        }
+        filing.onRetired = {
+            suggestionRetired = true
+            meta?.filingSuggestion = nil
+        }
+    }
+
+    /// Offer the recording's pending suggestion, once the meta is here — and
+    /// again when the folders land, so the sample's chips can include the
+    /// user's own recent folders. Personal scope only: an org recording cannot
+    /// be renamed or re-filed from the phone.
+    private func presentSuggestion() {
+        guard orgId == nil, !suggestionRetired, let meta, var suggestion = meta.filingSuggestion
+        else { return }
+        if isSample, let manifest = SampleRecordingStore.shared.manifest,
+            let composed = manifest.filingSuggestion(existingFolders: folders)
+        {
+            suggestion = composed
+        }
+        filing.present(
+            suggestion, currentTitle: displayTitle, currentFolderId: currentFolderId,
+            folders: folders, target: isSample ? .sample : .cloud(id: summary.id))
     }
 
     /// 摘要 ｜ 逐字稿. The system segmented control, because two mutually
@@ -1323,6 +1475,9 @@ struct RecordingDetailView: View {
 
     /// The face the recording opens on — once. See `face`.
     private func chooseFace(_ meta: RecordingMeta) {
+        // Every load, not only the first: a reload can bring a suggestion the
+        // desktop has just left on the recording.
+        Task { @MainActor in presentSuggestion() }
         guard !faceChosen else { return }
         faceChosen = true
         face = meta.hasAnalysis ? .summary : .transcript
@@ -1385,6 +1540,9 @@ struct RecordingDetailView: View {
         currentFolderId = folderId
         meta?.folderId = folderId
         onFolderChange?(folderId)
+        if let folderId, let name = folders.first(where: { $0.id == folderId })?.name {
+            lastFiling = (name, false)
+        }
         if folderId != nil { GettingStartedStore.shared.mark(.filed) }
     }
 

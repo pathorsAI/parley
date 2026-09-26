@@ -105,6 +105,23 @@
         }
       }
     },
+    "1 / 3 · See what Parley did for you": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 / 3 · See what Parley did for you"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 / 3 · 先看 Parley 幫你做了什麼"
+          }
+        }
+      }
+    },
     "1 hour": {
       "extractionState": "manual",
       "localizations": {
@@ -139,6 +156,40 @@
         }
       }
     },
+    "2 / 3 · Replay": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "2 / 3 · Replay"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "2 / 3 · 回放"
+          }
+        }
+      }
+    },
+    "3 / 3 · Hand it to your AI": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3 / 3 · Hand it to your AI"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3 / 3 · 交給你的 AI"
+          }
+        }
+      }
+    },
     "5 minutes": {
       "extractionState": "manual",
       "localizations": {
@@ -169,6 +220,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "AI 額度"
+          }
+        }
+      }
+    },
+    "Accept": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accept"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "採用"
           }
         }
       }
@@ -286,23 +354,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "加入鍵盤"
-          }
-        }
-      }
-    },
-    "Adjust": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Adjust"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "改一下"
           }
         }
       }
@@ -595,19 +646,36 @@
         }
       }
     },
-    "ChatGPT and Claude are in the share sheet": {
+    "Choose a folder": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "ChatGPT and Claude are in the share sheet"
+            "value": "Choose a folder"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "ChatGPT、Claude 都在分享面板裡"
+            "value": "選資料夾"
+          }
+        }
+      }
+    },
+    "Choose another…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose another…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選其他資料夾…"
           }
         }
       }
@@ -680,6 +748,23 @@
         }
       }
     },
+    "Close": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "關閉"
+          }
+        }
+      }
+    },
     "Connecting transcription…": {
       "extractionState": "manual",
       "localizations": {
@@ -731,6 +816,23 @@
         }
       }
     },
+    "Continue →": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continue →"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "繼續 →"
+          }
+        }
+      }
+    },
     "Copied": {
       "extractionState": "manual",
       "localizations": {
@@ -761,6 +863,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "複製"
+          }
+        }
+      }
+    },
+    "Copy instead": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy instead"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "先複製"
           }
         }
       }
@@ -1325,6 +1444,23 @@
         }
       }
     },
+    "Edit the title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edit the title"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "編輯標題"
+          }
+        }
+      }
+    },
     "Email and password, Google, and Apple all work. Before any recording starts, Parley asks you to confirm everyone in the room has agreed to it.": {
       "extractionState": "manual",
       "localizations": {
@@ -1393,6 +1529,23 @@
         }
       }
     },
+    "Every recording gets a name and a suggested folder when it's done. You can change the title or pick your own folder — tap Accept or any folder to try it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every recording gets a name and a suggested folder when it's done. You can change the title or pick your own folder — tap Accept or any folder to try it."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "錄完的會議會自動取名、建議放哪個資料夾。標題可以改，資料夾也能自己選。按「採用」或任一個資料夾試試。"
+          }
+        }
+      }
+    },
     "Everyone has agreed": {
       "extractionState": "manual",
       "localizations": {
@@ -1423,6 +1576,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "所有錄音都已同步"
+          }
+        }
+      }
+    },
+    "Existing folder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Existing folder"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既有資料夾"
+          }
+        }
+      }
+    },
+    "Filed in “%@”. Every recording will get a suggestion like this.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filed in “%@”. Every recording will get a suggestion like this."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已放進「%@」。之後每一場錄完都會這樣。"
+          }
+        }
+      }
+    },
+    "Filed. Every recording will get a suggestion like this.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filed. Every recording will get a suggestion like this."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已歸檔。之後每一場錄完都會這樣。"
           }
         }
       }
@@ -1474,23 +1678,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "聽寫完馬上把字改對，Parley 就會記住你的說法。學到的東西都在個人詞庫裡，你也可以在那裡加上該念對的名字。"
-          }
-        }
-      }
-    },
-    "Folder": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Folder"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "資料夾"
           }
         }
       }
@@ -1559,6 +1746,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "到逐字稿的 %@"
+          }
+        }
+      }
+    },
+    "Handed to your AI": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Handed to your AI"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已交給 AI"
           }
         }
       }
@@ -2003,23 +2207,6 @@
         }
       }
     },
-    "Load sample": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Load sample"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "載入範例"
-          }
-        }
-      }
-    },
     "Loading Parley": {
       "extractionState": "manual",
       "localizations": {
@@ -2341,6 +2528,23 @@
         }
       }
     },
+    "Named and filed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Named and filed"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已命名、歸檔"
+          }
+        }
+      }
+    },
     "Names, jargon, and anything else you say often. Parley keeps them so it can prefer your spelling — this list is yours to keep even where transcription can't yet be biased toward it.": {
       "extractionState": "manual",
       "localizations": {
@@ -2354,23 +2558,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "名字、行話，還有任何你常講的詞。Parley 會留著，好照你的寫法來寫——即使目前還無法讓辨識偏向這份清單，它仍然是你的。"
-          }
-        }
-      }
-    },
-    "New": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "New"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新增"
           }
         }
       }
@@ -2663,6 +2850,23 @@
         }
       }
     },
+    "On a Mac, Claude Code can also read your whole recording library directly over MCP.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "On a Mac, Claude Code can also read your whole recording library directly over MCP."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 Mac 上還能讓 Claude Code 透過 MCP 直接讀整個錄音資料庫。"
+          }
+        }
+      }
+    },
     "On this phone": {
       "extractionState": "manual",
       "localizations": {
@@ -2744,6 +2948,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "只有上傳者或管理員可以刪除這筆錄音"
+          }
+        }
+      }
+    },
+    "Open the transcript": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open the transcript"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開逐字稿"
           }
         }
       }
@@ -3496,6 +3717,40 @@
         }
       }
     },
+    "Renamed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Renamed"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已改名"
+          }
+        }
+      }
+    },
+    "Renamed and filed in “%@”. Every recording will do this from now on.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Renamed and filed in “%@”. Every recording will do this from now on."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已改名，放進「%@」。之後每一場錄完都會這樣。"
+          }
+        }
+      }
+    },
     "Renewal terms — Northwind": {
       "extractionState": "manual",
       "localizations": {
@@ -3530,6 +3785,23 @@
         }
       }
     },
+    "Replayed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replayed"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已回放"
+          }
+        }
+      }
+    },
     "Retry sync now": {
       "extractionState": "manual",
       "localizations": {
@@ -3560,40 +3832,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "範例"
-          }
-        }
-      }
-    },
-    "Save": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "儲存"
-          }
-        }
-      }
-    },
-    "Save as suggested": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save as suggested"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "就這樣存"
           }
         }
       }
@@ -3783,6 +4021,23 @@
         }
       }
     },
+    "Share it, paste it, and ask:": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share it, paste it, and ask:"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分享出去、貼上，就能問："
+          }
+        }
+      }
+    },
     "Share or copy transcript": {
       "extractionState": "manual",
       "localizations": {
@@ -3796,6 +4051,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "分享或複製逐字稿"
+          }
+        }
+      }
+    },
+    "Share to AI": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share to AI"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分享給 AI"
           }
         }
       }
@@ -3847,6 +4119,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "分享到組織（複製）"
+          }
+        }
+      }
+    },
+    "Show me": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show me"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "看建議"
           }
         }
       }
@@ -4225,6 +4514,23 @@
         }
       }
     },
+    "Start your first real meeting": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start your first real meeting"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開始第一場真的會議"
+          }
+        }
+      }
+    },
     "Starting…": {
       "extractionState": "manual",
       "localizations": {
@@ -4461,6 +4767,23 @@
         }
       }
     },
+    "Tap any line and the audio jumps to that moment. Try it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap any line and the audio jumps to that moment. Try it."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "點任一句，音訊會跳到那個時間。試試看。"
+          }
+        }
+      }
+    },
     "Tap the mic on the Parley keyboard and your words land at the cursor.": {
       "localizations": {
         "en": {
@@ -4541,6 +4864,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "錄音太短，已捨棄"
+          }
+        }
+      }
+    },
+    "That's a meeting in Parley: record → named and filed for you → replay → hand it to your AI. Next time it all happens on its own.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That's a meeting in Parley: record → named and filed for you → replay → hand it to your AI. Next time it all happens on its own."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這就是 Parley 的一場會議：錄 → 自動命名與歸檔 → 回放 → 交給 AI。下次錄完會自動發生。"
+          }
+        }
+      }
+    },
+    "That's it. Search finds any word you remember.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That's it. Search finds any word you remember."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "就是這樣。搜尋可以找關鍵字。"
           }
         }
       }
@@ -4817,6 +5174,23 @@
         }
       }
     },
+    "Transcribing…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transcribing…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轉錄中…"
+          }
+        }
+      }
+    },
     "Transcript": {
       "extractionState": "manual",
       "localizations": {
@@ -5084,6 +5458,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "等待重新轉錄。目前沒有任何工作在跑——開啟 Parley 或把它切回前景時就會開始。"
+          }
+        }
+      }
+    },
+    "Walk through it with the sample recording": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Walk through it with the sample recording"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用範例錄音走一遍"
           }
         }
       }
@@ -5474,23 +5865,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "未填"
-          }
-        }
-      }
-    },
-    "or load the sample recording": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "or load the sample recording"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "或載入範例錄音"
           }
         }
       }

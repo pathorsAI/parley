@@ -66,6 +66,8 @@
         /// The Library draws the checklist even though it is serving fixtures.
         /// Off for every store frame, which must not carry it.
         @Published var allowsChecklist = false
+        /// Library pushes the sample recording, as the lap opens it.
+        @Published var showSample = false
         /// Which fixture `showTranscript` pushes. The featured one unless a
         /// route asks for the unanalysed one.
         @Published var recordingID = "demo-renewal"
@@ -124,6 +126,7 @@
             openFolderPicker = false
             pressResetChecklist = false
             allowsChecklist = false
+            showSample = false
             recordingID = Self.featured.id
             forcedFace = nil
             jumpOnOpen = nil
@@ -154,6 +157,32 @@
                 jumpOnOpen = 44_000
                 holdsLitTurn = true
                 showTranscript = true
+            case "lap1", "lap3", "lapdone":
+                // The guided lap on the sample, at step 1 (suggestion card and
+                // bar), step 3 (hand it to your AI), or finishing — the last
+                // one ticks the share a beat after the screen is up, so the
+                // finish is reached the way a user reaches it.
+                tab = .library
+                let step = route
+                Task { @MainActor in
+                    let sample = SampleRecordingStore.shared
+                    sample.remove()
+                    sample.load()
+                    var state = GettingStartedState(recorded: true)
+                    if step != "lap1" {
+                        state.filed = true
+                        state.replayed = true
+                        sample.setTitle(sample.manifest?.suggestion?.title ?? "")
+                        sample.setFolder(Self.folders.first?.id)
+                        sample.answerSuggestion()
+                    }
+                    GettingStartedStore.shared.seedDemo(state)
+                    showSample = true
+                    if step == "lapdone" {
+                        try? await Task.sleep(for: .seconds(2.5))
+                        GettingStartedStore.shared.mark(.sharedToAI)
+                    }
+                }
             case "nosummary":
                 tab = .library
                 recordingID = "demo-review"

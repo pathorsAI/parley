@@ -1,44 +1,52 @@
 import ParleyKit
 import SwiftUI
 
-/// The filing suggestion on the record screen: the name this recording could
-/// have, and the folder it could live in — as **one decision**.
+/// The filing suggestion: the name this recording could have, and the folder it
+/// could live in. Shown on the record screen for the recording that just
+/// landed, and on the recording screen above the Summary | Transcript switch
+/// whenever the recording has a suggestion pending (the sample always starts
+/// with one — see `SampleRecordingStore`).
 ///
-/// It is a SUGGESTION, not a control, and it is drawn like one: a small
-/// secondary heading, the suggestion in plain ink, and the actions as blue text.
-/// No card, no border, no fill — the one glyph is the folder, which says what
-/// the line under the title is about. It used to be a violet-bordered panel
-/// carrying the AI stars — the loudest block on a screen whose job is to stay
-/// out of the way, coloured to advertise that a model wrote it rather than to
-/// say what it was offering. Nothing here happens on its own and nothing here is
-/// destructive, so nothing here needs to shout.
+/// It is a SUGGESTION, not a form, and it is drawn like one: a small secondary
+/// heading, the proposed name in ink, the candidate folders as outlined chips,
+/// and the actions as blue text. No card, no fill — the chips are the only
+/// shapes, because they are the only things here that are choices.
 ///
-/// ## Why one decision and not three
+/// ## The pieces
 ///
-/// This block used to lay the pass's whole answer out as a menu: a "use this
-/// name" row plus a row per candidate folder, each with its own button, each
-/// writing on its own. Three buttons meant three things to read and compare
-/// before anything could be filed — on the screen a person reaches at the exact
-/// moment they have stopped paying attention to their phone, having just
-/// finished a meeting. The candidates it was asking them to weigh are the
-/// model's 2nd and 3rd guesses, which are worth having but are not worth a
-/// decision.
+/// - **The name** is the proposal, and tapping it edits it in place. Return
+///   renames the recording then and there (for a cloud recording, the same meta
+///   re-push every rename and move on the phone uses; for the sample, its local
+///   title) and leaves the folder half on offer.
+/// - **The chips** are the folders: the pass's own candidates, best first — a
+///   folder that does not exist yet is dashed, because tapping it creates it —
+///   then, where there is room, folders the user already has. At most three.
+///   Tapping one files into that folder and does nothing to the name.
+/// - **Choose another…** opens the searchable folder picker with the chips'
+///   existing folders at the top, for the recording none of them fits. It
+///   files the same way a chip does.
+/// - **Accept** (採用) takes the WHOLE suggestion: the name as the field shows
+///   it and the first chip, in one tap. **Skip** answers the offer with no.
 ///
-/// So the block states the answer — the proposed name, what the recording is
-/// called now, and the best folder with its reason in full — and offers one
-/// blue verb that takes it. `Adjust` is where the rest of the answer lives, for
-/// the minority of recordings where the first guess is wrong, and `Skip
-/// suggestion` is the way out. The reason stays on screen and wraps rather than
-/// truncating: it is what makes a folder trustworthy without opening the
-/// recording, and a clipped reason is a reason nobody can act on.
+/// The same rule as the desktop: only filing — Accept, a chip, the picker —
+/// ticks the checklist's `filed`; a rename on its own does not.
+///
+/// Every write is one read-modify-write through `FilingSuggestionModel.apply`,
+/// so a rename followed by a chip is two pushes in order, never two racing.
 struct FilingSuggestionCard: View {
     @EnvironmentObject private var app: AppState
     @ObservedObject var model: FilingSuggestionModel
-    @State private var adjusting = false
+    /// Washes the block in the tint for a moment — the guided lap's "look
+    /// here". Owned by the screen, which knows when it asked.
+    var highlighted = false
+
+    @State private var draft = ""
+    @State private var editing = false
+    @FocusState private var titleFocused: Bool
+    @State private var choosing = false
     #if DEBUG
-        /// ScreenshotDemo's `adjust` route opens the sheet with nobody tapping;
-        /// `simctl` cannot tap, and a frame nobody can reproduce is a frame that
-        /// silently rots.
+        /// ScreenshotDemo's `adjust` route opens the picker with nobody
+        /// tapping; `simctl` cannot tap.
         @ObservedObject private var demo = ScreenshotDemo.shared
     #endif
 
@@ -46,344 +54,267 @@ struct FilingSuggestionCard: View {
         Group {
             if model.hasSomethingToOffer {
                 block
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .sheet(isPresented: $adjusting) {
-            FilingAdjustSheet(model: model)
+        .animation(.easeOut(duration: 0.25), value: model.hasSomethingToOffer)
+        .onAppear { draft = model.editableTitle }
+        .onChange(of: model.editableTitle) { _, title in
+            if !editing { draft = title }
         }
+        .sheet(isPresented: $choosing) { picker }
         #if DEBUG
             .onChange(of: demo.openFilingAdjust) {
-                if demo.openFilingAdjust { adjusting = true }
+                if demo.openFilingAdjust { choosing = true }
             }
         #endif
     }
 
     private var block: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Suggestion")
-                .font(.parley.footnote.weight(.semibold))
-                .foregroundStyle(Color(.secondaryLabel))
-                .accessibilityAddTraits(.isHeader)
-            if let proposed = model.proposedTitle {
-                title(proposed)
+            HStack(alignment: .firstTextBaseline) {
+                Text("Suggestion")
+                    .font(.parley.footnote.weight(.semibold))
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 8)
+                Button {
+                    model.dismiss(app: app)
+                } label: {
+                    Text("Skip suggestion")
+                        .font(.parley.footnote)
+                        .foregroundStyle(Color(.secondaryLabel))
+                }
+                .buttonStyle(.plain)
             }
-            if let folder = model.proposedFolder {
-                folderLine(folder)
+            title
+            if !model.proposedFolders.isEmpty {
+                chips
             }
             if model.writeFailed {
                 Text("That didn't save. Try again.")
                     .font(.parley.caption2)
                     .foregroundStyle(Theme.destructive)
             }
-            actions
         }
+        .disabled(model.isWriting)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
-        // Room above as well as below: the transcript scrolls to its last turn
-        // rather than to the end of its own padding, so without this the section
-        // label lands against the words of the meeting that just ended.
         .padding(.vertical, 12)
+        .background(Theme.primary.opacity(highlighted ? 0.12 : 0))
+        .animation(.easeOut(duration: 0.6), value: highlighted)
     }
 
-    /// The proposed name, and under it the name the recording carries now. Both
-    /// are needed: a title on its own gives nothing to judge it against, and
-    /// "Meeting May 14, 5:40 PM" is exactly the thing the suggestion exists to
-    /// replace — seeing it is most of the argument.
-    private func title(_ proposed: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            // The proposed name is the model's words, never a lookup key.
-            Text(verbatim: proposed)
-                .font(.parley.title3)
-                .foregroundStyle(Color(.label))
-                .lineLimit(2)
-            Text("Was: \(model.currentTitle)")
-                .font(.parley.footnote)
-                .foregroundStyle(Color(.secondaryLabel))
-                .lineLimit(1)
-        }
-    }
+    // MARK: the name
 
-    /// The folder, and why. A folder that does not exist yet has to read as one
-    /// being created rather than one to move into — accepting is what brings it
-    /// into being.
-    private func folderLine(_ folder: FilingFolderSuggestion) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Image(systemName: "folder")
-                    .font(.parley.footnote)
-                    .foregroundStyle(Color(.secondaryLabel))
-                    .accessibilityHidden(true)
-                folderLabel(folder)
-                    .font(.parley.subheadline)
-                    .foregroundStyle(Color(.label))
-                    .lineLimit(1)
-            }
-            if !folder.reason.isEmpty {
-                // The model's prose, not a lookup key, and never truncated.
-                Text(verbatim: folder.reason)
-                    .font(.parley.footnote)
-                    .foregroundStyle(Color(.secondaryLabel))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    /// The label, a real chevron, the name. `›` as a text character sits on the
-    /// baseline of PingFang and reads as a comma; the SF Symbol is drawn to the
-    /// cap height, which is the difference between "資料夾 › 續約" and
-    /// "資料夾，續約".
-    private func folderLabel(_ folder: FilingFolderSuggestion) -> some View {
-        HStack(spacing: 4) {
-            if folder.folderId == nil {
-                Text("New folder")
-            } else {
-                Text("Folder")
-            }
-            Image(systemName: "chevron.right")
-                .font(.parley.caption2.weight(.semibold))
-                .foregroundStyle(Color(.tertiaryLabel))
-                .accessibilityHidden(true)
-            Text(verbatim: folder.name)
-        }
-    }
-
-    /// One verb, then the two ways around it. `Skip suggestion` rather than an
-    /// ✕ in the corner: declining is one of the two things you can do with a
-    /// suggestion, so it reads as the pair to accepting it instead of as a way
-    /// to close a window.
-    private var actions: some View {
-        HStack(spacing: 18) {
-            Button {
-                Task { await model.acceptSuggested(app: app) }
-            } label: {
+    /// The proposed name, editable in place. Under it, while the proposal is
+    /// still on offer, what the recording is called now — "Meeting May 14, 5:40
+    /// PM" is most of the argument for the suggestion; once the name has been
+    /// answered, a quiet "Renamed" instead.
+    private var title: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if editing {
+                    TextField("Title", text: $draft, axis: .vertical)
+                        .font(.parley.title3)
+                        .foregroundStyle(Color(.label))
+                        .focused($titleFocused)
+                        .submitLabel(.done)
+                        .onSubmit(commitTitle)
+                        // A vertical field turns Return into a newline; a
+                        // title is one line, so Return is the rename.
+                        .onChange(of: draft) { _, text in
+                            if text.contains("\n") {
+                                draft = text.replacingOccurrences(of: "\n", with: "")
+                                commitTitle()
+                            }
+                        }
+                } else {
+                    Button {
+                        editing = true
+                        titleFocused = true
+                    } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            // The proposed name is the model's words, never a
+                            // lookup key.
+                            Text(verbatim: draft.isEmpty ? model.editableTitle : draft)
+                                .font(.parley.title3)
+                                .foregroundStyle(Color(.label))
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(2)
+                            Image(systemName: "pencil")
+                                .font(.parley.footnote)
+                                .foregroundStyle(Color(.tertiaryLabel))
+                                .accessibilityHidden(true)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(Text("Edit the title"))
+                }
+                Spacer(minLength: 8)
                 if model.isWriting {
                     ProgressView().controlSize(.mini)
                 } else {
-                    Text("Save as suggested")
-                        .font(.parley.bodyEmphasized)
+                    Button(action: accept) {
+                        Text("Accept")
+                            .font(.parley.bodyEmphasized)
+                    }
+                    .buttonStyle(.borderless)
                 }
             }
-            Button("Adjust") {
-                adjusting = true
-            }
-            .font(.parley.footnote.weight(.semibold))
-            Button {
-                model.dismiss(app: app)
-            } label: {
-                Text("Skip suggestion")
+            if model.proposedTitle != nil {
+                Text("Was: \(model.currentTitle)")
+                    .font(.parley.footnote)
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .lineLimit(1)
+            } else if model.titleWasAnswered {
+                Label("Renamed", systemImage: "checkmark")
                     .font(.parley.footnote)
                     .foregroundStyle(Color(.secondaryLabel))
             }
-            .buttonStyle(.plain)
-            Spacer(minLength: 0)
         }
-        // Everything is inert while the push is in flight, the primary
-        // included: it is the one write this screen makes, and a second tap
-        // would push a copy of the meta read before the first landed.
-        .disabled(model.isWriting)
-        .padding(.top, 2)
-    }
-}
-
-/// `Adjust`: the rest of the pass's answer, plus the name in a field.
-///
-/// Everything here was already fetched. The candidate folders are the ones the
-/// block did not have room for, and the existing folders are the registry the
-/// pass had to list anyway to give the model a menu — see
-/// `FilingSuggestionModel.existingFolders`. A sheet that fetched the folders
-/// again would be a second round trip that can fail on its own, and on a flaky
-/// network it would show a different list than the one the suggestion was made
-/// against.
-///
-/// Both edits are handed over together (`apply(title:folder:)`). Applying them
-/// one at a time would be two read-modify-writes against the same meta, and the
-/// second would carry a copy read before the first landed.
-private struct FilingAdjustSheet: View {
-    @EnvironmentObject private var app: AppState
-    @ObservedObject var model: FilingSuggestionModel
-    @Environment(\.dismiss) private var dismiss
-
-    /// One row of the folder list, whether it came from the model or from the
-    /// user's own registry. Identified by `FilingSuggestionModel.key(for:)`
-    /// rather than by name: a proposed new folder and an existing one can carry
-    /// the same name, and two rows sharing one identity is a list SwiftUI
-    /// cannot draw.
-    private struct Choice: Identifiable {
-        let id: String
-        let folder: FilingFolderSuggestion
-        let isNew: Bool
     }
 
-    @State private var title: String
-    /// `Choice.id`, or nil for "leave it where it is". Tapping the ticked row
-    /// unticks it, which is the only way to accept a rename without a move.
-    @State private var chosen: String?
-
-    init(model: FilingSuggestionModel) {
-        self.model = model
-        _title = State(initialValue: model.proposedTitle ?? model.currentTitle)
-        _chosen = State(initialValue: model.proposedFolder.map(FilingSuggestionModel.key(for:)))
-    }
-
-    /// Proposed folders first, best-first as the model ordered them, then the
-    /// user's own — minus any the model already named, so one folder is never
-    /// two rows.
-    private var choices: [Choice] {
-        let proposed = model.proposedFolders.map { folder in
-            Choice(
-                id: FilingSuggestionModel.key(for: folder), folder: folder,
-                isNew: folder.folderId == nil)
+    private func commitTitle() {
+        editing = false
+        titleFocused = false
+        let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty else {
+            draft = model.editableTitle
+            return
         }
-        let named = Set(proposed.map(\.id))
-        let rest = model.existingFolders.filter { !named.contains($0.id) }.map { folder in
-            Choice(
-                id: folder.id,
-                folder: FilingFolderSuggestion(folderId: folder.id, name: folder.name, reason: ""),
-                isNew: false)
-        }
-        return proposed + rest
+        Task { await model.rename(to: typed, app: app) }
     }
 
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    titleField
-                    folderList
-                }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .background(Theme.background)
-            .navigationTitle("Adjust")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .disabled(model.isWriting)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if model.isWriting {
-                        ProgressView().controlSize(.mini)
-                    } else {
-                        Button("Save") { save() }
-                            .font(.parley.bodyEmphasized)
-                    }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-    }
+    // MARK: the folders
 
-    private var titleField: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Title")
-                .font(.parley.footnote.weight(.semibold))
-                .foregroundStyle(Color(.secondaryLabel))
+    private var chips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                TextField("Title", text: $title, axis: .vertical)
-                    .font(.parley.body)
-                    .foregroundStyle(Color(.label))
-                    .textInputAutocapitalization(.sentences)
-                    .autocorrectionDisabled()
-                if !title.isEmpty {
-                    Button {
-                        title = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(Color(.tertiaryLabel))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear")
+                ForEach(model.proposedFolders, id: \.name) { folder in
+                    chip(folder)
                 }
+                Button {
+                    choosing = true
+                } label: {
+                    chipLabel(
+                        Text("Choose another…"), caption: nil, dashed: false,
+                        tint: Color(.secondaryLabel))
+                }
+                .buttonStyle(.plain)
             }
-            Divider()
+            .padding(.vertical, 1)
         }
+        // The chips scroll under the page's own gutter rather than being cut
+        // at it, so the row reads as continuing.
+        .padding(.horizontal, -20)
+        .contentMargins(.horizontal, 20, for: .scrollContent)
     }
 
-    private var folderList: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Move to folder")
-                .font(.parley.footnote.weight(.semibold))
-                .foregroundStyle(Color(.secondaryLabel))
-            // Whitespace between the rows and no hairline, like every other
-            // list in the app.
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(choices) { choice in
-                    row(choice)
-                }
-            }
-        }
-    }
-
-    private func row(_ choice: Choice) -> some View {
-        let isChosen = chosen == choice.id
+    private func chip(_ folder: FilingFolderSuggestion) -> some View {
+        let isNew = folder.folderId == nil
         return Button {
-            chosen = isChosen ? nil : choice.id
+            file(in: folder)
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(verbatim: choice.folder.name)
-                            .font(.parley.body)
-                            .foregroundStyle(Color(.label))
-                            .lineLimit(1)
-                        if choice.isNew {
-                            Text("New")
-                                .font(.parley.caption)
-                                .foregroundStyle(Color(.secondaryLabel))
-                        }
-                    }
-                    if !choice.folder.reason.isEmpty {
-                        Text(verbatim: choice.folder.reason)
-                            .font(.parley.footnote)
-                            .foregroundStyle(Color(.secondaryLabel))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Spacer(minLength: 8)
-                // Blue, because it is the one thing on this list that is true
-                // right now.
-                Image(systemName: "checkmark")
-                    .font(.parley.footnote.weight(.semibold))
-                    .foregroundStyle(Theme.primary)
-                    .opacity(isChosen ? 1 : 0)
-            }
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+            chipLabel(
+                Text(verbatim: folder.name),
+                caption: isNew ? Text("New folder") : Text("Existing folder"),
+                dashed: isNew, tint: Theme.primary)
         }
         .buttonStyle(.plain)
-        .accessibilityAddTraits(isChosen ? [.isButton, .isSelected] : .isButton)
+        .accessibilityHint(Text(verbatim: folder.reason))
     }
 
-    private func save() {
-        let folder = choices.first { $0.id == chosen }?.folder
-        Task {
-            let pushed = await model.apply(title: title, folder: folder, app: app)
-            // A failed push keeps the sheet up with the edits intact — the
-            // block behind it carries the message, and dismissing would throw
-            // away the only copy of what the user typed.
-            guard !model.writeFailed else { return }
-            // Saving here answers the offer outright, and answers it in the
-            // user's own words, so the block behind the sheet has to be retired
-            // rather than left to work it out: a name the user typed is neither
-            // the model's nor the one the recording had, and a block still
-            // holding the model's suggestion would redraw with it as the
-            // headline, the name just saved demoted to "Was: …", and `Save as
-            // suggested` still on screen offering to write over it.
-            //
-            // After the push and never before — `forget()` clears the recording
-            // id, and a write ordered against no id is a silent no-op. A Save
-            // that found nothing to change pushed nothing, so it leaves through
-            // `dismiss`, which lands `filingSuggested` for the desktop.
-            if pushed {
-                model.forget()
-            } else {
-                model.dismiss(app: app)
+    /// An outlined chip: the name in the tint (it is a thing to tap), a
+    /// caption saying what tapping it does to the folder list, and a dashed
+    /// outline for the folder that does not exist yet.
+    private func chipLabel(_ name: Text, caption: Text?, dashed: Bool, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 5) {
+                Image(systemName: dashed ? "folder.badge.plus" : "folder")
+                    .font(.parley.caption)
+                    .accessibilityHidden(true)
+                name
+                    .font(.parley.subheadlineEmphasized)
+                    .lineLimit(1)
             }
-            dismiss()
+            .foregroundStyle(tint)
+            if let caption {
+                caption
+                    .font(.parley.caption2)
+                    .foregroundStyle(Color(.secondaryLabel))
+            }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(minHeight: 44)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
+                .strokeBorder(
+                    Color(.separator),
+                    style: StrokeStyle(lineWidth: 1, dash: dashed ? [4, 3] : [])))
+        .contentShape(Rectangle())
+    }
+
+    /// 採用: the name as the field shows it, and the first chip.
+    private func accept() {
+        commitDraftIfEditing()
+        let title = currentDraft
+        Task { await model.apply(title: title, folder: model.proposedFolder, app: app) }
+    }
+
+    /// A chip or the picker: file, and leave the name to its own answer.
+    private func file(in folder: FilingFolderSuggestion) {
+        commitDraftIfEditing()
+        Task { await model.apply(title: nil, folder: folder, app: app) }
+    }
+
+    /// The name to write with a folder: what the field says, unless the name
+    /// has already been answered and the field still shows that answer.
+    private var currentDraft: String? {
+        let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return typed.isEmpty ? model.proposedTitle : typed
+    }
+
+    private func commitDraftIfEditing() {
+        guard editing else { return }
+        editing = false
+        titleFocused = false
+    }
+
+    // MARK: choose another
+
+    /// The searchable picker, with the chips' real folders offered first.
+    /// Choosing or creating there answers the offer exactly as a chip would.
+    private var picker: some View {
+        let live = Set(model.existingFolders.map(\.id))
+        let suggested = model.proposedFolders.compactMap { folder -> CloudFolder? in
+            guard let id = folder.folderId, live.contains(id) else { return nil }
+            return model.existingFolders.first { $0.id == id }
+        }
+        return FolderPickerSheet(
+            folders: model.existingFolders,
+            currentFolderId: model.currentFolderId,
+            suggested: suggested,
+            onSelect: { folderId in
+                guard let folderId,
+                    let folder = model.existingFolders.first(where: { $0.id == folderId })
+                else { return }
+                file(
+                    in: FilingFolderSuggestion(
+                        folderId: folder.id, name: folder.name, reason: ""))
+            },
+            onCreate: { name in
+                let landed = await model.apply(
+                    title: nil,
+                    folder: FilingFolderSuggestion(folderId: nil, name: name, reason: ""),
+                    app: app)
+                if !landed { throw FilingSuggestionCard.CreateFailed() }
+            })
+    }
+
+    private struct CreateFailed: LocalizedError {
+        var errorDescription: String? { String(localized: "That didn't save. Try again.") }
     }
 }
