@@ -850,49 +850,91 @@ The rule this leaves: **a view below the root takes values, not the bridge.**
 Anything that observes it re-evaluates on every key and every microphone
 reading.
 
-### Not painting a background
+### The backdrop: the system's, unless it would disagree
 
-The keyboard draws **no canvas of its own**. `view.backgroundColor` is clear,
-the SwiftUI root is clear, and the system's own `UIInputView` shows through.
-This is not a style choice: the input view is already the exact colour iOS uses,
-already rounds its corners the way the host expects, and already covers exactly
-the area the system keyboard would. A canvas painted over it is a slightly wrong
-grey that seams against whatever sits below the keyboard and a top-left corner
-that doesn't line up — which is precisely how the bug reported as 跑版 looked.
+The keyboard's canvas is the system's `UIInputView`. `view.backgroundColor` is
+clear, the SwiftUI root is clear, and the input view shows through. This is not
+a style choice: the input view is already the exact colour iOS uses, already
+rounds its corners the way the host expects and already covers exactly the area
+the system keyboard would — on every device, in every orientation, in every
+host. A canvas once painted over it was a slightly wrong grey that seamed
+against whatever sat below the keyboard, with a top-left corner that didn't
+line up, which is precisely how the bug reported as 跑版 looked.
 
-Not painting the backdrop has one consequence the caps have to follow: **the
-backdrop's colour is the system's decision, so the caps' has to be made the same
-way.** Until 1.20 the keyboard read only `keyboardAppearance == .dark`, and most
-third-party hosts — Claude and LINE among them — leave that property at
-`.default` while the system paints the backdrop from the *trait collection*. In
-Dark Mode those hosts got white caps with black glyphs on a black backdrop.
+What that costs is ownership of one of the three colours on screen. The caps
+and the ink are this keyboard's decision, made from `isDark`; the backdrop is
+the system's, made from the trait collection. Any time the two decisions come
+out differently, the keyboard draws one appearance on top of the other. 1.19 did
+it in Claude and LINE (white caps on a dark backdrop). 1.20 fixed that by
+teaching `isDark` to believe a host that reports the opposite of the system
+style — and #441 is the other side of the same coin: Apple Notes in Dark Mode
+reports `.light` while the trait is dark, so 1.20 drew white caps and near-black
+candidates on the system's black backdrop, and the candidates disappeared.
 
-The rule is now `KeyboardViewController.isDark`, and it has to cover three kinds
-of host, measured on the iOS 26.5 simulator:
+1.21 answers it in two parts, and the order matters.
 
-- **`.default`** follows `traitCollection.userInterfaceStyle`, as the backdrop
-  does.
-- **A value that mirrors the system.** Reminders and Safari report `.light` in
-  light mode and `.dark` in dark mode. Flipping Dark Mode with the keyboard on
-  screen repaints the backdrop at once, but the proxy keeps reporting the old
-  value until the field is activated again — a stale `.light` over a dark
-  backdrop. So when the value is read fresh (`viewWillAppear`) and matches the
-  trait, the host is taken to *follow the system*, and a later trait change
-  (`registerForTraitChanges([UITraitUserInterfaceStyle.self])`) is believed over
-  the unchanged proxy.
-- **A value that contradicts the system** — a dark-themed app on a light phone —
-  is the host forcing its appearance, and is kept across a flip.
+**First, make the two decisions agree wherever they can** — the rule in *Which
+appearance* below. With the trait collection first and a host's `.light` never
+overriding it, `isDark` and the system's backdrop agree in every host that
+leaves `keyboardAppearance` at `.default` (Claude, LINE), every system app that
+mirrors the system style (Reminders, Safari, Contacts, Messages, Settings) and
+Notes. In all of those the keyboard paints nothing and looks exactly as 1.20 did
+where 1.20 was right.
 
-`textDidChange` re-learns only from a *changed* value, because an unchanged one
-after a flip is exactly the stale case. The one case this cannot tell apart is a
-host that forces `.dark` while the phone is already dark and then sees the phone
-go light; it is corrected on the next appearance.
+**Then paint only where they cannot.** After that rule there is exactly one way
+for them to disagree: a host that forces `.dark` while the phone is light — a
+dark-themed app — where the system paints its light glass and the keyboard has
+chosen dark caps and white ink. There, and only there
+(`KeyboardViewController.needsOwnBackdrop`: `isDark` differs from the trait),
+the keyboard shows a `backdrop` view of its own, filled with
+`KBTheme.backdrop(dark)`, and hides it again the moment the two agree.
+`refreshAppearance()` toggles it together with rebuilding the SwiftUI root, on
+every appearance, every `textDidChange` and every trait change, so caps, ink and
+canvas always come from one answer.
+
+Painting only in that case is the smallest blast radius available. The painted
+backdrop's shape was fitted on one device; the system's is right on all of
+them. So the fitted shape is used in the one case where the alternative is
+white ink on a light keyboard, and nowhere else.
+
+How it is painted when it is, so that it does not reintroduce the seam:
+
+- **The grey is measured, not remembered.** With the system keyboard up in
+  Reminders on the iOS 26.5 simulator, the pixels between keys are
+  **`#E2E4E8`** in light mode and **`#171717`** in dark (the same 23 the dark
+  caps were measured against, below). The iOS 18-era values in #441 (`#D1D3D9`,
+  `#2B2B2B`) are visibly off on iOS 26. Only the dark value is painted today;
+  the light one is kept because `backdrop(_:)` is keyed on `dark` like every
+  other colour here, and the rule could one day paint it.
+- **It stays inside the system's card.** On iOS 26 the system draws the
+  keyboard as a card whose continuous top corners begin at the top of our view,
+  reach the screen edge only about 37pt down, and in light mode carry a 2px rim
+  along the top and down the sides. A full-width `view.backgroundColor` — the
+  obvious way to paint — poked square corners out of that curve and covered the
+  rim, which is the old top-left misalignment in new clothes. The backdrop is
+  therefore its own `UIView` behind the SwiftUI root, **1pt inside the view on
+  the top and both sides, with 32pt continuous top corners**
+  (`KBMetrics.backdropInset`, `backdropCorner`). On the iPhone 17 Pro simulator
+  that lies inside the card everywhere and leaves the rim visible. Other
+  devices are unmeasured, which is part of why it is painted so rarely.
+- **The system's globe-and-dictation strip stays the system's.** Under a
+  third-party keyboard on Face ID phones iOS draws that strip itself, below our
+  view, in the trait's appearance. In the forced-dark case it stays light under
+  our dark keys. Nothing inside the extension can reach it.
+- **Nothing else tints the canvas.** The hosting view stays clear. The
+  sub-visible fills that make empty points take touches (see *The strip takes
+  touches everywhere*) are the backdrop's colour at 1% (`KBTheme.hitFill`)
+  rather than white: white at 1% lifted the dark keyboard from 23 to 25 over
+  exactly the SwiftUI area, a two-level step against the home indicator's strip.
 
 The dark caps are measured against the same backdrop: iOS 26.5 draws every key
-at sRGB 61/255 over a backdrop of about 24, so `KBTheme.key(true)` is
+at sRGB 61/255 over a backdrop of 23, so `KBTheme.key(true)` is
 `Color(white: 0.24)`. iOS 26 no longer draws the non-letter keys a different
 grey; ours keep a darker `keyAlt` (0.17) anyway, because an engaged shift is
 shown by borrowing the letter cap and would otherwise have no way to look armed.
+The candidate ink is `KBTheme.ink` — `Color(white: 0.08)` (sRGB 20) in light,
+white in dark — which is **14.5:1** against `#E2E4E8` and **17.9:1** against
+`#171717`, far above WCAG's 4.5:1.
 
 Two more pieces of the same recipe:
 
@@ -929,6 +971,39 @@ knowing about:
   caps. `KBMetrics.zhuyinKeyHeight` is therefore *derived* — (213 − 8 − 4 − 4×7)
   ÷ 5 ≈ 34.6pt — rather than picked. Shorter 注音 caps are also what iOS's own
   注音 keyboard does, for exactly this reason.
+
+#### Which appearance
+
+`KeyboardViewController.isDark` is now two lines:
+
+- **The trait collection first.** The system picks its own chrome — the card,
+  the globe-and-dictation strip under a third-party keyboard — from
+  `traitCollection.userInterfaceStyle`, so that is the one signal that agrees
+  with everything around the keyboard.
+- **A host asking for `.dark` is an additional way in.** A dark-themed app on a
+  light phone gets a dark keyboard.
+- **A host's `.light` never overrides a dark trait.** That is the Notes case.
+  Believing `.light` could only ever be right for a light-themed app on a dark
+  phone, which would get a light keyboard against a dark screen; believing it
+  wrongly is what made the candidates invisible. A dark keyboard on a dark
+  phone is what the system is painting anyway, so the case given up costs
+  nothing.
+
+`hostAppearance`, `hostFollowsSystem` and `readHostAppearance` — the machinery
+1.20 needed to guess which hosts meant their report — are gone. One piece of it
+survives in a narrower form, because the simulator showed the regression without
+it: Reminders and Safari report `.dark` while the phone is dark and **keep
+reporting it after the user flips to light with the keyboard on screen**; typing
+does not refresh it, only activating the field again does. Taken at its word
+that `.dark` kept the keyboard dark on a light phone, above a system strip that
+had already turned light — and now that a disagreement is what makes the
+keyboard paint, it would also have painted a dark backdrop over the system's
+light one for no reason at all. So `staleHostDark` sets aside a `.dark` that was
+already there when the trait went from dark to light, until the field is read
+again (`viewWillAppear`, or a `textDidChange` that sees any other value). The one
+host this misjudges is a dark-themed app on a phone flipped from dark to light:
+it gets a light keyboard until the field is next activated — readable, and
+corrected on the next appearance.
 
 ### Mode strip
 
@@ -1354,8 +1429,8 @@ composer's limit rather than a position anybody argued for.
   cells, `max(4, width ÷ 64)` columns, scrolling vertically — in exactly the
   composer's order, never re-sorted. The keyboard's height does not change: the
   grid takes the keys' place rather than growing the keyboard. It *replaces*
-  them rather than covering them, because the keyboard paints no background
-  (see *Not painting a background*): the pane track is hidden and stops taking
+  them rather than covering them, because the SwiftUI tree paints no background
+  of its own (see *The backdrop: the system's, unless it would disagree*): the pane track is hidden and stops taking
   touches while the grid is up. The strip keeps the reading and flips ⌄ to ⌃ to
   close it; the grid carries its own ⌫ (bottom right, hold-to-repeat), because
   the pane's is hidden with the keys and delete still unwinds the buffer. The

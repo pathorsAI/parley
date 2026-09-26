@@ -94,6 +94,13 @@ belongs. Tap an entry to read it in full, share it, or delete it. The history
 stays on your phone and never leaves it. Settings › Voice typing history turns
 it off or clears it.
 
+The Parley keyboard stays readable in dark mode, Notes included.
+
+In a few apps, Apple's Notes among them, dark mode drew the candidates above
+the keys in near-black on a black keyboard, where they could not be read. The
+keys and the words above them now follow the same dark or light setting as the
+keyboard behind them, including when you switch dark mode while typing.
+
 ## What's New — 1.20
 
 The Parley keyboard looks right in dark mode, in every app.

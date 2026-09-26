@@ -17,10 +17,9 @@ import SwiftUI
 /// the pane with caps (which it used to do) made it read as a broken keyboard
 /// rather than a place to speak.
 ///
-/// The view paints no background of its own. The system's `UIInputView` is
-/// already the right colour, already has the right corners and already covers
-/// exactly the right area; painting over it was what made the keyboard seam
-/// against the row below and sit a shade off from the system's.
+/// The view paints no background of its own. The system's `UIInputView` shows
+/// through, and the controller covers it only when the system is painting the
+/// other appearance from the one this view was handed (#441).
 ///
 /// Everything here is presentation only — no audio, no transcript history
 /// beyond the short tail shown above the button — so the extension stays well
@@ -30,9 +29,8 @@ struct KeyboardRootView: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// The host field's appearance when it names one — a dark-themed app puts
-    /// a dark keyboard on screen even in light mode — and the trait collection's
-    /// when it leaves it at `.default`. See `KeyboardViewController.isDark`.
+    /// Dark when the trait collection is, or when the host field asks for a
+    /// dark keyboard. See `KeyboardViewController.isDark`.
     var dark: Bool
 
     /// Live horizontal travel of the pane track while a drag is in flight.
@@ -73,7 +71,7 @@ struct KeyboardRootView: View {
                 // touch through and only drawn controls could start a swipe.
                 // `contentShape` cannot fix that from inside SwiftUI; a fill
                 // below the eye's threshold can.
-                .background(Color.white.opacity(0.01))
+                .background(KBTheme.hitFill(dark))
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 24)
                         .updating($drag) { value, state, _ in
@@ -190,7 +188,7 @@ struct KeyboardRootView: View {
         // fully transparent point in a keyboard extension never receives the
         // touch, so without it only the drawn pixels of ⌄ — two thin strokes —
         // and of each candidate's glyphs were tappable.
-        .background(Color.white.opacity(0.01))
+        .background(KBTheme.hitFill(dark))
     }
 
     /// The English pane's word suggestions take the strip on the same terms the
