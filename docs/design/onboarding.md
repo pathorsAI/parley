@@ -206,3 +206,70 @@ Also rejected:
 2. **Sample voice quality.** `say` voices are serviceable but recognisably synthetic. The upgrade path is to swap the renderer in `render.ts` for a hosted TTS once a key is available on the build machine; the scripts stay the source of truth, and the entry id bumps to `-v2` so existing sample entries are not confused with the new audio.
 3. **"Copy this report" on iOS.** iOS shows a read-only report; whether it gets the same export in this round is undecided.
 4. **Measuring the funnel.** Nothing today reports where users stall between items. Without it, the decision on C (and on the BYOK gate in D2) rests on anecdote.
+
+---
+
+## v2 — the guided lap
+
+- **Status**: Implemented on `ob/w8`
+- **Date**: 2026-09-27
+- **One line**: the lap is taught on the page where it happens. A guide bar at the bottom of the study page follows the user through three steps. The sample recording arrives already named, suggested and analysed, so the "magic" is visible without a model key.
+
+### Why v1 did not feel like onboarding
+
+The owner ran v1 end to end and reported two failures.
+
+1. **A checklist is not guidance.** The Home checklist ticked correctly, but each row's CTA only moved the user to the Report or Replay page. Nothing on that page said what to do next, so the user landed on a full report and was left to work out the lesson alone. The checklist measured progress without teaching anything.
+2. **The magic depended on a key.** The step worth showing is the automatic title plus the suggested folder. It comes from the filing pass, which needs an LLM key. A new user signed in only for transcription, or holding only an STT key, never saw it. Their report was also empty ("needs an API key") exactly when it should have shown what Parley does.
+
+### The sample is already analysed and already suggested
+
+The sample manifests (`src/lib/onboarding/sampleManifests/sample.{zh-TW,en}.json`, rendered from `scripts/sample/script.*.json`) carry a prewritten `suggestion`, `brief`, `findings` and `actionItems`. `buildSampleEntry` maps them onto the entry:
+
+- `filingSuggestion = { title, folders }`. The manifest folder becomes a new-folder chip (`folderId: null`). If a live folder already has that name, the chip points at it, so the folder is never created twice. After it come up to two of the user's existing folders, most recently used first (`recentFolders`: newest recording filed there, then newest created), each with the reason 既有資料夾 / Existing folder. Three chips at most. `filingSuggested: true`.
+- `analyzed: true`, `brief` = the manifest's markdown, findings become `TimelineEvent`s (`sample-f-<i>`, `source: "extra"`), and action items become `ActionItem`s (`done: false`, `linkedEventId: null`).
+
+On load, `store.loadHistory` restores the findings, action items, brief and filing stages as "done". `factsOf` in `studyPipeline.ts` additionally turns auto-analysis off for sample entries. The delivery read, the one output the manifest does not carry, would otherwise score the synthetic `say` voices. A manual regenerate still runs. The report's "needs a key" lines now appear only when there is nothing to show, so a prewritten brief or checklist is not captioned with a missing-key warning.
+
+### The transcribing beat
+
+The sample loads in well under a second. Opened that fast, the report would already look named and filed, and the suggestion card would read as furniture rather than as something Parley just did. Every "walk through the sample" button (the wizard's done step, the Home checklist header, and Home's empty-recordings box) therefore swaps itself for a slim progress bar labelled 轉錄中… / Transcribing… for 1.5 s. The load runs during that time, and then the Report opens. The hook and bar live in `src/components/onboarding/TranscribingPulse.tsx`, so all three call sites behave the same way.
+
+### The guide bar contract
+
+`src/components/study/GuideBar.tsx` renders the bar. State and derivation live in `src/lib/onboarding/lap.ts` and reach the page through `LapContext`, which `StudyScreen` provides.
+
+**Visibility** (`isLapEligible`): the checklist is live (`isGettingStartedVisible`), the open recording is a saved personal entry (not an org copy, not an unsaved session), and it is either the sample (`isSampleEntry`) or the user's only recording (library count ≤ 1). The bar appears under both the Report and Replay tabs as a hairline-topped strip on the page background. It is not a card, and it has at most one filled button. Once the last step lands the checklist is complete and eligibility ends, but a bar that was already up keeps its done card until the user closes it or leaves the recording. Reopening the recording afterwards shows nothing.
+
+**Steps** are derived, never stored: the first of `filed → replayed → handedOff` that is not done yet (`lapPhase`). `recorded` is already true once there is an entry. The bar also ticks it if a checklist reset left it false while a recording is open. Every route to an outcome advances the bar, including the bar's own CTA, the titlebar, the library and an MCP call.
+
+| Step | Says | Primary CTA | Completes on |
+|---|---|---|---|
+| 1 / 3 · 先看 Parley 幫你做了什麼 | the recording is named and a folder is suggested; both can be changed | 看建議 / Show me: Report tab, scroll to `#filing-suggestion`; if the card is gone, open the destination picker | `filed` |
+| 2 / 3 · 回放 | click any line to jump there | 開回放 / Open replay (hidden when already on Replay) | `replayed` |
+| 3 / 3 · 交給你的 AI | Claude Code reads the library directly | 看完整說明 / Full instructions: scroll to `#handoff` | `handedOff` |
+| 完成 / Done | record → named and filed → replay → hand to AI; next time it happens on its own | 開始第一場真的會議 / Start your first real meeting (`beginMeeting()`), plus text 關閉 / Close | — |
+
+Step 3 carries the working parts inline: the `claude mcp add` command with a copy button, live MCP status (等待連線… / 已連線：{client}), the recording's three `mcpQuestions` as copyable lines, and a text fallback 沒有 Claude Code？先複製給 ChatGPT that calls `copyHandoffPrompt()`. Every step also has × 不用了 / No thanks, which calls `dismissGettingStarted()`.
+
+**Timing.** When a flag flips, the bar holds a ✓ line for the step it was teaching for 1.5 s (`LAP_CONFIRM_MS`) before it teaches the next step. `createLapTimer` holds this logic without React and is tested with fake timers:
+
+- A flag that is already set when the bar mounts never produces a ✓. Only a flip observed while the bar is up does.
+- The ✓ names the step the bar was teaching. A step done out of order was already done and is skipped silently.
+- A second flip during a hold restarts the hold.
+- Advancing into "done" has no hold, because the done card is its own ✓.
+
+The ✓ after step 1 reads 已改名，放進「{folder}」。之後每一場錄完都會這樣。 The folder clause is dropped when the recording was only renamed, and the rename clause is dropped when it was only filed. The ✓ after step 2 reads 就是這樣。⌘F 可以搜逐字稿。 While step 2 is active on the Replay tab, the first transcript line pulses once for about 2 s (`animate-pulse` on a `bg-primary/10` ring).
+
+**Hints yield to the bar.** While the bar is visible, the `report.filing` and `replay.seek` hints stay quiet, because they would repeat what the bar says.
+
+### Filing suggestion card changes
+
+- The proposed title can be edited in place: click it and type. Enter or clicking away applies the edit, and Esc cancels. An edit becomes the suggestion's title and goes through the same rename path as 採用 / Use it, so the "name equals the suggestion" rule still retires the row.
+- A last chip, 選其他資料夾… / Choose another…, opens the same destination picker sheet as the filing bar. The sheet's open state moved from `StudyLinkBar` up to `StudyScreen`, so the card and the guide bar can open it too.
+- **Accepting either half now ticks `filed`.** In v1, only a folder counted. The lap's first step is "see what Parley did for you", and its copy invites the user to press 採用 *or* a folder. If 採用 did not advance the bar, the user would act and nothing would happen. Filing into a folder still ticks it as before.
+
+### What was demoted
+
+- **The Home checklist is an index, not a set of launchers.** Rows keep their check state and titles and lose their per-row CTAs. The header has one text-weight blue button: 用範例錄音走一遍 / Walk through the sample while nothing is recorded (or nothing is left to continue on), which runs the transcribing beat and then opens the sample; otherwise 繼續 / Continue, which opens the lap's recording on the Report tab (the sample if present, else the newest recording). 不用了 stays.
+- **The `report.filing` and `replay.seek` hints** still exist, but they only show when the bar is not up (for example, on a second recording).
