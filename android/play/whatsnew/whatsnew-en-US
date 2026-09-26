@@ -1,0 +1,1 @@
+Fixes meetings not being transcribed: the microphone restarted in a loop while recording, and a connected Bluetooth headset captured silence.
