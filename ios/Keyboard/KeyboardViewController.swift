@@ -1316,40 +1316,39 @@ final class KeyboardViewController: UIInputViewController {
         publishComposition()
     }
 
-    /// Where a reading the host may keep as plain text is remembered. Between
-    /// appearances rather than in the controller, because UIKit makes a new
-    /// controller each time the keyboard comes up.
-    private static let strandedKey = "zhuyin.strandedReading"
-    /// Set with the stranded reading, cleared once the keyboard has explicitly
-    /// removed whatever might still be marked.
-    private static let markMayLingerKey = "zhuyin.markMayLinger"
+    /// A reading the host may keep as plain text, and its best guess. In
+    /// memory only, and static because UIKit makes a new controller each time
+    /// the keyboard comes up while the extension process lives on. Never
+    /// written to disk: the keyboard holds no typed content beyond the process
+    /// (see `ios/AppStore/privacy-label.md`), so if iOS ends the process
+    /// before the user comes back to the field, the reading is not repaired.
+    private static var stranded: StrandedReading?
+    /// Set with `stranded`, cleared once the keyboard has explicitly removed
+    /// whatever might still be marked.
+    private static var markMayLinger = false
 
     private func strandComposition() {
         guard marks.usesMarkedText else { return }
-        let stranded = StrandedReading(reading: zhuyin.reading, best: zhuyin.best, at: Date())
-        guard let data = try? JSONEncoder().encode(stranded) else { return }
-        UserDefaults.standard.set(data, forKey: Self.strandedKey)
-        UserDefaults.standard.set(true, forKey: Self.markMayLingerKey)
+        Self.stranded = StrandedReading(reading: zhuyin.reading, best: zhuyin.best, at: Date())
+        Self.markMayLinger = true
     }
 
     /// If the text before the caret ends with exactly the stranded reading,
     /// put its best guess in its place.
     @discardableResult
     private func repairStrandedReading() -> Bool {
-        guard let data = UserDefaults.standard.data(forKey: Self.strandedKey),
-            let stranded = try? JSONDecoder().decode(StrandedReading.self, from: data)
-        else { return false }
+        guard let stranded = Self.stranded else { return false }
         guard let repair = stranded.repair(
             before: textDocumentProxy.documentContextBeforeInput, now: Date())
         else {
             if Date().timeIntervalSince(stranded.at) >= StrandedReading.lifetime {
-                UserDefaults.standard.removeObject(forKey: Self.strandedKey)
+                Self.stranded = nil
             }
             return false
         }
         for _ in 0..<repair.delete { textDocumentProxy.deleteBackward() }
         textDocumentProxy.insertText(repair.insert)
-        UserDefaults.standard.removeObject(forKey: Self.strandedKey)
+        Self.stranded = nil
         return true
     }
 
@@ -1364,15 +1363,21 @@ final class KeyboardViewController: UIInputViewController {
         zhuyin.clear()
         marks.fieldChanged()
         currentField = fieldID
-        let defaults = UserDefaults.standard
-        if !repairStrandedReading(), defaults.bool(forKey: Self.markMayLingerKey),
-            (textDocumentProxy.selectedText ?? "").isEmpty
-        {
-            textDocumentProxy.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
-            textDocumentProxy.unmarkText()
-        }
-        defaults.removeObject(forKey: Self.markMayLingerKey)
+        if !repairStrandedReading() { removeLingeringMark() }
+        Self.markMayLinger = false
         publishComposition()
+    }
+
+    /// Remove whatever the keyboard may have left marked, with
+    /// `setMarkedText("")` followed by `unmarkText()`: neither kept raw nor
+    /// finalized as typed. Only after stranding a reading, and never over a
+    /// selection, because an empty `setMarkedText` replaces the selected text
+    /// when nothing is marked.
+    private func removeLingeringMark() {
+        guard Self.markMayLinger, (textDocumentProxy.selectedText ?? "").isEmpty else { return }
+        textDocumentProxy.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
+        textDocumentProxy.unmarkText()
+        Self.markMayLinger = false
     }
 
     /// Text that does not come from the composer ends the composition first,

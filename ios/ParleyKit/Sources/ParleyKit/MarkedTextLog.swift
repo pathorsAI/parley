@@ -142,9 +142,9 @@ public struct MarkedTextLog: Equatable, Sendable {
 /// Reminders on iOS 26.5 finalizes the marked reading as typed when its field
 /// resigns, and by then no proxy edit lands — not in `textWillChange`, not in
 /// `viewWillDisappear`. The keyboard can only repair it the next time it is
-/// in front of that text. It is stored by the keyboard between appearances,
-/// because a new controller is made for each one.
-public struct StrandedReading: Codable, Equatable, Sendable {
+/// in front of that text. The keyboard keeps it in memory for the life of its
+/// process only, never on disk: typed content does not outlive the process.
+public struct StrandedReading: Equatable, Sendable {
     public var reading: String
     public var best: String
     public var at: Date

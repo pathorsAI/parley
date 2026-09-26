@@ -182,10 +182,4 @@ final class MarkedTextLogTests: XCTestCase {
         XCTAssertNil(stranded.repair(before: "ㄋ ㄏ", now: at.addingTimeInterval(StrandedReading.lifetime)),
                      "too old to repair")
     }
-
-    func testAStrandedReadingSurvivesTheTripThroughStorage() throws {
-        let stranded = StrandedReading(reading: "ㄨㄛˉ", best: "我", at: Date(timeIntervalSince1970: 7))
-        let data = try JSONEncoder().encode(stranded)
-        XCTAssertEqual(try JSONDecoder().decode(StrandedReading.self, from: data), stranded)
-    }
 }

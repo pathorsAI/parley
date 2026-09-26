@@ -1561,16 +1561,19 @@ composer's limit rather than a position anybody argued for.
   composer does nothing.
 - **The backstop repairs a stranded reading on the way back.** Whenever the
   keyboard leaves a reading behind (dismissal, field change) it stores the
-  reading and its best guess (`StrandedReading`) in the extension's defaults —
-  not in the controller, because UIKit makes a new controller every time the
-  keyboard comes up. On `viewWillAppear`, and on any `textDidChange` with nothing
+  reading and its best guess (`StrandedReading`) in a static on the
+  controller — static because UIKit makes a new controller every time the
+  keyboard comes up, and in memory because the keyboard never writes what the
+  user types to disk (`ios/AppStore/privacy-label.md`, #290). On `viewWillAppear`, and on any `textDidChange` with nothing
   composing, if the text before the caret ends with exactly that reading —
   spaces and tone marks included, which is what makes the match unambiguous —
   the keyboard deletes it and types the best guess: `你好ㄨㄛ` became `你好我`
   when the reminder was tapped again, and a title left as `…我ㄋ ㄏ` by a field
   change became `…我你好` on tapping back into it. The record lives for 30
   minutes. The cost is honest: in such a host the raw 注音 is visible while the
-  keyboard is away, and stays if the user never comes back to that field.
+  keyboard is away, and stays if the user never comes back to that field — or
+  if iOS ends the keyboard's process before they do, since the record goes with
+  it.
 - **A drop is an explicit removal.** When the keyboard comes back after
   leaving a reading behind and the backstop did not match, whatever may still
   be marked — a reading a keyboard switch left underlined — is removed with
