@@ -16,6 +16,12 @@ import Foundation
 /// fallback behind it and the whole answer for a lone syllable. See
 /// `docs/design/ios-voice-keyboard.md`.
 ///
+/// **One wrong symbol still answers.** A syllable's candidates are its own row
+/// and then a bounded tail from the rows of the syllables it differs from by one
+/// `ZhuyinFuzzy` substitution — 模糊音 or an adjacent key — so `ㄗㄨㄥ` offers
+/// 從, 總 and 宗 first and 中 after them. The table itself is unchanged: the
+/// variants are more lookups into it, not more rows.
+///
 /// **Loaded lazily and once.** This runs inside a keyboard extension, which iOS
 /// jetsams far sooner than an app, so the resource is not touched until the user
 /// types into the 注音 pane: a keyboard opened on the voice or QWERTY pane never
@@ -83,22 +89,69 @@ public final class ZhuyinDictionary {
         }
     }
 
-    public func candidates(for syllable: ZhuyinSyllable) -> [String] {
-        candidates(for: syllable.text)
+    /// The characters for a toned syllable: its own row, then — unless `fuzzy`
+    /// is off — the characters of the syllables it could have been meant as.
+    /// See `withVariants` for the order and the bound.
+    public func candidates(for syllable: ZhuyinSyllable, fuzzy: Bool = true) -> [String] {
+        withVariants(of: syllable, fuzzy: fuzzy) { $0.text }
     }
 
     /// The characters for a syllable **ignoring its tone**, which is what the
     /// bar shows while the user is still typing one. The key is built from the
     /// slots rather than from `text`, so a syllable that already carries a tone
     /// answers the toneless row too — re-toning is allowed, and asking "what
-    /// could this still become" has to survive it.
-    public func tonelessCandidates(for syllable: ZhuyinSyllable) -> [String] {
-        var key = "~"
-        if let initial = syllable.initial { key.append(initial) }
-        if let medial = syllable.medial { key.append(medial) }
-        if let final = syllable.final { key.append(final) }
-        guard key.count > 1 else { return [] }
-        return candidates(for: key)
+    /// could this still become" has to survive it. Fuzzy as `candidates` is.
+    public func tonelessCandidates(for syllable: ZhuyinSyllable, fuzzy: Bool = true) -> [String] {
+        withVariants(of: syllable, fuzzy: fuzzy) { variant in
+            var key = "~"
+            if let initial = variant.initial { key.append(initial) }
+            if let medial = variant.medial { key.append(medial) }
+            if let final = variant.final { key.append(final) }
+            // A bare `~` is not a key; `candidates(for:)` answers it with nothing.
+            return key.count > 1 ? key : ""
+        }
+    }
+
+    /// How many characters each fuzzy variant may add. A slip is asking for the
+    /// word the user meant, which is among that reading's commonest characters,
+    /// not for its whole row — and the strip draws every candidate it is given,
+    /// so fourteen variants' full rows (toneless rows run to 441 characters)
+    /// would be well over a thousand buttons on a keystroke.
+    public static let fuzzyPerVariant = 8
+
+    /// The exact row first, untouched, then for each `ZhuyinFuzzy.variants` in
+    /// order its leading characters that are not already there.
+    ///
+    /// Exact first is the whole contract: a correctly typed syllable must read
+    /// exactly as it did before error tolerance existed, so a fuzzy character can
+    /// only ever come *after* every exact one, and `top` — the first element — is
+    /// the exact top whenever there is one. With no exact row at all the first
+    /// fuzzy character is the top, which is what lets a mistyped syllable still
+    /// commit a character on return rather than its raw 注音.
+    ///
+    /// A variant's row is read as raw scalars and abandoned after its first few
+    /// new characters, rather than split in full: a toneless row can be hundreds
+    /// long and only `fuzzyPerVariant` of it is wanted.
+    private func withVariants(
+        of syllable: ZhuyinSyllable, fuzzy: Bool, key: (ZhuyinSyllable) -> String
+    ) -> [String] {
+        var out = candidates(for: key(syllable))
+        guard fuzzy else { return out }
+        var seen: Set<String>?
+        for variant in ZhuyinFuzzy.variants(of: syllable) {
+            let reading = key(variant)
+            guard !reading.isEmpty, let row = load()[reading] else { continue }
+            if seen == nil { seen = Set(out) }
+            var added = 0
+            for scalar in row.unicodeScalars {
+                guard added < Self.fuzzyPerVariant else { break }
+                let character = String(scalar)
+                guard seen?.insert(character).inserted == true else { continue }
+                out.append(character)
+                added += 1
+            }
+        }
+        return out
     }
 
     /// The characters for a reading, most frequent first. Empty for a reading
@@ -113,8 +166,9 @@ public final class ZhuyinDictionary {
         return row.unicodeScalars.map { String($0) }
     }
 
-    /// The most likely character for a reading, which is what space commits and
-    /// what starting the next syllable auto-commits.
+    /// The most likely character for a reading — the exact row's first, with no
+    /// fuzzy fallback. The composer takes its top from `candidates` instead, which
+    /// is exact-first and falls back to a variant's.
     public func top(for syllable: ZhuyinSyllable) -> String? {
         guard let row = load()[syllable.text], let first = row.unicodeScalars.first else {
             return nil

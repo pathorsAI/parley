@@ -1338,7 +1338,13 @@ syllable is finished. libtabe's notice sits beside McBopomofo's in
   syllable by syllable with the prefix rule above, split into three groups in
   frequency order: phrases exactly as long as the buffer, longer ones (the
   predictions — `ㄋㄧㄏㄠ` offers 你好嗎 after 你好, and picking it takes the
-  whole buffer), and shorter ones covering a prefix of it. Forty at most.
+  whole buffer), and shorter ones covering a prefix of it. Forty at most. Since
+  1.20 a lookup can read **more than one bucket**: a wrong first symbol files the
+  intended phrase under a different key, so the forgiving half of a lookup (see
+  *Error tolerance*) also reads every key a first-symbol substitution could
+  reach — the typed symbol or one of its alternatives, for each of the two —
+  which is up to about forty buckets for two lone 聲母. The exact half still
+  reads only the typed key.
 - **`best` is greedy, not a lattice.** Return, space-on-a-toned-syllable,
   punctuation and leaving the pane all commit `best`, which walks the buffer
   left to right taking the longest phrase that exactly covers the syllables in
@@ -1351,18 +1357,99 @@ syllable is finished. libtabe's notice sits beside McBopomofo's in
   syllable. So both tables are warmed on a background queue the moment the 注音
   pane becomes current, and a lookup that arrives before the warm has landed
   loads synchronously as before — at worst the work is done twice, never a torn
-  table. Readings are parsed at match time rather than up front: only one
-  bucket is ever looked at, and pre-parsing 61,000 readings would cost memory
-  for rows the user will never type. It is the largest thing this process
-  holds, and a keyboard opened on the voice or QWERTY pane still never pays for
-  it.
+  table. It is the largest thing this process holds, and a keyboard opened on
+  the voice or QWERTY pane still never pays for it.
+- **Readings are packed once, at load.** Until 1.20 a row kept its reading as
+  text and it was split and parsed on every keystroke for every row of the
+  bucket, on the argument that pre-parsing rows nobody types costs memory. It
+  was the other way round: a reading is 20-odd bytes of UTF-8, past the 15 Swift
+  keeps inline, so every one of the 61,000 rows owned a heap string. Now each
+  syllable is `ZhuyinSyllable.packed` — the 聲母, 介音 and 韻母 as one-based
+  indices into their alphabets and the tone, 0 for an empty slot, fourteen bits
+  in all — four of them to a `UInt64`, beside a `UInt32` file rank that lets
+  rows drawn from several buckets be merged back into file order. A row is the
+  phrase (four BMP characters or fewer, so inline too), the reading and the
+  rank: 32 bytes, the same stride as the two strings it replaced, with no heap
+  behind it. Measured cold in a fresh process, building the index costs about
+  12.6 MB of footprint against 15.5 MB before, most of what remains being the
+  file and its split lines, which are freed but whose pages stay; after a warm
+  the index itself retains about 3 MB. Comparing a slot is now a mask, and a
+  keystroke allocates nothing per row.
+
+#### Error tolerance
+
+The owner's report on build 34: one wrong 注音 symbol and the bar was empty,
+while the system keyboard still guessed. Both tables matched exactly, so a
+syllable nobody pronounces answered nothing and a mistyped real one answered a
+different word. Since 1.20 both forgive **one wrong symbol per syllable**, by two
+rules kept in `ZhuyinFuzzy`:
+
+- **模糊音 pairs**, both ways: ㄣ/ㄥ, ㄓ/ㄗ, ㄔ/ㄘ, ㄕ/ㄙ, ㄈ/ㄏ, ㄌ/ㄋ, ㄖ/ㄌ. These
+  are facts about how Taiwanese speakers talk, so they are written down by hand.
+  They are not transitive (ㄋ and ㄖ are not each other's), and ㄧㄣ/ㄧㄥ needs
+  no entry because the 介音 is its own slot.
+- **Adjacent keys**, computed from `ZhuyinDachen.rows` and the pane's stagger
+  (`ZhuyinDachen.rowOffsets`, 0, ⅓, ⅔ and 0 key pitches — kept in step with
+  `KeyboardZhuyinPane.swift` by hand): left and right on the row, and on the rows
+  above and below every key whose centre is less than one pitch away. That is
+  always the same-index key plus one staggered neighbour, whose direction
+  depends on the row pair — the fourth row is not staggered, so `ㄋ` (s) sits
+  over `ㄏ` (c) and `ㄌ` (x), not over `ㄌ` and `ㄈ` as on a physical board.
+
+Both rules keep to the syllable model: a substitute must be in the **same slot**
+as the typed symbol, a tone mark is never substituted and never substitutes, an
+empty slot is never filled (a missing symbol is not a wrong one), and a typed
+tone is never forgiven. The resulting table is 模糊音 partners first, then
+neighbours nearest-centre first — `ㄋ` → ㄌㄇㄎㄊㄍㄏ, `ㄓ` → ㄗㄔㄐ,
+`ㄣ` → ㄥㄟㄢㄦㄤㄠ, `ㄧ` → ㄨ.
+
+- **The dictionary** answers the exact row first, untouched, then for each
+  variant of the syllable (every syllable one substitution away, 模糊音 ones
+  before slips) its first eight characters not already listed. The cap is
+  there because the strip draws every candidate and toneless rows run to 441
+  characters. A syllable with an exact row keeps its exact top; one with none
+  (`ㄓㄨㄡ`) takes the first variant's (中), so return commits a character
+  rather than raw 注音.
+- **The phrase table** counts, per row, how many typed syllables needed a symbol
+  forgiven. Every exact match comes first, in the three groups as before; then
+  the forgiving ones, fewest errors first, then the same three groups, then file
+  order; forty in all, and a phrase already offered is never offered again. Only
+  the best few forgiving matches can reach the bar while two lone 聲母 can match
+  five thousand rows, so they are kept in a short sorted list rather than
+  collected and sorted, and a tier of buckets whose every row carries more
+  errors than the list's worst is not read. So `ㄌㄧㄏㄠ` still offers 良好,
+  理好 … first and 你好 right after them, `ㄋㄧㄎㄠ` offers 你好 first, and
+  `ㄗㄨㄥ ㄨㄣˊ` offers 中文 first.
+- **`best` is stricter than the bar**, because the bar is a list to choose from
+  and `best` is text that lands unasked. An exact cover of any length beats a
+  forgiven one of any length. A forgiven cover is taken only for a window
+  holding a syllable with **no exact row** — one that cannot be right as typed
+  — and then the fewest errors win, length breaking a tie. So `ㄓㄨㄡ ㄨㄣˊ`
+  commits 中文, but `ㄗㄨㄥ ㄨㄣˊ`, whose syllables are both real readings (從,
+  文), commits as typed with 中文 first in the bar. Letting any forgiven cover
+  beat one character per syllable was tried first and changed five of twenty
+  correctly typed everyday sentences — 他說的人 became 他說到任, 吃飯了麼
+  吃飯老馬 — because two real syllables that are not a phrase are exactly where
+  a one-symbol-off phrase is always waiting.
+
+The cost, with both tables warm, measured per keystroke on an M4 Mac mini in a
+debug build: about 0.1 ms for one syllable, about 1.1 ms for two and for six
+pending syllables whose every symbol has alternatives, 0.65 ms for two lone
+聲母 (the widest fan-out); a release build is under 0.1 ms throughout. Exact
+matching alone was 0.02–0.8 ms in the same debug build. The budget is 8 ms on a
+phone.
 
 #### What v1 does not do
 
 Named here so nobody has to guess whether it was forgotten:
 
 - **No lattice.** Phrases are predicted and committed greedily (above); there is
-  no viterbi over segmentations, and no 5–6 character phrases.
+  no viterbi over segmentations, and no 5–6 character phrases. That includes
+  error tolerance: `best` weighs a forgiven cover against the covers at the same
+  position, never against a whole alternative segmentation.
+- **One wrong symbol per syllable, and only a wrong one.** A syllable with two
+  substitutions, a missing symbol, an extra one, two symbols swapped between
+  syllables, or a wrong tone is not forgiven (see *Error tolerance*).
 - **No user dictionary and no learning.** The bar's order is the corpus's, not
   yours. A keyboard extension that accumulated a per-user model would be holding
   state this process is deliberately kept free of.
@@ -1376,7 +1463,8 @@ Named here so nobody has to guess whether it was forgotten:
 
 What is *not* on this list any more is having to finish a syllable before
 starting the next. Until 1.16 a tone key was the only way to move on; that was
-the composer's limit, and it read as a rule.
+the composer's limit, and it read as a rule. Nor, since 1.20, is exact-only
+matching: one wrong symbol per syllable no longer empties the bar.
 
 #### The globe, and why it is still not on every device
 
