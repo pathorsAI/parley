@@ -92,6 +92,10 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) {
+            (self: Self, _: UITraitCollection) in
+            self.refreshAppearance()
+        }
         bridge.controller = self
         bridge.hasFullAccess = hasFullAccess
         bridge.showsGlobe = needsInputModeSwitchKey
@@ -276,10 +280,9 @@ final class KeyboardViewController: UIInputViewController {
         lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
     }
 
-    /// A keyboard follows the appearance of the *field* it is typing into, not
-    /// the system's: a dark-themed host app asks for a dark keyboard even while
-    /// iOS is in light mode. `textInputMode` changes as the user moves between
-    /// fields, so this is re-read whenever the keyboard comes back.
+    /// Moving to another field can change the return key's label and the word
+    /// in front of the cursor, so both are re-read here. Appearance follows the
+    /// trait (see `isDark`) and is refreshed with it.
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
         refreshAppearance()
@@ -345,10 +348,20 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func refreshAppearance() {
-        let dark = textDocumentProxy.keyboardAppearance == .dark
+        let dark = isDark
         if host?.rootView.dark != dark {
             host?.rootView = makeRoot(dark: dark)
         }
+    }
+
+    /// The trait, not `textDocumentProxy.keyboardAppearance`. The proxy's value
+    /// is resolved once, when the field becomes first responder, and then
+    /// kept: a Reminders field focused in dark mode still reports `.dark` after
+    /// the system goes light, and the keyboard drew white ⌫ and ⏎ on a light
+    /// background (and black ones on dark, the other way round). The trait
+    /// follows the keyboard iOS is actually drawing.
+    private var isDark: Bool {
+        traitCollection.userInterfaceStyle == .dark
     }
 
     /// The host field decides what the return key is *called* — Go, Send,
@@ -360,9 +373,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func makeRoot(dark: Bool? = nil) -> KeyboardRootView {
-        KeyboardRootView(
-            bridge: bridge,
-            dark: dark ?? (textDocumentProxy.keyboardAppearance == .dark))
+        KeyboardRootView(bridge: bridge, dark: dark ?? isDark)
     }
 
     // MARK: dictation control (called from SwiftUI)
