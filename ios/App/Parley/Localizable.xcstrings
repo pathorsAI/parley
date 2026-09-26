@@ -1,6 +1,24 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "%1$@: %2$@": {
+      "comment": "Speaker name, then what they said",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@: %2$@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@：%2$@"
+          }
+        }
+      }
+    },
     "%lld findings": {
       "extractionState": "manual",
       "localizations": {
@@ -49,6 +67,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "第 %1$lld 個，共 %2$lld 個"
+          }
+        }
+      }
+    },
+    "%lld of %lld done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld of %lld done"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已完成 %1$lld／%2$lld 項"
           }
         }
       }
@@ -123,6 +158,23 @@
         }
       }
     },
+    "--- Transcript ---": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "--- Transcript ---"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "--- 逐字稿 ---"
+          }
+        }
+      }
+    },
     "1 hour": {
       "extractionState": "manual",
       "localizations": {
@@ -170,23 +222,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "5 分鐘"
-          }
-        }
-      }
-    },
-    "A pocket recorder for the meetings you have in person — live transcript while you talk, in the cloud by the time you stand up.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "A pocket recorder for the meetings you have in person — live transcript while you talk, in the cloud by the time you stand up."
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "面對面會議的口袋錄音機——邊講邊出逐字稿，起身時已經在雲端。"
           }
         }
       }
@@ -596,6 +631,23 @@
         }
       }
     },
+    "ChatGPT and Claude are in the share sheet": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ChatGPT and Claude are in the share sheet"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ChatGPT、Claude 都在分享面板裡"
+          }
+        }
+      }
+    },
     "Clear": {
       "extractionState": "manual",
       "localizations": {
@@ -698,6 +750,23 @@
         }
       }
     },
+    "Context: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context: %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "背景：%@"
+          }
+        }
+      }
+    },
     "Copied": {
       "extractionState": "manual",
       "localizations": {
@@ -745,6 +814,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "複製逐字稿"
+          }
+        }
+      }
+    },
+    "Copy with analysis prompt": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy with analysis prompt"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "複製（附分析提示）"
+          }
+        }
+      }
+    },
+    "Couldn't create the folder: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't create the folder: %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法建立資料夾：%@"
           }
         }
       }
@@ -864,6 +967,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "沒能開始"
+          }
+        }
+      }
+    },
+    "Create and move": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Create and move"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "建立並移入"
           }
         }
       }
@@ -1084,6 +1204,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "新客戶需求訪談 — 晴光實驗室"
+          }
+        }
+      }
+    },
+    "Do one lap, five minutes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Do one lap, five minutes"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "先跑一輪，5 分鐘"
           }
         }
       }
@@ -1377,6 +1514,23 @@
         }
       }
     },
+    "Folder name": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Folder name"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "資料夾名稱"
+          }
+        }
+      }
+    },
     "Getting ready…": {
       "extractionState": "manual",
       "localizations": {
@@ -1525,23 +1679,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "在「鍵盤 → 加入新的鍵盤」選 Parley Voice。"
-          }
-        }
-      }
-    },
-    "It picks up the whole room and keeps the speakers apart.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "It picks up the whole room and keeps the speakers apart."
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "收整個房間的聲音，並自動分辨不同說話者。"
           }
         }
       }
@@ -1766,19 +1903,19 @@
         }
       }
     },
-    "Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings.": {
+    "Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code can also read your whole recording library over MCP.": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings."
+            "value": "Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code can also read your whole recording library over MCP."
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "即時教練與深度分析以桌面版為主；手機負責面對面會議的錄音、轉錄與閱讀。"
+            "value": "即時教練與深度分析以桌面版為主；手機負責面對面會議的錄音、轉錄與閱讀。在 Mac 上還能讓 Claude Code 透過 MCP 直接讀整個錄音資料庫。"
           }
         }
       }
@@ -1817,19 +1954,19 @@
         }
       }
     },
-    "Live transcription, no API key": {
+    "Load sample": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Live transcription, no API key"
+            "value": "Load sample"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "即時轉錄，不必自備 API key"
+            "value": "載入範例"
           }
         }
       }
@@ -1930,6 +2067,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "會議 %@"
+          }
+        }
+      }
+    },
+    "Meeting: %1$@ (%2$@)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Meeting: %1$@ (%2$@)"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "會議：%1$@（%2$@）"
           }
         }
       }
@@ -2104,6 +2258,23 @@
         }
       }
     },
+    "Move to folder…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to folder…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移到資料夾…"
+          }
+        }
+      }
+    },
     "Move to organization": {
       "extractionState": "manual",
       "localizations": {
@@ -2168,6 +2339,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "新資料夾"
+          }
+        }
+      }
+    },
+    "New folder…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New folder…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新資料夾…"
           }
         }
       }
@@ -2253,6 +2441,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "這裡還沒有錄音。"
+          }
+        }
+      }
+    },
+    "Not now": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not now"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不用了"
           }
         }
       }
@@ -2392,6 +2597,57 @@
         }
       }
     },
+    "One customer, one folder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "One customer, one folder"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一個客戶一個資料夾"
+          }
+        }
+      }
+    },
+    "One customer, one folder, synced with your Mac": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "One customer, one folder, synced with your Mac"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一個客戶一個資料夾，和 Mac 同步"
+          }
+        }
+      }
+    },
+    "One customer, one folder.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "One customer, one folder."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一個客戶一個資料夾。"
+          }
+        }
+      }
+    },
     "Only the uploader or an admin can delete this recording": {
       "extractionState": "manual",
       "localizations": {
@@ -2405,23 +2661,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "只有上傳者或管理員可以刪除這筆錄音"
-          }
-        }
-      }
-    },
-    "Open a meeting you recorded on the phone in the desktop app for the deep analysis.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open a meeting you recorded on the phone in the desktop app for the deep analysis."
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "手機錄的會議，用桌面版打開就能做深度分析。"
           }
         }
       }
@@ -2592,6 +2831,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Parley 會在這裡錄音，把你說的話即時輸入到游標處。請先回應權限詢問，聽寫才能開始。"
+          }
+        }
+      }
+    },
+    "Parley records in-person meetings, transcribes them live, and keeps them where your Mac and phone can both find them.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley records in-person meetings, transcribes them live, and keeps them where your Mac and phone can both find them."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parley 把現場會議錄下來、即時轉成文字，回到 Mac 或手機上都找得到。"
           }
         }
       }
@@ -2834,19 +3090,19 @@
         }
       }
     },
-    "Put the phone on the table": {
+    "Put it in a folder": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Put the phone on the table"
+            "value": "Put it in a folder"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "把手機放在桌上就好"
+            "value": "放進一個資料夾"
           }
         }
       }
@@ -2864,6 +3120,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "季度檢討 — 子午線"
+          }
+        }
+      }
+    },
+    "Quote the transcript's own words and give the timestamp when you answer.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quote the transcript's own words and give the timestamp when you answer."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回答時引用逐字稿原句並標時間。"
           }
         }
       }
@@ -2987,6 +3260,57 @@
         }
       }
     },
+    "Record and transcribe live, even from the lock screen": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record and transcribe live, even from the lock screen"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "錄音與即時轉錄，鎖屏也繼續"
+          }
+        }
+      }
+    },
+    "Record it. Hand it to the AI you already use.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record it. Hand it to the AI you already use."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "錄下來，交給你已經在用的 AI"
+          }
+        }
+      }
+    },
+    "Record your first meeting": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record your first meeting"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "錄第一段"
+          }
+        }
+      }
+    },
     "Recording · live transcript": {
       "extractionState": "manual",
       "localizations": {
@@ -3017,23 +3341,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "在這支手機錄的音檔會留在手機上，方便回放。其他裝置的錄音需要時再下載。"
-          }
-        }
-      }
-    },
-    "Recordings sync to your account": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Recordings sync to your account"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "錄音同步到你的帳號"
           }
         }
       }
@@ -3123,6 +3430,23 @@
         }
       }
     },
+    "Replay: tap a line to jump": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replay: tap a line to jump"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回放：點一句跳過去"
+          }
+        }
+      }
+    },
     "Retry sync now": {
       "extractionState": "manual",
       "localizations": {
@@ -3136,6 +3460,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "立即重試同步"
+          }
+        }
+      }
+    },
+    "SAMPLE": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SAMPLE"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "範例"
           }
         }
       }
@@ -3325,6 +3666,74 @@
         }
       }
     },
+    "Share it with your AI": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share it with your AI"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分享給你的 AI"
+          }
+        }
+      }
+    },
+    "Share or copy transcript": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share or copy transcript"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分享或複製逐字稿"
+          }
+        }
+      }
+    },
+    "Share to AI (with analysis prompt)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share to AI (with analysis prompt)"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分享給 AI（附分析提示）"
+          }
+        }
+      }
+    },
+    "Share to ChatGPT or Claude for analysis": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share to ChatGPT or Claude for analysis"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分享給 ChatGPT 或 Claude 分析"
+          }
+        }
+      }
+    },
     "Share to organization (copy)": {
       "extractionState": "manual",
       "localizations": {
@@ -3338,6 +3747,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "分享到組織（複製）"
+          }
+        }
+      }
+    },
+    "Show the getting-started list again": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show the getting-started list again"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再顯示起步清單"
           }
         }
       }
@@ -3393,23 +3819,6 @@
         }
       }
     },
-    "Sign in and ride our hosted transcription. The free tier covers everyday use.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sign in and ride our hosted transcription. The free tier covers everyday use."
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "登入後就能用我們代管的轉錄服務，免費額度足夠日常使用。"
-          }
-        }
-      }
-    },
     "Sign in or create an account": {
       "extractionState": "manual",
       "localizations": {
@@ -3422,7 +3831,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "登入或註冊"
+            "value": "登入或建立帳號"
           }
         }
       }
@@ -3593,6 +4002,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "講者 %@"
+          }
+        }
+      }
+    },
+    "Speakers: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Speakers: %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "說話者：%@"
           }
         }
       }
@@ -4070,6 +4496,23 @@
         }
       }
     },
+    "The sample recording is no longer in the library.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The sample recording is no longer in the library."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "範例錄音已不在錄音庫裡。"
+          }
+        }
+      }
+    },
     "The whole recording is transcribed again from the start, and the transcript you have now is replaced when the new one comes back. It uses your account's transcription hours, the same as a new meeting would.": {
       "extractionState": "manual",
       "localizations": {
@@ -4494,6 +4937,57 @@
         }
       }
     },
+    "What did I fail to ask, or should follow up on next time?": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What did I fail to ask, or should follow up on next time?"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "我漏問、或下次應該追問的是什麼？"
+          }
+        }
+      }
+    },
+    "What did each side commit to? Include owner and timing.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What did each side commit to? Include owner and timing."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "雙方各自答應了哪些事？附負責人與時間。"
+          }
+        }
+      }
+    },
+    "What was this meeting about and what was concluded? Five sentences or fewer.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What was this meeting about and what was concluded? Five sentences or fewer."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這場會議談了什麼、結論是什麼？五句以內。"
+          }
+        }
+      }
+    },
     "When the network drops, the server goes quiet, or you run out of quota, the phone holds on to finished recordings until they sync.": {
       "extractionState": "manual",
       "localizations": {
@@ -4541,6 +5035,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "收尾中…"
+          }
+        }
+      }
+    },
+    "You are my meeting analyst. Below is the full transcript of a meeting. Read all of it first, then answer:": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You are my meeting analyst. Below is the full transcript of a meeting. Read all of it first, then answer:"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你是我的會議分析助理。以下是一場會議的完整逐字稿，請先讀完，再回答："
           }
         }
       }
@@ -4778,6 +5289,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "小時"
+          }
+        }
+      }
+    },
+    "not provided": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "not provided"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未填"
+          }
+        }
+      }
+    },
+    "or load the sample recording": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "or load the sample recording"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "或載入範例錄音"
           }
         }
       }

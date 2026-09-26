@@ -34,6 +34,16 @@ struct LibraryView: View {
     /// What the last finished import landed, shown above the list until the
     /// user moves on. Failures go to `error` instead, with everything else.
     @State private var importNotice: String?
+    /// The getting-started checklist above the list, and the sample recording
+    /// it can put in it. Both are local to this phone.
+    @ObservedObject private var gettingStarted = GettingStartedStore.shared
+    @ObservedObject private var sample = SampleRecordingStore.shared
+    /// Whether the personal library has loaded at least once. The checklist
+    /// waits for it, so it never flashes up over a library still on its way
+    /// from the cloud — and so the existing-user check has run first.
+    @State private var personalLoaded = false
+    /// A recording the checklist opened, and what for.
+    @State private var opened: OpenedRecording?
     #if DEBUG
         @ObservedObject private var demo = ScreenshotDemo.shared
     #endif
@@ -64,6 +74,13 @@ struct LibraryView: View {
             ) { result in
                 Task { await runImport(result) }
             }
+            .navigationDestination(item: $opened) { target in
+                if let rec = allRecordings.first(where: { $0.id == target.id }) {
+                    RecordingDetailView(
+                        summary: rec, orgId: nil, intent: target.intent,
+                        onFolderChange: folderChanged(rec.id))
+                }
+            }
             .searchable(text: $search, prompt: Text("Search titles and snippets"))
             .refreshable { await load() }
             .task(id: "\(scope ?? "personal")-\(app.signedIn)") { await load() }
@@ -92,6 +109,61 @@ struct LibraryView: View {
             : String(localized: "Sign in under Settings → Account and your cloud recordings show up here.")
         return ContentUnavailableView(
             title, systemImage: "icloud.slash", description: Text(detail))
+    }
+
+    // MARK: getting started
+
+    /// The personal scope's list with the sample merged in. The sample is
+    /// local-only and belongs to no organization, so an org scope never shows
+    /// it. See `SampleRecordingStore`.
+    private var allRecordings: [CloudRecordingSummary] {
+        guard scope == nil, let entry = sample.summary else { return recordings }
+        return recordings + [entry]
+    }
+
+    /// Personal scope, not searching, loaded — and then the checklist's own
+    /// rule, plus one more: an empty library shows it even with all four done,
+    /// because an empty library is exactly where someone needs the way in.
+    /// "Not now" still wins.
+    private var showsChecklist: Bool {
+        #if DEBUG
+            if ScreenshotDemo.servesFixtures { return false }
+        #endif
+        guard scope == nil, search.isEmpty, personalLoaded else { return false }
+        if gettingStarted.isVisible { return true }
+        return allRecordings.isEmpty && gettingStarted.dismissedAt == nil
+    }
+
+    /// What rows 2–4 open: the newest recording, the sample included.
+    private var latestRecording: CloudRecordingSummary? {
+        allRecordings.max { $0.createdAt < $1.createdAt }
+    }
+
+    private func loadSample() {
+        guard sample.load() != nil else { return }
+        // Back to "All", so the row that just appeared is on screen.
+        select(nil)
+    }
+
+    private func openLatest(_ step: GettingStartedStep) {
+        guard let latest = latestRecording else { return }
+        let intent: RecordingDetailView.Intent =
+            switch step {
+            case .filed: .file
+            case .sharedToAI: .share
+            case .recorded, .replayed: .read
+            }
+        opened = OpenedRecording(id: latest.id, intent: intent)
+    }
+
+    /// Keeps a row's folder in step with a move made inside the recording, so
+    /// going back does not show where it used to be. The sample needs nothing:
+    /// its folder lives in `SampleRecordingStore`, which this view observes.
+    private func folderChanged(_ id: String) -> (String?) -> Void {
+        { folderId in
+            guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
+            recordings[index].folderId = folderId
+        }
     }
 
     // MARK: import (desktop History "+ Import", phone-sized)
@@ -206,9 +278,22 @@ struct LibraryView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             }
+            if folder == nil && showsChecklist {
+                GettingStartedList(
+                    state: gettingStarted.state,
+                    canLoadSample: SampleRecordingStore.isBundled,
+                    hasRecording: latestRecording != nil,
+                    loadSample: loadSample,
+                    open: openLatest,
+                    dismiss: { withAnimation { gettingStarted.dismiss() } })
+                    .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
             ForEach(items) { rec in
                 NavigationLink {
-                    RecordingDetailView(summary: rec, orgId: scope)
+                    RecordingDetailView(
+                        summary: rec, orgId: scope, onFolderChange: folderChanged(rec.id))
                 } label: {
                     RecordingCard(
                         summary: rec, folders: folders, audio: downloads.state(for: rec.id))
@@ -442,7 +527,7 @@ struct LibraryView: View {
     /// the whole library, so a search with the folder filter on "All" and the
     /// same search two chips over are the same search, narrowed.
     private func filtered(_ folderFilter: String?) -> [CloudRecordingSummary] {
-        var items = recordings
+        var items = allRecordings
         if let folderFilter {
             // Desktop orphan→root rule: an id not in the live folder list
             // renders at root.
@@ -478,7 +563,9 @@ struct LibraryView: View {
     /// `.destructive` would paint it says a recording is about to be lost.
     @ViewBuilder
     private func downloadAction(for rec: CloudRecordingSummary) -> some View {
-        if scope == nil {
+        // The sample's audio is in the app bundle: there is nothing to fetch
+        // and nothing to give back.
+        if scope == nil && !SampleManifest.isSample(id: rec.id) {
             switch downloads.state(for: rec.id) {
             case .local:
                 Button {
@@ -513,7 +600,9 @@ struct LibraryView: View {
                 }
             }
         }
-        if scope == nil && !app.orgs.isEmpty {
+        // Not for the sample: sharing is a server-side copy of something the
+        // server does not have.
+        if scope == nil && !app.orgs.isEmpty && !SampleManifest.isSample(id: rec.id) {
             Menu("Share to organization (copy)") {
                 ForEach(app.orgs) { org in
                     Button(org.name) { Task { await shareToOrg(rec, org: org, thenDelete: false) } }
@@ -580,6 +669,10 @@ struct LibraryView: View {
                 async let f = app.cloud.listFolders()
                 recordings = try await r
                 folders = try await f.filter { $0.orgId == nil }
+                // Before `personalLoaded` flips, so an existing user's library
+                // has dismissed the checklist before it could be drawn.
+                gettingStarted.noteLibraryLoaded(recordingCount: recordings.count)
+                personalLoaded = true
             }
         } catch let e as CloudError {
             error =
@@ -594,6 +687,12 @@ struct LibraryView: View {
 
     /// Personal: meta re-push (full POST upsert). Org: dedicated PATCH.
     private func moveToFolder(_ rec: CloudRecordingSummary, folderId: String?) async {
+        // Filed on this phone and nowhere else — see `SampleRecordingStore`.
+        if SampleManifest.isSample(id: rec.id) {
+            sample.setFolder(folderId)
+            if folderId != nil { gettingStarted.mark(.filed) }
+            return
+        }
         busyId = rec.id
         defer { busyId = nil }
         do {
@@ -607,6 +706,7 @@ struct LibraryView: View {
                 summary.folderId = folderId
                 try await app.cloud.pushRecording(id: rec.id, summary: summary, meta: meta)
             }
+            if folderId != nil { gettingStarted.mark(.filed) }
             await load()
         } catch {
             self.error = String(localized: "Move failed: \(error.localizedDescription)")
@@ -622,6 +722,7 @@ struct LibraryView: View {
             if thenDelete {
                 try await app.cloud.deleteRecording(id: rec.id)
             }
+            gettingStarted.mark(.filed)
             await load()
         } catch let e as CloudError where e.status == 403 {
             error = String(localized: "You don't have permission to share to “\(org.name)”")
@@ -631,6 +732,12 @@ struct LibraryView: View {
     }
 
     private func remove(_ rec: CloudRecordingSummary) async {
+        // Out of the Library, not out of the app: the checklist can load it
+        // again.
+        if SampleManifest.isSample(id: rec.id) {
+            sample.remove()
+            return
+        }
         busyId = rec.id
         defer { busyId = nil }
         do {
@@ -644,6 +751,135 @@ struct LibraryView: View {
             error = String(localized: "Only the uploader or an admin can delete this recording")
         } catch {
             self.error = String(localized: "Delete failed: \(error.localizedDescription)")
+        }
+    }
+}
+
+/// A recording the getting-started checklist opened, and what for.
+private struct OpenedRecording: Hashable {
+    let id: String
+    let intent: RecordingDetailView.Intent
+}
+
+/// The getting-started checklist: four plain rows that teach the product by
+/// doing it — record, file, replay, hand off — each ticked only by the real
+/// event (see `GettingStartedStore`), never by a tap on the row.
+///
+/// Rows, hairlines and text, no card: the page is white and the list is part
+/// of it. The one colour is the system green on a done item's check — "this
+/// is fine" in the platform's own words — and the tint on what can be tapped.
+private struct GettingStartedList: View {
+    let state: GettingStartedState
+    /// False in a build without the sample assets; the button is then absent
+    /// rather than broken.
+    let canLoadSample: Bool
+    /// Rows 2–4 open the newest recording; with none, they are just text.
+    let hasRecording: Bool
+    let loadSample: () -> Void
+    let open: (GettingStartedStep) -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Do one lap, five minutes")
+                    .font(.parley.subheadlineEmphasized)
+                    .foregroundStyle(Color(.label))
+                Text(verbatim: "\(state.done) / \(GettingStartedState.total)")
+                    .font(.parley.caption.monospacedDigit())
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .accessibilityLabel(
+                        Text("\(state.done) of \(GettingStartedState.total) done"))
+                Spacer(minLength: 8)
+                Button("Not now", action: dismiss)
+                    .font(.parley.footnote)
+                    .buttonStyle(.borderless)
+            }
+            .padding(.bottom, 8)
+            ForEach(GettingStartedStep.allCases, id: \.self) { step in
+                Rectangle()
+                    .fill(Color(.separator))
+                    .frame(height: 0.5)
+                row(step)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ step: GettingStartedStep) -> some View {
+        let done = state[step]
+        let opensRecording = step != .recorded && !done && hasRecording
+        if opensRecording {
+            // The whole row is the target: the words are what people reach
+            // for. Borderless, so it is not taken over by the list row.
+            Button {
+                open(step)
+            } label: {
+                rowContent(step, done: done) {
+                    Image(systemName: "chevron.right")
+                        .font(.parley.footnote.weight(.semibold))
+                        .foregroundStyle(Color(.tertiaryLabel))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+        } else {
+            rowContent(step, done: done) {
+                if step == .recorded && !done && canLoadSample {
+                    Button("Load sample", action: loadSample)
+                        .font(.parley.footnote.weight(.semibold))
+                        .buttonStyle(.borderless)
+                }
+            }
+        }
+    }
+
+    private func rowContent<Trailing: View>(
+        _ step: GettingStartedStep, done: Bool, @ViewBuilder trailing: () -> Trailing
+    ) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            // The mark and the words are one element to VoiceOver; the
+            // trailing button stays its own, so it can still be activated.
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                    .font(.parley.body)
+                    .foregroundStyle(done ? Theme.success : Color(.tertiaryLabel))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title(step))
+                        .font(.parley.subheadline)
+                        .foregroundStyle(done ? Color(.secondaryLabel) : Color(.label))
+                    if let detail = detail(step) {
+                        Text(detail)
+                            .font(.parley.caption)
+                            .foregroundStyle(Color(.secondaryLabel))
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityValue(done ? Text("Done") : Text(verbatim: ""))
+            Spacer(minLength: 8)
+            trailing()
+        }
+        .padding(.vertical, 10)
+    }
+
+    private func title(_ step: GettingStartedStep) -> LocalizedStringKey {
+        switch step {
+        case .recorded: return "Record your first meeting"
+        case .filed: return "Put it in a folder"
+        case .replayed: return "Replay: tap a line to jump"
+        case .sharedToAI: return "Share it with your AI"
+        }
+    }
+
+    private func detail(_ step: GettingStartedStep) -> LocalizedStringKey? {
+        switch step {
+        case .recorded: return "or load the sample recording"
+        case .filed: return "One customer, one folder"
+        case .replayed: return nil
+        case .sharedToAI: return "ChatGPT and Claude are in the share sheet"
         }
     }
 }
@@ -839,6 +1075,11 @@ private struct RecordingCard: View {
     /// file someone imported is the unremarkable case.
     private var badge: some View {
         let live = summary.source == "live"
+        if SampleManifest.isSample(id: summary.id) {
+            return Text("SAMPLE")
+                .font(.parley.caption2.weight(.semibold))
+                .foregroundStyle(Color(.secondaryLabel))
+        }
         return Text(live ? "LIVE" : "UPLOAD")
             .font(.parley.caption2.weight(.semibold))
             .foregroundStyle(live ? Theme.recording : Color(.secondaryLabel))
