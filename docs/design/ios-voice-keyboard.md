@@ -1357,9 +1357,18 @@ composer's limit rather than a position anybody argued for.
   it is not used here because how a host renders and commits marked text is the
   host's business, and a composition that the keyboard cannot see cannot be
   guaranteed to end the way the composer thinks it did. The strip is ours. Six
-  syllables and a candidate bar do not both fit in one row, so the composition
-  truncates at the **head**: the newest syllable is the one being typed and has
-  to stay visible, and the candidates keep most of the row.
+  syllables and a candidate bar do not both fit in one row, so **the chip shows
+  the last two syllables**, behind a `…` when more are pending (VoiceOver still
+  reads the whole buffer): the newest syllable is the one being typed, the one
+  before it shows the segmentation, and the front of the buffer is on screen
+  anyway as the candidates. Until 1.20 the chip showed the whole buffer capped
+  at 170pt, which at six syllables left a 320pt phone two or three candidates —
+  reported as "only about three characters". The chip is also 15pt now, down
+  from 17. Measured on the simulator: the chip for `…ㄖㄣ ㄐㄧㄣ` is 100pt plus a
+  6pt gap, a one-character candidate cell 45pt, a two-character phrase 65pt,
+  and ⌄ 33pt. So at 320pt (296pt of strip) the bar has 157pt — three and a half
+  single characters, or two and a half phrases — and at 402pt (iPhone 17 Pro)
+  239pt, three and a half phrases. `ZhuyinComposer.maxPending` is unchanged.
 - Leaving the pane commits what was pending — the user swiped, they didn't press
   delete. Coming back to a *different* field drops it, the same rule the
   transcript tail follows and for the same reason.
