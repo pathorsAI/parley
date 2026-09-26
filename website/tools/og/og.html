@@ -1,0 +1,69 @@
+<!doctype html>
+<!--
+  Open Graph card for parley.tw, rendered to website/assets/og-<lang>.png by
+  render.mjs (1200×630). The {{…}} slots are filled from website/src/i18n and
+  website/src/rms.json, so the card always matches the hero.
+-->
+<html lang="{{htmlLang}}">
+<head>
+<meta charset="utf-8">
+<style>
+@font-face { font-family: "DM Sans"; font-weight: 100 1000; src: url({{fontDmSans}}) format("woff2"); }
+@font-face { font-family: "Alexandria"; font-weight: 100 900; src: url({{fontAlexandria}}) format("woff2"); }
+:root {
+  --ink: #111418; --secondary: #5B6470; --tertiary: #9AA3AE;
+  --hairline: #E6E9ED; --signal: #1469D4; --recording: #E5322D;
+  --font: "DM Sans", "PingFang TC", "Noto Sans TC", sans-serif;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { width: 1200px; height: 630px; overflow: hidden; background: #FFFFFF; }
+body {
+  font-family: var(--font); color: var(--ink); -webkit-font-smoothing: antialiased;
+  display: grid; grid-template-columns: 1.2fr 1fr; gap: 56px;
+  padding: 64px 72px 60px;
+}
+.left { display: flex; flex-direction: column; justify-content: space-between; }
+.wm { font-family: "Alexandria", var(--font); font-weight: 700; font-size: 34px; letter-spacing: -.01em; }
+h1 { font-size: 54px; font-weight: 700; line-height: 1.16; letter-spacing: -.02em; }
+:lang(zh) h1 { font-size: 46px; line-height: 1.3; letter-spacing: 0; }
+.url { font-size: 18px; font-weight: 600; color: var(--secondary); margin-top: 22px; }
+.right { display: flex; flex-direction: column; justify-content: flex-end; min-width: 0; }
+.turn + .turn { margin-top: 22px; }
+.who { font-size: 16px; font-weight: 600; color: var(--secondary); display: flex; gap: 10px; align-items: baseline; }
+.who.on { color: var(--signal); }
+.ts { font-weight: 400; font-size: 15px; color: var(--tertiary); }
+.txt { font-size: 22px; line-height: 1.55; margin-top: 4px; }
+.tail { color: var(--tertiary); }
+.rec { border-top: 1px solid var(--hairline); margin-top: 26px; padding-top: 20px; display: flex; align-items: center; gap: 22px; }
+.st { font-size: 15px; color: var(--secondary); display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.st i { width: 9px; height: 9px; border-radius: 50%; background: var(--recording); }
+.wave { flex: 1; min-width: 0; overflow: hidden; display: flex; align-items: center; justify-content: flex-end; gap: 3px; height: 44px; }
+.wave b { width: 4px; border-radius: 2px; background: var(--signal); opacity: .35; }
+.wave b.new { opacity: .9; }
+.wave b.dot { width: 3px; height: 3px !important; border-radius: 50%; margin: 0 .5px; }
+</style>
+</head>
+<body>
+  <div class="left">
+    <div class="wm">Parley</div>
+    <div>
+      <h1>{{h1}}</h1>
+      <p class="url">{{url}}</p>
+    </div>
+  </div>
+  <div class="right">
+    <div class="turn">
+      <div class="who"><span>{{speakerA}}</span><span class="ts">0:12</span></div>
+      <div class="txt">{{line1}}</div>
+    </div>
+    <div class="turn">
+      <div class="who on"><span>{{speakerB}}</span><span class="ts">0:27</span></div>
+      <div class="txt">{{line2Settled}}<span class="tail">{{line2Tail}}</span></div>
+    </div>
+    <div class="rec">
+      <div class="st"><i></i><span>{{recording}}</span></div>
+      <div class="wave">{{bars}}</div>
+    </div>
+  </div>
+</body>
+</html>

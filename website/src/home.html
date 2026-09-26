@@ -1,0 +1,407 @@
+<!doctype html>
+<!--#
+  Template for the parley.tw home page. Do not open this file directly:
+  `bun scripts/build-website.ts` renders it once per language into _site/.
+
+  {{key}}        a string from src/i18n/<lang>.json, inserted as HTML
+  {{key|attr}}   the same string, escaped for use inside an attribute
+  {{@name}}      a value the build computes (paths, URLs, JSON-LD, …)
+
+  A key that is missing from either dictionary fails the build. Comments that
+  open with "<!--#" (like this one) are template notes and are stripped.
+-->
+<html lang="{{@htmlLang}}" data-lang="{{@lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{meta.title}}</title>
+<meta name="description" content="{{meta.description|attr}}">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="{{@canonical}}">
+<link rel="alternate" hreflang="zh-Hant-TW" href="{{@url.zh}}">
+<link rel="alternate" hreflang="en" href="{{@url.en}}">
+<link rel="alternate" hreflang="x-default" href="{{@url.zh}}">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0C1620" media="(prefers-color-scheme: dark)">
+
+<meta property="og:site_name" content="Parley">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{@canonical}}">
+<meta property="og:title" content="{{meta.ogTitle|attr}}">
+<meta property="og:description" content="{{meta.ogDescription|attr}}">
+<meta property="og:image" content="{{@ogImage}}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="{{meta.ogImageAlt|attr}}">
+<meta property="og:locale" content="{{@ogLocale}}">
+<meta property="og:locale:alternate" content="{{@ogLocaleAlt}}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{meta.ogTitle|attr}}">
+<meta name="twitter:description" content="{{meta.ogDescription|attr}}">
+<meta name="twitter:image" content="{{@ogImage}}">
+<meta name="twitter:image:alt" content="{{meta.ogImageAlt|attr}}">
+
+<link rel="icon" type="image/svg+xml" href="{{@base}}assets/logo.svg">
+<link rel="preload" href="{{@base}}assets/fonts/dm-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="{{@base}}styles.css">
+<script>document.documentElement.classList.add("js")</script>
+<script type="application/ld+json">{{@jsonld}}</script>
+<!--# Cookieless Cloudflare Web Analytics: emitted only when site.config.json has a token. -->
+{{@beacon}}
+</head>
+<body>
+<a class="skip" href="#main">{{a11y.skip}}</a>
+
+<!-- Shown by script.js only when the browser's language disagrees with this page. -->
+<div class="langbar" id="langbar" lang="{{@altHtmlLang}}" hidden>
+  <div class="wrap langbar__in">
+    <p>{{langbar.text}} <a href="{{@altHref}}" hreflang="{{@altHtmlLang}}">{{langbar.link}} →</a></p>
+    <button type="button" class="langbar__close" aria-label="{{langbar.close|attr}}">
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+</div>
+
+<header class="nav" id="nav">
+  <div class="wrap nav__in">
+    <a class="wm" href="./" aria-label="{{nav.home|attr}}">Parley</a>
+    <nav class="nav__links" id="nav-links" aria-label="{{nav.primary|attr}}">
+      <a href="#meetings">{{nav.meetings}}</a>
+      <a href="#ai">{{nav.ai}}</a>
+      <a href="#voice">{{nav.voice}}</a>
+      <a href="#trust">{{nav.trust}}</a>
+    </nav>
+    <a class="nav__lang" href="{{@altHref}}" hreflang="{{@altHtmlLang}}" lang="{{@altHtmlLang}}" title="{{nav.langTitle|attr}}">{{nav.lang}}</a>
+    <a class="b1 b1--sm" href="#download">{{nav.download}}</a>
+    <button class="nav__menu" type="button" aria-expanded="false" aria-controls="nav-links">
+      <span class="sr-only">{{nav.menu}}</span>
+      <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M3 7h14M3 13h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<main id="main">
+  <!-- ============ Hero ============ -->
+  <section class="wrap hero">
+    <div class="hero__copy">
+      <p class="plats">{{hero.platforms}}</p>
+      <h1>{{hero.h1}}</h1>
+      <p class="sub">{{hero.sub}}</p>
+      <div class="ctas">
+        <!-- No-JS default is the Mac; script.js re-points both buttons for the visitor's OS. -->
+        <a class="b1" id="cta-primary" href="https://api.parley.tw/download?platform=macos" data-os="mac">
+          <svg class="i-apple" viewBox="0 0 384 512" width="13" height="16" fill="currentColor" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+          <svg class="i-windows" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M0 0h7.4v7.4H0zM8.6 0H16v7.4H8.6zM0 8.6h7.4V16H0zM8.6 8.6H16V16H8.6z"/></svg>
+          <span class="cta-label">{{cta.mac}}</span>
+        </a>
+        <a class="b2" id="cta-secondary" href="https://apps.apple.com/app/id6795031201">{{cta.iphone}}</a>
+      </div>
+      <p class="fine">{{hero.fine}} <a href="https://github.com/pathorsAI/parley">{{hero.open}}</a></p>
+    </div>
+
+    <div class="demo">
+      <!-- The animated demo is decorative; the same content is in the .sr-only block below. -->
+      <div class="live" aria-hidden="true">
+        <div class="lines" id="lines">
+          <div class="turn"><div class="who"><span class="nm">{{demo.speakerA}}</span><span class="ts">0:12</span></div><div class="txt"><span class="set">{{demo.line1}}</span><span class="tail"></span></div></div>
+          <div class="turn"><div class="who on"><span class="nm">{{demo.speakerB}}</span><span class="ts">0:27</span></div><div class="txt"><span class="set">{{demo.line2}}</span><span class="tail"></span></div></div>
+        </div>
+        <div class="rec">
+          <div class="rec__st"><i></i><span>{{demo.recording}}</span></div>
+          <span class="rec__clock" id="clock">18:47</span>
+          <canvas id="wave" width="480" height="68"></canvas>
+        </div>
+      </div>
+      <div class="sr-only">
+        <p>{{demo.alt}}</p>
+        <p>{{demo.speakerA}} — {{demo.line1}}</p>
+        <p>{{demo.speakerB}} — {{demo.line2}}</p>
+      </div>
+      <div class="ask">
+        <p class="ask__label">{{ask.label}}</p>
+        <p class="ask__q">{{ask.q}}</p>
+        <p class="ask__a">{{ask.a}}<span class="ts">{{ask.cite}}</span></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Meetings: three places a meeting happens ============ -->
+  <section class="sec" id="meetings">
+    <div class="wrap">
+      <p class="k fade">{{meetings.kicker}}</p>
+      <h2 class="fade">{{meetings.h2}}</h2>
+      <div class="rooms">
+        <div class="room fade">
+          <div class="room__im room__im--desk">
+            <picture>
+              <source type="image/webp" srcset="{{@base}}assets/shots/desktop-live-{{@lang}}.webp">
+              <img src="{{@base}}assets/shots/desktop-live-{{@lang}}.jpg" width="2000" height="1250" loading="lazy" decoding="async" alt="{{room1.alt|attr}}">
+            </picture>
+          </div>
+          <p class="pf">{{room1.platforms}}</p>
+          <h3>{{room1.h}}</h3>
+          <p>{{room1.p}}</p>
+        </div>
+        <div class="room fade">
+          <div class="room__im">
+            <picture>
+              <source type="image/webp" srcset="{{@base}}assets/shots/iphone-record-{{@lang}}.webp">
+              <img src="{{@base}}assets/shots/iphone-record-{{@lang}}.jpg" width="600" height="1304" loading="lazy" decoding="async" alt="{{room2.alt|attr}}">
+            </picture>
+          </div>
+          <p class="pf">{{room2.platforms}}</p>
+          <h3>{{room2.h}}</h3>
+          <p>{{room2.p}}</p>
+        </div>
+        <div class="room fade">
+          <div class="room__im">
+            <picture>
+              <source type="image/webp" srcset="{{@base}}assets/shots/iphone-library-{{@lang}}.webp">
+              <img src="{{@base}}assets/shots/iphone-library-{{@lang}}.jpg" width="600" height="1304" loading="lazy" decoding="async" alt="{{room3.alt|attr}}">
+            </picture>
+          </div>
+          <p class="pf">{{room3.platforms}}</p>
+          <h3>{{room3.h}}</h3>
+          <p>{{room3.p}}</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ After the meeting ============ -->
+  <section class="sec" id="after">
+    <div class="wrap">
+      <p class="k fade">{{after.kicker}}</p>
+      <h2 class="fade">{{after.h2}}</h2>
+      <p class="p fade">{{after.p}}</p>
+      <div class="winshot fade">
+        <picture>
+          <source type="image/webp" srcset="{{@base}}assets/shots/desktop-report-{{@lang}}.webp">
+          <img src="{{@base}}assets/shots/desktop-report-{{@lang}}.jpg" width="2000" height="1250" loading="lazy" decoding="async" alt="{{after.alt|attr}}">
+        </picture>
+      </div>
+      <ul class="xrow fade">
+        <li>{{after.x1}}</li>
+        <li>{{after.x2}}</li>
+        <li>{{after.x3}}</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ For your AI ============ -->
+  <section class="sec" id="ai">
+    <div class="wrap">
+      <p class="k fade">{{ai.kicker}}</p>
+      <h2 class="fade">{{ai.h2}}</h2>
+      <p class="p fade">{{ai.p}}</p>
+      <div class="asks fade">
+        <div class="asks__it"><p class="asks__q">{{ai.q1}}</p><p class="asks__a">{{ai.a1}}</p></div>
+        <div class="asks__it"><p class="asks__q">{{ai.q2}}</p><p class="asks__a">{{ai.a2}}</p></div>
+        <div class="asks__it"><p class="asks__q">{{ai.q3}}</p><p class="asks__a">{{ai.a3}}</p></div>
+      </div>
+      <div class="code fade" role="group" aria-label="{{ai.codeLabel|attr}}">
+        <button type="button" class="code__copy" data-copy="claude mcp add --transport http parley http://127.0.0.1:3011/mcp" data-done="{{ai.copied|attr}}">{{ai.copy}}</button>
+        <pre><code><span class="code__c">{{ai.codeComment}}</span>
+claude mcp add --transport http parley \
+  http://127.0.0.1:3011/mcp</code></pre>
+      </div>
+      <p class="fine fade">{{ai.fine}}</p>
+      <ul class="xrow fade">
+        <li>{{ai.x1}} <a href="https://github.com/pathorsAI/parley#-the-mcp-server">{{ai.x1link}} →</a></li>
+        <li>{{ai.x2}}</li>
+        <li>{{ai.x3}}</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ One account ============ -->
+  <section class="sec" id="account">
+    <div class="wrap">
+      <div class="acct">
+        <div class="acct__copy">
+          <p class="k fade">{{account.kicker}}</p>
+          <h2 class="fade">{{account.h2}}</h2>
+          <p class="p fade">{{account.p}}</p>
+        </div>
+        <figure class="acct__fig fade">
+          <svg viewBox="0 0 520 220" role="img" aria-label="{{account.figLabel|attr}}">
+            <!-- phone -->
+            <rect class="fig-dev" x="40" y="34" width="78" height="142" rx="14"/>
+            <line class="fig-dev" x1="68" y1="46" x2="90" y2="46"/>
+            <line class="fig-soft" x1="54" y1="70" x2="104" y2="70"/>
+            <line class="fig-soft" x1="54" y1="80" x2="96" y2="80"/>
+            <line class="fig-soft" x1="54" y1="94" x2="104" y2="94"/>
+            <line class="fig-soft" x1="54" y1="104" x2="88" y2="104"/>
+            <circle class="fig-rec" cx="79" cy="150" r="7"/>
+            <!-- phone → account → desktop -->
+            <path class="fig-path" d="M126 105 H218"/>
+            <path class="fig-path" d="M302 105 H358"/>
+            <!-- the recording on its way: the only blue in the figure -->
+            <g class="fig-sig">
+              <rect x="146" y="98" width="3" height="14" rx="1.5"/>
+              <rect x="152" y="94" width="3" height="22" rx="1.5"/>
+              <rect x="158" y="100" width="3" height="10" rx="1.5"/>
+              <rect x="164" y="91" width="3" height="28" rx="1.5"/>
+              <rect x="170" y="97" width="3" height="16" rx="1.5"/>
+              <rect x="176" y="101" width="3" height="8" rx="1.5"/>
+              <path d="M196 99 L204 105 L196 111" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </g>
+            <!-- account -->
+            <circle class="fig-dev" cx="260" cy="105" r="40"/>
+            <circle class="fig-dev" cx="260" cy="94" r="10"/>
+            <path class="fig-dev" d="M240 124 C244 112 276 112 280 124"/>
+            <!-- desktop -->
+            <rect class="fig-dev" x="366" y="46" width="130" height="86" rx="8"/>
+            <line class="fig-dev" x1="366" y1="60" x2="496" y2="60"/>
+            <line class="fig-soft" x1="380" y1="76" x2="470" y2="76"/>
+            <line class="fig-soft" x1="380" y1="88" x2="452" y2="88"/>
+            <line class="fig-soft" x1="380" y1="104" x2="476" y2="104"/>
+            <line class="fig-soft" x1="380" y1="116" x2="440" y2="116"/>
+            <path class="fig-dev" d="M350 150 H512 L504 142 H358 Z"/>
+            <text class="fig-t" x="79" y="206" text-anchor="middle">{{account.figPhone}}</text>
+            <text class="fig-t" x="260" y="206" text-anchor="middle">{{account.figAccount}}</text>
+            <text class="fig-t" x="431" y="206" text-anchor="middle">{{account.figDesktop}}</text>
+          </svg>
+        </figure>
+      </div>
+      <ul class="points fade">
+        <li><h3>{{account.i1h}}</h3><p>{{account.i1p}}</p></li>
+        <li><h3>{{account.i2h}}</h3><p>{{account.i2p}}</p></li>
+        <li><h3>{{account.i3h}}</h3><p>{{account.i3p}}</p></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ Beyond the meeting: voice typing ============ -->
+  <section class="sec" id="voice">
+    <div class="wrap">
+      <p class="k fade">{{voice.kicker}}</p>
+      <h2 class="fade">{{voice.h2}}</h2>
+      <p class="p fade">{{voice.p}}</p>
+      <div class="polish fade">
+        <div><p class="polish__lab">{{voice.rawLabel}}</p><p class="polish__raw">{{voice.raw}}</p></div>
+        <div><p class="polish__lab polish__lab--out">{{voice.outLabel}}</p><div class="polish__out">{{voice.out}}</div></div>
+      </div>
+      <ul class="xrow fade">
+        <li>{{voice.kIphone}}</li>
+        <li>{{voice.kMac}}</li>
+        <li>{{voice.kWin}}</li>
+        <li>{{voice.kDict}}</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ Trust ============ -->
+  <section class="sec" id="trust">
+    <div class="wrap">
+      <p class="k fade">{{trust.kicker}}</p>
+      <h2 class="fade">{{trust.h2}}</h2>
+      <ul class="trust fade">
+        <li><h3>{{trust.t1}}</h3><p>{{trust.t1p}}</p></li>
+        <li><h3>{{trust.t2}}</h3><p>{{trust.t2p}}</p></li>
+        <li><h3>{{trust.t3}}</h3><p>{{trust.t3p}}</p></li>
+        <li><h3>{{trust.t4}}</h3><p>{{trust.t4p}}</p></li>
+      </ul>
+      <div class="prov fade">
+        <div class="prov__row">
+          <p class="prov__k">{{trust.transcription}}</p>
+          <ul>
+            <li>Soniox</li>
+            <li><span class="logo" style="--m:url('{{@base}}assets/logos/deepgram.svg')"></span>Deepgram</li>
+            <li><span class="logo" style="--m:url('{{@base}}assets/logos/assemblyai.svg')"></span>AssemblyAI</li>
+            <li><span class="logo" style="--m:url('{{@base}}assets/logos/openai.svg')"></span>OpenAI</li>
+            <li><span class="logo" style="--m:url('{{@base}}assets/logos/gemini.svg')"></span>Gemini</li>
+          </ul>
+        </div>
+        <div class="prov__row">
+          <p class="prov__k">{{trust.models}}</p>
+          <ul>
+            <li><span class="logo" style="--m:url('{{@base}}assets/logos/claude.svg')"></span>Claude</li>
+            <li><span class="logo" style="--m:url('{{@base}}assets/logos/openai.svg')"></span>OpenAI</li>
+            <li><span class="logo" style="--m:url('{{@base}}assets/logos/gemini.svg')"></span>Gemini</li>
+            <li><span class="logo" style="--m:url('{{@base}}assets/logos/groq.svg')"></span>Groq</li>
+            <li><span class="logo" style="--m:url('{{@base}}assets/logos/qwen.svg')"></span>Qwen</li>
+            <li><span class="logo" style="--m:url('{{@base}}assets/logos/kimi.svg')"></span>Kimi</li>
+            <li><span class="logo" style="--m:url('{{@base}}assets/logos/ollama.svg')"></span>Ollama</li>
+            <li><span class="logo" style="--m:url('{{@base}}assets/logos/openrouter.svg')"></span>OpenRouter</li>
+            <li>{{trust.custom}}</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Download ============ -->
+  <section class="sec" id="download">
+    <div class="wrap">
+      <h2 class="fade">{{dl.h2}}</h2>
+      <p class="p fade">{{dl.p}}</p>
+      <!-- script.js reorders this row for the visitor's OS and fills the first button. -->
+      <div class="dl fade" id="dl-row">
+        <a class="b1 b--lg" data-os="mac" href="https://api.parley.tw/download?platform=macos">
+          <svg class="i-apple" viewBox="0 0 384 512" width="13" height="16" fill="currentColor" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+          <span>{{cta.mac}}</span>
+        </a>
+        <a class="b2 b--lg" data-os="windows" href="https://api.parley.tw/download?platform=windows">
+          <svg class="i-windows" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M0 0h7.4v7.4H0zM8.6 0H16v7.4H8.6zM0 8.6h7.4V16H0zM8.6 8.6H16V16H8.6z"/></svg>
+          <span>{{dl.windows}}</span>
+        </a>
+        <a class="b2 b--lg" data-os="ios" href="https://apps.apple.com/app/id6795031201">
+          <svg class="i-apple" viewBox="0 0 384 512" width="13" height="16" fill="currentColor" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+          <span>{{dl.appStore}}</span>
+        </a>
+        <!--
+          Google's badge guidelines forbid recreating or recolouring the lockup, so this is
+          their unmodified asset (from the Partner Marketing Hub), never a button drawn to
+          match the others — and never the filled blue one, even for Android visitors. It
+          keeps its 48px height and clear space; see .badge-play in styles.css.
+        -->
+        <a class="badge-play" data-os="android" href="https://play.google.com/store/apps/details?id=com.pathors.parley">
+          <img src="{{@base}}assets/google-play-badge.svg" alt="{{dl.playAlt|attr}}" width="162" height="48">
+        </a>
+        <a class="b2 b--lg" data-os="source" href="https://github.com/pathorsAI/parley">{{dl.github}}</a>
+      </div>
+      <p class="fine fade">{{dl.free}}</p>
+      <p class="fine fade">{{dl.windowsNote}}</p>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot__top">
+      <a class="wm" href="./" aria-label="{{nav.home|attr}}">Parley</a>
+      <nav class="foot__col" aria-label="{{footer.product|attr}}">
+        <h2>{{footer.product}}</h2>
+        <a href="#meetings">{{nav.meetings}}</a>
+        <a href="#ai">{{nav.ai}}</a>
+        <a href="#voice">{{nav.voice}}</a>
+        <a href="#download">{{footer.download}}</a>
+      </nav>
+      <nav class="foot__col" aria-label="{{footer.project|attr}}">
+        <h2>{{footer.project}}</h2>
+        <a href="https://github.com/pathorsAI/parley">GitHub</a>
+        <a href="https://github.com/pathorsAI/parley/releases">{{footer.releases}}</a>
+        <a href="https://github.com/pathorsAI/parley/blob/main/CONTRIBUTING.md">{{footer.contributing}}</a>
+        <a href="https://github.com/pathorsAI/parley/blob/main/LICENSE">{{footer.license}}</a>
+      </nav>
+      <nav class="foot__col" aria-label="{{footer.legal|attr}}">
+        <h2>{{footer.legal}}</h2>
+        <a href="{{@base}}support/{{@legalQuery}}">{{footer.support}}</a>
+        <a href="{{@base}}privacy/{{@legalQuery}}">{{footer.privacy}}</a>
+        <a href="{{@base}}account-deletion/{{@legalQuery}}">{{footer.deletion}}</a>
+        <a href="mailto:contact@pathors.com">{{footer.contact}}</a>
+      </nav>
+    </div>
+    <div class="foot__bottom">
+      <p>© 2026 <a href="https://pathors.com">Pathors AI</a> · Apache 2.0</p>
+      <p>parley.tw</p>
+    </div>
+  </div>
+</footer>
+
+<script type="application/json" id="page-data">{{@pagedata}}</script>
+<script src="{{@base}}script.js" defer></script>
+</body>
+</html>
