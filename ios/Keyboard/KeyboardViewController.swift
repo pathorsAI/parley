@@ -188,8 +188,8 @@ final class KeyboardViewController: UIInputViewController {
         // `viewWillAppear` nor `textDidChange` hears about — and the trait
         // collection is the first thing `isDark` reads.
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) {
-            (self: Self, _: UITraitCollection) in
-            self.refreshAppearance()
+            (self: Self, previous: UITraitCollection) in
+            self.styleDidChange(from: previous)
         }
 
         armChannelObservers()
@@ -277,6 +277,9 @@ final class KeyboardViewController: UIInputViewController {
         // is dropped unless a session is still running — `drainDownlink` below
         // puts it straight back when one is.
         if !bridge.listening { bridge.tail = "" }
+        // A fresh appearance is a freshly read field: whatever it says now is
+        // current. See `staleHostDark`.
+        staleHostDark = false
         refreshAppearance()
         refreshReturnKey()
         readReadiness()
@@ -324,6 +327,9 @@ final class KeyboardViewController: UIInputViewController {
     /// whenever the text does.
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
+        // Only a field that stopped saying `.dark` is known to have been read
+        // again; one still saying it may be the same stale value.
+        if textDocumentProxy.keyboardAppearance != .dark { staleHostDark = false }
         refreshAppearance()
         refreshReturnKey()
         // The cursor may have moved somewhere this keyboard did not put it —
@@ -454,7 +460,30 @@ final class KeyboardViewController: UIInputViewController {
     /// is what made the candidates invisible, so it is the case given up.
     private var isDark: Bool {
         traitCollection.userInterfaceStyle == .dark
-            || (textDocumentProxy.keyboardAppearance ?? .default) == .dark
+            || (!staleHostDark && (textDocumentProxy.keyboardAppearance ?? .default) == .dark)
+    }
+
+    /// The host's `.dark` is left over from before the phone went light.
+    ///
+    /// System apps (Reminders, Safari) report `.dark` while the phone is dark
+    /// and keep reporting it after the user flips to light with the keyboard on
+    /// screen — typing does not refresh it, only activating the field again
+    /// does. Believed, it kept the keyboard dark on a light phone with the
+    /// system's own globe-and-dictation strip under it already light: a
+    /// two-tone keyboard. So a `.dark` that was already there when the trait
+    /// went from dark to light is set aside until the field is read again.
+    ///
+    /// The one host this misjudges is a dark-themed app on a phone the user
+    /// flips from dark to light: it gets a light keyboard until the field is
+    /// next activated. Readable, and corrected on the next appearance.
+    private var staleHostDark = false
+
+    private func styleDidChange(from previous: UITraitCollection) {
+        staleHostDark =
+            previous.userInterfaceStyle == .dark
+            && traitCollection.userInterfaceStyle != .dark
+            && textDocumentProxy.keyboardAppearance == .dark
+        refreshAppearance()
     }
 
     /// Repaint whenever `dark` changes: the backdrop, and the SwiftUI root that
