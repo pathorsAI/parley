@@ -29,6 +29,7 @@ import { fetchLatestReleaseNotes, markReleaseNotesSeen, type ReleaseNotes } from
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
 import { clientLabel, connState, relativeTime, type McpActivityInfo } from "../components/McpStatusChip";
+import { claudeCodeCommand, mcpClientConfigJson, type McpServerInfo } from "../lib/mcp/connect";
 import { ReleaseNotesDialog } from "../components/ReleaseNotesDialog";
 import { UsagePanel } from "./UsagePanel";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
@@ -73,12 +74,6 @@ import { PermissionsPanel } from "./PermissionsPanel";
 // The panel ids live in the store as SettingsCategory so other surfaces (e.g.
 // the titlebar 🌐 menu) can deep-link a panel without importing this file.
 type Category = import("../lib/store").SettingsCategory;
-
-interface McpServerInfo {
-  running: boolean;
-  endpoint: string;
-  templates_path: string;
-}
 
 // `cloudOnly` entries (the account/orgs page) are compiled out of the OSS edition,
 // which has no sign-in at all — so they never appear in that build's nav.
@@ -1065,15 +1060,13 @@ export function SettingsApp() {
                 <h3 className="text-xs font-semibold tracking-tight">{t("settings.mcp.claudeCodeInstructions")}</h3>
                 <CopyButton
                   className="h-8 gap-1"
-                  value={() =>
-                    `claude mcp add --transport http parley ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`
-                  }
+                  value={() => claudeCodeCommand(mcpInfo?.endpoint)}
                   label={t("settings.mcp.copyCommand")}
                 />
               </div>
               <p className="text-[11px] text-muted-foreground">{t("settings.mcp.claudeCodeHelp")}</p>
               <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
-                {`claude mcp add --transport http parley ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`}
+                {claudeCodeCommand(mcpInfo?.endpoint)}
               </pre>
             </div>
 
@@ -1082,33 +1075,13 @@ export function SettingsApp() {
                 <h3 className="text-xs font-semibold tracking-tight">{t("settings.mcp.configInstructions")}</h3>
                 <CopyButton
                   className="h-8 gap-1"
-                  value={() =>
-                    JSON.stringify(
-                      {
-                        mcpServers: {
-                          "parley": {
-                            type: "http",
-                            url: mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp",
-                          },
-                        },
-                      },
-                      null,
-                      2
-                    )
-                  }
+                  value={() => mcpClientConfigJson(mcpInfo?.endpoint)}
                   label={t("settings.mcp.copyConfig")}
                 />
               </div>
               <p className="text-[11px] text-muted-foreground">{t("settings.mcp.configHelp")}</p>
               <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
-                {`{
-  "mcpServers": {
-    "parley": {
-      "type": "http",
-      "url": "${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}"
-    }
-  }
-}`}
+                {mcpClientConfigJson(mcpInfo?.endpoint)}
               </pre>
             </div>
           </Section>
