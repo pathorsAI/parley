@@ -26,6 +26,7 @@ import {
 } from "../../lib/cloud/sync";
 import { buildOwnershipIndex, inFolderNode, inNode, nodeKey } from "../../lib/library/scope";
 import { log } from "../../lib/log";
+import { markGettingStarted } from "../../lib/onboarding/gettingStarted";
 import { isTauri } from "../../lib/tauriEvents";
 import { VoiceTypingHistory } from "../../history/VoiceTypingHistory";
 import { LibraryCard, MoveDialog } from "./LibraryCards";
@@ -345,6 +346,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           return;
         }
         await setEntryFolder(item.id, folderId);
+        if (folderId) markGettingStarted("filed");
         await emitHistoryUpdated(item.id);
         // A folder node shows one node's worth, so a re-filed recording leaves
         // it. The all node shows every node's worth, so the same recording
@@ -370,6 +372,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       if (selection.kind !== "org" || (item.folderId ?? null) === target) return;
       try {
         await setOrgRecordingFolder(selection.id, item.id, target);
+        if (target) markGettingStarted("filed");
         setEntries((prev) =>
           prev?.map((e) => (e.id === item.id ? { ...e, folderId: target } : e)) ?? null
         );
@@ -396,6 +399,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           setEntries((prev) => prev?.filter((e) => e.id !== p.item.id) ?? null);
           toast.success(t("history.move.moved", { org: p.org.name }));
         }
+        markGettingStarted("filed");
         tree.reloadSummaries();
       } catch (e) {
         log.error("library: org handoff failed", { id: p.item.id, error: String(e) });

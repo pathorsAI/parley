@@ -1,6 +1,6 @@
-import { ArrowRight, ClipboardList, FileAudio, Import, Mic } from "lucide-react";
+import { ArrowRight, ClipboardList, FileAudio, Import, Keyboard, Mic, X } from "lucide-react";
 import { toast } from "sonner";
-import { useStore } from "../../lib/store";
+import { DEFAULT_GETTING_STARTED, useStore } from "../../lib/store";
 import { loadHistoryEntry } from "../../lib/history/history";
 import { startImportFlow } from "../../lib/replay/ingest";
 import { beginMeeting } from "../../lib/meeting/start";
@@ -8,6 +8,13 @@ import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import type { LibraryTree } from "../shell/useLibraryTree";
+import { GettingStarted, openSampleRecording } from "./GettingStarted";
+import {
+  GETTING_STARTED_STEPS,
+  isGettingStartedVisible,
+  useHint,
+} from "../../lib/onboarding/gettingStarted";
+import { shortcutCaps } from "../../lib/voiceTyping/caps";
 
 /**
  * The idle landing (R8c). Before this, idle showed the live cockpit with three
@@ -20,6 +27,16 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const { t, language } = useI18n();
   const userName = useStore((s) => s.settings.userName);
   const openLibrary = useStore((s) => s.openLibrary);
+  const gettingStarted = useStore((s) => s.settings.gettingStarted) ?? DEFAULT_GETTING_STARTED;
+  const voiceTypingEnabled = useStore((s) => s.settings.voiceTypingEnabled);
+  const voiceTypingShortcut = useStore((s) => s.settings.voiceTypingShortcut);
+  const [voiceHintVisible, dismissVoiceHint] = useHint("home.voiceTyping");
+  const showChecklist = isGettingStartedVisible(gettingStarted);
+  // The lap is done: point at the other half of Parley, once.
+  const showVoiceTyping =
+    voiceHintVisible &&
+    voiceTypingEnabled &&
+    GETTING_STARTED_STEPS.every((step) => gettingStarted[step]);
 
   const folderName = (id: string | null | undefined) =>
     id ? tree.personalFolders.find((f) => f.id === id)?.name : undefined;
@@ -30,6 +47,13 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   // recent rows cascade. Delays are inline so the sequence stays put
   // when a section is conditionally absent.
   const delay = (ms: number) => ({ animationDelay: `${ms}ms` });
+
+  const openSample = () => {
+    void openSampleRecording(t).catch((e) => {
+      log.error("home: sample failed", { error: String(e) });
+      toast.error(String(e instanceof Error ? e.message : e));
+    });
+  };
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -69,6 +93,37 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           <p className="text-xs text-muted-foreground">{t("home.dropHint")}</p>
         </section>
 
+        {/* ── Getting started (first lap) ─────────────────────────────────── */}
+        {showChecklist && (
+          <GettingStarted
+            state={gettingStarted}
+            latestId={tree.summaries[0]?.id ?? null}
+            style={delay(90)}
+          />
+        )}
+        {showVoiceTyping && (
+          <p
+            className="animate-fade-up flex items-center gap-2 text-xs text-muted-foreground"
+            style={delay(90)}
+          >
+            <Keyboard className="size-3.5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              {t("home.voiceTypingBanner", {
+                shortcut: shortcutCaps(voiceTypingShortcut, t),
+              })}
+            </span>
+            <button
+              type="button"
+              aria-label={t("common.dismiss")}
+              title={t("common.dismiss")}
+              onClick={dismissVoiceHint}
+              className="grid size-5 shrink-0 cursor-pointer place-items-center rounded hover:text-foreground"
+            >
+              <X className="size-3.5" />
+            </button>
+          </p>
+        )}
+
         {/* ── Recent recordings ───────────────────────────────────────────── */}
         <section className="flex flex-col gap-1.5">
           <div className="animate-fade-up flex items-center gap-2" style={delay(180)}>
@@ -88,12 +143,18 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
             )}
           </div>
           {recent.length === 0 && (
-            <p
-              className="animate-fade-up rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground"
+            <div
+              className="animate-fade-up flex flex-col items-center gap-2 rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground"
               style={delay(220)}
             >
-              {t("home.emptyRecordings")}
-            </p>
+              <p>{t("home.emptyRecordings")}</p>
+              {/* The checklist already offers the sample — don't say it twice. */}
+              {!showChecklist && (
+                <Button variant="ghost" size="sm" onClick={openSample}>
+                  {t("home.gs.useSample")}
+                </Button>
+              )}
+            </div>
           )}
           {/* One list, rows split by hairlines — no box around each recording. */}
           {recent.length > 0 && (

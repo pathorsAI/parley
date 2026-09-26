@@ -25,6 +25,7 @@ import { planFolderDedupe } from "../library/scope";
 import type { OrgHandoffMode } from "../library/destination";
 import { rediarizeSegments } from "../speakers/postDiarize";
 import { translate } from "../../i18n/messages";
+import { markGettingStarted } from "../onboarding/gettingStarted";
 import type { ReplaySession } from "../replay/types";
 import type {
   ActionItem,
@@ -150,6 +151,13 @@ async function persist(
     compress,
   });
   log.info("history: entry saved", { id: entry.id, source: entry.source });
+  // Every NEW entry — live save, audio upload, transcript import — lands here
+  // (cloud pulls write their own files and never pass through), so this is the
+  // one place the getting-started checklist learns a recording exists, and that
+  // it was filed when the save already had a folder (the ingest wizard's
+  // destination, or a default save folder).
+  markGettingStarted("recorded");
+  if (entry.folderId) markGettingStarted("filed");
   // Best-effort push to the cloud when signed in (dynamic import avoids a static
   // cycle: sync.ts imports buildSummary/listHistory from here). No-op when signed out.
   pushToCloud(entry.id).catch((error) =>
@@ -260,6 +268,7 @@ async function applyDefaultOrgShare(id: string, res: MeetingSaveTarget): Promise
     } else {
       await m.shareRecordingToOrg(id, orgId, folderId);
     }
+    markGettingStarted("filed");
   } catch (e) {
     log.error("history: org auto-share failed", { id, error: String(e) });
     toast.error(translate(lang, "history.defaultSave.orgShareFailed"));

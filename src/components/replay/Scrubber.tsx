@@ -1,6 +1,7 @@
 import { useCallback, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { seekTargetForKey } from "../../lib/replay/seek";
+import { markGettingStarted } from "../../lib/onboarding/gettingStarted";
 
 interface ScrubberProps {
   /** Current position in ms. */
@@ -50,6 +51,8 @@ export function Scrubber({
       draggingRef.current = false;
       onCommit(draftRef.current);
       onScrubEnd();
+      // A drag or click on the bar is the user seeking — the checklist's replay item.
+      markGettingStarted("replayed");
     },
     [onCommit, onScrubEnd]
   );

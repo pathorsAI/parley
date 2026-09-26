@@ -10,7 +10,8 @@ vi.mock("../log", () => ({
 import { useStore } from "../store";
 import type { Settings } from "../types";
 import { arbitrateImportPaths, assertUploadTranscribable } from "./ingest";
-import { sttBatchUrl } from "../transcription/providers";
+import { STT_BY_ID, sttBatchUrl } from "../transcription/providers";
+import { translate } from "../../i18n/messages";
 
 // The single audio-vs-transcript arbitration rule (R7) shared by the picker and
 // the window drag-drop. If this rule changes, every import door changes with it.
@@ -48,40 +49,54 @@ describe("arbitrateImportPaths", () => {
   });
 });
 
-// The credential a provider is missing is NOT the same thing for everyone:
-// hosted Parley has no key field, so telling the user to paste one sends them
-// looking for a box that doesn't exist. These pin the branch.
+// The refusals are user-facing, so they come from the i18n dictionaries in the
+// user's language — and the missing-credential one names BOTH ways out (sign in
+// to hosted Parley, or add a key), so a hosted user is never told to paste a
+// key into a box that doesn't exist.
 describe("assertUploadTranscribable", () => {
   const base = useStore.getState().settings;
   const settingsFor = (over: Partial<Settings>): Settings => ({ ...base, ...over });
+  const messageOf = (settings: Settings): string => {
+    try {
+      assertUploadTranscribable(settings);
+    } catch (e) {
+      return (e as Error).message;
+    }
+    return "";
+  };
 
   beforeEach(() => {
     useStore.setState({ cloudAuth: null });
   });
 
-  it("refuses a provider without batch support without naming a replacement", () => {
-    expect(() =>
-      assertUploadTranscribable(settingsFor({ transcriptionProvider: "gemini" })),
-    ).toThrow(/switch to another transcription provider in Settings/);
+  it("refuses a provider without batch support, naming it, in the user's language", () => {
+    const zh = messageOf(settingsFor({ transcriptionProvider: "gemini", language: "zh-TW" }));
+    expect(zh).toBe(
+      translate("zh-TW", "ingest.error.providerNoUpload", { provider: STT_BY_ID.gemini.label }),
+    );
+    expect(zh).toContain(STT_BY_ID.gemini.label);
+
+    const en = messageOf(settingsFor({ transcriptionProvider: "gemini", language: "en" }));
+    expect(en).toMatch(/can't transcribe uploaded files; pick another transcription provider/);
   });
 
-  it("tells a BYOK provider's user to add an API key", () => {
-    expect(() =>
-      assertUploadTranscribable(
-        settingsFor({ transcriptionProvider: "soniox", sonioxApiKey: "" }),
-      ),
-    ).toThrow(/Add your Soniox API key/);
+  it("tells a BYOK user without a key how to get one, in the user's language", () => {
+    const en = messageOf(
+      settingsFor({ transcriptionProvider: "soniox", sonioxApiKey: "", language: "en" }),
+    );
+    expect(en).toBe(translate("en", "ingest.error.noSttKey"));
+    expect(en).toMatch(/add a transcription key in Settings/);
+
+    const zh = messageOf(
+      settingsFor({ transcriptionProvider: "soniox", sonioxApiKey: "", language: "zh-TW" }),
+    );
+    expect(zh).toBe(translate("zh-TW", "ingest.error.noSttKey"));
   });
 
-  it("tells a signed-out hosted user to sign in, not to paste a key", () => {
-    let message = "";
-    try {
-      assertUploadTranscribable(settingsFor({ transcriptionProvider: "parley" }));
-    } catch (e) {
-      message = (e as Error).message;
-    }
-    expect(message).toMatch(/Sign in to Parley Cloud/);
-    expect(message).not.toMatch(/API key/);
+  it("offers a signed-out hosted user sign-in, not only a key", () => {
+    const en = messageOf(settingsFor({ transcriptionProvider: "parley", language: "en" }));
+    expect(en).toMatch(/Sign in to Parley/);
+    expect(en).not.toMatch(/API key/);
   });
 
   it("passes hosted upload once a cloud session exists", () => {
