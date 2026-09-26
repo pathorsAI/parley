@@ -769,6 +769,35 @@ that moment.
 `UserDefaults` rather than a `DictationChannel` mailbox for the same reason —
 the mailboxes need Full Access, and the pane list must not.
 
+### What a keystroke redraws
+
+The controller talks to SwiftUI through one `ObservableObject`,
+`KeyboardBridge`, and every keystroke publishes on it — the 注音 composition and
+its candidates, the English suggestions, and while dictating the microphone
+level twelve times a second. Until 1.20 every typing pane held the bridge as
+`@ObservedObject`, and so did `SymbolPlanes` and `ReturnKey` inside them, so
+each of those publishes re-evaluated **every pane on the track**, the
+off-screen ones included: one 注音 keystroke re-diffed the 注音 pane's 41 keys
+*and* the QWERTY pane's, about seventy key bodies, to draw keys none of which
+had changed. That is where the owner's "注音 typing lags" pointed.
+
+So the panes do not observe the bridge any more. They hold it for its actions
+only, take what they actually draw — `dark`, `showsGlobe` and a
+`ReturnKeyStyle` (the return key's word, glyph and tint as one value) — as plain
+parameters, and are `Equatable` on those; `KeyboardRootView` wraps them in
+`.equatable()` and SwiftUI skips their bodies whenever those values are
+unchanged, which on a keystroke is always. A pane still redraws for its own
+`@State` — shift, the symbol planes — and there `KeyButton` and `DeleteKey`,
+also `Equatable` on their looks, keep the keys that did not change from being
+re-evaluated. The strip is the one thing a keystroke should redraw, and it now
+invalidates once per key rather than twice: the composition and its
+candidates are one published `ZhuyinStrip`, the English word and its
+suggestions one `EnglishStrip`.
+
+The rule this leaves: **a view below the root takes values, not the bridge.**
+Anything that observes it re-evaluates on every key and every microphone
+reading.
+
 ### Not painting a background
 
 The keyboard draws **no canvas of its own**. `view.backgroundColor` is clear,
@@ -1352,13 +1381,30 @@ syllable is finished. libtabe's notice sits beside McBopomofo's in
   character. Deterministic and explainable, and wrong in ways the user can see
   in the bar and fix by tapping instead. A viterbi over the same table is the
   obvious next step and is not this one.
-- **Loaded lazily, and warmed early.** Parsing and indexing 61,000 rows is about
-  100 ms on a current phone, which is not a hitch to spend on the user's second
-  syllable. So both tables are warmed on a background queue the moment the 注音
-  pane becomes current, and a lookup that arrives before the warm has landed
-  loads synchronously as before — at worst the work is done twice, never a torn
-  table. It is the largest thing this process holds, and a keyboard opened on
-  the voice or QWERTY pane still never pays for it.
+- **Loaded lazily, warmed early, never twice at once.** Parsing and indexing
+  61,000 rows is about 100 ms on a current phone, which is not a hitch to spend
+  on the user's second syllable. So both tables are warmed on a background
+  queue the moment the 注音 pane becomes current. A lookup that arrives before
+  the warm has landed **answers nothing** rather than parsing a table of its
+  own: until 1.20 it loaded synchronously, and for the length of that parse two
+  whole tables and their source strings coexisted — the highest this process's
+  memory ever went, in a process iOS kills without warning at its limit. No
+  crash was ever matched to it (there was no log to match against); the change
+  is preventive. `warm(onReady:)` calls back on the main queue when the table
+  lands, and the keyboard uses that to answer whatever is pending again
+  (`ZhuyinComposer.refresh()`), so the key that lost the race shows an empty
+  bar for a fraction of a second and then the right one. The completion runs in
+  the same main-queue block that stores the table, and keys arrive on the main
+  queue too, so a key is either before the landing or after it — never in
+  between. `EnglishWords` and `ZhuyinDictionary` follow the same contract.
+- **Given back under memory pressure.** `unload()` drops the table, and the
+  next lookup reads the file again. `didReceiveMemoryWarning` unloads the
+  phrase table and the English list when the pane on screen is not using them
+  and logs what it dropped (`com.pathors.parley.ios.keyboard`, category
+  `memory`), so a sysdiagnose from a keyboard that died has something to say.
+  The table under the user's fingers is kept: dropping it would make the next
+  keystroke re-parse it at exactly the moment memory is shortest. The 注音
+  dictionary is never dropped — a few hundred kilobytes, needed by every key.
 - **Readings are packed once, at load.** Until 1.20 a row kept its reading as
   text and it was split and parsed on every keystroke for every row of the
   bucket, on the argument that pre-parsing rows nobody types costs memory. It

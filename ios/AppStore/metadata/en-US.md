@@ -85,6 +85,17 @@ Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
 ## What's New — 1.20
 
+The keyboard is lighter and quicker.
+
+Typing on the 注音 and English keyboards now redraws only what changed — the
+bar of candidates above the keys — instead of every key on every tap, so the
+keyboard keeps up when you type fast.
+
+It also holds less in memory. Its word lists are never loaded twice at once,
+and the ones you are not using are let go when your phone runs short, which
+makes the keyboard much less likely to close unexpectedly in the middle of a
+sentence.
+
 One wrong 注音 symbol no longer empties the candidate bar.
 
 Type ㄌ for ㄋ, ㄗ for ㄓ or ㄣ for ㄥ, or catch the key next to the one you meant,
