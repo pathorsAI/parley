@@ -8,6 +8,8 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -15,7 +17,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -122,10 +128,10 @@ class CloudException(
  * `ParleyKit/CloudClient.swift` and the desktop's `src/lib/cloud/{client,sync}.ts`
  * — the OSS app only ever speaks to the cloud over this public API.
  *
- * Scope note: this is the phone's slice of the contract (identity, usage,
- * personal recordings). Folders and organizations exist on the backend and on
- * iOS, but the Android app does not surface them yet; they are additive and can
- * be added here without touching callers.
+ * Scope note: this is the phone's slice of the contract — identity, usage,
+ * personal recordings, folders, and the organization calls the library needs
+ * (list, read, delete, re-file, share into). Creating and managing
+ * organizations stays on the desktop.
  *
  * @param tokenProvider the current bearer token, re-read per request so a
  *   sign-out mid-flight is honoured. A null token sends no `Authorization`
@@ -324,6 +330,179 @@ class CloudClient(
         execute(Request.Builder().url(url("recordings", id)).delete()) { }
     }
 
+    /**
+     * File a personal recording under [folderId] (null = the personal root).
+     *
+     * There is no folder endpoint for a personal recording: the folder is a
+     * field of the entry, so moving one is a full re-push of the meta the cloud
+     * already holds with that one field changed — iOS `LibraryView.moveToFolder`
+     * and the desktop's `useRefile` do the same. The meta is re-read first rather
+     * than taken from the caller so that a field another device wrote since the
+     * list was fetched (a desktop analysis, a rename) survives the move.
+     *
+     * Hand-built rather than through [pushRecording] for one reason: un-filing
+     * has to put `"folderId": null` in the *summary* too, the way the desktop's
+     * `buildSummary` always does, and [CloudJson] omits nulls on encode. A
+     * summary that merely lacked the key would be read by a merging server as
+     * "no change".
+     *
+     * `updatedAt` is dropped from the summary: it is the server's write clock,
+     * and echoing the old value back would be asking the server to date this
+     * write in the past.
+     *
+     * @param summary the library card, when the caller has one; derived from the
+     *   meta otherwise (the detail screen fetches nothing else).
+     */
+    suspend fun refileRecording(
+        id: String,
+        folderId: String?,
+        summary: RecordingSummary? = null,
+    ) {
+        val meta = recordingMeta(id)
+        val card = (summary ?: RecordingSummary.fromMeta(meta)).copy(updatedAt = null)
+        val summaryJson = CloudJson.encodeToJsonElement(RecordingSummary.serializer(), card)
+            .let { it as JsonObject }
+            .let { encoded ->
+                buildJsonObject {
+                    encoded.forEach { (key, value) -> if (key != "folderId") put(key, value) }
+                    put("folderId", folderId?.let(::JsonPrimitive) ?: JsonNull)
+                }
+            }
+        val payload = buildJsonObject {
+            put("summary", summaryJson)
+            put("meta", meta.withFolderId(folderId).raw)
+        }
+        postJson(url("recordings", id), payload)
+    }
+
+    /**
+     * `POST /recordings/{id}/share` — a server-side COPY of a personal recording
+     * into an organization, optionally straight into one of its folders. The
+     * personal original is untouched.
+     *
+     * "Move to organization" is this followed by [deleteRecording], in that
+     * order and never the other: a failure half-way must leave the original
+     * where it was (the desktop's `moveRecordingToOrg`, iOS `shareToOrg`).
+     *
+     * Not idempotent: the server mints a new org-side id per call, so a retry
+     * after a lost response makes a second copy. Callers retry only what they
+     * know did not land.
+     */
+    suspend fun shareRecording(id: String, orgId: String, folderId: String? = null) {
+        val payload = buildJsonObject {
+            put("orgId", JsonPrimitive(orgId))
+            if (folderId != null) put("folderId", JsonPrimitive(folderId))
+        }
+        postJson(url("recordings", id, "share"), payload)
+    }
+
+    // ── folders (personal) ───────────────────────────────────────────────────
+
+    /**
+     * `GET /folders` — this account's folders. May include org folders on some
+     * backends; callers that want the personal ones filter on
+     * [CloudFolder.orgId], as iOS does.
+     */
+    suspend fun listFolders(): List<CloudFolder> =
+        CloudJson.decodeFromString(FoldersResponse.serializer(), getText(url("folders"))).folders
+
+    /**
+     * `POST /folders` — create a personal folder.
+     *
+     * The id is minted here, not by the server, matching the desktop's
+     * `createCloudFolder` and iOS `createFolder`: personal folders are a registry
+     * every device mirrors, so the id a device writes into a recording's meta has
+     * to be the id the row gets. That also makes the call idempotent — a retry
+     * after a timeout re-syncs the same folder instead of leaving a duplicate.
+     *
+     * The response body is used when it is a `{ folder }` envelope and ignored
+     * otherwise (the desktop never reads it): the request succeeded, so the row
+     * that was asked for is the row that now exists.
+     */
+    suspend fun createFolder(
+        name: String,
+        id: String = newCloudId(),
+        createdAtMs: Long = System.currentTimeMillis(),
+    ): CloudFolder {
+        val payload = buildJsonObject {
+            put("id", JsonPrimitive(id))
+            put("name", JsonPrimitive(name))
+            put("createdAt", JsonPrimitive(createdAtMs))
+        }
+        val text = postJson(url("folders"), payload)
+        return runCatching { CloudJson.decodeFromString(FolderEnvelope.serializer(), text).folder }
+            .getOrNull()
+            ?: CloudFolder(
+                id = id,
+                name = name,
+                orgId = null,
+                createdAt = createdAtMs.toDouble(),
+                updatedAt = createdAtMs.toDouble(),
+            )
+    }
+
+    // ── organizations ────────────────────────────────────────────────────────
+
+    /**
+     * `GET /orgs/mine` — every organization this account belongs to, each with
+     * the account's own role. A bare JSON array; anything else reads as "none",
+     * the way the desktop's `listMyOrgs` treats it.
+     */
+    suspend fun myOrgs(): List<CloudOrg> {
+        val text = getText(url("orgs", "mine"))
+        val array = runCatching { CloudJson.parseToJsonElement(text) }.getOrNull() as? JsonArray
+            ?: return emptyList()
+        return array.mapNotNull { item ->
+            runCatching { CloudJson.decodeFromJsonElement(CloudOrg.serializer(), item) }.getOrNull()
+        }
+    }
+
+    /** `GET /orgs/{orgId}/recordings` — the organization's shared library. */
+    suspend fun orgRecordings(orgId: String): List<RecordingSummary> =
+        CloudJson.decodeFromString(
+            RecordingsResponse.serializer(),
+            getText(url("orgs", orgId, "recordings")),
+        ).recordings
+
+    /** `GET /orgs/{orgId}/recordings/{id}/meta` — an org recording's full entry. */
+    suspend fun orgRecordingMeta(orgId: String, id: String): RecordingMeta {
+        val text = getText(url("orgs", orgId, "recordings", id, "meta"))
+        val obj = runCatching { CloudJson.parseToJsonElement(text) }.getOrNull() as? JsonObject
+            ?: throw CloudException(0, "bad_meta_json", code = "bad_meta_json")
+        return RecordingMeta(obj)
+    }
+
+    /** `GET /orgs/{orgId}/folders` — the organization's folders. */
+    suspend fun orgFolders(orgId: String): List<CloudFolder> =
+        CloudJson.decodeFromString(
+            FoldersResponse.serializer(),
+            getText(url("orgs", orgId, "folders")),
+        ).folders
+
+    /**
+     * `DELETE /orgs/{orgId}/recordings/{id}`. The server allows it to the
+     * uploader and to an owner or admin; everyone else gets a 403.
+     */
+    suspend fun deleteOrgRecording(orgId: String, id: String) {
+        execute(Request.Builder().url(url("orgs", orgId, "recordings", id)).delete()) { }
+    }
+
+    /**
+     * `PATCH /orgs/{orgId}/recordings/{id}/folder` with `{ folderId }` — an org
+     * recording's folder is a column of its own, not a field of the entry, so
+     * unlike a personal move this is one small call. `null` is the org root and
+     * is sent as an explicit JSON null.
+     */
+    suspend fun moveOrgRecordingToFolder(orgId: String, id: String, folderId: String?) {
+        val payload = buildJsonObject {
+            put("folderId", folderId?.let(::JsonPrimitive) ?: JsonNull)
+        }
+        val request = Request.Builder()
+            .url(url("orgs", orgId, "recordings", id, "folder"))
+            .patch(payload.toString().toRequestBody(APPLICATION_JSON))
+        execute(request) { }
+    }
+
     // ── hosted batch transcription ───────────────────────────────────────────
     //
     // The four calls behind `BatchTranscriber`, which drives them. Same
@@ -385,6 +564,12 @@ class CloudClient(
     private suspend fun getText(url: HttpUrl): String =
         execute(Request.Builder().url(url).get()) { response -> bodyText(response) }
 
+    /** `POST` a JSON object and hand back the response body. */
+    private suspend fun postJson(url: HttpUrl, payload: JsonObject): String =
+        execute(
+            Request.Builder().url(url).post(payload.toString().toRequestBody(APPLICATION_JSON)),
+        ) { response -> bodyText(response) }
+
     private suspend fun bodyText(response: Response): String =
         withContext(Dispatchers.IO) { response.body?.string().orEmpty() }
 
@@ -441,6 +626,12 @@ class CloudClient(
     companion object {
         /** The production cloud. Same default as iOS and the desktop. */
         const val DEFAULT_BASE_URL = "https://api.parley.tw"
+
+        /**
+         * A lowercase UUID — the one id shape every Parley client mints for the
+         * cloud, so an id is never the same row written two ways.
+         */
+        fun newCloudId(): String = UUID.randomUUID().toString().lowercase(Locale.ROOT)
 
         /** How often [downloadAudio] reports progress. See its doc. */
         private const val PROGRESS_INTERVAL_BYTES = 64L * 1024L
