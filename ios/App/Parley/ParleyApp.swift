@@ -16,6 +16,10 @@ struct ParleyApp: App {
     /// the first scene is built. See `ParleyAppearance.swift`.
     init() {
         ParleyAppearance.apply()
+        // Before anything can sign in: the checklist's first-launch migration
+        // reads whether a session token is *already* in the Keychain, and it
+        // has to ask before this launch could have put one there.
+        _ = GettingStartedStore.shared
     }
 
     var body: some Scene {

@@ -18,7 +18,15 @@ targets:
   Parley:
     type: application
     platform: iOS
-    sources: [Parley]
+    sources:
+      - Parley
+      # The getting-started sample recording (manifest + Ogg/Opus, zh-TW and
+      # en), shared with the desktop app, which serves the same files from
+      # `public/`. A folder reference, so it lands in the bundle as `sample/`
+      # and a re-render needs no project change. See SampleRecording.swift.
+      - path: ../../public/sample
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: ParleyKit
       # Embeds the keyboard extension into the app bundle.

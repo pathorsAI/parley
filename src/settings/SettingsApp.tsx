@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { log } from "../lib/log";
 import { Check, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, Plus, ScrollText, Sun, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
+import { resetGettingStarted } from "../lib/onboarding/gettingStarted";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings, SETTINGS_NAVIGATE_EVENT } from "../lib/settingsSync";
 import { signInWithGoogle, signOut, CloudError } from "../lib/cloud/client";
@@ -29,6 +30,7 @@ import { fetchLatestReleaseNotes, markReleaseNotesSeen, type ReleaseNotes } from
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
 import { clientLabel, connState, relativeTime, type McpActivityInfo } from "../components/McpStatusChip";
+import { claudeCodeCommand, mcpClientConfigJson, type McpServerInfo } from "../lib/mcp/connect";
 import { ReleaseNotesDialog } from "../components/ReleaseNotesDialog";
 import { UsagePanel } from "./UsagePanel";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
@@ -73,12 +75,6 @@ import { PermissionsPanel } from "./PermissionsPanel";
 // The panel ids live in the store as SettingsCategory so other surfaces (e.g.
 // the titlebar 🌐 menu) can deep-link a panel without importing this file.
 type Category = import("../lib/store").SettingsCategory;
-
-interface McpServerInfo {
-  running: boolean;
-  endpoint: string;
-  templates_path: string;
-}
 
 // `cloudOnly` entries (the account/orgs page) are compiled out of the OSS edition,
 // which has no sign-in at all — so they never appear in that build's nav.
@@ -200,6 +196,19 @@ export function SettingsApp() {
     }
   }
   const sttInfo = STT_BY_ID[settings.transcriptionProvider];
+
+  /** Bring the main window forward and close Settings so it isn't hidden behind it. */
+  async function focusMainWindow() {
+    if (!isTauri()) return;
+    try {
+      const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await (await WebviewWindow.getByLabel("main"))?.setFocus();
+      await getCurrentWindow().close();
+    } catch {
+      /* ignore */
+    }
+  }
 
   function patch(p: Partial<Settings>) {
     updateSettings(p);
@@ -507,27 +516,36 @@ export function SettingsApp() {
               </div>
             </Field>
             <Field label={t("settings.basic.setup")}>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 w-fit text-xs"
-                onClick={async () => {
-                  patch({ onboarded: false, onboardingStep: 0 });
-                  // The onboarding renders on the MAIN window — bring it forward
-                  // and close this Settings window so it isn't hidden behind it.
-                  if (!isTauri()) return;
-                  try {
-                    const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-                    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-                    await (await WebviewWindow.getByLabel("main"))?.setFocus();
-                    await getCurrentWindow().close();
-                  } catch {
-                    /* ignore */
-                  }
-                }}
-              >
-                {t("settings.basic.rerunSetup")}
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 w-fit text-xs"
+                  onClick={async () => {
+                    patch({ onboarded: false, onboardingStep: 0 });
+                    // The onboarding renders on the MAIN window — bring it forward
+                    // and close this Settings window so it isn't hidden behind it.
+                    await focusMainWindow();
+                  }}
+                >
+                  {t("settings.basic.rerunSetup")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 w-fit text-xs"
+                  onClick={async () => {
+                    // The checklist lives on the main window's Home — same hand-off.
+                    resetGettingStarted();
+                    await broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
+                      log.warn("settings: broadcast failed", { error: String(error) }),
+                    );
+                    await focusMainWindow();
+                  }}
+                >
+                  {t("settings.basic.showGettingStarted")}
+                </Button>
+              </div>
             </Field>
             <Field label={t("settings.update.title")}>
               {appVersion && (
@@ -1065,15 +1083,13 @@ export function SettingsApp() {
                 <h3 className="text-xs font-semibold tracking-tight">{t("settings.mcp.claudeCodeInstructions")}</h3>
                 <CopyButton
                   className="h-8 gap-1"
-                  value={() =>
-                    `claude mcp add --transport http parley ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`
-                  }
+                  value={() => claudeCodeCommand(mcpInfo?.endpoint)}
                   label={t("settings.mcp.copyCommand")}
                 />
               </div>
               <p className="text-[11px] text-muted-foreground">{t("settings.mcp.claudeCodeHelp")}</p>
               <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
-                {`claude mcp add --transport http parley ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`}
+                {claudeCodeCommand(mcpInfo?.endpoint)}
               </pre>
             </div>
 
@@ -1082,33 +1098,13 @@ export function SettingsApp() {
                 <h3 className="text-xs font-semibold tracking-tight">{t("settings.mcp.configInstructions")}</h3>
                 <CopyButton
                   className="h-8 gap-1"
-                  value={() =>
-                    JSON.stringify(
-                      {
-                        mcpServers: {
-                          "parley": {
-                            type: "http",
-                            url: mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp",
-                          },
-                        },
-                      },
-                      null,
-                      2
-                    )
-                  }
+                  value={() => mcpClientConfigJson(mcpInfo?.endpoint)}
                   label={t("settings.mcp.copyConfig")}
                 />
               </div>
               <p className="text-[11px] text-muted-foreground">{t("settings.mcp.configHelp")}</p>
               <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
-                {`{
-  "mcpServers": {
-    "parley": {
-      "type": "http",
-      "url": "${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}"
-    }
-  }
-}`}
+                {mcpClientConfigJson(mcpInfo?.endpoint)}
               </pre>
             </div>
           </Section>

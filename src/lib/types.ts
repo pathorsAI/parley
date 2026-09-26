@@ -372,7 +372,37 @@ export interface Settings {
   syncEnabled: boolean;
   /** Where a finished meeting is saved by default. */
   defaultSaveLocation: DefaultSaveLocation;
+  /** Home "getting started" checklist. Each flag flips once from a real event
+   *  (see src/lib/onboarding/gettingStarted.ts); never from "I've read this". */
+  gettingStarted: GettingStartedState;
+  /** One-time contextual hints the user has already seen (or closed). */
+  hintsSeen: HintId[];
 }
+
+/** The four items of the Home "getting started" checklist, in display order. */
+export type GettingStartedStep = "recorded" | "filed" | "replayed" | "handedOff";
+
+export interface GettingStartedState {
+  /** A recording exists (live save, import, or the bundled sample). */
+  recorded: boolean;
+  /** A recording was put in a folder (personal or org). */
+  filed: boolean;
+  /** The user sought in replay (transcript click or scrubber). */
+  replayed: boolean;
+  /** Copied the transcript with the analysis prompt, or an MCP client made its
+   *  first successful call. */
+  handedOff: boolean;
+  /** Epoch ms when the user closed the list, or null. */
+  dismissedAt: number | null;
+}
+
+/** One-time contextual hints, each shown until seen/closed once. */
+export type HintId =
+  | "report.filing" // "one customer, one folder" line on the Report page
+  | "replay.seek" // "click any line to jump" line in Replay
+  | "copy.handoff" // explainer above the copy menu's "with analysis prompt" item
+  | "speakers.whoAmI" // "which one is you?" when naming speakers the first time
+  | "home.voiceTyping"; // banner after the checklist completes
 
 /**
  * The default destination for auto-saved meetings. A personal folder (or the

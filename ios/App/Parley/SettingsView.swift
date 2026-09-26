@@ -349,6 +349,11 @@ struct SettingsView: View {
                         scope: "personal", orgId: nil,
                         folderId: parts.count > 1 ? parts[1] : nil)
                 }
+                // Choosing a real home for every recording to come — a folder
+                // or an organization, not the personal root — is filing.
+                if app.defaultSave != .personalRoot {
+                    GettingStartedStore.shared.mark(.filed)
+                }
             })
     }
 
@@ -658,8 +663,13 @@ struct SettingsView: View {
             Link("Parley for Mac", destination: URL(string: "https://parley.tw")!)
             Link("Privacy Policy", destination: URL(string: "https://parley.tw/privacy/")!)
             Link("Support & feedback", destination: URL(string: "https://parley.tw/support/")!)
+            // Brings the Library's checklist back, unticked — for someone who
+            // closed it with "Not now" and wants the lap after all.
+            Button("Show the getting-started list again") {
+                GettingStartedStore.shared.reset()
+            }
         } footer: {
-            sectionFooter("Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings.")
+            sectionFooter("Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code can also read your whole recording library over MCP.")
         }
     }
 

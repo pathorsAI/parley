@@ -4,6 +4,7 @@ import { setEntryFolder } from "../lib/history/history";
 import { useStore } from "../lib/store";
 import { useI18n } from "../i18n";
 import { log } from "../lib/log";
+import { markGettingStarted } from "../lib/onboarding/gettingStarted";
 import type { LibraryDestination, OrgHandoffMode } from "../lib/library/destination";
 
 /**
@@ -38,9 +39,13 @@ export function useRefile(): (
       const id = loadedHistoryId;
       if (!id) return Promise.resolve();
       if (destination.scope === "personal") {
-        return setEntryFolder(id, destination.folderId).catch((e) =>
-          log.warn("refile: folder change failed", { id, error: String(e) })
-        );
+        const { folderId } = destination;
+        return setEntryFolder(id, folderId)
+          .then(() => {
+            // Taking it back to 還沒歸檔 (null) isn't filing.
+            if (folderId) markGettingStarted("filed");
+          })
+          .catch((e) => log.warn("refile: folder change failed", { id, error: String(e) }));
       }
       const { orgId, folderId } = destination;
       return import("../lib/cloud/sync")
@@ -53,6 +58,7 @@ export function useRefile(): (
             await shareRecordingToOrg(id, orgId, folderId);
             toast.success(t("history.move.copiedToFolder"));
           }
+          markGettingStarted("filed");
         })
         .catch((e) => {
           log.error("refile: org handoff failed", { id, orgId, error: String(e) });

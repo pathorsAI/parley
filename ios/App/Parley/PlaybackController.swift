@@ -255,7 +255,7 @@ final class PlaybackController: NSObject, ObservableObject {
         activateSession()
         // A file played to the end restarts rather than refusing: the button
         // still says "play", so it has to play.
-        if currentTime >= duration - 0.05 { seek(to: 0) }
+        if currentTime >= duration - 0.05 { seek(to: 0, byUser: false) }
         engine.rate = isHoldingTwoX ? Self.heldRate : rate
         do {
             try engine.play()
@@ -285,12 +285,18 @@ final class PlaybackController: NSObject, ObservableObject {
     /// Called on every frame of a drag. The engine coalesces — a seek arriving
     /// while the previous one is still re-priming replaces it — so this stays a
     /// cheap call however fast the finger moves.
-    func seek(to time: TimeInterval) {
+    ///
+    /// `byUser` is false only for the controller's own rewind when play is
+    /// pressed at the end. Every other caller is a person — a tap on a turn or
+    /// its timecode, the scrubber, VoiceOver's ±15 s — and the first of those
+    /// ticks the checklist's "replay" item.
+    func seek(to time: TimeInterval, byUser: Bool = true) {
         guard let engine else { return }
         let clamped = min(max(0, time), max(0, duration))
         engine.seek(to: clamped)
         currentTime = clamped
         seekGeneration += 1
+        if byUser { GettingStartedStore.shared.mark(.replayed) }
     }
 
     func setRate(_ value: Double) {

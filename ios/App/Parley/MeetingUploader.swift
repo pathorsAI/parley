@@ -182,6 +182,9 @@ final class MeetingUploader {
             source: "live",
             title: nil)
         try Self.persist(pending, audioAt: fileURL)
+        // Saved on the phone is saved: whatever the upload does next, the
+        // meeting is safe and the queue will deliver it.
+        GettingStartedStore.markSoon(.recorded)
         return try await Self.upload(pending, cloud: cloud, orgs: orgs)
     }
 
@@ -224,6 +227,8 @@ final class MeetingUploader {
             source: "upload",
             title: trimmed.isEmpty ? nil : trimmed)
         try persist(pending, audioAt: ogg)
+        // An import counts as a recording, the same as a live meeting.
+        GettingStartedStore.markSoon(.recorded)
         return try await upload(pending, cloud: cloud, orgs: orgs)
     }
 

@@ -7,12 +7,16 @@ import {
   transcriptWithTimestamps,
 } from "../lib/store";
 import type { TranscriptSegment } from "../lib/types";
+import { useHint } from "../lib/onboarding/gettingStarted";
+import { useHandoff } from "../lib/onboarding/useHandoff";
 import { useI18n } from "../i18n";
 import { cn } from "@/lib/utils";
 
 /**
- * Copy-transcript control: a small dropdown offering three plain-text formats so
- * the user can grab the transcript in whatever shape they need —
+ * Copy-transcript control: a small dropdown. First, the hand-off: the transcript
+ * wrapped in an analysis prompt with ready-made questions, to paste into
+ * ChatGPT or Claude. Then three plain-text formats so the user can grab the
+ * transcript in whatever shape they need —
  *   • plain text (just what was said),
  *   • with speaker labels (the default), or
  *   • with speaker labels + [m:ss] timestamps.
@@ -30,20 +34,36 @@ export function TranscriptCopyMenu({
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handoff = useHandoff();
+  // One-time explainer above the hand-off item: shown the first time the menu
+  // opens, retired when that menu closes.
+  const [hintVisible, dismissHint] = useHint("copy.handoff");
+
+  function flashCopied() {
+    setCopied(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), 2000);
+  }
 
   async function copy(text: string) {
     try {
       await navigator.clipboard.writeText(text);
-      setCopied(true);
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => setCopied(false), 2000);
+      flashCopied();
     } catch (e) {
       console.error("copy transcript failed", e);
     }
   }
 
+  async function copyHandoff() {
+    if (await handoff.copyPrompt()) flashCopied();
+  }
+
   return (
-    <DropdownMenu.Root>
+    <DropdownMenu.Root
+      onOpenChange={(open) => {
+        if (!open && hintVisible) dismissHint();
+      }}
+    >
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
@@ -64,6 +84,18 @@ export function TranscriptCopyMenu({
           sideOffset={6}
           className="z-[80] min-w-[200px] rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
         >
+          {hintVisible && (
+            <p className="max-w-[240px] px-2 pb-1.5 pt-1 text-[11px] leading-snug text-muted-foreground">
+              {t("transcript.copyHandoffExplainer")}
+            </p>
+          )}
+          <Item
+            label={t("transcript.copyHandoff")}
+            hint={t("transcript.copyHandoffHint")}
+            disabled={!handoff.canCopy}
+            onSelect={() => void copyHandoff()}
+          />
+          <DropdownMenu.Separator className="my-1 h-px bg-border" />
           <Item
             label={t("transcript.copyWithSpeaker")}
             hint={t("transcript.copyWithSpeakerHint")}
@@ -89,14 +121,17 @@ export function TranscriptCopyMenu({
 function Item({
   label,
   hint,
+  disabled,
   onSelect,
 }: Readonly<{
   label: string;
   hint?: string;
+  disabled?: boolean;
   onSelect: () => void;
 }>) {
   return (
     <DropdownMenu.Item
+      disabled={disabled}
       onSelect={onSelect}
       className={cn(
         "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-xs outline-none",

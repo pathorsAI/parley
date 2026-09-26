@@ -61,7 +61,12 @@ struct OnboardingView: View {
             Text(verbatim: "Parley")
                 .font(.parley.wordmark(size: 40))
                 .foregroundStyle(Color(.label))
-            Text("A pocket recorder for the meetings you have in person — live transcript while you talk, in the cloud by the time you stand up.")
+            Text("Record it. Hand it to the AI you already use.")
+                .font(.parley.title3)
+                .foregroundStyle(Color(.label))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Parley records in-person meetings, transcribes them live, and keeps them where your Mac and phone can both find them.")
                 .font(.parley.subheadline)
                 .foregroundStyle(Color(.secondaryLabel))
                 .multilineTextAlignment(.center)
@@ -71,25 +76,23 @@ struct OnboardingView: View {
 
     // MARK: what you get
 
+    /// One line each: the three things the product does, in the order a
+    /// meeting goes through them — record, file, hand off.
     private struct Point {
         let icon: String
         let title: LocalizedStringKey
-        let detail: LocalizedStringKey
     }
 
     private static let points: [Point] = [
         Point(
             icon: "record.circle",
-            title: "Put the phone on the table",
-            detail: "It picks up the whole room and keeps the speakers apart."),
+            title: "Record and transcribe live, even from the lock screen"),
         Point(
-            icon: "text.bubble",
-            title: "Live transcription, no API key",
-            detail: "Sign in and ride our hosted transcription. The free tier covers everyday use."),
+            icon: "folder",
+            title: "One customer, one folder, synced with your Mac"),
         Point(
-            icon: "icloud",
-            title: "Recordings sync to your account",
-            detail: "Open a meeting you recorded on the phone in the desktop app for the deep analysis."),
+            icon: "square.and.arrow.up",
+            title: "Share to ChatGPT or Claude for analysis"),
     ]
 
     private func pointRow(_ point: Point) -> some View {
@@ -102,15 +105,10 @@ struct OnboardingView: View {
                 // blue on this screen is the button at the bottom.
                 .foregroundStyle(Color(.secondaryLabel))
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(point.title)
-                    .font(.parley.bodyEmphasized)
-                    .foregroundStyle(Color(.label))
-                Text(point.detail)
-                    .font(.parley.footnote)
-                    .foregroundStyle(Color(.secondaryLabel))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text(point.title)
+                .font(.parley.bodyEmphasized)
+                .foregroundStyle(Color(.label))
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

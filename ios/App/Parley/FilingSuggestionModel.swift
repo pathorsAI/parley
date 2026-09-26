@@ -299,6 +299,7 @@ final class FilingSuggestionModel: ObservableObject {
                 titleAnswered = true
             }
             if let targetId {
+                GettingStartedStore.shared.mark(.filed)
                 currentFolderId = targetId
                 // The home half is settled, wherever it settled — including the
                 // folder created a moment ago, whose id came back from
