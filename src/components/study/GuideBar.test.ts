@@ -76,22 +76,21 @@ describe("GuideBarView", () => {
     const html = render({ phase: "filed" });
     expect(html).toContain('data-lap="filed"');
     expect(html).toContain("1 / 3 · 先看 Parley 幫你做了什麼");
-    expect(html).toContain("按「採用」或任一個資料夾試試");
+    expect(html).toContain("按「採用建議」或任一個資料夾試試");
     expect(html).toContain("看建議");
     expect(html).toContain("不用了");
     expect(primaryButtons(html)).toHaveLength(1);
   });
 
-  it("confirms step 1 with the folder, and drops the clauses that didn't happen", () => {
+  it("confirms step 1 with the folder, naming the rename only when there was one", () => {
     const both = render({ phase: "replayed", justCompleted: "filed", folderName: "泓昇科技", renamed: true });
     expect(both).toContain('data-lap="filed-done"');
     expect(both).toContain("已改名，放進「泓昇科技」。之後每一場錄完都會這樣。");
     expect(both).not.toContain("2 / 3");
 
-    expect(render({ phase: "replayed", justCompleted: "filed", renamed: true })).toContain(
-      "已改名。之後每一場錄完都會這樣。",
-    );
-    expect(render({ phase: "replayed", justCompleted: "filed", folderName: "A" })).toContain("已放進「A」。");
+    const filed = render({ phase: "replayed", justCompleted: "filed", folderName: "A" });
+    expect(filed).toContain("已放進「A」。");
+    expect(filed).not.toContain("已改名");
   });
 
   it("step 2: replay, with the CTA only when not already on the Replay tab", () => {
@@ -111,7 +110,17 @@ describe("GuideBarView", () => {
     expect(html).toMatch(/就是這樣。(⌘F|Ctrl\+F) 可以搜逐字稿。/);
   });
 
-  it("step 3: the command, live status, the questions and the copy fallback", () => {
+  it("step 3 on Replay is compact: label, one line, and the way to the full form", () => {
+    const html = render({ phase: "handedOff", tab: "replay" });
+    expect(html).toContain("3 / 3 · 交給你的 AI");
+    expect(html).toContain("讓 Claude Code 直接讀你的錄音資料庫，不用複製貼上。");
+    expect(html).toContain("看完整說明");
+    expect(html).not.toContain("claude mcp add");
+    expect(html).not.toContain("Q-mcp-1");
+    expect(html).not.toContain("先複製給 ChatGPT");
+  });
+
+  it("step 3 on Report: the command, live status, the questions and the copy fallback", () => {
     const html = render({ phase: "handedOff" });
     expect(html).toContain("3 / 3 · 交給你的 AI");
     expect(html).toContain("讓 Claude Code 直接讀你的錄音資料庫，不用複製貼上。");
@@ -132,6 +141,10 @@ describe("GuideBarView", () => {
     expect(html).toContain('data-lap="done"');
     expect(html).toContain("完成");
     expect(html).toContain("錄 → 自動命名與歸檔 → 回放 → 交給 AI");
+    // The three ✓ lines cascade in, 260 ms apart.
+    for (const [i, line] of ["自動命名、歸進資料夾", "回放，點一句跳過去", "交給你的 AI"].entries()) {
+      expect(html).toMatch(new RegExp(`animation-delay:${i * 260}ms[^>]*>.*?${line}`));
+    }
     expect(html).toContain("開始第一場真的會議");
     expect(html).toContain("關閉");
     expect(html).not.toContain("不用了");

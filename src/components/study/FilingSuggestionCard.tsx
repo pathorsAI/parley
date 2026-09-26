@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FolderSearch, Plus, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { log } from "../../lib/log";
 import { createLocalFolder, emitFoldersUpdated } from "../../lib/history/folders";
 import { personalDestination } from "../../lib/library/destination";
 import { useRefile } from "../useRefile";
-import { markGettingStarted } from "../../lib/onboarding/gettingStarted";
+import { flyToFolder, useTypewriter } from "../../lib/onboarding/motion";
 import type { FilingSuggestion, FilingFolderSuggestion } from "../../lib/types";
 
 /**
@@ -38,19 +38,27 @@ import type { FilingSuggestion, FilingFolderSuggestion } from "../../lib/types";
  * from the store and persisted as null — it must not come back on the next load,
  * and must not be regenerated.
  *
- * The proposed title is editable in place (click, type, Enter or click away;
- * Esc cancels): an edit becomes the suggestion's title and is applied through
- * the same rename path as 採用, so the row retires the same way. The last chip,
- * "Choose another…", opens the filing bar's destination picker
- * (`onPickAnother`) for when none of the proposals fit.
+ * Three ways to act on it, and only the ones that FILE tick the
+ * getting-started "filed" step (the lap's first step, lib/onboarding/lap.ts):
+ *  - 採用建議 / Accept suggestion takes the whole thing in one click: the
+ *    proposed title (as edited) and the first folder, created if new.
+ *  - A folder chip files there without renaming; "Choose another…" opens the
+ *    filing bar's destination picker (`onPickAnother`).
+ *  - The title is editable in place (click, type, Enter or click away; Esc
+ *    cancels). That renames and nothing else — the edit becomes the
+ *    suggestion's title, so the title row retires by the usual rule.
  *
- * Accepting either half — the title or a folder — ticks the getting-started
- * "filed" step: it is the moment the lap's first step teaches (see
- * lib/onboarding/lap.ts), and the guide bar advances on it.
+ * The first time a card appears for a recording it springs in and types its
+ * title — the suggestion should look like something that just happened. A
+ * filed card flies into its sidebar folder (lib/onboarding/motion.ts).
  */
+/** Recordings whose card has already made its entrance this session. */
+const introduced = new Set<string>();
+
+
 export function FilingSuggestionCard({
   onPickAnother,
-}: Readonly<{ onPickAnother?: () => void }> = {}) {
+}: Readonly<{ onPickAnother?: () => void }>) {
   const { t } = useI18n();
   const suggestion = useStore((s) => s.filingSuggestion);
   const setFilingSuggestion = useStore((s) => s.setFilingSuggestion);
@@ -99,15 +107,39 @@ export function FilingSuggestionCard({
       .catch((e) => log.warn("filing: persisting a dismissal failed", { error: String(e) }));
   }, [setFilingSuggestion]);
 
+  const cardRef = useRef<HTMLDivElement | null>(null);
+
+  // First appearance for this recording → spring in and type the title. Read
+  // purely during render; recorded in a layout effect (before paint), so the
+  // entrance never flashes the finished card first.
+  const visible = !!suggestion && !readOnly && (showTitle || chips.length > 0);
+  const introduce = visible && !!loadedHistoryId && !introduced.has(loadedHistoryId);
+  const [introducedFor, setIntroducedFor] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    if (!introduce || !loadedHistoryId) return;
+    introduced.add(loadedHistoryId);
+    setIntroducedFor(loadedHistoryId);
+  }, [introduce, loadedHistoryId]);
+  const entering = introduce || (!!loadedHistoryId && introducedFor === loadedHistoryId);
+  const typedTitle = useTypewriter(suggestedTitle, entering);
+
+  /** The chip's folder id, creating the folder first when it is a new one. */
+  const resolveFolder = useCallback((chip: FilingFolderSuggestion): string => {
+    if (chip.folderId !== null) return chip.folderId;
+    const id = createLocalFolder(chip.name).id;
+    emitFoldersUpdated().catch((e) => log.warn("filing: folder broadcast failed", { error: String(e) }));
+    return id;
+  }, []);
+
   // The titlebar's rename path, reused verbatim — one write, one failure toast.
-  // Deliberately does NOT dismiss: the title row retires itself once the name
-  // matches, and the folder chips are still worth a click.
+  // An in-place edit renames and nothing more: the chips stay on offer, and
+  // renaming is not filing, so no checklist step moves.
   const applyTitle = useCallback(
-    (title: string = suggestedTitle) => {
+    (title: string) => {
       const clean = title.trim();
       if (!clean || clean === replayName.trim() || !loadedHistoryId) return;
-      // An in-place edit becomes the suggestion, so "name === suggestion" keeps
-      // being the one test that retires the row.
+      // The edit becomes the suggestion, so "name === suggestion" keeps being
+      // the one test that retires the row.
       const edited = !!suggestion && clean !== suggestedTitle;
       if (edited) setFilingSuggestion({ ...suggestion, title: clean });
       const rename = async () => {
@@ -115,7 +147,6 @@ export function FilingSuggestionCard({
         await history.renameHistoryEntry(loadedHistoryId, clean);
         renameReplay(clean);
         toast.success(t("study.filing.titleApplied"));
-        markGettingStarted("filed");
         // Keep the edit across a reopen while chips are still on offer. With
         // none left the card is spent, and the effect above persists the null.
         if (edited && chips.length > 0) await history.persistFilingSuggestion();
@@ -143,34 +174,66 @@ export function FilingSuggestionCard({
   // picked, visibly only after a reload. Hence sequencing rather than `dismiss()`.
   const applyFolder = useCallback(
     (chip: FilingFolderSuggestion) => {
-      let id = chip.folderId;
-      if (id === null) {
-        id = createLocalFolder(chip.name).id;
-        emitFoldersUpdated().catch((e) =>
-          log.warn("filing: folder broadcast failed", { error: String(e) })
-        );
-      }
+      const id = resolveFolder(chip);
+      void flyToFolder(cardRef.current, id);
       setFilingSuggestion(null);
       void refile(personalDestination(id), null)
         .then(() => import("../../lib/history/history"))
         .then((m) => m.persistFilingSuggestion())
         .catch((e) => log.warn("filing: persisting after a move failed", { error: String(e) }));
     },
-    [refile, setFilingSuggestion]
+    [refile, resolveFolder, setFilingSuggestion]
   );
 
-  if (!suggestion || readOnly) return null;
-  if (!showTitle && chips.length === 0) return null;
+  // 採用建議: the whole suggestion in one click — the title (as edited), then
+  // the first folder. Three writes to one meta.json, so strictly in sequence:
+  // rename, move (which ticks "filed", after the name has changed so the lap's
+  // confirmation can say both), then persist the cleared suggestion.
+  const acceptAll = useCallback(() => {
+    if (!loadedHistoryId) return;
+    const title = showTitle ? suggestedTitle : "";
+    const chip = chips[0] ?? null;
+    const target = chip ? resolveFolder(chip) : null;
+    if (target) void flyToFolder(cardRef.current, target);
+    setFilingSuggestion(null);
+    const run = async () => {
+      const history = await import("../../lib/history/history");
+      if (title) {
+        await history.renameHistoryEntry(loadedHistoryId, title);
+        renameReplay(title);
+      }
+      if (target) await refile(personalDestination(target), null);
+      await history.persistFilingSuggestion();
+    };
+    run().catch((e) => {
+      log.error("filing: accepting the suggestion failed", { id: loadedHistoryId, error: String(e) });
+      toast.error(t("replay.renameFailed", { error: e instanceof Error ? e.message : String(e) }));
+    });
+  }, [loadedHistoryId, showTitle, suggestedTitle, chips, resolveFolder, setFilingSuggestion, renameReplay, refile, t]);
+
+  if (!visible) return null;
 
   return (
     // Plain text on the page above a hairline — no tinted box; blue marks
     // only what can be clicked.
-    <div id="filing-suggestion" className="mb-3 scroll-mt-4 border-b border-border pb-3">
+    <div
+      ref={cardRef}
+      id="filing-suggestion"
+      className={`mb-3 scroll-mt-4 border-b border-border pb-3 ${entering ? "ob-spring-in" : ""}`}
+    >
       <div className="flex items-center gap-2">
         <Sparkles className="size-4 shrink-0 text-primary" />
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
           {t("study.filing.heading")}
         </span>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 shrink-0 text-xs text-primary hover:bg-primary/10 hover:text-primary"
+          onClick={acceptAll}
+        >
+          {t("study.filing.apply")}
+        </Button>
         <button
           type="button"
           aria-label={t("study.filing.dismiss")}
@@ -187,15 +250,7 @@ export function FilingSuggestionCard({
           <span className="shrink-0 text-xs text-muted-foreground">
             {t("study.filing.titleLabel")}
           </span>
-          <EditableTitle value={suggestedTitle} onCommit={applyTitle} />
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 shrink-0 text-xs text-primary hover:bg-primary/10 hover:text-primary"
-            onClick={() => applyTitle()}
-          >
-            {t("study.filing.apply")}
-          </Button>
+          <EditableTitle value={suggestedTitle} shown={typedTitle} onCommit={applyTitle} />
         </div>
       )}
 
@@ -247,8 +302,14 @@ export function FilingSuggestionCard({
  */
 function EditableTitle({
   value,
+  shown = value,
   onCommit,
-}: Readonly<{ value: string; onCommit: (title: string) => void }>) {
+}: Readonly<{
+  value: string;
+  /** What to display while not editing (the typewriter's progress). */
+  shown?: string;
+  onCommit: (title: string) => void;
+}>) {
   const { t } = useI18n();
   const [draft, setDraft] = useState<string | null>(null);
   // Esc unmounts the input, and some engines fire blur on the way out — which
@@ -267,7 +328,7 @@ function EditableTitle({
         }}
         className="min-w-0 flex-1 cursor-text truncate rounded px-1 -mx-1 text-left text-sm font-medium transition-colors hover:bg-muted/60"
       >
-        {value}
+        {shown}
       </button>
     );
   }

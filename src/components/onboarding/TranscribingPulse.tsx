@@ -70,8 +70,8 @@ export function TranscribingPulse({ className }: Readonly<{ className?: string }
     >
       <span className="relative h-1 w-24 overflow-hidden rounded-full bg-muted">
         <span
-          className="absolute inset-y-0 left-0 rounded-full bg-primary ease-out motion-reduce:transition-none"
-          style={{ width: filled ? "100%" : "4%", transition: `width ${TRANSCRIBING_MS}ms` }}
+          className="ob-fill absolute inset-y-0 left-0 rounded-full bg-primary"
+          style={{ width: filled ? "100%" : "4%" }}
         />
       </span>
       {t("onboarding.transcribing")}

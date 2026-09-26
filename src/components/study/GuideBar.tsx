@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { ArrowRight, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { useStore } from "../../lib/store";
@@ -12,6 +12,7 @@ import { copyHandoffPrompt, useHandoff } from "../../lib/onboarding/useHandoff";
 import { clientLabel, useMcpActivity } from "../../lib/mcp/activity";
 import { claudeCodeCommand, useMcpEndpoint } from "../../lib/mcp/connect";
 import { modChordCap } from "../../lib/commands/format";
+import { confettiBurst } from "../../lib/onboarding/motion";
 import { CopyButton } from "../CopyButton";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -139,31 +140,13 @@ export function GuideBarView(props: Readonly<GuideBarViewProps>) {
         cta={<PrimaryCta onClick={props.onShowHandoff}>{t("lap.step3.cta")}</PrimaryCta>}
         onDismiss={props.onDismiss}
       >
-        <HandoffStep />
+        {/* The working parts only on the Report, where the hand-off section
+            lives; over the transcript they would eat half the screen. */}
+        {props.tab === "report" && <HandoffStep />}
       </Step>
     );
   } else {
-    body = (
-      <div className="flex items-start gap-3">
-        <CheckMark />
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <p className="text-sm font-semibold">{t("lap.done.title")}</p>
-          <p className="text-xs leading-relaxed text-muted-foreground">{t("lap.done.body")}</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
-            onClick={props.onClose}
-            className="cursor-pointer rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-          >
-            {t("common.close")}
-          </button>
-          <Button size="sm" className="h-8" onClick={props.onBegin}>
-            {t("lap.done.cta")}
-          </Button>
-        </div>
-      </div>
-    );
+    body = <DoneCard onClose={props.onClose} onBegin={props.onBegin} />;
   }
 
   return (
@@ -173,7 +156,7 @@ export function GuideBarView(props: Readonly<GuideBarViewProps>) {
       data-lap={state}
       className="shrink-0 border-t border-border bg-background"
     >
-      <div key={state} className="animate-fade-up mx-auto max-w-3xl px-5 py-3">
+      <div key={state} className="ob-rise mx-auto max-w-3xl px-5 py-3">
         {body}
       </div>
     </section>
@@ -187,11 +170,74 @@ function confirmation(step: LapStep, p: Readonly<GuideBarViewProps>, t: T): stri
   if (step === "filed") {
     if (p.folderName && p.renamed) return t("lap.step1.doneBoth", { folder: p.folderName });
     if (p.folderName) return t("lap.step1.doneFiled", { folder: p.folderName });
-    return t("lap.step1.doneRenamed");
+    // Filed somewhere this page can't name (an org folder, say).
+    return t("home.gs.done");
   }
   // "handedOff" goes straight to the done card; only step 2 is left.
   return t("lap.step2.done", { shortcut: modChordCap("F") });
 }
+
+/** Delay between the done card's ✓ lines. */
+const CASCADE_MS = 260;
+
+/**
+ * The finish: the three things the user just did land as ✓ lines, one after
+ * another, then one burst of confetti inside the study page — once per
+ * recording, never again.
+ */
+function DoneCard({ onClose, onBegin }: Readonly<{ onClose: () => void; onBegin: () => void }>) {
+  const { t } = useI18n();
+  const ref = useRef<HTMLDivElement | null>(null);
+  const entryId = useStore((s) => s.loadedHistoryId);
+  const lines = [t("lap.done.line1"), t("lap.done.line2"), t("lap.done.line3")];
+
+  useEffect(() => {
+    if (!entryId || celebrated.has(entryId)) return;
+    const id = setTimeout(() => {
+      celebrated.add(entryId);
+      const bar = ref.current?.closest<HTMLElement>("[data-testid='guide-bar']") ?? null;
+      confettiBurst(ref.current?.closest<HTMLElement>("[data-study-root]") ?? null, bar);
+    }, CASCADE_MS * lines.length + 150);
+    return () => clearTimeout(id);
+  }, [entryId, lines.length]);
+
+  return (
+    <div ref={ref} className="flex items-start gap-3">
+      <CheckMark />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <p className="text-sm font-semibold">{t("lap.done.title")}</p>
+        <ul className="flex flex-wrap gap-x-4 gap-y-0.5">
+          {lines.map((line, i) => (
+            <li
+              key={line}
+              className="ob-rise flex items-center gap-1.5 text-xs"
+              style={{ animationDelay: `${i * CASCADE_MS}ms` }}
+            >
+              <Check className="size-3 text-success-foreground" strokeWidth={3} />
+              {line}
+            </li>
+          ))}
+        </ul>
+        <p className="text-xs leading-relaxed text-muted-foreground">{t("lap.done.body")}</p>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <button
+          type="button"
+          onClick={onClose}
+          className="cursor-pointer rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          {t("common.close")}
+        </button>
+        <Button size="sm" className="h-8" onClick={onBegin}>
+          {t("lap.done.cta")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Recordings whose lap has had its confetti this session. */
+const celebrated = new Set<string>();
 
 function CheckMark() {
   return (

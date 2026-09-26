@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useCommandShortcut } from "../../lib/commands/bind";
 import { markGettingStarted, useHint } from "../../lib/onboarding/gettingStarted";
 import { useLapContext } from "../../lib/onboarding/lap";
+import { emitTranscriptSeek } from "../../lib/onboarding/motion";
 import type { TranscriptSegment } from "../../lib/types";
 
 interface ReplayTranscriptProps {
@@ -89,6 +90,8 @@ export function ReplayTranscript({
   // A line click is the user's seek — it ticks the checklist (not in the wizard
   // preview) and retires the hint that taught it.
   function seekToLine(ms: number) {
+    // Before the seek lands, so the scrubber has its easing on when it moves.
+    if (!preview) emitTranscriptSeek(ms);
     onSeek(ms);
     if (preview) return;
     markGettingStarted("replayed");
@@ -317,7 +320,7 @@ export function ReplayTranscript({
                   "hover:bg-muted/60",
                   active && "bg-primary/10",
                   isCurrentMatch && "ring-1 ring-warning-border",
-                  pulsing && i === 0 && "animate-pulse bg-primary/10 ring-1 ring-primary/30",
+                  pulsing && i === 0 && "ob-soft-pulse bg-primary/10 ring-1 ring-primary/30",
                   masked && "opacity-35",
                   trimmed && "opacity-50"
                 )}

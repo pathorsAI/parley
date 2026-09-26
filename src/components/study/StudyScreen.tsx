@@ -48,7 +48,8 @@ export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: numb
   // lib/analysis/studyPipeline.ts) that runs no matter which screen is up.
   return (
     <LapContext.Provider value={lap}>
-      <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+      {/* data-study-root: the stage the lap's confetti is clipped to. */}
+      <div data-study-root className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
         {/* Ask floats over the page, so it sits above the guide bar, not on it. */}
         <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
           {tab === "replay" ? (

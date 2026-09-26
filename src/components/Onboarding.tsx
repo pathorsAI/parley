@@ -12,6 +12,7 @@ import { beginMeeting } from "../lib/meeting/start";
 import { loadSampleRecording } from "../lib/onboarding/sample";
 import { openRecording } from "./home/GettingStarted";
 import { TranscribingPulse, useTranscribingPulse } from "./onboarding/TranscribingPulse";
+import { IntroStage } from "./onboarding/IntroStage";
 import { useI18n, LANGUAGE_OPTIONS } from "../i18n";
 import { Flag } from "./ui/flag";
 import { Button } from "@/components/ui/button";
@@ -187,18 +188,10 @@ export function Onboarding() {
               </div>
               <div className="flex flex-col gap-3">
                 <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.intro.title")}</h2>
-                {/* "Both sides of the conversation" is a macOS promise: the
-                    system-audio tap has no Windows counterpart yet, and the first
-                    thing a Windows user reads should not be a capability the app
-                    doesn't have. */}
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  {t(isMac() ? "onboarding.intro.body" : "onboarding.intro.body.windows")}
-                </p>
-                <ul className="flex flex-col gap-1.5 text-sm text-muted-foreground">
-                  <li>• {t("onboarding.intro.point1")}</li>
-                  <li>• {t("onboarding.intro.point2")}</li>
-                  <li>• {t("onboarding.intro.point3")}</li>
-                </ul>
+                {/* The UI assembles itself: pill, transcript, folder, plug —
+                    one caption per beat. "Both sides of the conversation" is a
+                    macOS promise, so Windows gets its own first caption. */}
+                <IntroStage />
               </div>
             </div>
           )}

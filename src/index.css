@@ -333,6 +333,89 @@ textarea,
   }
 }
 
+/* ── onboarding motion ────────────────────────────────────────────────────────
+   Every keyframe and transition the first-run lap uses lives in this block
+   (the Web Animations API pieces are in src/lib/onboarding/motion.ts and use
+   the same curve). One easing, 400–700 ms per beat; the only longer ones are
+   the transcribing bar, which tracks its 1.5 s wait, and the looping dots.
+   Under reduced motion everything lands on its final state at once. */
+:root {
+  --ob-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes ob-scale-in {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ob-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes ob-slide-in {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ob-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+/* A spring: overshoots a hair past rest, then settles. */
+@keyframes ob-spring-in {
+  0% { opacity: 0; transform: translateY(16px) scale(0.98); }
+  65% { opacity: 1; transform: translateY(-3px) scale(1.006); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes ob-flash {
+  0%, 100% { background-color: transparent; }
+  35% { background-color: color-mix(in oklab, var(--primary) 10%, transparent); }
+}
+@keyframes ob-soft-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@keyframes ob-blink {
+  from { opacity: 1; }
+  to { opacity: 0.25; }
+}
+@keyframes ob-ripple {
+  from { width: 0; height: 0; opacity: 1; }
+  to { width: 70px; height: 70px; opacity: 0; }
+}
+.ob-scale-in { animation: ob-scale-in 500ms var(--ob-ease) both; }
+.ob-fade-in { animation: ob-fade-in 400ms var(--ob-ease) both; }
+.ob-slide-in { animation: ob-slide-in 450ms var(--ob-ease) both; }
+.ob-rise { animation: ob-rise 400ms var(--ob-ease) both; }
+.ob-spring-in { animation: ob-spring-in 600ms var(--ob-ease) both; }
+.ob-flash { animation: ob-flash 500ms var(--ob-ease); }
+/* ~2 s in all: three soft beats, then rest. */
+.ob-soft-pulse { animation: ob-soft-pulse 700ms var(--ob-ease) 3; }
+.ob-blink { animation: ob-blink 700ms var(--ob-ease) infinite alternate; }
+.ob-ripple {
+  position: absolute;
+  top: 50%;
+  border: 2px solid var(--primary);
+  border-radius: 9999px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  animation: ob-ripple 700ms var(--ob-ease) forwards;
+}
+/* The replay playhead gliding to a clicked transcript line. */
+.ob-seek-ease { transition: left 500ms var(--ob-ease), width 500ms var(--ob-ease); }
+/* State changes that should glide rather than snap (the plug lighting up). */
+.ob-transition {
+  transition: color 500ms var(--ob-ease), background-color 500ms var(--ob-ease),
+    box-shadow 500ms var(--ob-ease), opacity 500ms var(--ob-ease);
+}
+/* The transcribing bar fills over exactly the wait it stands for. */
+.ob-fill { transition: width 1500ms var(--ob-ease); }
+@media (prefers-reduced-motion: reduce) {
+  .ob-scale-in, .ob-fade-in, .ob-slide-in, .ob-rise, .ob-spring-in,
+  .ob-flash, .ob-soft-pulse, .ob-blink {
+    animation: none;
+  }
+  .ob-ripple { display: none; }
+  .ob-seek-ease, .ob-transition, .ob-fill { transition: none; }
+}
+
 /* Cursor behaviour: interactive controls (buttons, tabs, dropdown triggers
    and items, links, and custom role="button" elements) use the pointing-hand
    cursor. Text inputs keep their default I-beam; disabled controls do not. */
