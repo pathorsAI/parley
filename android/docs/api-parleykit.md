@@ -114,7 +114,7 @@ passes `"dictation"` for the keyboard, which the relay does *not* recognize — 
 sealed interface SttRelayEvent {
     data class Segment(val segment: TranscriptSegment) : SttRelayEvent
     data class Closed(val reason: String) : SttRelayEvent
-    data class Error(val message: String) : SttRelayEvent
+    data class Error(val message: String, val httpStatus: Int? = null) : SttRelayEvent
     data class QuotaExceeded(val message: String) : SttRelayEvent
 }
 ```
@@ -131,7 +131,7 @@ after the one terminal event (`Closed` / `Error` / `QuotaExceeded`) — so a
 | server close frame | `Closed("close code=<code> <reason>")` |
 | in-band `error_code` | `Error("relay error <code>: <message>")` |
 | transport died mid-stream | `Closed("close code=0 <cause>")` |
-| handshake rejected (401/429/…) | `Error("relay handshake failed: HTTP <code> <msg>")` |
+| handshake rejected (401/429/…) | `Error("relay handshake failed: HTTP <code> <msg>", httpStatus = <code>)` |
 | out of hosted STT quota | `QuotaExceeded(...)` |
 
 `QuotaExceeded` is the one behavioral addition over the Swift client (OkHttp
@@ -144,6 +144,12 @@ prompt instead of a generic failure:
 - the relay's mid-session hard cut: close **1011** with `"quota"` in the reason.
 
 Message strings are otherwise byte-identical to the Swift client's.
+
+`Error.httpStatus` is the second, smaller addition: a rejected handshake carries
+the status the relay answered with, so a caller can tell a dead session
+(`isUnauthorized`, HTTP 401 — send the user back to sign in) from a wait (429)
+without parsing the message. It is null for an in-band error frame, whose code
+belongs to the transcription vendor rather than to the caller's session.
 
 ### (a) Live mic streaming
 
