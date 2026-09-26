@@ -127,6 +127,12 @@
     <string name="meeting_mic_lost_taken">麥克風被其他程式佔住了。目前錄到的內容都還在；把 Parley 切到前景可以再試一次。</string>
     <string name="meeting_mic_lost_broken">麥克風停止運作了。目前錄到的內容都還在——結束會議就會存下來。</string>
     <string name="meeting_storage_low">這支手機的儲存空間快滿了。空間用完之前，Parley 會先停止並存下錄音。</string>
+    <string name="meeting_mic_back">麥克風已恢復——錄音持續中</string>
+    <string name="meeting_mic_lost_broken_detail">麥克風已中斷：%1$s。目前錄到的內容都還在——結束會議就會存下來。</string>
+    <string name="meeting_stopped_mic">提前結束——失去麥克風</string>
+    <string name="meeting_stopped_mic_permission">提前結束——麥克風權限被關閉</string>
+    <string name="meeting_stopped_storage">提前結束——手機儲存空間不足</string>
+    <string name="meeting_stopped_other">提前結束——發生了未預期的錯誤</string>
     <string name="meeting_title_format">會議 %1$s</string>
     <string name="speaker_label">說話者 %1$d</string>
     <string name="speaker_unknown">說話者</string>

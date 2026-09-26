@@ -54,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -62,6 +63,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.pathors.parley.R
+import com.pathors.parley.audio.MicRecoveryState
+import com.pathors.parley.kit.CaptureRecovery
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.meeting.LiveMeeting
 import com.pathors.parley.meeting.MeetingFailure
@@ -221,7 +224,8 @@ private fun shouldRequestConsent(
 @Composable
 private fun DemoMeetingScreen(onDone: () -> Unit) {
     val context = LocalContext.current
-    val demo = rememberDemoMeeting()
+    val navigation by DemoMode.navigation.collectAsState()
+    val demo = rememberDemoMeeting(navigation?.scenario ?: DemoMode.MeetingScenario.LIVE)
     // One exception, for the Play foreground-service declaration video: if
     // RECORD_AUDIO happens to be granted already, run the real service in
     // notification-only mode so the ongoing notification can be filmed. A plain
@@ -352,21 +356,60 @@ private fun MeetingContent(
     onDone: () -> Unit,
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val state by session.state.collectAsState()
     val segments by session.segments.collectAsState()
     val issue by session.issue.collectAsState()
     val level by session.level.collectAsState()
     val elapsed by session.elapsedMs.collectAsState()
     val micSilenced by session.micSilenced.collectAsState()
+    val micRecovery by session.micRecovery.collectAsState()
+    val storageLow by session.storageLow.collectAsState()
+    val live = state is MeetingState.Recording || state is MeetingState.Connecting
 
     // A finished meeting is a transient state: show the outcome for a beat, drop
     // the session, and go back to the library where the new recording now lives.
+    //
+    // Except when the user did not end it. A meeting the microphone or the disk
+    // ended has something to say about *why*, and 1.2 s is not long enough to
+    // read it — it used to flash "Uploaded" and vanish, which read as though the
+    // user had tapped Stop. That outcome stays on screen until they close it,
+    // the way iOS leaves its status line up after the recorder goes idle.
     LaunchedEffect(state) {
-        if (state is MeetingState.Finished) {
-            delay(1_200)
-            MeetingService.clear()
-            onDone()
+        val finished = state as? MeetingState.Finished ?: return@LaunchedEffect
+        if (finished.interruptedBy != null) return@LaunchedEffect
+        delay(1_200)
+        MeetingService.clear()
+        onDone()
+    }
+
+    // The microphone opening. On the transition only, so returning to a meeting
+    // already under way (or the screenshot demo, which starts mid-meeting) does
+    // not buzz as though it had just begun.
+    val lastState = remember { StateRef<MeetingState?>(null) }
+    LaunchedEffect(state) {
+        val before = lastState.value
+        lastState.value = state
+        if (state is MeetingState.Recording && before is MeetingState.Connecting) {
+            MeetingHaptics.recordingStarted(view)
         }
+    }
+
+    // "Microphone is back" is news for a moment, not a state: shown for a few
+    // seconds after recovery, then the line goes quiet again.
+    var micBack by remember { mutableStateOf(false) }
+    val lastRecovery = remember { StateRef<MicRecoveryState>(micRecovery) }
+    LaunchedEffect(micRecovery) {
+        val before = lastRecovery.value
+        lastRecovery.value = micRecovery
+        if (micRecovery is MicRecoveryState.Lost && before !is MicRecoveryState.Lost) {
+            MeetingHaptics.microphoneLost(view)
+        }
+        if (micRecovery is MicRecoveryState.Holding && before !is MicRecoveryState.Holding) {
+            micBack = true
+            delay(MIC_BACK_NOTICE_MS)
+        }
+        micBack = false
     }
 
     Column(
@@ -410,14 +453,32 @@ private fun MeetingContent(
         Spacer(Modifier.height(12.dp))
         LevelMeter(level = level, live = state is MeetingState.Recording)
 
-        // Louder than the transcription banner on purpose: a silenced mic means
-        // the audio itself is empty, which is the one failure nothing later can
-        // recover from.
-        if (micSilenced) {
+        // Louder than the transcription banner on purpose: a microphone that is
+        // silenced, being fought for or gone means the audio itself is empty,
+        // which is the one failure nothing later can recover from.
+        if (live) {
+            micNotice(micRecovery, micSilenced, micBack)?.let { notice ->
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = notice.text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (notice.alarming) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        }
+
+        // Still recording, but not for much longer unless something is freed.
+        // The session stops and saves on its own before the disk fills; this is
+        // the warning that gives the user the chance to prevent that.
+        if (live && storageLow) {
             Spacer(Modifier.height(12.dp))
             Text(
-                text = stringResource(R.string.meeting_mic_silenced),
-                style = MaterialTheme.typography.bodyMedium,
+                text = stringResource(R.string.meeting_storage_low),
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
         }
@@ -434,6 +495,27 @@ private fun MeetingContent(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
+        }
+
+        (state as? MeetingState.Finished)?.takeIf { it.interruptedBy != null }?.let { finished ->
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = stringResource(R.string.meeting_interrupted),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = stringResource(
+                    if (finished.pendingUpload) R.string.meeting_queued else R.string.meeting_uploaded
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = {
+                MeetingService.clear()
+                onDone()
+            }) {
+                Text(stringResource(R.string.action_close))
+            }
         }
 
         (state as? MeetingState.Failed)?.let { failed ->
@@ -456,9 +538,15 @@ private fun MeetingContent(
             LiveTranscript(segments)
         }
 
-        if (state is MeetingState.Recording || state is MeetingState.Connecting) {
+        if (live) {
             Button(
-                onClick = onStop,
+                onClick = {
+                    // On the tap, not when the upload lands: the beat answers
+                    // the press, and closing, draining and uploading are
+                    // seconds of work.
+                    MeetingHaptics.recordingStopped(view)
+                    onStop()
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     // A minimum, not a height: at the largest accessibility font
@@ -505,6 +593,7 @@ private fun MeetingContent(
  */
 @Composable
 private fun DiscardControl(onDiscard: () -> Unit, modifier: Modifier = Modifier) {
+    val view = LocalView.current
     var confirming by rememberSaveable { mutableStateOf(false) }
     val label = stringResource(R.string.meeting_discard)
     TextButton(
@@ -525,6 +614,7 @@ private fun DiscardControl(onDiscard: () -> Unit, modifier: Modifier = Modifier)
             confirmButton = {
                 TextButton(onClick = {
                     confirming = false
+                    MeetingHaptics.recordingDiscarded(view)
                     onDiscard()
                 }) {
                     Text(
@@ -590,6 +680,7 @@ private fun statusLabel(state: MeetingState): String = when (state) {
     MeetingState.Finishing -> stringResource(R.string.meeting_finishing)
     MeetingState.Uploading -> stringResource(R.string.meeting_uploading)
     is MeetingState.Finished -> when {
+        state.interruptedBy != null -> stoppedEarlyLabel(state.interruptedBy)
         state.dropped -> stringResource(R.string.meeting_dropped)
         state.pendingUpload -> stringResource(R.string.meeting_queued)
         else -> stringResource(R.string.meeting_uploaded)
@@ -597,6 +688,66 @@ private fun statusLabel(state: MeetingState): String = when (state) {
 
     is MeetingState.Failed -> failureMessage(state.reason)
 }
+
+/**
+ * How a meeting ended when the user was not the one who ended it — the status
+ * line of an interrupted [MeetingState.Finished].
+ */
+@Composable
+private fun stoppedEarlyLabel(reason: MeetingFailure): String = stringResource(
+    when (reason) {
+        MeetingFailure.MIC_UNAVAILABLE -> R.string.meeting_stopped_mic
+        MeetingFailure.MIC_PERMISSION -> R.string.meeting_stopped_mic_permission
+        MeetingFailure.STORAGE_FULL -> R.string.meeting_stopped_storage
+        MeetingFailure.NOT_SIGNED_IN,
+        MeetingFailure.ENCODER_UNAVAILABLE,
+        MeetingFailure.UPLOAD_FAILED,
+        MeetingFailure.UNKNOWN,
+        -> R.string.meeting_stopped_other
+    }
+)
+
+/** One line of microphone status, and whether it is bad news. */
+private class MicNotice(val text: String, val alarming: Boolean)
+
+/**
+ * The single microphone line, the way iOS shows its one status line
+ * (`MeetingRecorder.handle(_: AudioCapture.Status)`), in priority order: lost,
+ * being fought for, silenced, back. Never two at once — a silenced microphone
+ * is usually *also* recovering, and two banners saying the same thing in
+ * different words read as two problems.
+ */
+@Composable
+private fun micNotice(recovery: MicRecoveryState, silenced: Boolean, back: Boolean): MicNotice? =
+    when (recovery) {
+        is MicRecoveryState.Lost -> MicNotice(
+            text = when (val loss = recovery.loss) {
+                CaptureRecovery.Loss.TakenBySystem -> stringResource(R.string.meeting_mic_lost_taken)
+                is CaptureRecovery.Loss.Broken -> loss.description
+                    ?.let { stringResource(R.string.meeting_mic_lost_broken_detail, it) }
+                    ?: stringResource(R.string.meeting_mic_lost_broken)
+            },
+            alarming = true,
+        )
+
+        MicRecoveryState.Recovering ->
+            MicNotice(stringResource(R.string.meeting_mic_recovering), alarming = true)
+
+        MicRecoveryState.Holding -> when {
+            silenced -> MicNotice(stringResource(R.string.meeting_mic_silenced), alarming = true)
+            back -> MicNotice(stringResource(R.string.meeting_mic_back), alarming = false)
+            else -> null
+        }
+    }
+
+/**
+ * A plain mutable box for the previous value an effect compares against. Not
+ * snapshot state on purpose: writing it must not recompose anything.
+ */
+private class StateRef<T>(var value: T)
+
+/** How long "Microphone is back" stays up after a recovery. */
+private const val MIC_BACK_NOTICE_MS = 4_000L
 
 @Composable
 private fun failureMessage(reason: MeetingFailure): String = when (reason) {
