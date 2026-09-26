@@ -214,12 +214,12 @@ claude mcp add --transport http parley \
         A neutral chat client drawn in HTML (no vendor's UI or marks). script.js plays it
         once when it scrolls into view; without JS or with reduced motion it is the final state.
       -->
-      <div class="row__vis panel chat fade" role="img" aria-label="{{ai.chatAlt|attr}}">
+      <figure class="row__vis panel chat fade" aria-label="{{ai.chatAlt|attr}}">
         <p class="chat__q">{{ai.chatQ}}</p>
         <p class="chat__tool">{{ai.chatTool}}</p>
         <p class="chat__a">{{ai.chatA}}</p>
-        <div class="chat__box"><span></span><i></i></div>
-      </div>
+        <div class="chat__box" aria-hidden="true"><span></span><i></i></div>
+      </figure>
     </div>
   </section>
 
