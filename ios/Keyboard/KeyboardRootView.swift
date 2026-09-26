@@ -90,6 +90,7 @@ struct KeyboardRootView: View {
             .clipped()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlayPreferenceValue(PressedKeys.self) { KeyCalloutLayer(dark: dark, keys: $0) }
     }
 
     @ViewBuilder

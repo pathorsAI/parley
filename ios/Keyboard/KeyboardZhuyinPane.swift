@@ -134,6 +134,7 @@ struct ZhuyinPane: View {
         let tone = ZhuyinTone.mark(symbol)
         return KeyButton(
             dark: dark, width: width, height: KBMetrics.zhuyinKeyHeight,
+            callout: String(symbol),
             action: {
                 if let tone {
                     bridge.zhuyinTone(tone)
