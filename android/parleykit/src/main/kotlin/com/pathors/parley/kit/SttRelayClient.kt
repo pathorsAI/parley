@@ -95,7 +95,7 @@ sealed interface SttRelayEvent {
  * of it would be pointless, so it throttles itself against the socket and then
  * hands over through the same queue, keeping one ordered path to the wire.
  */
-class SttRelayClient(private val options: Options) {
+class SttRelayClient(private val options: Options) : PcmSink {
 
     /**
      * @property bearerToken cloud session token for the `Authorization` header.
@@ -260,8 +260,12 @@ class SttRelayClient(private val options: Options) {
      * reading — the oldest chunk in it is dropped to make room. Transcription
      * loses a few seconds and the microphone loses nothing, which is the only
      * ordering of those two that is recoverable afterwards.
+     *
+     * A live meeting does not call this directly: it goes through
+     * [RelayAudioBridge], which holds the audio spoken while there is no leg
+     * and flushes it into the next one.
      */
-    fun enqueuePcm(bytes: ByteArray) {
+    override fun enqueuePcm(bytes: ByteArray) {
         if (terminated.get()) return
         outbound.trySend(bytes)
     }
