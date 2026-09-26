@@ -75,3 +75,42 @@ npm run test:watch
 Config lives in [`vitest.config.ts`](../vitest.config.ts) — `environment: "node"`
 (the store + pure functions need no DOM); switch a file to `jsdom` only if a test
 genuinely needs the DOM.
+
+## Windows: what only a Windows machine can check
+
+CI builds and lints the Windows target (`cargo clippy --target
+x86_64-pc-windows-msvc` on `windows-latest`), and the unit suite is
+platform-neutral, so neither says anything about how the Windows build
+*behaves*. Nobody on the core team develops on Windows, so these need a real
+Windows 10/11 machine — walk them before a release that touches the areas
+involved:
+
+- **Tray icon** (`src-tauri/src/tray.rs`). The Parley icon appears in the
+  notification area (on Windows 11 it may start behind the ^ overflow arrow);
+  hovering shows "Parley"; left click brings the window back, including after it
+  was minimized; right click shows Open Parley / Start voice typing / Quit
+  Parley, in the app's language, and switching the language in Settings
+  relabels them.
+- **Close-to-tray** (`hideToTray` in `src/App.tsx`). The close button hides the
+  window instead of quitting; the first time only, a dialog explains where it
+  went. Voice typing's shortcut still works with the window hidden. Closing
+  mid-meeting ends and saves the meeting before hiding. Launching Parley again
+  (Start menu, taskbar pin) shows the hidden window rather than starting a
+  second copy. Quit Parley from the tray ends the process (check Task Manager),
+  and mid-meeting it saves the meeting first.
+- **Tray voice typing.** Start voice typing opens the overlay and the item
+  turns into Stop voice typing; the second click ends the dictation and the
+  text lands on the clipboard. Where it pastes depends on which window is in
+  front when the dictation ends — after a tray click that is usually not your
+  document, so the clipboard is the reliable result.
+- **Clipboard paste** (`paste_to_frontmost` in `src-tauri/src/voice_typing.rs`).
+  Dictating into Notepad, a browser text field and an Office app pastes the
+  text at the caret, and the held Ctrl+Alt of the shortcut does not turn the
+  paste into Ctrl+Alt+V.
+- **UIPI clipboard-only fallback.** Dictating into a window running as
+  administrator (e.g. an elevated terminal) cannot paste — Windows blocks
+  input injection into higher-integrity processes. The overlay should say the
+  text is on the clipboard, and Ctrl+V should paste it.
+- **Caches** (Settings › MCP Server › Caches). The only way to clear caches on
+  Windows, which draws no menu bar: sizes show, each Clear works, and Clear all
+  asks first.
