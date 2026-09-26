@@ -161,6 +161,43 @@ pub async fn save_remote_history_entry(
     Ok(dir.to_string_lossy().into_owned())
 }
 
+/// Write the bundled onboarding sample's `audio.ogg` from bytes the webview
+/// sends as the raw IPC body (entry id in the `x-entry-id` header). The sample's
+/// audio ships inside the frontend assets, not as a file Rust can reach, so no
+/// path-based save fits. Writes ONLY the recording: the caller then saves
+/// meta/summary through [`save_history_entry`], keeping the on-disk invariant
+/// that a summary claiming `hasAudio` always has `audio.ogg`.
+///
+/// Restricted to `sample-` ids so a webview bug can never overwrite a real
+/// recording through this door.
+#[tauri::command]
+pub async fn write_sample_audio(
+    app: AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> Result<(), String> {
+    const MAX_BYTES: usize = 20 * 1024 * 1024;
+    let id = request
+        .headers()
+        .get("x-entry-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("missing x-entry-id header")?
+        .to_string();
+    if !id.starts_with("sample-") {
+        return Err("write_sample_audio only accepts sample entries".into());
+    }
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected a raw audio body".into());
+    };
+    if bytes.is_empty() || bytes.len() > MAX_BYTES {
+        return Err(format!("sample audio has an unexpected size ({} bytes)", bytes.len()));
+    }
+    let dir = history_dir(&app)?.join(safe_id(&id));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("audio.ogg"), bytes).map_err(|e| e.to_string())?;
+    log::info!("history: wrote sample audio {}", dir.to_string_lossy());
+    Ok(())
+}
+
 /// Download a cloud audio file to a temp cache path and return it, so an ORG
 /// recording can be replayed WITHOUT persisting it under the personal `history/`
 /// dir (org recordings must never pollute the local history list). Fetched here
