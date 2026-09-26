@@ -185,6 +185,7 @@ pub fn run() {
             history::rename_history_entry,
             history::delete_history_entry,
             history::read_transcript_file,
+            history::write_sample_audio,
             diarize::download_diarize_model,
             diarize::diarize_model_status,
             mcp::get_mcp_server_info,

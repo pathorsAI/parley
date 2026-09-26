@@ -16,6 +16,7 @@ import { log } from "../log";
 import { CLOUD_URL, cloudFetch, cloudToken, isAuthError, syncEnabled } from "./client";
 import { buildSummary, listHistory, deleteHistoryEntry } from "../history/history";
 import { pruneSyncMeta, readSyncIndex, setSynced, setSyncedMany } from "./syncState";
+import { isSampleEntry } from "../onboarding/sample";
 import type { HistoryEntry, HistoryEntrySummary } from "../history/types";
 import type { CloudRecordingSummary } from "./types";
 
@@ -71,6 +72,10 @@ export async function pushLocalEntry(id: string): Promise<void> {
 /** The actual push: summary + full entry JSON, with the audio uploaded first. */
 async function pushLocalEntryNow(id: string): Promise<void> {
   if (!isTauri() || !cloudToken()) return;
+  // The bundled onboarding sample stays on this device: it is demo content, not
+  // the user's recording, so it must never land in their cloud account. Every
+  // push (inline save paths and the sweep) funnels through here.
+  if (isSampleEntry({ id })) return;
   const { meta, audioPath } = await invoke<{ meta: HistoryEntry; audioPath: string | null }>(
     "read_history_entry",
     { id }
@@ -230,7 +235,11 @@ export async function pushUnsyncedToCloud(): Promise<number> {
   // Decided up front from one snapshot (see readSyncIndex). An entry marked dirty
   // while the sweep runs is caught by the next one, like any other late change.
   const syncIndex = readSyncIndex();
-  const toPush = local.filter((e) => !cloudIds.has(e.id) || syncIndex[e.id]?.dirty === true);
+  // The sample is never pushed (see pushLocalEntryNow) — leave it out so the
+  // sweep doesn't count it as pushed on every pass.
+  const toPush = local.filter(
+    (e) => !isSampleEntry(e) && (!cloudIds.has(e.id) || syncIndex[e.id]?.dirty === true),
+  );
   let pushed = 0;
   for (const e of toPush) {
     try {
