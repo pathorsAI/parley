@@ -21,6 +21,22 @@ struct RecordingDetailView: View {
     let summary: CloudRecordingSummary
     /// nil = personal scope; set = org scope.
     let orgId: String?
+    /// What the screen was opened *for*. The getting-started checklist opens a
+    /// recording to file it or to hand it off, and landing on the transcript
+    /// with nothing else happening would leave the user to find the menu the
+    /// row was pointing at.
+    let intent: Intent
+    /// Called after the recording moves folder here, so the Library row it was
+    /// opened from can show the new folder without a reload.
+    let onFolderChange: ((String?) -> Void)?
+
+    enum Intent {
+        case read
+        /// Ask where to file it once the transcript is up.
+        case file
+        /// Open the share sheet with the analysis prompt once it is up.
+        case share
+    }
 
     @State private var meta: RecordingMeta?
     @State private var error: String?
@@ -105,11 +121,37 @@ struct RecordingDetailView: View {
     /// thing the reader has.
     @State private var reTranscribeError: String?
 
-    init(summary: CloudRecordingSummary, orgId: String?) {
+    /// The share sheet with the hand-off prompt. Owned here rather than by the
+    /// toolbar menu because the checklist can ask for it too (`Intent.share`).
+    @State private var sharingToAI = false
+    /// Whether `intent` has been acted on, so a reload does not re-open it.
+    @State private var intentHandled = false
+    /// The personal folders, for "Move to folder". Personal scope only, like
+    /// the rest of the overflow menu.
+    @State private var folders: [CloudFolder] = []
+    /// Where the recording is filed now. Seeded from the library row and moved
+    /// by this screen; the row's own `summary` is a `let`.
+    @State private var currentFolderId: String?
+    @State private var choosingFolder = false
+    @State private var creatingFolder = false
+    @State private var newFolderName = ""
+    @State private var moveError: String?
+
+    init(
+        summary: CloudRecordingSummary, orgId: String?, intent: Intent = .read,
+        onFolderChange: ((String?) -> Void)? = nil
+    ) {
         self.summary = summary
         self.orgId = orgId
+        self.intent = intent
+        self.onFolderChange = onFolderChange
         _playback = StateObject(wrappedValue: PlaybackController(recordingId: summary.id))
+        _currentFolderId = State(initialValue: summary.folderId)
     }
+
+    /// The bundled sample: local-only, so the cloud actions are not offered on
+    /// it. See `SampleRecordingStore`.
+    private var isSample: Bool { SampleManifest.isSample(id: summary.id) }
 
     var body: some View {
         Group {
@@ -141,11 +183,46 @@ struct RecordingDetailView: View {
             ToolbarItem(placement: .topBarTrailing) { searchButton }
             ToolbarItem(placement: .topBarTrailing) { downloadControl }
             ToolbarItem(placement: .topBarTrailing) {
-                CopyTranscriptButton(
-                    text: plainTranscript,
-                    isEmpty: readable.isEmpty)
+                TranscriptShareMenu(
+                    plain: plainTranscript,
+                    withPrompt: handoffText,
+                    isEmpty: readable.isEmpty,
+                    share: { sharingToAI = true })
             }
         }
+        .sheet(isPresented: $sharingToAI) {
+            ShareSheet(items: [handoffText()]) { completed in
+                sharingToAI = false
+                if completed { GettingStartedStore.shared.mark(.sharedToAI) }
+            }
+            .presentationDetents([.medium, .large])
+            .ignoresSafeArea()
+        }
+        .confirmationDialog(
+            "Move to folder", isPresented: $choosingFolder, titleVisibility: .visible
+        ) {
+            ForEach(folders) { folder in
+                Button(folder.id == currentFolderId ? "\(folder.name) ✓" : folder.name) {
+                    Task { await moveToFolder(folder.id) }
+                }
+            }
+            if currentFolderId != nil {
+                Button("Unfiled (top level)") { Task { await moveToFolder(nil) } }
+            }
+            Button("New folder…") {
+                newFolderName = ""
+                creatingFolder = true
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("One customer, one folder.")
+        }
+        .alert("New folder", isPresented: $creatingFolder) {
+            TextField("Folder name", text: $newFolderName)
+            Button("Cancel", role: .cancel) {}
+            Button("Create and move") { Task { await createFolderAndMove() } }
+        }
+        .task { await loadFolders() }
         .confirmationDialog(
             "Re-transcribe this recording?",
             isPresented: $confirmingReTranscribe,
@@ -302,16 +379,23 @@ struct RecordingDetailView: View {
     private var overflowMenu: some View {
         if orgId == nil {
             Menu {
-                Section {
-                    Button("Re-transcribe", systemImage: "arrow.clockwise") {
-                        confirmingReTranscribe = true
+                Button("Move to folder…", systemImage: "folder") {
+                    choosingFolder = true
+                }
+                // The sample's transcript is written, not transcribed, and its
+                // audio is not in the cloud to be sent again.
+                if !isSample {
+                    Section {
+                        Button("Re-transcribe", systemImage: "arrow.clockwise") {
+                            confirmingReTranscribe = true
+                        }
+                        .disabled(!canReTranscribe)
+                    } header: {
+                        // Localized on the way in by `reTranscribeNote`, so
+                        // `verbatim` — a key lookup here would look up a sentence
+                        // that is already the answer.
+                        if let note = reTranscribeNote { Text(verbatim: note) }
                     }
-                    .disabled(!canReTranscribe)
-                } header: {
-                    // Localized on the way in by `reTranscribeNote`, so
-                    // `verbatim` — a key lookup here would look up a sentence
-                    // that is already the answer.
-                    if let note = reTranscribeNote { Text(verbatim: note) }
                 }
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
@@ -459,6 +543,12 @@ struct RecordingDetailView: View {
         return TranscriptClipboard.plainText(readable) { meta.speakerLabel(for: $0) }
     }
 
+    /// The analysis prompt and the transcript, for the user's own AI.
+    private func handoffText() -> String {
+        guard let meta, !readable.isEmpty else { return "" }
+        return HandoffPrompt.build(summary: summary, meta: meta)
+    }
+
     /// One continuous column, the way the desktop reads a transcript: the meta
     /// line, the highlights, then turn after turn separated by whitespace. No
     /// rows, no rules, no cards — the speaker label is what marks a turn's start,
@@ -480,6 +570,12 @@ struct RecordingDetailView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 22) {
                     reTranscribeStatus
+                    if let moveError {
+                        Text(verbatim: moveError)
+                            .font(.parley.footnote)
+                            .foregroundStyle(Theme.destructive)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     header(meta)
                     findings(meta)
                     if segments.isEmpty {
@@ -1076,6 +1172,17 @@ struct RecordingDetailView: View {
     }
 
     private func load() async {
+        defer { handleIntent() }
+        // The sample is read from the bundle, never the cloud — see
+        // `SampleRecordingStore`.
+        if isSample {
+            if let sample = SampleRecordingStore.shared.meta(for: summary.id) {
+                meta = sample
+            } else {
+                error = String(localized: "The sample recording is no longer in the library.")
+            }
+            return
+        }
         #if DEBUG
             if ScreenshotDemo.servesFixtures {
                 meta = ScreenshotDemo.meta
@@ -1092,6 +1199,78 @@ struct RecordingDetailView: View {
                 : try await app.cloud.orgRecordingMeta(orgId: orgId!, id: summary.id)
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    /// Act on what the checklist opened this screen for, once, after the
+    /// transcript is up. The pause lets the push finish: a sheet presented
+    /// mid-transition is dropped by UIKit without a word.
+    private func handleIntent() {
+        guard !intentHandled, meta != nil, intent != .read else { return }
+        intentHandled = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            switch intent {
+            case .share where !readable.isEmpty: sharingToAI = true
+            case .file where orgId == nil: choosingFolder = true
+            default: break
+            }
+        }
+    }
+
+    // MARK: filing
+
+    private func loadFolders() async {
+        guard orgId == nil, app.signedIn else { return }
+        #if DEBUG
+            if ScreenshotDemo.servesFixtures {
+                folders = ScreenshotDemo.folders
+                return
+            }
+        #endif
+        folders = ((try? await app.cloud.listFolders()) ?? []).filter { $0.orgId == nil }
+    }
+
+    /// File the recording, or take it back to the top level.
+    ///
+    /// A real recording is a meta re-push, the same full upsert the Library's
+    /// context menu does. The sample is filed locally and never pushed — see
+    /// `SampleRecordingStore`.
+    private func moveToFolder(_ folderId: String?) async {
+        guard orgId == nil, folderId != currentFolderId else { return }
+        moveError = nil
+        if isSample {
+            SampleRecordingStore.shared.setFolder(folderId)
+        } else {
+            do {
+                var fresh = try await app.cloud.recordingMeta(id: summary.id)
+                fresh.folderId = folderId
+                var row = summary
+                row.folderId = folderId
+                try await app.cloud.pushRecording(id: summary.id, summary: row, meta: fresh)
+            } catch {
+                moveError = String(localized: "Move failed: \(error.localizedDescription)")
+                return
+            }
+        }
+        currentFolderId = folderId
+        meta?.folderId = folderId
+        onFolderChange?(folderId)
+        if folderId != nil { GettingStartedStore.shared.mark(.filed) }
+    }
+
+    /// "New folder…": the folder is created in the cloud — it is a real folder,
+    /// the user named it — and the recording moves into it.
+    private func createFolderAndMove() async {
+        let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        moveError = nil
+        do {
+            let folder = try await app.cloud.createFolder(name: name)
+            folders.append(folder)
+            await moveToFolder(folder.id)
+        } catch {
+            moveError = String(localized: "Couldn't create the folder: \(error.localizedDescription)")
         }
     }
 
