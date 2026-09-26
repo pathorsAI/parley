@@ -209,6 +209,8 @@ pub async fn start_voice_typing(
         Some(session),
     );
     state.adopt(session, task, cutoff);
+    // The Windows tray's voice-typing item now reads "Stop" (no-op elsewhere).
+    crate::tray::set_voice_typing_active(&app, true);
 
     // Backend safety net for the hosted single-session cap: if the frontend
     // never stops this session (webview hung/crashed), tear the mic down after
@@ -322,9 +324,11 @@ pub fn write_voice_history(app: AppHandle, content: String) -> Result<(), String
 /// that on the main thread hitched every window on every key release.
 #[tauri::command]
 pub async fn stop_voice_typing(
+    app: AppHandle,
     coord: State<'_, MicCoordinator>,
     state: State<'_, VoiceTypingState>,
 ) -> Result<(), String> {
+    crate::tray::set_voice_typing_active(&app, false);
     // Hard cut FIRST: stop forwarding audio to the STT session immediately so
     // nothing captured after release is transcribed, and its input closes now
     // for a prompt final flush — set before `coord.stop` so forwarding ceases

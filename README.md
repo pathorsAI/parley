@@ -40,6 +40,9 @@ Then it opens all of it over a local **MCP server** — 54 tools — so Claude, 
 | Voice typing | Yes (<kbd>Option+Space</kbd>) | Yes (<kbd>Ctrl+Alt+Space</kbd>) |
 | Transcription, diarization and analysis | Yes | Yes |
 | Sign-in and cloud sync | Yes | Yes |
+| Closing the window | Hides it; Parley stays in the Dock | Hides it; Parley stays in the notification area (tray) |
+
+Closing the window never stops voice typing: Parley keeps running so the shortcut still works (an active meeting is ended and saved first). Bring the window back from the Dock (macOS) or by clicking the tray icon (Windows); quit with <kbd>⌘Q</kbd> on macOS, or **Quit Parley** in the tray icon's right-click menu on Windows.
 
 There are also companion apps for [iPhone](https://apps.apple.com/app/id6795031201) and Android that record in-person meetings and sync to the same account.
 

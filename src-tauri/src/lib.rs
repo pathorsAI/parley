@@ -12,6 +12,7 @@ mod permissions;
 mod replay;
 mod replay_audio;
 mod transcription;
+mod tray;
 mod usage;
 mod voice_typing;
 
@@ -125,6 +126,15 @@ pub fn run() {
             hotkey::install_wake_observer(app.handle().clone());
             // Follow the user across Spaces while the voice-typing overlay is up.
             voice_typing::install_space_observer(app.handle().clone());
+            // Windows: the notification-area icon the close button hides to.
+            // A failure is logged, not fatal — `tray_active` then answers false
+            // and the close button quits instead of hiding into nowhere.
+            #[cfg(target_os = "windows")]
+            app.manage(tray::TrayState::default());
+            #[cfg(target_os = "windows")]
+            if let Err(e) = tray::install(app.handle()) {
+                log::error!("tray: failed to install notification-area icon: {e}");
+            }
             log::info!("app: starting up (parley {})", env!("CARGO_PKG_VERSION"));
             Ok(())
         })
@@ -192,7 +202,9 @@ pub fn run() {
             mcp::get_mcp_server_info,
             mcp::get_mcp_activity,
             cache::clear_cache,
-            cache::cache_sizes
+            cache::cache_sizes,
+            tray::tray_active,
+            tray::set_tray_labels
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
@@ -213,15 +225,14 @@ pub fn run() {
         );
 }
 
-/// Bring the main window back for a Dock-icon click (macOS Reopen) or a second
-/// app launch (single-instance callback): un-minimize + show + focus.
+/// Bring the main window back for a Dock-icon click (macOS Reopen), a second
+/// app launch (single-instance callback), or the Windows tray icon (left click
+/// or "Open Parley"): un-minimize + show + focus. On both shipping platforms
+/// the close button now HIDES the main window — into the Dock on macOS, the
+/// notification area on Windows — so this is the normal way back to it.
 /// Recreated from the window config if it was destroyed — possible via paths
-/// that bypass the frontend's hide-on-close, such as a crashed webview. Off
-/// macOS the close button now quits the app outright rather than destroying the
-/// window and leaving the process running, so a second launch there is a cold
-/// start; this path still matters for it, because the single-instance callback
-/// routes that launch here either way.
-fn show_main_window(app: &tauri::AppHandle) {
+/// that bypass the frontend's hide-on-close, such as a crashed webview.
+pub(crate) fn show_main_window(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.unminimize();
         let _ = win.show();
