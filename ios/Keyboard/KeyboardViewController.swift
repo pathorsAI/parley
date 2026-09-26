@@ -71,6 +71,8 @@ final class KeyboardViewController: UIInputViewController {
     /// it when the text landed and when the editing is over.
     private let lexicon = KeyboardLexiconWatch()
     private var host: UIHostingController<KeyboardRootView>?
+    /// The keyboard's canvas, behind the SwiftUI root. See `viewDidLoad`.
+    private let backdrop = UIView()
     private var heightConstraint: NSLayoutConstraint?
 
     /// 傳統注音 input for the 注音 pane. Cheap to hold: the dictionary behind it
@@ -118,19 +120,44 @@ final class KeyboardViewController: UIInputViewController {
             EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
         }
 
-        // Let the system's own input view supply the background. It is already
-        // the right colour, already rounds its corners the way the host expects
-        // and already covers exactly the area the system keyboard would; a
-        // canvas of our own painted over it was what left a seam against the
-        // row below and a top-left corner that didn't line up.
+        // The keyboard paints its own backdrop, from the same `dark` that
+        // picks the caps and the ink — see `KBTheme.backdrop` and
+        // `refreshAppearance`. Leaving it to the system let the backdrop follow
+        // the trait collection while the caps followed the host, and a host
+        // whose report disagreed put dark ink on a black backdrop (#441).
+        //
+        // A view of its own rather than `view.backgroundColor`: on iOS 26 the
+        // system draws the keyboard as a card with rounded top corners that
+        // begin above this view, and a full-width rectangle poked its square
+        // corners out of that curve and covered the card's rim. The backdrop
+        // is kept inside the card instead — see `KBMetrics.backdropInset` —
+        // and, being the same grey, the strip of card it leaves uncovered
+        // cannot be told from it.
         view.backgroundColor = .clear
+        backdrop.backgroundColor = KBTheme.backdrop(isDark)
+        backdrop.isUserInteractionEnabled = false
+        backdrop.layer.cornerRadius = KBMetrics.backdropCorner
+        backdrop.layer.cornerCurve = .continuous
+        backdrop.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(backdrop)
+        NSLayoutConstraint.activate([
+            // The whole input view vertically, home indicator strip included.
+            backdrop.topAnchor.constraint(equalTo: view.topAnchor, constant: KBMetrics.backdropInset),
+            backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            backdrop.leadingAnchor.constraint(
+                equalTo: view.leadingAnchor, constant: KBMetrics.backdropInset),
+            backdrop.trailingAnchor.constraint(
+                equalTo: view.trailingAnchor, constant: -KBMetrics.backdropInset),
+        ])
         // Self-sizing is what makes the system honour a height constraint at
-        // all. Without it the constraint below is advisory at best, which is
-        // the other half of the same misalignment.
+        // all. Without it the constraint below is advisory at best, and the
+        // keyboard renders at a height nobody asked for.
         inputView?.allowsSelfSizing = true
 
-        readHostAppearance(force: true)
         let root = UIHostingController(rootView: makeRoot())
+        // Clear, so the backdrop's shape is the only one painted: a filled
+        // hosting view would be a second, square-cornered rectangle over it.
         root.view.backgroundColor = .clear
         addChild(root)
         view.addSubview(root.view)
@@ -157,10 +184,9 @@ final class KeyboardViewController: UIInputViewController {
         height.isActive = true
         heightConstraint = height
 
-        // The backdrop follows the trait collection for a host that follows
-        // the system, so the caps have to follow it too — including when the
-        // user flips Dark Mode with the keyboard on screen, which neither
-        // `viewWillAppear` nor `textDidChange` hears about. See `isDark`.
+        // Dark Mode can flip with the keyboard on screen, which neither
+        // `viewWillAppear` nor `textDidChange` hears about — and the trait
+        // collection is the first thing `isDark` reads.
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) {
             (self: Self, _: UITraitCollection) in
             self.refreshAppearance()
@@ -251,7 +277,6 @@ final class KeyboardViewController: UIInputViewController {
         // is dropped unless a session is still running — `drainDownlink` below
         // puts it straight back when one is.
         if !bridge.listening { bridge.tail = "" }
-        readHostAppearance(force: true)
         refreshAppearance()
         refreshReturnKey()
         readReadiness()
@@ -294,13 +319,11 @@ final class KeyboardViewController: UIInputViewController {
         lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
     }
 
-    /// A keyboard follows the appearance of the *field* it is typing into when
-    /// the field names one — see `isDark`. `textInputMode` changes as the user
-    /// moves between fields, so this is re-read whenever the keyboard comes
-    /// back.
+    /// A field that asks for a dark keyboard gets one — see `isDark`. The field
+    /// changes as the user moves between them, so the question is asked again
+    /// whenever the text does.
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
-        readHostAppearance(force: false)
         refreshAppearance()
         refreshReturnKey()
         // The cursor may have moved somewhere this keyboard did not put it —
@@ -411,52 +434,36 @@ final class KeyboardViewController: UIInputViewController {
         UIView.animate(withDuration: 0.18) { self.view.superview?.layoutIfNeeded() }
     }
 
-    /// The last `keyboardAppearance` read off the host field, and whether that
-    /// value was the host forcing an appearance or merely mirroring the
-    /// system's. See `isDark`.
-    private var hostAppearance: UIKeyboardAppearance = .default
-    private var hostFollowsSystem = true
-
-    /// Whether to draw dark caps.
+    /// Whether to draw dark — caps, ink and backdrop alike.
     ///
-    /// The system paints the input view's backdrop — see `viewDidLoad` — so the
-    /// caps have to make the same call it does. Three kinds of host:
+    /// The trait collection first, and a host asking for `.dark` as a second
+    /// way in. A host reporting `.light` never overrides a dark trait:
     ///
     /// - Most third-party hosts (Claude, LINE) leave `keyboardAppearance` at
-    ///   `.default`, and the backdrop follows the trait collection. Reading
-    ///   `.default` as light drew white caps on a black backdrop, which is the
-    ///   bug 1.19 shipped with.
-    /// - System apps (Reminders, Safari) report `.dark` or `.light` *matching*
-    ///   the system style. That value goes stale the moment the user flips
-    ///   Dark Mode: the proxy keeps the old one until the field is activated
-    ///   again, while the backdrop repaints at once. So a value that matched
-    ///   the trait when it was read is taken to mean "follows the system".
-    /// - A host that forces the opposite of the system — a dark-themed app on
-    ///   a light phone — is believed, and keeps its appearance across a flip.
+    ///   `.default`, so the trait collection is the only signal there is.
+    /// - A dark-themed app on a light phone asks for `.dark`, and gets it.
+    /// - Apple Notes in Dark Mode reports `.light` while the trait is dark.
+    ///   1.20 believed it and drew white caps and near-black candidates on the
+    ///   system's black backdrop (#441). System apps also keep reporting the
+    ///   old value after a Dark Mode flip until the field is activated again,
+    ///   so a `.light` over a dark trait is more often stale than meant.
+    ///
+    /// Believing the host's `.light` could only ever be right for a light-themed
+    /// app on a dark phone, which draws a light keyboard against a dark screen —
+    /// readable either way now that the backdrop is ours. Believing it wrongly
+    /// is what made the candidates invisible, so it is the case given up.
     private var isDark: Bool {
-        hostFollowsSystem
-            ? traitCollection.userInterfaceStyle == .dark
-            : hostAppearance == .dark
+        traitCollection.userInterfaceStyle == .dark
+            || (textDocumentProxy.keyboardAppearance ?? .default) == .dark
     }
 
-    /// Re-read the host's appearance. `force` on a fresh appearance, where the
-    /// proxy is known to be current; otherwise only a *changed* value is
-    /// learned from, because an unchanged one after a Dark Mode flip is the
-    /// stale value described on `isDark`, not a host that forces it.
-    private func readHostAppearance(force: Bool) {
-        let appearance = textDocumentProxy.keyboardAppearance ?? .default
-        guard force || appearance != hostAppearance else { return }
-        hostAppearance = appearance
-        let systemDark = traitCollection.userInterfaceStyle == .dark
-        switch appearance {
-        case .dark: hostFollowsSystem = systemDark
-        case .light: hostFollowsSystem = !systemDark
-        default: hostFollowsSystem = true
-        }
-    }
-
+    /// Repaint whenever `dark` changes: the backdrop, and the SwiftUI root that
+    /// draws the caps and the ink. One value drives all three, which is what
+    /// keeps them from disagreeing.
     private func refreshAppearance() {
         let dark = isDark
+        let color = KBTheme.backdrop(dark)
+        if backdrop.backgroundColor != color { backdrop.backgroundColor = color }
         if host?.rootView.dark != dark {
             host?.rootView = makeRoot(dark: dark)
         }

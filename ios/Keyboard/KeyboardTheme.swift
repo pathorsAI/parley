@@ -3,20 +3,38 @@ import UIKit
 
 /// The keyboard's palette.
 ///
-/// The extension can't reach the app target's `Theme`, and it must not simply
-/// follow the *system* appearance either: a keyboard follows the appearance of
-/// the field it is typing into (`UITextDocumentProxy.keyboardAppearance`), which
-/// a dark-themed host app sets to `.dark` even while iOS is in light mode — and
-/// only falls back to the trait collection when the field leaves it at
-/// `.default` (see `KeyboardViewController.isDark`). Every color here therefore
+/// The extension can't reach the app target's `Theme`, and every colour here
 /// takes the resolved appearance explicitly rather than reading the trait
-/// collection.
+/// collection: `KeyboardViewController.isDark` decides it once — the trait
+/// collection, or a host that asks for `.dark` — and the caps, the ink and the
+/// backdrop are all drawn from that one answer.
 ///
-/// The canvas is deliberately absent: the keyboard paints no background of its
-/// own so the system's `UIInputView` shows through, which is the only way the
-/// colour, the corner treatment and the extent line up with the system
-/// keyboard on every device and in every host app.
+/// That includes the canvas. The keyboard used to paint none and let the
+/// system's `UIInputView` show through, which left the backdrop to the trait
+/// collection while the caps followed the host; a host whose report disagreed
+/// got dark ink on a black backdrop (#441). See `backdrop`.
 enum KBTheme {
+    /// The input view's backdrop, painted by the keyboard itself so it can
+    /// never disagree with the caps and ink drawn on it.
+    ///
+    /// Measured, not remembered: sampled between the keys of the system
+    /// keyboard on the iOS 26.5 simulator, in Reminders, light and dark —
+    /// see the design doc's *Painting the backdrop*.
+    static func backdrop(_ dark: Bool) -> UIColor {
+        dark
+            ? UIColor(red: 0x17 / 255, green: 0x17 / 255, blue: 0x17 / 255, alpha: 1)
+            : UIColor(red: 0xE2 / 255, green: 0xE4 / 255, blue: 0xE8 / 255, alpha: 1)
+    }
+
+    /// The sub-visible fill behind the pane track and the strip that makes
+    /// their empty points take touches (see `KeyboardRootView`). The backdrop's
+    /// own colour at 1%, so it tints nothing: white at 1% lifted the dark
+    /// backdrop from 23 to 25 over exactly the SwiftUI area, a two-level step
+    /// against the home indicator's strip below it.
+    static func hitFill(_ dark: Bool) -> Color {
+        Color(uiColor: backdrop(dark)).opacity(0.01)
+    }
+
     /// Parley's accent, matching the app's design tokens. Used for the accented
     /// return key (Go / Send / Search / Done), the way iOS tints it.
     static let accent = Color(red: 0.04, green: 0.52, blue: 1.0)
@@ -118,6 +136,18 @@ enum KBTheme {
 enum KBMetrics {
     /// The Parley wordmark + mode picker above the keys.
     static let strip: CGFloat = 38
+
+    /// How the painted backdrop stays inside the system's keyboard card.
+    ///
+    /// On iOS 26.5 (iPhone 17 Pro) the system draws a card whose continuous
+    /// top corners begin 16pt above this keyboard's view and only reach the
+    /// screen edge about 37pt down, with a 2px rim down the sides in light
+    /// mode. A backdrop that is 1pt narrower on each side, with 10pt corners of
+    /// its own, lies inside that curve everywhere; the sliver of card it leaves
+    /// is the same grey, so nothing shows. A square full-width backdrop did
+    /// show: its corners stuck out of the card's curve.
+    static let backdropInset: CGFloat = 1
+    static let backdropCorner: CGFloat = 32
 
     static let keyHeight: CGFloat = 42
     static let rowSpacing: CGFloat = 11
