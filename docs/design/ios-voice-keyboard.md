@@ -1059,11 +1059,12 @@ would contradict it two panes later.
 The strip defaults to the first typing pane when there is no Full Access,
 because that is the pane that still works in that state.
 
-While 注音 is being typed the strip gives its whole row over to the
-composition — every syllable still pending, space-separated — and the candidates
-for the oldest of them; see below. It is the one row the keyboard has to spare,
-and a candidate bar of its own above the keys would make that pane taller than
-its neighbours every time somebody started a word.
+While 注音 is being typed the strip gives its whole row over to the candidates
+for the oldest pending syllable; see below. The composition itself is marked
+text in the host's field, as on the system keyboard, so the row holds only the
+candidates. It is the one row the keyboard has to spare, and a candidate bar of
+its own above the keys would make that pane taller than its neighbours every
+time somebody started a word.
 
 ### English pane
 
@@ -1108,13 +1109,13 @@ spell every word out, which is how the owner put it — 「中文有 auto comple
 
 **While the cursor is inside a word, the mode strip is given over to a
 suggestion bar**: up to five completions of the run of letters before the cursor,
-most frequent first, on the same terms the 注音 composition takes the strip. The
+most frequent first, on the same terms the 注音 candidates take the strip. The
 argument is the same one, too — the strip is the one row this keyboard has to
 spare, and a bar of its own above the keys would make the English pane taller
 than its neighbours every time somebody started a word, which shoves the host
 app's content up and down mid-swipe. When the partial word is empty the strip is
-the wordmark and the tabs again. A pending 注音 composition wins the row, though
-it cannot arise while the English pane is current.
+the wordmark and the tabs again. 注音 candidates win the row, though they
+cannot arise while the English pane is current.
 
 The partial word is the run of letters and apostrophes immediately before the
 cursor in `textDocumentProxy.documentContextBeforeInput`, recomputed after every
@@ -1431,7 +1432,7 @@ composer's limit rather than a position anybody argued for.
   grid takes the keys' place rather than growing the keyboard. It *replaces*
   them rather than covering them, because the SwiftUI tree paints no background
   of its own (see *The backdrop: the system's, unless it would disagree*): the pane track is hidden and stops taking
-  touches while the grid is up. The strip keeps the reading and flips ⌄ to ⌃ to
+  touches while the grid is up. The strip keeps the way back and flips ⌄ to ⌃ to
   close it; the grid carries its own ⌫ (bottom right, hold-to-repeat), because
   the pane's is hidden with the keys and delete still unwinds the buffer. The
   open state lives on the bridge (`candidatesExpanded`) because the controller
@@ -1478,27 +1479,114 @@ composer's limit rather than a position anybody argued for.
     `， 。 ？ ！ ： ； （ ） 「 」 、 ～ 《 》`.
   - **Double-space types 「。」** on the 注音 pane, with no trailing space — the
     full-width mark carries its own. QWERTY keeps `. `.
-- **The composition is drawn in the mode strip**, space-separated, rather than as
-  marked text in the host's field. `UITextDocumentProxy` does offer
-  `setMarkedText(_:selectedRange:)`, and the system keyboard uses exactly that;
-  it is not used here because how a host renders and commits marked text is the
-  host's business, and a composition that the keyboard cannot see cannot be
-  guaranteed to end the way the composer thinks it did. The strip is ours. Six
-  syllables and a candidate bar do not both fit in one row, so **the chip shows
-  the last two syllables**, behind a `…` when more are pending (VoiceOver still
-  reads the whole buffer): the newest syllable is the one being typed, the one
-  before it shows the segmentation, and the front of the buffer is on screen
-  anyway as the candidates. Until 1.20 the chip showed the whole buffer capped
-  at 170pt, which at six syllables left a 320pt phone two or three candidates —
-  reported as "only about three characters". The chip is also 15pt now, down
-  from 17. Measured on the simulator: the chip for `…ㄖㄣ ㄐㄧㄣ` is 100pt plus a
-  6pt gap, a one-character candidate cell 45pt, a two-character phrase 65pt,
-  and ⌄ 33pt. So at 320pt (296pt of strip) the bar has 157pt — three and a half
-  single characters, or two and a half phrases — and at 402pt (iPhone 17 Pro)
-  239pt, three and a half phrases. `ZhuyinComposer.maxPending` is unchanged.
-- Leaving the pane commits what was pending — the user swiped, they didn't press
-  delete. Coming back to a *different* field drops it, the same rule the
-  transcript tail follows and for the same reason.
+- **The composition is marked text in the host's field**, underlined and
+  provisional, as the system keyboard shows it: the pending syllables
+  space-separated, tone marks included, with `ˉ` after one toned with space
+  (`ZhuyinComposer.reading`). On iOS 26.3 the system keyboard shows `ㄋ ㄏ` and
+  `ㄋㄧˇ ㄏ` for those keys, and does not convert a toned syllable inline. It
+  shows converted text only for a candidate picked from the front (`你ㄏ`), and
+  a pick here commits at once, so that part is already committed text. The
+  strip holds only the candidates, so `StripBar` has the full width: the 1.20
+  chip (last two syllables, 120 pt) is kept only for a host that ignores marked
+  text, below. The proxy cannot read marked text back, and
+  `textDidChange` reports the host's text as it was when the host answered,
+  which with fast typing is two or three keystrokes old. So the keyboard keeps
+  every marked state it has sent and the host has not yet confirmed
+  (`MarkedTextLog`), and accepts a report that matches any of them.
+- **A keyboard-initiated end commits with `insertText`.** A candidate, return,
+  space on a toned syllable, punctuation, leaving the pane (the user swiped,
+  they didn't press delete) and buffer overflow all call `insertText`, which
+  replaces the marked text. `setMarkedText` with the committed text followed by
+  `unmarkText` looks more explicit and is wrong: when the next `setMarkedText`
+  (the rest of the reading) follows in the same turn, Reminders applied them out
+  of order, dropped the picked character and left the rest unmarked. Deleting
+  the last symbol ends with a single `setMarkedText("")`: the proxy drops an
+  empty `insertText`, and one call has no order to lose. Text from outside the composer, a finished
+  transcript or an English suggestion, commits the composition first, so it
+  lands after the reading instead of replacing it.
+- **A host-initiated end keeps what the host shows.** When the host no longer
+  holds the marked text around the caret (a host that cleared or rewrote its
+  text, a caret moved out of the marked range), the keyboard calls
+  `unmarkText` and drops the buffer. Nothing is inserted: committing the best
+  guess would put it wherever the cursor has gone. A caret moved *inside* the
+  marked range keeps composing, as on the system keyboard, which is also where
+  UIKit puts a tap in the field while marked text is showing. A host that
+  reports no context at all cannot contradict anything, so it keeps composing.
+- **Hosts leave marked text out of the context they report (iOS 26.5).**
+  Measured on the simulator in Reminders and Safari's address bar:
+  `documentContextBeforeInput` is `nil` while the field holds nothing but the
+  reading, and holds only the text *before* the mark once there is some. No
+  `textDidChange` or `selectionDidChange` arrives for the keyboard's own edits
+  either; `selectionWillChange` never arrived at all. So the context cannot
+  confirm a mark, and it cannot say which field a report came from. The field
+  is told by `documentIdentifier` instead, read through key-value coding
+  because it is `nil` between fields and reading the Swift property then traps.
+  `MarkedTextLog` still accepts a context that holds the reading (what #427
+  measured on iOS 26.3), and treats anything it cannot decide as consistent.
+- **A host that ignores marked text gets the 1.20 chip, for that field only.**
+  0.4 s after the first marks in a field, if no report has confirmed them, the
+  keyboard asks again (`MarkedTextLog.hostSettled`). The only answer it can
+  trust is an empty field: the reading as the field's only text (`hasText`
+  with no context) confirms the mark, and a field that still reports no text at
+  all has dropped it. Then `usesMarkedText` goes false for the field: the
+  buffer is kept, the reading is published to the strip's chip (last two
+  syllables, 120 pt, as in 1.20), commits are plain `insertText`, and
+  `setMarkedText` is not called again until the field changes or the keyboard
+  comes back. The brief for this asked for a stronger rule — a host that has
+  never confirmed a mark and then reports context without it ignores marked
+  text — but on iOS 26.5 that describes *every* host, Reminders included,
+  because none of them ever puts the mark in the context. A field with text in
+  it therefore stays on marked text whatever the host does (fail open). No
+  simulator host ignored marked text, so the fallback has run only in
+  `MarkedTextLogTests`.
+- **Every exit commits or removes, as far as the proxy reaches.** Return,
+  punctuation, the symbol planes, English suggestions, the dictation transcript
+  and leaving the pane commit with `insertText` (above). The keyboard going away
+  and the field changing are the host's doing, and the hook experiment on
+  iOS 26.5 found no callback in which the proxy still edits the old field:
+  - In Reminders, dismissing (Done) calls `textWillChange`, `textDidChange`,
+    then `viewWillDisappear`. An `insertText(best)` in `textWillChange` or in
+    `viewWillDisappear` does not land; the title is saved with the raw reading
+    as plain text, the underline gone.
+  - Changing fields in Reminders (title → note) calls only `textWillChange` and
+    `textDidChange`, and by `textWillChange` the proxy is already on the *new*
+    field: the `insertText(best)` landed in the note. So on a field change the
+    keyboard edits nothing. It lets go of the buffer when `documentIdentifier`
+    changes, and the old field keeps the raw reading.
+  - In Safari's address bar, ✕ discards the whole entry, reading included, so
+    nothing is left either way.
+  `viewWillDisappear` still tries `insertText(best)` — it is where the system
+  keyboard commits, a host that honours it gets the right text, and in
+  Reminders it was verified to add nothing — and it is idempotent: an empty
+  composer does nothing.
+- **The backstop repairs a stranded reading on the way back.** Whenever the
+  keyboard leaves a reading behind (dismissal, field change) it stores the
+  reading and its best guess (`StrandedReading`) in a static on the
+  controller — static because UIKit makes a new controller every time the
+  keyboard comes up, and in memory because the keyboard never writes what the
+  user types to disk (`ios/AppStore/privacy-label.md`, #290). On `viewWillAppear`, and on any `textDidChange` with nothing
+  composing, if the text before the caret ends with exactly that reading —
+  spaces and tone marks included, which is what makes the match unambiguous —
+  the keyboard deletes it and types the best guess: `你好ㄨㄛ` became `你好我`
+  when the reminder was tapped again, and a title left as `…我ㄋ ㄏ` by a field
+  change became `…我你好` on tapping back into it. The record lives for 30
+  minutes. The cost is honest: in such a host the raw 注音 is visible while the
+  keyboard is away, and stays if the user never comes back to that field — or
+  if iOS ends the keyboard's process before they do, since the record goes with
+  it.
+- **A drop is an explicit removal.** When the keyboard comes back after
+  leaving a reading behind and the backstop did not match, whatever may still
+  be marked — a reading a keyboard switch left underlined — is removed with
+  `setMarkedText("")` followed by `unmarkText()`, so it is neither kept raw nor
+  finalized as typed. Only then, and never over a selection, because an empty
+  `setMarkedText` replaces the selected text when nothing is marked. On
+  Reminders the pair was verified to leave the field's committed text intact.
+- **Switching keyboards cannot commit.** The system 注音 keyboard commits its
+  best guess when the globe switches away. Ours cannot: by `viewWillDisappear`
+  the host has already stopped taking the proxy's edits, and on phones where
+  the system draws the globe there is no earlier callback. The reading stays in
+  the field, still underlined, until the next keyboard's first key finalizes it
+  as typed, after which the backstop no longer matches it.
 
 **Nothing commits itself on the way past.** The rule that starting a syllable
 confirmed the one before it went with one-at-a-time: starting the next syllable

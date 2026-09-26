@@ -80,6 +80,17 @@ final class KeyboardViewController: UIInputViewController {
     /// does not touch its resource until the first syllable is finalized, so a
     /// keyboard that only ever dictates never pays for it.
     private var zhuyin = ZhuyinComposer(dictionary: .bundled, phrases: ZhuyinPhrases.bundled)
+    /// The marked text this keyboard has sent and the host has not confirmed,
+    /// and whether this field's host shows marked text at all. A mirror
+    /// because the proxy cannot read marked text back.
+    private var marks = MarkedTextLog()
+    /// The field the keyboard is typing into, so a report from a different one
+    /// can be told apart from a report about this one: hosts on iOS 26.5 leave
+    /// marked text out of the context they report, so the context alone
+    /// cannot say which field it came from.
+    private var currentField: UUID?
+    /// The pending check that the host answered the first marks in a field.
+    private var settleCheck: DispatchWorkItem?
 
     /// The user's own words, offered ahead of the bundled list on the English
     /// pane. Read once per appearance rather than per keystroke: it is a file in
@@ -267,10 +278,10 @@ final class KeyboardViewController: UIInputViewController {
         bridge.showsGlobe = needsInputModeSwitchKey
         refreshPanes()
         // A half-typed syllable belongs to the field it was started in, so it is
-        // dropped rather than committed — the same rule as the transcript tail
-        // below, and for the same reason.
-        zhuyin.clear()
-        publishComposition()
+        // not carried into this one — the same rule as the transcript tail
+        // below, and for the same reason. A reading a host kept as plain text
+        // when the keyboard went away is replaced by its best guess here.
+        returnToField()
         // The field may be a different one, with a different word half-typed in
         // front of the cursor, so both the user's terms and the bar are re-read
         // rather than carried over.
@@ -324,6 +335,7 @@ final class KeyboardViewController: UIInputViewController {
         // is precisely the thing the user is walking away from.
         if hasFullAccess, bridge.listening { Haptics.dictationContinuesInBackground() }
         lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
+        leaveComposition()
     }
 
     /// A field that asks for a dark keyboard gets one — see `isDark`. The field
@@ -334,12 +346,18 @@ final class KeyboardViewController: UIInputViewController {
         // Only a field that stopped saying `.dark` is known to have been read
         // again; one still saying it may be the same stale value.
         if textDocumentProxy.keyboardAppearance != .dark { staleHostDark = false }
+        hostChangedText()
         refreshAppearance()
         refreshReturnKey()
         // The cursor may have moved somewhere this keyboard did not put it —
         // a tap in the field, an autofill, the host rewriting its own text — so
         // the word in front of it is re-read rather than assumed.
         refreshSuggestions()
+    }
+
+    override func selectionDidChange(_ textInput: UITextInput?) {
+        super.selectionDidChange(textInput)
+        hostChangedText()
     }
 
     /// The constraint measures the whole input view, but the content is pinned
@@ -1008,7 +1026,7 @@ final class KeyboardViewController: UIInputViewController {
         // appearance.
         let committed = Array(d.committed)
         if d.state == .done, committed.count > insertedCount {
-            textDocumentProxy.insertText(String(committed[insertedCount...]))
+            typeOutsideComposition(String(committed[insertedCount...]))
             insertedCount = committed.count
             var up = DictationChannel.readUplink() ?? .init(session: session)
             up.insertedCount = insertedCount
@@ -1170,24 +1188,203 @@ final class KeyboardViewController: UIInputViewController {
     ) {
         switch outcome {
         case .handled: break
-        case .insert(let text): textDocumentProxy.insertText(text)
+        case .insert(let text): commit(text)
         case .passThrough: passThrough()
         }
         publishComposition()
     }
 
-    /// One assignment for the composition and its candidates together, and
-    /// only on a real change: a keystroke is one invalidation of the strip,
-    /// not two.
+    /// `insertText` replaces the marked text. `setMarkedText` + `unmarkText`
+    /// does not survive a `setMarkedText` in the same turn: Reminders applied
+    /// them out of order and dropped the picked candidate. In a field whose
+    /// host ignores marked text there is nothing to replace, and this is the
+    /// plain insert the pane used before marked text.
+    private func commit(_ text: String) {
+        textDocumentProxy.insertText(text)
+        if marks.usesMarkedText { marks.sent("") }
+    }
+
+    /// The reading goes to the host as marked text and the strip gets only the
+    /// candidates — or, in a field whose host ignores marked text, the reading
+    /// goes to the strip's chip and nothing goes to the host. One assignment
+    /// for the strip, and only on a real change: a keystroke is one
+    /// invalidation of the strip, not two.
     private func publishComposition() {
+        let reading = zhuyin.reading
+        if marks.usesMarkedText, reading != marks.current {
+            if reading.isEmpty {
+                // One call, so there is no order to lose: the proxy drops an
+                // empty insertText, and unmarkText after this is not needed.
+                textDocumentProxy.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
+            } else {
+                textDocumentProxy.setMarkedText(
+                    reading,
+                    selectedRange: NSRange(location: (reading as NSString).length, length: 0))
+                scheduleSettleCheck()
+            }
+            marks.sent(reading)
+        }
         let next = KeyboardBridge.ZhuyinStrip(
-            composition: zhuyin.reading, candidates: zhuyin.candidates)
+            composition: marks.usesMarkedText ? "" : reading, candidates: zhuyin.candidates)
         if bridge.zhuyin != next { bridge.zhuyin = next }
         // The candidate grid is about a reading; once the buffer is committed or
         // cleared there is nothing left in it to choose, and the keys come back.
         // Here rather than in the view so every way the buffer empties — a pick,
         // return, space, punctuation, leaving the pane — closes it the same way.
-        if zhuyin.reading.isEmpty, bridge.candidatesExpanded { bridge.candidatesExpanded = false }
+        if reading.isEmpty, bridge.candidatesExpanded { bridge.candidatesExpanded = false }
+    }
+
+    /// Which field the proxy is on. Read through key-value coding because the
+    /// property is declared non-optional in Swift but is nil while the
+    /// keyboard is between fields, and reading it then traps.
+    private var fieldID: UUID? {
+        (textDocumentProxy as? NSObject)?.value(forKey: "documentIdentifier") as? UUID
+    }
+
+    /// The host changed its text or selection itself: a tap, a different
+    /// field, a host rewrite. The keyboard's own edits do not arrive here.
+    private func hostChangedText() {
+        let field = fieldID
+        defer { if field != nil { currentField = field } }
+        if let field, let previous = currentField, field != previous {
+            // Another field. Nothing the proxy does now reaches the old one —
+            // on iOS 26.5 an insert here landed in the *new* field — so the
+            // composition is only let go of, and remembered for repair.
+            if !zhuyin.reading.isEmpty { strandComposition() }
+            marks.fieldChanged()
+            zhuyin.clear()
+            publishComposition()
+            repairStrandedReading()
+            return
+        }
+        if zhuyin.reading.isEmpty {
+            // Back in front of a reading the host kept as plain text.
+            repairStrandedReading()
+            return
+        }
+        guard marks.usesMarkedText else { return }
+        let before = textDocumentProxy.documentContextBeforeInput
+        let after = textDocumentProxy.documentContextAfterInput
+        if marks.hostReported(before: before, after: after) == .left { abandonComposition() }
+    }
+
+    /// End the composition without inserting anything; the host keeps what it
+    /// shows. Committing the best guess here would put it wherever the cursor
+    /// has gone.
+    private func abandonComposition() {
+        if marks.usesMarkedText { textDocumentProxy.unmarkText() }
+        marks.reset()
+        zhuyin.clear()
+        publishComposition()
+    }
+
+    /// A while after the first marks in a field, ask whether the host showed
+    /// them. The callbacks cannot say: a host sends none for the keyboard's own
+    /// edits. Only an empty field can answer, and there a host that reports no
+    /// text at all has dropped the mark: the reading moves to the strip.
+    private func scheduleSettleCheck() {
+        guard !marks.confirmed else { return }
+        settleCheck?.cancel()
+        let check = DispatchWorkItem { [weak self] in self?.hostSettled() }
+        settleCheck = check
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: check)
+    }
+
+    private func hostSettled() {
+        let verdict = marks.hostSettled(
+            before: textDocumentProxy.documentContextBeforeInput,
+            after: textDocumentProxy.documentContextAfterInput,
+            hasText: textDocumentProxy.hasText)
+        guard verdict == .ignoresMarkedText else { return }
+        publishComposition()
+    }
+
+    /// The keyboard is going away with a reading pending. The system 注音
+    /// keyboard commits its best guess here; this one tries the same, but in
+    /// Reminders on iOS 26.5 no proxy edit lands this late (nor in
+    /// `textWillChange`, which comes first), and the host keeps the reading as
+    /// typed. So it is also remembered, and `returnToField` repairs it.
+    private func leaveComposition() {
+        settleCheck?.cancel()
+        guard !zhuyin.reading.isEmpty else { return }
+        if marks.usesMarkedText {
+            strandComposition()
+            commit(zhuyin.best)
+        }
+        marks.reset()
+        zhuyin.clear()
+        publishComposition()
+    }
+
+    /// A reading the host may keep as plain text, and its best guess. In
+    /// memory only, and static because UIKit makes a new controller each time
+    /// the keyboard comes up while the extension process lives on. Never
+    /// written to disk: the keyboard holds no typed content beyond the process
+    /// (see `ios/AppStore/privacy-label.md`), so if iOS ends the process
+    /// before the user comes back to the field, the reading is not repaired.
+    private static var stranded: StrandedReading?
+    /// Set with `stranded`, cleared once the keyboard has explicitly removed
+    /// whatever might still be marked.
+    private static var markMayLinger = false
+
+    private func strandComposition() {
+        guard marks.usesMarkedText else { return }
+        Self.stranded = StrandedReading(reading: zhuyin.reading, best: zhuyin.best, at: Date())
+        Self.markMayLinger = true
+    }
+
+    /// If the text before the caret ends with exactly the stranded reading,
+    /// put its best guess in its place.
+    @discardableResult
+    private func repairStrandedReading() -> Bool {
+        guard let stranded = Self.stranded else { return false }
+        guard let repair = stranded.repair(
+            before: textDocumentProxy.documentContextBeforeInput, now: Date())
+        else {
+            if Date().timeIntervalSince(stranded.at) >= StrandedReading.lifetime {
+                Self.stranded = nil
+            }
+            return false
+        }
+        for _ in 0..<repair.delete { textDocumentProxy.deleteBackward() }
+        textDocumentProxy.insertText(repair.insert)
+        Self.stranded = nil
+        return true
+    }
+
+    /// The keyboard is back, possibly in another field: start the field over.
+    /// A stranded reading in front of the caret is repaired. Otherwise, if one
+    /// was stranded, anything still marked is removed explicitly — a reading a
+    /// keyboard switch left underlined — with `setMarkedText("")` followed by
+    /// `unmarkText()`. Only then, and never over a selection: an empty
+    /// `setMarkedText` replaces the selected text when nothing is marked.
+    private func returnToField() {
+        settleCheck?.cancel()
+        zhuyin.clear()
+        marks.fieldChanged()
+        currentField = fieldID
+        if !repairStrandedReading() { removeLingeringMark() }
+        Self.markMayLinger = false
+        publishComposition()
+    }
+
+    /// Remove whatever the keyboard may have left marked, with
+    /// `setMarkedText("")` followed by `unmarkText()`: neither kept raw nor
+    /// finalized as typed. Only after stranding a reading, and never over a
+    /// selection, because an empty `setMarkedText` replaces the selected text
+    /// when nothing is marked.
+    private func removeLingeringMark() {
+        guard Self.markMayLinger, (textDocumentProxy.selectedText ?? "").isEmpty else { return }
+        textDocumentProxy.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
+        textDocumentProxy.unmarkText()
+        Self.markMayLinger = false
+    }
+
+    /// Text that does not come from the composer ends the composition first,
+    /// so it lands after the reading rather than replacing it.
+    private func typeOutsideComposition(_ text: String) {
+        apply(zhuyin.confirm())
+        textDocumentProxy.insertText(text)
     }
 
     // MARK: English word suggestions
@@ -1238,6 +1435,7 @@ final class KeyboardViewController: UIInputViewController {
     func pickSuggestion(_ word: String) {
         let partial = bridge.english.partialWord
         guard !partial.isEmpty else { return }
+        apply(zhuyin.confirm())
         for _ in 0..<partial.unicodeScalars.count { textDocumentProxy.deleteBackward() }
         textDocumentProxy.insertText(word + " ")
         refreshSuggestions()
@@ -1262,8 +1460,7 @@ final class KeyboardViewController: UIInputViewController {
     /// returns before its `documentContextBeforeInput` — a round trip to the
     /// host — on every pane but English.
     func insert(_ text: String) {
-        apply(zhuyin.confirm())
-        textDocumentProxy.insertText(text)
+        typeOutsideComposition(text)
         refreshSuggestions()
     }
 
@@ -1309,7 +1506,7 @@ final class KeyboardViewController: UIInputViewController {
             publishComposition()
             return
         case .insert(let text):
-            textDocumentProxy.insertText(text)
+            commit(text)
             publishComposition()
             return
         case .passThrough:
@@ -1483,11 +1680,16 @@ final class KeyboardBridge: ObservableObject {
     /// `MicMeter` is: every keystroke changes both, and two would invalidate the
     /// view twice for one key.
     struct ZhuyinStrip: Equatable {
-        /// The syllables part-way through being typed. Empty when nothing is
-        /// pending, which is also what puts the wordmark back.
+        /// The syllables part-way through being typed, for the strip's chip.
+        /// Empty unless the host ignores marked text: everywhere else the
+        /// reading is marked text in the field and the strip has no copy.
         var composition: String
         /// What the front of the composition could be, most likely first.
         var candidates: [String]
+
+        /// Something to show for 注音. Neither half pending is what puts the
+        /// wordmark back.
+        var isPending: Bool { !composition.isEmpty || !candidates.isEmpty }
     }
 
     @Published var zhuyin = ZhuyinStrip(composition: "", candidates: [])
