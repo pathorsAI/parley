@@ -123,5 +123,95 @@
     "Use Parley to find the call with Hongsheng Technology and list what I committed to, the deadlines, and the questions I left unanswered.",
     "Read the Hongsheng Technology transcript in Parley. What is Mr. Lin's price objection? Draft three replies I could use next time.",
     "Write the key points and risks of the Hongsheng call back into Parley's analysis and mark the meeting kind as a sales call."
+  ],
+  "suggestion": {
+    "title": "Hongsheng Technology · support voice system discovery call",
+    "folders": [
+      {
+        "name": "Hongsheng Technology",
+        "reason": "The customer's name; first contact, every later call files here"
+      }
+    ]
+  },
+  "brief": "**First discovery call with Hongsheng Technology, a sales call.** Their support line takes 300+ calls a day in peak season and around 200 otherwise; nobody answers after 8 pm, which is the biggest pain [0:07]. Over 60% of calls are repetitive order-status and invoice questions [0:26].\n\n**Progress:** Mr. Lin accepted an evenings-first rollout at about 22k a month [1:39] and agreed to a demo next Wednesday at 3 pm with Mr. Wang from IT present [1:53].\n\n**Risks:** last year's vendor was shut down because customers hung up on the machine [0:43]; the 30k vs 18k gap is still the boss's hurdle [1:20]; the data-residency question is still unanswered [1:53].",
+  "findings": [
+    {
+      "atMs": 7665,
+      "side": "them",
+      "severity": "info",
+      "title": "Missed evening calls are the biggest pain",
+      "detail": "300+ calls a day in peak season, nobody after 8 pm, a pile of voicemails every morning.",
+      "quotes": [
+        "In peak season three hundred or more, normally around two hundred. The real headache is nobody answers after eight in the evening, so every morning starts with a pile of voicemails."
+      ]
+    },
+    {
+      "atMs": 26685,
+      "side": "them",
+      "severity": "info",
+      "title": "Over 60% are repetitive queries",
+      "detail": "Shipment and invoice status: the first slice to automate.",
+      "quotes": [
+        "Sixty percent at least. Has it shipped, when will the invoice be issued, that kind of thing."
+      ]
+    },
+    {
+      "atMs": 43545,
+      "side": "them",
+      "severity": "warn",
+      "title": "Last year's failed rollout",
+      "detail": "Customers hung up the moment they heard a machine. The demo has to address this head-on.",
+      "quotes": [
+        "Sounds good. But we trialed another vendor's system last year. Customers hung up the moment they heard a machine, so we shut it down."
+      ]
+    },
+    {
+      "atMs": 80084,
+      "side": "them",
+      "severity": "warn",
+      "title": "Price objection: 30k vs 18k",
+      "detail": "The boss asks about price first. The gap has to be explained by the live ERP integration and the human handoff.",
+      "quotes": [
+        "Thirty thousand a month is on the high side. Last year's vendor was eighteen."
+      ]
+    },
+    {
+      "atMs": 99182,
+      "side": "them",
+      "severity": "info",
+      "title": "Evenings first at 22k is workable",
+      "detail": "Agreed to see a demo, provided Mr. Wang from IT attends.",
+      "quotes": [
+        "Twenty two I can take to my boss. But we need to see a demo first, and Mr. Wang from IT has to be there."
+      ]
+    },
+    {
+      "atMs": 113621,
+      "side": "them",
+      "severity": "critical",
+      "title": "Data residency left unanswered",
+      "detail": "You promised to confirm the hosting location. It is a precondition for the deal; answer in writing before the demo.",
+      "quotes": [
+        "Next Wednesday at three works. One more thing, where is the data stored? Some of our customer data can't leave the country."
+      ]
+    }
+  ],
+  "actionItems": [
+    {
+      "text": "Email the deployment data (about 15% ask for a human) and the quote to Mr. Lin before end of day",
+      "atMs": 131145
+    },
+    {
+      "text": "Demo next Wednesday 3 pm: record it with Hongsheng's common questions, invite Mr. Wang from IT",
+      "atMs": 106913
+    },
+    {
+      "text": "Answer the hosting location / data residency question in writing before the demo",
+      "atMs": 122477
+    },
+    {
+      "text": "Prepare the price story: 30k vs 18k comes down to live ERP integration and the human handoff",
+      "atMs": 85868
+    }
   ]
 }

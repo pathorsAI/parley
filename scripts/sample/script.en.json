@@ -5,28 +5,85 @@
   "audio": "sample-en.ogg",
   "meetingKind": "sales",
   "context": "Hongsheng Technology · first discovery call · counterpart: Mr. Lin, procurement manager. Their support line misses most evening calls; a competitor's voice system failed last year.",
-  "speakers": { "me": "You", "them": "Mr. Lin" },
-  "voices": { "me": "Samantha", "them": "Reed (English (US))" },
+  "speakers": {
+    "me": "You",
+    "them": "Mr. Lin"
+  },
+  "voices": {
+    "me": "Samantha",
+    "them": "Reed (English (US))"
+  },
   "rate": 185,
   "gapMs": 650,
   "lines": [
-    { "speaker": "me",   "text": "Good afternoon Mr. Lin, thanks for making time. To start, roughly how many calls does your support team take a day?" },
-    { "speaker": "them", "text": "In peak season three hundred or more, normally around two hundred. The real headache is nobody answers after eight in the evening, so every morning starts with a pile of voicemails." },
-    { "speaker": "me",   "text": "Understood, so the missed evening calls are the biggest pain point. What share of those calls are repetitive things like order status?" },
-    { "speaker": "them", "text": "Sixty percent at least. Has it shipped, when will the invoice be issued, that kind of thing." },
-    { "speaker": "me",   "text": "That part we can connect straight to your ERP, so a caller gives an order number and gets the answer. During the day we filter first and route the ones that need a person to your team." },
-    { "speaker": "them", "text": "Sounds good. But we trialed another vendor's system last year. Customers hung up the moment they heard a machine, so we shut it down." },
-    { "speaker": "me",   "text": "That's a fair concern. Our approach is to say up front that a human is one request away. Across our deployments only about fifteen percent of callers ask to transfer. I can send you that data." },
-    { "speaker": "them", "text": "Yes, I want to see that number. And pricing? My boss will ask about that first." },
-    { "speaker": "me",   "text": "For your volume, setup is about one hundred fifty thousand, then thirty thousand a month, which covers maintenance and two thousand minutes of calls." },
-    { "speaker": "them", "text": "Thirty thousand a month is on the high side. Last year's vendor was eighteen." },
-    { "speaker": "me",   "text": "I understand. The difference is the live ERP integration and the human handoff, which last year's vendor didn't have. If we start with evenings only, the monthly fee comes down to about twenty two thousand so you can validate first." },
-    { "speaker": "them", "text": "Twenty two I can take to my boss. But we need to see a demo first, and Mr. Wang from IT has to be there." },
-    { "speaker": "me",   "text": "Of course. Does next Wednesday afternoon work? I'll prepare a demo recorded with your most common questions." },
-    { "speaker": "them", "text": "Next Wednesday at three works. One more thing, where is the data stored? Some of our customer data can't leave the country." },
-    { "speaker": "me",   "text": "Let me confirm the hosting location when I'm back, and I'll give you a written answer before the demo." },
-    { "speaker": "them", "text": "Alright, let's leave it there." },
-    { "speaker": "me",   "text": "Thank you Mr. Lin. I'll email the deployment data and the quote before end of day, and see you next Wednesday." }
+    {
+      "speaker": "me",
+      "text": "Good afternoon Mr. Lin, thanks for making time. To start, roughly how many calls does your support team take a day?"
+    },
+    {
+      "speaker": "them",
+      "text": "In peak season three hundred or more, normally around two hundred. The real headache is nobody answers after eight in the evening, so every morning starts with a pile of voicemails."
+    },
+    {
+      "speaker": "me",
+      "text": "Understood, so the missed evening calls are the biggest pain point. What share of those calls are repetitive things like order status?"
+    },
+    {
+      "speaker": "them",
+      "text": "Sixty percent at least. Has it shipped, when will the invoice be issued, that kind of thing."
+    },
+    {
+      "speaker": "me",
+      "text": "That part we can connect straight to your ERP, so a caller gives an order number and gets the answer. During the day we filter first and route the ones that need a person to your team."
+    },
+    {
+      "speaker": "them",
+      "text": "Sounds good. But we trialed another vendor's system last year. Customers hung up the moment they heard a machine, so we shut it down."
+    },
+    {
+      "speaker": "me",
+      "text": "That's a fair concern. Our approach is to say up front that a human is one request away. Across our deployments only about fifteen percent of callers ask to transfer. I can send you that data."
+    },
+    {
+      "speaker": "them",
+      "text": "Yes, I want to see that number. And pricing? My boss will ask about that first."
+    },
+    {
+      "speaker": "me",
+      "text": "For your volume, setup is about one hundred fifty thousand, then thirty thousand a month, which covers maintenance and two thousand minutes of calls."
+    },
+    {
+      "speaker": "them",
+      "text": "Thirty thousand a month is on the high side. Last year's vendor was eighteen."
+    },
+    {
+      "speaker": "me",
+      "text": "I understand. The difference is the live ERP integration and the human handoff, which last year's vendor didn't have. If we start with evenings only, the monthly fee comes down to about twenty two thousand so you can validate first."
+    },
+    {
+      "speaker": "them",
+      "text": "Twenty two I can take to my boss. But we need to see a demo first, and Mr. Wang from IT has to be there."
+    },
+    {
+      "speaker": "me",
+      "text": "Of course. Does next Wednesday afternoon work? I'll prepare a demo recorded with your most common questions."
+    },
+    {
+      "speaker": "them",
+      "text": "Next Wednesday at three works. One more thing, where is the data stored? Some of our customer data can't leave the country."
+    },
+    {
+      "speaker": "me",
+      "text": "Let me confirm the hosting location when I'm back, and I'll give you a written answer before the demo."
+    },
+    {
+      "speaker": "them",
+      "text": "Alright, let's leave it there."
+    },
+    {
+      "speaker": "me",
+      "text": "Thank you Mr. Lin. I'll email the deployment data and the quote before end of day, and see you next Wednesday."
+    }
   ],
   "questions": [
     "What is Mr. Lin's concern about price, and how should I answer it next time?",
@@ -37,5 +94,79 @@
     "Use Parley to find the call with Hongsheng Technology and list what I committed to, the deadlines, and the questions I left unanswered.",
     "Read the Hongsheng Technology transcript in Parley. What is Mr. Lin's price objection? Draft three replies I could use next time.",
     "Write the key points and risks of the Hongsheng call back into Parley's analysis and mark the meeting kind as a sales call."
-  ]
+  ],
+  "suggestion": {
+    "title": "Hongsheng Technology · support voice system discovery call",
+    "folders": [
+      {
+        "name": "Hongsheng Technology",
+        "reason": "The customer's name; first contact, every later call files here"
+      }
+    ]
+  },
+  "analysis": {
+    "brief": "**First discovery call with Hongsheng Technology, a sales call.** Their support line takes 300+ calls a day in peak season and around 200 otherwise; nobody answers after 8 pm, which is the biggest pain {L2}. Over 60% of calls are repetitive order-status and invoice questions {L4}.\n\n**Progress:** Mr. Lin accepted an evenings-first rollout at about 22k a month {L12} and agreed to a demo next Wednesday at 3 pm with Mr. Wang from IT present {L14}.\n\n**Risks:** last year's vendor was shut down because customers hung up on the machine {L6}; the 30k vs 18k gap is still the boss's hurdle {L10}; the data-residency question is still unanswered {L14}.",
+    "findings": [
+      {
+        "line": 2,
+        "side": "them",
+        "severity": "info",
+        "title": "Missed evening calls are the biggest pain",
+        "detail": "300+ calls a day in peak season, nobody after 8 pm, a pile of voicemails every morning."
+      },
+      {
+        "line": 4,
+        "side": "them",
+        "severity": "info",
+        "title": "Over 60% are repetitive queries",
+        "detail": "Shipment and invoice status: the first slice to automate."
+      },
+      {
+        "line": 6,
+        "side": "them",
+        "severity": "warn",
+        "title": "Last year's failed rollout",
+        "detail": "Customers hung up the moment they heard a machine. The demo has to address this head-on."
+      },
+      {
+        "line": 10,
+        "side": "them",
+        "severity": "warn",
+        "title": "Price objection: 30k vs 18k",
+        "detail": "The boss asks about price first. The gap has to be explained by the live ERP integration and the human handoff."
+      },
+      {
+        "line": 12,
+        "side": "them",
+        "severity": "info",
+        "title": "Evenings first at 22k is workable",
+        "detail": "Agreed to see a demo, provided Mr. Wang from IT attends."
+      },
+      {
+        "line": 14,
+        "side": "them",
+        "severity": "critical",
+        "title": "Data residency left unanswered",
+        "detail": "You promised to confirm the hosting location. It is a precondition for the deal; answer in writing before the demo."
+      }
+    ],
+    "actionItems": [
+      {
+        "text": "Email the deployment data (about 15% ask for a human) and the quote to Mr. Lin before end of day",
+        "line": 17
+      },
+      {
+        "text": "Demo next Wednesday 3 pm: record it with Hongsheng's common questions, invite Mr. Wang from IT",
+        "line": 13
+      },
+      {
+        "text": "Answer the hosting location / data residency question in writing before the demo",
+        "line": 15
+      },
+      {
+        "text": "Prepare the price story: 30k vs 18k comes down to live ERP integration and the human handoff",
+        "line": 11
+      }
+    ]
+  }
 }
