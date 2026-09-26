@@ -8,6 +8,9 @@ import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.kit.TranscriptSegment
+import com.pathors.parley.meeting.ImportFailure
+import com.pathors.parley.meeting.ImportState
+import com.pathors.parley.meeting.ImportTranscript
 import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -46,7 +49,8 @@ import kotlinx.serialization.json.putJsonObject
  * ```
  *
  * Routes: `library`, `transcript`, `record` (alias `meeting`), `account`
- * (alias `settings`), and `off`.
+ * (alias `settings`), the import screen's endings (`import-partial`,
+ * `import-offline`, `import-quota`, `import-signed-out`), and `off`.
  *
  * Everything below is invented. No real company, person, account, or meeting is
  * represented, the only address is in the RFC-reserved `example.com`, and the
@@ -57,7 +61,27 @@ import kotlinx.serialization.json.putJsonObject
 object DemoMode {
 
     /** The screens the listing needs, each addressable by its own URL. */
-    enum class Screen { LIBRARY, TRANSCRIPT, MEETING, ACCOUNT }
+    enum class Screen { LIBRARY, TRANSCRIPT, MEETING, ACCOUNT, IMPORT }
+
+    /**
+     * Which ending the import screen shows. Not store-listing material: these
+     * exist so the states a person only meets when something goes wrong can be
+     * looked at — and reviewed in both languages — without breaking a relay or
+     * spending an account's quota to get there.
+     */
+    enum class ImportEnding {
+        /** Saved, but the relay died partway: the transcript finishes later. */
+        PARTIAL,
+
+        /** The same, with the upload still waiting for the network. */
+        PARTIAL_OFFLINE,
+
+        /** Stopped: the hosted transcription quota is spent. */
+        QUOTA,
+
+        /** Stopped: the relay refused the session. */
+        SIGNED_OUT,
+    }
 
     /**
      * A navigation request. [serial] makes each one distinct so firing the same
@@ -80,6 +104,11 @@ object DemoMode {
     /** Cheap synchronous read for the non-Compose injection points. */
     val isActive: Boolean get() = _enabled.value
 
+    private val _importEnding = MutableStateFlow(ImportEnding.PARTIAL)
+
+    /** The ending the last `parley://demo/import-…` asked for. */
+    val importEnding: StateFlow<ImportEnding> = _importEnding.asStateFlow()
+
     /**
      * Handle a `parley://demo/…` deep link. Returns false for anything else — a
      * sign-in callback, or any route in a release build — so `MainActivity`'s
@@ -98,6 +127,10 @@ object DemoMode {
             "transcript", "recording" -> Screen.TRANSCRIPT
             "record", "meeting" -> Screen.MEETING
             "account", "settings" -> Screen.ACCOUNT
+            in IMPORT_ROUTES -> {
+                _importEnding.value = IMPORT_ROUTES.getValue(route)
+                Screen.IMPORT
+            }
             else -> return false
         }
         _enabled.value = true
@@ -531,6 +564,38 @@ object DemoMode {
         startMs = 108_000,
         endMs = 112_000,
     )
+
+    // ── import fixture ───────────────────────────────────────────────────────
+
+    /** The picked file's name, as the import screen shows it. */
+    fun importTitle(locale: Locale = Locale.getDefault()): String =
+        t(locale, "Supplier call, Sep 18.m4a", "供應商電話 9月18日.m4a")
+
+    /** The state the import screen renders for [ending]. */
+    fun importState(ending: ImportEnding): ImportState = when (ending) {
+        ImportEnding.PARTIAL -> ImportState.Finished(
+            recordingId = IMPORT_ID,
+            pendingUpload = false,
+            transcript = ImportTranscript.COMPLETES_IN_BACKGROUND,
+        )
+        ImportEnding.PARTIAL_OFFLINE -> ImportState.Finished(
+            recordingId = IMPORT_ID,
+            pendingUpload = true,
+            transcript = ImportTranscript.COMPLETES_IN_BACKGROUND,
+        )
+        ImportEnding.QUOTA -> ImportState.Failed(ImportFailure.QUOTA_EXHAUSTED)
+        ImportEnding.SIGNED_OUT -> ImportState.Failed(ImportFailure.SESSION_EXPIRED)
+    }
+
+    private val IMPORT_ROUTES = mapOf(
+        "import" to ImportEnding.PARTIAL,
+        "import-partial" to ImportEnding.PARTIAL,
+        "import-offline" to ImportEnding.PARTIAL_OFFLINE,
+        "import-quota" to ImportEnding.QUOTA,
+        "import-signed-out" to ImportEnding.SIGNED_OUT,
+    )
+
+    private const val IMPORT_ID = "demo-import"
 
     private const val SCHEME = "parley"
     private const val HOST = "demo"

@@ -155,6 +155,11 @@
     <string name="import_failure_no_audio">That file has no audio track.</string>
     <string name="import_failure_unsupported">This device can\'t decode that audio format.</string>
     <string name="import_failure_decode">The file couldn\'t be decoded all the way through.</string>
+    <string name="import_failure_session_expired">Your session expired. Please sign in again.</string>
+    <string name="import_failure_upload_refused">Parley Cloud refused this recording, so it wasn\'t saved. Import the file again to retry.</string>
+    <string name="import_action_sign_in_again">Sign in again</string>
+    <string name="import_phase_saved">Saved</string>
+    <string name="import_transcript_in_background">Transcription stopped partway through. The recording is saved, and the transcript will be completed in the background.</string>
 
     <!-- Recording detail -->
     <string name="detail_title">Recording</string>

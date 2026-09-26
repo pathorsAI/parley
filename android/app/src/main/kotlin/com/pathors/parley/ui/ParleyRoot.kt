@@ -134,6 +134,7 @@ private fun DemoNavigation(navController: NavHostController) {
             DemoMode.Screen.LIBRARY, DemoMode.Screen.ACCOUNT -> Unit
             DemoMode.Screen.TRANSCRIPT -> navController.navigate(Route.recording(DemoMode.FEATURED_ID))
             DemoMode.Screen.MEETING -> navController.navigate(Route.MEETING)
+            DemoMode.Screen.IMPORT -> navController.navigate(Route.IMPORT)
         }
     }
 }
