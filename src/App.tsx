@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { exit } from "@tauri-apps/plugin-process";
 import { TitleBar } from "./components/TitleBar";
 import { AppShell } from "./components/shell/AppShell";
@@ -24,7 +25,13 @@ import {
   listenForProsody,
   listenForTranscript,
 } from "./lib/tauriEvents";
-import { isMac } from "./lib/platform";
+import { isMac, isWindows } from "./lib/platform";
+import {
+  showTrayNoticeOnce,
+  syncTrayLabels,
+  trayActive,
+  TRAY_QUIT_EVENT,
+} from "./lib/tray";
 import { listenForSettings } from "./lib/settingsSync";
 import { listenForViewLogsMenu } from "./lib/diagnostics";
 import { listenForSttUsage } from "./lib/usage/log";
@@ -85,13 +92,33 @@ function exitApp(): void {
 }
 
 /**
- * Close-to-quit for Windows/Linux. The stop has to land before the process
- * goes away — `exit` is immediate and would cut the IPC mid-flight, leaving the
- * native capture to die with the process instead of finishing its teardown — so
- * the exit is chained onto it, on success and failure alike.
+ * Stop-then-quit: the tray's Quit item on Windows, and the close button where
+ * there is nothing to hide to (Linux, or a Windows tray that failed to build).
+ * The stop has to land before the process goes away — `exit` is immediate and
+ * would cut the IPC mid-flight, leaving the native capture to die with the
+ * process instead of finishing its teardown — so the exit is chained onto it,
+ * on success and failure alike.
  */
 function exitOnClose(stopIfRecording: () => Promise<void>): void {
   void stopIfRecording().then(exitApp, exitApp);
+}
+
+/**
+ * Close-to-tray for Windows: stop an active meeting (a hidden window must
+ * never keep recording), explain where the window went the first time, then
+ * hide. Falls back to quitting when the tray icon does not exist — hiding the
+ * window then would leave no way back to it. Extracted to module scope so its
+ * awaits don't push the close-request listener past the nested-function depth
+ * limit.
+ */
+async function hideToTray(stopIfRecording: () => Promise<void>): Promise<void> {
+  if (!(await trayActive())) {
+    exitOnClose(stopIfRecording);
+    return;
+  }
+  void stopIfRecording();
+  await showTrayNoticeOnce();
+  await getCurrentWindow().hide();
 }
 
 /**
@@ -240,15 +267,16 @@ const App = () => {
   // the global push-to-talk key dead until the app is relaunched. An active
   // meeting is still stopped first: a hidden window must never keep recording.
   //
-  // Everywhere else the close button QUITS. Hiding needs somewhere to hide to,
-  // and off macOS there is none: no Dock, and no tray icon in the Tauri config.
-  // Merely letting the window be destroyed didn't end the process either —
-  // `initVoiceTyping` prewarms a hidden `voice-typing` window with
-  // `skipTaskbar`, and Tauri only raises ExitRequested once the window map is
-  // empty — so Parley vanished from screen and taskbar while still sitting in
-  // Task Manager holding the global Ctrl+Alt+Space hotkey, unreachable except
-  // by relaunching. A background process the user cannot see or reach is the
-  // wrong bargain for keeping voice typing alive.
+  // Windows does the same, into the notification area: Rust puts a tray icon
+  // there (src-tauri/src/tray.rs) whose click brings the window back and whose
+  // Quit item is the real exit (TRAY_QUIT_EVENT, below). Before that icon
+  // existed the close button had to QUIT on Windows — hiding needs somewhere to
+  // hide to, and merely letting the window be destroyed left Parley running
+  // invisibly (the prewarmed `voice-typing` window kept the process alive,
+  // holding the global Ctrl+Alt+Space hotkey, reachable only by relaunching).
+  // If the tray icon failed to build, `hideToTray` still quits for that reason.
+  //
+  // Anywhere else (Linux: not shipped, no tray) the close button QUITS.
   useEffect(() => {
     if (!isTauri()) return;
     let active = true;
@@ -276,6 +304,12 @@ const App = () => {
             .catch((error) => log.warn("window: hide on close failed", { error: String(error) }));
           return;
         }
+        if (isWindows()) {
+          hideToTray(stopIfRecording).catch((error) =>
+            log.warn("window: hide to tray failed", { error: String(error) }),
+          );
+          return;
+        }
         exitOnClose(stopIfRecording);
       })
       .then((fn) => {
@@ -286,12 +320,31 @@ const App = () => {
         }
       })
       .catch((error) => log.warn("window: close listener failed", { error: String(error) }));
+    // The tray's Quit item (Windows): Rust asks, and the exit runs here so an
+    // active meeting is stopped first — the same chain close-to-quit uses.
+    let unlistenQuit: (() => void) | undefined;
+    listen(TRAY_QUIT_EVENT, () => exitOnClose(stopIfRecording))
+      .then((fn) => {
+        if (active) {
+          unlistenQuit = fn;
+        } else {
+          fn();
+        }
+      })
+      .catch((error) => log.warn("window: tray quit listener failed", { error: String(error) }));
     return () => {
       active = false;
       window.removeEventListener("beforeunload", stopOnUnload);
       unlisten?.();
+      unlistenQuit?.();
     };
   }, []);
+
+  // The Windows tray menu speaks the app's language (no-op elsewhere).
+  const language = useStore((s) => s.settings.language);
+  useEffect(() => {
+    syncTrayLabels(language);
+  }, [language]);
 
   // Drop files anywhere on the window → the same import flow as every picker
   // door (R7): arbitration + STT gate live in lib/replay/ingest.ts, imported

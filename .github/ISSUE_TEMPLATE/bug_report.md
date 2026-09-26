@@ -19,12 +19,12 @@ labels: bug
 ## Environment
 
 - Parley version:
-- macOS version:
-- Apple silicon or Intel:
+- OS and version (e.g. macOS 15.5, Windows 11 24H2):
+- Chip (Apple silicon or Intel on a Mac; x64 or Arm64 on Windows):
 
 ## Logs
 
 <!--
-Diagnostics → View Logs (or the Diagnostics window) usually has the relevant lines.
+Settings → MCP Server → Open Field Log (or Diagnostics → View Logs in the macOS menu bar) usually has the relevant lines.
 Please redact API keys and anything from a real meeting transcript.
 -->

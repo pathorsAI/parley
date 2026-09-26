@@ -377,7 +377,7 @@ fn cache_file_path(app: &AppHandle, path: &str, provider: &str) -> Option<std::p
             }
         })
         .collect();
-    let dir = app.path().app_cache_dir().ok()?.join("transcriptions");
+    let dir = app.path().app_cache_dir().ok()?.join(crate::cache::TRANSCRIPTIONS_DIR);
     // Soniox keeps its original (provider-less) filename so existing caches stay
     // valid; new providers get a suffixed key.
     let file = if provider == "soniox" {
