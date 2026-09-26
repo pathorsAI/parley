@@ -1,3 +1,4 @@
+import ParleyKit
 import SwiftUI
 import UIKit
 
@@ -6,7 +7,11 @@ import UIKit
 /// bottom row they share.
 ///
 /// A view of its own rather than rows inside `LetterPane` because both typing
-/// panes reach the same two planes through the same `123` key. They also fit
+/// panes reach the two planes through the same `123` key. From the 注音 pane
+/// (`fullWidth`) the punctuation on them is Chinese — `。，、？！`, `「」`, `…`,
+/// `～` — laid out after the system 注音 keyboard's planes; the digits and the
+/// marks with no full-width convention are the same keys either way. The rows
+/// live in `FullWidthPunctuation` (ParleyKit), where they are tested. They also fit
 /// either side without changing the keyboard's height: four 42pt rows is exactly
 /// what QWERTY measures, so tapping `123` from the shorter 注音 rows still lands
 /// on the same 213pt content area.
@@ -22,6 +27,10 @@ struct SymbolPlanes: View, Equatable {
     /// What the key that goes back says — `ABC` from QWERTY, `注音` from the
     /// 注音 pane.
     var homeLabel: String
+    /// Chinese punctuation rather than ASCII — true from the 注音 pane. A plain
+    /// value rather than something read off the bridge, so the planes stay a
+    /// function of what they are handed.
+    var fullWidth = false
     var onHome: () -> Void
 
     /// What the planes draw. The bridge is the same object for the process's
@@ -29,7 +38,7 @@ struct SymbolPlanes: View, Equatable {
     /// make two planes look different.
     static func == (a: Self, b: Self) -> Bool {
         a.dark == b.dark && a.showsGlobe == b.showsGlobe && a.returnKey == b.returnKey
-            && a.homeLabel == b.homeLabel
+            && a.homeLabel == b.homeLabel && a.fullWidth == b.fullWidth
     }
 
     /// Which of the two planes. Owned here, so leaving and coming back always
@@ -47,13 +56,24 @@ struct SymbolPlanes: View, Equatable {
             VStack(spacing: KBMetrics.rowSpacing) {
                 switch plane {
                 case .numbers:
-                    row { ForEach(Array("1234567890"), id: \.self) { key($0, width: m.unit) } }
-                    row { ForEach(Array("-/:;()$&@\""), id: \.self) { key($0, width: m.unit) } }
-                    punctuationRow(m, toggleLabel: "#+=", toggleTarget: .symbols)
+                    fixedRow(Self.keys("1234567890"), m)
+                    fixedRow(
+                        fullWidth
+                            ? FullWidthPunctuation.numbersMiddle : Self.keys("-/:;()$&@\""), m)
+                    punctuationRow(
+                        m, toggleLabel: "#+=", toggleTarget: .symbols,
+                        keys: fullWidth
+                            ? FullWidthPunctuation.numbersPunctuation : Self.keys(".,?!'"))
                 case .symbols:
-                    row { ForEach(Array("[]{}#%^*+="), id: \.self) { key($0, width: m.unit) } }
-                    row { ForEach(Array("_\\|~<>$£¥•"), id: \.self) { key($0, width: m.unit) } }
-                    punctuationRow(m, toggleLabel: "123", toggleTarget: .numbers)
+                    fixedRow(
+                        fullWidth ? FullWidthPunctuation.symbolsTop : Self.keys("[]{}#%^*+="), m)
+                    fixedRow(
+                        fullWidth
+                            ? FullWidthPunctuation.symbolsMiddle : Self.keys("_\\|~<>$£¥•"), m)
+                    punctuationRow(
+                        m, toggleLabel: "123", toggleTarget: .numbers,
+                        keys: fullWidth
+                            ? FullWidthPunctuation.symbolsPunctuation : Self.keys(".,?!'"))
                 }
                 bottomRow(m)
             }
@@ -63,16 +83,25 @@ struct SymbolPlanes: View, Equatable {
         }
     }
 
-    /// The row both planes share: the plane toggle, five punctuation keys that
-    /// spread to fill whatever is left, and delete.
+    private static func keys(_ row: String) -> [String] { row.map { String($0) } }
+
+    /// Ten keys at the unit width. Indexed rather than keyed by the text,
+    /// because a row may carry the same mark twice.
+    private func fixedRow(_ keys: [String], _ m: KeyRowMetrics) -> some View {
+        row {
+            ForEach(Array(keys.enumerated()), id: \.offset) { key($0.element, width: m.unit) }
+        }
+    }
+
+    /// The row both planes share: the plane toggle, the punctuation keys — five
+    /// from QWERTY, six from 注音, as on the system keyboards — spread to fill
+    /// whatever is left, and delete.
     private func punctuationRow(
-        _ m: KeyRowMetrics, toggleLabel: String, toggleTarget: Plane
+        _ m: KeyRowMetrics, toggleLabel: String, toggleTarget: Plane, keys: [String]
     ) -> some View {
         row {
             altKey(toggleLabel, width: m.wide) { plane = toggleTarget }
-            ForEach(Array(".,?!'"), id: \.self) { character in
-                key(character, width: nil)
-            }
+            ForEach(Array(keys.enumerated()), id: \.offset) { key($0.element, width: nil) }
             DeleteKey(dark: dark, width: m.wide) { bridge.backspace() }
                 .equatable()
         }
@@ -102,9 +131,8 @@ struct SymbolPlanes: View, Equatable {
 
     /// A key that types itself as-is. A `nil` width means "share the row's slack
     /// with your neighbours".
-    private func key(_ character: Character, width: CGFloat?) -> some View {
-        let text = String(character)
-        return KeyButton(dark: dark, width: width, action: { bridge.type(text) }) {
+    private func key(_ text: String, width: CGFloat?) -> some View {
+        KeyButton(dark: dark, width: width, action: { bridge.type(text) }) {
             Text(verbatim: text).font(.system(size: 22))
         }
         .equatable()

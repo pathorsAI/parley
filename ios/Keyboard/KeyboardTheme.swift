@@ -3,12 +3,14 @@ import UIKit
 
 /// The keyboard's palette.
 ///
-/// The extension can't reach the app target's `Theme`, and it must not follow
-/// the *system* appearance either: a keyboard follows the appearance of the
-/// field it is typing into (`UITextDocumentProxy.keyboardAppearance`), which a
-/// dark-themed host app sets to `.dark` even while iOS is in light mode. Every
-/// color here therefore takes the resolved appearance explicitly rather than
-/// reading the trait collection.
+/// The extension can't reach the app target's `Theme`, and it must not simply
+/// follow the *system* appearance either: a keyboard follows the appearance of
+/// the field it is typing into (`UITextDocumentProxy.keyboardAppearance`), which
+/// a dark-themed host app sets to `.dark` even while iOS is in light mode — and
+/// only falls back to the trait collection when the field leaves it at
+/// `.default` (see `KeyboardViewController.isDark`). Every color here therefore
+/// takes the resolved appearance explicitly rather than reading the trait
+/// collection.
 ///
 /// The canvas is deliberately absent: the keyboard paints no background of its
 /// own so the system's `UIInputView` shows through, which is the only way the
@@ -50,20 +52,29 @@ enum KBTheme {
 
     /// Key cap — deliberately lighter than the input view behind it in both
     /// appearances, the way system letter keys read.
+    ///
+    /// The dark value is measured, not remembered: on iOS 26.5 the system
+    /// keyboard draws its caps at sRGB 61/255 over a backdrop of about 24, and
+    /// `Color(white:)` is gamma-encoded, so 0.24 lands on exactly that grey.
     static func key(_ dark: Bool) -> Color {
-        dark ? Color(white: 0.28) : .white
+        dark ? Color(white: 0.24) : .white
     }
 
     static func keyPressed(_ dark: Bool) -> Color {
-        dark ? Color(white: 0.38) : Color(white: 0.85)
+        dark ? Color(white: 0.34) : Color(white: 0.85)
     }
 
     /// The duller cap iOS gives the keys that aren't letters — shift, delete,
     /// `123`, globe, return. Pressing one lightens it *towards* a letter key,
     /// which is the inverse of how a letter key behaves; that inversion is what
     /// makes the two families distinguishable under a finger.
+    ///
+    /// iOS 26's dark keyboard no longer draws the two families differently —
+    /// every cap is the same grey. The split is kept a step apart here anyway,
+    /// because an engaged shift is shown by borrowing the letter cap, and with
+    /// one grey for both it would have no way to look armed.
     static func keyAlt(_ dark: Bool) -> Color {
-        dark ? Color(white: 0.18) : Color(red: 0.68, green: 0.70, blue: 0.74)
+        dark ? Color(white: 0.17) : Color(red: 0.68, green: 0.70, blue: 0.74)
     }
 
     static func keyAltPressed(_ dark: Bool) -> Color {

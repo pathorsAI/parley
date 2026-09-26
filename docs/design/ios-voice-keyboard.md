@@ -808,6 +808,40 @@ the area the system keyboard would. A canvas painted over it is a slightly wrong
 grey that seams against whatever sits below the keyboard and a top-left corner
 that doesn't line up — which is precisely how the bug reported as 跑版 looked.
 
+Not painting the backdrop has one consequence the caps have to follow: **the
+backdrop's colour is the system's decision, so the caps' has to be made the same
+way.** Until 1.20 the keyboard read only `keyboardAppearance == .dark`, and most
+third-party hosts — Claude and LINE among them — leave that property at
+`.default` while the system paints the backdrop from the *trait collection*. In
+Dark Mode those hosts got white caps with black glyphs on a black backdrop.
+
+The rule is now `KeyboardViewController.isDark`, and it has to cover three kinds
+of host, measured on the iOS 26.5 simulator:
+
+- **`.default`** follows `traitCollection.userInterfaceStyle`, as the backdrop
+  does.
+- **A value that mirrors the system.** Reminders and Safari report `.light` in
+  light mode and `.dark` in dark mode. Flipping Dark Mode with the keyboard on
+  screen repaints the backdrop at once, but the proxy keeps reporting the old
+  value until the field is activated again — a stale `.light` over a dark
+  backdrop. So when the value is read fresh (`viewWillAppear`) and matches the
+  trait, the host is taken to *follow the system*, and a later trait change
+  (`registerForTraitChanges([UITraitUserInterfaceStyle.self])`) is believed over
+  the unchanged proxy.
+- **A value that contradicts the system** — a dark-themed app on a light phone —
+  is the host forcing its appearance, and is kept across a flip.
+
+`textDidChange` re-learns only from a *changed* value, because an unchanged one
+after a flip is exactly the stale case. The one case this cannot tell apart is a
+host that forces `.dark` while the phone is already dark and then sees the phone
+go light; it is corrected on the next appearance.
+
+The dark caps are measured against the same backdrop: iOS 26.5 draws every key
+at sRGB 61/255 over a backdrop of about 24, so `KBTheme.key(true)` is
+`Color(white: 0.24)`. iOS 26 no longer draws the non-letter keys a different
+grey; ours keep a darker `keyAlt` (0.17) anyway, because an engaged shift is
+shown by borrowing the letter cap and would otherwise have no way to look armed.
+
 Two more pieces of the same recipe:
 
 - `inputView?.allowsSelfSizing = true`, with the height constraint at
@@ -1224,7 +1258,7 @@ composer's limit rather than a position anybody argued for.
   of a key pitch rather than centred, for the same reason: the shape of the block
   is the thing a 注音 typist has learned, and ours differing from it bought
   nothing. The function row is then `123`, the globe where the system asks for
-  one, space and return, with `123` and return at 2.5 units each. The pane is
+  one, `，`, space, `。` and return, with `123` and return at 2.5 units each. The pane is
   still five rows and still measures 213pt — none of this moved a height, and it
   could not, because the panes are one swipe apart.
 - **Slots inside a syllable, an ordered list of syllables above them.**
@@ -1262,6 +1296,26 @@ composer's limit rather than a position anybody argued for.
   is the first tone while the last syllable has no tone, and commits everything
   once it has one. So a sentence stays typeable without ever looking at the bar,
   and choosing one word does not cost the syllables behind it.
+- **⌄ opens every candidate as a grid.** The bar shows what fits in one row;
+  the ⌄ at its end (only while there are candidates) opens all of them as a
+  grid in the 注音 pane's own 213pt key area — `CandidateGrid`, 22pt key-cap
+  cells, `max(4, width ÷ 64)` columns, scrolling vertically — in exactly the
+  composer's order, never re-sorted. The keyboard's height does not change: the
+  grid takes the keys' place rather than growing the keyboard. It *replaces*
+  them rather than covering them, because the keyboard paints no background
+  (see *Not painting a background*): the pane track is hidden and stops taking
+  touches while the grid is up. The strip keeps the reading and flips ⌄ to ⌃ to
+  close it; the grid carries its own ⌫ (bottom right, hold-to-repeat), because
+  the pane's is hidden with the keys and delete still unwinds the buffer. The
+  open state lives on the bridge (`candidatesExpanded`) because the controller
+  closes it: whenever the reading empties — a pick that used the last
+  syllables, return, space, punctuation, leaving the pane — the grid goes and
+  the keys come back. A pick that leaves syllables pending keeps it open with
+  their candidates.
+- **The strip takes touches everywhere.** A fully transparent point in a
+  keyboard extension never receives a touch, and the strip had no fill, so only
+  the drawn pixels of a candidate's glyphs were tappable — and of ⌄, just two
+  thin strokes. It now carries the same sub-visible fill the pane track does.
 - **Two lone 聲母 already predict.** `ㄋㄏ` offers 你好 before a vowel or a tone
   has been typed, because a phrase is matched **by prefix within each
   syllable**: the slots the user has filled must agree with the phrase's
@@ -1272,18 +1326,49 @@ composer's limit rather than a position anybody argued for.
 - **Delete unwinds the buffer before it reaches the document**: the last
   syllable's tone, then its slots, then the empty syllable itself, and on into
   the syllable before it. Only with nothing pending does it reach the field.
-- **Punctuation commits first.** A mark typed from the symbol planes flushes the
-  pending syllables and then lands, rather than arriving in front of the word
-  that was being typed.
+- **Punctuation commits first.** A mark typed from the symbol planes or the
+  function row flushes the pending syllables and then lands, rather than
+  arriving in front of the word that was being typed.
+- **Punctuation is full-width.** Chinese is punctuated with 。，、？！「」, and
+  until 1.20 the 注音 pane could only type the ASCII marks it shared with
+  QWERTY. Two parts:
+  - **「，」 and 「。」 flank space on the function row**: `123`, the globe where
+    the system asks for one, `，`, space, `。`, return. This is *not* where the
+    system puts them — iOS 26.5's 注音 keyboard has no punctuation on its main
+    plane at all (screenshotted in Reminders), so every sentence costs two trips
+    to `123`. They go beside space because that is where both thumbs already
+    are. `123` and return keep their 2.5 units: on a 320pt SE with the globe,
+    space still gets about 81pt (11-column unit ≈ 23.1pt, 2.5 units ≈ 66.7pt).
+  - **The symbol planes opened from 注音 are the system 注音 keyboard's planes**
+    (`SymbolPlanes(fullWidth: true)`; the rows are in `FullWidthPunctuation`,
+    ParleyKit, with tests). Numbers: `1234567890` / `- / ： ； （ ） $ @ 「 」` /
+    `#+=` `。 ， 、 ？ ！ .` ⌫. Symbols: `[]{}#%^*+=` / `_ — \ | ～ 《 》 ¥ & ·` /
+    `123` `… ， 。 ？ ！ '` ⌫. The system's `^^` emoticon key is replaced by `。`;
+    one ASCII `.` stays on the numbers plane for decimals, as it does on the
+    system's. Marks with no full-width convention in Taiwanese writing (`$ @ & #
+    - /` …) stay ASCII — a `＠` in an email address is a broken address — and
+    digits stay half-width. The mapping itself: `, . ? ! : ; ( ) [ ] ' ~ < >` →
+    `， 。 ？ ！ ： ； （ ） 「 」 、 ～ 《 》`.
+  - **Double-space types 「。」** on the 注音 pane, with no trailing space — the
+    full-width mark carries its own. QWERTY keeps `. `.
 - **The composition is drawn in the mode strip**, space-separated, rather than as
   marked text in the host's field. `UITextDocumentProxy` does offer
   `setMarkedText(_:selectedRange:)`, and the system keyboard uses exactly that;
   it is not used here because how a host renders and commits marked text is the
   host's business, and a composition that the keyboard cannot see cannot be
   guaranteed to end the way the composer thinks it did. The strip is ours. Six
-  syllables and a candidate bar do not both fit in one row, so the composition
-  truncates at the **head**: the newest syllable is the one being typed and has
-  to stay visible, and the candidates keep most of the row.
+  syllables and a candidate bar do not both fit in one row, so **the chip shows
+  the last two syllables**, behind a `…` when more are pending (VoiceOver still
+  reads the whole buffer): the newest syllable is the one being typed, the one
+  before it shows the segmentation, and the front of the buffer is on screen
+  anyway as the candidates. Until 1.20 the chip showed the whole buffer capped
+  at 170pt, which at six syllables left a 320pt phone two or three candidates —
+  reported as "only about three characters". The chip is also 15pt now, down
+  from 17. Measured on the simulator: the chip for `…ㄖㄣ ㄐㄧㄣ` is 100pt plus a
+  6pt gap, a one-character candidate cell 45pt, a two-character phrase 65pt,
+  and ⌄ 33pt. So at 320pt (296pt of strip) the bar has 157pt — three and a half
+  single characters, or two and a half phrases — and at 402pt (iPhone 17 Pro)
+  239pt, three and a half phrases. `ZhuyinComposer.maxPending` is unchanged.
 - Leaving the pane commits what was pending — the user swiped, they didn't press
   delete. Coming back to a *different* field drops it, the same rule the
   transcript tail follows and for the same reason.
@@ -1499,8 +1584,10 @@ Named here so nobody has to guess whether it was forgotten:
 - **No user dictionary and no learning.** The bar's order is the corpus's, not
   yours. A keyboard extension that accumulated a per-user model would be holding
   state this process is deliberately kept free of.
-- **No 漢語拼音 or 倚天 layouts**, and no half-width/full-width punctuation
-  switch — punctuation comes from the symbol planes shared with QWERTY.
+- **No 漢語拼音 or 倚天 layouts.**
+- **No half-width/full-width toggle.** The 注音 pane types full-width marks and
+  the English pane ASCII (see *Punctuation is full-width* above); a user who
+  wants `,` in Chinese text swipes to English for it.
 - **No associated-phrase prompts** after a commit.
 - **No unbounded buffer.** Six syllables may be pending; a seventh commits the
   oldest at its best guess. A sentence-length buffer would be a sentence this

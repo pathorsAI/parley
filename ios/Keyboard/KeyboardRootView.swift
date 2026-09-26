@@ -30,8 +30,9 @@ struct KeyboardRootView: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// The host field's appearance, not the system's: a dark-themed app puts a
-    /// dark keyboard on screen even in light mode.
+    /// The host field's appearance when it names one — a dark-themed app puts
+    /// a dark keyboard on screen even in light mode — and the trait collection's
+    /// when it leaves it at `.default`. See `KeyboardViewController.isDark`.
     var dark: Bool
 
     /// Live horizontal travel of the pane track while a drag is in flight.
@@ -86,6 +87,21 @@ struct KeyboardRootView: View {
                             bridge.stepPane(by: dx < 0 ? 1 : -1)
                         }
                 )
+                // Hidden rather than covered while the candidate grid is up:
+                // the keyboard has no background to cover it with. Hit-testing
+                // goes with it, so the track can't be swiped or typed on
+                // underneath the grid.
+                .opacity(showsCandidateGrid ? 0 : 1)
+                .allowsHitTesting(!showsCandidateGrid)
+            }
+            // The same content area the panes have, so opening the grid cannot
+            // change the keyboard's height.
+            .overlay {
+                if showsCandidateGrid {
+                    CandidateGrid(
+                        candidates: bridge.zhuyin.candidates, dark: dark,
+                        pick: bridge.pickCandidate, backspace: bridge.backspace)
+                }
             }
             .clipped()
         }
@@ -146,7 +162,14 @@ struct KeyboardRootView: View {
         HStack(spacing: 0) {
             if !bridge.zhuyin.composition.isEmpty {
                 compositionChip
-                candidateBar
+                if bridge.candidatesExpanded {
+                    // The grid below has the candidates; the strip keeps the
+                    // reading and the way back.
+                    Spacer(minLength: 8)
+                } else {
+                    candidateBar
+                }
+                if showsExpandKey { expandKey }
             } else if showsSuggestions {
                 suggestionBar
             } else {
@@ -163,6 +186,11 @@ struct KeyboardRootView: View {
         }
         .frame(height: KBMetrics.strip)
         .padding(.horizontal, 12)
+        // The same sub-visible fill the pane track has, for the same reason: a
+        // fully transparent point in a keyboard extension never receives the
+        // touch, so without it only the drawn pixels of ⌄ — two thin strokes —
+        // and of each candidate's glyphs were tappable.
+        .background(Color.white.opacity(0.01))
     }
 
     /// The English pane's word suggestions take the strip on the same terms the
@@ -250,41 +278,60 @@ struct KeyboardRootView: View {
 
     // MARK: 注音 composition
 
-    /// About 45% of the strip on every phone the keyboard runs on — 320pt to
-    /// 440pt wide — which is the most the chip can take before the candidate bar
-    /// stops being able to show a candidate the user would have picked anyway.
-    private static let compositionChipWidth: CGFloat = 170
+    /// A backstop rather than a layout: `compositionTail` keeps the chip to two
+    /// syllables, which at 15pt is under 100pt for almost every reading. The
+    /// cap only matters for two four-symbol syllables side by side.
+    private static let compositionChipWidth: CGFloat = 120
 
-    /// What is being typed but has not landed anywhere yet — up to six syllables,
-    /// space-separated — in the accent so it reads as pending rather than as
-    /// text in the document.
+    /// How many syllables the chip shows. See `compositionTail`.
+    private static let compositionChipSyllables = 2
+
+    /// What is being typed but has not landed anywhere yet, in the accent so it
+    /// reads as pending rather than as text in the document.
     ///
-    /// It is capped at roughly the left half of the strip and truncated from the
-    /// *head*, because the row is shared with the candidate bar: a long
-    /// composition must not push the candidates off the end, and the syllable
-    /// the next keystroke edits is the newest one, on the right. It is fixed to
-    /// its natural width up to that cap, so the bar can neither squeeze it nor
-    /// hand it room it has no text for.
+    /// The chip shares the row with the candidate bar, and the bar is the part
+    /// the user acts on. It used to show the whole buffer, capped at 170pt: at
+    /// six syllables that is the cap, and on a 320pt phone the bar was left with
+    /// two or three candidates — "only about three characters", as it was
+    /// reported. So it shows the **last two syllables**, behind an ellipsis when
+    /// more are pending: the newest syllable is the one the next keystroke
+    /// edits, the one before it is enough context to see a segmentation, and the
+    /// front of the buffer is already on screen as the candidates themselves.
+    /// VoiceOver still gets the whole reading. It is fixed to its natural width,
+    /// so the bar can neither squeeze it nor hand it room it has no text for.
     private var compositionChip: some View {
-        Text(verbatim: bridge.zhuyin.composition)
-            .font(.system(size: 17))
+        Text(verbatim: compositionTail)
+            // 15pt, two below the 17 it had: the reading is a caption for
+            // the candidates beside it, not text the user reads for itself,
+            // and at 320pt every point it gives up is a candidate's.
+            .font(.system(size: 15))
             .foregroundStyle(KBTheme.accent)
             .lineLimit(1)
             .truncationMode(.head)
             .frame(maxWidth: Self.compositionChipWidth, alignment: .trailing)
             // Hug the text: a flexible frame beside a scroll view is offered
-            // the whole cap and takes it, which drew a 170pt chip around two
+            // the whole cap and takes it, which drew a wide chip around two
             // symbols. Fixed to its ideal width the chip is as wide as the
-            // reading, and the cap still truncates a six-syllable one.
+            // reading, and the cap still truncates an unusually long one.
             .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 1)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
             .background(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .fill(KBTheme.control(dark)))
-            .padding(.trailing, 8)
+            .padding(.trailing, 6)
             .accessibilityLabel(Text("Composing"))
             .accessibilityValue(Text(verbatim: bridge.zhuyin.composition))
+    }
+
+    /// The last `compositionChipSyllables` of the space-separated reading,
+    /// after a `…` when that drops any.
+    private var compositionTail: String {
+        let syllables = bridge.zhuyin.composition.split(separator: " ")
+        guard syllables.count > Self.compositionChipSyllables else {
+            return bridge.zhuyin.composition
+        }
+        return "…" + syllables.suffix(Self.compositionChipSyllables).joined(separator: " ")
     }
 
     /// What the front of the buffer could be — phrases first, then the first
@@ -303,6 +350,41 @@ struct KeyboardRootView: View {
             label: Text("Candidates"), action: bridge.pickCandidate
         )
         .equatable()
+    }
+
+    /// The grid replaces the 注音 keys only while there is a reading to choose
+    /// for. The controller collapses it when the buffer empties; the pane test
+    /// is a second guard, so the grid can never sit over another pane's keys.
+    private var showsCandidateGrid: Bool {
+        bridge.candidatesExpanded && bridge.pane == .zhuyin && !bridge.zhuyin.composition.isEmpty
+    }
+
+    /// Only with something to show, or with the grid already open so it can be
+    /// closed again.
+    private var showsExpandKey: Bool {
+        bridge.candidatesExpanded || !bridge.zhuyin.candidates.isEmpty
+    }
+
+    /// ⌄ at the end of the candidate bar, as on the system keyboard: the bar
+    /// shows what fits in one row, this opens all of them over the keys.
+    /// Flips to ⌃ while the grid is open. A hairline sets it off from the last
+    /// candidate, so it doesn't read as one.
+    private var expandKey: some View {
+        let expanded = bridge.candidatesExpanded
+        return HStack(spacing: 0) {
+            Rectangle()
+                .fill(KBTheme.inkSoft(dark).opacity(0.3))
+                .frame(width: 1, height: KBMetrics.strip - 18)
+            Button(action: { bridge.candidatesExpanded.toggle() }) {
+                Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(KBTheme.ink(dark))
+                    .frame(width: 32, height: KBMetrics.strip - 4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(expanded ? Text("Fewer candidates") : Text("Show more candidates"))
+        }
     }
 
     // MARK: English word suggestions

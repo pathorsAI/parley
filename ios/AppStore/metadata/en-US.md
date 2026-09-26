@@ -85,6 +85,24 @@ Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
 ## What's New — 1.20
 
+The Parley keyboard looks right in dark mode, in every app.
+
+In apps that follow the system's dark mode — Claude and LINE among them — the
+keys were drawn white with black letters on a dark keyboard. They now match the
+keyboard around them, and change with it when you switch dark mode on or off
+while typing.
+
+注音 types Chinese punctuation. 「，」 and 「。」 sit on either side of the space
+bar, and the 123 and #+= keys on the 注音 keyboard now bring up full-width
+marks — 、？！：；「」（）…～ and more. Tapping space twice ends a sentence with 「。」.
+
+Tap ⌄ at the end of the candidate bar to see every candidate at once, in a grid
+where the keys were. Tap one to type it, or ⌃ to go back to the keys.
+
+More candidates stay in view while you type a long phrase: the reading above the
+keys now shows its last two syllables instead of all of them, so the candidates
+keep most of the bar.
+
 The keyboard is lighter and quicker.
 
 Typing on the 注音 and English keyboards now redraws only what changed — the
