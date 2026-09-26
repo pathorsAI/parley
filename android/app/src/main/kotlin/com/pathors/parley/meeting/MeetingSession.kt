@@ -16,6 +16,7 @@ import com.pathors.parley.audio.MicCaptureException
 import com.pathors.parley.audio.MicRecoveryState
 import com.pathors.parley.audio.OggOpusEncoder
 import com.pathors.parley.audio.OpusEncodeException
+import com.pathors.parley.audio.PlatformSilenceEdge
 import com.pathors.parley.audio.StorageHeadroom
 import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.cloud.RecordingSource
@@ -485,6 +486,7 @@ class MeetingSession(
     private fun startMicMonitor() {
         if (finishRequested) return
         val audio = context.getSystemService(AudioManager::class.java) ?: return
+        val edge = PlatformSilenceEdge()
         val callback = object : AudioManager.AudioRecordingCallback() {
             override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
                 val silenced = configs.any { it.isClientSilenced }
@@ -495,7 +497,15 @@ class MeetingSession(
                 // microphone. Handing it to the capture turns the same signal
                 // into an attempt to take the input back. See
                 // [MicCapture.notePlatformSilenced].
-                mic.notePlatformSilenced(silenced)
+                //
+                // Only the *edges* go through, and only from a delivery that
+                // lists a live recording. This callback also fires for our own
+                // record starting and stopping — including every stop/start of
+                // a rebuild — and forwarding those as "interruption ended" made
+                // the capture rebuild itself in a loop for the whole meeting
+                // (1.13). See [PlatformSilenceEdge].
+                edge.observe(anyRecording = configs.isNotEmpty(), anySilenced = silenced)
+                    ?.let(mic::notePlatformSilenced)
             }
         }
         // A Handler is required: this runs on Dispatchers.IO, which has no Looper.
