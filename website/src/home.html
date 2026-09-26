@@ -200,12 +200,12 @@
         <div class="asks__it"><p class="asks__q">{{ai.q2}}</p><p class="asks__a">{{ai.a2}}</p></div>
         <div class="asks__it"><p class="asks__q">{{ai.q3}}</p><p class="asks__a">{{ai.a3}}</p></div>
       </div>
-      <div class="code fade" role="group" aria-label="{{ai.codeLabel|attr}}">
+      <figure class="code fade" aria-label="{{ai.codeLabel|attr}}">
         <button type="button" class="code__copy" data-copy="claude mcp add --transport http parley http://127.0.0.1:3011/mcp" data-done="{{ai.copied|attr}}">{{ai.copy}}</button>
         <pre><code><span class="code__c">{{ai.codeComment}}</span>
 claude mcp add --transport http parley \
   http://127.0.0.1:3011/mcp</code></pre>
-      </div>
+      </figure>
       <p class="fine fade">{{ai.fine}}</p>
       <ul class="xrow fade">
         <li>{{ai.x1}} <a href="https://github.com/pathorsAI/parley#-the-mcp-server">{{ai.x1link}} →</a></li>

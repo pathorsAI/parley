@@ -101,15 +101,49 @@ function escapeAttr(value: string): string {
 /** JSON that is safe inside a <script> element. */
 function scriptJson(value: unknown): string {
   return JSON.stringify(value)
-    .replaceAll("<", "\\u003c")
-    .replaceAll(">", "\\u003e")
-    .replaceAll("&", "\\u0026")
-    .replaceAll("\u2028", "\\u2028")
-    .replaceAll("\u2029", "\\u2029");
+    .replaceAll("<", String.raw`\u003c`)
+    .replaceAll(">", String.raw`\u003e`)
+    .replaceAll("&", String.raw`\u0026`)
+    .replaceAll("\u2028", String.raw`\u2028`)
+    .replaceAll("\u2029", String.raw`\u2029`);
 }
 
+/**
+ * Drops every `<…>` tag, then collapses whitespace. Same result as
+ * `.replace(/<[^>]*>/g, "")`, but a single indexOf pass: that regex rescans to the
+ * end of the string from every unclosed `<`, which is quadratic.
+ */
 function stripTags(html: string): string {
-  return html.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+  let text = "";
+  let i = 0;
+  while (i < html.length) {
+    const open = html.indexOf("<", i);
+    if (open < 0) break;
+    const close = html.indexOf(">", open + 1);
+    // No `>` after this `<` means none after any later `<` either: keep the rest.
+    if (close < 0) break;
+    text += html.slice(i, open);
+    i = close + 1;
+  }
+  text += html.slice(i);
+  return text.replaceAll(/\s+/g, " ").trim();
+}
+
+/**
+ * The leftmost `{{…}}` whose body contains no `}` — what `/\{\{[^}]*\}\}/` matches —
+ * or null. Linear: when the first `}` after a `{{` is not doubled, no `{{` before
+ * that `}` can match either, so the search resumes past it.
+ */
+function findPlaceholder(html: string): string | null {
+  let from = 0;
+  for (;;) {
+    const open = html.indexOf("{{", from);
+    if (open < 0) return null;
+    const close = html.indexOf("}", open + 2);
+    if (close < 0) return null;
+    if (html[close + 1] === "}") return html.slice(open, close + 2);
+    from = close + 1;
+  }
 }
 
 function loadDicts(srcDir: string): Record<Lang, Dict> {
@@ -217,9 +251,9 @@ function render(
   used.add("meta.description");
   used.add("ld.features");
 
-  const source = template.replace(/<!--#[\s\S]*?-->\n?/g, "");
+  const source = template.replaceAll(/<!--#[\s\S]*?-->\n?/g, "");
   const missing = new Set<string>();
-  const out = source.replace(/\{\{\s*([@\w.-]+)(\|attr)?\s*\}\}/g, (_m, key: string, attr?: string) => {
+  const out = source.replaceAll(/\{\{\s*([@\w.-]+)(\|attr)?\s*\}\}/g, (_m, key: string, attr?: string) => {
     let value: string | undefined;
     if (key.startsWith("@")) value = computed[key];
     else {
@@ -237,14 +271,26 @@ function render(
       `build-website: home.html uses keys that ${lang} does not define: ${[...missing].join(", ")}`,
     );
   }
-  const leftover = out.match(/\{\{[^}]*\}\}/);
-  if (leftover) throw new Error(`build-website: unresolved placeholder ${leftover[0]} (${lang})`);
+  const leftover = findPlaceholder(out);
+  if (leftover) throw new Error(`build-website: unresolved placeholder ${leftover} (${lang})`);
   return out;
+}
+
+/**
+ * `p` with symlinks resolved. The output directory usually doesn't exist yet, so
+ * resolve its nearest existing ancestor and re-append the rest. Without this,
+ * /tmp and /private/tmp (the same directory on macOS) compare as unrelated.
+ */
+function canonical(p: string): string {
+  const abs = path.resolve(p);
+  let existing = abs;
+  while (!fs.existsSync(existing)) existing = path.dirname(existing);
+  return path.join(fs.realpathSync(existing), path.relative(existing, abs));
 }
 
 /** True when `child` is `parent` or somewhere below it. */
 function isWithin(parent: string, child: string): boolean {
-  const rel = path.relative(parent, child);
+  const rel = path.relative(canonical(parent), canonical(child));
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 

@@ -34,9 +34,11 @@
 
   function detectOS() {
     const ua = navigator.userAgent || "";
-    const platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+    // Chromium names the platform outright; elsewhere the user-agent string is all there is.
+    const platform = navigator.userAgentData?.platform || "";
+    const looksLikeMac = /Mac/i.test(platform) || /Macintosh/.test(ua);
     // iPadOS reports itself as a Mac; touch points give it away.
-    if (/iPhone|iPad|iPod/.test(ua) || (/Mac/.test(platform) && navigator.maxTouchPoints > 1)) return "ios";
+    if (/iPhone|iPad|iPod/.test(ua) || (looksLikeMac && navigator.maxTouchPoints > 1)) return "ios";
     if (/Android/i.test(ua)) return "android";
     if (/Win/i.test(platform) || /Windows/.test(ua)) return "windows";
     return "mac";
@@ -51,7 +53,7 @@
     }[os];
     const primary = document.getElementById("cta-primary");
     const secondary = document.getElementById("cta-secondary");
-    if (primary && heroCta && heroCta.label) {
+    if (primary && heroCta?.label) {
       primary.href = heroCta.href;
       primary.dataset.os = heroCta.icon;
       const label = primary.querySelector(".cta-label");
@@ -92,7 +94,7 @@
     if (!bar) return;
     const KEY = "parley.langbar.dismissed";
     if (store.get(KEY) === "1") return;
-    const prefs = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || ""];
+    const prefs = navigator.languages?.length ? navigator.languages : [navigator.language || ""];
     const prefersZh = /^zh\b/i.test(prefs[0] || "");
     const mismatch = pageLang === "zh" ? !prefersZh : prefersZh;
     if (!mismatch) return;
@@ -130,18 +132,22 @@
   }
 
   /* ---------- Copy button for the MCP command ---------- */
+  function showCopied(btn, original) {
+    btn.textContent = btn.dataset.done || original;
+    btn.classList.add("is-done");
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.classList.remove("is-done");
+    }, 1600);
+  }
+
   function setupCopy() {
     document.querySelectorAll(".code__copy").forEach((btn) => {
       const original = btn.textContent;
       btn.addEventListener("click", async () => {
         try {
           await navigator.clipboard.writeText(btn.dataset.copy || "");
-          btn.textContent = btn.dataset.done || original;
-          btn.classList.add("is-done");
-          setTimeout(() => {
-            btn.textContent = original;
-            btn.classList.remove("is-done");
-          }, 1600);
+          showCopied(btn, original);
         } catch {
           /* clipboard unavailable: the command is on screen to select by hand */
         }
@@ -153,7 +159,7 @@
   function setupFades() {
     const els = document.querySelectorAll(".fade");
     const showAll = () => els.forEach((el) => el.classList.add("in"));
-    if (reduceMotion.matches || !("IntersectionObserver" in window)) return showAll();
+    if (reduceMotion.matches || !("IntersectionObserver" in globalThis)) return showAll();
     const io = new IntersectionObserver(
       (entries) => {
         entries.forEach((e) => {
@@ -173,12 +179,33 @@
      on screen (website/tools/hero-rms). A run of zeros is the silence between the
      speakers, so the text only advances while someone is talking, and the
      waveform is a dotted centreline when nobody is. */
+
+  // Turn boundaries = runs of true silence (six or more zero samples) in the data.
+  function findTurns(rms) {
+    const turns = [];
+    let start = 0;
+    let i = 0;
+    while (i < rms.length) {
+      if (rms[i] === 0) {
+        let j = i;
+        while (j < rms.length && rms[j] === 0) j++;
+        if (j - i >= 6) {
+          turns.push([start, i]);
+          start = j;
+        }
+        i = j;
+      } else i++;
+    }
+    if (start < rms.length) turns.push([start, rms.length]);
+    return turns;
+  }
+
   function setupHero() {
     const RMS = Array.isArray(data.rms) ? data.rms : [];
     const lines = document.getElementById("lines");
     const canvas = document.getElementById("wave");
     const clock = document.getElementById("clock");
-    if (!RMS.length || !lines || !canvas || !canvas.getContext) return;
+    if (!RMS.length || !lines || !canvas?.getContext) return;
     const ctx = canvas.getContext("2d");
     const HOP = 85;
     const H = 34;
@@ -186,25 +213,8 @@
     const STEP = 5; // 3px bar + 2px gap
     const texts = [data.line1 || "", data.line2 || ""];
     const who = [data.speakerA || "A", data.speakerB || "B"];
-
-    // Turn boundaries = runs of true silence in the data.
-    const turns = [];
-    {
-      let start = 0;
-      let i = 0;
-      while (i < RMS.length) {
-        if (RMS[i] === 0) {
-          let j = i;
-          while (j < RMS.length && RMS[j] === 0) j++;
-          if (j - i >= 6) {
-            turns.push([start, i]);
-            start = j;
-          }
-          i = j;
-        } else i++;
-      }
-      if (start < RMS.length) turns.push([start, RMS.length]);
-    }
+    const settleLag = pageLang === "zh" ? 6 : 18; // characters still "unsettled"
+    const turns = findTurns(RMS);
 
     let color = "20, 105, 212";
     const readColor = () => {
@@ -254,8 +264,30 @@
         '<div class="txt"><span class="set"></span><span class="tail"></span></div>';
       el.querySelector(".nm").textContent = label;
       lines.appendChild(el);
-      while (lines.children.length > 3) lines.removeChild(lines.firstChild);
+      while (lines.children.length > 3) lines.firstChild.remove();
       return el;
+    }
+
+    // One frame of turn t at sample i: open it when its speech starts, then let
+    // the text catch up with the audio, the last few characters still settling.
+    let turnEls = [];
+    function advanceTurn(t, i) {
+      const [a, b] = turns[t];
+      if (i === a) {
+        turnEls[t] = makeTurn("…"); // speaker not decided yet
+        turnEls[t].querySelector(".ts").textContent = fmt(12 + t * 15);
+        lines.querySelectorAll(".who").forEach((w) => w.classList.remove("on"));
+        turnEls[t].querySelector(".who").classList.add("on");
+      }
+      const el = turnEls[t];
+      if (!el || i < a || i > b + 4) return;
+      const text = texts[t] || "";
+      const p = Math.min(1, (i - a) / Math.max(1, b - a));
+      const n = Math.round(text.length * p);
+      const settled = Math.max(0, n - settleLag);
+      el.querySelector(".set").textContent = i > b ? text : text.slice(0, settled);
+      el.querySelector(".tail").textContent = i > b ? "" : text.slice(settled, n);
+      if (i - a === 10) el.querySelector(".nm").textContent = who[t] || ""; // resolves after ~0.85s
     }
 
     readColor();
@@ -276,36 +308,19 @@
       hist = [];
       let tick = 0;
       let secs = 18 * 60 + 47;
-      let els = [];
+      turnEls = [];
       const total = RMS.length + 14; // a short pause before it loops
-      const settleLag = pageLang === "zh" ? 6 : 18; // characters still "unsettled"
       timer = setInterval(() => {
         if (!visible || document.hidden) return;
         const i = tick % total;
         if (i === 0 && tick > 0) {
           lines.innerHTML = "";
-          els = [];
+          turnEls = [];
         }
         hist.push(i < RMS.length ? RMS[i] : 0);
         if (hist.length > 400) hist.shift();
         if (tick % 12 === 0 && clock) clock.textContent = fmt(secs++);
-        turns.forEach(([a, b], t) => {
-          if (i === a) {
-            els[t] = makeTurn("…"); // speaker not decided yet
-            els[t].querySelector(".ts").textContent = fmt(12 + t * 15);
-            lines.querySelectorAll(".who").forEach((w) => w.classList.remove("on"));
-            els[t].querySelector(".who").classList.add("on");
-          }
-          const el = els[t];
-          if (!el || i < a || i > b + 4) return;
-          const text = texts[t] || "";
-          const p = Math.min(1, (i - a) / Math.max(1, b - a));
-          const n = Math.round(text.length * p);
-          const settled = Math.max(0, n - settleLag);
-          el.querySelector(".set").textContent = i > b ? text : text.slice(0, settled);
-          el.querySelector(".tail").textContent = i > b ? "" : text.slice(settled, n);
-          if (i - a === 10) el.querySelector(".nm").textContent = who[t] || ""; // resolves after ~0.85s
-        });
+        for (const t of turns.keys()) advanceTurn(t, i);
         draw();
         tick++;
       }, HOP);
@@ -323,7 +338,7 @@
       }
     }
 
-    if ("IntersectionObserver" in window) {
+    if ("IntersectionObserver" in globalThis) {
       new IntersectionObserver((entries) => {
         visible = entries.some((e) => e.isIntersecting);
         // Below the fold (phones), the full transcript stays in place until the

@@ -34,18 +34,24 @@ function bars(rms, end, count) {
     .map((v, i) => {
       const cls = [i >= slice.length - 6 ? "new" : "", v < 0.05 ? "dot" : ""].filter(Boolean).join(" ");
       const h = v < 0.05 ? 3 : Math.max(4, Math.round(v * 40));
-      return `<b${cls ? ` class="${cls}"` : ""} style="height:${h}px"></b>`;
+      const classAttr = cls ? ` class="${cls}"` : "";
+      return `<b${classAttr} style="height:${h}px"></b>`;
     })
     .join("");
 }
 
 function secondTurnStart(rms) {
-  for (let i = 0; i < rms.length; i++) {
-    if (rms[i] !== 0) continue;
-    let j = i;
-    while (j < rms.length && rms[j] === 0) j++;
-    if (j - i >= 6) return j;
-    i = j;
+  // Find the first run of ≥6 silent samples; the second turn starts right after it.
+  let i = 0;
+  while (i < rms.length) {
+    if (rms[i] === 0) {
+      let j = i;
+      while (j < rms.length && rms[j] === 0) j++;
+      if (j - i >= 6) return j;
+      i = j;
+    } else {
+      i++;
+    }
   }
   return 0;
 }
@@ -101,7 +107,7 @@ for (const [lang, cfg] of Object.entries(LANGS)) {
   let settled = Math.max(0, shown - cfg.lag);
   if (lang === "en") {
     // Space-separated text: freeze on word boundaries, not mid-word.
-    shown = line2.indexOf(" ", shown) === -1 ? line2.length : line2.indexOf(" ", shown);
+    shown = line2.includes(" ", shown) ? line2.indexOf(" ", shown) : line2.length;
     settled = Math.max(0, line2.lastIndexOf(" ", settled));
   }
   const start2 = secondTurnStart(rms);
@@ -121,7 +127,7 @@ for (const [lang, cfg] of Object.entries(LANGS)) {
   };
   const html = template
     .replace(/<!--[\s\S]*?-->\n?/, "")
-    .replace(/\{\{(\w+)\}\}/g, (m, k) => {
+    .replaceAll(/\{\{(\w+)\}\}/g, (m, k) => {
       if (!(k in values)) throw new Error(`og.html: no value for ${m}`);
       return values[k];
     });

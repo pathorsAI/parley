@@ -10,7 +10,7 @@
 //     UI calls (startMeeting / upsertSegment / loadHistoryEntry / openLibrary …).
 //
 // URL: index.html?scene=home|library|live|report&lang=zh|en&theme=light|dark
-// When the scene is on screen, `window.__SHOT_READY__` becomes true.
+// When the scene is on screen, `globalThis.__SHOT_READY__` becomes true.
 import { mockIPC, mockWindows, mockConvertFileSrc } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import * as demo from "./demo-data";
@@ -23,16 +23,16 @@ const lang: demo.Lang = q.get("lang") === "en" ? "en" : "zh";
 const theme = q.get("theme") === "dark" ? "dark" : "light";
 const NOW = Date.now();
 
+// Page globals the shooter reads (or calls). `var` so they type on `globalThis`,
+// which in the page is the same object as `window`.
 declare global {
-  interface Window {
-    __SHOT_READY__?: boolean;
-    __SHOT_LOG__?: string[];
-    __TAURI_OS_PLUGIN_INTERNALS__?: Record<string, string>;
-    /** Fire a macOS menu-bar command the way the native menu does (⌘K etc.). */
-    __MENU_COMMAND__?: (id: string) => Promise<void>;
-  }
+  var __SHOT_READY__: boolean | undefined;
+  var __SHOT_LOG__: string[] | undefined;
+  var __TAURI_OS_PLUGIN_INTERNALS__: Record<string, string> | undefined;
+  /** Fire a macOS menu-bar command the way the native menu does (⌘K etc.). */
+  var __MENU_COMMAND__: ((id: string) => Promise<void>) | undefined;
 }
-const shotLog: string[] = (window.__SHOT_LOG__ = []);
+const shotLog: string[] = (globalThis.__SHOT_LOG__ = []);
 
 // ── 1. Seed storage ────────────────────────────────────────────────────────
 try {
@@ -68,7 +68,7 @@ try {
 }
 
 // ── 2. Tauri IPC mock ──────────────────────────────────────────────────────
-window.__TAURI_OS_PLUGIN_INTERNALS__ = {
+globalThis.__TAURI_OS_PLUGIN_INTERNALS__ = {
   platform: "macos",
   os_type: "macos",
   family: "unix",
@@ -86,7 +86,7 @@ function handle(cmd: string, args: Record<string, unknown> | undefined): unknown
     case "list_history":
       return demo.summaries(lang, NOW).map((s) => JSON.stringify(s));
     case "read_history_entry":
-      return { meta: demo.entry(String(args?.id ?? ""), lang, NOW), audioPath: null };
+      return { meta: demo.entry(typeof args?.id === "string" ? args.id : "", lang, NOW), audioPath: null };
     case "read_folders":
       return JSON.stringify(demo.folders(lang));
     case "write_folders":
@@ -135,7 +135,7 @@ mockIPC((cmd, args) => handle(cmd, args as Record<string, unknown> | undefined),
   shouldMockEvents: true,
 });
 
-window.__MENU_COMMAND__ = (id: string) => emit("menu://command", id);
+globalThis.__MENU_COMMAND__ = (id: string) => emit("menu://command", id);
 
 // ── 3 + 4. Boot the app, then stage the scene ─────────────────────────────
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -183,7 +183,9 @@ async function stage(): Promise<void> {
     setInterval(() => {
       phase += 1;
       const level = 0.14 + 0.05 * Math.sin(phase / 2) + 0.03 * Math.sin(phase * 1.7);
-      void emit("audio://level", { source: "me", level });
+      emit("audio://level", { source: "me", level }).catch((e: unknown) => {
+        shotLog.push(`audio level emit failed: ${String(e)}`);
+      });
     }, 90);
   } else if (scene === "report") {
     const { loadHistoryEntry } = await import("@repo/lib/history/history");
@@ -195,10 +197,15 @@ async function stage(): Promise<void> {
   await document.fonts.ready;
   await until(() => document.querySelector("#root")?.childElementCount !== 0);
   await sleep(1200);
-  window.__SHOT_READY__ = true;
+  globalThis.__SHOT_READY__ = true;
 }
 
-stage().catch((e) => {
+// Deliberately not a top-level `await stage()`: Rollup hoists the Tauri API the
+// app shares with this harness into this entry chunk, so the app chunks that
+// stage() imports import back from a module that would still be evaluating, and
+// the build throws a TDZ ReferenceError at boot. Letting this module finish
+// evaluating first (a detached promise) is what makes the harness work.
+stage().catch((e: unknown) => {
   shotLog.push(`harness error: ${String(e)}`);
-  window.__SHOT_READY__ = true;
+  globalThis.__SHOT_READY__ = true;
 });
