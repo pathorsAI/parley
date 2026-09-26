@@ -83,6 +83,16 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.20
+
+One wrong 注音 symbol no longer empties the candidate bar.
+
+Type ㄌ for ㄋ, ㄗ for ㄓ or ㄣ for ㄥ, or catch the key next to the one you meant,
+and the 注音 keyboard still offers the word you were after, right behind the
+words that match exactly what you typed, so typing correctly works just as it
+did. A syllable no character is read as now commits its closest character on
+return instead of the raw 注音. Tones still have to be right.
+
 ## What's New — 1.19
 
 Dictating twice in a row stays where you are.
