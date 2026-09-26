@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
 import { MicOff, X } from "lucide-react";
 import {
@@ -6,7 +6,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
-import { isMeetingActive, useStore } from "../../lib/store";
+import { useStore } from "../../lib/store";
 import { isWindows } from "../../lib/platform";
 import { useI18n } from "../../i18n";
 import { MeetingView } from "../MeetingView";
@@ -15,43 +15,32 @@ import { TodosPanel } from "../sidebar/TodosPanel";
 import { FindingsPanel } from "../analysis/FindingsPanel";
 
 /**
- * Persistent mic-only warning (⑥): the system-audio tap failing means the
+ * Persistent mic-only warning (⑥): the system-audio capture failing means the
  * OTHER side never reaches the transcript — a 10s toast is gone long before
  * the user notices the silence, so this stays up for the rest of the call
- * (dismissable, re-armed per meeting).
+ * (dismissable, re-armed per meeting by startMeeting()).
  *
- * On macOS the trigger is the `meeting://warning` event: a tap that was tried
- * and failed. Windows never tries — no loopback capture ships yet — so no
- * event can ever arrive and the condition is simply true for every running
- * meeting. Same banner, different sentence (a capability that isn't there
- * reads nothing like a permission that wasn't granted) and its own dismissal,
- * keyed on the meeting's start so ending one re-arms it exactly as
- * startMeeting() re-arms the store flag.
+ * The trigger is the `meeting://warning` event on both platforms, but the
+ * cause differs, and so does the sentence: on macOS it is almost always the
+ * missing "System Audio Recording" grant; on Windows loopback needs no grant,
+ * so the only way to get here is having no output device to capture.
  */
 function SystemAudioBanner() {
   const { t } = useI18n();
   const warning = useStore((s) => s.systemAudioWarning);
   const setSystemAudioWarning = useStore((s) => s.setSystemAudioWarning);
-  const meetingStatus = useStore((s) => s.meetingStatus);
-  const meetingStartedAt = useStore((s) => s.meetingStartedAt);
-  const [dismissedFor, setDismissedFor] = useState<number | null>(null);
 
-  const micOnlyPlatform =
-    isWindows() && isMeetingActive(meetingStatus) && dismissedFor !== meetingStartedAt;
-  if (!warning && !micOnlyPlatform) return null;
+  if (!warning) return null;
   return (
     <div className="flex shrink-0 items-center gap-2 border-b border-warning-border bg-warning px-3 py-1.5 text-xs text-warning-foreground">
       <MicOff className="size-3.5 shrink-0" />
       <span className="min-w-0 flex-1">
-        {t(warning ? "meeting.warning.systemAudioBanner" : "meeting.warning.systemAudioBanner.windows")}
+        {t(isWindows() ? "meeting.warning.systemAudioBanner.windows" : "meeting.warning.systemAudioBanner")}
       </span>
       <button
         type="button"
         aria-label={t("common.dismiss")}
-        onClick={() => {
-          setSystemAudioWarning(false);
-          setDismissedFor(meetingStartedAt);
-        }}
+        onClick={() => setSystemAudioWarning(false)}
         className="grid size-5 shrink-0 place-items-center rounded hover:bg-warning-border/40"
       >
         <X className="size-3.5" />

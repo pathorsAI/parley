@@ -278,12 +278,17 @@ pub fn start_meeting(
     // Diarizing providers separate speakers themselves, so mix mic + system
     // into ONE session (1x cost) and let diarization label speakers. Providers
     // without diarization keep two sessions so "me"/"them" stays deterministic.
-    #[cfg(target_os = "macos")]
+    // Same shape on both desktop platforms; only the system-audio source
+    // differs (macOS Core Audio process tap, Windows WASAPI loopback).
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
         let mic = Microphone {
             device_name: input_device,
         };
+        #[cfg(target_os = "macos")]
         let sys = crate::audio::system_macos::SystemAudio { app: app.clone() };
+        #[cfg(target_os = "windows")]
+        let sys = crate::audio::system_windows::SystemAudio { app: app.clone() };
         // Shared far-end state: the system-audio tap feeds it, the mic prosody
         // tap reads it to reject the counterpart's voice bleeding through the
         // speakers into the mic (pace/intonation must score "me" only).
@@ -402,7 +407,8 @@ pub fn start_meeting(
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    // Any other target has no system-audio source: mic only.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let mic = Microphone {
             device_name: input_device,
@@ -807,7 +813,7 @@ fn spawn_mic_prosody_tap(
 /// [`FarEndAnalyzer`](crate::audio::prosody::FarEndAnalyzer) that feeds the
 /// shared far-end state for speaker-bleed rejection, forwarding every chunk
 /// untouched downstream. Counterpart of [`spawn_mic_prosody_tap`].
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn spawn_farend_tap(
     mut rx: UnboundedReceiver<Vec<i16>>,
     far: std::sync::Arc<crate::audio::prosody::FarEndState>,
