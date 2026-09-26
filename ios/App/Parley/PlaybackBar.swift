@@ -35,6 +35,9 @@ struct PlaybackBar: View {
     /// own (see `LibraryView.downloadAction`), so the absent state there offers
     /// nothing rather than a button that would 404.
     let orgId: String?
+    /// Moments worth finding on the timeline — the analysis's findings — drawn
+    /// as small dots on the waveform. Tapping one seeks there.
+    var markers: [TimeInterval] = []
 
     enum Layout {
         /// Half of the 72pt it started at. Still the whole scrub target, and
@@ -157,7 +160,7 @@ struct PlaybackBar: View {
 
     private var player: some View {
         VStack(spacing: 0) {
-            ScrubbableWaveform(controller: controller)
+            ScrubbableWaveform(controller: controller, markers: markers)
                 .frame(height: Layout.waveformHeight)
             PlaybackControls(controller: controller)
                 .frame(height: Layout.controlsHeight)
@@ -191,6 +194,7 @@ struct PlaybackBar: View {
 ///   directions count.
 private struct ScrubbableWaveform: View {
     @ObservedObject var controller: PlaybackController
+    let markers: [TimeInterval]
 
     /// Tier boundaries in points of vertical travel, and what each does to the
     /// horizontal scale. 1× is "full width = full duration".
@@ -213,6 +217,11 @@ private struct ScrubbableWaveform: View {
     private static let playheadWidth: CGFloat = 2
 
     @State private var scrub: Scrub?
+    /// The playhead mid-glide after a tapped turn, as a fraction of the width,
+    /// and the ring at where it is going. nil when nothing is gliding.
+    @State private var glide: Double?
+    @State private var ringAt: (fraction: Double, id: Int)?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Live state for one drag. Absent when no finger is down.
     private struct Scrub {
@@ -230,8 +239,11 @@ private struct ScrubbableWaveform: View {
             }
             .contentShape(Rectangle())
             .gesture(drag(width: size.width))
+            .overlay(alignment: .topLeading) { markerDots(in: size) }
+            .overlay(alignment: .topLeading) { jumpMarks(in: size) }
             .overlay(alignment: .topLeading) { timeLabel(in: size) }
         }
+        .onChange(of: controller.lastJump) { _, jump in startGlide(jump) }
         .accessibilityElement()
         .accessibilityLabel("Scrub")
         .accessibilityValue(
@@ -290,7 +302,7 @@ private struct ScrubbableWaveform: View {
         // rounded 2pt line rather than a full-bleed rule — it is a control, so
         // it has to be visible, but it belongs to the same soft geometry as the
         // bars it sits among.
-        if controller.duration > 0 {
+        if controller.duration > 0 && glide == nil {
             var playhead = Path()
             playhead.addRoundedRect(
                 in: CGRect(
@@ -301,6 +313,77 @@ private struct ScrubbableWaveform: View {
                 cornerSize: CGSize(
                     width: Self.playheadWidth / 2, height: Self.playheadWidth / 2))
             context.fill(playhead, with: .color(Color(.label)))
+        }
+    }
+
+    // MARK: a tapped turn
+
+    /// The playhead gliding from where it was to the tapped turn, and a ring
+    /// growing where it lands. Drawn over the canvas, whose own playhead steps
+    /// aside for the length of the glide.
+    @ViewBuilder
+    private func jumpMarks(in size: CGSize) -> some View {
+        ZStack(alignment: .topLeading) {
+            if let glide {
+                RoundedRectangle(cornerRadius: Self.playheadWidth / 2)
+                    .fill(Color(.label))
+                    .frame(width: Self.playheadWidth, height: size.height)
+                    .offset(x: max(0, size.width * glide - Self.playheadWidth / 2))
+            }
+            if let ringAt {
+                RippleRing()
+                    .id(ringAt.id)
+                    .offset(x: size.width * ringAt.fraction - 22, y: size.height / 2 - 22)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func startGlide(_ jump: PlaybackController.Jump) {
+        guard controller.duration > 0, !reduceMotion else { return }
+        let from = min(1, max(0, jump.from / controller.duration))
+        let to = min(1, max(0, jump.to / controller.duration))
+        glide = from
+        ringAt = (to, jump.id)
+        withAnimation(.easeInOut(duration: LapMotion.playheadGlide)) { glide = to }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(LapMotion.ripple))
+            guard controller.lastJump.id == jump.id else { return }
+            glide = nil
+            ringAt = nil
+        }
+    }
+
+    // MARK: finding markers
+
+    /// A dot per finding along the top edge of the strip, in ink with a ring
+    /// of page colour so it reads over a loud bar as well as over silence.
+    ///
+    /// Each dot is its own button with a thumb-sized target. Laid over the
+    /// waveform, the targets take a tap that lands on a dot before the scrub
+    /// can, which is the point — and nothing else: a drag that starts on one is
+    /// still a tap-sized area in a strip that is otherwise all scrub.
+    @ViewBuilder
+    private func markerDots(in size: CGSize) -> some View {
+        if controller.duration > 0, size.width > 0 {
+            ForEach(Array(markers.enumerated()), id: \.offset) { _, time in
+                let x = size.width * CGFloat(min(1, max(0, time / controller.duration)))
+                Button {
+                    controller.seek(to: time)
+                } label: {
+                    Circle()
+                        .fill(Color(.label))
+                        .frame(width: 6, height: 6)
+                        .overlay(Circle().stroke(Theme.background, lineWidth: 1.5))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                // Centred on the moment, riding the strip's top edge.
+                .offset(x: x - 12, y: -9)
+                .accessibilityLabel(
+                    Text("Highlight at \(PlaybackClock.string(time))"))
+            }
         }
     }
 

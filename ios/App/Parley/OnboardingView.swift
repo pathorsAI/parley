@@ -24,12 +24,8 @@ struct OnboardingView: View {
                     Spacer(minLength: 24)
                     header
                     Spacer(minLength: 28)
-                    VStack(alignment: .leading, spacing: 22) {
-                        ForEach(Self.points, id: \.icon) { point in
-                            pointRow(point)
-                        }
-                    }
-                    .frame(maxWidth: 420)
+                    IntroStage()
+                        .frame(maxWidth: 420)
                     Spacer(minLength: 24)
                 }
                 .frame(maxWidth: .infinity)
@@ -72,45 +68,6 @@ struct OnboardingView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    // MARK: what you get
-
-    /// One line each: the three things the product does, in the order a
-    /// meeting goes through them — record, file, hand off.
-    private struct Point {
-        let icon: String
-        let title: LocalizedStringKey
-    }
-
-    private static let points: [Point] = [
-        Point(
-            icon: "record.circle",
-            title: "Record and transcribe live, even from the lock screen"),
-        Point(
-            icon: "folder",
-            title: "One customer, one folder, synced with your Mac"),
-        Point(
-            icon: "square.and.arrow.up",
-            title: "Share to ChatGPT or Claude for analysis"),
-    ]
-
-    private func pointRow(_ point: Point) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: point.icon)
-                .font(.parley.title3)
-                .frame(width: 28)
-                // Secondary, not blue: these three glyphs mark the list, they
-                // are not happening now and there is nothing to tap. The only
-                // blue on this screen is the button at the bottom.
-                .foregroundStyle(Color(.secondaryLabel))
-                .accessibilityHidden(true)
-            Text(point.title)
-                .font(.parley.bodyEmphasized)
-                .foregroundStyle(Color(.label))
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: sign in

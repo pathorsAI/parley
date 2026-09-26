@@ -55,6 +55,8 @@ struct LibraryView: View {
     @State private var path: [OpenedRecording] = []
     /// The last `TabRouter.checklistRequest` acted on.
     @State private var handledChecklistRequest = 0
+    /// "Walk through the sample" was tapped and its 1.5 s "Transcribing…" is up.
+    @State private var walkingThrough = false
     /// The recording the folder picker is moving, while it is up.
     @State private var moving: CloudRecordingSummary?
     #if DEBUG
@@ -91,7 +93,9 @@ struct LibraryView: View {
                 if let rec = allRecordings.first(where: { $0.id == target.id }) {
                     RecordingDetailView(
                         summary: rec, orgId: target.orgId, intent: target.intent,
-                        onFolderChange: folderChanged(rec.id))
+                        isLapRecording: target.guided || isLapRecording(rec, orgId: target.orgId),
+                        onFolderChange: folderChanged(rec.id),
+                        onTitleChange: titleChanged(rec.id))
                 }
             }
             .sheet(item: $moving) { rec in folderPicker(for: rec) }
@@ -105,7 +109,12 @@ struct LibraryView: View {
             // (back chevron and all) rather than as a detached view.
             #if DEBUG
                 .navigationDestination(isPresented: $demo.showTranscript) {
-                    RecordingDetailView(summary: ScreenshotDemo.featured, orgId: nil)
+                    RecordingDetailView(summary: ScreenshotDemo.pushed, orgId: nil)
+                }
+                .navigationDestination(isPresented: $demo.showSample) {
+                    if let summary = sample.summary {
+                        RecordingDetailView(summary: summary, orgId: nil, isLapRecording: true)
+                    }
                 }
             #endif
         }
@@ -188,26 +197,54 @@ struct LibraryView: View {
         }
     }
 
-    /// What rows 2–4 open: the newest recording, the sample included.
-    private var latestRecording: CloudRecordingSummary? {
-        allRecordings.max { $0.createdAt < $1.createdAt }
+    /// The recording the guided lap is about: the sample when it is in the
+    /// Library, else the user's only recording, else the newest one.
+    private var lapRecording: CloudRecordingSummary? {
+        if let sample = sample.summary { return sample }
+        if recordings.count == 1 { return recordings[0] }
+        return allRecordings.max { $0.createdAt < $1.createdAt }
     }
 
-    private func loadSample() {
-        guard sample.load() != nil else { return }
-        // Back to "All", so the row that just appeared is on screen.
-        select(nil)
+    /// Whether a row opens with the guide bar: the sample, or the user's only
+    /// recording. On the fortieth recording the lap would be noise.
+    private func isLapRecording(_ rec: CloudRecordingSummary, orgId: String?) -> Bool {
+        guard orgId == nil else { return false }
+        if SampleManifest.isSample(id: rec.id) { return true }
+        return recordings.count == 1 && recordings[0].id == rec.id
     }
 
-    private func openLatest(_ step: GettingStartedStep) {
-        guard let latest = latestRecording else { return }
-        let intent: RecordingDetailView.Intent =
-            switch step {
-            case .filed: .file
-            case .sharedToAI: .share
-            case .recorded, .replayed: .read
-            }
-        path.append(OpenedRecording(id: latest.id, orgId: nil, intent: intent))
+    /// The checklist header's one action. "Walk through the sample" while
+    /// nothing has been recorded (or there is nothing left to continue on),
+    /// "Continue" once there is a lap recording to go back to.
+    private var checklistAction: GettingStartedList.Action {
+        if gettingStarted.state.recorded, lapRecording != nil { return .continueLap }
+        return SampleRecordingStore.isBundled ? .walkThrough : .none
+    }
+
+    /// 用範例錄音走一遍: a moment of "Transcribing…" on the list, then the
+    /// sample opens on its summary with its suggestion waiting.
+    ///
+    /// The pause is theatre, and deliberately so. The sample is transcribed
+    /// already; opening it instantly made the name, the folder and the summary
+    /// read as fixtures that were always there, where the point of the lap is
+    /// that Parley *made* them from a recording. A second and a half is enough
+    /// to see the step happen and short enough not to be a wait.
+    private func walkThroughSample() {
+        guard !walkingThrough else { return }
+        walkingThrough = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            walkingThrough = false
+            guard let summary = sample.load() else { return }
+            select(nil)
+            path.append(OpenedRecording(id: summary.id, orgId: nil, intent: .read, guided: true))
+        }
+    }
+
+    /// 繼續 →: back into the lap recording.
+    private func continueLap() {
+        guard let rec = lapRecording else { return }
+        path.append(OpenedRecording(id: rec.id, orgId: nil, intent: .read, guided: true))
     }
 
     /// Keeps a row's folder in step with a move made inside the recording, so
@@ -217,6 +254,14 @@ struct LibraryView: View {
         { folderId in
             guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
             recordings[index].folderId = folderId
+        }
+    }
+
+    /// The same for a rename.
+    private func titleChanged(_ id: String) -> (String) -> Void {
+        { title in
+            guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
+            recordings[index].title = title
         }
     }
 
@@ -344,10 +389,10 @@ struct LibraryView: View {
             if checklist {
                 GettingStartedList(
                     state: gettingStarted.state,
-                    canLoadSample: SampleRecordingStore.isBundled,
-                    hasRecording: latestRecording != nil,
-                    loadSample: loadSample,
-                    open: openLatest,
+                    action: checklistAction,
+                    transcribing: walkingThrough,
+                    walkThrough: walkThroughSample,
+                    continueLap: continueLap,
                     dismiss: { withAnimation { gettingStarted.dismiss() } })
                     .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
                     .listRowSeparator(.hidden)
@@ -850,24 +895,41 @@ private struct OpenedRecording: Hashable {
     /// nil = personal scope.
     let orgId: String?
     let intent: RecordingDetailView.Intent
+    /// Opened from the checklist's own action, so the guide bar is up even on
+    /// a recording that is not the only one.
+    var guided = false
 }
 
-/// The getting-started checklist: four plain rows that teach the product by
-/// doing it — record, file, replay, hand off — each ticked only by the real
+/// The getting-started checklist: four plain rows, each ticked only by the real
 /// event (see `GettingStartedStore`), never by a tap on the row.
+///
+/// Demoted in onboarding v2. The rows used to be doors — a chevron each,
+/// opening the newest recording "to file it" or "to share it" — and the owner's
+/// verdict was that the list ticked but the recording it opened never said what
+/// to do. The teaching now happens on the recording (`GuideBar`); the list is
+/// the scoreboard. So the rows keep their ticks and titles and lose their
+/// actions, and the header carries the one way in: walk through the sample, or
+/// continue the lap already started.
 ///
 /// Rows, hairlines and text, no card: the page is white and the list is part
 /// of it. The one colour is the system green on a done item's check — "this
 /// is fine" in the platform's own words — and the tint on what can be tapped.
-private struct GettingStartedList: View {
+struct GettingStartedList: View {
+    enum Action {
+        /// 用範例錄音走一遍 — nothing recorded yet.
+        case walkThrough
+        /// 繼續 → — back into the lap recording.
+        case continueLap
+        /// A build without the sample and nothing to continue.
+        case none
+    }
+
     let state: GettingStartedState
-    /// False in a build without the sample assets; the button is then absent
-    /// rather than broken.
-    let canLoadSample: Bool
-    /// Rows 2–4 open the newest recording; with none, they are just text.
-    let hasRecording: Bool
-    let loadSample: () -> Void
-    let open: (GettingStartedStep) -> Void
+    let action: Action
+    /// The sample's "Transcribing…" moment is up.
+    let transcribing: Bool
+    let walkThrough: () -> Void
+    let continueLap: () -> Void
     let dismiss: () -> Void
 
     var body: some View {
@@ -886,7 +948,9 @@ private struct GettingStartedList: View {
                     .font(.parley.footnote)
                     .buttonStyle(.borderless)
             }
-            .padding(.bottom, 8)
+            headerAction
+                .padding(.top, 6)
+                .padding(.bottom, 10)
             ForEach(GettingStartedStep.allCases, id: \.self) { step in
                 Rectangle()
                     .fill(Color(.separator))
@@ -897,63 +961,51 @@ private struct GettingStartedList: View {
     }
 
     @ViewBuilder
-    private func row(_ step: GettingStartedStep) -> some View {
-        let done = state[step]
-        let opensRecording = step != .recorded && !done && hasRecording
-        if opensRecording {
-            // The whole row is the target: the words are what people reach
-            // for. Borderless, so it is not taken over by the list row.
-            Button {
-                open(step)
-            } label: {
-                rowContent(step, done: done) {
-                    Image(systemName: "chevron.right")
-                        .font(.parley.footnote.weight(.semibold))
-                        .foregroundStyle(Color(.tertiaryLabel))
-                }
-                .contentShape(Rectangle())
+    private var headerAction: some View {
+        if transcribing {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Transcribing…")
+                    .font(.parley.footnote)
+                    .foregroundStyle(Color(.secondaryLabel))
             }
-            .buttonStyle(.borderless)
+            .accessibilityElement(children: .combine)
         } else {
-            rowContent(step, done: done) {
-                if step == .recorded && !done && canLoadSample {
-                    Button("Load sample", action: loadSample)
-                        .font(.parley.footnote.weight(.semibold))
-                        .buttonStyle(.borderless)
+            switch action {
+            case .walkThrough:
+                Button(action: walkThrough) {
+                    Text("Walk through it with the sample recording")
+                        .font(.parley.subheadlineEmphasized)
                 }
+                .buttonStyle(.borderless)
+            case .continueLap:
+                Button(action: continueLap) {
+                    Text("Continue →")
+                        .font(.parley.subheadlineEmphasized)
+                }
+                .buttonStyle(.borderless)
+            case .none:
+                EmptyView()
             }
         }
     }
 
-    private func rowContent<Trailing: View>(
-        _ step: GettingStartedStep, done: Bool, @ViewBuilder trailing: () -> Trailing
-    ) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            // The mark and the words are one element to VoiceOver; the
-            // trailing button stays its own, so it can still be activated.
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: done ? "checkmark.circle.fill" : "circle")
-                    .font(.parley.body)
-                    .foregroundStyle(done ? Theme.success : Color(.tertiaryLabel))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title(step))
-                        .font(.parley.subheadline)
-                        .foregroundStyle(done ? Color(.secondaryLabel) : Color(.label))
-                    if let detail = detail(step) {
-                        Text(detail)
-                            .font(.parley.caption)
-                            .foregroundStyle(Color(.secondaryLabel))
-                    }
-                }
+    private func row(_ step: GettingStartedStep) -> some View {
+        let done = state[step]
+        return HStack(alignment: .center, spacing: 12) {
+            Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                .font(.parley.body)
+                .foregroundStyle(done ? Theme.success : Color(.tertiaryLabel))
+                .accessibilityHidden(true)
+            Text(title(step))
+                .font(.parley.subheadline)
+                .foregroundStyle(done ? Color(.secondaryLabel) : Color(.label))
                 .fixedSize(horizontal: false, vertical: true)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityValue(done ? Text("Done") : Text(verbatim: ""))
-            Spacer(minLength: 8)
-            trailing()
+            Spacer(minLength: 0)
         }
         .padding(.vertical, 10)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(done ? Text("Done") : Text(verbatim: ""))
     }
 
     private func title(_ step: GettingStartedStep) -> LocalizedStringKey {
@@ -962,15 +1014,6 @@ private struct GettingStartedList: View {
         case .filed: return "Put it in a folder"
         case .replayed: return "Replay: tap a line to jump"
         case .sharedToAI: return "Share it with your AI"
-        }
-    }
-
-    private func detail(_ step: GettingStartedStep) -> LocalizedStringKey? {
-        switch step {
-        case .recorded: return "or load the sample recording"
-        case .filed: return "One customer, one folder"
-        case .replayed: return nil
-        case .sharedToAI: return "ChatGPT and Claude are in the share sheet"
         }
     }
 }

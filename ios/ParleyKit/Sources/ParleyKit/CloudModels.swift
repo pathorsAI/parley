@@ -208,14 +208,24 @@ public struct RecordingMeta: @unchecked Sendable {
     }
 
     /// One line of the whole-recording analysis (`TimelineEvent`, types.ts). The
-    /// phone reads a recording rather than analysing one, so only the three
-    /// fields it can show are lifted out of `raw`.
-    public struct Finding: Identifiable, Sendable {
+    /// phone reads a recording rather than analysing one, so only the fields it
+    /// can show are lifted out of `raw`.
+    public struct Finding: Identifiable, Sendable, Equatable {
         public let id: String
         /// Moment on the recording timeline.
         public let atMs: UInt64
         public let title: String
         public let detail: String
+        /// `info`, `warn` or `critical`; `info` when the entry does not say.
+        public let severity: String
+
+        public init(id: String, atMs: UInt64, title: String, detail: String, severity: String = "info") {
+            self.id = id
+            self.atMs = atMs
+            self.title = title
+            self.detail = detail
+            self.severity = severity
+        }
     }
 
     /// The findings the desktop's analysis left on this recording, in timeline
@@ -228,9 +238,101 @@ public struct RecordingMeta: @unchecked Sendable {
                 id: f["id"] as? String ?? "finding-\(index)",
                 atMs: UInt64(max(0, f["atMs"] as? Double ?? 0)),
                 title: title,
-                detail: f["detail"] as? String ?? "")
+                detail: f["detail"] as? String ?? "",
+                severity: f["severity"] as? String ?? "info")
         }
         .sorted { $0.atMs < $1.atMs }
+    }
+
+    /// The analysis's short read of the meeting (`HistoryEntry.brief`), as the
+    /// markdown-lite the desktop saves it in. Empty when there is none.
+    public var brief: String {
+        (raw["brief"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A post-meeting next step (`ActionItem`, types.ts).
+    public struct ActionItem: Identifiable, Sendable, Equatable {
+        public let id: String
+        public let text: String
+        public let done: Bool
+        /// Where on the recording it came from, when the analysis could say.
+        public let atMs: UInt64?
+
+        public init(id: String, text: String, done: Bool, atMs: UInt64?) {
+            self.id = id
+            self.text = text
+            self.done = done
+            self.atMs = atMs
+        }
+    }
+
+    /// The action items, in the order the analysis wrote them — which is the
+    /// order of importance, not of time, so they are not re-sorted.
+    public var actionItems: [ActionItem] {
+        guard let arr = raw["actionItems"] as? [[String: Any]] else { return [] }
+        return arr.enumerated().compactMap { index, item in
+            guard let text = item["text"] as? String,
+                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { return nil }
+            return ActionItem(
+                id: item["id"] as? String ?? "action-\(index)",
+                text: text,
+                done: item["done"] as? Bool ?? false,
+                atMs: (item["atMs"] as? Double).map { UInt64(max(0, $0)) })
+        }
+    }
+
+    /// Tick or untick one action item in place. Everything else about the item
+    /// — and every field the phone does not model — is left as it was.
+    public mutating func setActionItem(_ id: String, done: Bool) {
+        guard var arr = raw["actionItems"] as? [[String: Any]] else { return }
+        for index in arr.indices where (arr[index]["id"] as? String ?? "action-\(index)") == id {
+            arr[index]["done"] = done
+        }
+        raw["actionItems"] = arr
+    }
+
+    /// Whether there is anything for a summary to show: a brief, a finding, or
+    /// an action item. What the detail screen opens on is decided by this.
+    public var hasAnalysis: Bool {
+        !brief.isEmpty || !findings.isEmpty || !actionItems.isEmpty
+    }
+
+    /// The filing suggestion still waiting on the user
+    /// (`HistoryEntry.filingSuggestion`). The desktop clears it to `null` once it
+    /// is accepted or dismissed — the suggestion is a prompt, not a property of
+    /// the recording — so non-nil here means "pending". Setting nil writes that
+    /// same `null`.
+    public var filingSuggestion: FilingSuggestion? {
+        get {
+            guard let dict = raw["filingSuggestion"] as? [String: Any] else { return nil }
+            let folders = (dict["folders"] as? [[String: Any]] ?? []).compactMap {
+                folder -> FilingFolderSuggestion? in
+                guard let name = folder["name"] as? String, !name.isEmpty else { return nil }
+                return FilingFolderSuggestion(
+                    folderId: folder["folderId"] as? String, name: name,
+                    reason: folder["reason"] as? String ?? "")
+            }
+            let title = dict["title"] as? String ?? ""
+            guard !title.isEmpty || !folders.isEmpty else { return nil }
+            return FilingSuggestion(title: title, folders: folders)
+        }
+        set {
+            guard let newValue else {
+                raw["filingSuggestion"] = NSNull()
+                return
+            }
+            raw["filingSuggestion"] = [
+                "title": newValue.title,
+                "folders": newValue.folders.map { folder -> [String: Any] in
+                    [
+                        "folderId": folder.folderId as Any? ?? NSNull(),
+                        "name": folder.name,
+                        "reason": folder.reason,
+                    ]
+                },
+            ] as [String: Any]
+        }
     }
 }
 

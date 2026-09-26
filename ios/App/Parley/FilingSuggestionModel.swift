@@ -51,8 +51,29 @@ import SwiftUI
 /// has returned: a write that threw leaves the offer open, because it is still
 /// worth taking. `forget()` clears them with the rest of the offer, because the
 /// next recording gets its own to answer.
+///
+/// ## Two screens, two kinds of recording
+///
+/// The record screen runs the pass itself (`consider`) for the recording that
+/// just landed. The recording screen shows a suggestion that is already
+/// *pending* on the recording (`present`): a desktop pass leaves one in the
+/// synced meta's `filingSuggestion`, and the bundled sample ships with one. The
+/// writes differ only in where they land — `Target` — and both answer the
+/// offer the same way: a cloud recording's meta gets `filingSuggestion: null`
+/// and `filingSuggested: true` (the desktop's "resolved"), the sample's local
+/// entry gets `suggestionPending = false`.
 @MainActor
 final class FilingSuggestionModel: ObservableObject {
+
+    /// Where an accepted suggestion is written.
+    enum Target: Equatable {
+        /// A personal cloud recording: one read-modify-write of its meta.
+        case cloud(id: String)
+        /// The bundled sample: `SampleRecordingStore`, on this phone only. A
+        /// new folder is still created in the cloud — it is a real folder the
+        /// user now has — and only the filing itself stays local.
+        case sample
+    }
 
     @Published private(set) var suggestion: FilingSuggestion?
     /// What the recording carries in the cloud right now. Written by the pass
@@ -75,10 +96,19 @@ final class FilingSuggestionModel: ObservableObject {
     /// pass itself: nobody asked for that one, so its failure is silence.
     @Published private(set) var writeFailed = false
 
-    /// The recording the visible suggestion belongs to.
-    private var recordingId: String?
+    /// Where the visible suggestion's answer is written. nil = nothing on offer.
+    private var target: Target?
+    /// Told after each write that landed: the new title (if it changed), the
+    /// folder filed into (if it changed), and a folder created for it (if one
+    /// was). The recording screen keeps its title, its folder and its folder
+    /// list in step with this.
+    var onApplied: ((_ title: String?, _ folderId: String?, _ created: CloudFolder?) -> Void)?
+    /// Told once the offer is fully answered — accepted in full, or skipped —
+    /// so a screen that presented it from the recording's own data stops
+    /// presenting it.
+    var onRetired: (() -> Void)?
     /// The recording the pass has already been spent on. Kept separately from
-    /// `recordingId`, and NOT cleared by `forget()`: a dismissed card must stay
+    /// `target`, and NOT cleared by `forget()`: a dismissed card must stay
     /// dismissed, and this view is re-entered every time the tab comes back.
     private var consideredId: String?
     /// The user has answered the name half of this offer — with the proposed
@@ -142,6 +172,14 @@ final class FilingSuggestionModel: ObservableObject {
     /// is the only one the block shows. The rest are in the Adjust sheet.
     var proposedFolder: FilingFolderSuggestion? { proposedFolders.first }
 
+    /// What the title field starts with: the proposed name while it is still on
+    /// offer, the recording's own once it has been answered.
+    var editableTitle: String { proposedTitle ?? currentTitle }
+
+    /// Whether the name half has been answered, so the card can say "renamed"
+    /// instead of offering it again.
+    var titleWasAnswered: Bool { titleAnswered }
+
     /// Identity for a candidate folder. A folder that does not exist yet has no
     /// id, so it is keyed by the name it would be created under.
     static func key(for folder: FilingFolderSuggestion) -> String {
@@ -171,14 +209,14 @@ final class FilingSuggestionModel: ObservableObject {
     /// has moved on from — and by the routes that have finished with the offer
     /// AFTER their own write landed (`dismiss`, the Adjust sheet's Save).
     ///
-    /// It clears `recordingId`, so a write ordered after this one is a no-op:
+    /// It clears `target`, so a write ordered after this one is a no-op:
     /// retire the offer once the push it was answered with has returned, never
     /// before.
     func forget() {
         pass?.cancel()
         pass = nil
         suggestion = nil
-        recordingId = nil
+        target = nil
         currentTitle = ""
         currentFolderId = nil
         existingFolders = []
@@ -227,7 +265,7 @@ final class FilingSuggestionModel: ObservableObject {
             // reappeared over the recording that replaced it would be offering
             // a rename for the wrong meeting.
             guard !Task.isCancelled else { return }
-            recordingId = settled.id
+            target = .cloud(id: settled.id)
             currentTitle = settled.title
             currentFolderId = settled.folderId
             existingFolders = folders
@@ -240,7 +278,32 @@ final class FilingSuggestionModel: ObservableObject {
         }
     }
 
+    // MARK: a suggestion that is already pending
+
+    /// Offer a suggestion the recording already carries — the recording
+    /// screen's route in. Safe to call again with a fuller folder list (the
+    /// folders arrive after the meta): an offer the user has started to answer
+    /// is left alone.
+    func present(
+        _ suggestion: FilingSuggestion, currentTitle: String, currentFolderId: String?,
+        folders: [CloudFolder], target: Target
+    ) {
+        guard !isWriting, !titleAnswered, !folderAnswered else { return }
+        self.target = target
+        self.suggestion = suggestion
+        self.currentTitle = currentTitle
+        self.currentFolderId = currentFolderId
+        existingFolders = folders
+        writeFailed = false
+    }
+
     // MARK: accepting
+
+    /// The inline title field's Return: rename, and leave the folder half on
+    /// offer.
+    func rename(to title: String, app: AppState) async {
+        await apply(title: title, folder: nil, app: app)
+    }
 
     /// Take the suggestion as offered: the proposed name and the best proposed
     /// folder, in one go. Whichever of the two the pass had nothing to say
@@ -269,7 +332,7 @@ final class FilingSuggestionModel: ObservableObject {
     ///   Save that found nothing to change.
     @discardableResult
     func apply(title: String?, folder: FilingFolderSuggestion?, app: AppState) async -> Bool {
-        guard !isWriting, let id = recordingId else { return false }
+        guard !isWriting, let target else { return false }
         var newTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         if newTitle?.isEmpty == true || newTitle == currentTitle { newTitle = nil }
         var newFolder = folder
@@ -280,16 +343,27 @@ final class FilingSuggestionModel: ObservableObject {
         defer { isWriting = false }
         do {
             var targetId: String?
+            var created: CloudFolder?
             if let newFolder {
                 if let existing = newFolder.folderId {
                     targetId = existing
                 } else {
-                    targetId = try await app.cloud.createFolder(name: newFolder.name).id
+                    let folder = try await app.cloud.createFolder(name: newFolder.name)
+                    created = folder
+                    targetId = folder.id
+                    existingFolders.append(folder)
                 }
             }
-            try await Self.write(id: id, cloud: app.cloud) { meta in
-                if let newTitle { meta.title = newTitle }
-                if let targetId { meta.folderId = targetId }
+            switch target {
+            case .cloud(let id):
+                try await Self.write(id: id, cloud: app.cloud) { meta in
+                    if let newTitle { meta.title = newTitle }
+                    if let targetId { meta.folderId = targetId }
+                }
+            case .sample:
+                let store = SampleRecordingStore.shared
+                if let newTitle { store.setTitle(newTitle) }
+                if let targetId { store.setFolder(targetId) }
             }
             if let newTitle {
                 currentTitle = newTitle
@@ -309,6 +383,11 @@ final class FilingSuggestionModel: ObservableObject {
                 // retrying.
                 folderAnswered = true
             }
+            onApplied?(newTitle, targetId, created)
+            if !hasSomethingToOffer {
+                if target == .sample { SampleRecordingStore.shared.answerSuggestion() }
+                onRetired?()
+            }
             return true
         } catch {
             writeFailed = true
@@ -319,10 +398,14 @@ final class FilingSuggestionModel: ObservableObject {
     /// The user said no. The card goes at once — a dismiss that waits on the
     /// network reads as a broken button — and the flag is written behind it.
     func dismiss(app: AppState) {
-        let id = recordingId
+        let target = self.target
         let cloud = app.cloud
         forget()
-        guard let id else { return }
+        onRetired?()
+        guard case .cloud(let id) = target else {
+            if target == .sample { SampleRecordingStore.shared.answerSuggestion() }
+            return
+        }
         Task {
             // Nothing is accepted here, but `filingSuggested` still has to
             // land: see `write(id:cloud:apply:)`. Failure is ignored, because
@@ -351,6 +434,9 @@ final class FilingSuggestionModel: ObservableObject {
         var meta = try await cloud.recordingMeta(id: id)
         apply(&meta)
         meta.filingSuggested = true
+        // Answered, whichever way: the desktop reads a non-null suggestion as
+        // still waiting, and would offer it again on the Mac.
+        meta.filingSuggestion = nil
         try await cloud.pushRecording(id: id, summary: summary(from: meta), meta: meta)
     }
 
@@ -384,7 +470,7 @@ final class FilingSuggestionModel: ObservableObject {
     #if DEBUG
         /// ScreenshotDemo: the state the block is worth capturing in — a
         /// recording that has landed under its clock name, with a better name
-        /// and a home on offer. `recordingId` is deliberately left nil, so a
+        /// and a home on offer. `target` is deliberately left nil, so a
         /// tap on the demo build's own buttons writes nothing: there is no
         /// account behind the fixtures to write to.
         func seedDemo(
