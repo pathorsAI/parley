@@ -11,6 +11,9 @@ import { ActionItemsPanel } from "../replay/ActionItemsPanel";
 import { AskPanel } from "../sidebar/AskPanel";
 import { StudyLinkBar } from "./StudyLinkBar";
 import { FilingSuggestionCard } from "./FilingSuggestionCard";
+import { HandoffSection } from "./HandoffSection";
+import { OnboardingHint } from "../OnboardingHint";
+import { markHintSeen, useHint } from "../../lib/onboarding/gettingStarted";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -19,6 +22,7 @@ const SECTIONS = [
   { id: "study-brief", key: "study.brief" },
   { id: "study-actions", key: "actionItems.title" },
   { id: "study-delivery", key: "study.delivery" },
+  { id: "handoff", key: "study.handoff.title" },
 ] as const;
 
 /**
@@ -92,6 +96,9 @@ function ReportPage() {
     <div className="relative min-h-0 flex-1">
       <ScrollArea className="h-full">
         <div ref={scrollRef} className="mx-auto max-w-2xl px-6 py-5">
+          {/* Above the filing suggestion when it shows, else right above the
+              filing bar — either way, next to where filing happens. */}
+          <FilingHint />
           <FilingSuggestionCard />
           <StudyLinkBar />
           <div className="flex flex-col gap-8 pb-10">
@@ -105,6 +112,10 @@ function ReportPage() {
 
             <ReportSection id="study-delivery" title={t("study.delivery")}>
               <DeliveryPanel mode="replay" variant="full" />
+            </ReportSection>
+
+            <ReportSection id="handoff" title={t("study.handoff.title")}>
+              <HandoffSection />
             </ReportSection>
           </div>
         </div>
@@ -164,6 +175,28 @@ function ReportToc({
       </div>
     </nav>
   );
+}
+
+/** One-time "one customer, one folder" line, shown while the recording is
+ *  unfiled. Filing the recording counts as having taken the point. */
+function FilingHint() {
+  const { t } = useI18n();
+  const [visible, dismiss] = useHint("report.filing");
+  const loadedHistoryId = useStore((s) => s.loadedHistoryId);
+  // An org copy (read-only) or an unsaved session can't be filed from here.
+  const fileable = useStore((s) => !s.replayReadOnly) && !!loadedHistoryId;
+  const folderId = useStore((s) => s.replayFolderId);
+
+  // Unfiled → filed on the SAME recording retires the hint.
+  const prev = useRef<{ id: string | null; folderId: string | null }>({ id: null, folderId: null });
+  useEffect(() => {
+    const was = prev.current;
+    prev.current = { id: loadedHistoryId, folderId };
+    if (was.id && was.id === loadedHistoryId && !was.folderId && folderId) markHintSeen("report.filing");
+  }, [loadedHistoryId, folderId]);
+
+  if (!visible || !fileable || folderId) return null;
+  return <OnboardingHint text={t("study.hint.filing")} onDismiss={dismiss} className="mb-3" />;
 }
 
 function ReportSection({
