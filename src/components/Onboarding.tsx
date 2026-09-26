@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { Check, ChevronLeft, ChevronRight, Download, Keyboard, Loader2, LogIn, Mic, Volume2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, LogIn, Mic, Volume2, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isMac } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
-import { broadcastSettings } from "../lib/settingsSync";
 import { CLOUD_ENABLED } from "../lib/flags";
 import { log } from "../lib/log";
-import { shortcutCaps } from "../lib/voiceTyping/caps";
 import { PROVIDERS, PROVIDER_BY_ID, type ProviderInfo } from "../lib/ai/providers";
-import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
+import { STT_PROVIDERS, STT_BY_ID, sttApiKey } from "../lib/transcription/providers";
+import { beginMeeting } from "../lib/meeting/start";
+import { loadSampleRecording } from "../lib/onboarding/sample";
+import { loadHistoryEntry } from "../lib/history/history";
 import { useI18n, LANGUAGE_OPTIONS } from "../i18n";
 import { Flag } from "./ui/flag";
 import { Button } from "@/components/ui/button";
@@ -28,41 +28,28 @@ import type { LlmProvider, Settings, SttProviderId } from "../lib/types";
 // systemAudio: unknown | granted | denied | unsupported (macOS < 14.2).
 type Perms = { microphone: string; systemAudio: string };
 
-type StepId =
-  | "lang"
-  | "welcome"
-  | "login"
-  | "llm"
-  | "stt"
-  | "perms"
-  | "profile"
-  | "diarize"
-  | "voiceTyping"
-  | "done";
+type StepId = "intro" | "account" | "perms" | "done";
 
-// Ordered onboarding steps. The Parley sign-in step only exists in the official
-// (cloud) build — it offers the free hosted STT + LLM. CLOUD_ENABLED is a
-// compile-time constant, so the OSS build never ships the step at all.
-// The perms step runs on both platforms. macOS walks the TCC prompts; Windows
-// has no runtime prompt, but the step is still the only place that shows
-// whether the mic is actually allowed (the backend reads the consent store) and
-// sends the user to the exact pane that flips it
-// (ms-settings:privacy-microphone) — the welcome checklist promises that step,
-// so skipping it left the promise unkept. Voice typing gets its step on both
-// platforms too.
-const STEPS: StepId[] = [
-  "lang",
-  "welcome",
-  ...(CLOUD_ENABLED ? (["login"] as StepId[]) : []),
-  "llm",
-  "stt",
-  "perms",
-  "profile",
-  "diarize",
-  "voiceTyping",
-  "done",
-];
+// Four steps, one job each: say what Parley is, make transcription actually
+// work, get the OS permissions, then hand off to a first real run. Teaching the
+// rest of the app lives in the Home checklist, not here. The perms step runs on
+// both platforms: macOS walks the TCC prompts; Windows has no runtime prompt,
+// but the step is still the only place that shows whether the mic is actually
+// allowed (the backend reads the consent store) and sends the user to the exact
+// pane that flips it (ms-settings:privacy-microphone).
+const STEPS: StepId[] = ["intro", "account", "perms", "done"];
 const STEP_COUNT = STEPS.length;
+const ACCOUNT_STEP = STEPS.indexOf("account");
+
+/**
+ * The account gate: transcription must be able to run before the wizard lets
+ * the user go. Either a Parley session (hosted STT) or a key for the selected
+ * BYOK STT provider — the same check `beginMeeting` makes before it opens a
+ * capture session.
+ */
+function transcriptionReady(settings: Settings, signedIn: boolean): boolean {
+  return signedIn || !!sttApiKey(settings, settings.transcriptionProvider).trim();
+}
 
 export function Onboarding() {
   const { t } = useI18n();
@@ -71,7 +58,11 @@ export function Onboarding() {
   const cloudAuth = useStore((s) => s.cloudAuth);
   const [step, setStep] = useState(() => {
     const s = settings.onboardingStep ?? 0;
-    return s >= 0 && s < STEP_COUNT ? s : 0;
+    const resumed = s >= 0 && s < STEP_COUNT ? s : 0;
+    // A step persisted past the account gate (an older, longer wizard, or a
+    // session that has since signed out) must not resume beyond it.
+    const { settings: current, cloudAuth: auth } = useStore.getState();
+    return resumed > ACCOUNT_STEP && !transcriptionReady(current, !!auth) ? ACCOUNT_STEP : resumed;
   });
   const current = STEPS[step];
   const [perms, setPerms] = useState<Perms | null>(null);
@@ -82,8 +73,12 @@ export function Onboarding() {
     patch({ onboardingStep: step });
   }, [step, patch]);
 
-  const llm = PROVIDER_BY_ID[settings.llmProviders.deep];
-  const stt = STT_BY_ID[settings.transcriptionProvider];
+  const ready = transcriptionReady(settings, !!cloudAuth);
+  // Neither Next on the account step nor the header X may get past the gate:
+  // skipping used to land users in a mock recorder that played a fake
+  // transcript and saved nothing, so the first meeting silently failed.
+  const nextBlocked = current === "account" && !ready;
+  const skipBlocked = !ready;
 
   async function recheck() {
     if (!isTauri()) return;
@@ -96,12 +91,13 @@ export function Onboarding() {
     }
   }
 
-  // Permissions step (4): re-check on entry AND whenever the app regains focus /
-  // becomes visible, plus a slow fallback poll — so granting mic/screen access in
-  // the system prompt or System Settings flips the row to ✓ on its own when the
-  // user comes back, instead of staying stale until a manual re-check. (Webview
-  // focus events aren't fully reliable across the app-switch to System Settings,
-  // hence the 2 s poll; it stops when the user leaves the step.)
+  // Permissions step: re-check on entry AND whenever the app regains focus /
+  // becomes visible, plus a slow fallback poll — so granting mic/system-audio
+  // access in the system prompt or System Settings flips the row to ✓ on its
+  // own when the user comes back, instead of staying stale until a manual
+  // re-check. (Webview focus events aren't fully reliable across the app-switch
+  // to System Settings, hence the 2 s poll; it stops when the user leaves the
+  // step.)
   useEffect(() => {
     if (STEPS[step] !== "perms") return;
     recheck().catch((error) => log.warn("onboarding: permission recheck failed", { error: String(error) }));
@@ -122,6 +118,16 @@ export function Onboarding() {
     patch({ onboarded: true, onboardingStep: 0 });
   }
 
+  async function walkThroughSample() {
+    finish();
+    const id = await loadSampleRecording();
+    if (id) {
+      await loadHistoryEntry(id);
+    } else {
+      log.warn("onboarding: sample recording unavailable");
+    }
+  }
+
   const micOk = perms?.microphone === "authorized";
   const systemAudioOk = perms?.systemAudio === "granted";
 
@@ -135,30 +141,33 @@ export function Onboarding() {
             <span className="text-[11px] tabular-nums text-muted-foreground">
               {step + 1} / {STEP_COUNT}
             </span>
-            <button
-              type="button"
-              className="text-muted-foreground hover:text-foreground"
-              title={t("onboarding.skip")}
-              onClick={finish}
-            >
-              <X className="size-4" />
-            </button>
+            {/* The tooltip sits on a wrapper: a disabled button swallows the
+                hover that would show its own title. */}
+            <span title={skipBlocked ? t("onboarding.account.gate") : t("onboarding.skip")}>
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                aria-label={t("onboarding.skip")}
+                disabled={skipBlocked}
+                onClick={finish}
+              >
+                <X className="size-4" />
+              </button>
+            </span>
           </div>
         </div>
 
         {/* Body */}
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-          {current === "lang" && (
-            <div className="flex flex-col gap-3">
-              <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.lang.title")}</h2>
-              <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.lang.body")}</p>
-              <div className="mt-1 grid gap-2">
+          {current === "intro" && (
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-2 gap-2">
                 {LANGUAGE_OPTIONS.map((lang) => (
                   <button
                     key={lang.value}
                     type="button"
                     onClick={() => patch({ language: lang.value })}
-                    className={`flex items-center justify-between rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
+                    className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
                       settings.language === lang.value
                         ? "border-primary bg-primary/10"
                         : "hover:bg-muted/50"
@@ -172,153 +181,25 @@ export function Onboarding() {
                   </button>
                 ))}
               </div>
+              <div className="flex flex-col gap-3">
+                <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.intro.title")}</h2>
+                {/* "Both sides of the conversation" is a macOS promise: the
+                    system-audio tap has no Windows counterpart yet, and the first
+                    thing a Windows user reads should not be a capability the app
+                    doesn't have. */}
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  {t(isMac() ? "onboarding.intro.body" : "onboarding.intro.body.windows")}
+                </p>
+                <ul className="flex flex-col gap-1.5 text-sm text-muted-foreground">
+                  <li>• {t("onboarding.intro.point1")}</li>
+                  <li>• {t("onboarding.intro.point2")}</li>
+                  <li>• {t("onboarding.intro.point3")}</li>
+                </ul>
+              </div>
             </div>
           )}
 
-          {current === "welcome" && (
-            <div className="flex flex-col gap-3">
-              <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.welcome.title")}</h2>
-              {/* "Both your voice and the other party" is a macOS promise: the
-                  system-audio tap has no Windows counterpart yet, and the first
-                  thing a Windows user reads should not be a capability the app
-                  doesn't have. */}
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                {t(isMac() ? "onboarding.welcome.body" : "onboarding.welcome.body.windows")}
-              </p>
-              <ul className="mt-1 flex flex-col gap-1.5 text-sm text-muted-foreground">
-                <li>• {t("onboarding.welcome.point1")}</li>
-                <li>• {t("onboarding.welcome.point2")}</li>
-                {/* Windows has no screen-recording consent and its mic consent
-                    is a privacy setting, not a macOS grant — naming the wrong
-                    OS here is the first thing a Windows user reads. */}
-                <li>• {t(isMac() ? "onboarding.welcome.point3" : "onboarding.welcome.point3.windows")}</li>
-              </ul>
-            </div>
-          )}
-
-          {current === "login" && <LoginStep />}
-
-          {current === "llm" && (
-            <StepKey
-              title={t("onboarding.llm.title")}
-              body={t("onboarding.llm.body")}
-              label={t("onboarding.llm.provider")}
-            >
-              <Select
-                value={settings.llmProviders.deep}
-                onValueChange={(v) =>
-                  // Onboarding keeps it simple: one pick drives both lanes; the
-                  // per-workload split lives in Settings.
-                  patch({ llmProviders: { realtime: v as LlmProvider, deep: v as LlmProvider } })
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {/* The hosted "parley" provider needs a signed-in cloud session:
-                      offer it only in the official build once the user signed in at
-                      the login step (mirrors the Settings gate). */}
-                  {PROVIDERS.filter((p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth)).map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      <span className="flex items-center gap-2">
-                        <img src={p.icon} alt="" className="size-4 rounded-sm" />
-                        {p.label}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {/* A self-hosted endpoint needs its URL and a model id, and its key
-                  is optional — so the keyless copy above ("Ollama needs no key")
-                  would be actively misleading here. Ask for the two things that
-                  are actually required instead. */}
-              {llm.userSuppliedBaseUrl ? (
-                <div className="flex flex-col gap-2">
-                  <Input
-                    value={settings.customBaseUrl}
-                    onChange={(e) => patch({ customBaseUrl: e.target.value })}
-                    placeholder="http://localhost:8000/v1"
-                    className="font-mono text-xs"
-                    spellCheck={false}
-                    autoComplete="off"
-                  />
-                  <Input
-                    value={settings.models[llm.id].deep}
-                    onChange={(e) =>
-                      patch({
-                        models: {
-                          ...settings.models,
-                          [llm.id]: { realtime: e.target.value, deep: e.target.value },
-                        },
-                      })
-                    }
-                    placeholder={t("settings.provider.serverModelPlaceholder")}
-                    className="font-mono text-xs"
-                    spellCheck={false}
-                    autoComplete="off"
-                  />
-                  <PasswordInput
-                    autoComplete="off"
-                    placeholder={t("settings.provider.apiKeyOptional")}
-                    value={settings.customApiKey}
-                    onChange={(e) => patch({ customApiKey: e.target.value })}
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    {t("onboarding.llm.customHint")} {t("settings.provider.baseUrlHint")}
-                  </p>
-                </div>
-              ) : (
-                <LlmKeyField llm={llm} settings={settings} patch={patch} />
-              )}
-            </StepKey>
-          )}
-
-          {current === "stt" && (
-            <StepKey
-              title={t("onboarding.stt.title")}
-              body={t("onboarding.stt.body")}
-              label={t("onboarding.stt.provider")}
-            >
-              <Select
-                value={settings.transcriptionProvider}
-                onValueChange={(v) => patch({ transcriptionProvider: v as SttProviderId })}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {/* Hosted "parley" STT (relayed to Soniox) shows only in the
-                      official build once signed in — mirrors the LLM step. */}
-                  {STT_PROVIDERS.filter((p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth)).map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      <span className="flex items-center gap-2">
-                        <img src={p.icon} alt="" className="size-4 rounded-sm" />
-                        {p.label}
-                        {!p.diarization && (
-                          <span className="rounded bg-warning px-1.5 py-px text-[10px] text-warning-foreground">
-                            {t("settings.transcription.noDiarizationTag")}
-                          </span>
-                        )}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {/* The hosted provider authenticates with the signed-in session, not
-                  an API key — so no key field for it. */}
-              {stt.id === "parley" ? (
-                <p className="text-[11px] text-muted-foreground">{t("onboarding.login.signedIn")}</p>
-              ) : (
-                <PasswordInput
-                  autoComplete="off"
-                  placeholder={stt.keyPlaceholder}
-                  value={(settings[stt.apiKeyField] as string) ?? ""}
-                  onChange={(e) => patch({ [stt.apiKeyField]: e.target.value } as Partial<Settings>)}
-                />
-              )}
-            </StepKey>
-          )}
+          {current === "account" && <AccountStep />}
 
           {current === "perms" && (
             <div className="flex flex-col gap-3">
@@ -396,74 +277,6 @@ export function Onboarding() {
             </div>
           )}
 
-          {current === "profile" && (
-            <div className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold tracking-tight">{t("onboarding.profile.title")}</h2>
-              <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.profile.body")}</p>
-              <Input
-                placeholder={t("settings.basic.namePlaceholder")}
-                value={settings.userName}
-                onChange={(e) => patch({ userName: e.target.value })}
-              />
-              <Input
-                placeholder={t("settings.basic.rolePlaceholder")}
-                value={settings.userRole}
-                onChange={(e) => patch({ userRole: e.target.value })}
-              />
-              <Input
-                placeholder={t("settings.basic.companyPlaceholder")}
-                value={settings.userCompany}
-                onChange={(e) => patch({ userCompany: e.target.value })}
-              />
-            </div>
-          )}
-
-          {current === "diarize" && <DiarizeModelStep />}
-
-          {current === "voiceTyping" && (
-            <div className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold tracking-tight">{t("onboarding.voiceTyping.title")}</h2>
-              <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.voiceTyping.body")}</p>
-              <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2.5">
-                <span className="text-muted-foreground">
-                  <Keyboard className="size-4" />
-                </span>
-                <span className="flex-1 text-sm">
-                  {t("onboarding.voiceTyping.holdPrefix")}{" "}
-                  <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px]">
-                    {shortcutCaps(settings.voiceTypingShortcut, t)}
-                  </kbd>{" "}
-                  {t("onboarding.voiceTyping.holdSuffix")}
-                </span>
-                <Button
-                  variant={settings.voiceTypingEnabled ? "outline" : "default"}
-                  size="sm"
-                  className="h-7 shrink-0 text-[11px]"
-                  onClick={() => {
-                    const enabled = !settings.voiceTypingEnabled;
-                    patch({ voiceTypingEnabled: enabled });
-                    broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
-                      log.warn("settings: broadcast failed", { error: String(error) }),
-                    );
-                    // Auto-paste needs Accessibility on macOS — enabling is the
-                    // moment to ask (same as the Settings toggle). Windows has
-                    // no equivalent grant, so there is nothing to ask for.
-                    if (enabled && isMac()) {
-                      invoke("accessibility_status", { prompt: true }).catch((error) =>
-                        log.warn("permissions: accessibility prompt failed", { error: String(error) }),
-                      );
-                    }
-                  }}
-                >
-                  {settings.voiceTypingEnabled
-                    ? t("settings.voiceTyping.disable")
-                    : t("settings.voiceTyping.enable")}
-                </Button>
-              </div>
-              <span className="text-[11px] text-muted-foreground">{t("onboarding.voiceTyping.hint")}</span>
-            </div>
-          )}
-
           {current === "done" && (
             <div className="flex flex-col items-center gap-3 py-6 text-center">
               <div className="flex size-12 items-center justify-center rounded-full bg-success text-success-foreground">
@@ -471,12 +284,38 @@ export function Onboarding() {
               </div>
               <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.done.title")}</h2>
               <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">{t("onboarding.done.body")}</p>
+              <div className="mt-2 flex flex-col items-center gap-2">
+                <Button
+                  size="sm"
+                  className="h-9 text-xs"
+                  onClick={() =>
+                    walkThroughSample().catch((error) =>
+                      log.error("onboarding: sample walkthrough failed", { error: String(error) }),
+                    )
+                  }
+                >
+                  {t("onboarding.done.sample")}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={() => {
+                    finish();
+                    beginMeeting().catch((error) =>
+                      log.error("onboarding: start meeting failed", { error: String(error) }),
+                    );
+                  }}
+                >
+                  {t("onboarding.done.startMeeting")}
+                </Button>
+              </div>
             </div>
           )}
         </div>
 
         {/* Footer nav */}
-        <div className="flex items-center justify-between border-t px-5 py-3">
+        <div className="flex items-start justify-between border-t px-5 py-3">
           <Button
             variant="ghost"
             size="sm"
@@ -487,15 +326,22 @@ export function Onboarding() {
             <ChevronLeft className="size-3.5" />
             {t("onboarding.back")}
           </Button>
-          {step < STEP_COUNT - 1 ? (
-            <Button size="sm" className="h-8 text-xs" onClick={() => setStep((s) => s + 1)}>
-              {t("onboarding.next")}
-              <ChevronRight className="size-3.5" />
-            </Button>
-          ) : (
-            <Button size="sm" className="h-8 text-xs" onClick={finish}>
-              {t("onboarding.start")}
-            </Button>
+          {/* The last step ends through its own two buttons above. */}
+          {step < STEP_COUNT - 1 && (
+            <div className="flex flex-col items-end gap-1">
+              <Button
+                size="sm"
+                className="h-8 text-xs"
+                disabled={nextBlocked}
+                onClick={() => setStep((s) => Math.min(STEP_COUNT - 1, s + 1))}
+              >
+                {t("onboarding.next")}
+                <ChevronRight className="size-3.5" />
+              </Button>
+              {nextBlocked && (
+                <span className="text-[11px] text-muted-foreground">{t("onboarding.account.gate")}</span>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -504,17 +350,30 @@ export function Onboarding() {
 }
 
 /**
- * Official-build-only sign-in step. Signing in unlocks Parley's free hosted STT
- * + LLM; on success we default both providers to "parley" so the next two steps
- * come pre-configured (and now list "parley" as an option). Fully skippable —
- * Next advances regardless, and BYOK keys still work.
+ * Step 2: make transcription work. Signing in (official build only) is the
+ * primary path — it unlocks Parley's hosted STT + LLM, and on success both
+ * providers default to "parley". Bringing your own keys is the secondary path,
+ * collapsed behind a disclosure in the official build and always open in the
+ * OSS build, where it is the only path. The STT key is required; the LLM key
+ * is optional (recording works without it, analysis doesn't).
  */
-function LoginStep() {
+function AccountStep() {
   const { t } = useI18n();
+  const settings = useStore((s) => s.settings);
   const patch = useStore((s) => s.updateSettings);
   const cloudAuth = useStore((s) => s.cloudAuth);
   const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Start expanded when a BYOK STT key is already there (re-running onboarding)
+  // so the user sees what satisfies the gate.
+  const [byokOpen, setByokOpen] = useState(
+    () =>
+      !CLOUD_ENABLED ||
+      (settings.transcriptionProvider !== "parley" && !!sttApiKey(settings, settings.transcriptionProvider)),
+  );
+
+  const llm = PROVIDER_BY_ID[settings.llmProviders.deep];
+  const stt = STT_BY_ID[settings.transcriptionProvider];
 
   async function doSignIn() {
     setSigningIn(true);
@@ -522,8 +381,8 @@ function LoginStep() {
     try {
       const { signInWithGoogle } = await import("../lib/cloud/client");
       await signInWithGoogle();
-      // Signed in → default to Parley's free hosted STT + LLM so onboarding is
-      // done in one tap; the LLM/STT pickers now surface "parley" too.
+      // Signed in → default to Parley's free hosted STT + LLM so the step is
+      // done in one tap; the pickers below now surface "parley" too.
       patch({ llmProviders: { realtime: "parley", deep: "parley" }, transcriptionProvider: "parley" });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -534,64 +393,175 @@ function LoginStep() {
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-base font-semibold tracking-tight">{t("onboarding.login.title")}</h2>
-      <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.login.body")}</p>
-      <ul className="flex flex-col gap-1.5 text-sm text-muted-foreground">
-        <li className="flex items-center gap-2">
-          <Check className="size-3.5 shrink-0 text-success-foreground" />
-          {t("onboarding.login.benefit1")}
-        </li>
-        <li className="flex items-center gap-2">
-          <Check className="size-3.5 shrink-0 text-success-foreground" />
-          {t("onboarding.login.benefit2")}
-        </li>
-      </ul>
-      {cloudAuth ? (
-        <div className="flex items-center gap-2 rounded-lg border border-success-border bg-success px-3 py-2.5 text-sm text-success-foreground">
-          <Check className="size-4 shrink-0" />
-          {t("onboarding.login.signedIn")}
+      <h2 className="text-base font-semibold tracking-tight">{t("onboarding.account.title")}</h2>
+      <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.account.body")}</p>
+
+      {CLOUD_ENABLED &&
+        (cloudAuth ? (
+          <div className="flex items-center gap-2 rounded-lg border border-success-border bg-success px-3 py-2.5 text-sm text-success-foreground">
+            <Check className="size-4 shrink-0" />
+            {t("onboarding.login.signedIn")}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <Button
+              size="sm"
+              className="h-9 w-fit gap-2 text-xs"
+              disabled={signingIn || !isTauri()}
+              onClick={() => doSignIn().catch((error) => log.error("onboarding: sign-in failed", { error: String(error) }))}
+            >
+              {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+              {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
+            </Button>
+            <p className="text-[11px] text-muted-foreground">{t("onboarding.account.freeNote")}</p>
+            {error && (
+              <p className="rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
+                {t("onboarding.login.failed", { error })}
+              </p>
+            )}
+          </div>
+        ))}
+
+      {CLOUD_ENABLED && (
+        <button
+          type="button"
+          className="flex w-fit items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          aria-expanded={byokOpen}
+          onClick={() => setByokOpen((o) => !o)}
+        >
+          {byokOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+          {t("onboarding.account.byok")}
+        </button>
+      )}
+
+      {byokOpen && (
+        <div className="flex flex-col gap-4 rounded-lg border bg-muted/10 px-3 py-3">
+          {/* Transcription — required: it is what the gate checks. */}
+          <div className="flex flex-col gap-2">
+            <FieldLabel label={t("onboarding.stt.provider")} tag={t("onboarding.account.required")} />
+            <Select
+              value={settings.transcriptionProvider}
+              onValueChange={(v) => patch({ transcriptionProvider: v as SttProviderId })}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {/* Hosted "parley" STT (relayed to Soniox) shows only in the
+                    official build once signed in. */}
+                {STT_PROVIDERS.filter((p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth)).map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    <span className="flex items-center gap-2">
+                      <img src={p.icon} alt="" className="size-4 rounded-sm" />
+                      {p.label}
+                      {!p.diarization && (
+                        <span className="rounded bg-warning px-1.5 py-px text-[10px] text-warning-foreground">
+                          {t("settings.transcription.noDiarizationTag")}
+                        </span>
+                      )}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {/* The hosted provider authenticates with the signed-in session, not
+                an API key — so no key field for it. */}
+            {stt.id === "parley" ? (
+              <p className="text-[11px] text-muted-foreground">{t("onboarding.login.signedIn")}</p>
+            ) : (
+              <PasswordInput
+                autoComplete="off"
+                placeholder={stt.keyPlaceholder}
+                value={(settings[stt.apiKeyField] as string) ?? ""}
+                onChange={(e) => patch({ [stt.apiKeyField]: e.target.value } as Partial<Settings>)}
+              />
+            )}
+          </div>
+
+          {/* AI model — optional: recording works without it. */}
+          <div className="flex flex-col gap-2">
+            <FieldLabel label={t("onboarding.llm.provider")} tag={t("onboarding.account.optional")} />
+            <Select
+              value={settings.llmProviders.deep}
+              onValueChange={(v) =>
+                // Onboarding keeps it simple: one pick drives both lanes; the
+                // per-workload split lives in Settings.
+                patch({ llmProviders: { realtime: v as LlmProvider, deep: v as LlmProvider } })
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {/* The hosted "parley" provider needs a signed-in cloud session:
+                    offer it only in the official build once signed in (mirrors
+                    the Settings gate). */}
+                {PROVIDERS.filter((p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth)).map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    <span className="flex items-center gap-2">
+                      <img src={p.icon} alt="" className="size-4 rounded-sm" />
+                      {p.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {/* A self-hosted endpoint needs its URL and a model id, and its key
+                is optional — so the keyless copy ("Ollama needs no key") would
+                be actively misleading here. Ask for the two things that are
+                actually required instead. */}
+            {llm.userSuppliedBaseUrl ? (
+              <div className="flex flex-col gap-2">
+                <Input
+                  value={settings.customBaseUrl}
+                  onChange={(e) => patch({ customBaseUrl: e.target.value })}
+                  placeholder="http://localhost:8000/v1"
+                  className="font-mono text-xs"
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+                <Input
+                  value={settings.models[llm.id].deep}
+                  onChange={(e) =>
+                    patch({
+                      models: {
+                        ...settings.models,
+                        [llm.id]: { realtime: e.target.value, deep: e.target.value },
+                      },
+                    })
+                  }
+                  placeholder={t("settings.provider.serverModelPlaceholder")}
+                  className="font-mono text-xs"
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+                <PasswordInput
+                  autoComplete="off"
+                  placeholder={t("settings.provider.apiKeyOptional")}
+                  value={settings.customApiKey}
+                  onChange={(e) => patch({ customApiKey: e.target.value })}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  {t("onboarding.llm.customHint")} {t("settings.provider.baseUrlHint")}
+                </p>
+              </div>
+            ) : (
+              <LlmKeyField llm={llm} settings={settings} patch={patch} />
+            )}
+            <p className="text-[11px] text-muted-foreground">{t("onboarding.account.llmLater")}</p>
+          </div>
         </div>
-      ) : (
-        <>
-          <Button
-            size="sm"
-            className="h-9 w-fit gap-2 text-xs"
-            disabled={signingIn || !isTauri()}
-            onClick={() => doSignIn().catch((error) => log.error("onboarding: sign-in failed", { error: String(error) }))}
-          >
-            {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
-            {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
-          </Button>
-          {error && (
-            <p className="rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
-              {t("onboarding.login.failed", { error })}
-            </p>
-          )}
-          <p className="text-[11px] text-muted-foreground">{t("onboarding.login.skipHint")}</p>
-        </>
       )}
     </div>
   );
 }
 
-function StepKey({
-  title,
-  body,
-  label,
-  children,
-}: Readonly<{
-  title: string;
-  body: string;
-  label: string;
-  children: React.ReactNode;
-}>) {
+function FieldLabel({ label, tag }: Readonly<{ label: string; tag: string }>) {
   return (
-    <div className="flex flex-col gap-3">
-      <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-      <p className="text-sm leading-relaxed text-muted-foreground">{body}</p>
-      <label className="mt-1 text-xs font-medium text-muted-foreground">{label}</label>
-      {children}
-    </div>
+    <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+      {label}
+      <span className="rounded bg-muted px-1.5 py-px text-[10px] font-normal">{tag}</span>
+    </span>
   );
 }
 
@@ -620,98 +590,6 @@ function PermRow({
         <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={onAction}>
           {actionLabel}
         </Button>
-      )}
-    </div>
-  );
-}
-
-/**
- * Optional step: pre-fetch the ~27 MB speaker-diarization model so the first real
- * diarization is instant and works offline. Fully skippable — Next advances
- * regardless, and the model still downloads on demand on first use if skipped.
- * Reuses the Rust `diarize://progress` events for the progress bar.
- */
-function DiarizeModelStep() {
-  const { t } = useI18n();
-  const [status, setStatus] = useState<"idle" | "downloading" | "done" | "error">("idle");
-  const [progress, setProgress] = useState<{ received: number; total: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    let unlisten: (() => void) | undefined;
-    listen<{ stage: string; received: number; total: number }>("diarize://progress", (e) => {
-      if (alive && e.payload.stage === "downloading-model") {
-        setProgress({ received: e.payload.received, total: e.payload.total });
-      }
-    }).then((u) => {
-      if (alive) unlisten = u;
-      else u();
-    });
-    return () => {
-      alive = false;
-      unlisten?.();
-    };
-  }, []);
-
-  const pct =
-    progress && progress.total > 0 ? Math.min(100, Math.round((progress.received / progress.total) * 100)) : 0;
-
-  async function download() {
-    if (status === "downloading") return;
-    setStatus("downloading");
-    setError(null);
-    setProgress(null);
-    try {
-      const { prefetchDiarizeModel } = await import("../lib/speakers/diarize");
-      await prefetchDiarizeModel();
-      setStatus("done");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setStatus("error");
-    } finally {
-      setProgress(null);
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <h2 className="text-base font-semibold tracking-tight">{t("onboarding.diarize.title")}</h2>
-      <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.diarize.body")}</p>
-      {status === "done" ? (
-        <div className="flex items-center gap-2 rounded-lg border border-success-border bg-success px-3 py-2.5 text-sm text-success-foreground">
-          <Check className="size-4" />
-          {t("onboarding.diarize.ready")}
-        </div>
-      ) : (
-        <>
-          <Button
-            size="sm"
-            className="h-8 gap-1.5 self-start"
-            disabled={status === "downloading"}
-            onClick={() => download().catch((error) => log.error("onboarding: diarize download failed", { error: String(error) }))}
-          >
-            {status === "downloading" ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Download className="size-3.5" />
-            )}
-            {status === "downloading"
-              ? t("onboarding.diarize.downloading", { percent: pct })
-              : t("onboarding.diarize.download")}
-          </Button>
-          {status === "downloading" && (
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
-            </div>
-          )}
-          {error && (
-            <p className="rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
-              {t("onboarding.diarize.failed", { error })}
-            </p>
-          )}
-          <p className="text-[11px] text-muted-foreground">{t("onboarding.diarize.skipHint")}</p>
-        </>
       )}
     </div>
   );
