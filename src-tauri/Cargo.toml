@@ -76,6 +76,11 @@ objc = "0.2"
 block2 = "0.6"
 
 [target.'cfg(target_os = "windows")'.dependencies]
+# The notification-area icon the main window hides to on close (see tray.rs).
+# Windows-only on purpose: macOS keeps the Dock and gets no menu-bar icon, so
+# the tray code is not even compiled there. Cargo unions this feature with the
+# `[dependencies]` entry above for Windows builds only.
+tauri = { version = "2", features = ["tray-icon"] }
 # Microphone consent state lives in the registry capability consent store.
 winreg = "0.55"
 # Voice typing's native side: the Win32 clipboard, SendInput for the Ctrl+V

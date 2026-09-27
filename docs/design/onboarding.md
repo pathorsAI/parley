@@ -206,3 +206,97 @@ Also rejected:
 2. **Sample voice quality.** `say` voices are serviceable but recognisably synthetic. The upgrade path is to swap the renderer in `render.ts` for a hosted TTS once a key is available on the build machine; the scripts stay the source of truth, and the entry id bumps to `-v2` so existing sample entries are not confused with the new audio.
 3. **"Copy this report" on iOS.** iOS shows a read-only report; whether it gets the same export in this round is undecided.
 4. **Measuring the funnel.** Nothing today reports where users stall between items. Without it, the decision on C (and on the BYOK gate in D2) rests on anecdote.
+
+---
+
+## v2 — the guided lap
+
+- **Status**: Implemented on `ob/w8`
+- **Date**: 2026-09-27
+- **One line**: the lap is taught on the page where it happens. A guide bar at the bottom of the study page follows the user through three steps. The sample recording arrives already named, suggested and analysed, so the "magic" is visible without a model key.
+
+### Why v1 did not feel like onboarding
+
+The owner ran v1 end to end and reported two failures.
+
+1. **A checklist is not guidance.** The Home checklist ticked correctly, but each row's CTA only moved the user to the Report or Replay page. Nothing on that page said what to do next, so the user landed on a full report and was left to work out the lesson alone. The checklist measured progress without teaching anything.
+2. **The magic depended on a key.** The step worth showing is the automatic title plus the suggested folder. It comes from the filing pass, which needs an LLM key. A new user signed in only for transcription, or holding only an STT key, never saw it. Their report was also empty ("needs an API key") exactly when it should have shown what Parley does.
+
+### The sample is already analysed and already suggested
+
+The sample manifests (`src/lib/onboarding/sampleManifests/sample.{zh-TW,en}.json`, rendered from `scripts/sample/script.*.json`) carry a prewritten `suggestion`, `brief`, `findings` and `actionItems`. `buildSampleEntry` maps them onto the entry:
+
+- `filingSuggestion = { title, folders }`. The manifest folder becomes a new-folder chip (`folderId: null`). If a live folder already has that name, the chip points at it, so the folder is never created twice. After it come up to two of the user's existing folders, most recently used first (`recentFolders`: newest recording filed there, then newest created), each with the reason 既有資料夾 / Existing folder. Three chips at most. `filingSuggested: true`.
+- `analyzed: true`, `brief` = the manifest's markdown, findings become `TimelineEvent`s (`sample-f-<i>`, `source: "extra"`), and action items become `ActionItem`s (`done: false`, `linkedEventId: null`).
+
+On load, `store.loadHistory` restores the findings, action items, brief and filing stages as "done". `factsOf` in `studyPipeline.ts` additionally turns auto-analysis off for sample entries. The delivery read, the one output the manifest does not carry, would otherwise score the synthetic `say` voices. A manual regenerate still runs. The report's "needs a key" lines now appear only when there is nothing to show, so a prewritten brief or checklist is not captioned with a missing-key warning.
+
+### The transcribing beat
+
+The sample loads in well under a second. Opened that fast, the report would already look named and filed, and the suggestion card would read as furniture rather than as something Parley just did. Every "walk through the sample" button (the wizard's done step, the Home checklist header, and Home's empty-recordings box) therefore swaps itself for a slim progress bar labelled 轉錄中… / Transcribing… for 1.5 s. The load runs during that time, and then the Report opens. The hook and bar live in `src/components/onboarding/TranscribingPulse.tsx`, so all three call sites behave the same way.
+
+### The guide bar contract
+
+`src/components/study/GuideBar.tsx` renders the bar. State and derivation live in `src/lib/onboarding/lap.ts` and reach the page through `LapContext`, which `StudyScreen` provides.
+
+**Visibility** (`isLapEligible`): the checklist is live (`isGettingStartedVisible`), the open recording is a saved personal entry (not an org copy, not an unsaved session), and it is either the sample (`isSampleEntry`) or the user's only recording (library count ≤ 1). The bar appears under both the Report and Replay tabs as a hairline-topped strip on the page background. It is not a card, and it has at most one filled button. Once the last step lands the checklist is complete and eligibility ends, but a bar that was already up keeps its done card until the user closes it or leaves the recording. Reopening the recording afterwards shows nothing.
+
+**Steps** are derived, never stored: the first of `filed → replayed → handedOff` that is not done yet (`lapPhase`). `recorded` is already true once there is an entry. The bar also ticks it if a checklist reset left it false while a recording is open. Every route to an outcome advances the bar, including the bar's own CTA, the titlebar, the library and an MCP call.
+
+| Step | Says | Primary CTA | Completes on |
+|---|---|---|---|
+| 1 / 3 · 先看 Parley 幫你做了什麼 | the recording is named and a folder is suggested; both can be changed | 看建議 / Show me: Report tab, scroll to `#filing-suggestion`; if the card is gone, open the destination picker | `filed` |
+| 2 / 3 · 回放 | click any line to jump there | 開回放 / Open replay (hidden when already on Replay) | `replayed` |
+| 3 / 3 · 交給你的 AI | Claude Code reads the library directly | 看完整說明 / Full instructions: scroll to `#handoff` | `handedOff` |
+| 完成 / Done | record → named and filed → replay → hand to AI; next time it happens on its own | 開始第一場真的會議 / Start your first real meeting (`beginMeeting()`), plus text 關閉 / Close | — |
+
+On the Report tab, step 3 carries the working parts inline: the `claude mcp add` command with a copy button, live MCP status (等待連線… / 已連線：{client}), the recording's three `mcpQuestions` as copyable lines, and a text fallback 沒有 Claude Code？先複製給 ChatGPT that calls `copyHandoffPrompt()`. On the Replay tab, where those parts would cover half the transcript, step 3 is compact: its label, one line, and the CTA, which switches to the Report tab and scrolls to `#handoff`. Every step also has × 不用了 / No thanks, which calls `dismissGettingStarted()`.
+
+**Timing.** When a flag flips, the bar holds a ✓ line for the step it was teaching for 1.5 s (`LAP_CONFIRM_MS`) before it teaches the next step. `createLapTimer` holds this logic without React and is tested with fake timers:
+
+- A flag that is already set when the bar mounts never produces a ✓. Only a flip observed while the bar is up does.
+- The ✓ names the step the bar was teaching. A step done out of order was already done and is skipped silently.
+- A second flip during a hold restarts the hold.
+- Advancing into "done" has no hold, because the done card is its own ✓.
+
+The ✓ after step 1 reads 已改名，放進「{folder}」。之後每一場錄完都會這樣。 If the recording was filed without a rename, it reads 已放進「{folder}」。 instead. The ✓ after step 2 reads 就是這樣。⌘F 可以搜逐字稿。 While step 2 is active on the Replay tab, the first transcript line pulses softly for about 2 s (`.ob-soft-pulse` on a `bg-primary/10` ring), once.
+
+**Hints yield to the bar.** While the bar is visible, the `report.filing` and `replay.seek` hints stay quiet, because they would repeat what the bar says.
+
+### Filing suggestion card changes
+
+- **採用建議 / Accept suggestion takes the whole suggestion in one click.** It applies the proposed title (as edited) and files the recording into the first suggested folder, creating that folder if its `folderId` is null. The three writes (rename, move, clear the suggestion) run in sequence because they all modify the same `meta.json`. The button sits in the card's header because it accepts both halves.
+- **A folder chip files the recording without renaming it.** The last chip, 選其他資料夾… / Choose another…, opens the same destination picker sheet as the filing bar. The sheet's open state moved from `StudyLinkBar` up to `StudyScreen`, so the card and the guide bar can open it too.
+- **The title can be edited in place.** Click it and type: Enter or clicking away applies the edit, and Esc cancels. An edit **renames and nothing more**. It becomes the suggestion's title, so the title row retires by the usual rule, and the chips stay on offer.
+- **Only filing ticks `filed`.** That means 採用建議, a chip, or the picker. Renaming alone is not filing. The step-1 ✓ says "renamed and filed under {folder}" when both happened, and "filed under {folder}" otherwise.
+
+### What was demoted
+
+- **The Home checklist is an index, not a set of launchers.** Rows keep their check state and titles and lose their per-row CTAs. The header has one text-weight blue button: 用範例錄音走一遍 / Walk through the sample while nothing is recorded (or nothing is left to continue on), which runs the transcribing beat and then opens the sample; otherwise 繼續 / Continue, which opens the lap's recording on the Report tab (the sample if present, else the newest recording). 不用了 stays.
+- **The `report.filing` and `replay.seek` hints** still exist, but they only show when the bar is not up (for example, on a second recording).
+
+### Motion
+
+The lap has motion because a suggestion that is simply *there* reads as furniture. Motion makes each step look like something Parley just did. The rules:
+
+- **One place for CSS.** Every keyframe and transition used by onboarding lives in the `/* onboarding motion */` block in `src/index.css`. The Web Animations API parts that need measured positions live in `src/lib/onboarding/motion.ts`: the fly-to-folder ghost, the confetti, the typewriter hook, and the `pulseFolder` / transcript-seek window events.
+- **One curve and a narrow duration range.** Everything uses `cubic-bezier(.2,.8,.2,1)` (`--ob-ease` / `OB_EASE`), and each beat takes 400–700 ms. There are three exceptions: the transcribing bar fills over the 1.5 s it stands for, the recording dot and the "waiting" dot loop, and the confetti runs 1.5 s.
+- **Reduced motion shows the final state.** Under `prefers-reduced-motion` every class lands on its final state, the ghost and the confetti are skipped, and the intro stage shows its final frame with all five captions listed.
+- **No shared animation.** Nothing reuses Home's `animate-fade-up`. No animation library is used.
+
+**The wizard's intro, the UI assembling itself** (`src/components/onboarding/IntroStage.tsx`). It replaces the intro step's paragraph and three bullets with a sequence of about 7 s inside the card. The beats come from `runTimeline` in `timeline.ts`, and each beat has one caption line:
+
+1. At 0 s, the recording pill (titlebar styles, blinking dot, 錄音中 00:12) scales in.
+2. At 0.9 s, the sample's first three lines type themselves, and each speaker name fades in after its line (你 in blue, 林經理 muted). The lines share a 2.8 s budget: 22 ms/char when they fit, faster when they don't (English runs about 9 ms/char).
+3. At 4.1 s, the mini sidebar slides in its rows, then the 泓昇科技 folder row appears. A library row titled 泓昇科技 · 客服語音系統需求訪談 then flies into that folder row, which flashes once.
+4. At 5.7 s, the MCP plug fades in and then lights up blue with a soft ring.
+5. At 6.6 s, the last caption appears: 先花一分鐘完成設定。
+
+The sequence rests on its final frame, and Next works at any point. The Windows record caption says the other side can't be captured yet.
+
+**Rewards on the study page:**
+
+- **Filing card entrance.** The first time the card appears for a recording, it springs in (16 px → 0, .98 → 1, 600 ms, a slight overshoot) and its title types itself at 22 ms/char.
+- **Filing.** Accepting the suggestion or a chip lifts a copy of the card, which shrinks and flies into the folder's sidebar row (700 ms). The row then flashes `bg-primary/10` for 500 ms, via `pulseFolder(id)` and the `data-folder-row` attribute. If the row cannot be found, for example because the sidebar is hidden, the copy scales and fades in place.
+- **Transcript clicks.** A click on a transcript line makes the replay playhead glide to its new position over 500 ms, and a 2 px primary ring expands from 0 to 70 px at that point on the scrubber over 700 ms. This happens on every transcript click, not only during the lap, because it is the seek feedback. Drags and keyboard seeks stay instant.
+- **Lap completion.** The done card's three ✓ lines cascade in 260 ms apart. Then about 26 small blue rectangles (primary and brand) burst once inside the study page for 1.5 s. This happens once per recording per session.

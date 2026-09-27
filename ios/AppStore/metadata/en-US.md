@@ -94,6 +94,25 @@ belongs. Tap an entry to read it in full, share it, or delete it. The history
 stays on your phone and never leaves it. Settings › Voice typing history turns
 it off or clears it.
 
+The Parley keyboard stays readable in dark mode, Notes included.
+
+In a few apps, Apple's Notes among them, dark mode drew the candidates above
+the keys in near-black on a black keyboard, where they could not be read. The
+keys and the words above them now follow the same dark or light setting as the
+keyboard behind them, including when you switch dark mode while typing.
+
+Bopomofo is typed where you are typing, and the whole bar above the keys is for candidates.
+
+The syllables you haven't turned into characters yet now appear underlined at
+the cursor in the app you're typing in, as they do on the system keyboard,
+instead of in a small box beside the candidates. That box is gone, so the bar
+has room for more candidates. Pick one and the underline shrinks to what is
+left; delete edits the underlined syllables before anything else. If you
+dismiss the keyboard or move to another field before choosing, some apps keep
+the bare symbols as typed; the next time the keyboard comes up right after
+them, Parley swaps them for its best guess. In the rare app that doesn't show
+underlined text, the syllables appear in the bar as before.
+
 ## What's New — 1.20
 
 The Parley keyboard looks right in dark mode, in every app.

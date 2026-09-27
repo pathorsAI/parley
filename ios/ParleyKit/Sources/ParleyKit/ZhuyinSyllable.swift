@@ -17,8 +17,8 @@ public enum ZhuyinTone: String, CaseIterable, Sendable, Hashable {
     case neutral = "˙"
 
     /// The mark as it appears on a key cap. First tone has no mark, so it
-    /// borrows the macron the tone charts use — it is a label, never part of a
-    /// reading.
+    /// borrows the macron the tone charts use — it is never part of a
+    /// syllable's `text`, the dictionary key.
     public var keyCap: String {
         self == .first ? "ˉ" : rawValue
     }

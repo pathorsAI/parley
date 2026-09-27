@@ -25,7 +25,15 @@ import SwiftUI
 /// id here, so the row shows under that folder's chip exactly as a real
 /// recording would — but nothing is written to the cloud, and the Mac never
 /// sees it. The cloud-only actions (download, re-transcribe, share to an org)
-/// are not offered on it.
+/// are not offered on it. The same goes for a rename, the ticks on its action
+/// items, and whether its filing suggestion has been answered: four values
+/// here, none of them anywhere else.
+///
+/// It arrives *pre-suggested and pre-analysed*. The manifest carries the title
+/// and folder a filing pass would have proposed and the brief, findings and
+/// action items an analysis would have written, so the first recording a new
+/// user opens shows what every recording will get — without a model, a key or
+/// a network.
 ///
 /// Recognised everywhere by its id prefix, `sample-` (`SampleManifest.isSample`),
 /// the same rule the desktop uses.
@@ -44,6 +52,14 @@ final class SampleRecordingStore: ObservableObject {
         /// Epoch ms. When it was added, which is what it sorts by.
         var addedAt: Double
         var folderId: String?
+        /// The user's rename. nil = the manifest's title.
+        var title: String?
+        /// Whether the filing suggestion is still waiting on an answer. nil on
+        /// an entry saved before the suggestion existed, read as "pending"
+        /// while it has neither a name nor a folder of its own.
+        var suggestionPending: Bool?
+        /// `SampleManifest.actionItemID`s the user has ticked.
+        var doneActionItems: [String]?
     }
 
     private static let entryKey = "sampleRecording.entry"
@@ -103,7 +119,14 @@ final class SampleRecordingStore: ObservableObject {
     /// The Library row, or nil when the sample is not in the Library.
     var summary: CloudRecordingSummary? {
         guard let entry, let manifest else { return nil }
-        return manifest.summary(createdAt: entry.addedAt, folderId: entry.folderId)
+        return manifest.summary(
+            createdAt: entry.addedAt, folderId: entry.folderId, title: entry.title)
+    }
+
+    /// Whether the card should still offer the suggestion.
+    var suggestionPending: Bool {
+        guard let entry else { return false }
+        return entry.suggestionPending ?? (entry.folderId == nil && entry.title == nil)
     }
 
     func isSample(_ id: String) -> Bool { SampleManifest.isSample(id: id) }
@@ -111,7 +134,10 @@ final class SampleRecordingStore: ObservableObject {
     /// The transcript for the detail screen, when `id` is the sample's.
     func meta(for id: String) -> RecordingMeta? {
         guard let entry, let manifest, manifest.id == id else { return nil }
-        return manifest.meta(createdAt: entry.addedAt, folderId: entry.folderId)
+        return manifest.meta(
+            createdAt: entry.addedAt, folderId: entry.folderId, title: entry.title,
+            doneActionItems: Set(entry.doneActionItems ?? []),
+            suggestionPending: suggestionPending)
     }
 
     /// The bundled audio, when `id` is the sample's.
@@ -131,7 +157,9 @@ final class SampleRecordingStore: ObservableObject {
         if entry == nil {
             let lang = Self.preferredLang
             guard Self.manifest(lang: lang) != nil else { return nil }
-            entry = Entry(lang: lang, addedAt: Date().timeIntervalSince1970 * 1000, folderId: nil)
+            entry = Entry(
+                lang: lang, addedAt: Date().timeIntervalSince1970 * 1000, folderId: nil,
+                title: nil, suggestionPending: true, doneActionItems: [])
             save()
         }
         guard let summary else { return nil }
@@ -143,6 +171,32 @@ final class SampleRecordingStore: ObservableObject {
     func setFolder(_ folderId: String?) {
         guard entry != nil else { return }
         entry?.folderId = folderId
+        save()
+    }
+
+    /// Rename the sample. Local only. Empty or the manifest's own title puts
+    /// the manifest's title back.
+    func setTitle(_ title: String) {
+        guard entry != nil else { return }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        entry?.title = trimmed.isEmpty || trimmed == manifest?.title ? nil : trimmed
+        save()
+    }
+
+    /// The filing suggestion has been answered — accepted, or skipped — and
+    /// the card is not offered again.
+    func answerSuggestion() {
+        guard entry != nil else { return }
+        entry?.suggestionPending = false
+        save()
+    }
+
+    /// Tick or untick one of the sample's action items.
+    func setActionItem(_ id: String, done: Bool) {
+        guard entry != nil else { return }
+        var ids = Set(entry?.doneActionItems ?? [])
+        if done { ids.insert(id) } else { ids.remove(id) }
+        entry?.doneActionItems = ids.sorted()
         save()
     }
 

@@ -118,6 +118,15 @@ final class GettingStartedStore: ObservableObject {
         }
     }
 
+    #if DEBUG
+        /// ScreenshotDemo's lap routes start the lap at a given step.
+        func seedDemo(_ seeded: GettingStartedState) {
+            defaults.set(true, forKey: Self.libraryCheckedKey)
+            state = seeded
+            save()
+        }
+    #endif
+
     private func save() {
         guard let data = try? JSONEncoder().encode(state) else { return }
         defaults.set(data, forKey: Self.stateKey)

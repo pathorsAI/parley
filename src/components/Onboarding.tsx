@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, LogIn, Mic, Volume2, X } from "lucide-react";
 import { useStore } from "../lib/store";
-import { isMac } from "../lib/platform";
+import { isMac, isWindows } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
 import { CLOUD_ENABLED } from "../lib/flags";
 import { log } from "../lib/log";
@@ -10,7 +10,9 @@ import { PROVIDERS, PROVIDER_BY_ID, type ProviderInfo } from "../lib/ai/provider
 import { STT_PROVIDERS, STT_BY_ID, sttApiKey } from "../lib/transcription/providers";
 import { beginMeeting } from "../lib/meeting/start";
 import { loadSampleRecording } from "../lib/onboarding/sample";
-import { loadHistoryEntry } from "../lib/history/history";
+import { openRecording } from "./home/GettingStarted";
+import { TranscribingPulse, useTranscribingPulse } from "./onboarding/TranscribingPulse";
+import { IntroStage } from "./onboarding/IntroStage";
 import { useI18n, LANGUAGE_OPTIONS } from "../i18n";
 import { Flag } from "./ui/flag";
 import { Button } from "@/components/ui/button";
@@ -118,11 +120,14 @@ export function Onboarding() {
     patch({ onboarded: true, onboardingStep: 0 });
   }
 
+  // The wizard stays up through the transcribing beat, so the button the user
+  // pressed turns into the progress bar; it closes as the report opens.
+  const samplePulse = useTranscribingPulse();
   async function walkThroughSample() {
+    const id = await samplePulse.run(loadSampleRecording);
     finish();
-    const id = await loadSampleRecording();
     if (id) {
-      await loadHistoryEntry(id);
+      await openRecording(id, "report");
     } else {
       log.warn("onboarding: sample recording unavailable");
     }
@@ -183,18 +188,11 @@ export function Onboarding() {
               </div>
               <div className="flex flex-col gap-3">
                 <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.intro.title")}</h2>
-                {/* "Both sides of the conversation" is a macOS promise: the
-                    system-audio tap has no Windows counterpart yet, and the first
-                    thing a Windows user reads should not be a capability the app
-                    doesn't have. */}
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  {t(isMac() ? "onboarding.intro.body" : "onboarding.intro.body.windows")}
-                </p>
-                <ul className="flex flex-col gap-1.5 text-sm text-muted-foreground">
-                  <li>• {t("onboarding.intro.point1")}</li>
-                  <li>• {t("onboarding.intro.point2")}</li>
-                  <li>• {t("onboarding.intro.point3")}</li>
-                </ul>
+                {/* The UI assembles itself: pill, transcript, folder, plug —
+                    one caption per beat. "Both sides of the conversation" holds
+                    on both desktop platforms (macOS process tap, Windows WASAPI
+                    loopback), so the captions are the same everywhere. */}
+                <IntroStage />
               </div>
             </div>
           )}
@@ -206,9 +204,10 @@ export function Onboarding() {
               <h2 className="text-base font-semibold tracking-tight">
                 {t(isMac() ? "onboarding.perms.title" : "onboarding.perms.title.windows")}
               </h2>
-              {/* Windows names one permission, not two, and points at its own
-                  Settings app — the macOS copy would send the user hunting for
-                  a "System Audio Recording" grant that doesn't exist there. */}
+              {/* Windows asks consent for the microphone alone and points at
+                  its own Settings app — the macOS copy would send the user
+                  hunting for a "System Audio Recording" grant that doesn't
+                  exist there (loopback capture needs none). */}
               <p className="text-sm leading-relaxed text-muted-foreground">
                 {t(isMac() ? "onboarding.perms.body" : "onboarding.perms.body.windows")}
               </p>
@@ -236,21 +235,23 @@ export function Onboarding() {
                   await recheck();
                 }}
               />
-              {/* macOS only, and only where the tap exists (< 14.2 reports
-                  unsupported). Windows always reports unsupported, but `perms`
-                  is null until the first check answers — without the platform
-                  test the row would flash into a Windows user's first run. */}
-              {isMac() && perms?.systemAudio !== "unsupported" && (
+              {/* macOS shows the row only where the tap exists (< 14.2
+                  reports unsupported). Windows always has it: loopback needs
+                  no consent, so the row is a ✓ whenever there is an output
+                  device to capture, and otherwise a link to Sound settings. */}
+              {((isMac() && perms?.systemAudio !== "unsupported") || isWindows()) && (
                 <PermRow
                   icon={<Volume2 className="size-4" />}
-                  label={t("onboarding.perms.systemAudio")}
+                  label={t(isMac() ? "onboarding.perms.systemAudio" : "onboarding.perms.systemAudio.windows")}
                   ok={systemAudioOk}
-                  actionLabel={t("onboarding.perms.grant")}
+                  actionLabel={t(isMac() ? "onboarding.perms.grant" : "settings.permissions.openSettings")}
                   onAction={async () => {
-                    // Probes a real Core Audio process tap; the first probe makes
-                    // macOS show the "record system audio" consent prompt.
+                    // macOS: probes a real Core Audio process tap; the first
+                    // probe shows the "record system audio" consent prompt.
+                    // Windows: only checks for a default output device, and
+                    // when there is none the fix lives in Sound settings.
                     const s = await invoke<string>("probe_system_audio").catch(() => null);
-                    if (s === "denied") {
+                    if (s === "denied" || (!isMac() && s !== "granted")) {
                       await invoke("open_privacy_settings", { pane: "system-audio" }).catch((error) =>
                         log.warn("permissions: open system-audio settings failed", { error: String(error) }),
                       );
@@ -285,21 +286,26 @@ export function Onboarding() {
               <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.done.title")}</h2>
               <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">{t("onboarding.done.body")}</p>
               <div className="mt-2 flex flex-col items-center gap-2">
-                <Button
-                  size="sm"
-                  className="h-9 text-xs"
-                  onClick={() =>
-                    walkThroughSample().catch((error) =>
-                      log.error("onboarding: sample walkthrough failed", { error: String(error) }),
-                    )
-                  }
-                >
-                  {t("onboarding.done.sample")}
-                </Button>
+                {samplePulse.active ? (
+                  <TranscribingPulse className="h-9" />
+                ) : (
+                  <Button
+                    size="sm"
+                    className="h-9 text-xs"
+                    onClick={() =>
+                      walkThroughSample().catch((error) =>
+                        log.error("onboarding: sample walkthrough failed", { error: String(error) }),
+                      )
+                    }
+                  >
+                    {t("onboarding.done.sample")}
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
                   className="h-8 text-xs"
+                  disabled={samplePulse.active}
                   onClick={() => {
                     finish();
                     beginMeeting().catch((error) =>

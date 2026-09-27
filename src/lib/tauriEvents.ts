@@ -142,10 +142,11 @@ interface MeetingWarningPayload {
 }
 
 /**
- * Subscribe to NON-fatal meeting warnings. Today that's the system-audio tap
- * reporting it can't deliver the other party's audio (usually the "System Audio
- * Recording" permission is missing) — the meeting continues mic-only, but the
- * user should know why the remote side produces no transcript. De-duped per
+ * Subscribe to NON-fatal meeting warnings. Today that's the system-audio
+ * capture reporting it can't deliver the other party's audio (macOS: usually
+ * the "System Audio Recording" permission is missing; Windows: no output
+ * device could be looped back) — the meeting continues mic-only, but the user
+ * should know why the remote side produces no transcript. De-duped per
  * meeting via a module flag reset on each `meeting://status` change.
  */
 let warnedSystemAudio = false;
