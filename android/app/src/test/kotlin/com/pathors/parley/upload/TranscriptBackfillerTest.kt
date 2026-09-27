@@ -124,8 +124,8 @@ class TranscriptBackfillerTest {
     /** The full transcript the job comes back with. */
     private fun fullTranscript() = BatchTranscriptResponse(
         listOf(
-            BatchToken("Every word of it.", 0, 1_400_000, 1),
-            BatchToken("All of it.", 1_400_000, 2_953_000, 2),
+            BatchToken(FIRST_LINE, 0, 1_400_000, 1),
+            BatchToken(SECOND_LINE, 1_400_000, 2_953_000, 2),
         )
     )
 
@@ -152,7 +152,7 @@ class TranscriptBackfillerTest {
 
         val body = pushedBody()
         val meta = RecordingMeta(body["meta"] as JsonObject)
-        assertEquals(listOf("Every word of it.", "All of it."), meta.segments.map { it.text })
+        assertEquals(listOf(FIRST_LINE, SECOND_LINE), meta.segments.map { it.text })
         assertEquals(2_953_000.0, meta.durationMs, 0.0)
         assertEquals("Renewal terms", meta.title)
     }
@@ -170,7 +170,7 @@ class TranscriptBackfillerTest {
             queue.enqueueMoving(BackfillRequest(pending = pending(RECORDING)), audio("a.ogg"))
             cloudMeta[RECORDING] = MeetingUploader.buildMeta(pending(RECORDING))
                 .withTitle(RENAMED)
-                .withFolderId("folder-3")
+                .withFolderId(MOVED_TO)
                 .withFilingSuggested()
                 .raw
 
@@ -180,12 +180,12 @@ class TranscriptBackfillerTest {
             val body = pushedBody()
             val meta = RecordingMeta(body["meta"] as JsonObject)
             val summary = CloudJson.decodeFromJsonElement(RecordingSummary.serializer(), body["summary"]!!)
-            assertEquals(listOf("Every word of it.", "All of it."), meta.segments.map { it.text })
+            assertEquals(listOf(FIRST_LINE, SECOND_LINE), meta.segments.map { it.text })
             assertEquals(RENAMED, meta.title)
-            assertEquals("folder-3", meta.folderId)
+            assertEquals(MOVED_TO, meta.folderId)
             assertTrue(meta.filingSuggested)
             assertEquals("the library row says the same", RENAMED, summary.title)
-            assertEquals("folder-3", summary.folderId)
+            assertEquals(MOVED_TO, summary.folderId)
             assertEquals(2, summary.speakerCount)
             assertTrue(summary.hasAudio)
         }
@@ -297,7 +297,7 @@ class TranscriptBackfillerTest {
             body["summary"]!!,
         )
 
-        assertEquals(listOf("Every word of it.", "All of it."), meta.segments.map { it.text })
+        assertEquals(listOf(FIRST_LINE, SECOND_LINE), meta.segments.map { it.text })
         assertEquals(mapOf("mix-0" to "Jack"), meta.speakerNames)
         assertEquals(1, meta.findingsCount)
         assertTrue(meta.analyzed)
@@ -529,6 +529,11 @@ class TranscriptBackfillerTest {
     private companion object {
         const val RECORDING = "rec-renamed"
         const val RENAMED = "Acme renewal terms"
+        const val MOVED_TO = "folder-3"
+
+        /** The two runs the batch job comes back with. */
+        const val FIRST_LINE = "Every word of it."
+        const val SECOND_LINE = "All of it."
     }
 }
 

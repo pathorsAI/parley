@@ -12,7 +12,7 @@ import kotlinx.serialization.json.Json
  * 401 discipline); this module only knows the wire shapes, so the passes built
  * on it can be tested against a fake without a server.
  */
-interface ChatCompletions {
+fun interface ChatCompletions {
     /**
      * Send one request body to `v1/chat/completions` and return the response
      * body. Throws on transport or HTTP failure.
