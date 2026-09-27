@@ -1,9 +1,14 @@
 package com.pathors.parley.ui
 
 import androidx.annotation.StringRes
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,6 +69,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
@@ -71,18 +77,28 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -93,6 +109,7 @@ import com.pathors.parley.cloud.OrgRole
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.library.FolderFilter
+import com.pathors.parley.library.FolderSwipe
 import com.pathors.parley.library.LibraryFolders
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingState
@@ -102,6 +119,7 @@ import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.ui.theme.ParleyTheme
 import com.pathors.parley.upload.PendingUpload
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 /**
  * The library: everything this account has in the cloud, with whatever is still
@@ -474,9 +492,27 @@ private fun LibraryList(
     callbacks: LibraryCallbacks,
     lap: LibraryLap,
 ) {
+    val cards = remember { CardBounds() }
+    val minDistance = with(LocalDensity.current) { FolderSwipeDistance.toPx() }
+    val entranceOffset = with(LocalDensity.current) { PageEntranceOffset.toPx() }
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val latest by rememberUpdatedState(state)
+    val onSelectFolder by rememberUpdatedState(callbacks.onSelectFolder)
+    val entrance = rememberPageEntrance(state.folders, state.folderFilter)
     LazyColumn(
         state = lap.listState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .folderSwipe(cards, minDistance, rtl) { step ->
+                LibraryFolders.adjacent(latest.folders, latest.folderFilter, step)?.let(onSelectFolder)
+            }
+            // After the swipe in the chain: the finger is read outside the
+            // slide and the cards' bounds are measured through it, so a swipe
+            // that starts mid-slide still lands where the cards are drawn.
+            .graphicsLayer {
+                translationX = entrance.value * entranceOffset * (if (rtl) -1 else 1)
+                alpha = 1f - 0.4f * abs(entrance.value)
+            },
         contentPadding = PaddingValues(
             start = 16.dp,
             end = 16.dp,
@@ -513,12 +549,125 @@ private fun LibraryList(
         // items sharing a key is an IllegalArgumentException out of
         // LazyColumn, not a glitch.
         items(visible, key = { "recording-" + it.id }) { recording ->
+            DisposableEffect(cards, recording.id) {
+                onDispose { cards.remove(recording.id) }
+            }
             RecordingRow(
                 model = LibraryRules.recordingRow(state, recording),
                 actions = callbacks.rowActions(recording),
+                modifier = Modifier.onGloballyPositioned { cards.put(recording.id, it) },
             )
         }
     }
+}
+
+/** How far across a finger has to travel before it is a swipe to the next page. */
+private val FolderSwipeDistance = 60.dp
+
+/** How far in from the side a new page slides. */
+private val PageEntranceOffset = 32.dp
+
+/**
+ * Where the recording cards are, so a swipe that starts on one is left to it —
+ * see [FolderSwipe]. Coordinates rather than rectangles, turned into bounds at
+ * the moment a finger goes down, because the list scrolls under them between
+ * one layout and the next. Rows leave as they leave the composition.
+ */
+private class CardBounds {
+    var list: LayoutCoordinates? = null
+    private val cards = mutableMapOf<String, LayoutCoordinates>()
+
+    fun put(id: String, coordinates: LayoutCoordinates) {
+        cards[id] = coordinates
+    }
+
+    fun remove(id: String) {
+        cards.remove(id)
+    }
+
+    /** The cards' bounds in the list's coordinates, as they are now. */
+    fun rects(): List<Rect> {
+        val list = list?.takeIf { it.isAttached } ?: return emptyList()
+        return cards.values
+            .filter { it.isAttached }
+            .map { list.localBoundingBoxOf(it, clipBounds = false) }
+    }
+}
+
+/**
+ * Swiping sideways across the library turns to the neighbouring folder page,
+ * as on iOS; [onStep] gets -1 or +1 once the finger lifts on one that counts
+ * ([FolderSwipe.step] decides).
+ *
+ * It watches first and takes over late. Until the finger is past the touch
+ * slop nothing is consumed, so the list's scroll, the pull to refresh and the
+ * cards' taps and long presses see every event as they did before. Past it,
+ * a sideways drag is claimed ([FolderSwipe.claim]) and every event from there
+ * to the lift is consumed ahead of the children — otherwise a swipe across a
+ * card comes up as a tap and opens it. That holds for a swipe that started on
+ * a card too: it claims the gesture but never turns the page. A drag that is
+ * down rather than across is the list's and is never touched. Two fingers are
+ * a pinch or an accident, never a page turn.
+ */
+private fun Modifier.folderSwipe(
+    cards: CardBounds,
+    minDistance: Float,
+    rtl: Boolean,
+    onStep: (Int) -> Unit,
+): Modifier = onGloballyPositioned { cards.list = it }
+    .pointerInput(cards, minDistance, rtl) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            val onCards = cards.rects()
+            val touchSlop = viewConfiguration.touchSlop
+            var last = down.position
+            var multiTouch = false
+            var claim = FolderSwipe.Claim.UNDECIDED
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.changes.size > 1) multiTouch = true
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                last = change.position
+                if (claim == FolderSwipe.Claim.UNDECIDED && !multiTouch) {
+                    claim = FolderSwipe.claim(last - down.position, touchSlop)
+                }
+                if (claim == FolderSwipe.Claim.SWIPE) change.consume()
+                if (!change.pressed) break
+            }
+            if (multiTouch) return@awaitEachGesture
+            val step = FolderSwipe.step(down.position, last - down.position, onCards, minDistance, rtl)
+            if (step != 0) onStep(step)
+        }
+    }
+
+/**
+ * A short slide in from the side the new page is on, whichever way it was
+ * chosen — a chip or a swipe — so a folder change reads as moving along the
+ * row. A nudge on the one list rather than two lists crossing: the list keeps
+ * its single scroll state, which "show the getting-started list again" and
+ * rotation both rely on.
+ *
+ * Nothing slides when the page is not a step along the row the user can see:
+ * a scope switch or a deleted folder resetting to All is a new library, not a
+ * neighbouring page. The value runs from ±1 (off to that side) to 0.
+ */
+@Composable
+private fun rememberPageEntrance(
+    folders: List<CloudFolder>,
+    selected: FolderFilter,
+): Animatable<Float, AnimationVector1D> {
+    val entrance = remember { Animatable(0f) }
+    val previous = remember { arrayOf(selected) }
+    LaunchedEffect(selected) {
+        val pages = LibraryFolders.pages(folders)
+        val from = pages.indexOf(previous[0])
+        val to = pages.indexOf(selected)
+        previous[0] = selected
+        if (from < 0 || to < 0 || from == to) return@LaunchedEffect
+        entrance.snapTo(if (to > from) 1f else -1f)
+        entrance.animateTo(0f, tween(durationMillis = 220))
+    }
+    return entrance
 }
 
 /** The folder picker over the library, moving [target]. */
@@ -676,14 +825,15 @@ internal fun orgRoleLabel(role: String?): Int = when (role) {
 
 /**
  * All, Unfiled, then the scope's folders in the server's order — one page of
- * the library each, horizontally scrollable because a folder is a customer and
- * there are dozens.
+ * the library each ([LibraryFolders.pages], which a swipe across the list walks
+ * too), horizontally scrollable because a folder is a customer and there are
+ * dozens.
  *
  * Material filter chips rather than iOS's underlined labels: the chip *is* the
  * Android control for "narrow this list to one of these", and TalkBack already
  * announces its selected state. The row scrolls itself so the selected chip is
  * on screen, which matters when the selection changes from somewhere other than
- * a tap on it (a scope switch resetting to All).
+ * a tap on it (a swipe across the list, or a scope switch resetting to All).
  */
 @Composable
 private fun FolderChips(
@@ -692,9 +842,7 @@ private fun FolderChips(
     onSelect: (FolderFilter) -> Unit,
 ) {
     val listState = rememberLazyListState()
-    val pages = remember(folders) {
-        listOf(FolderFilter.All, FolderFilter.Unfiled) + folders.map { FolderFilter.Folder(it.id) }
-    }
+    val pages = remember(folders) { LibraryFolders.pages(folders) }
     // Only when the chip is not already fully on screen: scrolling a visible
     // chip to the leading edge would clip "All" for no reason.
     LaunchedEffect(selected, pages) {
@@ -1056,12 +1204,16 @@ private fun PendingRow(pending: PendingUpload) {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RecordingRow(model: RecordingRowModel, actions: RecordingRowActions) {
+private fun RecordingRow(
+    model: RecordingRowModel,
+    actions: RecordingRowActions,
+    modifier: Modifier = Modifier,
+) {
     var menu by remember { mutableStateOf<RowMenuPage?>(null) }
     val actionsLabel = stringResource(R.string.home_recording_actions)
 
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .alpha(if (model.working) 0.5f else 1f)
             .combinedClickable(

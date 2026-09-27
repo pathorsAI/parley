@@ -7,6 +7,7 @@ import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.ui.HomeViewModel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -83,6 +84,48 @@ class LibraryFoldersTest {
     @Test
     fun `no folders means All`() {
         assertEquals(FolderFilter.All, LibraryFolders.reconcile(FolderFilter.Unfiled, emptyList()))
+    }
+
+    // ── pages ────────────────────────────────────────────────────────────────
+
+    /** The chip row and the swipe walk the same list, so this order is both. */
+    @Test
+    fun `pages are All, Unfiled, then the folders in the server's order`() {
+        assertEquals(
+            listOf(
+                FolderFilter.All,
+                FolderFilter.Unfiled,
+                FolderFilter.Folder("renewals"),
+                FolderFilter.Folder("new"),
+            ),
+            LibraryFolders.pages(folders),
+        )
+    }
+
+    /** No chip row, nothing to swipe to: the library is the one page it always was. */
+    @Test
+    fun `no folders is a single All page`() {
+        assertEquals(listOf(FolderFilter.All), LibraryFolders.pages(emptyList()))
+    }
+
+    /** Whatever [LibraryFolders.reconcile] settles on is a page there is to show. */
+    @Test
+    fun `a reconciled selection is always one of the pages`() {
+        val selections = listOf(
+            FolderFilter.All,
+            FolderFilter.Unfiled,
+            FolderFilter.Folder("new"),
+            FolderFilter.Folder("gone"),
+        )
+        for (list in listOf(folders, folders.take(1), emptyList())) {
+            for (selected in selections) {
+                val reconciled = LibraryFolders.reconcile(selected, list)
+                assertTrue(
+                    "$selected over ${list.map { it.id }} reconciled to $reconciled",
+                    reconciled in LibraryFolders.pages(list),
+                )
+            }
+        }
     }
 
     @Test
