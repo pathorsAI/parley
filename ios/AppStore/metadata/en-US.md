@@ -83,6 +83,16 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.23
+
+See Parley polish your words after you stop.
+
+When you tap stop on the voice keyboard, the button turns blue right away, and while AI polishes your dictation a wave of light runs through the words, with the three dots on the button lighting in step. Don't want to wait? Tap again to insert the raw text.
+
+Long dictations no longer stop at three lines: the text stays on the newest line, and you can scroll back up to read the rest.
+
+The first time you open the app after an update, a short card tells you what changed.
+
 ## What's New — 1.22
 
 Your first lap through Parley now shows you what it does, instead of listing it.
