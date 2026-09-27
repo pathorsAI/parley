@@ -104,6 +104,7 @@ struct KeyboardRootView: View {
             .clipped()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlayPreferenceValue(PressedKeys.self) { KeyCalloutLayer(dark: dark, keys: $0) }
     }
 
     /// The typing panes are handed values rather than the bridge to observe,

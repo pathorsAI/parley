@@ -199,12 +199,13 @@ struct KeyButton<Label: View>: View {
     var width: CGFloat?
     var height: CGFloat = KBMetrics.keyHeight
     var ink: Color?
+    var callout: String?
     let action: () -> Void
     let label: Label
 
     init(
         dark: Bool, tint: KeyTint = .letter, width: CGFloat? = nil,
-        height: CGFloat = KBMetrics.keyHeight, ink: Color? = nil,
+        height: CGFloat = KBMetrics.keyHeight, ink: Color? = nil, callout: String? = nil,
         action: @escaping () -> Void, @ViewBuilder label: () -> Label
     ) {
         self.dark = dark
@@ -212,6 +213,7 @@ struct KeyButton<Label: View>: View {
         self.width = width
         self.height = height
         self.ink = ink
+        self.callout = callout
         self.action = action
         self.label = label()
     }
@@ -224,6 +226,10 @@ struct KeyButton<Label: View>: View {
             }
             .frame(width: width, height: height)
             .frame(maxWidth: width == nil ? .infinity : nil)
+            .anchorPreference(key: PressedKeys.self, value: .bounds) { bounds in
+                guard pressed, let callout else { return [] }
+                return [PressedKey(label: callout, bounds: bounds)]
+            }
         }
     }
 }
@@ -235,7 +241,7 @@ struct KeyButton<Label: View>: View {
 extension KeyButton: Equatable where Label: Equatable {
     static func == (a: Self, b: Self) -> Bool {
         a.dark == b.dark && a.tint == b.tint && a.width == b.width && a.height == b.height
-            && a.ink == b.ink && a.label == b.label
+            && a.ink == b.ink && a.callout == b.callout && a.label == b.label
     }
 }
 

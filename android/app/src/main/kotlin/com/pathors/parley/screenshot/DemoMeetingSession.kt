@@ -3,9 +3,13 @@ package com.pathors.parley.screenshot
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
+import com.pathors.parley.audio.MicRecoveryState
+import com.pathors.parley.kit.CaptureRecovery
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.meeting.LiveMeeting
+import com.pathors.parley.meeting.MeetingFailure
 import com.pathors.parley.meeting.MeetingState
+import com.pathors.parley.screenshot.DemoMode.MeetingScenario
 import com.pathors.parley.meeting.TranscriptionIssue
 import kotlin.random.Random
 import kotlinx.coroutines.CoroutineScope
@@ -32,14 +36,29 @@ import kotlinx.coroutines.launch
  *
  * Starts mid-conversation on purpose: two settled runs and an unfinished tail is
  * the state worth showing, not an empty transcript waiting for someone to speak.
+ *
+ * [scenario] puts the same meeting into one of the states only a real
+ * microphone or a filling disk can produce — see [MeetingScenario].
  */
 class DemoMeetingSession(
+    private val scenario: MeetingScenario = MeetingScenario.LIVE,
     private val script: List<TranscriptSegment> = DemoMode.liveScript(),
     private val tail: TranscriptSegment = DemoMode.liveTail(),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main),
 ) : LiveMeeting {
 
-    private val _state = MutableStateFlow<MeetingState>(MeetingState.Recording)
+    private val _state = MutableStateFlow(
+        if (scenario == MeetingScenario.INTERRUPTED) {
+            MeetingState.Finished(
+                recordingId = DemoMode.FEATURED_ID,
+                pendingUpload = false,
+                dropped = false,
+                interruptedBy = MeetingFailure.MIC_UNAVAILABLE,
+            )
+        } else {
+            MeetingState.Recording
+        }
+    )
     override val state: StateFlow<MeetingState> = _state.asStateFlow()
 
     private val _segments = MutableStateFlow<List<TranscriptSegment>>(emptyList())
@@ -48,8 +67,24 @@ class DemoMeetingSession(
     /** A demo meeting never has a transcription problem to report. */
     override val issue: StateFlow<TranscriptionIssue?> = MutableStateFlow(null).asStateFlow()
 
-    /** …and never loses the microphone, since it never opens one. */
-    override val micSilenced: StateFlow<Boolean> = MutableStateFlow(false).asStateFlow()
+    /** …and never loses the microphone, since it never opens one — unless asked to. */
+    override val micSilenced: StateFlow<Boolean> =
+        MutableStateFlow(scenario == MeetingScenario.MIC_SILENCED).asStateFlow()
+
+    private val _micRecovery = MutableStateFlow(
+        when (scenario) {
+            MeetingScenario.MIC_RECOVERING, MeetingScenario.MIC_BACK -> MicRecoveryState.Recovering
+            MeetingScenario.MIC_LOST -> MicRecoveryState.Lost(CaptureRecovery.Loss.TakenBySystem)
+            MeetingScenario.MIC_BROKEN -> MicRecoveryState.Lost(
+                CaptureRecovery.Loss.Broken("AudioRecord could not be initialised"),
+            )
+            else -> MicRecoveryState.Holding
+        }
+    )
+    override val micRecovery: StateFlow<MicRecoveryState> = _micRecovery.asStateFlow()
+
+    override val storageLow: StateFlow<Boolean> =
+        MutableStateFlow(scenario == MeetingScenario.STORAGE_LOW).asStateFlow()
 
     private val _level = MutableStateFlow(0f)
     override val level: StateFlow<Float> = _level.asStateFlow()
@@ -57,15 +92,29 @@ class DemoMeetingSession(
     private val _elapsedMs = MutableStateFlow(START_AT_MS)
     override val elapsedMs: StateFlow<Long> = _elapsedMs.asStateFlow()
 
+    private var started = false
     private var transcriptJob: Job? = null
     private var meterJob: Job? = null
 
     /** Seed the opening frame and start both timers. Safe to call twice. */
     fun start() {
-        if (transcriptJob != null) return
+        if (started) return
+        started = true
+        if (scenario == MeetingScenario.INTERRUPTED) {
+            // Over already: the whole conversation, nothing moving.
+            _segments.value = script
+            _elapsedMs.value = END_AT_MS
+            return
+        }
         _segments.value = script.take(SEEDED_LINES) + tail
         transcriptJob = scope.launch { runTranscript() }
         meterJob = scope.launch { runMeter() }
+        if (scenario == MeetingScenario.MIC_BACK) {
+            scope.launch {
+                delay(MIC_BACK_AFTER_MS)
+                _micRecovery.value = MicRecoveryState.Holding
+            }
+        }
     }
 
     /**
@@ -113,6 +162,10 @@ class DemoMeetingSession(
         /** A clock that reads like a meeting under way, not one just started. */
         const val START_AT_MS = 108_000L
 
+        /** Where the interrupted scenario's clock stopped. */
+        const val END_AT_MS = 1_122_000L
+
+        const val MIC_BACK_AFTER_MS = 1_500L
         const val SETTLE_INTERVAL_MS = 4_000L
         const val METER_INTERVAL_MS = 140L
         const val BASE_LEVEL = 0.12f
@@ -123,8 +176,10 @@ class DemoMeetingSession(
 
 /** A demo meeting bound to the composition that shows it. */
 @Composable
-fun rememberDemoMeeting(): DemoMeetingSession {
-    val session = remember { DemoMeetingSession().also { it.start() } }
+fun rememberDemoMeeting(
+    scenario: MeetingScenario = MeetingScenario.LIVE,
+): DemoMeetingSession {
+    val session = remember(scenario) { DemoMeetingSession(scenario).also { it.start() } }
     DisposableEffect(session) {
         onDispose { session.dispose() }
     }

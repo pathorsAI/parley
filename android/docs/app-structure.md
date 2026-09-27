@@ -27,7 +27,8 @@ com.pathors.parley
     LibraryIcons.kt      folder / new folder / tray / group glyphs (not in core icons)
     AccountSheet.kt      identity, usage, default save location, sync, storage,
                          appearance, language, about, sign out, delete account
-    MeetingScreen.kt     permission gate, live transcript, level meter, stop
+    MeetingScreen.kt     permission gate, live transcript, level meter, mic/storage status, stop
+    MeetingHaptics.kt    the four recording beats (start, stop, discard, mic lost)
     ImportScreen.kt      progress + phase label + cancel; the failure / partial endings
     RecordingDetail*.kt  player, transcript + search, findings, action items,
                          re-transcribe, move to folder (personal recordings)
@@ -65,8 +66,11 @@ Both sessions expose the same shape — `StateFlow` for state, segments and
 progress — and both fan one PCM stream out to two sinks:
 
 ```
-MicCapture / AudioFileDecoder ──ByteArray──┬──▶ OggOpusEncoder.append  ──▶ .ogg
-                                           └──▶ SttRelayClient.sendPcm ──▶ segments
+MicCapture ──ByteArray──┬──▶ OggOpusEncoder.append ──▶ .ogg
+                        └──▶ RelayAudioBridge.send ──▶ SttRelayClient (leg N).enqueuePcm ──▶ segments
+
+AudioFileDecoder ──ByteArray──┬──▶ OggOpusEncoder.append ──▶ .ogg
+                              └──▶ SttRelayClient.sendPcm ──▶ segments
 ```
 
 Segments are **upserted by id**, never appended: the relay re-emits a growing
@@ -93,6 +97,15 @@ throwing. A capture that is *interrupted* but left audio behind (the mic taken
 away mid-meeting, say) still ends `Finished`, with `interruptedBy` saying why;
 see `terminalStateFor` in `meeting/CaptureEnding.kt`.
 
+On an error or unexpected close `MeetingSession` holds the `RelayAudioBridge`,
+retires the dead client and redials on `ReconnectPolicy`'s ladder. The new leg is
+created through `bridge.attach`, so it gets its own id prefix (`mix@N`), a
+`timeOffsetMs` equal to where the first held chunk was captured, and the held
+audio before any live audio — the words spoken during the gap reach the relay
+instead of being dropped. When no leg is coming (budget spent, out of quota,
+signed out, stop, discard) the bridge drops what it holds. See
+`api-parleykit.md`.
+
 An import splits the same failures differently (`meeting/ImportRelayOutcome.kt`),
 because the user still holds the source file:
 
@@ -107,6 +120,18 @@ or with a transcript being redone, stays up until it is dismissed. An upload the
 cloud refuses for good (see `api-cloud.md`) is `Failed(UPLOAD_REFUSED)`, not
 "Done". A 402 on upload is not a refusal: the recording stays queued and the
 screen says it will sync once the quota resets (`Finished.waitingForQuota`).
+
+### What the meeting screen says about the microphone
+
+`MeetingScreen` shows one microphone line while recording, in priority order:
+`micRecovery` **Lost** (taken by something else, or broken with the platform's
+reason), **Recovering**, `micSilenced`, and a four-second "Microphone is back —
+still recording" after a recovery — never two at once. `storageLow` adds a
+warning line. A `Finished` state with `interruptedBy` set says how the meeting
+ended ("Stopped early — lost the microphone" / storage / permission / other) and
+stays until the user taps Close; only a user-ended meeting auto-dismisses after
+1.2 s. Haptics (`ui/MeetingHaptics`) mark recording started, Stop, Discard and
+microphone lost.
 
 ## The service
 
@@ -215,6 +240,11 @@ admin) with two folders and a shared library of its own, and a default save
 location — so the scope switcher, chips, row menu and account picker are all
 capturable. Moves, shares, created folders and the save location are applied to
 in-memory copies only.
+
+The meeting route takes `?scenario=` for the states only a real microphone or a
+filling disk reaches: `mic-silenced`, `mic-recovering`, `mic-back`, `mic-lost`,
+`mic-broken`, `storage-low`, `interrupted` (default `live`), e.g.
+`parley://demo/meeting?scenario=mic-lost`.
 
 Three invariants, all worth keeping: **no network** (every call site is guarded,
 so an offline machine captures the same frames), **no writes** (nothing reaches
