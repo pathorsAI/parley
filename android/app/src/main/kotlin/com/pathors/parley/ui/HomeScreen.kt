@@ -64,6 +64,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -127,183 +128,72 @@ fun HomeScreen(
     // The recording the folder picker is moving, while it is up.
     var moving by remember { mutableStateOf<RecordingSummary?>(null) }
 
-    // The search field, and what is in it. `query` is the whole of the "is a
-    // search live" state: the field can be up with nothing typed, which is not
-    // a search and must not narrow anything.
-    var searching by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
-    val visible = remember(state.recordings, state.folders, state.folderFilter, query) {
-        HomeViewModel.visibleRecordings(state.recordings, state.folders, state.folderFilter, query)
+    // The search field, and what is in it. See [LibrarySearch].
+    val search = remember { LibrarySearch() }
+    val visible = remember(state.recordings, state.folders, state.folderFilter, search.query) {
+        HomeViewModel.visibleRecordings(state.recordings, state.folders, state.folderFilter, search.query)
     }
 
-    // A meeting that is still running (the user navigated home without stopping).
-    val session by MeetingService.activeSession.collectAsState()
-    val meetingState = session?.state?.collectAsState()?.value
-    val meetingLive = meetingState is MeetingState.Recording ||
-        meetingState is MeetingState.Connecting
+    val meetingLive = rememberMeetingLive()
 
     // Reload on every visit: a meeting or an import that finished while this
     // screen was off-stage has a new row waiting in the cloud.
     LaunchedEffect(Unit) { viewModel.refresh() }
 
-    // `parley://demo/account` lands on the library and opens the account sheet —
-    // the one screen the store listing needs that has no route of its own.
-    val demoNavigation by DemoMode.navigation.collectAsState()
-    LaunchedEffect(demoNavigation) {
-        val target = demoNavigation ?: return@LaunchedEffect
-        showAccount = target.screen == DemoMode.Screen.ACCOUNT
-        if (showAccount) viewModel.loadAccount()
+    DemoAccountRequest { open ->
+        showAccount = open
+        if (open) viewModel.loadAccount()
     }
+
+    val callbacks = LibraryCallbacks(
+        onRecord = onRecord,
+        onImport = onImport,
+        onUpload = { viewModel.uploadNow() },
+        onRefresh = { viewModel.refresh() },
+        onSelectFolder = viewModel::selectFolder,
+        rowActions = { recording ->
+            RecordingRowActions(
+                onClick = { onOpenRecording(recording.id, state.scopeOrgId) },
+                onMoveToFolder = { moving = recording },
+                onShare = { org -> viewModel.shareToOrg(recording, org, thenDelete = false) },
+                onMoveToOrg = { org -> viewModel.shareToOrg(recording, org, thenDelete = true) },
+                onDelete = { pendingDelete = recording },
+            )
+        },
+    )
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    ScopeTitle(
-                        state = state,
-                        onSelectScope = { orgId ->
-                            // A folder filter or a search belongs to the library
-                            // it was typed into; the next one starts clean.
-                            searching = false
-                            query = ""
-                            viewModel.selectScope(orgId)
-                        },
-                    )
+            HomeTopBar(
+                state = state,
+                onSelectScope = { orgId ->
+                    // A folder filter or a search belongs to the library
+                    // it was typed into; the next one starts clean.
+                    search.close()
+                    viewModel.selectScope(orgId)
                 },
-                actions = {
-                    IconButton(onClick = { searching = !searching }) {
-                        Icon(Icons.Default.Search, stringResource(R.string.home_search))
-                    }
-                    IconButton(onClick = { viewModel.refresh() }) {
-                        Icon(Icons.Default.Refresh, stringResource(R.string.action_refresh))
-                    }
-                    IconButton(onClick = {
-                        showAccount = true
-                        viewModel.loadAccount()
-                    }) {
-                        Icon(Icons.Default.Person, stringResource(R.string.home_account))
-                    }
+                onToggleSearch = search::toggle,
+                onRefresh = { viewModel.refresh() },
+                onAccount = {
+                    showAccount = true
+                    viewModel.loadAccount()
                 },
             )
         },
         bottomBar = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Button(
-                    onClick = onRecord,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.home_record),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                }
-                // Personal scope only, as on iOS. An import files into the
-                // personal library first and shares from there (the default
-                // save location decides that), so offering it under an org's
-                // name would promise a destination the flow does not have.
-                if (state.isPersonal) {
-                    OutlinedButton(
-                        onClick = onImport,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                    ) {
-                        Text(stringResource(R.string.home_import))
-                    }
-                }
-            }
+            HomeBottomBar(isPersonal = state.isPersonal, onRecord = onRecord, onImport = onImport)
         },
     ) { padding ->
-        Column(
-            Modifier
+        LibraryBody(
+            state = state,
+            visible = visible,
+            search = search,
+            meetingLive = meetingLive,
+            callbacks = callbacks,
+            modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-        ) {
-            if (searching) {
-                SearchField(
-                    query = query,
-                    onQueryChange = { query = it },
-                    hint = stringResource(R.string.home_search_hint),
-                    // Closing clears, because a search that is out of sight must
-                    // not leave the library filtered — there is no field left to
-                    // explain why three of eleven recordings are showing.
-                    onClose = {
-                        searching = false
-                        query = ""
-                    },
-                )
-            }
-            // No folders, no chip row: "All" and "Unfiled" would be the same
-            // list, and a row of two chips that change nothing is noise.
-            if (state.folders.isNotEmpty()) {
-                FolderChips(
-                    folders = state.folders,
-                    selected = state.folderFilter,
-                    onSelect = viewModel::selectFolder,
-                )
-            }
-            PullToRefreshBox(
-                isRefreshing = state.loading,
-                onRefresh = { viewModel.refresh() },
-                state = rememberPullToRefreshState(),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(
-                        start = 16.dp,
-                        end = 16.dp,
-                        top = 8.dp,
-                        bottom = 16.dp,
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    libraryHeader(
-                        meetingLive = meetingLive,
-                        state = state,
-                        searching = query.isNotBlank(),
-                        onRecord = onRecord,
-                        onUpload = { viewModel.uploadNow() },
-                    )
-                    libraryPlaceholders(
-                        state = state,
-                        visible = visible,
-                        query = query,
-                        onImport = onImport,
-                    )
-                    // Namespaced keys: a recording drained from the pending
-                    // queue can show up in both lists for one refresh, and two
-                    // items sharing a key is an IllegalArgumentException out of
-                    // LazyColumn, not a glitch.
-                    items(visible, key = { "recording-" + it.id }) { recording ->
-                        RecordingRow(
-                            recording = recording,
-                            folderName = LibraryFolders.folderName(recording, state.folders),
-                            deleting = recording.id in state.deleting,
-                            busy = recording.id in state.busy,
-                            // Personal scope can create a folder, so it always
-                            // has somewhere to go; an org scope has no create
-                            // endpoint here, so it needs folders to offer.
-                            canMoveToFolder = state.isPersonal || state.folders.isNotEmpty(),
-                            // Sharing is a copy *out of* the personal library.
-                            shareTargets = if (state.isPersonal) state.orgs else emptyList(),
-                            onClick = { onOpenRecording(recording.id, state.scopeOrgId) },
-                            onMoveToFolder = { moving = recording },
-                            onShare = { org -> viewModel.shareToOrg(recording, org, thenDelete = false) },
-                            onMoveToOrg = { org -> viewModel.shareToOrg(recording, org, thenDelete = true) },
-                            onDelete = { pendingDelete = recording },
-                        )
-                    }
-                }
-            }
-        }
+        )
     }
 
     if (showAccount) {
@@ -314,19 +204,7 @@ fun HomeScreen(
     }
 
     moving?.let { target ->
-        FolderPickerSheet(
-            folders = state.folders,
-            // The orphan rule the list renders by, so the tick agrees with the
-            // page the row was on.
-            currentFolderId = LibraryFolders.liveFolderId(target.folderId, state.folders),
-            onSelect = { folderId -> viewModel.moveToFolder(target, folderId) },
-            onCreate = if (state.isPersonal) {
-                { name -> viewModel.createFolderAndMove(target, name) }
-            } else {
-                null
-            },
-            onDismiss = { moving = null },
-        )
+        MoveToFolderSheet(viewModel, state, target, onDismiss = { moving = null })
     }
 
     pendingDelete?.let { target ->
@@ -341,6 +219,243 @@ fun HomeScreen(
         )
     }
 
+    LibraryErrorDialogs(viewModel, state)
+}
+
+/**
+ * The library's search field, and what is in it. [query] is the whole of the
+ * "is a search live" state: the field can be up with nothing typed, which is not
+ * a search and must not narrow anything.
+ */
+@Stable
+private class LibrarySearch {
+    var open by mutableStateOf(false)
+    var query by mutableStateOf("")
+
+    fun toggle() {
+        open = !open
+    }
+
+    /**
+     * Closing clears, because a search that is out of sight must not leave the
+     * library filtered — there is no field left to explain why three of eleven
+     * recordings are showing.
+     */
+    fun close() {
+        open = false
+        query = ""
+    }
+}
+
+/** What the library's banners, chips and rows call back into. */
+private class LibraryCallbacks(
+    val onRecord: () -> Unit,
+    val onImport: () -> Unit,
+    val onUpload: () -> Unit,
+    val onRefresh: () -> Unit,
+    val onSelectFolder: (FolderFilter) -> Unit,
+    val rowActions: (RecordingSummary) -> RecordingRowActions,
+)
+
+/** A meeting that is still running (the user navigated home without stopping). */
+@Composable
+private fun rememberMeetingLive(): Boolean {
+    val session by MeetingService.activeSession.collectAsState()
+    val meetingState = session?.state?.collectAsState()?.value
+    return meetingState is MeetingState.Recording || meetingState is MeetingState.Connecting
+}
+
+/**
+ * `parley://demo/account` lands on the library and opens the account sheet —
+ * the one screen the store listing needs that has no route of its own.
+ * [onRequest] is told whether the latest demo request is for the account.
+ */
+@Composable
+private fun DemoAccountRequest(onRequest: (Boolean) -> Unit) {
+    val demoNavigation by DemoMode.navigation.collectAsState()
+    LaunchedEffect(demoNavigation) {
+        val target = demoNavigation ?: return@LaunchedEffect
+        onRequest(target.screen == DemoMode.Screen.ACCOUNT)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HomeTopBar(
+    state: HomeViewModel.UiState,
+    onSelectScope: (String?) -> Unit,
+    onToggleSearch: () -> Unit,
+    onRefresh: () -> Unit,
+    onAccount: () -> Unit,
+) {
+    TopAppBar(
+        title = { ScopeTitle(state = state, onSelectScope = onSelectScope) },
+        actions = {
+            IconButton(onClick = onToggleSearch) {
+                Icon(Icons.Default.Search, stringResource(R.string.home_search))
+            }
+            IconButton(onClick = onRefresh) {
+                Icon(Icons.Default.Refresh, stringResource(R.string.action_refresh))
+            }
+            IconButton(onClick = onAccount) {
+                Icon(Icons.Default.Person, stringResource(R.string.home_account))
+            }
+        },
+    )
+}
+
+@Composable
+private fun HomeBottomBar(isPersonal: Boolean, onRecord: () -> Unit, onImport: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Button(
+            onClick = onRecord,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.home_record),
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
+        // Personal scope only, as on iOS. An import files into the
+        // personal library first and shares from there (the default
+        // save location decides that), so offering it under an org's
+        // name would promise a destination the flow does not have.
+        if (isPersonal) {
+            OutlinedButton(
+                onClick = onImport,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+            ) {
+                Text(stringResource(R.string.home_import))
+            }
+        }
+    }
+}
+
+/** The search field, the folder chips and the pull-to-refresh list under them. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LibraryBody(
+    state: HomeViewModel.UiState,
+    visible: List<RecordingSummary>,
+    search: LibrarySearch,
+    meetingLive: Boolean,
+    callbacks: LibraryCallbacks,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier) {
+        if (search.open) {
+            SearchField(
+                query = search.query,
+                onQueryChange = { search.query = it },
+                hint = stringResource(R.string.home_search_hint),
+                onClose = search::close,
+            )
+        }
+        // No folders, no chip row: "All" and "Unfiled" would be the same
+        // list, and a row of two chips that change nothing is noise.
+        if (state.folders.isNotEmpty()) {
+            FolderChips(
+                folders = state.folders,
+                selected = state.folderFilter,
+                onSelect = callbacks.onSelectFolder,
+            )
+        }
+        PullToRefreshBox(
+            isRefreshing = state.loading,
+            onRefresh = callbacks.onRefresh,
+            state = rememberPullToRefreshState(),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            LibraryList(
+                state = state,
+                visible = visible,
+                query = search.query,
+                meetingLive = meetingLive,
+                callbacks = callbacks,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LibraryList(
+    state: HomeViewModel.UiState,
+    visible: List<RecordingSummary>,
+    query: String,
+    meetingLive: Boolean,
+    callbacks: LibraryCallbacks,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = 8.dp,
+            bottom = 16.dp,
+        ),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        libraryHeader(
+            meetingLive = meetingLive,
+            state = state,
+            searching = query.isNotBlank(),
+            onRecord = callbacks.onRecord,
+            onUpload = callbacks.onUpload,
+        )
+        libraryPlaceholders(
+            state = state,
+            visible = visible,
+            query = query,
+            onImport = callbacks.onImport,
+        )
+        // Namespaced keys: a recording drained from the pending
+        // queue can show up in both lists for one refresh, and two
+        // items sharing a key is an IllegalArgumentException out of
+        // LazyColumn, not a glitch.
+        items(visible, key = { "recording-" + it.id }) { recording ->
+            RecordingRow(
+                model = LibraryRules.recordingRow(state, recording),
+                actions = callbacks.rowActions(recording),
+            )
+        }
+    }
+}
+
+/** The folder picker over the library, moving [target]. */
+@Composable
+private fun MoveToFolderSheet(
+    viewModel: HomeViewModel,
+    state: HomeViewModel.UiState,
+    target: RecordingSummary,
+    onDismiss: () -> Unit,
+) {
+    FolderPickerSheet(
+        folders = state.folders,
+        // The orphan rule the list renders by, so the tick agrees with the
+        // page the row was on.
+        currentFolderId = LibraryFolders.liveFolderId(target.folderId, state.folders),
+        onSelect = { folderId -> viewModel.moveToFolder(target, folderId) },
+        onCreate = if (state.isPersonal) {
+            { name -> viewModel.createFolderAndMove(target, name) }
+        } else {
+            null
+        },
+        onDismiss = onDismiss,
+    )
+}
+
+/** A failed delete, move or share, each answered where the user is looking. */
+@Composable
+private fun LibraryErrorDialogs(viewModel: HomeViewModel, state: HomeViewModel.UiState) {
     state.deleteError?.let { error ->
         DeleteRecordingErrorDialog(
             error = error,
@@ -848,77 +963,28 @@ private fun PendingRow(pending: PendingUpload) {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RecordingRow(
-    recording: RecordingSummary,
-    folderName: String?,
-    deleting: Boolean,
-    busy: Boolean,
-    canMoveToFolder: Boolean,
-    shareTargets: List<CloudOrg>,
-    onClick: () -> Unit,
-    onMoveToFolder: () -> Unit,
-    onShare: (CloudOrg) -> Unit,
-    onMoveToOrg: (CloudOrg) -> Unit,
-    onDelete: () -> Unit,
-) {
+private fun RecordingRow(model: RecordingRowModel, actions: RecordingRowActions) {
     var menu by remember { mutableStateOf<RowMenuPage?>(null) }
     val actionsLabel = stringResource(R.string.home_recording_actions)
-    val working = deleting || busy
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .alpha(if (working) 0.5f else 1f)
+            .alpha(if (model.working) 0.5f else 1f)
             .combinedClickable(
-                enabled = !working,
+                enabled = !model.working,
                 onLongClickLabel = actionsLabel,
                 onLongClick = { menu = RowMenuPage.ROOT },
-                onClick = onClick,
+                onClick = actions.onClick,
             ),
     ) {
         Row(
             modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 4.dp, bottom = 16.dp),
             verticalAlignment = Alignment.Top,
         ) {
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.Top) {
-                    SourceBadge(recording.source)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = recording.title.ifEmpty {
-                            stringResource(R.string.recording_untitled)
-                        },
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                val snippet = recording.snippet.orEmpty()
-                if (snippet.isNotEmpty()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = snippet,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                RecordingMeta(recording, folderName)
-                if (working) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = stringResource(
-                            if (deleting) R.string.home_deleting else R.string.library_working,
-                        ),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+            RecordingRowText(model, Modifier.weight(1f))
             Box {
-                if (working) {
+                if (model.working) {
                     CircularProgressIndicator(
                         modifier = Modifier
                             .padding(12.dp)
@@ -930,33 +996,95 @@ private fun RecordingRow(
                         Icon(Icons.Default.MoreVert, actionsLabel)
                     }
                 }
-                DropdownMenu(expanded = menu != null, onDismissRequest = { menu = null }) {
-                    when (val page = menu) {
-                        RowMenuPage.ROOT, null -> RowMenuRoot(
-                            canMoveToFolder = canMoveToFolder,
-                            canShare = shareTargets.isNotEmpty(),
-                            onMoveToFolder = {
-                                menu = null
-                                onMoveToFolder()
-                            },
-                            onOpen = { menu = it },
-                            onDelete = {
-                                menu = null
-                                onDelete()
-                            },
-                        )
-
-                        RowMenuPage.SHARE, RowMenuPage.MOVE -> RowMenuOrgs(
-                            orgs = shareTargets,
-                            onBack = { menu = RowMenuPage.ROOT },
-                            onPick = { org ->
-                                menu = null
-                                if (page == RowMenuPage.SHARE) onShare(org) else onMoveToOrg(org)
-                            },
-                        )
-                    }
-                }
+                RowMenu(
+                    page = menu,
+                    model = model,
+                    actions = actions,
+                    onPage = { menu = it },
+                )
             }
+        }
+    }
+}
+
+/** The row's words: source, title, snippet, the counts, and what is in flight. */
+@Composable
+private fun RecordingRowText(model: RecordingRowModel, modifier: Modifier = Modifier) {
+    val recording = model.recording
+    Column(modifier) {
+        Row(verticalAlignment = Alignment.Top) {
+            SourceBadge(recording.source)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = recording.title.ifEmpty {
+                    stringResource(R.string.recording_untitled)
+                },
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        val snippet = recording.snippet.orEmpty()
+        if (snippet.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = snippet,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        RecordingMeta(recording, model.folderName)
+        if (model.working) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = stringResource(
+                    if (model.deleting) R.string.home_deleting else R.string.library_working,
+                ),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * The row's menu, on whichever [page] is open (null is closed). [onPage] moves
+ * between pages, and closes the menu with null.
+ */
+@Composable
+private fun RowMenu(
+    page: RowMenuPage?,
+    model: RecordingRowModel,
+    actions: RecordingRowActions,
+    onPage: (RowMenuPage?) -> Unit,
+) {
+    DropdownMenu(expanded = page != null, onDismissRequest = { onPage(null) }) {
+        when (page) {
+            RowMenuPage.ROOT, null -> RowMenuRoot(
+                canMoveToFolder = model.canMoveToFolder,
+                canShare = model.canShare,
+                onMoveToFolder = {
+                    onPage(null)
+                    actions.onMoveToFolder()
+                },
+                onOpen = onPage,
+                onDelete = {
+                    onPage(null)
+                    actions.onDelete()
+                },
+            )
+
+            RowMenuPage.SHARE, RowMenuPage.MOVE -> RowMenuOrgs(
+                orgs = model.shareTargets,
+                onBack = { onPage(RowMenuPage.ROOT) },
+                onPick = { org ->
+                    onPage(null)
+                    if (page == RowMenuPage.SHARE) actions.onShare(org) else actions.onMoveToOrg(org)
+                },
+            )
         }
     }
 }

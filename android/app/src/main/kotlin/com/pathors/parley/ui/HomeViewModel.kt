@@ -360,11 +360,11 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     },
                 )
                 else -> done.copy(
-                    actionError = if (scope != null && result.isForbidden()) {
-                        LibraryActionError.MoveForbidden(current.scopeOrg?.name.orEmpty())
-                    } else {
-                        LibraryActionError.MoveFailed
-                    },
+                    actionError = LibraryRules.moveError(
+                        scopeOrgId = scope,
+                        forbidden = result.isForbidden(),
+                        orgName = current.scopeOrg?.name,
+                    ),
                 )
             }
         }
@@ -407,52 +407,41 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val state = _state.value
         if (!state.isPersonal || recording.id in state.busy) return
         if (DemoMode.isActive) {
-            if (thenDelete) {
-                demoLibrary[null] = demoRecordingsFor(null).filterNot { it.id == recording.id }
-                demoLibrary[org.id] = listOf(recording.copy(folderId = null)) +
-                    demoRecordingsFor(org.id)
-                refresh()
-            }
+            if (thenDelete) demoMoveToOrg(recording, org)
             return
         }
-        viewModelScope.launch {
-            markBusy(recording.id, true)
-            val shared = runCatchingCancellable {
-                container.cloud.shareRecording(recording.id, org.id)
-            }
-            if (shared.isFailure) {
-                _state.update {
-                    it.copy(
-                        busy = it.busy - recording.id,
-                        actionError = if (shared.isForbidden()) {
-                            LibraryActionError.ShareForbidden(org.name)
-                        } else {
-                            LibraryActionError.ShareFailed
-                        },
-                    )
-                }
-                return@launch
-            }
-            if (!thenDelete) {
-                markBusy(recording.id, false)
-                return@launch
-            }
-            val deleted = runCatchingCancellable { container.cloud.deleteRecording(recording.id) }
-            val gone = deleted.isSuccess ||
-                (deleted.exceptionOrNull() as? CloudException)?.isNotFound == true
-            if (gone) forgetLocally(recording.id)
-            _state.update { current ->
-                current.copy(
-                    busy = current.busy - recording.id,
-                    recordings = if (gone && current.isPersonal) {
-                        current.recordings.filterNot { it.id == recording.id }
-                    } else {
-                        current.recordings
-                    },
-                    actionError = if (gone) null else LibraryActionError.OriginalKept(org.name),
-                )
-            }
+        viewModelScope.launch { share(recording, org, thenDelete) }
+    }
+
+    /** The demo library's "Move to organization": the fixtures change hands, nothing is sent. */
+    private fun demoMoveToOrg(recording: RecordingSummary, org: CloudOrg) {
+        demoLibrary[null] = demoRecordingsFor(null).filterNot { it.id == recording.id }
+        demoLibrary[org.id] = listOf(recording.copy(folderId = null)) + demoRecordingsFor(org.id)
+        refresh()
+    }
+
+    private suspend fun share(recording: RecordingSummary, org: CloudOrg, thenDelete: Boolean) {
+        markBusy(recording.id, true)
+        val shared = runCatchingCancellable {
+            container.cloud.shareRecording(recording.id, org.id)
         }
+        if (shared.isFailure) {
+            val error = LibraryRules.shareError(forbidden = shared.isForbidden(), orgName = org.name)
+            _state.update { it.copy(busy = it.busy - recording.id, actionError = error) }
+            return
+        }
+        if (thenDelete) {
+            deleteSharedOriginal(recording, org)
+        } else {
+            markBusy(recording.id, false)
+        }
+    }
+
+    /** The second half of "Move to organization", once the org copy exists. */
+    private suspend fun deleteSharedOriginal(recording: RecordingSummary, org: CloudOrg) {
+        val gone = runCatchingCancellable { container.cloud.deleteRecording(recording.id) }.isGone()
+        if (gone) forgetLocally(recording.id)
+        _state.update { it.afterSharedOriginalDeleted(recording.id, gone, org.name) }
     }
 
     /** Dismiss the move/share error. */
@@ -496,38 +485,28 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         if (DemoMode.isActive) return
         if (id in _state.value.deleting) return
         val scope = _state.value.scopeOrgId
-        viewModelScope.launch {
-            _state.update { it.copy(deleting = it.deleting + id, deleteError = null) }
-            val result = runCatchingCancellable {
-                if (scope == null) {
-                    container.cloud.deleteRecording(id)
-                } else {
-                    container.cloud.deleteOrgRecording(scope, id)
-                }
-            }
-            val failure = result.exceptionOrNull()
-            val gone = failure == null || (failure as? CloudException)?.isNotFound == true
-            // Only a personal recording has anything on this phone: an org
-            // row is the server's copy, under an id of its own.
-            if (gone && scope == null) forgetLocally(id)
-            _state.update { current ->
-                if (gone) {
-                    current.copy(
-                        recordings = if (current.scopeOrgId == scope) {
-                            current.recordings.filterNot { it.id == id }
-                        } else {
-                            current.recordings
-                        },
-                        deleting = current.deleting - id,
-                    )
-                } else {
-                    current.copy(
-                        deleting = current.deleting - id,
-                        deleteError = classifyRecordingDeletion(failure, orgScope = scope != null),
-                    )
-                }
+        viewModelScope.launch { delete(id, scope) }
+    }
+
+    private suspend fun delete(id: String, scope: String?) {
+        _state.update { it.copy(deleting = it.deleting + id, deleteError = null) }
+        val result = runCatchingCancellable {
+            if (scope == null) {
+                container.cloud.deleteRecording(id)
+            } else {
+                container.cloud.deleteOrgRecording(scope, id)
             }
         }
+        val gone = result.isGone()
+        // Only a personal recording has anything on this phone: an org
+        // row is the server's copy, under an id of its own.
+        if (gone && scope == null) forgetLocally(id)
+        val error = if (gone) {
+            null
+        } else {
+            classifyRecordingDeletion(result.exceptionOrNull(), orgScope = scope != null)
+        }
+        _state.update { it.afterRecordingDeleted(id, scope, error) }
     }
 
     /**
@@ -757,3 +736,38 @@ private inline fun <T> runCatchingCancellable(block: () -> T): Result<T> =
 
 private fun Result<*>.isForbidden(): Boolean =
     (exceptionOrNull() as? CloudException)?.isForbidden == true
+
+/** A delete that worked, or found the row already gone (a 404 is the same outcome). */
+private fun Result<*>.isGone(): Boolean =
+    isSuccess || (exceptionOrNull() as? CloudException)?.isNotFound == true
+
+/**
+ * The library after "Move to organization" tried to delete the personal
+ * original. [gone] false keeps the row and says the copy exists anyway.
+ */
+private fun HomeViewModel.UiState.afterSharedOriginalDeleted(
+    id: String,
+    gone: Boolean,
+    orgName: String,
+): HomeViewModel.UiState = copy(
+    busy = busy - id,
+    recordings = if (gone && isPersonal) recordings.filterNot { it.id == id } else recordings,
+    actionError = if (gone) null else LibraryActionError.OriginalKept(orgName),
+)
+
+/**
+ * The library after a delete in [scope] came back: the row leaves on success
+ * (only if that library is still on screen), and [error] is shown otherwise.
+ */
+private fun HomeViewModel.UiState.afterRecordingDeleted(
+    id: String,
+    scope: String?,
+    error: DeleteRecordingError?,
+): HomeViewModel.UiState = if (error == null) {
+    copy(
+        recordings = if (scopeOrgId == scope) recordings.filterNot { it.id == id } else recordings,
+        deleting = deleting - id,
+    )
+} else {
+    copy(deleting = deleting - id, deleteError = error)
+}
