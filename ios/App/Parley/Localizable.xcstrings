@@ -527,6 +527,24 @@
         }
       }
     },
+    "Also" : {
+      "comment" : "What's New sheet: bold prefix of the one-line 'also changed' note under the divider",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Also"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "也改了"
+          }
+        }
+      }
+    },
     "And share it with ChatGPT or Claude to analyse." : {
       "extractionState" : "manual",
       "localizations" : {
