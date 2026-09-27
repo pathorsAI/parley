@@ -240,14 +240,12 @@ class RelayAudioBridgeTest {
         // chunk: that chunk arrives while the bridge is half-way through the
         // flush.
         val received = mutableListOf<Int>()
-        val leg = object : PcmSink {
-            var sentLive = false
-            override fun enqueuePcm(bytes: ByteArray) {
-                received.add(bytes.marker())
-                if (!sentLive) {
-                    sentLive = true
-                    bridge.send(chunk(3))
-                }
+        var sentLive = false
+        val leg = PcmSink { bytes ->
+            received.add(bytes.marker())
+            if (!sentLive) {
+                sentLive = true
+                bridge.send(chunk(3))
             }
         }
         bridge.attach { leg }
@@ -267,12 +265,10 @@ class RelayAudioBridgeTest {
         val third = Recorder()
         // The new leg dies the moment it is handed audio; the capture loop
         // keeps talking through it.
-        val doomed = object : PcmSink {
-            override fun enqueuePcm(bytes: ByteArray) {
-                bridge.send(chunk(2))
-                bridge.hold()
-                bridge.send(chunk(3))
-            }
+        val doomed = PcmSink {
+            bridge.send(chunk(2))
+            bridge.hold()
+            bridge.send(chunk(3))
         }
         bridge.attach { doomed }
         assertTrue(bridge.isHolding)
