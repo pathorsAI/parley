@@ -83,6 +83,26 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.24
+
+Chinese transcripts always read in Traditional Chinese. The automatic re-transcription after a meeting — and tapping Re-transcribe — could turn a transcript Simplified; both now come back Traditional, and recordings you already have open in Traditional too.
+
+While recording, drag the top of the controls down to give the live transcript more room. It stays where you leave it, and the stop button is always there.
+
+In the Library, swipe left or right on empty space — between recordings or below them — to move between folders. Swiping on a recording still opens Delete and Download.
+
+The sample recording's transcript no longer runs into the suggestion card when you scroll up.
+
+See Parley polish your words after you stop. When you tap stop on the voice keyboard, the button turns blue right away, and while AI polishes your dictation a wave of light runs through the words, with the three dots on the button lighting in step. Don't want to wait? Tap again to insert the raw text. Long dictations no longer stop at three lines: the text stays on the newest line, and you can scroll back up.
+
+Your first lap through Parley now shows you what it does, instead of listing it. Load the sample call from the Library and a guide walks you through three steps on the recording itself: Parley proposes a title and a folder (accept both in one tap, or pick another from a searchable list), you tap a line to jump the audio there, and you share the transcript — with an analysis prompt and three questions already written — to ChatGPT or Claude. Each step ticks off from the thing you actually did. The sign-in page opens with a short film of the app assembling itself.
+
+Summary and transcript are two pages now. A recording opens on its summary — what was said in a paragraph, the action items, the highlights with their timestamps, the speakers — and the transcript sits one tap away under the same player. Tap a timestamp in the summary and the transcript opens at that line.
+
+Keyboard: hold a key to see it magnified above your finger; the English pane predicts the next word and offers the space you missed; the voice pane's tab is a microphone.
+
+The first time you open the app after an update, a short card tells you what changed.
+
 ## What's New — 1.23
 
 See Parley polish your words after you stop. When you tap stop on the voice keyboard, the button turns blue right away, and while AI polishes your dictation a wave of light runs through the words, with the three dots on the button lighting in step. Don't want to wait? Tap again to insert the raw text. Long dictations no longer stop at three lines: the text stays on the newest line, and you can scroll back up.

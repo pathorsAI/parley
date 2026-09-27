@@ -92,7 +92,7 @@ android {
         // MediaMuxer's OGG output — which also needed 29 — no longer figures.
         minSdk = 29
         targetSdk = 36
-        versionCode = 8
+        versionCode = 9
 
         // 1.13, not 0.2: the jump is the point. Android shipped as 0.1.x while it
         // carried iOS 1.1's feature set, and this release is the one that closes
@@ -105,7 +105,7 @@ android {
         // 1.14 is the hotfix for 1.13's microphone: a meeting recorded through it
         // rebuilt the input in a loop and sent the relay nothing it could
         // transcribe (see audio/PlatformSilenceEdge.kt).
-        versionName = "1.15"
+        versionName = "1.16"
 
         // Instrumented tests only: audio/OggOpusEncoderDeviceTest drives the real
         // MediaCodec Opus encoder, which has no JVM stand-in.
