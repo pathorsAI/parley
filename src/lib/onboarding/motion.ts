@@ -18,7 +18,7 @@ export const OB_EASE = "cubic-bezier(.2,.8,.2,1)";
 export const TYPE_MS_PER_CHAR = 22;
 
 export function prefersReducedMotion(): boolean {
-  return typeof globalThis.window !== "undefined" && !!globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  return globalThis.window !== undefined && !!globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 }
 
 // ── Folder row pulse ─────────────────────────────────────────────────────────
@@ -28,7 +28,7 @@ export const FOLDER_PULSE_MS = 500;
 
 /** Flash a folder's sidebar row once (the row listens via {@link usePulsingFolder}). */
 export function pulseFolder(folderId: string): void {
-  if (typeof globalThis.window === "undefined") return;
+  if (globalThis.window === undefined) return;
   globalThis.dispatchEvent(new CustomEvent<string>(PULSE_FOLDER_EVENT, { detail: folderId }));
 }
 
@@ -61,7 +61,7 @@ const TRANSCRIPT_SEEK_EVENT = "parley:transcript-seek";
 /** A transcript line was clicked; the replay scrubber eases its playhead there
  *  and drops a ripple. Emit BEFORE the seek lands so the easing is in place. */
 export function emitTranscriptSeek(ms: number): void {
-  if (typeof globalThis.window === "undefined") return;
+  if (globalThis.window === undefined) return;
   globalThis.dispatchEvent(new CustomEvent<number>(TRANSCRIPT_SEEK_EVENT, { detail: ms }));
 }
 
@@ -80,7 +80,7 @@ export function onTranscriptSeek(handler: (ms: number) => void): () => void {
  * changes to `text` — an edit, say — show in full straight away.
  */
 export function useTypewriter(text: string, enabled: boolean, msPerChar = TYPE_MS_PER_CHAR): string {
-  const animate = enabled && typeof globalThis.window !== "undefined" && !prefersReducedMotion();
+  const animate = enabled && globalThis.window !== undefined && !prefersReducedMotion();
   const [count, setCount] = useState(() => (animate ? 0 : Number.POSITIVE_INFINITY));
   const started = useRef(false);
   const spent = useRef(false);
