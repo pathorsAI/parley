@@ -1,5 +1,6 @@
 package com.pathors.parley.ui
 
+import android.content.Context
 import androidx.annotation.StringRes
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -54,6 +56,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -77,6 +80,8 @@ import com.pathors.parley.cloud.TranscriptSegmentDto
 import com.pathors.parley.kit.TranscriptSearch
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.playback.PlaybackBar
+import com.pathors.parley.playback.PlaybackState
+import com.pathors.parley.screenshot.DemoMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -97,17 +102,22 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
+fun RecordingDetailScreen(recordingId: String, orgId: String? = null, onBack: () -> Unit) {
     val container = rememberContainer()
     val context = LocalContext.current
     val viewModel: RecordingDetailViewModel = viewModel(
-        factory = RecordingDetailViewModel.factory(container, recordingId, context),
-        key = recordingId,
+        factory = RecordingDetailViewModel.factory(container, recordingId, orgId, context),
+        key = "$recordingId@${orgId.orEmpty()}",
     )
     val state by viewModel.state.collectAsState()
     val playback by viewModel.playbackState.collectAsState()
     val retranscribe by viewModel.retranscribe.collectAsState()
-    val untitled = stringResource(R.string.recording_untitled)
+    val filing by viewModel.filing.collectAsState()
+
+    // The folder picker, while it is up. `parley://demo/movetofolder` opens it
+    // over the demo transcript — a review frame for the picker, as on iOS.
+    var choosingFolder by remember { mutableStateOf(false) }
+    DemoFolderPickerRequest(metaLoaded = state.meta != null, onOpen = { choosingFolder = true })
 
     // Whether the search field is up. Held here rather than in [DetailBody]
     // because the toolbar is what summons it and the toolbar lives up here; what
@@ -118,91 +128,171 @@ fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
     // here: the tentative tail a live session leaves behind never reaches this
     // screen, so it must not reach the clipboard either.
     val readable = state.meta?.segments?.filter { it.isFinal }.orEmpty()
-    val plainTranscript = {
-        val meta = state.meta
-        if (meta == null) {
-            ""
-        } else {
-            TranscriptClipboard.storedTranscript(readable) { segment ->
-                speakerLabel(context, segment, meta.speakerName(segment))
-            }
-        }
-    }
+    val plainTranscript = { plainTranscriptOf(context, state.meta, readable) }
+
+    val onRetranscribe: (() -> Unit)? =
+        if (viewModel.canRetranscribe) viewModel::askToRetranscribe else null
+    val onMoveToFolder: (() -> Unit)? =
+        if (viewModel.canMoveToFolder && state.meta != null) ({ choosingFolder = true }) else null
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = state.meta?.title?.takeIf { it.isNotEmpty() }
-                            ?: stringResource(R.string.detail_title),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            stringResource(R.string.action_back),
-                        )
-                    }
-                },
-                actions = {
-                    // Its own button rather than a row in an overflow menu, and
-                    // absent rather than inert when there is no transcript: the
-                    // same rule the copy button follows. Finding a phrase is
-                    // something you do *while reading*, over and over, which is
-                    // not a thing to put two taps away.
-                    if (readable.isNotEmpty()) {
-                        IconButton(onClick = { searching = !searching }) {
-                            Icon(
-                                Icons.Default.Search,
-                                stringResource(R.string.transcript_search),
-                            )
-                        }
-                    }
-                    CopyTranscriptButton(
-                        text = plainTranscript,
-                        isEmpty = readable.isEmpty(),
-                    )
-                    DetailOverflowMenu(
-                        transcript = plainTranscript,
-                        transcriptEmpty = readable.isEmpty(),
-                        state = retranscribe,
-                        onRetranscribe = viewModel::askToRetranscribe,
-                    )
-                },
-            )
-        },
-    ) { padding ->
-        val meta = state.meta
-        when {
-            state.loading -> Box(
-                Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                Alignment.Center,
-            ) { CircularProgressIndicator() }
-
-            state.failed || meta == null -> Box(
-                Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                Alignment.Center,
-            ) {
-                Text(
-                    text = stringResource(R.string.detail_load_failed),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
+            DetailTopBar(title = state.meta?.title, onBack = onBack) {
+                DetailToolbarActions(
+                    transcriptEmpty = readable.isEmpty(),
+                    onToggleSearch = { searching = !searching },
+                    transcript = plainTranscript,
+                    retranscribe = retranscribe,
+                    onRetranscribe = onRetranscribe,
+                    onMoveToFolder = onMoveToFolder,
                 )
             }
+        },
+    ) { padding ->
+        DetailContent(
+            viewModel = viewModel,
+            state = state,
+            playback = playback,
+            orgId = orgId,
+            searching = searching,
+            onCloseSearch = { searching = false },
+            padding = padding,
+        )
+    }
 
-            else -> Column(
-                Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-            ) {
+    DetailDialogs(
+        viewModel = viewModel,
+        retranscribe = retranscribe,
+        filing = filing,
+        choosingFolder = choosingFolder,
+        onDismissPicker = { choosingFolder = false },
+    )
+}
+
+/** The transcript as "copy" and "share" hand it on: speaker-labelled final segments. */
+private fun plainTranscriptOf(
+    context: Context,
+    meta: RecordingMeta?,
+    readable: List<TranscriptSegmentDto>,
+): String {
+    if (meta == null) return ""
+    return TranscriptClipboard.storedTranscript(readable) { segment ->
+        speakerLabel(context, segment, meta.speakerName(segment))
+    }
+}
+
+/**
+ * `parley://demo/movetofolder` over a loaded recording calls [onOpen] — once
+ * per request: the meta changes when the demo recording is moved, and that
+ * must not bring the picker straight back.
+ */
+@Composable
+private fun DemoFolderPickerRequest(metaLoaded: Boolean, onOpen: () -> Unit) {
+    val demoNavigation by DemoMode.navigation.collectAsState()
+    var handledDemoRequest by remember { mutableLongStateOf(-1L) }
+    LaunchedEffect(demoNavigation, metaLoaded) {
+        val request = demoNavigation ?: return@LaunchedEffect
+        if (LibraryRules.opensDemoPicker(request, metaLoaded, handledDemoRequest)) {
+            handledDemoRequest = request.serial
+            onOpen()
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DetailTopBar(
+    title: String?,
+    onBack: () -> Unit,
+    actions: @Composable RowScope.() -> Unit,
+) {
+    TopAppBar(
+        title = {
+            Text(
+                text = title?.takeIf { it.isNotEmpty() }
+                    ?: stringResource(R.string.detail_title),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
+        navigationIcon = {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    stringResource(R.string.action_back),
+                )
+            }
+        },
+        actions = actions,
+    )
+}
+
+@Composable
+private fun DetailToolbarActions(
+    transcriptEmpty: Boolean,
+    onToggleSearch: () -> Unit,
+    transcript: () -> String,
+    retranscribe: RetranscribeState,
+    onRetranscribe: (() -> Unit)?,
+    onMoveToFolder: (() -> Unit)?,
+) {
+    // Its own button rather than a row in an overflow menu, and
+    // absent rather than inert when there is no transcript: the
+    // same rule the copy button follows. Finding a phrase is
+    // something you do *while reading*, over and over, which is
+    // not a thing to put two taps away.
+    if (!transcriptEmpty) {
+        IconButton(onClick = onToggleSearch) {
+            Icon(
+                Icons.Default.Search,
+                stringResource(R.string.transcript_search),
+            )
+        }
+    }
+    CopyTranscriptButton(
+        text = transcript,
+        isEmpty = transcriptEmpty,
+    )
+    DetailOverflowMenu(
+        transcript = transcript,
+        transcriptEmpty = transcriptEmpty,
+        state = retranscribe,
+        onRetranscribe = onRetranscribe,
+        onMoveToFolder = onMoveToFolder,
+    )
+}
+
+/** Loading, failed, or the player over the recording's body. */
+@Composable
+private fun DetailContent(
+    viewModel: RecordingDetailViewModel,
+    state: RecordingDetailViewModel.UiState,
+    playback: PlaybackState,
+    orgId: String?,
+    searching: Boolean,
+    onCloseSearch: () -> Unit,
+    padding: PaddingValues,
+) {
+    val meta = state.meta
+    val modifier = Modifier
+        .fillMaxSize()
+        .padding(padding)
+    when {
+        state.loading -> Box(modifier, Alignment.Center) { CircularProgressIndicator() }
+
+        state.failed || meta == null -> Box(modifier, Alignment.Center) {
+            Text(
+                text = stringResource(R.string.detail_load_failed),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+
+        else -> Column(modifier) {
+            // An org recording's audio cannot be fetched from here (see
+            // `downloadAudio`), so the bar is drawn only when the file is
+            // already on this phone — the case where it can actually play.
+            if (LibraryRules.showsPlaybackBar(orgId, playback.phase)) {
                 PlaybackBar(
                     state = playback,
                     onPlayPause = viewModel::togglePlayPause,
@@ -211,27 +301,61 @@ fun RecordingDetailScreen(recordingId: String, onBack: () -> Unit) {
                     onCycleRate = viewModel::cycleRate,
                     onDownload = viewModel::downloadAudio,
                 )
-                RetranscribeStatus(retranscribe)
-                DetailBody(
-                    meta = meta,
-                    state = state,
-                    untitled = untitled,
-                    positionMs = playback.positionMs,
-                    isPlaying = playback.isPlaying,
-                    seekGeneration = playback.seekGeneration,
-                    isSeekable = playback.isSeekable,
-                    onSeek = viewModel::seekTo,
-                    searching = searching,
-                    onCloseSearch = { searching = false },
-                )
             }
+            val retranscribe by viewModel.retranscribe.collectAsState()
+            RetranscribeStatus(retranscribe)
+            DetailBody(
+                meta = meta,
+                state = state,
+                untitled = stringResource(R.string.recording_untitled),
+                positionMs = playback.positionMs,
+                isPlaying = playback.isPlaying,
+                seekGeneration = playback.seekGeneration,
+                isSeekable = playback.isSeekable,
+                onSeek = viewModel::seekTo,
+                searching = searching,
+                onCloseSearch = onCloseSearch,
+            )
         }
     }
+}
 
+/** The re-transcription confirmation, the folder picker, and a failed move. */
+@Composable
+private fun DetailDialogs(
+    viewModel: RecordingDetailViewModel,
+    retranscribe: RetranscribeState,
+    filing: RecordingDetailViewModel.FilingState,
+    choosingFolder: Boolean,
+    onDismissPicker: () -> Unit,
+) {
     if (retranscribe.phase == RetranscribeState.Phase.CONFIRMING) {
         RetranscribeConfirmation(
             onConfirm = viewModel::confirmRetranscribe,
             onDismiss = viewModel::dismissRetranscribe,
+        )
+    }
+
+    if (choosingFolder) {
+        FolderPickerSheet(
+            folders = filing.folders,
+            currentFolderId = viewModel.currentFolderId(),
+            onSelect = viewModel::moveToFolder,
+            onCreate = viewModel::createFolderAndMove,
+            onDismiss = onDismissPicker,
+        )
+    }
+
+    if (filing.moveFailed) {
+        AlertDialog(
+            onDismissRequest = viewModel::clearMoveError,
+            title = { Text(stringResource(R.string.library_action_error_title)) },
+            text = { Text(stringResource(R.string.library_move_failed)) },
+            confirmButton = {
+                TextButton(onClick = viewModel::clearMoveError) {
+                    Text(stringResource(R.string.action_close))
+                }
+            },
         )
     }
 }
@@ -266,7 +390,10 @@ private fun DetailOverflowMenu(
     transcript: () -> String,
     transcriptEmpty: Boolean,
     state: RetranscribeState,
-    onRetranscribe: () -> Unit,
+    /** Null for an org recording: re-transcribing writes through the personal endpoints. */
+    onRetranscribe: (() -> Unit)?,
+    /** Null for an org recording, as on iOS; see [RecordingDetailViewModel.canMoveToFolder]. */
+    onMoveToFolder: (() -> Unit)?,
 ) {
     val context = LocalContext.current
     val shareTitle = stringResource(R.string.transcript_share_title)
@@ -289,35 +416,49 @@ private fun DetailOverflowMenu(
                     }
                 },
             )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.retranscribe_action)) },
-                leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
-                enabled = state.canRequest,
-                onClick = {
-                    open = false
-                    onRetranscribe()
-                },
-            )
-            // Under the row it is about rather than above the menu, which is
-            // where iOS puts it: a Material menu is read top-down, so a sentence
-            // explaining the item above it needs no rule about which way to look.
-            // Always present, never only-when-disabled — "2 re-transcriptions
-            // left" is exactly what somebody deciding whether to spend one wants
-            // to know, and a note that appeared only on refusal would tell them
-            // after the fact.
-            Text(
-                text = state.block
-                    ?.let { stringResource(retranscribeNoteRes(it)) }
-                    ?: stringResource(
-                        R.string.retranscribe_remaining,
-                        state.retriesRemaining,
-                    ),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .width(RETRANSCRIBE_NOTE_WIDTH)
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-            )
+            if (onMoveToFolder != null) {
+                // Above the paid action, and a plain row: filing is free,
+                // reversible and frequent.
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.library_move_to_folder)) },
+                    leadingIcon = { Icon(LibraryIcons.Folder, contentDescription = null) },
+                    onClick = {
+                        open = false
+                        onMoveToFolder()
+                    },
+                )
+            }
+            if (onRetranscribe != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.retranscribe_action)) },
+                    leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                    enabled = state.canRequest,
+                    onClick = {
+                        open = false
+                        onRetranscribe()
+                    },
+                )
+                // Under the row it is about rather than above the menu, which is
+                // where iOS puts it: a Material menu is read top-down, so a sentence
+                // explaining the item above it needs no rule about which way to look.
+                // Always present, never only-when-disabled — "2 re-transcriptions
+                // left" is exactly what somebody deciding whether to spend one wants
+                // to know, and a note that appeared only on refusal would tell them
+                // after the fact.
+                Text(
+                    text = state.block
+                        ?.let { stringResource(retranscribeNoteRes(it)) }
+                        ?: stringResource(
+                            R.string.retranscribe_remaining,
+                            state.retriesRemaining,
+                        ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .width(RETRANSCRIBE_NOTE_WIDTH)
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
         }
     }
 }
