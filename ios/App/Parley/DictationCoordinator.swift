@@ -134,6 +134,14 @@ final class DictationCoordinator: ObservableObject {
     /// The session is ending on purpose, so a socket close is the expected end
     /// of the stream rather than something to redial.
     private var finishRequested = false
+    /// Which of the two endings of a finishing session gets to run: the AI
+    /// polish, or the keyboard's "insert without polishing". Fresh per session
+    /// (`launch`); see `FinishingPolish` for the race it settles.
+    private var finishingPolish = FinishingPolish()
+    /// The polish round trip in flight, so a skip can cancel it rather than
+    /// merely outrun it — the request is a metered model call, and one whose
+    /// answer nobody will read is worth stopping.
+    private var polishTask: Task<Void, Never>?
     private var capTimer: Task<Void, Never>?
     /// Persistent uplink listener (armed for the process's whole life): stop
     /// requests for the running session, and — the no-jump path — start
@@ -351,6 +359,12 @@ final class DictationCoordinator: ObservableObject {
         let owner = leg
         reconnectAttempts = 0
         finishRequested = false
+        // A previous session still polishing can no longer deliver — its
+        // result is dropped by the session guard in `finishUp` — so the
+        // request is stopped rather than left to finish for nobody.
+        finishingPolish = FinishingPolish()
+        polishTask?.cancel()
+        polishTask = nil
         reconnectTask?.cancel()
         reconnectTask = nil
         audio.reset()
@@ -611,7 +625,9 @@ final class DictationCoordinator: ObservableObject {
     /// The uplink channel, listened to for the process's whole life:
     ///   - stop: the keyboard's ⏹ for the running session, or its ✕ — the same
     ///     request with `wantsCancel` set, which ends the session without
-    ///     delivering anything.
+    ///     delivering anything — or a tap on the button while the session is
+    ///     finishing, the same request with `wantsSkipPolish` set, which
+    ///     delivers the raw words without waiting for the polish.
     ///   - start: a keyboard minted a new session while this process happens
     ///     to be awake (foreground, or lingering in the background right after
     ///     a session). Starting here means the user never leaves their app —
@@ -622,7 +638,27 @@ final class DictationCoordinator: ObservableObject {
             Task { @MainActor in
                 guard let self, let up = DictationChannel.readUplink() else { return }
                 if up.stopRequested {
-                    guard self.active, up.session == self.session else { return }
+                    guard up.session == self.session else { return }
+                    // Ahead of the `active` guard below, on purpose: the
+                    // polish round trip runs after `finishUp` has already
+                    // marked the session inactive, and that is exactly the
+                    // wait the skip exists to cut short.
+                    //
+                    // ✕ still wins. A cancel is never also a skip, and during
+                    // the polish the keyboard that pressed ✕ has already
+                    // cleared its pane and will not insert whatever `done`
+                    // this app goes on to publish (`cancelledSession`).
+                    if up.wantsSkipPolish, !up.wantsCancel {
+                        self.skipPolish()
+                        // Already stopping: the drain is running, and a
+                        // second `stop()` would only finalize the relay again.
+                        // A skip that arrived with the stop itself — the two
+                        // notes coalesced before this process heard the first
+                        // — falls through and stops, with the skip already
+                        // recorded for when the drain completes.
+                        if self.state == .finishing { return }
+                    }
+                    guard self.active else { return }
                     // ✕ before ⏹: a cancel is written as both, so that an
                     // uplink this app only half understands still ends the
                     // session rather than leaving a microphone open.
@@ -1185,7 +1221,10 @@ final class DictationCoordinator: ObservableObject {
         // before the endpoint is dropped from what the keyboard inserts.
         foldPartialIn()
 
-        guard wantsPolish() else {
+        // A skip the keyboard sent while the drain was still running is
+        // honoured here, now that the last words are in: straight to `done`,
+        // exactly as if the polish had been switched off.
+        guard finishingPolish.drained(wantsPolish: wantsPolish()) else {
             settle()
             // Not `beginLinger()` any more: whether this leaves a ~30 s
             // background task or an open microphone window is
@@ -1219,15 +1258,56 @@ final class DictationCoordinator: ObservableObject {
         // The dictionary rides along so the model cannot "fix" the corrections
         // the user made by hand; `applyLexicon` then has the last word anyway.
         let terms = LexiconStore.recognitionTerms()
-        Task {
-            let polished = await Self.polished(raw: raw, cloud: client, terms: terms)
+        var polish: @Sendable () async -> String? = {
+            await Self.polished(raw: raw, cloud: client, terms: terms)
+        }
+        #if DEBUG
+            if let hold = ScreenshotDemo.finishingHold {
+                polish = { await Self.demoPolish(holding: hold) }
+            }
+        #endif
+        polishTask = Task {
+            let polished = await polish()
             // A new session, or a `fail`, may have landed while the request was
             // out. Either way this is no longer the transcript the keyboard is
             // waiting for, and publishing it now would be publishing over
-            // somebody else's.
-            guard self.session == target, self.state == .finishing else { return }
+            // somebody else's. And the user may have skipped it: then the raw
+            // words have already been settled, and this reply — cancelled or
+            // not — is the one that must not settle a second time.
+            guard self.session == target, self.state == .finishing,
+                self.finishingPolish.polishReturned()
+            else { return }
+            self.polishTask = nil
             self.committed = polished ?? raw
             self.settle()
+        }
+    }
+
+    /// The keyboard's "insert without polishing": the user tapped the button
+    /// while the session was finishing.
+    ///
+    /// What that can mean depends on which wait the session is in, and
+    /// `FinishingPolish` decides it. If the relay is still draining, the last
+    /// words are still arriving and cutting them off is the one thing a skip
+    /// must never do — so the skip is only recorded, and `finishUp` settles
+    /// raw the moment the drain is in, without starting the polish. If the
+    /// polish is out, it is cancelled and the raw `committed` settles now:
+    /// the same ending as the polish coming back with nothing, which is also
+    /// what the cancelled request itself returns, and which the guard in
+    /// `finishUp`'s task then declines to settle again.
+    ///
+    /// A session that is no longer live has nothing left to skip.
+    private func skipPolish() {
+        guard state.isLive else { return }
+        switch finishingPolish.skip() {
+        case .afterDrain, .tooLate:
+            return
+        case .settleRawNow:
+            polishTask?.cancel()
+            polishTask = nil
+            // `committed` is still the raw transcript: the polish only ever
+            // writes it on its way to `settle`, and it never got there.
+            settle()
         }
     }
 
@@ -1236,8 +1316,10 @@ final class DictationCoordinator: ObservableObject {
         #if DEBUG
             // ScreenshotDemo runs with no account and no network by design —
             // the whole flow has to be capturable without either — so its
-            // sessions keep the plain synchronous ending.
-            if ScreenshotDemo.isActive { return false }
+            // sessions keep the plain synchronous ending, unless it was asked
+            // to hold `finishing` so the keyboard's polish wave can be seen
+            // (`ScreenshotDemo.finishingHold`), which never touches the network.
+            if ScreenshotDemo.isActive { return ScreenshotDemo.finishingHold != nil }
         #endif
         guard polishEnabled else { return false }
         // The keyboard only reaches a signed-in app, but a session can have
@@ -1297,6 +1379,17 @@ final class DictationCoordinator: ObservableObject {
         }
         return outcome ?? nil
     }
+
+    #if DEBUG
+        /// ScreenshotDemo's stand-in for the polish: hold `finishing` for as
+        /// long as asked, then keep the raw words — no account, no network.
+        /// Cancellable like the real one, so "insert without polishing" can be
+        /// exercised against it.
+        private nonisolated static func demoPolish(holding hold: Duration) async -> String? {
+            try? await Task.sleep(for: hold)
+            return nil
+        }
+    #endif
 
     private func fail(_ message: String) {
         errorMessage = message

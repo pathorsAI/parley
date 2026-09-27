@@ -98,6 +98,17 @@
         /// cloud. Guards every injection point so a normal DEBUG run is untouched.
         static var servesFixtures: Bool { isActive && startsSignedIn }
 
+        /// `-ParleyDemoHoldFinishing <seconds>` keeps a demo dictation in
+        /// `finishing` that long after ⏹, standing in for the AI polish, so
+        /// the keyboard's polish wave and its "insert without polishing" tap
+        /// can be seen and captured. Absent, a demo dictation settles the
+        /// moment it stops, as it always has.
+        static var finishingHold: Duration? {
+            guard isActive else { return nil }
+            let seconds = UserDefaults.standard.double(forKey: "ParleyDemoHoldFinishing")
+            return seconds > 0 ? .milliseconds(Int(seconds * 1000)) : nil
+        }
+
         private init() {
             // Applying the launch route here — not from a view — is what lets the
             // script skip `openurl`. Nothing observes these properties yet, so the
@@ -235,10 +246,20 @@
         /// The dictation transcript, pre-chunked roughly the way the relay
         /// settles text. `DictationCoordinator.streamDemoTranscript` plays it
         /// back at speaking pace.
+        ///
+        /// `-ParleyDemoLongDictation YES` plays a paragraph instead of a line —
+        /// past the transcript slot's three visible lines, with an emoji and
+        /// Latin inside the Chinese — so the slot's scrolling and the polish
+        /// wave can be seen on text that needs them.
         static var dictationScript: [String] {
-            let text = t(
-                "Hi Anna, just wanted to let you know that my new number is 0912 345 678. Talk soon!",
-                "嗨 Anna，跟你說一聲我的新電話號碼是 0912345678，之後再聊！")
+            let text =
+                UserDefaults.standard.bool(forKey: "ParleyDemoLongDictation")
+                ? t(
+                    "Hi Anna, just wanted to let you know that my new number is 0912 345 678. I'll be at Tuesday's Q3 review on time 👍 and I'll send you the deck tonight. The client also asked to move the contract to two years at the same price, so let's go over the details when we meet. Talk soon!",
+                    "嗨 Anna，跟你說一聲我的新電話號碼是 0912345678。下週二的 Q3 review 我會準時到 👍，簡報我今晚先寄給你看。另外客戶那邊說合約想改成兩年約，價格維持不變，細節我們見面再討論。之後再聊！")
+                : t(
+                    "Hi Anna, just wanted to let you know that my new number is 0912 345 678. Talk soon!",
+                    "嗨 Anna，跟你說一聲我的新電話號碼是 0912345678，之後再聊！")
             var chunks: [String] = []
             var current = ""
             for ch in text {

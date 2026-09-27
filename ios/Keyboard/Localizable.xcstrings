@@ -288,6 +288,23 @@
         }
       }
     },
+    "Insert without polishing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insert without polishing"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跳過潤飾，直接插入"
+          }
+        }
+      }
+    },
     "Mic ready": {
       "extractionState": "manual",
       "localizations": {
@@ -401,6 +418,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Parley 停止聆聽了，再點一下麥克風重試。"
+          }
+        }
+      }
+    },
+    "Polishing…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Polishing…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "潤飾中…"
           }
         }
       }

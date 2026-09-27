@@ -244,6 +244,17 @@ public enum DictationChannel {
         /// mailbox that fails to decode reads as "nothing there", which here
         /// would mean a stop request the app never hears.
         public var cancelRequested: Bool?
+        /// The user tapped the record button while the session was finishing:
+        /// insert the raw words now rather than wait for the AI polish.
+        ///
+        /// Written alongside `stopRequested` for the same reason ✕ is — an app
+        /// that does not know this field still reads "end this session", which
+        /// is the right thing for it to do — and optional for the same reason
+        /// `cancelRequested` is: an uplink from an older build has no such key,
+        /// and a mailbox that fails to decode reads as no request at all.
+        ///
+        /// It never cuts the relay's drain: see `FinishingPolish`.
+        public var skipPolishRequested: Bool?
         /// How much of `committed` the keyboard has already inserted. Persisted
         /// here so a keyboard that was killed mid-session does not double-insert
         /// when it relaunches.
@@ -251,17 +262,22 @@ public enum DictationChannel {
 
         public init(
             session: String, hostBundleID: String? = nil,
-            stopRequested: Bool = false, cancelRequested: Bool? = nil, insertedCount: Int = 0
+            stopRequested: Bool = false, cancelRequested: Bool? = nil,
+            skipPolishRequested: Bool? = nil, insertedCount: Int = 0
         ) {
             self.session = session
             self.hostBundleID = hostBundleID
             self.stopRequested = stopRequested
             self.cancelRequested = cancelRequested
+            self.skipPolishRequested = skipPolishRequested
             self.insertedCount = insertedCount
         }
 
         /// The keyboard asked for this session to be thrown away.
         public var wantsCancel: Bool { cancelRequested == true }
+
+        /// The keyboard asked for the raw transcript now, unpolished.
+        public var wantsSkipPolish: Bool { skipPolishRequested == true }
     }
 
     public static func writeUplink(_ value: Uplink) {

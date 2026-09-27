@@ -635,12 +635,22 @@ struct KeyboardRootView: View {
     /// true when the app is set up and holding an open microphone window;
     /// otherwise the tap goes to Parley, and the button says so. The colour
     /// stays either way — the button is still the thing to press.
+    ///
+    /// **Finishing** is its own face, because it used to be the listening one:
+    /// a red ⏹ over a microphone that had already closed, with no ripple since
+    /// nobody was speaking — a button that looked stuck for as long as the
+    /// polish took. The moment ⏹ is pressed the red goes and the brand blue
+    /// comes back, with nothing on it; if the words are still on their way a
+    /// quarter of a second later, three dots rise in step with the wave
+    /// reading through the transcript (`PolishWaveDots`). The tap it offers then
+    /// is the only one that still means anything: put the words in now,
+    /// unpolished.
     private var recordButton: some View {
-        PressableButton(action: toggle, onPressDown: startHaptic) { pressed in
+        PressableButton(action: toggle, onPressDown: pressHaptic) { pressed in
             ZStack {
                 // Only while there is a voice. In silence the rings are not
                 // faint, they are absent — see `LevelRipple`.
-                if bridge.listening, !reduceMotion, bridge.mic.isAudible {
+                if hearing, !reduceMotion, bridge.mic.isAudible {
                     LevelRipple(
                         color: KBTheme.recording, level: bridge.mic.level,
                         trail: bridge.mic.trail)
@@ -654,14 +664,41 @@ struct KeyboardRootView: View {
                     .scaleEffect(swell)
                     .animation(.linear(duration: MicLevelReading.publishInterval), value: swell)
                     .brightness(pressed ? -0.06 : 0)
-                Image(systemName: recordGlyph)
-                    .font(.system(size: bridge.listening ? 24 : 27, weight: .medium))
-                    .foregroundStyle(recordInk)
+                recordFace
             }
             .frame(width: KBMetrics.deckHeight, height: KBMetrics.deckHeight)
         }
         .disabled(!bridge.hasFullAccess)
         .accessibilityLabel(recordLabel)
+    }
+
+    /// The microphone is open and listening to the user — a live session that
+    /// has not been stopped. The ripple and the swell answer a voice, and only
+    /// this state has one.
+    private var hearing: Bool { bridge.listening && !bridge.finishing }
+
+    /// What is drawn on the button: the glyph, or while finishing the dots —
+    /// and for the first quarter second of a finish, nothing, so a finish that
+    /// lands inside it goes straight from the blue to the microphone without a
+    /// transition flashing past.
+    @ViewBuilder
+    private var recordFace: some View {
+        Group {
+            if bridge.finishing {
+                if let wave = bridge.wave {
+                    PolishWaveDots(wave: wave, still: reduceMotion)
+                        .equatable()
+                        .transition(.opacity)
+                }
+            } else {
+                Image(systemName: recordGlyph)
+                    .font(.system(size: bridge.listening ? 24 : 27, weight: .medium))
+                    .foregroundStyle(recordInk)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: bridge.finishing)
+        .animation(.easeOut(duration: 0.18), value: bridge.wave == nil)
     }
 
     /// How much bigger the button gets at the top of the meter: ⌀80 → ⌀86.4.
@@ -686,7 +723,7 @@ struct KeyboardRootView: View {
     /// setting, and what that setting buys here is exactly what shipped before
     /// this change: a flat red button.
     private var swell: CGFloat {
-        guard bridge.listening, !reduceMotion else { return 1 }
+        guard hearing, !reduceMotion else { return 1 }
         return 1 + Self.maxSwell * CGFloat(bridge.mic.level)
     }
 
@@ -708,6 +745,7 @@ struct KeyboardRootView: View {
     /// The label says what the tap does, not what the button is called — the
     /// three idle states are three different actions.
     private var recordLabel: Text {
+        if bridge.finishing { return Text("Insert without polishing") }
         if bridge.listening { return Text("Stop dictation") }
         // Without Full Access the button is dimmed and the slot explains why;
         // the label stays what it was so nothing about that state changes.
@@ -720,10 +758,12 @@ struct KeyboardRootView: View {
     }
 
     /// Disabled (no Full Access) reads inert rather than inviting: the button
-    /// can't record until the user has been through Settings.
+    /// can't record until the user has been through Settings. Red only while
+    /// the microphone is actually hearing the user — a finishing session is
+    /// back in the brand blue, because nothing it says is being recorded.
     private var recordFill: AnyShapeStyle {
         if !bridge.hasFullAccess { return AnyShapeStyle(KBTheme.control(dark)) }
-        if bridge.listening { return AnyShapeStyle(KBTheme.recording) }
+        if hearing { return AnyShapeStyle(KBTheme.recording) }
         return AnyShapeStyle(KBTheme.micGradient)
     }
 
@@ -742,13 +782,28 @@ struct KeyboardRootView: View {
     /// deliberately different beats. A keyboard extension only gets haptics at
     /// all with Full Access; without it the button is disabled anyway, and the
     /// guard says so rather than leaving it to be inferred.
-    private func startHaptic() {
-        guard bridge.hasFullAccess, !bridge.listening else { return }
-        Haptics.dictationStarted()
+    ///
+    /// The tap that skips the polish plays nothing of its own, for the same
+    /// reason ⏹ doesn't: it asks for the words, and the words landing is what
+    /// answers it — `Haptics.dictationDelivered`, a moment later. A beat on
+    /// the press as well would arrive a round trip ahead of the success pattern
+    /// and blur the two into one event; what the press does instead is warm
+    /// the engine so that pattern is not late.
+    private func pressHaptic() {
+        guard bridge.hasFullAccess else { return }
+        if bridge.finishing {
+            Haptics.prepareForDelivery()
+        } else if !bridge.listening {
+            Haptics.dictationStarted()
+        }
     }
 
     private func toggle() {
-        if bridge.listening {
+        if bridge.finishing {
+            // The words are already on their way; the only thing a tap can
+            // still change is whether they wait for the polish.
+            bridge.skipPolish()
+        } else if bridge.listening {
             bridge.stop()
         } else if !bridge.ready {
             // Nothing to start. Without an account or microphone permission the
@@ -825,18 +880,45 @@ struct KeyboardRootView: View {
     /// it was — nothing already said is thrown away — with one line above it
     /// saying why it stopped growing. Amber rather than the error red: the
     /// session is still alive and the words are being kept.
+    ///
+    /// Below the caption the words scroll like the live slot's, pinned to the
+    /// newest line: this used to be two lines truncated at the end, which hid
+    /// exactly the sentence that was cut off — the one the user most wants to
+    /// see kept.
     private var reconnectingText: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        captioned(Text("Reconnecting… keep talking"), in: KBTheme.reconnecting) {
+            TranscriptText(tail: bridge.tail, partial: "", dark: dark, wave: nil, still: false)
+                .equatable()
+        }
+    }
+
+    /// A one-line caption above the transcript, for the two states that need
+    /// to say why the words have stopped moving: a reconnect, and — under
+    /// Reduce Motion, where there is no wave to show it — a polish.
+    ///
+    /// The caption sits on the words, not at the top of the slot: while they
+    /// fit below it the two are one block at the foot of the slot, as before
+    /// the slot scrolled, and only a transcript too long for that gets the
+    /// caption pinned above a scrolling one.
+    private func captioned<Content: View>(
+        _ caption: Text, in color: Color, @ViewBuilder transcript: () -> Content
+    ) -> some View {
+        let label = caption
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(color)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        return VStack(spacing: 0) {
             Spacer(minLength: 0)
-            Text("Reconnecting… keep talking")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(KBTheme.reconnecting)
-            Text(bridge.tail)
-                .font(.system(size: 15))
-                .foregroundStyle(KBTheme.inkSoft(dark))
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            ViewThatFits(in: .vertical) {
+                VStack(alignment: .leading, spacing: 2) {
+                    label
+                    transcript().fixedSize(horizontal: false, vertical: true)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    label
+                    TranscriptScroll { transcript() }
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -904,16 +986,25 @@ struct KeyboardRootView: View {
         }
     }
 
+    /// The words as they arrive, scrolled to the newest line (`TranscriptScroll`)
+    /// — and, once ⏹ has been pressed and the words are being polished, the
+    /// wave reading through them (`TranscriptText`).
+    ///
+    /// Reduce Motion gets no wave. The words settle to the wave's resting
+    /// emphasis instead, still, and a caption in the reconnect caption's shape
+    /// says what is happening — in the accent rather than amber, because
+    /// nothing is wrong.
+    @ViewBuilder
     private var liveText: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Spacer(minLength: 0)
-            (Text(bridge.tail).foregroundStyle(KBTheme.inkSoft(dark))
-                + Text(bridge.tail.isEmpty || bridge.partial.isEmpty ? "" : " ")
-                + Text(bridge.partial).foregroundStyle(KBTheme.ink(dark)))
-                .font(.system(size: 15))
-                .lineLimit(3)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        let transcript = TranscriptText(
+            tail: bridge.tail, partial: bridge.partial, dark: dark, wave: bridge.wave,
+            still: reduceMotion
+        )
+        .equatable()
+        if reduceMotion, bridge.finishing, bridge.wave != nil {
+            captioned(Text("Polishing…"), in: KBTheme.accent) { transcript }
+        } else {
+            TranscriptScroll { transcript }
         }
     }
 

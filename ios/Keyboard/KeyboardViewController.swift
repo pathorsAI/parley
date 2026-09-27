@@ -50,6 +50,13 @@ final class KeyboardViewController: UIInputViewController {
     /// answers a stop by publishing `finishing` within milliseconds; a session
     /// still `listening` seconds later is one nobody heard the stop for.
     private var stopRequestedAt: Date?
+    /// The 250 ms wait before a finishing session shows the polish wave — see
+    /// `enterFinishing`. A cancellable task tied to the session that started
+    /// it, never a timer: a finish that ends early, a ✕, or the next session
+    /// cancels it, so a reveal can never land on a pane that has moved on.
+    private var waveReveal: Task<Void, Never>?
+    /// Takes the wave down once its ease-out after `done` has played.
+    private var waveFade: Task<Void, Never>?
 
     /// The keyboard's view of the current session. It mints the id, so it owns
     /// the truth about which downlink is "ours"; a downlink for any other
@@ -581,6 +588,7 @@ final class KeyboardViewController: UIInputViewController {
                 hostBundleID: KeyboardHost.bundleID(of: self),
                 stopRequested: false,
                 insertedCount: 0))
+        leaveFinishing(settled: false)
         bridge.listening = true
         bridge.partial = ""
         bridge.tail = ""
@@ -886,12 +894,102 @@ final class KeyboardViewController: UIInputViewController {
         up.cancelRequested = false
         up.insertedCount = insertedCount
         DictationChannel.writeUplink(up)
-        // The pane keeps its live shape until the app answers: `finishing`
-        // keeps ⏹ and ✕ on screen while the transcript is polished, and a
-        // stop nobody answers is what the watchdog is for. Going quiet here,
-        // as this used to, only meant the next drain put the button back.
+        // The pane stays live — ✕ on screen, the keys resting, the watchdog
+        // armed — because the session is: going quiet here, as this once did,
+        // only meant the next drain put the button back. What changes now,
+        // under the finger and without waiting for the app's `finishing`, is
+        // the button: it stops being a red stop button the moment it has been
+        // pressed. A stop nobody answers is still what the watchdog is for.
         stopRequestedAt = Date()
+        enterFinishing()
         checkLiveness()
+    }
+
+    /// The record button tapped while the session is finishing: insert the raw
+    /// words now instead of waiting for the AI polish.
+    ///
+    /// Written as a stop *and* a skip, the way ✕ is written as a stop and a
+    /// cancel: an app that predates the skip still reads "end this session",
+    /// which it is already doing. The pane changes nothing here. The words are
+    /// still on their way — the relay may be draining the last of them, which
+    /// the app will not cut short — and `done` is what ends the wave and puts
+    /// them in the field, as it always is.
+    func skipPolishing() {
+        guard !session.isEmpty, bridge.finishing else { return }
+        var up = DictationChannel.readUplink() ?? .init(session: session)
+        up.session = session
+        up.stopRequested = true
+        up.cancelRequested = false
+        up.skipPolishRequested = true
+        up.insertedCount = insertedCount
+        DictationChannel.writeUplink(up)
+    }
+
+    // MARK: finishing
+
+    /// Take the pane into its finishing face: the button leaves the recording
+    /// red for the brand blue, the voice meter goes to rest, and — only if the
+    /// finish is still running `PolishWave.revealDelay` from now — the wave and
+    /// the dots appear. A finish that lands inside that quarter second shows
+    /// no transition at all: blue, then the idle microphone.
+    ///
+    /// Idempotent, because it has two callers that usually both fire: ⏹
+    /// itself, optimistically, and the app's `finishing` a moment later (the
+    /// only caller for a session this keyboard adopted mid-finish).
+    private func enterFinishing() {
+        guard !bridge.finishing else { return }
+        bridge.finishing = true
+        // Nothing is listening any more, so nothing should swell or ripple.
+        // The app stops publishing levels at ⏹ anyway; this is the same
+        // "under the finger, not a decay later" rule `cancelDictation` follows.
+        restMicLevel()
+        waveFade?.cancel()
+        waveFade = nil
+        if bridge.wave != nil { bridge.wave = nil }
+        waveReveal?.cancel()
+        let target = session
+        waveReveal = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: PolishWave.revealDelay)
+            guard !Task.isCancelled, let self, self.session == target, self.bridge.finishing
+            else { return }
+            self.waveReveal = nil
+            // Sized once, from the text as it stands: the pass must not change
+            // length mid-crest if the relay's last words land during it.
+            let shown = (self.bridge.tail + self.bridge.partial).count
+            self.bridge.wave = PolishWave(
+                startedAt: Date(),
+                pass: PolishWave.passDuration(graphemes: min(shown, PolishWave.visibleGraphemes)))
+        }
+    }
+
+    /// Leave the finishing face. `settled` is `done`: the words landed, and the
+    /// wave eases off them over `PolishWave.fadeOut` instead of stopping
+    /// mid-crest. Every other ending — ✕, an error, the microphone taken, the
+    /// next session — takes it down at once, because nothing it was waiting
+    /// for is coming.
+    private func leaveFinishing(settled: Bool) {
+        waveReveal?.cancel()
+        waveReveal = nil
+        if bridge.finishing { bridge.finishing = false }
+        guard let wave = bridge.wave else { return }
+        guard settled else {
+            waveFade?.cancel()
+            waveFade = nil
+            bridge.wave = nil
+            return
+        }
+        // A `done` republished on a later drain finds the wave already ending.
+        guard wave.endedAt == nil else { return }
+        var ending = wave
+        ending.endedAt = Date()
+        bridge.wave = ending
+        waveFade?.cancel()
+        waveFade = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(PolishWave.fadeOut))
+            guard !Task.isCancelled, let self, self.bridge.wave == ending else { return }
+            self.waveFade = nil
+            self.bridge.wave = nil
+        }
     }
 
     /// Ask the app to end the session and throw the words away — the ✕ next to
@@ -918,6 +1016,7 @@ final class KeyboardViewController: UIInputViewController {
         liveness?.cancel()
         liveness = nil
         stopRequestedAt = nil
+        leaveFinishing(settled: false)
         bridge.listening = false
         bridge.reconnecting = false
         bridge.partial = ""
@@ -943,10 +1042,17 @@ final class KeyboardViewController: UIInputViewController {
     ///
     /// Since nothing is inserted until the session is done, this echo is the
     /// only place the words are visible while they are being spoken — but it is
-    /// still a window, not a transcript. Three lines at this size hold rather
-    /// fewer than 140 characters, so the cap is already past what the slot can
-    /// show; raising it would only push more of the newest words out of view.
-    private static let tailLimit = 140
+    /// still a window, not a transcript.
+    ///
+    /// It used to be 140, on the argument that three lines hold fewer
+    /// characters than that and anything more "would only push the newest
+    /// words out of view". That was the bug, stated as a reason: the slot
+    /// truncated at the *end*, so past three lines the words being spoken were
+    /// the ones hidden. The slot now scrolls, pinned to its newest line, so the
+    /// cap is how far back the user can scroll to reread — about twenty lines
+    /// of Chinese or ten of English, under a kilobyte, and still nowhere near
+    /// the transcript store this extension deliberately doesn't keep.
+    private static let tailLimit = 400
 
     /// Read the transcript the app has published, and insert it once the app
     /// says the session is done.
@@ -1064,9 +1170,13 @@ final class KeyboardViewController: UIInputViewController {
         // included, which is the whole point of it being recoverable.
         bridge.micTaken = false
         switch d.state {
-        case .starting, .listening: 
+        case .starting, .listening:
             bridge.listening = true
             bridge.reconnecting = false
+            // Still `listening` after ⏹ is the app not having read the stop
+            // yet, not the session carrying on: the finishing face the tap put
+            // up stays, and `stopGrace` decides if the stop went unheard.
+            if stopRequestedAt == nil { leaveFinishing(settled: false) }
         case .reconnecting:
             // Still a live session: the app's microphone is open and the audio
             // is being held for the next relay leg. Saying so — rather than
@@ -1074,9 +1184,14 @@ final class KeyboardViewController: UIInputViewController {
             // between "hold on" and "that didn't work".
             bridge.listening = true
             bridge.reconnecting = true
+            if stopRequestedAt == nil { leaveFinishing(settled: false) }
         case .finishing:
             bridge.listening = true
             bridge.reconnecting = false
+            // Usually already entered by ⏹; this is the path for a session
+            // stopped from somewhere else — adopted after a relaunch, or the
+            // Action Button's.
+            enterFinishing()
             // The transcript is one AI-polish round trip away from landing;
             // warm the engine now so the pattern is not a beat late. Cheap to
             // repeat on the drains that follow.
@@ -1085,6 +1200,9 @@ final class KeyboardViewController: UIInputViewController {
             bridge.listening = false
             bridge.reconnecting = false
             bridge.partial = ""
+            // The words are in the field. The wave eases off them rather than
+            // stopping mid-crest; the button is already back to the microphone.
+            leaveFinishing(settled: true)
             // The dictated text is all in the field now, so this is the picture
             // any later edit gets compared against.
             lexicon.noteInserted(context: textDocumentProxy.documentContextBeforeInput)
@@ -1097,6 +1215,7 @@ final class KeyboardViewController: UIInputViewController {
             // the one that did *not*: killed between the tap and the answer,
             // relaunched, and reading the ending out of the file. It says the
             // same nothing.
+            leaveFinishing(settled: false)
             bridge.listening = false
             bridge.reconnecting = false
             bridge.partial = ""
@@ -1108,6 +1227,7 @@ final class KeyboardViewController: UIInputViewController {
             // kept rather than cleared, and so is the session id: if the app wins
             // the microphone back it publishes `listening` for this same session
             // and the pane comes back with the sentence still in it.
+            leaveFinishing(settled: false)
             bridge.listening = false
             bridge.reconnecting = false
             bridge.partial = ""
@@ -1131,6 +1251,7 @@ final class KeyboardViewController: UIInputViewController {
             // to read this state from and no haptics to play anyway.
             if !wasMicTaken { Haptics.micTakenBySystem() }
         case .error:
+            leaveFinishing(settled: false)
             bridge.listening = false
             bridge.reconnecting = false
             bridge.partial = ""
@@ -1567,7 +1688,27 @@ final class KeyboardBridge: ObservableObject {
     weak var controller: KeyboardViewController?
 
     @Published var hasFullAccess = false
+    /// A session is live: the keyboard's mirror of
+    /// `DictationChannel.Downlink.State.isLive`, `finishing` included. Every
+    /// "while a session exists" rule on this pane reads it — the resting keys,
+    /// ✕, the liveness watchdog — and none of them changes when the session
+    /// starts finishing, which is why finishing is a flag of its own beside it
+    /// rather than a replacement for it.
     @Published var listening = false
+    /// The user pressed ⏹ (or the app said `finishing`) and the words are on
+    /// their way to the field: the relay's last utterance draining, then the
+    /// AI polish. Only ever true while `listening` is.
+    ///
+    /// Set the moment ⏹ is pressed rather than when the app answers: the
+    /// button has to stop being a red stop button under the finger, and the
+    /// app's `finishing` is a note round trip away. A stop nobody hears is
+    /// still the watchdog's (`stopGrace`), exactly as before.
+    @Published var finishing = false
+    /// The polish wave, once finishing has lasted long enough to show one —
+    /// see `PolishWave.revealDelay`. `nil` otherwise, and kept for
+    /// `PolishWave.fadeOut` after `done` so the light eases off the words
+    /// rather than being cut mid-crest.
+    @Published var wave: PolishWave?
     /// The app lost the relay socket and is redialling it. Still listening —
     /// this only changes what the caption says, never whether the session is
     /// alive.
@@ -1579,7 +1720,7 @@ final class KeyboardBridge: ObservableObject {
     /// It is a short window, not history: the transcript lands in the host's
     /// document in one piece when the session is done, and until then this is
     /// where the words are visible. Capped at `tailLimit` characters, cleared
-    /// with the session — a few hundred bytes, nowhere near the transcript
+    /// with the session — a kilobyte or so, nowhere near the transcript
     /// store the extension deliberately doesn't keep.
     @Published var tail = ""
     /// Whether the system wants *us* to draw a next-keyboard key. False from
@@ -1767,6 +1908,9 @@ final class KeyboardBridge: ObservableObject {
     /// and find the app.
     func endWindow() { controller?.endMicWindow() }
     func stop() { controller?.stopDictation() }
+    /// Insert the raw words now rather than wait for the AI polish — the
+    /// record button's tap while the session is finishing.
+    func skipPolish() { controller?.skipPolishing() }
     /// End the session and throw the words away — the ✕ beside ⏹.
     func cancel() { controller?.cancelDictation() }
     func backspace() { controller?.deleteBackward() }
