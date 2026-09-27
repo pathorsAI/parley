@@ -10,6 +10,8 @@ import com.pathors.parley.cloud.OrgRole
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
+import com.pathors.parley.kit.FilingFolderSuggestion
+import com.pathors.parley.kit.FilingSuggestion
 import com.pathors.parley.kit.GettingStartedState
 import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.kit.TranscriptSegment
@@ -149,7 +151,19 @@ object DemoMode {
 
         /** Finished because the microphone was lost, not because of Stop. */
         INTERRUPTED("interrupted"),
+
+        /**
+         * Stopped and uploaded, with the filing suggestion on offer — iOS
+         * `parley://demo/settled`. Also its own top-level route, `settled`.
+         */
+        SETTLED("settled"),
+
+        /** [SETTLED] with the Adjust sheet open — iOS `parley://demo/adjust`. */
+        ADJUST("adjust"),
         ;
+
+        /** The meeting is over and uploaded, and the filing offer is up. */
+        val isSettled: Boolean get() = this == SETTLED || this == ADJUST
 
         companion object {
             fun fromRoute(route: String?): MeetingScenario =
@@ -205,7 +219,7 @@ object DemoMode {
         val screen = when (route) {
             "library", "recordings" -> Screen.LIBRARY
             "transcript", "recording" -> Screen.TRANSCRIPT
-            "record", "meeting" -> Screen.MEETING
+            "record", "meeting", in FILING_ROUTES -> Screen.MEETING
             "account", "settings" -> Screen.ACCOUNT
             "movetofolder" -> Screen.MOVE_TO_FOLDER
             in IMPORT_ROUTES -> {
@@ -223,7 +237,8 @@ object DemoMode {
         _navigation.value = Navigation(
             screen = screen,
             serial = serial,
-            scenario = MeetingScenario.fromRoute(uri.getQueryParameter(QUERY_SCENARIO)),
+            scenario = FILING_ROUTES[route]
+                ?: MeetingScenario.fromRoute(uri.getQueryParameter(QUERY_SCENARIO)),
         )
         return true
     }
@@ -788,6 +803,49 @@ object DemoMode {
         isFinal = false,
         startMs = 108_000,
         endMs = 112_000,
+    )
+
+    // ── filing suggestion fixture ────────────────────────────────────────────
+
+    /** The recording the settled meeting screen has just uploaded. */
+    const val SETTLED_ID = "demo-settled"
+
+    /**
+     * What the live meeting is called when it lands: the clock name every
+     * phone recording starts with, and the thing the suggestion replaces.
+     */
+    fun settledTitle(locale: Locale = Locale.getDefault()): String =
+        t(locale, "Meeting Sep 18, 2025, 3:20 PM", "會議 2025年9月18日 下午3:20")
+
+    /**
+     * What the filing pass proposes for the live script: a name that says who
+     * and what, the Renewals folder with its reason, and a new folder as the
+     * runner-up for the Adjust sheet.
+     */
+    fun filingSuggestion(locale: Locale = Locale.getDefault()): FilingSuggestion = FilingSuggestion(
+        title = t(locale, "Northwind renewal — seat count and price hold", "北風工業續約：席次與鎖價"),
+        folders = listOf(
+            FilingFolderSuggestion(
+                folderId = RENEWALS_FOLDER_ID,
+                name = t(locale, "Renewals", "續約"),
+                reason = t(
+                    locale,
+                    "An existing customer negotiating next year's seats and price.",
+                    "既有客戶在談明年的席次與價格。",
+                ),
+            ),
+            FilingFolderSuggestion(
+                folderId = null,
+                name = t(locale, "Northwind", "北風工業"),
+                reason = t(locale, "Every call with this customer in one place.", "這個客戶的所有通話放在一起。"),
+            ),
+        ),
+    )
+
+    /** The top-level routes that land on the meeting screen in a filing scenario. */
+    private val FILING_ROUTES = mapOf(
+        MeetingScenario.SETTLED.route to MeetingScenario.SETTLED,
+        MeetingScenario.ADJUST.route to MeetingScenario.ADJUST,
     )
 
     // ── import fixture ───────────────────────────────────────────────────────

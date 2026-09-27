@@ -350,4 +350,21 @@
     <string name="account_save_location_org">Organization</string>
     <string name="account_save_location_change">Change</string>
     <string name="account_save_location_footer">Picking an organization still saves the recording to your personal space and shares a copy there — same as the desktop app.</string>
+
+    <!-- Filing suggestion (iOS FilingSuggestionCard / FilingAdjustSheet) -->
+    <string name="filing_heading">Suggestion</string>
+    <string name="filing_thinking">Suggesting a name and a folder…</string>
+    <string name="filing_was">Was: %1$s</string>
+    <string name="filing_folder">Folder</string>
+    <string name="filing_new_folder">New folder</string>
+    <string name="filing_save_suggested">Save as suggested</string>
+    <string name="filing_adjust">Adjust</string>
+    <string name="filing_skip">Skip suggestion</string>
+    <string name="filing_write_failed">That didn\'t save. Try again.</string>
+    <string name="filing_done">Done</string>
+    <string name="filing_save">Save</string>
+    <string name="filing_title">Title</string>
+    <string name="filing_move_to_folder">Move to folder</string>
+    <string name="filing_new_tag">New</string>
+    <string name="filing_other_folder">Choose another folder…</string>
 </resources>

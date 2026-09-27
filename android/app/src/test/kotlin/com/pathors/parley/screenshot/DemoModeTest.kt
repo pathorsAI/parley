@@ -181,6 +181,37 @@ class DemoModeTest {
         assertTrue(DemoMode.saveDestination().folderId in orgFolderIds)
     }
 
+    /**
+     * The `settled` and `adjust` frames: an offer worth capturing — a real name,
+     * an existing folder first (so the one-tap accept files somewhere the user
+     * knows) and one new folder as the runner-up — over the clock name it
+     * replaces, in both languages.
+     */
+    @Test
+    fun `the filing suggestion files into a folder the picker knows`() {
+        listOf(en, zh).forEach { locale ->
+            val suggestion = DemoMode.filingSuggestion(locale)
+            val pickerIds = DemoMode.pickerFolders(locale).map { it.id }
+            assertTrue(suggestion.title.isNotBlank())
+            assertTrue(suggestion.folders.first().folderId in pickerIds)
+            assertEquals("at most one new folder", 1, suggestion.folders.count { it.folderId == null })
+            assertTrue(suggestion.folders.all { it.reason.isNotBlank() })
+            assertNotEquals(suggestion.title, DemoMode.settledTitle(locale))
+        }
+        assertNotEquals(DemoMode.filingSuggestion(en), DemoMode.filingSuggestion(zh))
+        assertNotEquals(DemoMode.settledTitle(en), DemoMode.settledTitle(zh))
+    }
+
+    @Test
+    fun `the filing scenarios are settled meetings with their own routes`() {
+        assertTrue(DemoMode.MeetingScenario.SETTLED.isSettled)
+        assertTrue(DemoMode.MeetingScenario.ADJUST.isSettled)
+        assertFalse(DemoMode.MeetingScenario.LIVE.isSettled)
+        assertFalse(DemoMode.MeetingScenario.INTERRUPTED.isSettled)
+        assertEquals(DemoMode.MeetingScenario.ADJUST, DemoMode.MeetingScenario.fromRoute("adjust"))
+        assertEquals(DemoMode.MeetingScenario.SETTLED, DemoMode.MeetingScenario.fromRoute("settled"))
+    }
+
     private fun assertNotEquals(a: Any?, b: Any?) {
         assertFalse("expected $a and $b to differ", a == b)
     }

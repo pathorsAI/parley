@@ -132,10 +132,8 @@ class TranscriptBackfiller(
      * the phone at all.
      *
      * @param meta the recording's full entry as the cloud holds it. Required,
-     *   not optional: a request that reached the queue without it would fall
-     *   through to the automatic path and rebuild the entry from the new
-     *   transcript alone — wiping the analysis this whole detour exists to
-     *   protect.
+     *   not optional: the run edits the new transcript into exactly this, so
+     *   the analysis this whole detour exists to protect survives it.
      * @param summary the library card, when the caller has one. A detail screen
      *   fetches only the meta, so null derives it via [RecordingSummary.fromMeta]
      *   rather than making every caller find one.
@@ -277,21 +275,56 @@ class TranscriptBackfiller(
             meta = existingMeta.replacingTranscript(segments, durationMs)
             summary = existingSummary.replacingTranscript(segments, durationMs)
         } else {
-            // The automatic path: this recording was created by the upload that
-            // queued the backfill, so there is nothing on it to preserve.
-            val repaired = request.pending.copy(
-                durationMs = durationMs,
-                segments = segments,
-                folderId = request.folderId ?: request.pending.folderId,
-            )
-            meta = MeetingUploader.buildMeta(repaired)
-            summary = MeetingUploader.buildSummary(repaired)
+            // The automatic path. It used to rebuild the entry out of
+            // `request.pending`, on the reasoning that the recording had been
+            // created seconds earlier by the upload that queued this and so had
+            // nothing on it worth keeping. That holds at the moment of queueing
+            // and stops holding immediately afterwards: the batch job takes
+            // minutes and the run may happen on a later launch, and in between
+            // the user may have renamed the recording, moved it, and answered a
+            // filing suggestion on it. Pushing the rebuilt entry put the clock
+            // name back over the name they typed, along with the folder and
+            // `filingSuggested` — a rename undone later by a background job is
+            // silent data loss. (iOS fixed the same thing in 1.14.)
+            //
+            // So read the recording as it stands right now and edit the
+            // transcript inside it, exactly as the manual path does.
+            // `request.folderId` is not applied: the recording's own folder is
+            // the current one.
+            //
+            // Not wrapped: a fetch that failed would leave only the stale copy
+            // to push, which is the very thing this branch exists to stop. The
+            // request stays queued, and the network that just failed here is
+            // the network the push below needs anyway.
+            meta = cloud.recordingMeta(id).replacingTranscript(segments, durationMs)
+            summary = repushSummary(meta, request.pending)
         }
 
         // Audio is already in the cloud and unchanged, so this is a metadata
         // push only.
         cloud.pushRecording(id, summary, meta)
         finish(id, audio)
+    }
+
+    /**
+     * The summary that goes up beside a re-pushed meta on the automatic path,
+     * derived from that meta rather than from the queued request: every field
+     * except the ones the transcript speaks for is a fact the *recording* owns
+     * — its name, its folder, how much analysis is on it — and the request is
+     * out of date about all of them by the time the run happens. [fallback]
+     * covers a meta too sparse to name itself, which the server should never
+     * return but is cheap to survive.
+     */
+    private fun repushSummary(meta: RecordingMeta, fallback: PendingUpload): RecordingSummary {
+        val derived = RecordingSummary.fromMeta(meta)
+        return derived.copy(
+            id = derived.id.ifEmpty { fallback.id },
+            title = derived.title.ifEmpty { fallback.title },
+            source = if (meta.raw.containsKey(SOURCE_KEY)) derived.source else fallback.source,
+            createdAt = if (derived.createdAt > 0) derived.createdAt else fallback.startedAtMs.toDouble(),
+            // The audio this run transcribed is the blob the cloud holds.
+            hasAudio = true,
+        )
     }
 
     /**
@@ -312,6 +345,8 @@ class TranscriptBackfiller(
     }
 
     companion object {
+        private const val SOURCE_KEY = "source"
+
         fun create(context: Context, cloud: CloudClient): TranscriptBackfiller {
             val retention = AudioRetention(context)
             return TranscriptBackfiller(

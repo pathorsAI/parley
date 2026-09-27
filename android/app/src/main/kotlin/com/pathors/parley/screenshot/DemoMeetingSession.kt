@@ -48,15 +48,20 @@ class DemoMeetingSession(
 ) : LiveMeeting {
 
     private val _state = MutableStateFlow(
-        if (scenario == MeetingScenario.INTERRUPTED) {
-            MeetingState.Finished(
+        when {
+            scenario == MeetingScenario.INTERRUPTED -> MeetingState.Finished(
                 recordingId = DemoMode.FEATURED_ID,
                 pendingUpload = false,
                 dropped = false,
                 interruptedBy = MeetingFailure.MIC_UNAVAILABLE,
             )
-        } else {
-            MeetingState.Recording
+            // Stopped and uploaded: the moment the filing suggestion arrives.
+            scenario.isSettled -> MeetingState.Finished(
+                recordingId = DemoMode.SETTLED_ID,
+                pendingUpload = false,
+                dropped = false,
+            )
+            else -> MeetingState.Recording
         }
     )
     override val state: StateFlow<MeetingState> = _state.asStateFlow()
@@ -100,7 +105,7 @@ class DemoMeetingSession(
     fun start() {
         if (started) return
         started = true
-        if (scenario == MeetingScenario.INTERRUPTED) {
+        if (scenario == MeetingScenario.INTERRUPTED || scenario.isSettled) {
             // Over already: the whole conversation, nothing moving.
             _segments.value = script
             _elapsedMs.value = END_AT_MS
