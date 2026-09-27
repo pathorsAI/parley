@@ -1,1 +1,1 @@
-Fixes meetings not being transcribed: the microphone restarted in a loop while recording, and a connected Bluetooth headset captured silence.
+Your first lap shows you what Parley does: load the sample call and a checklist walks you through filing it, replaying it and sharing it to your AI with a ready-made prompt. Recordings now propose a title and a folder after you stop, the library has folders and organizations with a default save location, imports report relay failures and sync when the network returns, and speech during a relay reconnect is no longer lost.
