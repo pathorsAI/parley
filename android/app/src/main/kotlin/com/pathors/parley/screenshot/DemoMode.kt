@@ -56,16 +56,12 @@ import kotlinx.serialization.json.putJsonObject
  * ```
  *
  * Routes: `library`, `transcript`, `record` (alias `meeting`), `account`
-<<<<<<< HEAD
- * (alias `settings`), the import screen's endings (`import-partial`,
- * `import-offline`, `import-quota`, `import-signed-out`), the getting-started
- * frames (`checklist`, `checklist-partial`, `sample`, `share-menu` — see
- * [LAP_ROUTES]), and `off`.
-=======
  * (alias `settings`), `movetofolder` (the transcript with the folder picker
  * open over fifteen folders — a review frame, not a store frame, the same one
  * iOS has), the import screen's endings (`import-partial`, `import-offline`,
- * `import-quota`, `import-signed-out`), and `off`.
+ * `import-quota`, `import-signed-out`), the getting-started frames
+ * (`checklist`, `checklist-partial`, `sample`, `share-menu` — see
+ * [LAP_ROUTES]), and `off`.
  *
  * The meeting route takes an optional `?scenario=` naming a [MeetingScenario] —
  * the states a real meeting only reaches when a microphone is taken away or the
@@ -74,7 +70,6 @@ import kotlinx.serialization.json.putJsonObject
  * ```
  * adb shell am start -a android.intent.action.VIEW -d "'parley://demo/meeting?scenario=mic-lost'"
  * ```
->>>>>>> origin/main
  *
  * Everything below is invented. No real company, person, account, or meeting is
  * represented, the only address is in the RFC-reserved `example.com`, and the
@@ -85,13 +80,13 @@ import kotlinx.serialization.json.putJsonObject
 object DemoMode {
 
     /** The screens the listing needs, each addressable by its own URL. */
-<<<<<<< HEAD
     enum class Screen {
         LIBRARY,
         TRANSCRIPT,
         MEETING,
         ACCOUNT,
         IMPORT,
+        MOVE_TO_FOLDER,
 
         /** The bundled sample recording's detail screen. */
         SAMPLE,
@@ -115,9 +110,6 @@ object DemoMode {
         /** The sample loaded and nothing else changed. */
         SAMPLE,
     }
-=======
-    enum class Screen { LIBRARY, TRANSCRIPT, MEETING, ACCOUNT, IMPORT, MOVE_TO_FOLDER }
->>>>>>> origin/main
 
     /**
      * Which ending the import screen shows. Not store-listing material: these
@@ -208,6 +200,8 @@ object DemoMode {
             disable()
             return true
         }
+        // Every other frame is of the product, not of the lap: no checklist.
+        if (route !in LAP_ROUTES) resetLap()
         val screen = when (route) {
             "library", "recordings" -> Screen.LIBRARY
             "transcript", "recording" -> Screen.TRANSCRIPT
@@ -238,9 +232,7 @@ object DemoMode {
     fun disable() {
         _enabled.value = false
         _navigation.value = null
-        _gettingStarted.value = STORE_FRAMES_CHECKLIST
-        _sampleEntry.value = null
-        _emptyLibrary.value = false
+        resetLap()
     }
 
     // ── getting started ──────────────────────────────────────────────────────
@@ -271,9 +263,14 @@ object DemoMode {
         _sampleEntry.value = entry
     }
 
-    /** What the library lists: the fixtures, or nothing for a brand-new account's frame. */
-    fun libraryRecordings(locale: Locale = Locale.getDefault()): List<RecordingSummary> =
-        if (_emptyLibrary.value) emptyList() else recordings(locale)
+    /** The `checklist` frame is a brand-new account's: the personal library lists nothing. */
+    val isLibraryEmpty: Boolean get() = _emptyLibrary.value
+
+    private fun resetLap() {
+        _gettingStarted.value = STORE_FRAMES_CHECKLIST
+        _sampleEntry.value = null
+        _emptyLibrary.value = false
+    }
 
     private fun seedLap(lap: Lap) {
         val sample = SampleRecordingStore.Entry(

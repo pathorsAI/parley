@@ -2,6 +2,7 @@ package com.pathors.parley.ui
 
 import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.RecordingSummary
+import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.library.LibraryFolders
 import com.pathors.parley.playback.PlaybackPhase
 import com.pathors.parley.screenshot.DemoMode
@@ -46,7 +47,8 @@ internal object LibraryRules {
      * Personal scope can create a folder, so it always has somewhere to go; an
      * org scope has no create endpoint here, so it needs folders to offer.
      * Sharing is a copy *out of* the personal library, so only a personal row
-     * has share targets.
+     * has share targets — and never the sample, which is not in the cloud to be
+     * copied (see `SampleRecordingStore`).
      */
     fun recordingRow(state: HomeViewModel.UiState, recording: RecordingSummary) = RecordingRowModel(
         recording = recording,
@@ -54,7 +56,11 @@ internal object LibraryRules {
         deleting = recording.id in state.deleting,
         busy = recording.id in state.busy,
         canMoveToFolder = state.isPersonal || state.folders.isNotEmpty(),
-        shareTargets = if (state.isPersonal) state.orgs else emptyList(),
+        shareTargets = if (state.isPersonal && !SampleManifest.isSample(recording.id)) {
+            state.orgs
+        } else {
+            emptyList()
+        },
     )
 
     /**

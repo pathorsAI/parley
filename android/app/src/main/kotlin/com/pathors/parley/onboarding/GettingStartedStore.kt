@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -89,8 +91,28 @@ class GettingStartedStore(
         }.onFailure { Log.w(TAG, "could not initialise the checklist", it) }
     }
 
+    /**
+     * The stored preferences, read only once the migration above has written.
+     *
+     * Not `store.data` straight away: a collector that starts on a brand-new
+     * file while that first write is in flight can miss the write entirely —
+     * seen in the unit tests one run in three, the list then never appearing —
+     * and waiting for the write costs one disk round trip at launch.
+     */
+    private val preferences: Flow<Preferences> = flow {
+        initialized.await()
+        emitAll(store.data)
+    }
+
+    /**
+     * Suspends until the first-launch migration has written. The sample store
+     * shares this DataStore and waits here before it starts reading, for the
+     * reason [preferences] gives.
+     */
+    suspend fun awaitReady() = initialized.await()
+
     private val stored: Flow<GettingStartedState?> =
-        store.data.map { preferences -> decode(preferences[STATE_KEY]) }
+        preferences.map { preferences -> decode(preferences[STATE_KEY]) }
 
     /**
      * The checklist, or null until the stored value has been read — the library
@@ -108,7 +130,7 @@ class GettingStartedStore(
      * [GettingStartedState.showsInLibrary].
      */
     val existingUserChecked: StateFlow<Boolean> =
-        combine(DemoMode.enabled, store.data) { demo, preferences ->
+        combine(DemoMode.enabled, preferences) { demo, preferences ->
             demo || preferences[LIBRARY_CHECKED_KEY] == true
         }.stateIn(scope, SharingStarted.Eagerly, false)
 

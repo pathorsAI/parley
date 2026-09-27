@@ -17,9 +17,12 @@ import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
@@ -92,9 +95,15 @@ class SampleRecordingStore(
 
     /** The entry, or null when the sample is not in the library. */
     val entry: StateFlow<Entry?> =
-        combine(DemoMode.enabled, DemoMode.sampleEntry, store.data) { demo, demoEntry, preferences ->
+        combine(DemoMode.enabled, DemoMode.sampleEntry, readyData()) { demo, demoEntry, preferences ->
             if (demo) demoEntry else decode(preferences[ENTRY_KEY])
         }.stateIn(scope, SharingStarted.Eagerly, null)
+
+    /** `store.data`, from once the shared store's first write has landed — see [GettingStartedStore.awaitReady]. */
+    private fun readyData(): Flow<Preferences> = flow {
+        gettingStarted.awaitReady()
+        emitAll(store.data)
+    }
 
     /**
      * Where the player finds the audio: a copy of the asset in the cache, made
@@ -130,18 +139,22 @@ class SampleRecordingStore(
 
     // ── the entry ────────────────────────────────────────────────────────────
 
+    /**
+     * The entry as stored right now, read through rather than from [entry] —
+     * which starts at null and catches up a moment later, so a screen opened
+     * straight after launch would mistake "not read yet" for "not there".
+     */
+    suspend fun currentEntry(): Entry? {
+        if (DemoMode.isActive) return DemoMode.sampleEntry.value
+        gettingStarted.awaitReady()
+        return decode(store.data.first()[ENTRY_KEY])
+    }
+
     /** The library row, or null when the sample is not in the library. */
     fun summary(entry: Entry?): RecordingSummary? {
         if (entry == null) return null
         val manifest = manifest(entry.lang) ?: return null
         return summaryOf(manifest, entry)
-    }
-
-    /** The transcript for the detail screen, when [id] is the sample's. */
-    fun meta(id: String): RecordingMeta? {
-        val entry = entry.value ?: return null
-        val manifest = manifestOf(entry)?.takeIf { it.id == id } ?: return null
-        return metaOf(manifest, entry)
     }
 
     /**
@@ -153,8 +166,7 @@ class SampleRecordingStore(
      * with", and the sample is offered as exactly that.
      */
     suspend fun load(language: String): RecordingSummary? {
-        val existing = entry.value
-        val loaded = existing ?: run {
+        val loaded = currentEntry() ?: run {
             val lang = SampleManifest.langFor(language)
             if (manifest(lang) == null) return null
             Entry(lang = lang, addedAtMs = clock().toDouble()).also { save(it) }
@@ -166,7 +178,7 @@ class SampleRecordingStore(
 
     /** File the sample. Local only — see the class doc. */
     suspend fun setFolder(folderId: String?) {
-        val current = entry.value ?: return
+        val current = currentEntry() ?: return
         save(current.copy(folderId = folderId))
     }
 
@@ -210,8 +222,6 @@ class SampleRecordingStore(
         }
         runCatching { store.edit { it[ENTRY_KEY] = json.encodeToString(Entry.serializer(), entry) } }
             .onFailure { Log.w(TAG, "could not save the sample", it) }
-        // Let the flow catch up before the caller reads it back.
-        store.data.first()
     }
 
     companion object {

@@ -108,7 +108,6 @@ class AppContainer(private val app: Application) {
     /** How many hand-triggered re-transcriptions each recording has spent. */
     val manualRetries: ManualRetryLedger = ManualRetryLedger.default(app)
 
-<<<<<<< HEAD
     /**
      * The library's getting-started checklist. Built before anything can sign
      * in, which is what lets it tell an existing user from a new one — see
@@ -127,10 +126,8 @@ class AppContainer(private val app: Application) {
         scope = appScope,
         gettingStarted = gettingStarted,
     )
-=======
     /** "Default save location" — read by the uploader, chosen in the account sheet. */
     val saveLocation: SaveLocationStore = SaveLocationStore.default(app)
->>>>>>> origin/main
 
     val uploader: MeetingUploader = MeetingUploader(
         cloud = cloud,
@@ -138,11 +135,8 @@ class AppContainer(private val app: Application) {
         backfills = backfillQueue,
         localAudio = localAudio,
         keepsAudioOnPhone = audioRetention::keepsAudioOnPhoneNow,
-<<<<<<< HEAD
         onSaved = { gettingStarted.mark(GettingStartedStep.RECORDED) },
-=======
         defaultDestination = saveLocation::current,
->>>>>>> origin/main
     )
 
     /**

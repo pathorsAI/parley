@@ -216,3 +216,32 @@ private fun detailOf(step: GettingStartedStep): Int? = when (step) {
     GettingStartedStep.REPLAYED -> null
     GettingStartedStep.SHARED_TO_AI -> R.string.getting_started_shared_detail
 }
+
+/**
+ * What a recording's detail screen was opened *for*. The checklist opens a
+ * recording to file it or to hand it off, and landing on the transcript with
+ * nothing else happening would leave the user to find the menu the row was
+ * pointing at. iOS `RecordingDetailView.Intent`.
+ */
+enum class OpenFor {
+    READ,
+
+    /** Ask where to file it once the transcript is up. */
+    FILE,
+
+    /** Open the share sheet with the analysis prompt once it is up. */
+    SHARE,
+    ;
+
+    companion object {
+        /** The intent that finishes [step]'s row on the checklist. */
+        fun of(step: GettingStartedStep): OpenFor = when (step) {
+            GettingStartedStep.FILED -> FILE
+            GettingStartedStep.SHARED_TO_AI -> SHARE
+            GettingStartedStep.RECORDED, GettingStartedStep.REPLAYED -> READ
+        }
+
+        /** Tolerant of a route argument it does not know: that is a plain read. */
+        fun parse(value: String?): OpenFor = entries.firstOrNull { it.name == value } ?: READ
+    }
+}

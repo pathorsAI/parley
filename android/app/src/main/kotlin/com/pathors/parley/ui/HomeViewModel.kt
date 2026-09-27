@@ -12,6 +12,9 @@ import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.CloudUser
 import com.pathors.parley.cloud.HostedQuota
 import com.pathors.parley.cloud.RecordingSummary
+import com.pathors.parley.kit.GettingStartedState
+import com.pathors.parley.kit.GettingStartedStep
+import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.kit.TranscriptSearch
 import com.pathors.parley.library.FolderFilter
 import com.pathors.parley.library.LibraryFolders
@@ -29,6 +32,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -130,6 +134,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         /** Recording ids with a move or a share in flight — see [deleting]. */
         val busy: Set<String> = emptySet(),
         val actionError: LibraryActionError? = null,
+        /**
+         * The personal library has come back from the cloud at least once
+         * since this screen was built — what the getting-started checklist
+         * waits for while its existing-user check is pending.
+         */
+        val personalLoaded: Boolean = false,
     ) {
         val isPersonal: Boolean get() = scopeOrgId == null
 
@@ -216,6 +226,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     orgs = orgs,
                     folders = folders,
                     folderFilter = LibraryFolders.reconcile(it.folderFilter, folders),
+                    personalLoaded = true,
                 )
             }
             return
@@ -249,6 +260,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                             folders = live,
                             folderFilter = LibraryFolders.reconcile(current.folderFilter, live),
                             error = null,
+                            personalLoaded = current.personalLoaded || scope == null,
                         )
                     },
                     onFailure = { error ->
@@ -266,6 +278,14 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     },
                 )
             }
+            // The checklist's second existing-user check, once per install:
+            // a personal library that arrives full of recordings nobody on
+            // this phone made.
+            if (scope == null) {
+                result.getOrNull()?.let { (recordings, _) ->
+                    container.gettingStarted.noteLibraryLoaded(recordings.size)
+                }
+            }
         }
     }
 
@@ -279,10 +299,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             container.cloud.orgFolders(scope)
         }
 
-    private fun demoRecordingsFor(scope: String?): List<RecordingSummary> =
-        demoLibrary.getOrPut(scope) {
+    private fun demoRecordingsFor(scope: String?): List<RecordingSummary> {
+        if (scope == null && DemoMode.isLibraryEmpty) return emptyList()
+        return demoLibrary.getOrPut(scope) {
             if (scope == null) DemoMode.recordings() else DemoMode.orgRecordings(scope)
         }
+    }
 
     private fun demoFoldersFor(scope: String?): List<CloudFolder> =
         demoFolders.getOrPut(scope) {
@@ -328,6 +350,10 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val state = _state.value
         if (recording.id in state.busy) return
         if (LibraryFolders.liveFolderId(recording.folderId, state.folders) == folderId) return
+        if (SampleManifest.isSample(recording.id)) {
+            fileSample(folderId)
+            return
+        }
         val scope = state.scopeOrgId
         if (DemoMode.isActive) {
             demoLibrary[scope] = demoRecordingsFor(scope).map {
@@ -367,6 +393,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     ),
                 )
             }
+        }
+        if (result.isSuccess && folderId != null) {
+            container.gettingStarted.mark(GettingStartedStep.FILED)
         }
     }
 
@@ -430,6 +459,8 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             _state.update { it.copy(busy = it.busy - recording.id, actionError = error) }
             return
         }
+        // Filed with a team is filed: iOS ticks the checklist here too.
+        container.gettingStarted.mark(GettingStartedStep.FILED)
         if (thenDelete) {
             deleteSharedOriginal(recording, org)
         } else {
@@ -442,6 +473,47 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val gone = runCatchingCancellable { container.cloud.deleteRecording(recording.id) }.isGone()
         if (gone) forgetLocally(recording.id)
         _state.update { it.afterSharedOriginalDeleted(recording.id, gone, org.name) }
+    }
+
+    // ── getting started ──────────────────────────────────────────────────────
+
+    /** The sample's library row, or null when it is not in the library. */
+    val sample: StateFlow<RecordingSummary?> = container.sample.entry
+        .map { container.sample.summary(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val gettingStarted: StateFlow<GettingStartedState?> = container.gettingStarted.state
+
+    val existingUserChecked: StateFlow<Boolean> = container.gettingStarted.existingUserChecked
+
+    /** Whether this build carries the sample in [language]. */
+    fun canLoadSample(language: String): Boolean = container.sample.isBundled(language)
+
+    /** "Load sample": into the library, and back to All so the new row is on screen. */
+    fun loadSample(language: String) {
+        viewModelScope.launch {
+            if (container.sample.load(language) != null) selectFolder(FolderFilter.All)
+        }
+    }
+
+    /** "Not now". */
+    fun dismissChecklist() = container.gettingStarted.dismiss()
+
+    /**
+     * The account sheet's "Show the getting-started list again": the list
+     * reset, and everything that would keep it off screen gone — an org scope,
+     * a folder page. The screen closes the search and scrolls up.
+     */
+    fun showChecklistAgain() {
+        container.gettingStarted.reset()
+        selectScope(null)
+        selectFolder(FolderFilter.All)
+    }
+
+    /** The sample is filed on this phone and nowhere else — see `SampleRecordingStore`. */
+    private fun fileSample(folderId: String?) {
+        viewModelScope.launch { container.sample.setFolder(folderId) }
+        if (folderId != null) container.gettingStarted.mark(GettingStartedStep.FILED)
     }
 
     /** Dismiss the move/share error. */
@@ -480,6 +552,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
      * a ghost in the list that no amount of retrying can remove.
      */
     fun deleteRecording(id: String) {
+        // Out of the library, not out of the app: the checklist can load the
+        // sample again, and there is nothing in the cloud to delete.
+        if (SampleManifest.isSample(id)) {
+            viewModelScope.launch { container.sample.remove() }
+            return
+        }
         // Demo mode renders fixtures; there is nothing in the cloud to delete and
         // a screenshot run must never write against a real account.
         if (DemoMode.isActive) return
@@ -669,6 +747,27 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     companion object {
+
+        /**
+         * The personal library with the sample merged in, at its place by date
+         * (the server lists newest first). The sample is local-only and belongs
+         * to no organization, so [isPersonal] false leaves the list alone.
+         */
+        internal fun withSample(
+            recordings: List<RecordingSummary>,
+            sample: RecordingSummary?,
+            isPersonal: Boolean,
+        ): List<RecordingSummary> {
+            if (sample == null || !isPersonal) return recordings
+            val others = recordings.filterNot { it.id == sample.id }
+            val index = others.indexOfFirst { it.createdAt < sample.createdAt }
+                .let { if (it < 0) others.size else it }
+            return others.take(index) + sample + others.drop(index)
+        }
+
+        /** What checklist rows 2–4 open: the newest recording, the sample included. */
+        internal fun latestRecording(library: List<RecordingSummary>): RecordingSummary? =
+            library.maxByOrNull { it.createdAt }
 
         /**
          * What the list shows: the selected folder page of the scope, then the

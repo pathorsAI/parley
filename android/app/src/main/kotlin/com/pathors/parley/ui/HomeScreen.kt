@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -69,11 +70,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -93,9 +96,12 @@ import com.pathors.parley.library.FolderFilter
 import com.pathors.parley.library.LibraryFolders
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingState
+import com.pathors.parley.kit.GettingStartedState
+import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.ui.theme.ParleyTheme
 import com.pathors.parley.upload.PendingUpload
+import kotlinx.coroutines.launch
 
 /**
  * The library: everything this account has in the cloud, with whatever is still
@@ -115,12 +121,15 @@ import com.pathors.parley.upload.PendingUpload
 fun HomeScreen(
     onRecord: () -> Unit,
     onImport: () -> Unit,
-    onOpenRecording: (id: String, orgId: String?) -> Unit,
+    onOpenRecording: (id: String, orgId: String?, openFor: OpenFor) -> Unit,
 ) {
     val container = rememberContainer()
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
     val state by viewModel.state.collectAsState()
+    val sample by viewModel.sample.collectAsState()
     var showAccount by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
 
     // The recording the user has asked to delete, held until they confirm.
     var pendingDelete by remember { mutableStateOf<RecordingSummary?>(null) }
@@ -130,8 +139,16 @@ fun HomeScreen(
 
     // The search field, and what is in it. See [LibrarySearch].
     val search = remember { LibrarySearch() }
-    val visible = remember(state.recordings, state.folders, state.folderFilter, search.query) {
-        HomeViewModel.visibleRecordings(state.recordings, state.folders, state.folderFilter, search.query)
+    // The personal library with the bundled sample merged in — see
+    // `SampleRecordingStore`. Everything below reads this, not the cloud's list.
+    val library = remember(state.recordings, sample, state.isPersonal) {
+        HomeViewModel.withSample(state.recordings, sample, state.isPersonal)
+    }
+    val visible = remember(library, state.folders, state.folderFilter, search.query) {
+        HomeViewModel.visibleRecordings(library, state.folders, state.folderFilter, search.query)
+    }
+    val checklist = rememberChecklist(viewModel, state, library, search.query) { id, openFor ->
+        onOpenRecording(id, null, openFor)
     }
 
     val meetingLive = rememberMeetingLive()
@@ -143,6 +160,9 @@ fun HomeScreen(
     DemoAccountRequest { open ->
         showAccount = open
         if (open) viewModel.loadAccount()
+        // A lap route re-seeds the fixtures under a screen that may already be
+        // up, so every demo request re-reads them.
+        viewModel.refresh()
     }
 
     val callbacks = LibraryCallbacks(
@@ -153,11 +173,19 @@ fun HomeScreen(
         onSelectFolder = viewModel::selectFolder,
         rowActions = { recording ->
             RecordingRowActions(
-                onClick = { onOpenRecording(recording.id, state.scopeOrgId) },
+                onClick = { onOpenRecording(recording.id, state.scopeOrgId, OpenFor.READ) },
                 onMoveToFolder = { moving = recording },
                 onShare = { org -> viewModel.shareToOrg(recording, org, thenDelete = false) },
                 onMoveToOrg = { org -> viewModel.shareToOrg(recording, org, thenDelete = true) },
-                onDelete = { pendingDelete = recording },
+                // The sample goes without a question: nothing is lost, and the
+                // checklist can load it again.
+                onDelete = {
+                    if (SampleManifest.isSample(recording.id)) {
+                        viewModel.deleteRecording(recording.id)
+                    } else {
+                        pendingDelete = recording
+                    }
+                },
             )
         },
     )
@@ -190,6 +218,7 @@ fun HomeScreen(
             search = search,
             meetingLive = meetingLive,
             callbacks = callbacks,
+            lap = LibraryLap(checklist, listState),
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
@@ -200,6 +229,12 @@ fun HomeScreen(
         AccountSheet(
             viewModel = viewModel,
             onDismiss = { showAccount = false },
+            onShowGettingStarted = {
+                showAccount = false
+                search.close()
+                viewModel.showChecklistAgain()
+                coroutineScope.launch { listState.animateScrollToItem(0) }
+            },
         )
     }
 
@@ -256,6 +291,48 @@ private class LibraryCallbacks(
     val onSelectFolder: (FolderFilter) -> Unit,
     val rowActions: (RecordingSummary) -> RecordingRowActions,
 )
+
+/**
+ * The getting-started checklist above the list, when it shows: the personal
+ * library, no search, and then the checklist's own rule
+ * ([GettingStartedState.showsInLibrary], unit-tested in parleykit).
+ */
+private class ChecklistModel(val state: GettingStartedState, val actions: GettingStartedActions)
+
+/** The checklist, and the list state "Show the getting-started list again" scrolls. */
+private class LibraryLap(val checklist: ChecklistModel?, val listState: LazyListState)
+
+@Composable
+private fun rememberChecklist(
+    viewModel: HomeViewModel,
+    state: HomeViewModel.UiState,
+    library: List<RecordingSummary>,
+    query: String,
+    onOpen: (id: String, openFor: OpenFor) -> Unit,
+): ChecklistModel? {
+    val checklist by viewModel.gettingStarted.collectAsState()
+    val existingUserChecked by viewModel.existingUserChecked.collectAsState()
+    val language = LocalConfiguration.current.locales[0].language
+    val current = checklist ?: return null
+    if (!state.isPersonal || query.isNotBlank()) return null
+    val shows = current.showsInLibrary(
+        libraryLoaded = state.personalLoaded,
+        existingUserChecked = existingUserChecked,
+        libraryIsEmpty = library.isEmpty(),
+    )
+    if (!shows) return null
+    val latest = HomeViewModel.latestRecording(library)
+    return ChecklistModel(
+        state = current,
+        actions = GettingStartedActions(
+            canLoadSample = viewModel.canLoadSample(language),
+            hasRecording = latest != null,
+            onLoadSample = { viewModel.loadSample(language) },
+            onOpen = { step -> latest?.let { onOpen(it.id, OpenFor.of(step)) } },
+            onDismiss = viewModel::dismissChecklist,
+        ),
+    )
+}
 
 /** A meeting that is still running (the user navigated home without stopping). */
 @Composable
@@ -349,6 +426,7 @@ private fun LibraryBody(
     search: LibrarySearch,
     meetingLive: Boolean,
     callbacks: LibraryCallbacks,
+    lap: LibraryLap,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier) {
@@ -381,6 +459,7 @@ private fun LibraryBody(
                 query = search.query,
                 meetingLive = meetingLive,
                 callbacks = callbacks,
+                lap = lap,
             )
         }
     }
@@ -393,8 +472,10 @@ private fun LibraryList(
     query: String,
     meetingLive: Boolean,
     callbacks: LibraryCallbacks,
+    lap: LibraryLap,
 ) {
     LazyColumn(
+        state = lap.listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             start = 16.dp,
@@ -411,11 +492,21 @@ private fun LibraryList(
             onRecord = callbacks.onRecord,
             onUpload = callbacks.onUpload,
         )
+        lap.checklist?.let { checklist ->
+            item(key = "getting-started") {
+                GettingStartedList(
+                    state = checklist.state,
+                    actions = checklist.actions,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+            }
+        }
         libraryPlaceholders(
             state = state,
             visible = visible,
             query = query,
             onImport = callbacks.onImport,
+            checklistShown = lap.checklist != null,
         )
         // Namespaced keys: a recording drained from the pending
         // queue can show up in both lists for one refresh, and two
@@ -819,6 +910,8 @@ private fun LazyListScope.libraryPlaceholders(
     visible: List<RecordingSummary>,
     query: String,
     onImport: () -> Unit,
+    /** The checklist is the first-run welcome when it is up; the empty state stands down. */
+    checklistShown: Boolean,
 ) {
     if (state.loading && state.recordings.isEmpty()) {
         item { LoadingRow() }
@@ -835,7 +928,7 @@ private fun LazyListScope.libraryPlaceholders(
         val wholePersonal = state.isPersonal && state.folderFilter == FolderFilter.All
         if (!wholePersonal) {
             item { EmptyLibrary(onImport = null, firstRun = false) }
-        } else if (state.pending.isEmpty()) {
+        } else if (state.pending.isEmpty() && !checklistShown) {
             item { EmptyLibrary(onImport = onImport, firstRun = true) }
         }
     }
@@ -1013,7 +1106,7 @@ private fun RecordingRowText(model: RecordingRowModel, modifier: Modifier = Modi
     val recording = model.recording
     Column(modifier) {
         Row(verticalAlignment = Alignment.Top) {
-            SourceBadge(recording.source)
+            SourceBadge(recording)
             Spacer(Modifier.width(8.dp))
             Text(
                 text = recording.title.ifEmpty {
@@ -1179,13 +1272,14 @@ private fun RowMenuOrgs(
  * a `Row` that aligned baselines would pin the badge to the *last* of them.
  */
 @Composable
-private fun SourceBadge(source: String) {
-    val live = source != RecordingSource.UPLOAD
+private fun SourceBadge(recording: RecordingSummary) {
+    val live = recording.source != RecordingSource.UPLOAD
     Text(
-        text = if (live) {
-            stringResource(R.string.recording_source_live)
-        } else {
-            stringResource(R.string.recording_source_upload)
+        // The bundled sample says what it is, in the same quiet grey as UPLOAD.
+        text = when {
+            SampleManifest.isSample(recording.id) -> stringResource(R.string.recording_source_sample)
+            live -> stringResource(R.string.recording_source_live)
+            else -> stringResource(R.string.recording_source_upload)
         },
         style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.SemiBold,
