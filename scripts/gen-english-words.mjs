@@ -64,6 +64,19 @@
 // among the common words without putting them above them. This is the same
 // device, for the same reason, as `CONVERSATIONAL` in `gen-zhuyin-phrases.mjs`:
 // a short hand-written list that only ever moves a word up.
+//
+// ## Run-together scanning artefacts
+//
+// OCR also glues two words together often enough that the result ranks as a
+// word: `ofthe` is in the top 6,000. Kept, it would be offered as a completion
+// of `oft`, and it would stop `WordSuggestions` from splitting `ofthe` into
+// `of the`, since a partial that is itself a list word is never split.
+// RUN_TOGETHER drops them. It was chosen by hand from the list words that equal
+// one of the 5,000 most frequent 2-grams with the space removed (the source of
+// `gen-english-next-words.mjs`), keeping those whose 2-gram count, scaled to
+// this corpus's size, is at least 100 times the word's own count. The real
+// words in that set (`cannot`, `tome`, `togo`, `goto`, `forme`, `goon`, `todo`,
+// `ashe`) were kept.
 
 import { writeFile } from "node:fs/promises";
 
@@ -109,6 +122,11 @@ const SUPPLEMENT = [
   "okay", "ok", "hi", "hey", "thanks", "bye", "yeah", "yep", "nope", "sorry",
 ];
 
+const RUN_TOGETHER = new Set([
+  "ofthe", "forthe", "tobe", "itis", "ido", "fora", "ina", "weare", "thana",
+  "ata", "bethe", "nota", "soit",
+]);
+
 const OUT = resourcePath("english-words.txt");
 
 async function main() {
@@ -119,7 +137,9 @@ async function main() {
     prefix: "english-words-",
   });
 
-  const rows = merge(parseFrequencies(texts[0]), SUPPLEMENT);
+  const rows = merge(parseFrequencies(texts[0]), SUPPLEMENT).filter(
+    (row) => !RUN_TOGETHER.has(row.word)
+  );
   // Count first, upstream order as the tiebreak — the same rule the 注音
   // generators use, and for the same reason: a stable tiebreak is what makes
   // the output reproducible. The supplement's rows all carry one count, so

@@ -90,12 +90,16 @@ winreg = "0.55"
 # make Tauri's `Window::hwnd()` return an HWND of a DIFFERENT type than the one
 # these APIs accept, which does not fail until link time. Features are trimmed
 # to what is actually called; QueryFullProcessImageNameW lives in Threading, so
-# Win32_System_ProcessStatus is not needed.
+# Win32_System_ProcessStatus is not needed. Win32_UI_Accessibility (UI
+# Automation) + Win32_System_Com (the apartment and CoCreateInstance) are the
+# correction watcher's field reads (see ax_observe/windows.rs).
 windows = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_System_Com",
     "Win32_System_DataExchange",
     "Win32_System_Memory",
     "Win32_System_Threading",
+    "Win32_UI_Accessibility",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }

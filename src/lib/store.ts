@@ -132,15 +132,10 @@ export const DEFAULT_VOICE_TYPING_SHORTCUT: Settings["voiceTypingShortcut"] = is
   : "combo:control+alt+Space";
 
 /** The trigger ids that only macOS can deliver: `alt-space` (the old universal
- *  default) plus the four modifier keys, which ride a CGEventTap that has no
- *  Windows counterpart. */
-const MAC_ONLY_SHORTCUTS: ReadonlySet<string> = new Set([
-  "alt-space",
-  "fn",
-  "right-option",
-  "right-command",
-  "right-control",
-]);
+ *  default) plus the two modifier keys a PC keyboard doesn't have. Right Ctrl
+ *  (`right-control`) and right Alt (`right-option`) are NOT here: Windows
+ *  holds those through a low-level keyboard hook (#462). */
+const MAC_ONLY_SHORTCUTS: ReadonlySet<string> = new Set(["alt-space", "fn", "right-command"]);
 
 /**
  * Move a Windows install off a trigger it can never fire.
@@ -153,7 +148,8 @@ const MAC_ONLY_SHORTCUTS: ReadonlySet<string> = new Set([
  * overwrite a real choice: the Settings pane that edits this value was hidden
  * on Windows until now, so no Windows user has ever picked any of these ids —
  * they could only arrive from the old default or from settings synced off a
- * Mac. A combo the user recorded themselves is left alone.
+ * Mac. A combo the user recorded themselves is left alone, and so is right
+ * Ctrl / right Alt, which Windows can now hold as well.
  *
  * Exported for tests.
  */

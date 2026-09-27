@@ -411,7 +411,7 @@ final class KeyboardViewController: UIInputViewController {
         }
         // Same bargain on the English pane: reading and sorting 40,000 words is
         // tens of milliseconds, and it belongs on the swipe rather than on the
-        // first letter typed.
+        // first letter typed. The bar is empty until it lands, then refreshed.
         if bridge.pane == .english {
             EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
         }
@@ -1389,7 +1389,8 @@ final class KeyboardViewController: UIInputViewController {
 
     // MARK: English word suggestions
 
-    /// Re-read the word in front of the cursor and publish what it could become.
+    /// Re-read the word in front of the cursor and publish what it could become,
+    /// or, right after a word and a space, what usually follows that word.
     ///
     /// Called after every key this keyboard types and from `textDidChange`,
     /// because the cursor can also move without us — a tap in the field, an
@@ -1405,12 +1406,14 @@ final class KeyboardViewController: UIInputViewController {
             publishSuggestions(partial: "", suggestions: [])
             return
         }
-        let partial = WordSuggestions.partialWord(
-            before: textDocumentProxy.documentContextBeforeInput)
+        let context = textDocumentProxy.documentContextBeforeInput
+        let partial = WordSuggestions.partialWord(before: context)
         publishSuggestions(
             partial: partial,
-            suggestions: WordSuggestions.suggestions(
-                for: partial, in: EnglishWords.bundled, lexiconTerms: lexiconTerms))
+            suggestions: partial.isEmpty
+                ? WordSuggestions.predictions(after: context, in: EnglishWords.bundled)
+                : WordSuggestions.suggestions(
+                    for: partial, in: EnglishWords.bundled, lexiconTerms: lexiconTerms))
     }
 
     /// One assignment, and only on a real change: a keystroke that changed
@@ -1433,8 +1436,9 @@ final class KeyboardViewController: UIInputViewController {
     /// The suggestion already carries the case the partial asked for, so it is
     /// inserted as it is shown.
     func pickSuggestion(_ word: String) {
+        // Empty right after a space, where the bar holds predictions: the tap
+        // then deletes nothing and only inserts.
         let partial = bridge.english.partialWord
-        guard !partial.isEmpty else { return }
         apply(zhuyin.confirm())
         for _ in 0..<partial.unicodeScalars.count { textDocumentProxy.deleteBackward() }
         textDocumentProxy.insertText(word + " ")
@@ -1702,12 +1706,13 @@ final class KeyboardBridge: ObservableObject {
     /// for the same reason as `ZhuyinStrip`.
     struct EnglishStrip: Equatable {
         /// The run of letters before the cursor. Empty whenever the cursor is
-        /// not inside a word, which is what puts the wordmark back. Kept beside
-        /// the suggestions rather than derived from them because it is what a
-        /// tap deletes.
+        /// not inside a word, when the suggestions are predictions and a tap
+        /// deletes nothing. Kept beside the suggestions rather than derived
+        /// from them because it is what a tap deletes.
         var partialWord: String
-        /// What `partialWord` could become, best first, already cased to match
-        /// what was typed. Nothing acts on these without a tap — see
+        /// What `partialWord` could become, or what could follow the word
+        /// before it, best first, already cased. Empty is what puts the
+        /// wordmark back. Nothing acts on these without a tap — see
         /// `WordSuggestions`.
         var suggestions: [String]
     }

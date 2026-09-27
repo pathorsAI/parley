@@ -125,17 +125,18 @@ export function initVoiceTyping(): () => void {
   // Runs on macOS AND Windows. The whole dictation path — global shortcut,
   // overlay, STT, polish, clipboard, synthetic paste — is wired on both.
   //
-  // Two macOS-only pieces stay dark on Windows, and both degrade to nothing
-  // rather than to a broken feature:
-  //   • The modifier-key trigger (fn / right ⌥⌘⌃) rides an HID event tap that
-  //     has no Windows equivalent, so `input_monitoring_status` and
-  //     `ensure_fn_listener` answer false there and Settings hides the chips.
-  //     Every trigger on Windows is an OS global shortcut (a recorded combo).
-  //   • The correction-learning loop below (observe the field we pasted into,
-  //     diff it, offer to remember the fix) needs the Accessibility API;
-  //     `observe_pasted_field` returns false on Windows, so no observation is
-  //     ever armed and no bubble is ever offered. The dictionary still biases
-  //     recognition on both platforms — it just isn't taught this way there.
+  // The hold-a-modifier trigger differs by keyboard: macOS holds fn / right
+  // ⌥⌘⌃ through an HID event tap, Windows holds right Ctrl / right Alt through
+  // a low-level keyboard hook (no fn or ⌘ there). Both emit the same
+  // `voicetyping://ptt` as a recorded combo, so nothing below can tell them
+  // apart.
+  //
+  // The correction-learning loop below (observe the field we pasted into, diff
+  // it, offer to remember the fix) runs on both: Rust reads the field through
+  // the Accessibility API on macOS and UI Automation on Windows, and emits the
+  // same event. A field that can't be read (Accessibility not granted, or a
+  // Windows app exposing neither ValuePattern nor TextPattern) just means no
+  // bubble for that dictation.
   // listen() resolves asynchronously — a cleanup that runs before it resolves
   // (StrictMode's dev double-mount of App) must still unlisten the late
   // arrival, or the second init's handlers double up for the app's lifetime.
@@ -224,7 +225,8 @@ export function initVoiceTyping(): () => void {
     }),
   );
   // Apply the saved push-to-talk key so the right trigger is live from launch
-  // (registers Option+Space, or arms the HID tap for a modifier key). The
+  // (registers the combo, or arms the HID tap / keyboard hook for a modifier
+  // key). The
   // Settings panel re-applies it whenever the user changes the selection.
   invoke("set_voice_typing_shortcut", {
     shortcut: useStore.getState().settings.voiceTypingShortcut,
@@ -612,8 +614,8 @@ async function armObservation(): Promise<void> {
     return;
   }
   if (!started) {
-    // Rust already logged why (no AX trust, no focused element, value not a
-    // readable string). Note it here too so the TS log tells the whole story.
+    // Rust already logged why (no AX trust, no foreground app, UI Automation
+    // unavailable). Note it here too so the TS log tells the whole story.
     log.info("voice-typing: field observation not armed");
     return;
   }

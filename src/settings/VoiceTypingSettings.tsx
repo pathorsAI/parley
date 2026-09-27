@@ -8,13 +8,8 @@ import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
 import { log } from "../lib/log";
 import { hasProviderKey } from "../lib/ai/settings";
-import {
-  isModifierId,
-  shortcutCaps,
-  MODIFIER_IDS,
-  MODIFIER_LABEL_KEYS,
-  type ModifierId,
-} from "../lib/voiceTyping/caps";
+import { isModifierId, modifierIdsFor, shortcutCaps } from "../lib/voiceTyping/caps";
+import { loneModifierRelease, MODIFIER_CODES } from "../lib/voiceTyping/recorder";
 import type { VoiceTypingMode, VoiceTypingShortcut } from "../lib/types";
 import { Button } from "@/components/ui/button";
 
@@ -24,44 +19,10 @@ interface HotkeyStatus {
   shortcut: string;
   /** How the trigger is wired: "combo" (OS global shortcut) | "tap-active"
    *  (HID tap, can swallow the key) | "tap-listen" (HID tap can only observe
-   *  the key — matters for fn, whose native 🌐 action still fires) | "none". */
+   *  the key — matters for fn, whose native 🌐 action still fires) | "hook"
+   *  (Windows low-level keyboard hook, observes only) | "none". */
   mode: string;
 }
-
-/** Keys that never end a recording on their own — we wait for the main key. */
-const MODIFIER_CODES = new Set([
-  "MetaLeft",
-  "MetaRight",
-  "AltLeft",
-  "AltRight",
-  "ControlLeft",
-  "ControlRight",
-  "ShiftLeft",
-  "ShiftRight",
-  "CapsLock",
-  "Fn",
-  "FnLock",
-]);
-
-/** Right-side modifiers double as hold-to-talk keys: releasing one alone while
- *  recording selects the matching HID-tap option instead of a combo. */
-const RIGHT_MODIFIER_BY_CODE: Record<string, ModifierId> = {
-  MetaRight: "right-command",
-  AltRight: "right-option",
-  ControlRight: "right-control",
-};
-
-/** Lone left-side/Shift releases are deliberately NOT selectable — they fire
- *  during every ordinary shortcut (⌘C, ⇧-typing…), so holding one would
- *  constantly collide. The recorder shows a hint pointing at the right-side
- *  chips instead. (fn never reaches the DOM at all; its chip is the only way.) */
-const LEFT_MODIFIER_CODES = new Set([
-  "MetaLeft",
-  "AltLeft",
-  "ControlLeft",
-  "ShiftLeft",
-  "ShiftRight",
-]);
 
 /** The combo id a recorded keydown selects, or null when the press needs a
  *  modifier (a bare letter would swallow ordinary typing system-wide). */
@@ -155,40 +116,27 @@ function useShortcutRecorder(
       );
     };
     // Users routinely press a lone modifier here hoping to pick it as a
-    // hold-key. A tap only becomes distinguishable from "start of a combo" at
-    // keyup, so react there: a lone right-side modifier is selected directly
-    // (same as clicking its chip below); left-side/Shift get an explanatory
-    // hint. Skipped as soon as any non-modifier key was involved.
+    // hold-key — see `loneModifierRelease` for what each one means. Skipped as
+    // soon as any non-modifier key was involved.
     const onKeyUp = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
       if (sawNonModifierRef.current) return;
-      // Holding a lone modifier is a macOS-only trigger: it rides an HID event
-      // tap that has no Windows counterpart, and `set_voice_typing_shortcut`
-      // would have nothing to register. So on Windows a lone release can only
-      // be explained, never selected — otherwise a stray ⌥ tap would silently
-      // store a trigger that never fires.
-      if (!isMac()) {
-        if (MODIFIER_CODES.has(e.code)) {
-          setRecordHint("settings.voiceTyping.recorder.modifierAloneWindows");
-        }
+      const outcome = loneModifierRelease(e.code, isMac());
+      if (!outcome) return;
+      if ("hint" in outcome) {
+        setRecordHint(outcome.hint);
         return;
       }
-      const rightId = RIGHT_MODIFIER_BY_CODE[e.code];
-      if (rightId) {
-        setRecording(false);
-        setRecordHint(null);
-        chooseShortcut(rightId).catch((error) =>
-          log.error("voice-typing: choose modifier shortcut failed", {
-            error: String(error),
-            shortcut: rightId,
-          }),
-        );
-        return;
-      }
-      if (LEFT_MODIFIER_CODES.has(e.code)) {
-        setRecordHint("settings.voiceTyping.recorder.leftModifier");
-      }
+      const shortcut = outcome.select;
+      setRecording(false);
+      setRecordHint(null);
+      chooseShortcut(shortcut).catch((error) =>
+        log.error("voice-typing: choose modifier shortcut failed", {
+          error: String(error),
+          shortcut,
+        }),
+      );
     };
     const cancel = () => {
       setRecording(false);
@@ -275,11 +223,12 @@ function describeTrigger(
  *   - Hold a single modifier key (fn / right ⌥⌘⌃): needs Input Monitoring —
  *     requested HERE, at the moment of picking the key (permissions follow the
  *     feature; the Permissions tab only carries the meeting-critical ones).
+ *     On Windows only right Ctrl / right Alt, through a low-level keyboard
+ *     hook that needs no permission; a hook that failed to install shows as
+ *     "not active" in the status badge.
  *
- * Only the first way exists on Windows. The hold-a-modifier chips, the Input
- * Monitoring warning and the Accessibility warning all describe a macOS event
- * tap or a macOS grant, so they are hidden there rather than shown dead —
- * Windows users get the recorder, the mode switch and the polish toggle.
+ * The Input Monitoring warning and the Accessibility warning describe macOS
+ * grants, so they are hidden on Windows rather than shown dead.
  *
  * Releasing the key always auto-pastes (no separate setting); on macOS the
  * Accessibility grant that needs is requested when voice typing is enabled
@@ -395,9 +344,8 @@ export const VoiceTypingSettings = () => {
   useShortcutRecorder(recording, chooseShortcut, setRecording, setRecordHint);
   if (!isTauri()) return null;
 
-  // Windows has neither the HID tap behind the hold-a-modifier triggers nor the
-  // Accessibility / Input Monitoring grants those and auto-paste ask for, so
-  // this panel is the recorder, the mode switch and the polish toggle there.
+  // Windows has none of the Accessibility / Input Monitoring grants the macOS
+  // tap and auto-paste ask for, so those warnings never show there.
   const mac = isMac();
   const selected = settings.voiceTypingShortcut;
   const { needsPermission, comboConflict, active, fnListenOnly } = describeTrigger(
@@ -446,8 +394,9 @@ export const VoiceTypingSettings = () => {
   // caption.
   const icon = recorderIcon(saving, recording);
   // The caption under the recorder names the ways a trigger can be picked, so
-  // it differs by platform: only macOS has the hold-a-modifier chips to point
-  // at. (While capture is armed the caption says how to back out instead.)
+  // it differs by platform: holding a key needs Input Monitoring only on
+  // macOS, and Windows adds the Alt+Space caveat. (While capture is armed the
+  // caption says how to back out instead.)
   const recorderHelpKey: TranslationKey = mac
     ? "settings.voiceTyping.recorder.help"
     : "settings.voiceTyping.recorder.helpWindows";
@@ -473,16 +422,6 @@ export const VoiceTypingSettings = () => {
               : t("settings.voiceTyping.enable")}
           </Button>
         </div>
-        {/* The dictionary's growth loop rides on watching the field we pasted
-            into, which is macOS accessibility observation — the Windows
-            observer is a stub that returns false, so no correction is ever
-            noticed there. Said once here, where someone who fixed the same
-            word three times would come looking. */}
-        {!mac && (
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            {t("settings.voiceTyping.correctionLearningWindows")}
-          </p>
-        )}
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -611,33 +550,31 @@ export const VoiceTypingSettings = () => {
           )}
         </div>
 
-        {/* Hold-a-modifier alternative (HID tap; needs Input Monitoring).
-            macOS only: the tap has no Windows counterpart, and the four ids it
-            offers aren't shortcuts the backend can register there. */}
-        {mac && (
-          <div className="flex items-center gap-2">
-            <span className="shrink-0 text-[11px] text-muted-foreground">
-              {t("settings.voiceTyping.modifierSection")}
-            </span>
-            <div className="grid flex-1 grid-cols-4 gap-1.5">
-              {MODIFIER_IDS.map((id) => (
-                <Button
-                  key={id}
-                  variant={selected === id ? "secondary" : "outline"}
-                  size="sm"
-                  className="h-7 justify-center px-1.5 text-[11px]"
-                  onClick={() =>
-                    chooseShortcut(id).catch((error) =>
-                      log.error("voice-typing: choose modifier shortcut failed", { error: String(error), shortcut: id }),
-                    )
-                  }
-                >
-                  {t(MODIFIER_LABEL_KEYS[id])}
-                </Button>
-              ))}
-            </div>
+        {/* Hold-a-modifier alternative: the HID tap on macOS (needs Input
+            Monitoring), a low-level keyboard hook on Windows (right Ctrl /
+            right Alt only — a PC keyboard has no fn or ⌘). */}
+        <div className="flex items-center gap-2">
+          <span className="shrink-0 text-[11px] text-muted-foreground">
+            {t("settings.voiceTyping.modifierSection")}
+          </span>
+          <div className={`grid flex-1 gap-1.5 ${mac ? "grid-cols-4" : "grid-cols-2"}`}>
+            {modifierIdsFor(mac).map((id) => (
+              <Button
+                key={id}
+                variant={selected === id ? "secondary" : "outline"}
+                size="sm"
+                className="h-7 justify-center px-1.5 text-[11px]"
+                onClick={() =>
+                  chooseShortcut(id).catch((error) =>
+                    log.error("voice-typing: choose modifier shortcut failed", { error: String(error), shortcut: id }),
+                  )
+                }
+              >
+                {shortcutCaps(id, t, mac)}
+              </Button>
+            ))}
           </div>
-        )}
+        </div>
 
         <p className="text-[11px] text-muted-foreground">
           {recording ? t("settings.voiceTyping.recorder.cancelHint") : t(recorderHelpKey)}
