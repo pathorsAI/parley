@@ -199,55 +199,84 @@ class MeetingUploader(
      */
     suspend fun drain(): DrainResult = drainMutex.withLock {
         val pending = withContext(Dispatchers.IO) { queue.list() }
+        val tally = DrainTally()
+
+        for (item in pending) {
+            if (!drainOne(item, tally)) break
+        }
+
+        DrainResult(
+            uploaded = tally.uploaded,
+            remaining = withContext(Dispatchers.IO) { queue.count() },
+            discarded = tally.discarded,
+            failure = tally.failure,
+            refused = tally.refused,
+        )
+    }
+
+    /** What one [drain] pass has done so far. */
+    private class DrainTally {
         var uploaded = 0
         var discarded = 0
         var failure: Throwable? = null
         val refused = LinkedHashMap<String, Throwable>()
+    }
 
-        for (item in pending) {
-            val audio = queue.audioFile(item.id)
-            if (!withContext(Dispatchers.IO) { audio.isFile && audio.length() > 0L }) {
-                // The manifest outlived its blob (an interrupted enqueue, or a user
-                // clearing app storage). It can never be uploaded, and keeping it
-                // would block the queue head forever.
-                withContext(Dispatchers.IO) { queue.remove(item.id) }
-                discarded++
-                continue
-            }
-            try {
-                uploadWithRetry(item, audio)
-                // The cloud now holds everything, so the *queue's* copy has done
-                // its job — unless the transcript that went up does not account
-                // for the audio that went with it, in which case the Ogg is the
-                // only thing that can still fix it and is handed to the backfill
-                // queue instead of retired.
-                if (!handOffForBackfill(item, audio)) {
-                    retireAudio(item.id, audio)
-                }
-                withContext(Dispatchers.IO) { queue.remove(item.id) }
-                uploaded++
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                failure = e
-                when (dispositionOf(e)) {
-                    UploadFailureDisposition.DROP -> {
-                        withContext(Dispatchers.IO) { queue.remove(item.id) }
-                        discarded++
-                        refused[item.id] = e
-                    }
-                    UploadFailureDisposition.STOP_PASS -> break
-                }
-            }
+    /**
+     * One recording's turn in a [drain] pass, recorded into [tally].
+     *
+     * @return false when the pass must stop here (see [dispositionOf]).
+     */
+    private suspend fun drainOne(item: PendingUpload, tally: DrainTally): Boolean {
+        val audio = queue.audioFile(item.id)
+        if (!withContext(Dispatchers.IO) { audio.isFile && audio.length() > 0L }) {
+            // The manifest outlived its blob (an interrupted enqueue, or a user
+            // clearing app storage). It can never be uploaded, and keeping it
+            // would block the queue head forever.
+            withContext(Dispatchers.IO) { queue.remove(item.id) }
+            tally.discarded++
+            return true
         }
+        return try {
+            uploadAndRetire(item, audio)
+            tally.uploaded++
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            onUploadFailed(item, e, tally)
+        }
+    }
 
-        DrainResult(
-            uploaded = uploaded,
-            remaining = withContext(Dispatchers.IO) { queue.count() },
-            discarded = discarded,
-            failure = failure,
-            refused = refused,
-        )
+    private suspend fun uploadAndRetire(item: PendingUpload, audio: File) {
+        uploadWithRetry(item, audio)
+        // The cloud now holds everything, so the *queue's* copy has done
+        // its job — unless the transcript that went up does not account
+        // for the audio that went with it, in which case the Ogg is the
+        // only thing that can still fix it and is handed to the backfill
+        // queue instead of retired.
+        if (!handOffForBackfill(item, audio)) {
+            retireAudio(item.id, audio)
+        }
+        withContext(Dispatchers.IO) { queue.remove(item.id) }
+    }
+
+    /** @return whether the pass carries on with the next recording. */
+    private suspend fun onUploadFailed(
+        item: PendingUpload,
+        e: Throwable,
+        tally: DrainTally,
+    ): Boolean {
+        tally.failure = e
+        return when (dispositionOf(e)) {
+            UploadFailureDisposition.DROP -> {
+                withContext(Dispatchers.IO) { queue.remove(item.id) }
+                tally.discarded++
+                tally.refused[item.id] = e
+                true
+            }
+            UploadFailureDisposition.STOP_PASS -> false
+        }
     }
 
     /**

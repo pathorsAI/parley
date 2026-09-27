@@ -16,6 +16,9 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
+/** A recording the server refuses for good (413). */
+private const val TOO_BIG = "too-big"
+
 /**
  * What one failed upload does to the rest of the queue — iOS
  * `MeetingUploader.syncPending` / `isTerminal`, except that a 402 is kept
@@ -117,7 +120,7 @@ class MeetingUploaderDrainTest {
 
     @Test
     fun `a recording the server refuses for good is dropped and the pass carries on`() = runBlocking {
-        val queue = queue("too-big", "next")
+        val queue = queue(TOO_BIG, "next")
         respond(413, """{"error":"payload_too_large"}""")
         respondUploaded()
 
@@ -126,11 +129,11 @@ class MeetingUploaderDrainTest {
         assertEquals(1, result.uploaded)
         assertEquals(1, result.discarded)
         assertEquals(0, result.remaining)
-        assertEquals(setOf("too-big"), result.refused.keys)
-        assertEquals(413, (result.refused.getValue("too-big") as CloudException).status)
+        assertEquals(setOf(TOO_BIG), result.refused.keys)
+        assertEquals(413, (result.refused.getValue(TOO_BIG) as CloudException).status)
         assertEquals("the refusal is still reported", 413, (result.failure as CloudException).status)
-        assertFalse("its audio goes with it", queue.audioFile("too-big").exists())
-        assertFalse(queue.manifestFile("too-big").exists())
+        assertFalse("its audio goes with it", queue.audioFile(TOO_BIG).exists())
+        assertFalse(queue.manifestFile(TOO_BIG).exists())
     }
 
     @Test

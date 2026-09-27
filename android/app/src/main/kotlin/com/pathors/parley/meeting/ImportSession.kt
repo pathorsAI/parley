@@ -200,27 +200,42 @@ class ImportSession(
     }
 
     private suspend fun runImport() {
-        val token = auth.currentToken()
-        if (token == null) {
-            _state.value = ImportState.Failed(ImportFailure.NOT_SIGNED_IN)
-            return
-        }
+        val token = auth.currentToken() ?: return fail(ImportFailure.NOT_SIGNED_IN)
 
         try {
             durationMs = AudioFileDecoder.probe(context, uri).durationMs
         } catch (e: AudioDecodeException) {
-            _state.value = ImportState.Failed(decodeFailure(e), e.message)
-            return
+            return fail(decodeFailure(e), e.message)
         }
 
         val encoder = try {
             OggOpusEncoder.create(newAudioFile())
         } catch (e: OpusEncodeException) {
-            _state.value = ImportState.Failed(ImportFailure.ENCODER_UNAVAILABLE, e.message)
-            return
+            return fail(ImportFailure.ENCODER_UNAVAILABLE, e.message)
         }
         this.encoder = encoder
 
+        val client = connectRelay(token)
+        publishRunning()
+        var decodedMs = decodeAndStream(encoder, client) ?: return
+        if (!drainRelayTail(client)) return
+
+        val audio = try {
+            withContext(Dispatchers.IO) { encoder.finish() }
+        } catch (e: OpusEncodeException) {
+            return fail(ImportFailure.ENCODER_UNAVAILABLE, e.message)
+        }
+        if (decodedMs <= 0L) decodedMs = encoder.durationMs
+
+        uploadAndFinish(audio, decodedMs)
+    }
+
+    private fun fail(reason: ImportFailure, detail: String? = null) {
+        _state.value = ImportState.Failed(reason, detail)
+    }
+
+    /** Opens the relay and starts listening to it; audio goes out via [decodeAndStream]. */
+    private suspend fun connectRelay(token: String): SttRelayClient {
         val client = SttRelayClient(
             SttRelayClient.Options(
                 bearerToken = token,
@@ -232,8 +247,16 @@ class ImportSession(
         relay = client
         eventsJob = scope.launch { client.events.collect(::onRelayEvent) }
         client.connect()
+        return client
+    }
 
-        publishRunning()
+    /**
+     * Decodes the whole file, feeding the encoder and the relay as it goes.
+     *
+     * @return the decoded duration in ms (0 when the decoder did not say), or
+     *   null when the import failed and [state] already says why.
+     */
+    private suspend fun decodeAndStream(encoder: OggOpusEncoder, client: SttRelayClient): Long? {
         var decodedMs = 0L
         try {
             AudioFileDecoder.decodeWithProgress(context, uri).collect { event ->
@@ -263,19 +286,29 @@ class ImportSession(
                 }
             }
         } catch (e: AudioDecodeException) {
-            abandon()
-            _state.value = ImportState.Failed(decodeFailure(e), e.message)
-            return
+            return abandonWith(decodeFailure(e), e.message)
         } catch (e: OpusEncodeException) {
-            abandon()
-            _state.value = ImportState.Failed(ImportFailure.ENCODER_UNAVAILABLE, e.message)
-            return
+            return abandonWith(ImportFailure.ENCODER_UNAVAILABLE, e.message)
         } catch (e: RelayFatalException) {
-            abandon()
-            _state.value = ImportState.Failed(e.verdict.failure, e.verdict.detail)
-            return
+            return abandonWith(e.verdict.failure, e.verdict.detail)
         }
+        return decodedMs
+    }
 
+    /** Tears the run down and reports [reason]; always null, for `return`. */
+    private fun abandonWith(reason: ImportFailure, detail: String?): Long? {
+        abandon()
+        fail(reason, detail)
+        return null
+    }
+
+    /**
+     * Sends `finalize` and waits for the relay to flush what it still holds.
+     *
+     * @return false when the relay ended the import meanwhile and [state]
+     *   already says why.
+     */
+    private suspend fun drainRelayTail(client: SttRelayClient): Boolean {
         finishSent = true
         runCatching { client.finish() }
         val tailArrived = withTimeoutOrNull(TAIL_TIMEOUT_MS) { eventsJob?.join(); true } ?: false
@@ -287,20 +320,13 @@ class ImportSession(
             noteRelay(ImportRelayVerdict.Degraded("relay tail timed out"))
         }
         // The quota can run out, or the session die, while the tail drains.
-        (relayVerdict as? ImportRelayVerdict.Fatal)?.let { fatal ->
-            abandon()
-            _state.value = ImportState.Failed(fatal.failure, fatal.detail)
-            return
-        }
+        val fatal = relayVerdict as? ImportRelayVerdict.Fatal ?: return true
+        abandonWith(fatal.failure, fatal.detail)
+        return false
+    }
 
-        val audio = try {
-            withContext(Dispatchers.IO) { encoder.finish() }
-        } catch (e: OpusEncodeException) {
-            _state.value = ImportState.Failed(ImportFailure.ENCODER_UNAVAILABLE, e.message)
-            return
-        }
-        if (decodedMs <= 0L) decodedMs = encoder.durationMs
-
+    /** Queues the recording, tries to upload it now, and reports how that went. */
+    private suspend fun uploadAndFinish(audio: File, decodedMs: Long) {
         val segments = finalSegments()
         val transcript = transcriptOutcome(segments, decodedMs)
         (relayVerdict as? ImportRelayVerdict.Degraded)?.let {
@@ -319,19 +345,15 @@ class ImportSession(
                 )
             )
         } catch (e: Throwable) {
-            _state.value = ImportState.Failed(ImportFailure.UPLOAD_FAILED, e.message)
-            return
+            return fail(ImportFailure.UPLOAD_FAILED, e.message)
         }
-        if (id == null) {
-            // Unreachable: only LIVE captures are ever dropped for length.
-            _state.value = ImportState.Failed(ImportFailure.UPLOAD_FAILED)
-            return
-        }
+        // Unreachable: only LIVE captures are ever dropped for length.
+        if (id == null) return fail(ImportFailure.UPLOAD_FAILED)
+
         val result = runCatching { uploader.drain() }.getOrNull()
         result?.refused?.get(id)?.let { refusal ->
             // Dropped, not queued: saying "saved" here would be the lie.
-            _state.value = ImportState.Failed(ImportFailure.UPLOAD_REFUSED, refusal.message)
-            return
+            return fail(ImportFailure.UPLOAD_REFUSED, refusal.message)
         }
         // A short transcript was just handed to the backfill queue by that
         // drain (or will be, by whichever drain finally uploads it). Start the
