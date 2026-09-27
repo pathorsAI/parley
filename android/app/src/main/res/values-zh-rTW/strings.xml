@@ -113,6 +113,10 @@
     <string name="meeting_discard_confirm">丟棄</string>
     <string name="meeting_connecting">連線中…</string>
     <string name="meeting_recording">錄音中</string>
+    <string name="meeting_recording_live">錄音中 · 即時逐字稿</string>
+    <string name="meeting_panel_resize">調整控制區高度</string>
+    <string name="meeting_panel_expand">展開控制區</string>
+    <string name="meeting_panel_collapse">收合控制區</string>
     <string name="meeting_finishing">正在收尾逐字稿…</string>
     <string name="meeting_uploading">上傳中…</string>
     <string name="meeting_uploaded">已上傳</string>

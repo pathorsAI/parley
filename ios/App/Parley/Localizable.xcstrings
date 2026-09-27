@@ -851,6 +851,24 @@
         }
       }
     },
+    "Compact" : {
+      "comment" : "Accessibility value: the recording controls panel is folded to one row",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compact"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "精簡"
+          }
+        }
+      }
+    },
     "Connecting transcription…" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1713,6 +1731,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "既有資料夾"
+          }
+        }
+      }
+    },
+    "Expanded" : {
+      "comment" : "Accessibility value: the recording controls panel is fully open",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expanded"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已展開"
           }
         }
       }
@@ -4105,6 +4141,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已回放"
+          }
+        }
+      }
+    },
+    "Resize controls" : {
+      "comment" : "Accessibility label for the grabber that resizes the recording controls panel",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resize controls"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "調整控制區高度"
           }
         }
       }

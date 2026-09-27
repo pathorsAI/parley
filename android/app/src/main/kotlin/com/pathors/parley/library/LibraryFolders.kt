@@ -42,6 +42,34 @@ object LibraryFolders {
         return folders.firstOrNull { it.id == id }?.name
     }
 
+    /**
+     * The library's pages, in the order the chip row draws them and a swipe
+     * walks them: All, Unfiled, then the folders in the server's order. With
+     * no folders there is no chip row, and so only All — the same rule as
+     * [reconcile], so the selected page is always one of these.
+     */
+    fun pages(folders: List<CloudFolder>): List<FolderFilter> =
+        if (folders.isEmpty()) {
+            listOf(FolderFilter.All)
+        } else {
+            listOf(FolderFilter.All, FolderFilter.Unfiled) + folders.map { FolderFilter.Folder(it.id) }
+        }
+
+    /**
+     * The page [step] pages away from [current] — the next one for +1, the
+     * previous for -1 — or null past either end: the row does not wrap, since
+     * a swipe that lands on All from the last folder reads as the list having
+     * jumped rather than moved on. A [current] that is not a page has no
+     * neighbours either.
+     */
+    fun adjacent(folders: List<CloudFolder>, current: FolderFilter, step: Int): FolderFilter? {
+        if (step == 0) return null
+        val pages = pages(folders)
+        val index = pages.indexOf(current)
+        if (index < 0) return null
+        return pages.getOrNull(index + step)
+    }
+
     /** [recordings] narrowed to one page of the chip row. */
     fun filter(
         recordings: List<RecordingSummary>,

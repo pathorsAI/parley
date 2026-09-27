@@ -644,6 +644,13 @@ struct RecordingDetailView: View {
                 faceSwitcher
                 if searching && face == .transcript { searchField }
             }
+            // Opaque as a whole, not piece by piece: both faces scroll *under*
+            // this block, and the filing card is deliberately see-through (its
+            // only fill is the highlight tint), so without a ground of its own
+            // the transcript showed through the card's title and chips on the
+            // way up. The sample recording always carries a pending card, which
+            // is where it read as a broken layout.
+            .background(Theme.background)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             guideBar

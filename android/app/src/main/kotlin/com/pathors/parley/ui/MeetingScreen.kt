@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -36,7 +37,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -51,6 +51,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,6 +61,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.app.ActivityCompat
@@ -78,7 +80,6 @@ import com.pathors.parley.meeting.MeetingSession
 import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.meeting.TranscriptionIssue
 import com.pathors.parley.screenshot.DemoMode
-import com.pathors.parley.ui.theme.ParleyTheme
 import com.pathors.parley.screenshot.rememberDemoMeeting
 import java.util.UUID
 import kotlinx.coroutines.delay
@@ -387,6 +388,23 @@ private fun MeetingContent(
         onDone()
     }
 
+    if (live) {
+        LiveMeetingLayout(
+            state = state,
+            segments = segments,
+            elapsed = elapsed,
+            level = level,
+            notices = liveNotices(
+                micLine = micLine(micRecovery, micSilenced, micBack),
+                storageLow = storageLow,
+                issue = issue,
+            ),
+            onStop = onStop,
+            onDiscard = onDiscard,
+        )
+        return
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -396,11 +414,6 @@ private fun MeetingContent(
         MeetingHeader(elapsed = elapsed, state = state, segments = segments)
         Spacer(Modifier.height(12.dp))
         LevelMeter(level = level, live = state is MeetingState.Recording)
-
-        if (live) {
-            MicStatusLine(micLine(micRecovery, micSilenced, micBack))
-            if (storageLow) StorageLowWarning()
-        }
 
         issue?.let { TranscriptionIssueLine(it) }
         interruptedFinish(state)?.let { InterruptedOutcome(it, onClose = close) }
@@ -418,16 +431,84 @@ private fun MeetingContent(
             onDone = close,
             openAdjust = demoFiling == DemoMode.MeetingScenario.ADJUST,
         )
-
-        if (live) {
-            StopButton(onStop)
-            DiscardControl(
-                onDiscard = onDiscard,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
-        }
         Spacer(Modifier.height(16.dp))
     }
+}
+
+/**
+ * The meeting while the microphone is (about to be) open: the live transcript
+ * on top, and under it the controls, which the user can drag shorter to give
+ * the transcript more room — see [LiveControlsPanel].
+ *
+ * Once the meeting stops the screen goes back to the layout in [MeetingContent]:
+ * the outcome, the filing suggestion and the way out are the news then, not the
+ * controls.
+ */
+@Composable
+private fun LiveMeetingLayout(
+    state: MeetingState,
+    segments: List<TranscriptSegment>,
+    elapsed: Long,
+    level: Float,
+    notices: List<PanelNotice>,
+    onStop: () -> Unit,
+    onDiscard: () -> Unit,
+) {
+    val context = LocalContext.current
+    val recording = state is MeetingState.Recording
+    val transcript = {
+        TranscriptClipboard.liveTranscript(segments) {
+            speakerLabel(context, it.speaker)
+        }
+    }
+    Column(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 16.dp),
+        ) {
+            LiveTranscript(segments)
+        }
+        LiveControlsPanel(
+            readout = LiveReadout(
+                recording = recording,
+                statusText = if (recording) {
+                    stringResource(R.string.meeting_recording_live)
+                } else {
+                    statusLabel(state)
+                },
+                elapsedMs = elapsed,
+                level = level,
+                notices = notices,
+            ),
+            onStop = onStop,
+            onDiscard = onDiscard,
+        ) {
+            // Copying works mid-meeting on purpose: the reason to grab a line
+            // is usually that it was just said.
+            CopyTranscriptButton(text = transcript, isEmpty = segments.isEmpty())
+            ShareTranscriptButton(text = transcript, isEmpty = segments.isEmpty())
+        }
+    }
+}
+
+/**
+ * Everything the live panel has to say about the recording's health, most
+ * urgent first: the one microphone line ([micLine]), the storage warning, and a
+ * transcription problem.
+ */
+@Composable
+private fun liveNotices(
+    micLine: MicLine?,
+    storageLow: Boolean,
+    issue: TranscriptionIssue?,
+): List<PanelNotice> = buildList {
+    micLine?.let { add(PanelNotice(micLineText(it), alarming = it.alarming)) }
+    if (storageLow) {
+        add(PanelNotice(stringResource(R.string.meeting_storage_low), alarming = true))
+    }
+    issue?.let { add(PanelNotice(stringResource(transcriptionIssueRes(it)), alarming = true)) }
 }
 
 /**
@@ -601,41 +682,6 @@ private fun MeetingHeader(elapsed: Long, state: MeetingState, segments: List<Tra
     }
 }
 
-/**
- * Louder than the transcription banner on purpose: a microphone that is
- * silenced, being fought for or gone means the audio itself is empty, which is
- * the one failure nothing later can recover from.
- */
-@Composable
-private fun MicStatusLine(line: MicLine?) {
-    if (line == null) return
-    Spacer(Modifier.height(12.dp))
-    Text(
-        text = micLineText(line),
-        style = MaterialTheme.typography.bodyMedium,
-        color = if (line.alarming) {
-            MaterialTheme.colorScheme.error
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        },
-    )
-}
-
-/**
- * Still recording, but not for much longer unless something is freed. The
- * session stops and saves on its own before the disk fills; this is the
- * warning that gives the user the chance to prevent that.
- */
-@Composable
-private fun StorageLowWarning() {
-    Spacer(Modifier.height(12.dp))
-    Text(
-        text = stringResource(R.string.meeting_storage_low),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.error,
-    )
-}
-
 @Composable
 private fun TranscriptionIssueLine(issue: TranscriptionIssue) {
     Spacer(Modifier.height(12.dp))
@@ -677,35 +723,6 @@ private fun FailedOutcome(failed: MeetingState.Failed, onClose: () -> Unit) {
     }
 }
 
-@Composable
-private fun StopButton(onStop: () -> Unit) {
-    val view = LocalView.current
-    Button(
-        onClick = {
-            // On the tap, not when the upload lands: the beat answers
-            // the press, and closing, draining and uploading are
-            // seconds of work.
-            MeetingHaptics.recordingStopped(view)
-            onStop()
-        },
-        modifier = Modifier
-            .fillMaxWidth()
-            // A minimum, not a height: at the largest accessibility font
-            // a fixed 56.dp clips the label it exists to show.
-            .defaultMinSize(minHeight = 56.dp)
-            .padding(vertical = 4.dp),
-        colors = ButtonDefaults.buttonColors(
-            // The recording red, not the error red. Since the brand
-            // palette landed these mean different things: this button is
-            // the state of the recording, not a fault.
-            containerColor = ParleyTheme.colors.recording,
-            contentColor = MaterialTheme.colorScheme.onError,
-        ),
-    ) {
-        Text(stringResource(R.string.action_stop))
-    }
-}
-
 /**
  * The way out for a recording that should not have started.
  *
@@ -726,7 +743,7 @@ private fun StopButton(onStop: () -> Unit) {
  * `.ogg` sat in the cache directory.
  */
 @Composable
-private fun DiscardControl(onDiscard: () -> Unit, modifier: Modifier = Modifier) {
+internal fun DiscardControl(onDiscard: () -> Unit, modifier: Modifier = Modifier) {
     val view = LocalView.current
     var confirming by rememberSaveable { mutableStateOf(false) }
     val label = stringResource(R.string.meeting_discard)
@@ -860,7 +877,7 @@ private fun micLineText(line: MicLine): String = when (line) {
  * A plain mutable box for the previous value an effect compares against. Not
  * snapshot state on purpose: writing it must not recompose anything.
  */
-private class StateRef<T>(var value: T)
+internal class StateRef<T>(var value: T)
 
 /** How long "Microphone is back" stays up after a recovery. */
 private const val MIC_BACK_NOTICE_MS = 4_000L
@@ -876,18 +893,21 @@ private fun failureMessage(reason: MeetingFailure): String = when (reason) {
     MeetingFailure.UNKNOWN -> stringResource(R.string.failure_unknown)
 }
 
-/** Twelve bars lit in proportion to the last chunk's RMS. */
+/** [bars] bars lit in proportion to the last chunk's RMS. */
 @Composable
-private fun LevelMeter(level: Float, live: Boolean) {
+internal fun LevelMeter(
+    level: Float,
+    live: Boolean,
+    modifier: Modifier = Modifier.fillMaxWidth(),
+    bars: Int = 12,
+    height: Dp = 20.dp,
+) {
     val animated by animateFloatAsState(
         targetValue = if (live) level.coerceIn(0f, 1f) else 0f,
         label = "level",
     )
-    val bars = 12
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(20.dp),
+        modifier = modifier.height(height),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -916,6 +936,8 @@ private fun LiveTranscript(segments: List<TranscriptSegment>) {
         if (segments.isNotEmpty()) listState.animateScrollToItem(segments.lastIndex)
     }
 
+    LaunchedEffect(listState) { listState.stayOnNewestAcrossResizes() }
+
     if (segments.isEmpty()) {
         Box(Modifier.fillMaxSize(), Alignment.Center) {
             Text(
@@ -934,38 +956,65 @@ private fun LiveTranscript(segments: List<TranscriptSegment>) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         items(segments, key = { it.id }) { segment ->
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = speakerLabel(context, segment.speaker),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = formatClock(segment.startMs),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline,
-                    )
-                }
-                Text(
-                    text = segment.text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (segment.isTail()) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                )
-            }
+            TranscriptLine(segment = segment, speaker = speakerLabel(context, segment.speaker))
         }
+    }
+}
+
+/**
+ * The controls under the transcript can be dragged taller or shorter mid-
+ * meeting. A reader who was on the newest line stays on it while the viewport
+ * changes size; one who had scrolled back is left where they were.
+ */
+private suspend fun LazyListState.stayOnNewestAcrossResizes() {
+    var lastHeight = 0
+    var atEnd = true
+    snapshotFlow { layoutInfo.viewportSize.height to canScrollForward }
+        .collect { (height, moreBelow) ->
+            val resized = lastHeight != 0 && height != lastHeight
+            lastHeight = height
+            if (resized && atEnd) scrollToNewest() else atEnd = !moreBelow
+        }
+}
+
+private suspend fun LazyListState.scrollToNewest() {
+    val last = layoutInfo.totalItemsCount - 1
+    if (last >= 0) scrollToItem(last)
+}
+
+/** One line of the live transcript: who, when, and what they said. */
+@Composable
+private fun TranscriptLine(segment: TranscriptSegment, speaker: String) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = speaker,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = formatClock(segment.startMs),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        Text(
+            text = segment.text,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (segment.isTail()) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+        )
     }
 }
 

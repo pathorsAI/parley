@@ -114,6 +114,10 @@
     <string name="meeting_discard_confirm">Discard</string>
     <string name="meeting_connecting">Connecting…</string>
     <string name="meeting_recording">Recording</string>
+    <string name="meeting_recording_live">Recording · live transcript</string>
+    <string name="meeting_panel_resize">Resize controls</string>
+    <string name="meeting_panel_expand">Expand controls</string>
+    <string name="meeting_panel_collapse">Collapse controls</string>
     <string name="meeting_finishing">Finishing the transcript…</string>
     <string name="meeting_uploading">Uploading…</string>
     <string name="meeting_uploaded">Uploaded</string>

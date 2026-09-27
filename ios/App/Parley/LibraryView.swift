@@ -24,6 +24,9 @@ struct LibraryView: View {
     /// id. Written by a chip tap and by the folder swipe, which move through
     /// `folderPages` in order.
     @State private var folderFilter: String?
+    /// Where the rows and the chip strip are, for `folderSwipe` to tell a
+    /// row's swipe from the page's.
+    @State private var swipeGeometry = SwipeGeometry()
     @State private var recordings: [CloudRecordingSummary] = []
     @State private var folders: [CloudFolder] = []
     @State private var loading = false
@@ -372,7 +375,9 @@ struct LibraryView: View {
     // MARK: list
 
     /// Chip row above, one folder's worth of recordings below, and a horizontal
-    /// swipe on the chip row moves between them.
+    /// swipe moves between folders — from anywhere on the page except a
+    /// recording row, which keeps its own swipe (leading download, trailing
+    /// delete).
     ///
     /// **A `TabView(selection:)` in `.page` style was tried first and it does not
     /// work here.** It pages beautifully, and it takes the rows' swipe actions
@@ -381,12 +386,27 @@ struct LibraryView: View {
     /// starts on a row. Measured, not guessed — an XCUITest drove a measured drag
     /// on a row with the pager in place (both actions failed to open) and again
     /// with the pager bypassed (both opened). Losing delete to gain paging is not
-    /// a trade worth making, so the drag lives on the chip row instead, where
-    /// nothing else wants it.
+    /// a trade worth making.
     ///
-    /// The chip row therefore stays put instead of scrolling away with the list —
-    /// a swipe target that scrolls off screen is a swipe target that mostly is
-    /// not there.
+    /// So the page reads the drag instead of paging on it: `folderSwipe` sits on
+    /// this whole container as a simultaneous gesture, which claims nothing —
+    /// the rows, the list's scroll and the chips all get the touch exactly as
+    /// before — and when the drag ends it asks where the finger went down. On a
+    /// row (every visible row reports its frame into `swipeGeometry`), the
+    /// swipe was the row's and the folder stays. Anywhere else — the space under
+    /// the last row, the gaps between rows (kept outside every cell, see
+    /// `RecordingRow.spacing`), the chips while they fit, the empty state, the
+    /// checklist — it steps to the neighbouring folder. The decision itself is
+    /// `FolderSwipe.step`, unit-tested in ParleyKit.
+    ///
+    /// Not covered: the navigation bar (title, search field) and the
+    /// Meetings / Voice typing picker. The first is UIKit's, outside this
+    /// view; the second already turns a horizontal drag into its own
+    /// selection change.
+    ///
+    /// The chip row stays put instead of scrolling away with the list, so the
+    /// selected folder is always named on screen while the list under it
+    /// changes.
     private var list: some View {
         VStack(spacing: 0) {
             if !folders.isEmpty {
@@ -394,6 +414,7 @@ struct LibraryView: View {
             }
             folderList(folderFilter)
         }
+        .simultaneousGesture(folderSwipe)
     }
 
     /// One folder's worth of the library.
@@ -411,7 +432,7 @@ struct LibraryView: View {
         List {
             if importer.isRunning || importNotice != nil {
                 importStatus
-                    .listRowInsets(EdgeInsets(top: 10, leading: 20, bottom: 10, trailing: 20))
+                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             }
@@ -430,7 +451,7 @@ struct LibraryView: View {
                     walkThrough: walkThroughSample,
                     continueLap: continueLap,
                     dismiss: { withAnimation { gettingStarted.dismiss() } })
-                    .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
+                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
                     .id(Self.checklistID)
@@ -449,6 +470,12 @@ struct LibraryView: View {
                     RecordingCard(
                         summary: rec, folders: folders, audio: downloads.state(for: rec.id))
                 }
+                .onGeometryChange(for: CGRect.self) { proxy in
+                    proxy.frame(in: .global)
+                } action: { frame in
+                    swipeGeometry.rows[rec.id] = frame
+                }
+                .onDisappear { swipeGeometry.rows[rec.id] = nil }
                 .modifier(RecordingRow())
                 .swipeActions(edge: .trailing) {
                     Button("Delete", systemImage: "trash", role: .destructive) {
@@ -470,7 +497,17 @@ struct LibraryView: View {
             }
         }
         .listStyle(.plain)
+        // The gap between rows lives here, outside every cell — see
+        // `RecordingRow.spacing` — and the list's own top and bottom margins
+        // stand in for the half-gap the first and last row used to carry.
+        .listRowSpacing(RecordingRow.spacing)
+        .contentMargins(.vertical, RecordingRow.spacing / 2, for: .scrollContent)
         .scrollContentBackground(.hidden)
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .global)
+        } action: {
+            swipeGeometry.list = $0
+        }
         .overlay { if loading && recordings.isEmpty && !checklist { ProgressView() } }
     }
 
@@ -543,13 +580,8 @@ struct LibraryView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 56)
+        .padding(.top, 42)
         .padding(.bottom, 24)
-        // The other place a folder swipe is safe: an empty folder has no rows to
-        // take the drag away from, and it is exactly where someone lands when
-        // they switch to a folder they have not filed anything into yet.
-        .contentShape(Rectangle())
-        .simultaneousGesture(folderSwipe)
     }
 
     /// The pages, in the order the chips and the swipe both run: everything,
@@ -558,25 +590,32 @@ struct LibraryView: View {
         [Self.allPage, Self.unfiledPage] + folders.map(\.id)
     }
 
-    /// Swipe left for the next folder, right for the previous one.
+    /// Swipe left for the next folder, right for the previous one — unless the
+    /// drag started on a recording row, whose swipe actions it was.
     ///
-    /// `simultaneousGesture`, so the chip row can still be scrolled and its chips
-    /// still tapped — this reads the drag, it does not claim it. The two
-    /// conditions are what keep it from firing on gestures that were meant for
-    /// something else: 60pt so a thumb resting and moving slightly does nothing,
-    /// and more horizontal than vertical so a diagonal flick towards the list
-    /// scrolls rather than switching folder.
+    /// `simultaneousGesture` on the whole page (see `list`), so the rows, the
+    /// list's scroll and the chips all still get their touches — this reads the
+    /// drag, it does not claim it.
+    ///
+    /// Measured in `.global`, the space the rows and the chip strip report
+    /// their frames in. Not a named space on `list`: a name set outside the
+    /// `List` does not reach into its cells, so a row asked for its frame in it
+    /// answers in window coordinates, and the hit test came out shifted by the
+    /// height of everything above the list — row swipes switched folder and the
+    /// blank area did not.
     ///
     /// The ends are ends: at `All` a rightward swipe has nowhere to go and the
     /// selection stays where it is, which is what the chip row already shows.
     private var folderSwipe: some Gesture {
-        DragGesture(minimumDistance: 20)
+        DragGesture(minimumDistance: 20, coordinateSpace: .global)
             .onEnded { drag in
-                let horizontal = drag.translation.width
-                guard abs(horizontal) >= 60,
-                    abs(horizontal) > abs(drag.translation.height)
+                guard
+                    let delta = FolderSwipe.step(
+                        start: drag.startLocation, translation: drag.translation,
+                        rows: swipeGeometry.rows.values, list: swipeGeometry.list,
+                        scrollingStrip: swipeGeometry.scrollingChipStrip)
                 else { return }
-                step(horizontal < 0 ? 1 : -1)
+                step(delta)
             }
     }
 
@@ -621,6 +660,20 @@ struct LibraryView: View {
                 }
                 .padding(.vertical, 4)
                 .padding(.horizontal, 2)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
+                    swipeGeometry.chipsWidth = $0
+                }
+            }
+            // While the chips fit, a swipe across them is a folder switch (see
+            // `SwipeGeometry.scrollingChipStrip`), and the strip rubber-banding
+            // under the finger at the same time would read as a scroll that
+            // went nowhere. Once they overflow, the strip scrolls as it always
+            // has and the switch is left to the rest of the page.
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .global)
+            } action: {
+                swipeGeometry.chipStrip = $0
             }
             .onChange(of: folderFilter) { _, _ in
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -631,10 +684,9 @@ struct LibraryView: View {
         .padding(.horizontal, 20)
         .padding(.top, 8)
         .padding(.bottom, 4)
-        // The whole strip is the swipe target, padding included, so the gesture
-        // does not require hitting a chip.
+        // The padding round the strip is page too, so a swipe that misses the
+        // chips still switches folder.
         .contentShape(Rectangle())
-        .simultaneousGesture(folderSwipe)
         // Carries the underline and the semibold to the new chip instead of
         // snapping them across.
         .animation(.easeInOut(duration: 0.2), value: folderFilter)
@@ -670,9 +722,8 @@ struct LibraryView: View {
         .buttonStyle(.plain)
     }
 
-    /// The rows one page shows. Takes the folder rather than reading
-    /// `folderFilter`, because every page of the pager is built at once and each
-    /// one has to filter by *its* folder, not by the selected one.
+    /// The rows one folder shows. Takes the folder as a parameter so the list
+    /// is plainly a function of the selection it is drawn for.
     ///
     /// The search text is deliberately not a parameter: it is one query across
     /// the whole library, so a search with the folder filter on "All" and the
@@ -931,6 +982,28 @@ private enum LibrarySection: Hashable {
     case voiceTyping
 }
 
+/// The frames the folder swipe hit-tests against, in `.global` coordinates.
+///
+/// A class held in `@State` rather than state itself: every visible row writes
+/// its frame on every frame of a scroll, and a write here must not rebuild the
+/// Library. Nothing draws from it — it is read once, when a drag ends.
+private final class SwipeGeometry {
+    /// Recording id → that row's frame. A row leaving the screen takes its
+    /// entry with it.
+    var rows: [String: CGRect] = [:]
+    /// The list's visible bounds, which the rows are clipped to.
+    var list: CGRect = .zero
+    var chipStrip: CGRect?
+    var chipsWidth: CGFloat = 0
+
+    /// The chip strip, while it has more chips than width and so scrolls on a
+    /// horizontal drag of its own. A fitting strip is just more of the page.
+    var scrollingChipStrip: CGRect? {
+        guard let chipStrip, chipsWidth > chipStrip.width + 0.5 else { return nil }
+        return chipStrip
+    }
+}
+
 private struct OpenedRecording: Hashable {
     let id: String
     /// nil = personal scope.
@@ -1066,12 +1139,20 @@ struct GettingStartedList: View {
 /// one stops.
 ///
 /// So all this modifier does is set the gutter and take the system furniture
-/// away. The vertical inset is the gap; the horizontal one lines the row up with
+/// away. The gap is `spacing`, below; the horizontal inset lines the row up with
 /// the folder chips and the navigation title above it.
 private struct RecordingRow: ViewModifier {
+    /// The gap between two rows. It is the list's row spacing and not the
+    /// rows' vertical insets, because a cell's insets are part of the cell: a
+    /// swipe that started in them opened that row's actions, where the gap
+    /// between two recordings is page, and a swipe there switches folder. With
+    /// the gap outside every cell the whitespace is the same and nothing owns
+    /// it. Lists that carry these rows set `.listRowSpacing(Self.spacing)`.
+    static let spacing: CGFloat = 28
+
     func body(content: Content) -> some View {
         content
-            .listRowInsets(EdgeInsets(top: 14, leading: 20, bottom: 14, trailing: 20))
+            .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
     }
@@ -1303,6 +1384,7 @@ private struct RecordingCard: View {
                 }
             }
             .listStyle(.plain)
+            .listRowSpacing(RecordingRow.spacing)
             .scrollContentBackground(.hidden)
             .background(Theme.background)
             .navigationTitle("Library")
@@ -1320,6 +1402,7 @@ private struct RecordingCard: View {
                 }
             }
             .listStyle(.plain)
+            .listRowSpacing(RecordingRow.spacing)
             .scrollContentBackground(.hidden)
             .background(Theme.background)
         }
