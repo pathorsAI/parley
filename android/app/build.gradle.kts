@@ -159,6 +159,8 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    // ProcessLifecycleOwner: "the app came back" drains the sync queues (AutoSync).
+    implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.datastore.preferences)
     // Media3/ExoPlayer plays the recording back. Its OggExtractor seeks
     // Opus streams natively, which is why Android needs none of the
