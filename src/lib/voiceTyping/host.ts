@@ -125,12 +125,11 @@ export function initVoiceTyping(): () => void {
   // Runs on macOS AND Windows. The whole dictation path — global shortcut,
   // overlay, STT, polish, clipboard, synthetic paste — is wired on both.
   //
-  // One macOS-only piece stays dark on Windows, and degrades to nothing rather
-  // than to a broken feature: the modifier-key trigger (fn / right ⌥⌘⌃) rides
-  // an HID event tap that has no Windows equivalent, so
-  // `input_monitoring_status` and `ensure_fn_listener` answer false there and
-  // Settings hides the chips. Every trigger on Windows is an OS global
-  // shortcut (a recorded combo).
+  // The hold-a-modifier trigger differs by keyboard: macOS holds fn / right
+  // ⌥⌘⌃ through an HID event tap, Windows holds right Ctrl / right Alt through
+  // a low-level keyboard hook (no fn or ⌘ there). Both emit the same
+  // `voicetyping://ptt` as a recorded combo, so nothing below can tell them
+  // apart.
   //
   // The correction-learning loop below (observe the field we pasted into, diff
   // it, offer to remember the fix) runs on both: Rust reads the field through
@@ -226,7 +225,8 @@ export function initVoiceTyping(): () => void {
     }),
   );
   // Apply the saved push-to-talk key so the right trigger is live from launch
-  // (registers Option+Space, or arms the HID tap for a modifier key). The
+  // (registers the combo, or arms the HID tap / keyboard hook for a modifier
+  // key). The
   // Settings panel re-applies it whenever the user changes the selection.
   invoke("set_voice_typing_shortcut", {
     shortcut: useStore.getState().settings.voiceTypingShortcut,
