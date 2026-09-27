@@ -103,6 +103,27 @@ function emptyStateCopy(
   return { title: t("library.unassigned.empty"), hint: t("library.unassigned.emptyHint") };
 }
 
+/** The delete dialog's words: in an org scope the action is "remove from the
+ *  org", everywhere else it is a delete. */
+function deleteDialogCopy(
+  t: Translate,
+  isOrg: boolean,
+  title: string
+): { title: string; body: string; confirmLabel: string } {
+  if (isOrg) {
+    return {
+      title: t("history.org.remove"),
+      body: t("history.org.removeConfirm", { title }),
+      confirmLabel: t("history.org.remove"),
+    };
+  }
+  return {
+    title: t("history.delete"),
+    body: t("history.deleteConfirm", { title }),
+    confirmLabel: t("common.delete"),
+  };
+}
+
 /** "+ Import": the shared import flow (R7) — audio → ingest wizard, .txt →
  *  transcript import. Lazy-loaded so the ingest module stays out of the
  *  initial bundle. Importing while a folder is open pre-picks that folder: the
@@ -580,13 +601,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         <ConfirmDialog
           // The trash button's own label doubles as the title, so the action
           // has one name whether it is read off a tooltip or off this dialog.
-          title={isOrg ? t("history.org.remove") : t("history.delete")}
-          body={
-            isOrg
-              ? t("history.org.removeConfirm", { title: pendingDelete.title })
-              : t("history.deleteConfirm", { title: pendingDelete.title })
-          }
-          confirmLabel={isOrg ? t("history.org.remove") : t("common.delete")}
+          {...deleteDialogCopy(t, isOrg, pendingDelete.title)}
           cancelLabel={t("common.cancel")}
           onConfirm={() => {
             const item = pendingDelete;

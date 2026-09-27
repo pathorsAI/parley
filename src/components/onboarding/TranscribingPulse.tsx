@@ -63,8 +63,8 @@ export function TranscribingPulse({ className }: Readonly<{ className?: string }
     return () => cancelAnimationFrame(id);
   }, []);
   return (
-    <span
-      role="status"
+    <output
+      aria-live="polite"
       data-testid="transcribing"
       className={cn("inline-flex h-8 min-w-40 items-center gap-2.5 text-xs text-muted-foreground", className)}
     >
@@ -75,6 +75,6 @@ export function TranscribingPulse({ className }: Readonly<{ className?: string }
         />
       </span>
       {t("onboarding.transcribing")}
-    </span>
+    </output>
   );
 }

@@ -79,6 +79,9 @@
   --sidebar-accent-foreground: oklch(0.52 0.19 260);
   --sidebar-border: oklch(0.205 0.02 257 / 8%);
   --sidebar-ring: oklch(0.6231 0.188 259.8145);
+  /* Onboarding motion: the one easing curve the first-run lap uses (see the
+     "onboarding motion" block below; mirrors OB_EASE in motion.ts). */
+  --ob-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .dark {
@@ -338,10 +341,8 @@ textarea,
    (the Web Animations API pieces are in src/lib/onboarding/motion.ts and use
    the same curve). One easing, 400–700 ms per beat; the only longer ones are
    the transcribing bar, which tracks its 1.5 s wait, and the looping dots.
-   Under reduced motion everything lands on its final state at once. */
-:root {
-  --ob-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
-}
+   Under reduced motion everything lands on its final state at once. Its
+   easing token, --ob-ease, is declared with the theme tokens in :root above. */
 @keyframes ob-scale-in {
   from { opacity: 0; transform: scale(0.85); }
   to { opacity: 1; transform: none; }

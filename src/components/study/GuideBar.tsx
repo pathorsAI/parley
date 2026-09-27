@@ -249,10 +249,10 @@ function CheckMark() {
 
 function CheckLine({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <p role="status" className="flex items-start gap-3 py-0.5 text-sm">
+    <output aria-live="polite" className="flex items-start gap-3 py-0.5 text-sm">
       <CheckMark />
       <span className="min-w-0 flex-1">{children}</span>
-    </p>
+    </output>
   );
 }
 

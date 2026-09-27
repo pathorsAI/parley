@@ -59,7 +59,7 @@ export function IntroStage() {
   } as const;
 
   return (
-    <div className="flex flex-col gap-2.5" aria-label={t("onboarding.stage.aria")} role="group">
+    <section className="flex flex-col gap-2.5" aria-label={t("onboarding.stage.aria")}>
       <div className="relative flex h-[204px] overflow-hidden rounded-lg border bg-background" data-testid="intro-stage">
         <MiniSidebar
           running={reached("folder")}
@@ -89,6 +89,7 @@ export function IntroStage() {
             running={reached("transcript")}
             instant={reduced}
             lines={manifest.segments.slice(0, 3).map((s) => ({
+              id: `${s.speaker}-${s.startMs}`,
               speaker: manifest.speakers[s.speaker],
               me: s.speaker === "me",
               text: s.text,
@@ -107,7 +108,7 @@ export function IntroStage() {
           {beat ? t(captionKey[beat]) : " "}
         </p>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -134,7 +135,7 @@ function TranscriptLines({
 }: Readonly<{
   running: boolean;
   instant: boolean;
-  lines: { speaker: string; me: boolean; text: string }[];
+  lines: { id: string; speaker: string; me: boolean; text: string }[];
 }>) {
   const schedule = useMemo(
     () => typingSchedule(lines.map((l) => l.text.length), TRANSCRIPT_BUDGET_MS, LINE_GAP_MS, TYPE_MS_PER_CHAR),
@@ -150,14 +151,14 @@ function TranscriptLines({
         if (shown <= 0) return null;
         const done = shown >= line.text.length;
         return (
-          <div key={i} className="flex flex-col">
+          <div key={line.id} className="flex flex-col">
             {/* The speaker is named once the line is in — the order a live
                 transcript resolves it. */}
             <span
               className={cn(
                 "h-3.5 text-[10px] font-semibold",
                 line.me ? "text-primary" : "text-muted-foreground",
-                done ? (instant ? "" : "ob-fade-in") : "invisible"
+                speakerRevealClass(done, instant)
               )}
             >
               {line.speaker}
@@ -170,6 +171,12 @@ function TranscriptLines({
       })}
     </div>
   );
+}
+
+/** The speaker name hides while its line types, then fades in (or just shows when instant). */
+function speakerRevealClass(done: boolean, instant: boolean): string {
+  if (!done) return "invisible";
+  return instant ? "" : "ob-fade-in";
 }
 
 function MiniSidebar({
