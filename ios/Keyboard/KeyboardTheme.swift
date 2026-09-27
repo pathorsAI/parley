@@ -204,8 +204,9 @@ enum KBMetrics {
     static let voiceBottom: CGFloat = 11
 
     /// The live-transcript slot. Fixed height, so beginning to speak never
-    /// resizes the keyboard: idle it holds the prompt, listening it holds up to
-    /// three lines of what is being heard.
+    /// resizes the keyboard: idle it holds the prompt, listening it shows the
+    /// newest three lines of what is being heard and scrolls back for the rest
+    /// (`TranscriptScroll`).
     static let textHeight: CGFloat = 74
     static let textToDeck: CGFloat = 12
 

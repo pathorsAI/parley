@@ -132,7 +132,33 @@ final class DictationChannelTests: XCTestCase {
         let value = try JSONDecoder().decode(DictationChannel.Uplink.self, from: json)
         XCTAssertTrue(value.stopRequested)
         XCTAssertFalse(value.wantsCancel)
+        XCTAssertFalse(value.wantsSkipPolish)
         XCTAssertEqual(value.insertedCount, 7)
+    }
+
+    func testUplinkCarriesTheSkipPolishAlongsideTheStop() throws {
+        // Tapping the button while the transcript is being polished is written
+        // as a stop *and* a skip, so an app that does not know the skip still
+        // hears "end this session" — and one that does inserts the raw words.
+        let back = try roundTrip(
+            DictationChannel.Uplink(
+                session: "s", stopRequested: true, skipPolishRequested: true, insertedCount: 3))
+        XCTAssertTrue(back.stopRequested)
+        XCTAssertTrue(back.wantsSkipPolish)
+        XCTAssertFalse(back.wantsCancel)
+        XCTAssertEqual(back.insertedCount, 3)
+    }
+
+    func testUplinkWithoutASkipFromThisBuildDecodesAsNoSkip() throws {
+        // The build that added `cancelRequested` but not the skip: its uplink
+        // must still decode, with the skip read as absent rather than as a
+        // mailbox that fails and swallows a ⏹ or a ✕.
+        let json = Data(
+            #"{"session":"s","stopRequested":true,"cancelRequested":true,"insertedCount":0}"#.utf8)
+        let value = try JSONDecoder().decode(DictationChannel.Uplink.self, from: json)
+        XCTAssertNil(value.skipPolishRequested)
+        XCTAssertFalse(value.wantsSkipPolish)
+        XCTAssertTrue(value.wantsCancel)
     }
 
     // MARK: microphone level
