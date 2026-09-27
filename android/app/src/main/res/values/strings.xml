@@ -128,6 +128,12 @@
     <string name="meeting_mic_lost_taken">Something else is holding the microphone. Everything recorded so far is safe; bring Parley to the front to try again.</string>
     <string name="meeting_mic_lost_broken">The microphone stopped working. Everything recorded so far is safe — stop the meeting to save it.</string>
     <string name="meeting_storage_low">This phone is nearly out of storage. Parley will stop and save the recording before it runs out.</string>
+    <string name="meeting_mic_back">Microphone is back — still recording</string>
+    <string name="meeting_mic_lost_broken_detail">Lost the microphone: %1$s. Everything recorded so far is safe — stop the meeting to save it.</string>
+    <string name="meeting_stopped_mic">Stopped early — lost the microphone</string>
+    <string name="meeting_stopped_mic_permission">Stopped early — microphone access was turned off</string>
+    <string name="meeting_stopped_storage">Stopped early — this phone ran out of storage</string>
+    <string name="meeting_stopped_other">Stopped early — something went wrong</string>
     <string name="meeting_title_format">Meeting %1$s</string>
     <string name="speaker_label">Speaker %1$d</string>
     <string name="speaker_unknown">Speaker</string>
