@@ -473,16 +473,6 @@ export const VoiceTypingSettings = () => {
               : t("settings.voiceTyping.enable")}
           </Button>
         </div>
-        {/* The dictionary's growth loop rides on watching the field we pasted
-            into, which is macOS accessibility observation — the Windows
-            observer is a stub that returns false, so no correction is ever
-            noticed there. Said once here, where someone who fixed the same
-            word three times would come looking. */}
-        {!mac && (
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            {t("settings.voiceTyping.correctionLearningWindows")}
-          </p>
-        )}
       </div>
 
       <div className="flex flex-col gap-1.5">

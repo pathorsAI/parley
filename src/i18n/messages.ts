@@ -379,8 +379,6 @@ export const zhTW = {
   "settings.voiceTyping.title": "語音輸入",
   "settings.voiceTyping.hint": "長按觸發鍵說話，放開自動貼上（並複製到剪貼簿）。",
   "settings.voiceTyping.pushToTalk": "Push-to-Talk 語音輸入",
-  "settings.voiceTyping.correctionLearningWindows":
-    "「從你的修正學習」目前只在 macOS 有效：那裡 Parley 會看著剛貼上的欄位，發現你把某個字改掉就問要不要記進詞庫。Windows 不會觀察任何欄位，詞條請自己到「設定 › 詞庫」新增。",
   "settings.voiceTyping.enable": "啟用",
   "settings.voiceTyping.disable": "停用",
   "settings.voiceTyping.polish": "AI 潤飾",
@@ -715,7 +713,8 @@ export const zhTW = {
   "settings.dictionary.delete": "刪除這一筆",
   "settings.dictionary.empty": "還沒有任何詞。加入常被聽錯的名字、產品名或術語，之後的語音輸入與會議轉錄都會照著寫。",
   "settings.dictionary.limitNote": "詞條超過 {limit} 筆，只有最新的 {limit} 筆會用來輔助辨識；替換規則則全部都會生效。",
-  "settings.dictionary.privacy": "隱私：詞庫只存在這台電腦上，不會上傳。（僅限 macOS）語音輸入貼上後，Parley 會觀察那一個欄位 60 秒，看你有沒有把字改掉；前後比對在本機完成後隨即丟棄，不會存檔、也不會上傳。",
+  "settings.dictionary.privacy":
+    "隱私：詞庫只存在這台電腦上，不會上傳。語音輸入貼上後，Parley 會觀察那一個欄位 60 秒（macOS 透過「輔助使用」、Windows 透過 UI Automation 讀取），看你有沒有把字改掉；前後比對在本機完成後隨即丟棄，不會存檔、也不會上傳。不開放讀取內容的欄位（例如部分 Electron app）不會被觀察，也就不會從那裡學習。",
   "settings.evaluations.title": "評估模板",
   "settings.evaluations.templateHelp": "評估模板（套用後會取代目前啟用的清單）",
   "settings.evaluations.templateMeta": "{type} · {count} 項",
@@ -1552,8 +1551,6 @@ export const en = {
   "settings.voiceTyping.title": "Voice typing",
   "settings.voiceTyping.hint": "Hold the trigger key to talk; release to auto-paste (also copied to the clipboard).",
   "settings.voiceTyping.pushToTalk": "Push-to-talk voice typing",
-  "settings.voiceTyping.correctionLearningWindows":
-    "Learning from your corrections is macOS-only: there Parley watches the field it just pasted into and offers to remember a word you fixed. On Windows no field is watched, so add terms yourself under Settings › Phrase dictionary.",
   "settings.voiceTyping.enable": "Enable",
   "settings.voiceTyping.disable": "Disable",
   "settings.voiceTyping.polish": "AI polish",
@@ -1893,7 +1890,7 @@ export const en = {
   "settings.dictionary.limitNote":
     "Past {limit} entries only the newest {limit} bias recognition; every replacement still applies.",
   "settings.dictionary.privacy":
-    "Privacy: the dictionary stays on this machine and is never uploaded. On macOS, Parley also watches the field it just pasted into — only that field, only for 60 seconds — to notice a word you fixed; that before/after comparison runs here and is discarded, never stored, never uploaded.",
+    "Privacy: the dictionary stays on this machine and is never uploaded. After voice typing pastes, Parley watches the field it just pasted into — only that field, only for 60 seconds, read through Accessibility on macOS and UI Automation on Windows — to notice a word you fixed; that before/after comparison runs here and is discarded, never stored, never uploaded. Fields an app doesn't expose (some Electron apps, for example) are not watched, so no correction is learned there.",
   "settings.evaluations.title": "Evaluations",
   "settings.evaluations.templateHelp": "Templates (applying one replaces the active list)",
   "settings.evaluations.templateMeta": "{type} · {count} items",
