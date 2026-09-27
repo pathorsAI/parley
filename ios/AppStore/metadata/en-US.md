@@ -83,6 +83,18 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.22
+
+Your first lap through Parley now shows you what it does, instead of listing it.
+
+Load the sample call from the Library and a guide walks you through three steps on the recording itself: Parley proposes a title and a folder (accept both in one tap, or pick another folder from a searchable list), you tap a line to jump the audio there, and you share the transcript — with an analysis prompt and three questions already written — to ChatGPT or Claude. Each step ticks off from the thing you actually did. The sign-in page opens with a short film of the app assembling itself.
+
+Summary and transcript are two pages now, not one long scroll.
+
+A recording opens on its summary — what was said in a paragraph, the action items, the highlights with their timestamps, the speakers — and the transcript sits one tap away under the same player. Tap a timestamp in the summary and the transcript opens at that line. Recordings with no analysis yet offer to generate one with your AI instead of showing an empty page.
+
+Keyboard: hold a key on the English or 注音 pane to see it magnified above your finger; the English pane predicts the next word and offers the space you missed; the voice pane's tab is a microphone.
+
 ## What's New — 1.21
 
 What you dictate is kept, so words that never landed are one tap away.
