@@ -37,6 +37,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +60,7 @@ import com.pathors.parley.R
 import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.kit.FolderSearch
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 /**
@@ -104,66 +106,14 @@ fun FolderPickerSheet(
     // The picker is a list someone searches, so it takes the room up front.
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
-    var query by remember { mutableStateOf("") }
-    var creating by remember { mutableStateOf(false) }
-    // A TextFieldValue so the name prefilled from the search opens with the
-    // cursor at its end, where someone finishing the name will type.
-    var newName by remember { mutableStateOf(TextFieldValue("")) }
-    var busy by remember { mutableStateOf(false) }
-    var createFailed by remember { mutableStateOf(false) }
+    val picker = remember { FolderPickerState() }
+    val target = PickerTarget(folders, currentFolderId, onSelect, onCreate, onDismiss)
 
     val unfiled = stringResource(R.string.library_folder_unfiled)
-    val matches = remember(folders, query) { FolderSearch.filter(folders, query) { it.name } }
-    val trimmed = FolderSearch.normalized(query)
+    val matches = remember(folders, picker.query) { FolderSearch.filter(folders, picker.query) { it.name } }
+    val trimmed = FolderSearch.normalized(picker.query)
     // Unfiled is a place too; it answers to its own name like a folder does.
-    val showsUnfiled = FolderSearch.matches(unfiled, query)
-
-    fun select(folderId: String?) {
-        if (busy) return
-        if (folderId != currentFolderId) onSelect(folderId)
-        onDismiss()
-    }
-
-    fun openCreate() {
-        newName = TextFieldValue(trimmed, selection = TextRange(trimmed.length))
-        createFailed = false
-        creating = true
-    }
-
-    // A name that already exists is a pick, not a second folder with the same
-    // customer in it.
-    fun create() {
-        val name = FolderSearch.normalized(newName.text)
-        val create = onCreate ?: return
-        if (name.isEmpty() || busy) return
-        FolderSearch.exactMatch(folders, name) { it.name }?.let { existing ->
-            select(existing.id)
-            return
-        }
-        busy = true
-        createFailed = false
-        scope.launch {
-            try {
-                create(name)
-                onDismiss()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                createFailed = true
-                busy = false
-            }
-        }
-    }
-
-    // Return in the search field: one match is a pick, no match is the create
-    // row opened with the name already in it.
-    fun submitSearch() {
-        if (trimmed.isEmpty()) return
-        when {
-            matches.size == 1 -> select(matches.single().id)
-            matches.isEmpty() && onCreate != null -> openCreate()
-        }
-    }
+    val showsUnfiled = FolderSearch.matches(unfiled, picker.query)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -178,115 +128,266 @@ fun FolderPickerSheet(
         // to: a sheet that shrank with every keystroke would jump under the
         // thumb, and at full height the top inset above sits where it belongs.
         Column(Modifier.fillMaxSize()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 24.dp, end = 12.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.folder_picker_title),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = stringResource(R.string.folder_picker_subtitle),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
-            }
-
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                placeholder = { Text(stringResource(R.string.folder_picker_search)) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        IconButton(onClick = { query = "" }) {
-                            Icon(Icons.Default.Clear, stringResource(R.string.action_clear))
-                        }
-                    }
-                },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { submitSearch() }),
+            PickerHeader(onDismiss)
+            PickerSearchField(
+                query = picker.query,
+                onQueryChange = { picker.query = it },
+                onSearch = { picker.submitSearch(target, matches, trimmed) },
             )
             Spacer(Modifier.size(8.dp))
             HorizontalDivider()
-
-            LazyColumn(
+            PickerList(
+                list = PickerListModel(
+                    matches = matches,
+                    currentFolderId = currentFolderId,
+                    unfiledLabel = unfiled,
+                    showsUnfiled = showsUnfiled,
+                    showsNoMatch = FolderPickerRules.showsNoMatch(matches.size, showsUnfiled, onCreate != null),
+                    busy = picker.busy,
+                ),
+                createRow = if (onCreate != null) {
+                    {
+                        CreateRow(
+                            picker = picker,
+                            named = FolderPickerRules.offersNamedCreate(trimmed, matches.size),
+                            trimmed = trimmed,
+                            onCreate = { picker.create(target, scope) },
+                        )
+                    }
+                } else {
+                    null
+                },
+                onSelect = { folderId -> picker.select(target, folderId) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
-                contentPadding = PaddingValues(bottom = 24.dp),
-            ) {
-                if (onCreate != null) {
-                    item(key = "create") {
-                        if (creating) {
-                            CreateField(
-                                name = newName,
-                                onNameChange = {
-                                    newName = it
-                                    createFailed = false
-                                },
-                                busy = busy,
-                                failed = createFailed,
-                                onCreate = ::create,
-                            )
-                        } else {
-                            PickerRow(
-                                icon = LibraryIcons.NewFolder,
-                                title = if (trimmed.isNotEmpty() && matches.isEmpty()) {
-                                    stringResource(R.string.folder_picker_create_named, trimmed)
-                                } else {
-                                    stringResource(R.string.folder_picker_new)
-                                },
-                                accent = true,
-                                isCurrent = false,
-                                enabled = !busy,
-                                onClick = ::openCreate,
-                            )
-                        }
-                    }
-                }
-                items(matches, key = { "folder-" + it.id }) { folder ->
-                    PickerRow(
-                        icon = LibraryIcons.Folder,
-                        title = folder.name,
-                        isCurrent = folder.id == currentFolderId,
-                        enabled = !busy,
-                        onClick = { select(folder.id) },
-                    )
-                }
-                if (showsUnfiled) {
-                    item(key = "unfiled") {
-                        PickerRow(
-                            icon = LibraryIcons.Unfiled,
-                            title = unfiled,
-                            isCurrent = currentFolderId == null,
-                            enabled = !busy,
-                            onClick = { select(null) },
-                        )
-                    }
-                }
-                if (matches.isEmpty() && !showsUnfiled && onCreate == null) {
-                    item(key = "none") {
-                        Text(
-                            text = stringResource(R.string.folder_picker_no_match),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
-                        )
-                    }
-                }
+            )
+        }
+    }
+}
+
+/** What the sheet was opened with: the folders, where the recording is, and the caller's moves. */
+private class PickerTarget(
+    val folders: List<CloudFolder>,
+    val currentFolderId: String?,
+    val onSelect: (String?) -> Unit,
+    val onCreate: (suspend (String) -> Unit)?,
+    val onDismiss: () -> Unit,
+)
+
+/** The sheet's own state: the search, and the create row once it is open. */
+@Stable
+private class FolderPickerState {
+    var query by mutableStateOf("")
+    var creating by mutableStateOf(false)
+
+    // A TextFieldValue so the name prefilled from the search opens with the
+    // cursor at its end, where someone finishing the name will type.
+    var newName by mutableStateOf(TextFieldValue(""))
+    var busy by mutableStateOf(false)
+    var createFailed by mutableStateOf(false)
+
+    fun select(target: PickerTarget, folderId: String?) {
+        if (busy) return
+        if (folderId != target.currentFolderId) target.onSelect(folderId)
+        target.onDismiss()
+    }
+
+    fun openCreate(trimmed: String) {
+        newName = TextFieldValue(trimmed, selection = TextRange(trimmed.length))
+        createFailed = false
+        creating = true
+    }
+
+    fun editName(value: TextFieldValue) {
+        newName = value
+        createFailed = false
+    }
+
+    fun submitSearch(target: PickerTarget, matches: List<CloudFolder>, trimmed: String) {
+        when (FolderPickerRules.submitAction(trimmed, matches.size, target.onCreate != null)) {
+            FolderPickerRules.SubmitAction.PICK_ONLY_MATCH -> select(target, matches.single().id)
+            FolderPickerRules.SubmitAction.OPEN_CREATE -> openCreate(trimmed)
+            FolderPickerRules.SubmitAction.NOTHING -> Unit
+        }
+    }
+
+    fun create(target: PickerTarget, scope: CoroutineScope) {
+        val create = target.onCreate
+        when (val action = FolderPickerRules.createAction(newName.text, target.folders, create != null, busy)) {
+            FolderPickerRules.CreateAction.Ignore -> Unit
+            is FolderPickerRules.CreateAction.PickExisting -> select(target, action.folderId)
+            is FolderPickerRules.CreateAction.Create -> if (create != null) {
+                launchCreate(scope, action.name, create, target.onDismiss)
             }
         }
+    }
+
+    /** The create request itself. A throw keeps the sheet up with the error under the field. */
+    private fun launchCreate(
+        scope: CoroutineScope,
+        name: String,
+        create: suspend (String) -> Unit,
+        onDismiss: () -> Unit,
+    ) {
+        busy = true
+        createFailed = false
+        scope.launch {
+            try {
+                create(name)
+                onDismiss()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                createFailed = true
+                busy = false
+            }
+        }
+    }
+}
+
+/** The rows under the search field, as the list draws them. */
+private class PickerListModel(
+    val matches: List<CloudFolder>,
+    val currentFolderId: String?,
+    val unfiledLabel: String,
+    val showsUnfiled: Boolean,
+    val showsNoMatch: Boolean,
+    val busy: Boolean,
+)
+
+@Composable
+private fun PickerHeader(onDismiss: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 24.dp, end = 12.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.folder_picker_title),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = stringResource(R.string.folder_picker_subtitle),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+    }
+}
+
+@Composable
+private fun PickerSearchField(query: String, onQueryChange: (String) -> Unit, onSearch: () -> Unit) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        placeholder = { Text(stringResource(R.string.folder_picker_search)) },
+        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(Icons.Default.Clear, stringResource(R.string.action_clear))
+                }
+            }
+        },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+    )
+}
+
+/**
+ * The create row first (null where there is no create), then the matching
+ * folders, then Unfiled, and "no match" when there is nothing at all.
+ */
+@Composable
+private fun PickerList(
+    list: PickerListModel,
+    createRow: (@Composable () -> Unit)?,
+    onSelect: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(bottom = 24.dp),
+    ) {
+        if (createRow != null) {
+            item(key = "create") { createRow() }
+        }
+        items(list.matches, key = { "folder-" + it.id }) { folder ->
+            PickerRow(
+                icon = LibraryIcons.Folder,
+                title = folder.name,
+                isCurrent = folder.id == list.currentFolderId,
+                enabled = !list.busy,
+                onClick = { onSelect(folder.id) },
+            )
+        }
+        if (list.showsUnfiled) {
+            item(key = "unfiled") {
+                PickerRow(
+                    icon = LibraryIcons.Unfiled,
+                    title = list.unfiledLabel,
+                    isCurrent = list.currentFolderId == null,
+                    enabled = !list.busy,
+                    onClick = { onSelect(null) },
+                )
+            }
+        }
+        if (list.showsNoMatch) {
+            item(key = "none") { NoMatchRow() }
+        }
+    }
+}
+
+@Composable
+private fun NoMatchRow() {
+    Text(
+        text = stringResource(R.string.folder_picker_no_match),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+    )
+}
+
+/**
+ * The create row: "New folder…" (or "Create “…”" when [named]), and once tapped
+ * the name field with Create.
+ */
+@Composable
+private fun CreateRow(
+    picker: FolderPickerState,
+    named: Boolean,
+    trimmed: String,
+    onCreate: () -> Unit,
+) {
+    if (picker.creating) {
+        CreateField(
+            name = picker.newName,
+            onNameChange = picker::editName,
+            busy = picker.busy,
+            failed = picker.createFailed,
+            onCreate = onCreate,
+        )
+    } else {
+        PickerRow(
+            icon = LibraryIcons.NewFolder,
+            title = if (named) {
+                stringResource(R.string.folder_picker_create_named, trimmed)
+            } else {
+                stringResource(R.string.folder_picker_new)
+            },
+            accent = true,
+            isCurrent = false,
+            enabled = !picker.busy,
+            onClick = { picker.openCreate(trimmed) },
+        )
     }
 }
 
