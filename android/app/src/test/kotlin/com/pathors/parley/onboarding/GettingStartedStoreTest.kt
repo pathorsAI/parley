@@ -3,6 +3,7 @@ package com.pathors.parley.onboarding
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import com.pathors.parley.kit.GettingStartedState
 import com.pathors.parley.kit.GettingStartedStep
+import com.pathors.parley.screenshot.DemoMode
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -33,6 +35,12 @@ class GettingStartedStoreTest {
     val temporary = TemporaryFolder()
 
     private val scopes = mutableListOf<CoroutineScope>()
+
+    /** Demo mode is process-wide; with it on, the store reads and writes its in-memory checklist instead. */
+    @Before
+    fun setUp() {
+        DemoMode.disable()
+    }
 
     @After
     fun tearDown() {
@@ -155,6 +163,18 @@ class GettingStartedStoreTest {
     }
 
     @Test
+    fun `writes land in the order they were asked for`() {
+        val store = store(file())
+        store.mark(GettingStartedStep.RECORDED)
+        store.reset()
+        store.mark(GettingStartedStep.FILED)
+
+        val state = store.awaitState { it.filed }
+
+        assertFalse("the reset came after the first tick", state.recorded)
+    }
+
+    @Test
     fun `a stored value that no longer decodes reads as absent`() {
         assertNull(GettingStartedStore.decode("{not json"))
         val state = GettingStartedState(recorded = true)
@@ -163,6 +183,7 @@ class GettingStartedStoreTest {
 
     private companion object {
         const val NOW = 1_786_498_800_000L
-        const val TIMEOUT_MS = 5_000L
+        /** A safety margin for a loaded CI runner, not a wait anything should need. */
+        const val TIMEOUT_MS = 20_000L
     }
 }

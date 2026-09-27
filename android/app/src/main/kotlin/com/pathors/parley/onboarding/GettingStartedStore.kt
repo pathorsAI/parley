@@ -12,16 +12,24 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.pathors.parley.kit.GettingStartedState
 import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.screenshot.DemoMode
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.retryWhen
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
@@ -91,18 +99,50 @@ class GettingStartedStore(
         }.onFailure { Log.w(TAG, "could not initialise the checklist", it) }
     }
 
+    /** Completed by [preferences]' first read, or by its first failure. [write]s wait for it. */
+    private val firstRead = CompletableDeferred<Unit>()
+
     /**
-     * The stored preferences, read only once the migration above has written.
+     * The stored preferences: the store's one collector of `store.data`, shared
+     * by [state] and [existingUserChecked], started once the migration above
+     * has written.
      *
-     * Not `store.data` straight away: a collector that starts on a brand-new
-     * file while that first write is in flight can miss the write entirely —
-     * seen in the unit tests one run in three, the list then never appearing —
-     * and waiting for the write costs one disk round trip at launch.
+     * One collector, and no write in flight while it starts, because DataStore
+     * (1.1.x) can lose a write to a collector that starts during it. The reader
+     * that cannot take the file lock labels what it read with the version
+     * counter it saw *before* trying the lock, and a write bumps that counter
+     * before it writes the file. So a read that lands between the bump and the
+     * write returns the old contents under the new version, and when the write
+     * then publishes the new contents under that same version the collector
+     * drops them as "not newer" — the flow simply never shows the write. That
+     * is why nothing is written until this has read once (see the writer in
+     * `init`), and why the migration is awaited before it starts.
+     *
+     * A failed read (a file another instance has not let go of yet, an I/O
+     * error) is retried rather than allowed to end the flow: an ended flow
+     * would leave [state] at null for good, the list never drawn.
      */
-    private val preferences: Flow<Preferences> = flow {
-        initialized.await()
-        emitAll(store.data)
-    }
+    private val preferences: SharedFlow<Preferences> =
+        flow {
+            initialized.await()
+            emitAll(store.data)
+        }
+            .onEach { firstRead.complete(Unit) }
+            .retryWhen { cause, attempt ->
+                if (cause is CancellationException) return@retryWhen false
+                firstRead.complete(Unit)
+                Log.w(TAG, "could not read the checklist; retrying", cause)
+                delay((attempt + 1).coerceAtMost(MAX_READ_RETRY_STEPS) * READ_RETRY_DELAY_MS)
+                true
+            }
+            .shareIn(scope, SharingStarted.Eagerly, replay = 1)
+
+    /**
+     * The writes, in the order they were asked for. One coroutine drains it
+     * (see `init`), so a [reset] followed by a [mark] can never land the other
+     * way round.
+     */
+    private val writes = Channel<suspend (MutablePreferences) -> Unit>(Channel.UNLIMITED)
 
     /**
      * Suspends until the first-launch migration has written. The sample store
@@ -133,6 +173,25 @@ class GettingStartedStore(
         combine(DemoMode.enabled, preferences) { demo, preferences ->
             demo || preferences[LIBRARY_CHECKED_KEY] == true
         }.stateIn(scope, SharingStarted.Eagerly, false)
+
+    init {
+        // The one writer. It starts after the migration (which every write must
+        // land on) and after the first read (see [preferences]), then applies
+        // the queue strictly in order, one edit at a time.
+        scope.launch {
+            initialized.await()
+            firstRead.await()
+            for (transform in writes) {
+                try {
+                    store.edit(transform)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "could not save the checklist", e)
+                }
+            }
+        }
+    }
 
     /**
      * Tick an item, from the code path where the event actually succeeded.
@@ -197,12 +256,9 @@ class GettingStartedStore(
         }
     }
 
+    /** Queue [transform]. Fire-and-forget: it lands after every write queued before it. */
     private fun write(transform: suspend (MutablePreferences) -> Unit) {
-        scope.launch {
-            initialized.await()
-            runCatching { store.edit(transform) }
-                .onFailure { Log.w(TAG, "could not save the checklist", it) }
-        }
+        writes.trySend(transform)
     }
 
     private fun current(preferences: Preferences): GettingStartedState =
@@ -211,6 +267,9 @@ class GettingStartedStore(
     companion object {
         private val STATE_KEY = stringPreferencesKey("getting-started.v1")
         private val LIBRARY_CHECKED_KEY = booleanPreferencesKey("getting-started.library-checked")
+
+        private const val READ_RETRY_DELAY_MS = 500L
+        private const val MAX_READ_RETRY_STEPS = 10L
 
         private val json = Json { ignoreUnknownKeys = true }
 
