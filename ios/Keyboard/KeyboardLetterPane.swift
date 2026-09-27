@@ -92,7 +92,7 @@ struct LetterPane: View, Equatable {
                 GlobeKey(controller: bridge.controller, dark: dark)
                     .frame(width: m.unit, height: KBMetrics.keyHeight)
             }
-            KeyButton(dark: dark, width: m.unit, action: { bridge.type("@") }) {
+            KeyButton(dark: dark, width: m.unit, callout: "@", action: { bridge.type("@") }) {
                 Text(verbatim: "@").font(.system(size: 22))
             }
             .equatable()
@@ -117,7 +117,7 @@ struct LetterPane: View, Equatable {
     /// A letter, shown and inserted in whatever case shift currently says.
     private func letterKey(_ character: Character, width: CGFloat) -> some View {
         let text = shift.isOn ? character.uppercased() : String(character)
-        return KeyButton(dark: dark, width: width, action: { type(text) }) {
+        return KeyButton(dark: dark, width: width, callout: text, action: { type(text) }) {
             Text(verbatim: text).font(.system(size: 24))
         }
         .equatable()

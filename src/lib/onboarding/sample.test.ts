@@ -17,7 +17,16 @@ vi.mock("../log", () => ({
 const toastError = vi.fn();
 vi.mock("sonner", () => ({ toast: { error: (...a: unknown[]) => toastError(...a), message: vi.fn(), success: vi.fn() } }));
 
-import { buildSampleEntry, isSampleEntry, loadSampleRecording, sampleManifest, sampleQuestions } from "./sample";
+import {
+  buildSampleEntry,
+  isSampleEntry,
+  loadSampleRecording,
+  recentFolders,
+  sampleFilingSuggestion,
+  sampleManifest,
+  sampleQuestions,
+} from "./sample";
+import { evaluateStages, factsOf } from "../analysis/studyPipeline";
 import type { SampleManifest } from "./sample";
 import { speakerLabel, useStore } from "../store";
 import type { HistoryEntry } from "../history/types";
@@ -80,13 +89,8 @@ describe("buildSampleEntry (manifest → library entry)", () => {
       durationMs: m.durationMs,
       meetingKind: "sales",
       meetingContext: m.context,
-      analyzed: false,
-      filingSuggested: false,
-      filingSuggestion: null,
       folderId: null,
       audio: "audio.ogg",
-      findings: [],
-      actionItems: [],
     });
     expect(entry.segments).toHaveLength(m.segments.length);
     expect(entry.segments.map((s) => [s.startMs, s.endMs, s.text])).toEqual(
@@ -94,6 +98,114 @@ describe("buildSampleEntry (manifest → library entry)", () => {
     );
     expect(new Set(entry.segments.map((s) => s.id)).size).toBe(entry.segments.length);
     expect(isSampleEntry(entry)).toBe(true);
+  });
+
+  it("arrives already analysed: brief, findings and action items from the manifest", () => {
+    const m = sampleManifest("zh-TW");
+    const entry = buildSampleEntry(m, 0);
+
+    expect(entry.analyzed).toBe(true);
+    expect(entry.brief).toBe(m.brief);
+    expect(entry.findings).toHaveLength(m.findings.length);
+    entry.findings.forEach((f, i) => {
+      expect(f).toEqual({
+        id: `sample-f-${i}`,
+        source: "extra",
+        atMs: m.findings[i].atMs,
+        side: m.findings[i].side,
+        severity: m.findings[i].severity,
+        title: m.findings[i].title,
+        detail: m.findings[i].detail,
+        quotes: m.findings[i].quotes,
+      });
+    });
+    expect(entry.actionItems).toHaveLength(m.actionItems.length);
+    for (const [i, a] of entry.actionItems.entries()) {
+      expect(a).toMatchObject({ text: m.actionItems[i].text, atMs: m.actionItems[i].atMs, done: false, linkedEventId: null });
+    }
+    expect(new Set(entry.actionItems.map((a) => a.id)).size).toBe(entry.actionItems.length);
+  });
+
+  it("arrives already suggested: the manifest title and a new folder", () => {
+    const m = sampleManifest("zh-TW");
+    const entry = buildSampleEntry(m, 0);
+
+    expect(entry.filingSuggested).toBe(true);
+    expect(entry.filingSuggestion).toEqual({
+      title: m.suggestion.title,
+      folders: [{ folderId: null, name: "泓昇科技", reason: m.suggestion.folders[0].reason }],
+    });
+    expect(entry.filingSuggestion!.title).not.toBe(entry.title);
+  });
+
+  it("offers up to two existing folders after the new one, three chips at most", () => {
+    const m = sampleManifest("en");
+    const existing = [
+      { id: "a", name: "Acme" },
+      { id: "b", name: "Beta" },
+      { id: "c", name: "Gamma" },
+    ];
+    const s = sampleFilingSuggestion(m, existing);
+    expect(s.folders).toEqual([
+      { folderId: null, name: m.suggestion.folders[0].name, reason: m.suggestion.folders[0].reason },
+      { folderId: "a", name: "Acme", reason: "Existing folder" },
+      { folderId: "b", name: "Beta", reason: "Existing folder" },
+    ]);
+    expect(sampleFilingSuggestion(sampleManifest("zh-TW"), existing).folders[1].reason).toBe("既有資料夾");
+  });
+
+  it("points at a folder that already carries the suggested name instead of creating it twice", () => {
+    const m = sampleManifest("zh-TW");
+    const s = sampleFilingSuggestion(m, [{ id: "x", name: "Other" }, { id: "hs", name: "泓昇科技" }]);
+    expect(s.folders.map((f) => f.folderId)).toEqual(["hs", "x"]);
+  });
+
+  it("orders existing folders by most recent use, skipping archived ones", () => {
+    const folders = [
+      { id: "old", name: "Old", createdAt: 1 },
+      { id: "used", name: "Used", createdAt: 2 },
+      { id: "fresh", name: "Fresh", createdAt: 5 },
+      { id: "gone", name: "Gone", createdAt: 9, archivedAt: 10 },
+    ];
+    const library = [
+      { folderId: "old", createdAt: 100 },
+      { folderId: "used", createdAt: 300 },
+      { folderId: "gone", createdAt: 999 },
+      { folderId: null, createdAt: 50 },
+    ];
+    expect(recentFolders(folders, library).map((f) => f.id)).toEqual(["used", "old", "fresh"]);
+  });
+
+  it("does not send the study pipeline after the sample once it is open", () => {
+    const m = sampleManifest("zh-TW");
+    const entry = buildSampleEntry(m, 0);
+    useStore.getState().updateSettings({ autoStudyAnalysis: true });
+    useStore.getState().loadHistory(entry, {
+      id: entry.id,
+      name: entry.title,
+      audioPath: "",
+      audioSrc: "",
+      durationMs: entry.durationMs,
+      audioOffsetMs: 0,
+      createdAt: 0,
+      segments: entry.segments,
+      speakerNames: entry.speakerNames,
+      speechRateHz: null,
+    });
+    const s = useStore.getState();
+    expect(s.analysisStatus).toBe("done");
+    expect(s.actionItemsStatus).toBe("done");
+    expect(s.briefStatus).toBe("done");
+    expect(s.filingStatus).toBe("done");
+    expect(s.filingSuggestion?.title).toBe(m.suggestion.title);
+    // Even with every key present and auto-analysis on, nothing runs — not even
+    // the delivery read, the one output the manifest doesn't carry.
+    const facts = { ...factsOf(s), hasDeepKey: true, hasRealtimeKey: true };
+    expect(facts.autoAnalyze).toBe(false);
+    expect(evaluateStages(facts)).toEqual([]);
+    // A manual regenerate on the sample is still the user's call.
+    useStore.setState({ studyManualForId: entry.id });
+    expect(factsOf(useStore.getState()).autoAnalyze).toBe(true);
   });
 
   it("drops a meeting kind the app doesn't know rather than saving it", () => {
@@ -116,7 +228,13 @@ describe("loadSampleRecording", () => {
     const audioCall = invoke.mock.calls.find((c) => c[0] === "write_sample_audio")!;
     expect(audioCall[1]).toBeInstanceOf(Uint8Array);
     expect(audioCall[2]).toEqual({ headers: { "x-entry-id": id } });
-    expect(savedMeta()).toMatchObject({ id, source: "upload", speakerNames: { "me-1": "You", "them-1": "Mr. Lin" } });
+    expect(savedMeta()).toMatchObject({
+      id,
+      source: "upload",
+      speakerNames: { "me-1": "You", "them-1": "Mr. Lin" },
+      analyzed: true,
+      filingSuggested: true,
+    });
     expect(useStore.getState().settings.gettingStarted.recorded).toBe(true);
   });
 

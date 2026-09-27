@@ -78,6 +78,16 @@ All methods are `suspend` and throw `CloudException` on a non-2xx response.
 | `uploadAudio(id, ogg: File)` | `PUT /recordings/{id}/audio`, `Content-Type: audio/ogg`, raw file body |
 | `pushRecording(id, summary, meta): Double?` | `POST /recordings/{id}` `{summary, meta}` → server `updatedAt` |
 | `deleteRecording(id)` | `DELETE /recordings/{id}` |
+| `refileRecording(id, folderId, summary?)` | `GET /recordings/{id}/meta`, then `POST /recordings/{id}` with the fresh meta and summary carrying the new `folderId` — an explicit `null` in **both** halves to un-file; `updatedAt` never echoed back |
+| `shareRecording(id, orgId, folderId?)` | `POST /recordings/{id}/share` `{orgId, folderId?}` — server-side copy into an org. Not idempotent (a new org-side id per call) |
+| `listFolders(): List<CloudFolder>` | `GET /folders` → `{ folders }` (filter `orgId == null` for the personal ones) |
+| `createFolder(name, id?, createdAtMs?): CloudFolder` | `POST /folders` `{id, name, createdAt}` — the id is a client-minted lowercase UUID, so a retry re-syncs the same folder; a `{ folder }` response is used when present |
+| `myOrgs(): List<CloudOrg>` | `GET /orgs/mine` → bare array, each with the caller's `role` (`owner` / `admin` / `member`); a non-array reads as none |
+| `orgRecordings(orgId)` | `GET /orgs/{orgId}/recordings` → `{ recordings }` |
+| `orgRecordingMeta(orgId, id)` | `GET /orgs/{orgId}/recordings/{id}/meta` |
+| `orgFolders(orgId)` | `GET /orgs/{orgId}/folders` → `{ folders }` |
+| `deleteOrgRecording(orgId, id)` | `DELETE /orgs/{orgId}/recordings/{id}` — uploader, owner or admin; 403 otherwise |
+| `moveOrgRecordingToFolder(orgId, id, folderId?)` | `PATCH /orgs/{orgId}/recordings/{id}/folder` `{folderId}` (explicit `null` = org root) |
 | `signOut()` | `POST /auth/sign-out` (prefer `AuthManager.signOut()`) |
 | `deleteAccount()` | `DELETE /me` — permanent account deletion. See below. |
 
@@ -85,9 +95,12 @@ All methods are `suspend` and throw `CloudException` on a non-2xx response.
 row claiming `hasAudio` before its blob exists 404s the download on every other
 device. `MeetingUploader` already does this; hand-rolled push paths must too.
 
-Not implemented (exists on the backend and on iOS, unused by this app so far):
-folders, organizations, `POST /recordings/{id}/share`. They are additive — no
-caller changes when they land.
+**Move semantics** (the desktop's and iOS's): a personal folder move is a meta
+re-push; an org folder move is the dedicated `PATCH`; "share to organization" is
+`shareRecording`; "move to organization" is `shareRecording` *then*
+`deleteRecording`, never the other order, so a failure half-way leaves the
+original. Creating and managing organizations, and renaming or deleting folders,
+are not in this client.
 
 ### Deleting the account
 
@@ -148,17 +161,47 @@ val queuedId = uploader.finishAndUpload(
   importing it was explicit.
 - Segments are filtered to finals, minus the tentative `"-tail"` segment.
 - `drain(): DrainResult` uploads everything waiting, oldest first, 3 attempts per
-  recording with 1 s / 2 s / 4 s backoff for transient failures. A non-retryable
-  failure stops the pass (iOS breaks out rather than spinning a failing loop over
-  the whole queue); the next drain picks up in order. Passes are serialized by an
-  internal mutex, so calling it from several places is safe.
-- Files are deleted **only** after both cloud steps succeed. Call `drain()` on app
-  start, after sign-in, and when connectivity returns.
-- `DrainResult(uploaded, remaining, discarded, failure)` — `signedOut` and
-  `quotaExhausted` are convenience reads of `failure`. `discarded` counts
-  manifests whose blob had vanished (unuploadable forever; they would otherwise
-  block the queue head).
+  recording with 1 s / 2 s / 4 s backoff for transient failures (transport, 5xx,
+  408, 429). What happens after that is iOS `MeetingUploader.syncPending`'s rule
+  (`MeetingUploader.dispositionOf`), except for 402:
+  - **401, 402, 403, 408, 425, 429, 5xx, transport** — something later clears it
+    (signing in, the quota resetting, access, waiting, the network): the pass
+    **stops** with the queue untouched, and the next drain picks up in order.
+    402 is not retried within the pass either — one request, then stop.
+  - **any other 4xx** (400, 404, 413, …) — the server will refuse the identical
+    request forever: that recording is **dropped**, audio and all, and the pass
+    carries on. Left in place it would jam every recording behind it.
+  - **missing or empty audio file** — dropped without a request, pass carries on.
+
+  iOS `isTerminal` drops a 402'd recording. Android deliberately keeps it: iOS's
+  own importer promises the recording "will sync once the quota resets", and a
+  drop breaks that promise, so the drop is treated as an iOS bug rather than a
+  contract to mirror.
+
+  Passes are serialized by an internal mutex, so calling it from several places
+  is safe.
+- Files are otherwise deleted **only** after both cloud steps succeed. Drains run
+  on app start, after sign-in, at the end of a meeting or an import, from "Upload
+  now", and from `AutoSync` whenever a validated network comes back or the app
+  returns to the foreground (debounced by `SyncDebouncer`: a network must hold
+  for 3 s, and passes start at least 30 s apart). Nothing drains once the process
+  is gone — a WorkManager job is the follow-up for that.
+- `DrainResult(uploaded, remaining, discarded, failure, refused)` — `signedOut`
+  and `quotaExhausted` are convenience reads of `failure`. `discarded` counts
+  every recording the pass dropped (vanished blob or permanent refusal);
+  `refused` maps the ids the server refused to the refusal, so a caller that just
+  queued a recording can tell "dropped" from "uploaded" before saying "saved".
 - `pendingCount()` backs a "N waiting to upload" badge.
+- **Where it goes.** `EnqueueRequest.destination` (a `SaveDestination`) wins,
+  then `EnqueueRequest.folderId` (a personal folder), then the uploader's
+  `defaultDestination` — wired to `SaveLocationStore`, the account sheet's
+  "Default save location". It is resolved once, at enqueue, into the manifest's
+  `folderId` / `shareOrgId` / `shareFolderId`.
+- **Organization destinations** upload to the personal root exactly as always and
+  then run a third step, `POST /recordings/{id}/share` into the org (and org
+  folder). Order: audio → push → share. A transient or 401 share failure stops
+  the pass and the whole (idempotent) upload is retried later; any other 4xx is
+  swallowed, leaving the recording personal-only.
 
 `PendingUploadQueue` is the durable store on its own if you need it directly
 (`list()`, `remove(id)`, `audioFile(id)`, `count()`, `bytesOnDisk()`). Its methods
@@ -189,7 +232,7 @@ sent (`encodeDefaults = true`): `findingsCount: 0` is part of the contract.
   "actionItemsCount": 0,
   "hasAudio": true,
   "snippet": "…",            // first 3 final lines joined by " ", capped at 120 chars
-  "folderId": "…"            // omitted at the personal root
+  "folderId": "…"            // omitted at the personal root on upload; explicit null when un-filing
   // "updatedAt" is server-assigned; never pushed
 }
 ```
@@ -226,7 +269,8 @@ as a history entry, so the key names are load-bearing.
   "meetingFloor": "",
   "audio": "audio.ogg",
   "analyzed": false,         // the findings/action-items pipeline has not run
-  "folderId": "…"            // written ONLY when set — absent means the personal root
+  "folderId": "…"            // on upload, written ONLY when set — absent means the personal root.
+                             // A re-file writes it always, null to un-file (RecordingMeta.withFolderId).
 }
 ```
 
@@ -261,8 +305,10 @@ user-assigned name, or null.
 | Token store | Keychain | Preferences DataStore (app-private; no Android equivalent survives reinstall) |
 | Callback URL | `parley://auth/cb` | `parley://auth-callback` (the manifest filter; the backend accepts any `parley://`) |
 | `source` | always `"live"` | `"live"` or `"upload"` — Android imports audio files |
-| Queue manifest | `{id, startedAt, durationMs, segments, defaultSave}` | `{id, title, source, startedAtMs, durationMs, segments, folderId}` — the title is carried (an import is named after its file, and copy belongs to the UI); `defaultSave` is org-sharing, which Android does not surface |
+| Queue manifest | `{id, startedAt, durationMs, segments, defaultSave}` | `{id, title, source, startedAtMs, durationMs, segments, folderId, shareOrgId, shareFolderId}` — the title is carried (an import is named after its file, and copy belongs to the UI); `defaultSave` is flattened into the personal folder plus the org copy to make |
+| Share refused after upload | 403 stops the pass (retried later) | any 4xx other than 401/408/429 is swallowed and the recording stays personal — it has already uploaded, and a stop-at-first-failure queue must not be held by a membership change |
 | Short recordings | dropped under 2 s | dropped under 2 s **for live capture only** — silently discarding a file the user deliberately imported would be a bug |
 | Audio upload | whole file in memory | streamed from disk |
-| Retries | one attempt per drain | 3 attempts with backoff, then the pass stops (same "don't spin" rule) |
+| Retries | one attempt per drain | 3 attempts with backoff for transient failures, then iOS's stop-or-drop rule |
+| 402 on upload | dropped (`isTerminal`) | **kept**, pass stops — iOS's importer promises it "will sync once the quota resets"; the iOS drop is a bug |
 | Segment type | `ParleyKit.TranscriptSegment` | `cloud.TranscriptSegmentDto` — a wire DTO, deliberately separate from the `:parleykit` STT type so the on-the-wire names stay pinned. Map at the call site. |

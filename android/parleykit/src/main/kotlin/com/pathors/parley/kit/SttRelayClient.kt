@@ -34,8 +34,23 @@ sealed interface SttRelayEvent {
     /** Stream ended: normally (`finished`/server close after finalize) or not. */
     data class Closed(val reason: String) : SttRelayEvent
 
-    /** The stream died — in-band Soniox error frame, or a rejected handshake. */
-    data class Error(val message: String) : SttRelayEvent
+    /**
+     * The stream died — in-band Soniox error frame, or a rejected handshake.
+     *
+     * [httpStatus] is set only for a rejected handshake, where it is the HTTP
+     * status the relay answered the upgrade with (401 unauthorized, 429
+     * too_many_sessions, …). It is null for an in-band error frame: that code is
+     * the transcription vendor's, not the relay's verdict on the caller, so a
+     * vendor-side 401 must never read as "your session is dead".
+     */
+    data class Error(val message: String, val httpStatus: Int? = null) : SttRelayEvent {
+        /** The relay refused this session's token: the caller has to sign in again. */
+        val isUnauthorized: Boolean get() = httpStatus == HTTP_UNAUTHORIZED
+
+        private companion object {
+            const val HTTP_UNAUTHORIZED = 401
+        }
+    }
 
     /**
      * The account ran out of hosted STT quota. A distinguished case of [Error]
@@ -95,7 +110,7 @@ sealed interface SttRelayEvent {
  * of it would be pointless, so it throttles itself against the socket and then
  * hands over through the same queue, keeping one ordered path to the wire.
  */
-class SttRelayClient(private val options: Options) {
+class SttRelayClient(private val options: Options) : PcmSink {
 
     /**
      * @property bearerToken cloud session token for the `Authorization` header.
@@ -260,8 +275,12 @@ class SttRelayClient(private val options: Options) {
      * reading — the oldest chunk in it is dropped to make room. Transcription
      * loses a few seconds and the microphone loses nothing, which is the only
      * ordering of those two that is recoverable afterwards.
+     *
+     * A live meeting does not call this directly: it goes through
+     * [RelayAudioBridge], which holds the audio spoken while there is no leg
+     * and flushes it into the next one.
      */
-    fun enqueuePcm(bytes: ByteArray) {
+    override fun enqueuePcm(bytes: ByteArray) {
         if (terminated.get()) return
         outbound.trySend(bytes)
     }
@@ -448,7 +467,7 @@ class SttRelayClient(private val options: Options) {
         return if (response.code == HTTP_PAYMENT_REQUIRED) {
             SttRelayEvent.QuotaExceeded(message)
         } else {
-            SttRelayEvent.Error(message)
+            SttRelayEvent.Error(message, httpStatus = response.code)
         }
     }
 

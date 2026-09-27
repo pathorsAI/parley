@@ -56,6 +56,23 @@ interface Script {
   lines: { speaker: Side; text: string }[];
   questions: string[];
   mcpQuestions: string[];
+  /** The filing the app "suggests" for the sample — prewritten so the first
+   *  lap shows the rename-and-file moment without a model, a key or a network. */
+  suggestion: { title: string; folders: { name: string; reason: string }[] };
+  /** Prewritten analysis, keyed by 1-based line number; resolved to `atMs`
+   *  from the rendered segments so the timestamps are exact. `{Ln}` tokens in
+   *  the brief become `[m:ss]`. */
+  analysis: {
+    brief: string;
+    findings: {
+      line: number;
+      side: "me" | "them";
+      severity: "info" | "warn" | "critical";
+      title: string;
+      detail: string;
+    }[];
+    actionItems: { text: string; line: number }[];
+  };
 }
 
 interface Segment {
@@ -154,6 +171,23 @@ function renderScript(file: string): void {
       oggPath,
     ]);
 
+    const lineStart = (line: number): number => {
+      const seg = segments[line - 1];
+      if (!seg) throw new Error(`analysis refers to line ${line}, but there are ${segments.length}`);
+      return seg.startMs;
+    };
+    const clock = (ms: number): string => {
+      const total = Math.floor(ms / 1000);
+      return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+    };
+    const brief = script.analysis.brief.replace(/\{L(\d+)\}/g, (_, n) => `[${clock(lineStart(Number(n)))}]`);
+    const findings = script.analysis.findings.map(({ line, ...f }) => ({
+      atMs: lineStart(line),
+      ...f,
+      quotes: [segments[line - 1].text],
+    }));
+    const actionItems = script.analysis.actionItems.map(({ text, line }) => ({ text, atMs: lineStart(line) }));
+
     const manifest = {
       id: script.id,
       lang: script.lang,
@@ -166,6 +200,10 @@ function renderScript(file: string): void {
       segments,
       questions: script.questions,
       mcpQuestions: script.mcpQuestions,
+      suggestion: script.suggestion,
+      brief,
+      findings,
+      actionItems,
     };
     const json = `${JSON.stringify(manifest, null, 2)}\n`;
     const name = `sample.${script.lang}.json`;

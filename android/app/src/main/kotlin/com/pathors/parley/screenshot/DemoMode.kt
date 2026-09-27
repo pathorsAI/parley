@@ -2,12 +2,19 @@ package com.pathors.parley.screenshot
 
 import android.net.Uri
 import com.pathors.parley.BuildConfig
+import com.pathors.parley.cloud.CloudFolder
+import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.CloudUser
 import com.pathors.parley.cloud.HostedQuota
+import com.pathors.parley.cloud.OrgRole
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.kit.TranscriptSegment
+import com.pathors.parley.library.SaveDestination
+import com.pathors.parley.meeting.ImportFailure
+import com.pathors.parley.meeting.ImportState
+import com.pathors.parley.meeting.ImportTranscript
 import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -46,7 +53,18 @@ import kotlinx.serialization.json.putJsonObject
  * ```
  *
  * Routes: `library`, `transcript`, `record` (alias `meeting`), `account`
- * (alias `settings`), and `off`.
+ * (alias `settings`), `movetofolder` (the transcript with the folder picker
+ * open over fifteen folders — a review frame, not a store frame, the same one
+ * iOS has), the import screen's endings (`import-partial`, `import-offline`,
+ * `import-quota`, `import-signed-out`), and `off`.
+ *
+ * The meeting route takes an optional `?scenario=` naming a [MeetingScenario] —
+ * the states a real meeting only reaches when a microphone is taken away or the
+ * disk fills, which an emulator cannot be made to do on cue:
+ *
+ * ```
+ * adb shell am start -a android.intent.action.VIEW -d "'parley://demo/meeting?scenario=mic-lost'"
+ * ```
  *
  * Everything below is invented. No real company, person, account, or meeting is
  * represented, the only address is in the RFC-reserved `example.com`, and the
@@ -57,13 +75,63 @@ import kotlinx.serialization.json.putJsonObject
 object DemoMode {
 
     /** The screens the listing needs, each addressable by its own URL. */
-    enum class Screen { LIBRARY, TRANSCRIPT, MEETING, ACCOUNT }
+    enum class Screen { LIBRARY, TRANSCRIPT, MEETING, ACCOUNT, IMPORT, MOVE_TO_FOLDER }
+
+    /**
+     * Which ending the import screen shows. Not store-listing material: these
+     * exist so the states a person only meets when something goes wrong can be
+     * looked at — and reviewed in both languages — without breaking a relay or
+     * spending an account's quota to get there.
+     */
+    enum class ImportEnding {
+        /** Saved, but the relay died partway: the transcript finishes later. */
+        PARTIAL,
+
+        /** The same, with the upload still waiting for the network. */
+        PARTIAL_OFFLINE,
+
+        /** Stopped: the hosted transcription quota is spent. */
+        QUOTA,
+
+        /** Stopped: the relay refused the session. */
+        SIGNED_OUT,
+    }
+
+    /**
+     * What the demo meeting screen is showing. [LIVE] is the store screenshot;
+     * the rest exist so the recovery and warning states can be captured and
+     * reviewed without a device that is actually losing its microphone.
+     */
+    enum class MeetingScenario(val route: String) {
+        LIVE("live"),
+        MIC_SILENCED("mic-silenced"),
+        MIC_RECOVERING("mic-recovering"),
+
+        /** Recovering for a moment, then back — shows the "back" notice. */
+        MIC_BACK("mic-back"),
+        MIC_LOST("mic-lost"),
+        MIC_BROKEN("mic-broken"),
+        STORAGE_LOW("storage-low"),
+
+        /** Finished because the microphone was lost, not because of Stop. */
+        INTERRUPTED("interrupted"),
+        ;
+
+        companion object {
+            fun fromRoute(route: String?): MeetingScenario =
+                entries.firstOrNull { it.route == route } ?: LIVE
+        }
+    }
 
     /**
      * A navigation request. [serial] makes each one distinct so firing the same
      * URL twice re-navigates instead of being swallowed as "no change".
      */
-    data class Navigation(val screen: Screen, val serial: Long)
+    data class Navigation(
+        val screen: Screen,
+        val serial: Long,
+        val scenario: MeetingScenario = MeetingScenario.LIVE,
+    )
 
     private val _enabled = MutableStateFlow(false)
 
@@ -79,6 +147,11 @@ object DemoMode {
 
     /** Cheap synchronous read for the non-Compose injection points. */
     val isActive: Boolean get() = _enabled.value
+
+    private val _importEnding = MutableStateFlow(ImportEnding.PARTIAL)
+
+    /** The ending the last `parley://demo/import-…` asked for. */
+    val importEnding: StateFlow<ImportEnding> = _importEnding.asStateFlow()
 
     /**
      * Handle a `parley://demo/…` deep link. Returns false for anything else — a
@@ -98,11 +171,20 @@ object DemoMode {
             "transcript", "recording" -> Screen.TRANSCRIPT
             "record", "meeting" -> Screen.MEETING
             "account", "settings" -> Screen.ACCOUNT
+            "movetofolder" -> Screen.MOVE_TO_FOLDER
+            in IMPORT_ROUTES -> {
+                _importEnding.value = IMPORT_ROUTES.getValue(route)
+                Screen.IMPORT
+            }
             else -> return false
         }
         _enabled.value = true
         serial += 1
-        _navigation.value = Navigation(screen, serial)
+        _navigation.value = Navigation(
+            screen = screen,
+            serial = serial,
+            scenario = MeetingScenario.fromRoute(uri.getQueryParameter(QUERY_SCENARIO)),
+        )
         return true
     }
 
@@ -141,6 +223,87 @@ object DemoMode {
         periodResetTs = EPOCH_MS + 18 * DAY_MS,
     )
 
+    // ── organization and folder fixtures ─────────────────────────────────────
+
+    /** The one organization the demo account belongs to, as an admin. */
+    const val ORG_ID = "demo-org"
+
+    private const val RENEWALS_FOLDER_ID = "f-renewals"
+    private const val NEW_BUSINESS_FOLDER_ID = "f-new"
+    private const val PIPELINE_FOLDER_ID = "of-pipeline"
+
+    fun orgs(locale: Locale = Locale.getDefault()): List<CloudOrg> = listOf(
+        CloudOrg(
+            id = ORG_ID,
+            name = t(locale, "Sales team", "業務團隊"),
+            slug = "sales",
+            role = OrgRole.ADMIN,
+        ),
+    )
+
+    /** The personal folders the library's chip row shows — iOS `ScreenshotDemo.folders`. */
+    fun folders(locale: Locale = Locale.getDefault()): List<CloudFolder> = listOf(
+        CloudFolder(id = RENEWALS_FOLDER_ID, name = t(locale, "Renewals", "續約")),
+        CloudFolder(id = NEW_BUSINESS_FOLDER_ID, name = t(locale, "New business", "新客戶")),
+    )
+
+    /**
+     * Enough folders that the picker has to scroll and its search earns its
+     * place. The first two are the library's own, so the featured recording's
+     * folder is ticked. Same names as iOS `ScreenshotDemo.pickerFolders`.
+     */
+    fun pickerFolders(locale: Locale = Locale.getDefault()): List<CloudFolder> {
+        val more = listOf(
+            "Halcyon Labs" to "晴光實驗室", "Meridian" to "子午線",
+            "Acme Logistics" to "頂峰物流", "Blue Harbor Hotels" to "藍港酒店",
+            "Café Luna" to "月光咖啡", "Evergreen Clinics" to "長青診所",
+            "Foxglove Retail" to "毛地黃零售", "Granite Insurance" to "磐石保險",
+            "Harbourline Freight" to "港線貨運", "Ironwood Motors" to "鐵木汽車",
+            "Juniper Schools" to "杜松教育", "Kestrel Energy" to "紅隼能源",
+            "Lumen Dental" to "流明牙醫",
+        )
+        return folders(locale) + more.mapIndexed { index, (en, zh) ->
+            CloudFolder(id = "f-picker-$index", name = t(locale, en, zh))
+        }
+    }
+
+    /** The organization's own folders. */
+    fun orgFolders(orgId: String, locale: Locale = Locale.getDefault()): List<CloudFolder> =
+        if (orgId != ORG_ID) {
+            emptyList()
+        } else {
+            listOf(
+                CloudFolder(
+                    id = PIPELINE_FOLDER_ID,
+                    name = t(locale, "Pipeline", "商機追蹤"),
+                    orgId = ORG_ID,
+                ),
+                CloudFolder(
+                    id = "of-accounts",
+                    name = t(locale, "Key accounts", "重點客戶"),
+                    orgId = ORG_ID,
+                ),
+            )
+        }
+
+    /** What the team library holds: two of the recordings, shared in. */
+    fun orgRecordings(orgId: String, locale: Locale = Locale.getDefault()): List<RecordingSummary> =
+        if (orgId != ORG_ID) {
+            emptyList()
+        } else {
+            recordings(locale)
+                .filter { it.id != FEATURED_ID }
+                .map { it.copy(folderId = if (it.id == DISCOVERY_ID) PIPELINE_FOLDER_ID else null) }
+        }
+
+    /**
+     * What the account sheet's "Default save location" shows in demo mode —
+     * the organization, into one of its folders, because that is the choice the
+     * section's footer exists to explain.
+     */
+    fun saveDestination(): SaveDestination =
+        SaveDestination(orgId = ORG_ID, folderId = PIPELINE_FOLDER_ID)
+
     // ── library fixtures ─────────────────────────────────────────────────────
 
     /** The recording the `transcript` route opens: the fully analyzed one. */
@@ -160,6 +323,7 @@ object DemoMode {
             findingsCount = 3,
             actionItemsCount = 2,
             hasAudio = true,
+            folderId = RENEWALS_FOLDER_ID,
             snippet = t(
                 locale,
                 "Forty seats against an eighty-seat quote; price held through the next renewal.",
@@ -176,6 +340,7 @@ object DemoMode {
             findingsCount = 2,
             actionItemsCount = 1,
             hasAudio = true,
+            folderId = NEW_BUSINESS_FOLDER_ID,
             snippet = t(
                 locale,
                 "Security questionnaire due Friday; invoicing split across two cost centres.",
@@ -212,6 +377,7 @@ object DemoMode {
                 put("durationMs", summary.durationMs.toLong())
                 put("audio", "audio.ogg")
                 put("analyzed", summary.findingsCount != 0)
+                summary.folderId?.let { put("folderId", it) }
                 putJsonObject("speakerNames") {
                     speakerNames(id, locale).forEach { (key, name) -> put(key, name) }
                 }
@@ -532,9 +698,42 @@ object DemoMode {
         endMs = 112_000,
     )
 
+    // ── import fixture ───────────────────────────────────────────────────────
+
+    /** The picked file's name, as the import screen shows it. */
+    fun importTitle(locale: Locale = Locale.getDefault()): String =
+        t(locale, "Supplier call, Sep 18.m4a", "供應商電話 9月18日.m4a")
+
+    /** The state the import screen renders for [ending]. */
+    fun importState(ending: ImportEnding): ImportState = when (ending) {
+        ImportEnding.PARTIAL -> ImportState.Finished(
+            recordingId = IMPORT_ID,
+            pendingUpload = false,
+            transcript = ImportTranscript.COMPLETES_IN_BACKGROUND,
+        )
+        ImportEnding.PARTIAL_OFFLINE -> ImportState.Finished(
+            recordingId = IMPORT_ID,
+            pendingUpload = true,
+            transcript = ImportTranscript.COMPLETES_IN_BACKGROUND,
+        )
+        ImportEnding.QUOTA -> ImportState.Failed(ImportFailure.QUOTA_EXHAUSTED)
+        ImportEnding.SIGNED_OUT -> ImportState.Failed(ImportFailure.SESSION_EXPIRED)
+    }
+
+    private val IMPORT_ROUTES = mapOf(
+        "import" to ImportEnding.PARTIAL,
+        "import-partial" to ImportEnding.PARTIAL,
+        "import-offline" to ImportEnding.PARTIAL_OFFLINE,
+        "import-quota" to ImportEnding.QUOTA,
+        "import-signed-out" to ImportEnding.SIGNED_OUT,
+    )
+
+    private const val IMPORT_ID = "demo-import"
+
     private const val SCHEME = "parley"
     private const val HOST = "demo"
     private const val ROUTE_OFF = "off"
+    private const val QUERY_SCENARIO = "scenario"
 
     /** A fixed clock, so a re-capture months later produces identical frames. */
     private const val EPOCH_MS = 1_786_498_800_000.0

@@ -255,6 +255,8 @@ class SttRelayClientTest {
         val event = withTimeout(5_000) { relay.events.first() }
         assertTrue(event is SttRelayEvent.Error)
         assertEquals("relay error 500: upstream exploded", (event as SttRelayEvent.Error).message)
+        // A vendor-side code is not the relay's verdict on the caller's session.
+        assertEquals(null, event.httpStatus)
     }
 
     @Test
@@ -279,5 +281,20 @@ class SttRelayClientTest {
         val event = withTimeout(5_000) { relay.events.first() }
         assertTrue(event is SttRelayEvent.Error)
         assertTrue((event as SttRelayEvent.Error).message.contains("401"))
+        assertEquals(401, event.httpStatus)
+        assertTrue(event.isUnauthorized)
+    }
+
+    @Test
+    fun rejectedHandshakeCarriesItsStatus(): Unit = runBlocking {
+        // 429 too_many_sessions: a wait, not a dead session.
+        server.enqueue(MockResponse().setResponseCode(429).setBody("""{"error":"too_many_sessions"}"""))
+        val relay = newClient()
+        relay.connect()
+
+        val event = withTimeout(5_000) { relay.events.first() }
+        assertTrue(event is SttRelayEvent.Error)
+        assertEquals(429, (event as SttRelayEvent.Error).httpStatus)
+        assertFalse(event.isUnauthorized)
     }
 }

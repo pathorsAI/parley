@@ -15,6 +15,8 @@ import {
   useHint,
 } from "../../lib/onboarding/gettingStarted";
 import { shortcutCaps } from "../../lib/voiceTyping/caps";
+import { isSampleEntry } from "../../lib/onboarding/sample";
+import { TranscribingPulse, useTranscribingPulse } from "../onboarding/TranscribingPulse";
 
 /**
  * The idle landing (R8c). Before this, idle showed the live cockpit with three
@@ -48,8 +50,12 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   // when a section is conditionally absent.
   const delay = (ms: number) => ({ animationDelay: `${ms}ms` });
 
+  // The recording the lap runs on: the sample when it's there, else the newest.
+  const lapEntryId = (tree.summaries.find(isSampleEntry) ?? tree.summaries[0])?.id ?? null;
+
+  const samplePulse = useTranscribingPulse();
   const openSample = () => {
-    void openSampleRecording().catch((e) => {
+    void openSampleRecording(samplePulse.run).catch((e) => {
       log.error("home: sample failed", { error: String(e) });
       toast.error(String(e instanceof Error ? e.message : e));
     });
@@ -97,7 +103,7 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         {showChecklist && (
           <GettingStarted
             state={gettingStarted}
-            latestId={tree.summaries[0]?.id ?? null}
+            lapEntryId={lapEntryId}
             style={delay(90)}
           />
         )}
@@ -149,11 +155,14 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
             >
               <p>{t("home.emptyRecordings")}</p>
               {/* The checklist already offers the sample — don't say it twice. */}
-              {!showChecklist && (
-                <Button variant="ghost" size="sm" onClick={openSample}>
-                  {t("home.gs.useSample")}
-                </Button>
-              )}
+              {!showChecklist &&
+                (samplePulse.active ? (
+                  <TranscribingPulse />
+                ) : (
+                  <Button variant="ghost" size="sm" onClick={openSample}>
+                    {t("home.gs.useSample")}
+                  </Button>
+                ))}
             </div>
           )}
           {/* One list, rows split by hairlines — no box around each recording. */}
