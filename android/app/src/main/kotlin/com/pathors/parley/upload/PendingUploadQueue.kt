@@ -22,8 +22,11 @@ import kotlinx.serialization.Serializable
  * - `source` distinguishes a live capture from an imported file — iOS only ever
  *   pushes `"live"`.
  *
- * iOS additionally stores a `defaultSave` destination (for org sharing). Android
- * does not surface organizations yet, so only the personal `folderId` is kept.
+ * The save destination is flattened into three fields rather than stored as
+ * iOS's nested `defaultSave`: [folderId] is where the upload itself is filed,
+ * and [shareOrgId] / [shareFolderId] are the organization copy made after it.
+ * All three are captured when the recording is queued, so a recording keeps the
+ * destination it was made under even if the setting changes while it waits.
  */
 @Serializable
 data class PendingUpload(
@@ -40,6 +43,13 @@ data class PendingUpload(
     val segments: List<TranscriptSegmentDto> = emptyList(),
     /** Personal folder to file the recording under; null = the personal root. */
     val folderId: String? = null,
+    /**
+     * The organization to share a copy into once the personal upload has
+     * landed (`POST /recordings/{id}/share`); null = personal only.
+     */
+    val shareOrgId: String? = null,
+    /** The folder inside [shareOrgId] the copy goes into; null = the org's root. */
+    val shareFolderId: String? = null,
 )
 
 /**
