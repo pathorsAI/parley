@@ -48,8 +48,8 @@ struct TranscriptText: View, Equatable {
                 // why (see `KeyboardRootView.liveText`).
                 Text(verbatim: joined).foregroundStyle(style.restingInk)
             } else {
+                // Nothing between the two halves: see `PolishWave.transcript`.
                 (Text(verbatim: tail).foregroundStyle(KBTheme.inkSoft(dark))
-                    + Text(verbatim: separator)
                     + Text(verbatim: partial).foregroundStyle(KBTheme.ink(dark)))
             }
         }
@@ -63,15 +63,24 @@ struct TranscriptText: View, Equatable {
     /// The keyboard's inks: the wave rises from the soft ink the tail already
     /// wears, and its crest leans towards the wordmark's blue — brand in
     /// light, sky in dark.
+    ///
+    /// Tuned per appearance, because the two do not read alike. Brand blue
+    /// mixed into near-black ink reads as a dark blue and needs 40 % before
+    /// the crest is seen as tinted at all; sky in white needs only a quarter.
+    /// The resting emphasis is lower in light (0.32 of ink over the #E2E4E8
+    /// backdrop is a grey near 0.63, about 2:1 — faint but legible for the
+    /// seconds it lasts) than in dark (0.36 of white over #171717, about
+    /// 3.3:1), which is what gives the crest its headroom in both.
     private var style: PolishWaveStyle {
         PolishWaveStyle(
             ink: KBTheme.ink(dark), softInk: KBTheme.inkSoft(dark),
-            tint: KBTheme.wordmark(dark), fontSize: Self.fontSize)
+            tint: KBTheme.wordmark(dark),
+            tintAmount: dark ? 0.25 : 0.40,
+            restingOpacity: dark ? 0.36 : 0.32,
+            fontSize: Self.fontSize)
     }
 
-    /// A space between the two halves when both have words.
-    private var separator: String { tail.isEmpty || partial.isEmpty ? "" : " " }
-    private var joined: String { tail + separator + partial }
+    private var joined: String { PolishWave.transcript(settled: tail, unsettled: partial) }
 }
 
 /// The slot's scrolling: pinned to the newest line, so the words being spoken

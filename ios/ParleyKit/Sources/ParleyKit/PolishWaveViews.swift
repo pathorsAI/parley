@@ -41,24 +41,40 @@
         public var ink: Color
         /// The settled words' ink before the wave arrives and after it leaves.
         public var softInk: Color
-        /// The colour the crest leans towards, at `PolishWave.tint` at most —
-        /// the brand blue that survives the background.
+        /// The colour the crest leans towards — the brand blue that survives
+        /// the background.
         public var tint: Color
+        /// How far the crest leans towards `tint`, 0…1.
+        ///
+        /// Per surface rather than global, because the same mix does not read
+        /// the same on both backgrounds: a trace of sky in white ink is
+        /// already light, while brand blue in near-black ink reads as a dark
+        /// blue and needs about twice as much before it is seen at all.
+        public var tintAmount: Double
+        /// The resting emphasis of every glyph while the wave runs, as an
+        /// opacity of `ink`. Lower is more headroom for the crest; too low and
+        /// the words stop being readable while they wait.
+        public var restingOpacity: Double
         /// The system font size the text is set in. A size rather than a
         /// `Font` because the line measurement needs the same face in Core
         /// Text, and a `Font` cannot be turned back into one.
         public var fontSize: CGFloat
 
-        public init(ink: Color, softInk: Color, tint: Color, fontSize: CGFloat = 15) {
+        public init(
+            ink: Color, softInk: Color, tint: Color, tintAmount: Double = PolishWave.tint,
+            restingOpacity: Double = PolishWave.restingOpacity, fontSize: CGFloat = 15
+        ) {
             self.ink = ink
             self.softInk = softInk
             self.tint = tint
+            self.tintAmount = tintAmount
+            self.restingOpacity = restingOpacity
             self.fontSize = fontSize
         }
 
         /// Every word at the wave's resting emphasis — what Reduce Motion
         /// shows instead of the wave.
-        public var restingInk: Color { ink.opacity(PolishWave.restingOpacity) }
+        public var restingInk: Color { ink.opacity(restingOpacity) }
     }
 
     /// The transcript with the polish wave reading through its last three
@@ -66,9 +82,10 @@
     ///
     /// `settled` and `unsettled` are the two halves the keyboard shows: the
     /// settled words start from (and return to) `style.softInk`, the unsettled
-    /// ones from the full ink. Both are joined with a space when both have
-    /// words. The view is as wide as it is offered and wraps; put it in
-    /// whatever frame or scroll view the host needs.
+    /// ones from the full ink. The two are joined as they are, with nothing
+    /// between them (`PolishWave.transcript`). The view is as wide as it is
+    /// offered and wraps; put it in whatever frame or scroll view the host
+    /// needs.
     ///
     /// `Equatable`, so a host that redraws for unrelated reasons can wrap it in
     /// `.equatable()` and leave it alone.
@@ -126,11 +143,6 @@
             }
             .font(.system(size: style.fontSize))
             .multilineTextAlignment(.leading)
-        }
-
-        /// A space between the two halves when both have words.
-        static func separator(_ settled: String, _ unsettled: String) -> String {
-            settled.isEmpty || unsettled.isEmpty ? "" : " "
         }
     }
 
@@ -207,9 +219,10 @@
         init(style: PolishWaveStyle, in environment: EnvironmentValues) {
             let ink = RGBA(style.ink.resolve(in: environment))
             var rest = ink
-            rest.a *= Float(PolishWave.restingOpacity)
+            rest.a *= Float(style.restingOpacity)
             resting = rest
-            crest = ink.mixed(with: RGBA(style.tint.resolve(in: environment)), by: PolishWave.tint)
+            crest = ink.mixed(
+                with: RGBA(style.tint.resolve(in: environment)), by: style.tintAmount)
             soft = RGBA(style.softInk.resolve(in: environment))
             full = ink
         }
@@ -270,11 +283,11 @@
 
         var body: some View {
             // Once per text or width change — not per frame.
-            let separator = PolishWaveText.separator(settled, unsettled)
             let characters: [(Character, unsettled: Bool)] =
-                (settled + separator).map { ($0, false) } + unsettled.map { ($0, true) }
+                settled.map { ($0, false) } + unsettled.map { ($0, true) }
             let wavingFrom = PolishWaveLines.lastLinesStart(
-                of: settled + separator + unsettled, graphemes: characters.count,
+                of: PolishWave.transcript(settled: settled, unsettled: unsettled),
+                graphemes: characters.count,
                 lines: PolishWave.wavingLines, width: width, fontSize: style.fontSize)
             // 30 Hz: every tick is a new attributed string and a new layout,
             // and half the display rate is still smooth at a band this wide.
@@ -378,20 +391,22 @@
 
         var body: some View {
             let text =
-                Text(verbatim: settled)
-                + Text(verbatim: PolishWaveText.separator(settled, unsettled))
-                + Text(verbatim: unsettled).customAttribute(UnsettledRun())
+                Text(verbatim: settled) + Text(verbatim: unsettled).customAttribute(UnsettledRun())
             let graphemes = GraphemeStarts(
-                settled + PolishWaveText.separator(settled, unsettled) + unsettled)
+                PolishWave.transcript(settled: settled, unsettled: unsettled))
             TimelineView(.animation(minimumInterval: 1.0 / 60)) { context in
                 let frame = WaveFrame(
                     strength: wave.strength(at: context.date),
                     progress: wave.progress(at: context.date))
                 ZStack(alignment: .topLeading) {
                     text.foregroundStyle(style.ink)
-                        .textRenderer(WaveRenderer(frame: frame, blue: false, graphemes: graphemes))
+                        .textRenderer(
+                            WaveRenderer(
+                                frame: frame, blue: false, style: style, graphemes: graphemes))
                     text.foregroundStyle(style.tint)
-                        .textRenderer(WaveRenderer(frame: frame, blue: true, graphemes: graphemes))
+                        .textRenderer(
+                            WaveRenderer(
+                                frame: frame, blue: true, style: style, graphemes: graphemes))
                         .accessibilityHidden(true)
                 }
             }
@@ -436,8 +451,9 @@
     @available(iOS 18.0, macOS 15.0, *)
     private struct WaveRenderer: TextRenderer {
         let frame: WaveFrame
-        /// The tint layer: only glyphs under the crest, at up to `tint`.
+        /// The tint layer: only glyphs under the crest, at up to `style.tintAmount`.
         let blue: Bool
+        let style: PolishWaveStyle
         let graphemes: GraphemeStarts
 
         /// The settled words' emphasis in this drawing, as an opacity of the
@@ -448,7 +464,7 @@
             let strength = frame.strength
             func inkOpacity(_ unsettled: Bool, _ lit: Double) -> Double {
                 let settled = unsettled ? 1 : Self.softOpacity
-                let base = settled + (PolishWave.restingOpacity - settled) * strength
+                let base = settled + (style.restingOpacity - settled) * strength
                 return base + (1 - base) * lit * strength
             }
             let lines = Array(layout)
@@ -489,7 +505,7 @@
                 var c = ctx
                 c.opacity =
                     blue
-                    ? PolishWave.tint * lit * strength
+                    ? style.tintAmount * lit * strength
                     : inkOpacity(entry.run[UnsettledRun.self] != nil, lit)
                 c.draw(entry.run[entry.glyph..<(entry.glyph + 1)])
             }

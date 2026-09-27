@@ -48,10 +48,11 @@ public struct PolishWave: Equatable, Sendable {
     public static let revealDelay: Duration = .milliseconds(250)
     /// The breath between passes.
     public static let rest: TimeInterval = 0.25
-    /// Full width of the band, in graphemes. Wide enough that three or four
-    /// characters are always noticeably lit, narrow enough to read as a crest
-    /// travelling rather than as the whole line brightening.
-    public static let bandWidth: Double = 7
+    /// Full width of the band, in graphemes. Wide enough that a word or two
+    /// is always noticeably lit — at 7 the crest was a few letters of Latin
+    /// and easy to miss — narrow enough to read as a crest travelling rather
+    /// than as the whole line brightening.
+    public static let bandWidth: Double = 10
     /// Reading pace, in graphemes a second. At this speed a full slot — three
     /// lines of CJK, `visibleGraphemes` — takes exactly the upper clamp.
     public static let readingSpeed: Double = 35
@@ -65,17 +66,31 @@ public struct PolishWave: Equatable, Sendable {
     /// above them — scrolled out of a short slot — stay at the resting
     /// emphasis.
     public static let wavingLines = 3
-    /// The resting emphasis of every glyph while the wave runs, as an opacity
-    /// of the full ink: dimmer than a soft ink, so the crest has somewhere to
-    /// rise from.
+    /// The default resting emphasis of every glyph while the wave runs, as an
+    /// opacity of the full ink: dimmer than a soft ink, so the crest has
+    /// somewhere to rise from. Each surface can set its own
+    /// (`PolishWaveStyle.restingOpacity`); the keyboard does, per appearance.
     public static let restingOpacity = 0.4
-    /// How far the crest leans towards the tint colour, at most. Under a
-    /// quarter, so it reads as light passing through rather than blue text.
+    /// The default for how far the crest leans towards the tint colour
+    /// (`PolishWaveStyle.tintAmount`). Under a quarter, so on a dark
+    /// background it reads as light passing through rather than blue text.
     public static let tint = 0.22
     /// How long the wave takes to arrive over the settled colours, and to
     /// leave again once the words land.
     public static let fadeIn: TimeInterval = 0.2
     public static let fadeOut: TimeInterval = 0.2
+
+    /// The transcript as shown: the settled words followed directly by the
+    /// ones still being revised, with **nothing** between them.
+    ///
+    /// The app builds `committed` the same way — its runs are joined with no
+    /// separator, because the recogniser's tokens carry their own spacing — so
+    /// anything added here would be text the preview shows and the field never
+    /// gets. A space used to be put in, and split 電話號碼 into 電話號 碼 and
+    /// "Talk" into "Ta lk" wherever a run boundary fell mid-word.
+    public static func transcript(settled: String, unsettled: String) -> String {
+        settled + unsettled
+    }
 
     /// One pass over `graphemes` characters at `readingSpeed`, clamped to
     /// `passRange`.

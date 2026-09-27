@@ -82,13 +82,26 @@ final class PolishWaveTests: XCTestCase {
         XCTAssertEqual(left, right, accuracy: 1e-9)
         XCTAssertLessThan(left, 1)
         XCTAssertGreaterThan(left, 0)
-        XCTAssertEqual(PolishWave.intensity(index: 24, count: count, progress: progress), 0)
-        XCTAssertEqual(PolishWave.intensity(index: 16, count: count, progress: progress), 0)
-        // Between six and eight characters are lit at any moment.
+        XCTAssertEqual(PolishWave.intensity(index: 25, count: count, progress: progress), 0)
+        XCTAssertEqual(PolishWave.intensity(index: 15, count: count, progress: progress), 0)
+        // About ten characters are lit at any moment: a word or two, not a
+        // few letters.
         let lit = (0..<count).filter {
             PolishWave.intensity(index: $0, count: count, progress: progress) > 0
         }
-        XCTAssertTrue((6...8).contains(lit.count), "\(lit.count) lit")
+        XCTAssertTrue((9...11).contains(lit.count), "\(lit.count) lit")
+    }
+
+    // MARK: the transcript
+
+    func testTheTwoHalvesJoinWithNothingBetweenThem() {
+        // The app joins its runs with no separator — the recogniser's tokens
+        // carry their own spacing — so the preview must not add one either.
+        XCTAssertEqual(PolishWave.transcript(settled: "我的新電話號", unsettled: "碼是"), "我的新電話號碼是")
+        XCTAssertEqual(PolishWave.transcript(settled: "Ta", unsettled: "lk soon"), "Talk soon")
+        XCTAssertEqual(PolishWave.transcript(settled: "Hi Anna, ", unsettled: "just"), "Hi Anna, just")
+        XCTAssertEqual(PolishWave.transcript(settled: "", unsettled: "嗨"), "嗨")
+        XCTAssertEqual(PolishWave.transcript(settled: "嗨", unsettled: ""), "嗨")
     }
 
     func testNothingIsLitDuringTheRestOrOutOfRange() {
