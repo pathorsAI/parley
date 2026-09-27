@@ -33,6 +33,7 @@ import { useStore, type LibrarySelection } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import type { LibraryTree } from "./useLibraryTree";
 import { isArchived, type Folder as LocalFolder } from "../../lib/history/folders";
+import { usePulsingFolder } from "../../lib/onboarding/motion";
 import type { CloudOrg } from "../../lib/cloud/types";
 
 /**
@@ -85,6 +86,9 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   // OWN their recordings (buildOwnershipIndex above is fed the whole list), so
   // putting one away can't dump what is inside it into 還沒歸檔.
   const liveFolders = tree.personalFolders.filter((f) => !isArchived(f));
+  // A recording just filed into a folder (the filing card's fly-in): its row
+  // flashes once so the eye lands on where the recording went.
+  const pulsingFolder = usePulsingFolder();
   const archivedFolders = tree.personalFolders.filter(isArchived);
   const archivedCount = archivedFolders.reduce(
     (n, f) => n + countAt({ kind: "folder", folderId: f.id }),
@@ -156,6 +160,8 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         return (
           <Row
             key={f.id}
+            folderId={f.id}
+            pulsing={pulsingFolder === f.id}
             icon={<Folder className="size-3.5" />}
             label={f.name}
             count={countAt(node)}
@@ -413,6 +419,8 @@ function HeaderAdd({ label, onClick }: Readonly<{ label: string; onClick: () => 
 
 /** A tree row: selectable, optionally expandable, optionally renameable. */
 function Row({
+  folderId,
+  pulsing,
   icon,
   label,
   depth = 0,
@@ -428,6 +436,10 @@ function Row({
   onUnarchive,
   onDelete,
 }: Readonly<{
+  /** A personal folder's row carries its id, as the filing fly-in's target. */
+  folderId?: string;
+  /** Flash once (bg-primary/10, see .ob-flash). */
+  pulsing?: boolean;
   icon: ReactNode;
   label: string;
   depth?: number;
@@ -502,11 +514,12 @@ function Row({
 
   const row = (
     <div
+      data-folder-row={folderId}
       className={`group/row flex shrink-0 items-center rounded-md transition-colors ${
         active
           ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
           : "hover:bg-sidebar-foreground/5"
-      }`}
+      } ${pulsing ? "ob-flash" : ""}`}
       style={pad}
     >
       {expandable && (
