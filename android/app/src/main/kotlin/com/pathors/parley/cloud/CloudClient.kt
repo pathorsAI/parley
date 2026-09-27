@@ -338,19 +338,7 @@ class CloudClient(
      * There is no folder endpoint for a personal recording: the folder is a
      * field of the entry, so moving one is a full re-push of the meta the cloud
      * already holds with that one field changed — iOS `LibraryView.moveToFolder`
-     * and the desktop's `useRefile` do the same. The meta is re-read first rather
-     * than taken from the caller so that a field another device wrote since the
-     * list was fetched (a desktop analysis, a rename) survives the move.
-     *
-     * Hand-built rather than through [pushRecording] for one reason: un-filing
-     * has to put `"folderId": null` in the *summary* too, the way the desktop's
-     * `buildSummary` always does, and [CloudJson] omits nulls on encode. A
-     * summary that merely lacked the key would be read by a merging server as
-     * "no change".
-     *
-     * `updatedAt` is dropped from the summary: it is the server's write clock,
-     * and echoing the old value back would be asking the server to date this
-     * write in the past.
+     * and the desktop's `useRefile` do the same. See [editRecording].
      *
      * @param summary the library card, when the caller has one; derived from the
      *   meta otherwise (the detail screen fetches nothing else).
@@ -360,21 +348,53 @@ class CloudClient(
         folderId: String?,
         summary: RecordingSummary? = null,
     ) {
-        val meta = recordingMeta(id)
-        val card = (summary ?: RecordingSummary.fromMeta(meta)).copy(updatedAt = null)
+        editRecording(id, summary) { it.withFolderId(folderId) }
+    }
+
+    /**
+     * One read-modify-write against a personal recording's entry: re-read the
+     * meta, apply [edit], and push the edited meta with its summary. Returns the
+     * meta that was pushed.
+     *
+     * The meta is re-read rather than taken from the caller so that a field
+     * another device wrote since the caller last looked (a desktop analysis, a
+     * rename) survives the edit. Every edit a phone makes to a recording — a
+     * move, a rename, the filing suggestion's answer — goes through here, as
+     * one write: two writes in a row would each read the meta and push it back,
+     * and the second would carry a copy read before the first landed.
+     *
+     * The summary's title and folder follow the edited meta, so the library row
+     * and the transcript never disagree about what the recording is called or
+     * where it lives. Hand-built rather than through [pushRecording] because the
+     * folder has to be explicit — un-filing puts `"folderId": null` in the
+     * summary, the way the desktop's `buildSummary` always does, and [CloudJson]
+     * omits nulls on encode; a summary that merely lacked the key would be read
+     * by a merging server as "no change". `updatedAt` is dropped: it is the
+     * server's write clock, and echoing the old value back would be asking the
+     * server to date this write in the past.
+     */
+    suspend fun editRecording(
+        id: String,
+        summary: RecordingSummary? = null,
+        edit: (RecordingMeta) -> RecordingMeta,
+    ): RecordingMeta {
+        val meta = edit(recordingMeta(id))
+        val base = summary ?: RecordingSummary.fromMeta(meta)
+        val card = base.copy(title = meta.title.ifEmpty { base.title }, updatedAt = null)
         val summaryJson = CloudJson.encodeToJsonElement(RecordingSummary.serializer(), card)
             .let { it as JsonObject }
             .let { encoded ->
                 buildJsonObject {
-                    encoded.forEach { (key, value) -> if (key != "folderId") put(key, value) }
-                    put("folderId", folderId?.let(::JsonPrimitive) ?: JsonNull)
+                    encoded.forEach { (key, value) -> if (key != FOLDER_ID) put(key, value) }
+                    put(FOLDER_ID, meta.folderId?.let(::JsonPrimitive) ?: JsonNull)
                 }
             }
         val payload = buildJsonObject {
             put("summary", summaryJson)
-            put("meta", meta.withFolderId(folderId).raw)
+            put("meta", meta.raw)
         }
         postJson(url("recordings", id), payload)
+        return meta
     }
 
     /**
@@ -393,7 +413,7 @@ class CloudClient(
     suspend fun shareRecording(id: String, orgId: String, folderId: String? = null) {
         val payload = buildJsonObject {
             put("orgId", JsonPrimitive(orgId))
-            if (folderId != null) put("folderId", JsonPrimitive(folderId))
+            if (folderId != null) put(FOLDER_ID, JsonPrimitive(folderId))
         }
         postJson(url("recordings", id, "share"), payload)
     }
@@ -497,7 +517,7 @@ class CloudClient(
      */
     suspend fun moveOrgRecordingToFolder(orgId: String, id: String, folderId: String?) {
         val payload = buildJsonObject {
-            put("folderId", folderId?.let(::JsonPrimitive) ?: JsonNull)
+            put(FOLDER_ID, folderId?.let(::JsonPrimitive) ?: JsonNull)
         }
         val request = Request.Builder()
             .url(url("orgs", orgId, "recordings", id, "folder"))
@@ -649,6 +669,8 @@ class CloudClient(
          * cloud, so an id is never the same row written two ways.
          */
         fun newCloudId(): String = UUID.randomUUID().toString().lowercase(Locale.ROOT)
+
+        private const val FOLDER_ID = "folderId"
 
         /** How often [downloadAudio] reports progress. See its doc. */
         private const val PROGRESS_INTERVAL_BYTES = 64L * 1024L
