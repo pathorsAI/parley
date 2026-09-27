@@ -11,7 +11,10 @@ import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.asBatchTranscriptionProblem
+import com.pathors.parley.kit.GettingStartedStep
+import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.library.LibraryFolders
+import com.pathors.parley.onboarding.SampleRecordingStore
 import com.pathors.parley.playback.PlaybackController
 import com.pathors.parley.playback.PlaybackPhase
 import com.pathors.parley.playback.PlaybackState
@@ -217,23 +220,40 @@ class RecordingDetailViewModel(
 ) : ViewModel() {
 
     /**
+     * The bundled sample (`SampleRecordingStore`): read from the APK, never the
+     * cloud, so everything that writes to the cloud is off for it.
+     */
+    val isSample: Boolean = SampleManifest.isSample(recordingId)
+
+    /**
      * The player for this recording. Built with the screen and released with
      * it — one recording, one engine, and `onCleared` is what guarantees the
      * audio stops when the screen goes away.
+     *
+     * The sample plays its real, bundled audio even in demo mode: it needs no
+     * network and no account, and it is the one recording a screenshot run can
+     * genuinely play.
      */
     private val playback = PlaybackController(
         context = context,
         cloud = container.cloud,
-        store = container.localAudio,
+        store = if (isSample) container.sample.audioStore else container.localAudio,
         scope = viewModelScope,
-        demo = DemoMode.isActive,
+        demo = DemoMode.isActive && !isSample,
     )
 
     val playbackState: StateFlow<PlaybackState> = playback.state
 
     fun togglePlayPause() = playback.togglePlayPause()
 
-    fun seekTo(ms: Long) = playback.seekTo(ms)
+    /**
+     * Every caller is a person — a tap on a turn or its timecode, the
+     * scrubber, a finding — so the first seek ticks the checklist's "replay".
+     */
+    fun seekTo(ms: Long) {
+        playback.seekTo(ms)
+        container.gettingStarted.mark(GettingStartedStep.REPLAYED)
+    }
 
     fun setRate(rate: Float) = playback.setRate(rate)
 
@@ -243,14 +263,34 @@ class RecordingDetailViewModel(
         // `GET /recordings/{id}/audio` is the personal endpoint; an org
         // recording's audio lives behind an org path this client does not
         // speak, and a download that would 404 is worse than none.
-        if (orgId == null) playback.download()
+        // The sample's audio is in the APK; there is nothing to fetch.
+        if (orgId == null && !isSample) playback.download()
     }
 
     /** Whether this screen can file the recording: personal recordings only, as on iOS. */
     val canMoveToFolder: Boolean get() = orgId == null
 
-    /** Whether "transcribe again" applies — it re-pushes through the personal endpoints. */
-    val canRetranscribe: Boolean get() = orgId == null
+    /**
+     * Whether "transcribe again" applies — it re-pushes through the personal
+     * endpoints. Never the sample: its transcript is written, not transcribed,
+     * and its audio is not in the cloud to be sent again.
+     */
+    val canRetranscribe: Boolean get() = orgId == null && !isSample
+
+    /**
+     * The analysis prompt plus the transcript — [HandoffText] — or empty
+     * before the meta has arrived. The sample asks the questions written for
+     * its script.
+     */
+    fun handoffText(context: Context): String {
+        val meta = _state.value.meta ?: return ""
+        return HandoffText.build(context, meta, sampleQuestions)
+    }
+
+    /** "Copy with analysis prompt" put it on the clipboard: that is a hand-off too. */
+    fun noteCopiedWithPrompt() = container.gettingStarted.mark(GettingStartedStep.SHARED_TO_AI)
+
+    private var sampleQuestions: List<String>? = null
 
     override fun onCleared() {
         playback.release()
@@ -262,6 +302,8 @@ class RecordingDetailViewModel(
         val findings: List<FindingRow> = emptyList(),
         val actionItems: List<ActionItemRow> = emptyList(),
         val failed: Boolean = false,
+        /** The failure is the sample having been taken out of the library meanwhile. */
+        val sampleMissing: Boolean = false,
     )
 
     /**
@@ -289,6 +331,11 @@ class RecordingDetailViewModel(
     }
 
     fun load() {
+        if (isSample) {
+            viewModelScope.launch { loadSample() }
+            if (canMoveToFolder) viewModelScope.launch { loadFolders() }
+            return
+        }
         if (DemoMode.isActive) {
             _state.value = fromMeta(DemoMode.meta(recordingId))
             openPlayer()
@@ -306,6 +353,25 @@ class RecordingDetailViewModel(
         if (canMoveToFolder) viewModelScope.launch { loadFolders() }
     }
 
+    /**
+     * The sample is read from the APK, never the cloud — see
+     * `SampleRecordingStore`. Its audio is unpacked into the cache first, so
+     * the player finds it where it looks.
+     */
+    private suspend fun loadSample() {
+        val sample = container.sample
+        val entry = sample.currentEntry()
+        val manifest = sample.manifestOf(entry)?.takeIf { it.id == recordingId }
+        if (entry == null || manifest == null) {
+            _state.value = UiState(loading = false, failed = true, sampleMissing = true)
+            return
+        }
+        sampleQuestions = manifest.questions
+        _state.value = fromMeta(SampleRecordingStore.metaOf(manifest, entry))
+        sample.ensureAudio(manifest)
+        openPlayer()
+    }
+
     private suspend fun fetchMeta(): RecordingMeta =
         if (orgId == null) {
             container.cloud.recordingMeta(recordingId)
@@ -317,6 +383,10 @@ class RecordingDetailViewModel(
 
     /** Best-effort: without the list the picker still offers Unfiled and "New folder…". */
     private suspend fun loadFolders() {
+        if (DemoMode.isActive) {
+            _filing.update { it.copy(folders = DemoMode.pickerFolders()) }
+            return
+        }
         val folders = runCatching {
             LibraryFolders.personalFolders(container.cloud.listFolders())
         }.getOrNull() ?: return
@@ -339,27 +409,33 @@ class RecordingDetailViewModel(
     fun moveToFolder(folderId: String?) {
         if (!canMoveToFolder || _filing.value.moving) return
         val meta = _state.value.meta ?: return
-        if (DemoMode.isActive) {
-            _state.update { it.copy(meta = meta.withFolderId(folderId)) }
+        // Filed on this phone and nowhere else — see `SampleRecordingStore`.
+        if (DemoMode.isActive || isSample) {
+            if (isSample) viewModelScope.launch { container.sample.setFolder(folderId) }
+            showFiled(meta.withFolderId(folderId), folderId)
             return
         }
-        viewModelScope.launch {
-            _filing.update { it.copy(moving = true, moveFailed = false) }
-            val result = try {
-                container.cloud.refileRecording(recordingId, folderId)
-                true
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                false
-            }
-            if (result) {
-                _state.update { current ->
-                    current.copy(meta = current.meta?.withFolderId(folderId))
-                }
-            }
-            _filing.update { it.copy(moving = false, moveFailed = !result) }
+        viewModelScope.launch { refile(folderId) }
+    }
+
+    private suspend fun refile(folderId: String?) {
+        _filing.update { it.copy(moving = true, moveFailed = false) }
+        val landed = try {
+            container.cloud.refileRecording(recordingId, folderId)
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            false
         }
+        if (landed) _state.value.meta?.let { showFiled(it.withFolderId(folderId), folderId) }
+        _filing.update { it.copy(moving = false, moveFailed = !landed) }
+    }
+
+    /** The move landed: the meta on screen follows, and filing into a folder ticks the checklist. */
+    private fun showFiled(meta: RecordingMeta, folderId: String?) {
+        _state.update { it.copy(meta = meta) }
+        if (folderId != null) container.gettingStarted.mark(GettingStartedStep.FILED)
     }
 
     /**

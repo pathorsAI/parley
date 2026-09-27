@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pathors.parley.AppContainer
 import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.kit.FilingSuggestion
+import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.meeting.MeetingState
@@ -93,6 +94,7 @@ class FilingSuggestionViewModel(
                     model = FilingSuggestionModel(
                         cloud = container.cloud,
                         speakerLabel = { speakerLabel(app, it.speaker) },
+                        onFiled = { container.gettingStarted.mark(GettingStartedStep.FILED) },
                     ),
                     destination = container.saveLocation.destination,
                     backgroundScope = container.appScope,

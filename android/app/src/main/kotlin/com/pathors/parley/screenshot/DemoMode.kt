@@ -12,11 +12,14 @@ import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.kit.FilingFolderSuggestion
 import com.pathors.parley.kit.FilingSuggestion
+import com.pathors.parley.kit.GettingStartedState
+import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.meeting.ImportFailure
 import com.pathors.parley.meeting.ImportState
 import com.pathors.parley.meeting.ImportTranscript
+import com.pathors.parley.onboarding.SampleRecordingStore
 import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,7 +61,9 @@ import kotlinx.serialization.json.putJsonObject
  * (alias `settings`), `movetofolder` (the transcript with the folder picker
  * open over fifteen folders — a review frame, not a store frame, the same one
  * iOS has), the import screen's endings (`import-partial`, `import-offline`,
- * `import-quota`, `import-signed-out`), and `off`.
+ * `import-quota`, `import-signed-out`), the getting-started frames
+ * (`checklist`, `checklist-partial`, `sample`, `share-menu` — see
+ * [LAP_ROUTES]), and `off`.
  *
  * The meeting route takes an optional `?scenario=` naming a [MeetingScenario] —
  * the states a real meeting only reaches when a microphone is taken away or the
@@ -77,7 +82,36 @@ import kotlinx.serialization.json.putJsonObject
 object DemoMode {
 
     /** The screens the listing needs, each addressable by its own URL. */
-    enum class Screen { LIBRARY, TRANSCRIPT, MEETING, ACCOUNT, IMPORT, MOVE_TO_FOLDER }
+    enum class Screen {
+        LIBRARY,
+        TRANSCRIPT,
+        MEETING,
+        ACCOUNT,
+        IMPORT,
+        MOVE_TO_FOLDER,
+
+        /** The bundled sample recording's detail screen. */
+        SAMPLE,
+
+        /** The same, with its share-and-copy menu open. */
+        SHARE_MENU,
+    }
+
+    /**
+     * The getting-started frames. Each seeds the in-memory checklist and sample
+     * entry it needs, so the frame is the same on every run and nothing is
+     * written to the stores a real user's lap lives in.
+     */
+    enum class Lap {
+        /** A new account: nothing done, no sample, nothing in the library. */
+        FRESH,
+
+        /** Two of four done, the sample loaded, the fixture library under it. */
+        PARTIAL,
+
+        /** The sample loaded and nothing else changed. */
+        SAMPLE,
+    }
 
     /**
      * Which ending the import screen shows. Not store-listing material: these
@@ -180,6 +214,8 @@ object DemoMode {
             disable()
             return true
         }
+        // Every other frame is of the product, not of the lap: no checklist.
+        if (route !in LAP_ROUTES) resetLap()
         val screen = when (route) {
             "library", "recordings" -> Screen.LIBRARY
             "transcript", "recording" -> Screen.TRANSCRIPT
@@ -189,6 +225,10 @@ object DemoMode {
             in IMPORT_ROUTES -> {
                 _importEnding.value = IMPORT_ROUTES.getValue(route)
                 Screen.IMPORT
+            }
+            in LAP_ROUTES -> LAP_ROUTES.getValue(route).let { (screen, lap) ->
+                seedLap(lap)
+                screen
             }
             else -> return false
         }
@@ -207,6 +247,58 @@ object DemoMode {
     fun disable() {
         _enabled.value = false
         _navigation.value = null
+        resetLap()
+    }
+
+    // ── getting started ──────────────────────────────────────────────────────
+
+    /**
+     * Closed, unless a lap route opens it: the store-listing frames are of the
+     * product, and a checklist over them would date every screenshot.
+     */
+    private val STORE_FRAMES_CHECKLIST = GettingStartedState(dismissedAtMs = EPOCH_MS.toLong())
+
+    private val _gettingStarted = MutableStateFlow(STORE_FRAMES_CHECKLIST)
+
+    /** The checklist `GettingStartedStore` serves while demo mode is on. */
+    val gettingStarted: StateFlow<GettingStartedState> = _gettingStarted.asStateFlow()
+
+    private val _sampleEntry = MutableStateFlow<SampleRecordingStore.Entry?>(null)
+
+    /** The sample's library entry `SampleRecordingStore` serves while demo mode is on. */
+    val sampleEntry: StateFlow<SampleRecordingStore.Entry?> = _sampleEntry.asStateFlow()
+
+    private val _emptyLibrary = MutableStateFlow(false)
+
+    fun updateGettingStarted(transform: (GettingStartedState) -> GettingStartedState) {
+        _gettingStarted.value = transform(_gettingStarted.value)
+    }
+
+    fun setSampleEntry(entry: SampleRecordingStore.Entry?) {
+        _sampleEntry.value = entry
+    }
+
+    /** The `checklist` frame is a brand-new account's: the personal library lists nothing. */
+    val isLibraryEmpty: Boolean get() = _emptyLibrary.value
+
+    private fun resetLap() {
+        _gettingStarted.value = STORE_FRAMES_CHECKLIST
+        _sampleEntry.value = null
+        _emptyLibrary.value = false
+    }
+
+    private fun seedLap(lap: Lap) {
+        val sample = SampleRecordingStore.Entry(
+            lang = SampleManifest.langFor(Locale.getDefault().language),
+            addedAtMs = EPOCH_MS + HOUR_MS,
+        )
+        _emptyLibrary.value = lap == Lap.FRESH
+        _sampleEntry.value = if (lap == Lap.FRESH) null else sample
+        _gettingStarted.value = when (lap) {
+            Lap.FRESH -> GettingStartedState()
+            Lap.PARTIAL -> GettingStartedState(recorded = true, replayed = true)
+            Lap.SAMPLE -> GettingStartedState(recorded = true)
+        }
     }
 
     // ── language ─────────────────────────────────────────────────────────────
@@ -788,6 +880,13 @@ object DemoMode {
 
     private const val IMPORT_ID = "demo-import"
 
+    private val LAP_ROUTES = mapOf(
+        "checklist" to (Screen.LIBRARY to Lap.FRESH),
+        "checklist-partial" to (Screen.LIBRARY to Lap.PARTIAL),
+        "sample" to (Screen.SAMPLE to Lap.SAMPLE),
+        "share-menu" to (Screen.SHARE_MENU to Lap.SAMPLE),
+    )
+
     private const val SCHEME = "parley"
     private const val HOST = "demo"
     private const val ROUTE_OFF = "off"
@@ -797,5 +896,6 @@ object DemoMode {
     private const val EPOCH_MS = 1_786_498_800_000.0
 
     private const val DAY_MS = 86_400_000.0
+    private const val HOUR_MS = 3_600_000.0
     private const val LINE_LENGTH_MS = 12_000L
 }

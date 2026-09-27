@@ -275,6 +275,39 @@
     <string name="notification_title">Recording a meeting</string>
     <string name="notification_text">Tap to return to Parley.</string>
 
+    <!-- Hand-off to the user's own AI. Word for word the iOS catalogue
+         (ios/App/Parley/Localizable.xcstrings): the same meeting hands off
+         identically from either phone. HandoffStringsParityTest checks it. -->
+    <string name="handoff_preamble">You are my meeting analyst. Below is the full transcript of a meeting. Read all of it first, then answer:</string>
+    <string name="handoff_question_summary">What was this meeting about and what was concluded? Five sentences or fewer.</string>
+    <string name="handoff_question_commitments">What did each side commit to? Include owner and timing.</string>
+    <string name="handoff_question_missed">What did I fail to ask, or should follow up on next time?</string>
+    <string name="handoff_closing">Quote the transcript\'s own words and give the timestamp when you answer.</string>
+    <string name="handoff_meeting">Meeting: %1$s (%2$s)</string>
+    <string name="handoff_context">Context: %1$s</string>
+    <string name="handoff_context_missing">not provided</string>
+    <string name="handoff_speakers">Speakers: %1$s</string>
+    <string name="handoff_transcript_header">--- Transcript ---</string>
+    <string name="handoff_line">%1$s: %2$s</string>
+    <string name="transcript_share_to_ai">Share to AI (with analysis prompt)</string>
+    <string name="transcript_copy_with_prompt">Copy with analysis prompt</string>
+
+    <!-- Getting started -->
+    <string name="getting_started_title">Do one lap, five minutes</string>
+    <string name="getting_started_progress_spoken">%1$d of %2$d done</string>
+    <string name="getting_started_not_now">Not now</string>
+    <string name="getting_started_load_sample">Load sample</string>
+    <string name="getting_started_done">Done</string>
+    <string name="getting_started_recorded">Record your first meeting</string>
+    <string name="getting_started_recorded_detail">or load the sample recording</string>
+    <string name="getting_started_filed">Put it in a folder</string>
+    <string name="getting_started_filed_detail">One customer, one folder</string>
+    <string name="getting_started_replayed">Replay: tap a line to jump</string>
+    <string name="getting_started_shared">Share it with your AI</string>
+    <string name="getting_started_shared_detail">ChatGPT and Claude are in the share sheet</string>
+    <string name="getting_started_show_again">Show the getting-started list again</string>
+    <string name="recording_source_sample">SAMPLE</string>
+    <string name="sample_missing">The sample recording is no longer in the library.</string>
     <!-- Library scope and folders (see HomeScreen, LibraryFolders) -->
     <string name="library_scope_personal">Personal</string>
     <string name="library_scope_choose">Switch between your personal and team recordings</string>

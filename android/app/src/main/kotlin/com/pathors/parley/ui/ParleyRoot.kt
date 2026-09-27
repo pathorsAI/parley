@@ -37,10 +37,18 @@ private object Route {
      * endpoints under an id of its own, so the detail screen has to know.
      */
     const val ARG_ORG = "org"
-    const val RECORDING = "recording/{id}?$ARG_ORG={$ARG_ORG}"
 
-    fun recording(id: String, orgId: String? = null) =
-        if (orgId == null) "recording/$id" else "recording/$id?$ARG_ORG=$orgId"
+    /** What the checklist opened it for — see [OpenFor]. Absent is a plain read. */
+    const val ARG_FOR = "for"
+    const val RECORDING = "recording/{id}?$ARG_ORG={$ARG_ORG}&$ARG_FOR={$ARG_FOR}"
+
+    fun recording(id: String, orgId: String? = null, openFor: OpenFor = OpenFor.READ): String {
+        val query = listOfNotNull(
+            orgId?.let { "$ARG_ORG=$it" },
+            openFor.takeIf { it != OpenFor.READ }?.let { "$ARG_FOR=${it.name}" },
+        )
+        return if (query.isEmpty()) "recording/$id" else "recording/$id?" + query.joinToString("&")
+    }
 }
 
 /**
@@ -84,7 +92,7 @@ private fun ParleyNavHost(container: AppContainer) {
     val navController = rememberNavController()
     val context = LocalContext.current
 
-    DemoNavigation(navController)
+    DemoNavigation(navController, container)
 
     // The Storage Access Framework: no storage permission, any provider (Files,
     // Drive, a recorder app), and the grant lives as long as we need the Uri.
@@ -108,8 +116,8 @@ private fun ParleyNavHost(container: AppContainer) {
             HomeScreen(
                 onRecord = { navController.navigate(Route.MEETING) },
                 onImport = { picker.launch(arrayOf("audio/*")) },
-                onOpenRecording = { id, orgId ->
-                    navController.navigate(Route.recording(id, orgId))
+                onOpenRecording = { id, orgId, openFor ->
+                    navController.navigate(Route.recording(id, orgId, openFor))
                 },
             )
         }
@@ -127,11 +135,17 @@ private fun ParleyNavHost(container: AppContainer) {
                     nullable = true
                     defaultValue = null
                 },
+                navArgument(Route.ARG_FOR) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { entry ->
             RecordingDetailScreen(
                 recordingId = entry.arguments?.getString("id").orEmpty(),
                 orgId = entry.arguments?.getString(Route.ARG_ORG),
+                openFor = OpenFor.parse(entry.arguments?.getString(Route.ARG_FOR)),
                 onBack = { navController.popBackStack() },
             )
         }
@@ -147,7 +161,7 @@ private fun ParleyNavHost(container: AppContainer) {
  * cue and opens its account sheet.
  */
 @Composable
-private fun DemoNavigation(navController: NavHostController) {
+private fun DemoNavigation(navController: NavHostController, container: AppContainer) {
     val navigation by DemoMode.navigation.collectAsState()
     LaunchedEffect(navigation) {
         val target = navigation ?: return@LaunchedEffect
@@ -158,6 +172,12 @@ private fun DemoNavigation(navController: NavHostController) {
                 navController.navigate(Route.recording(DemoMode.FEATURED_ID))
             DemoMode.Screen.MEETING -> navController.navigate(Route.MEETING)
             DemoMode.Screen.IMPORT -> navController.navigate(Route.IMPORT)
+            // Read straight off the seeded entry rather than the store's flow,
+            // which catches up a moment after the route seeded it.
+            DemoMode.Screen.SAMPLE, DemoMode.Screen.SHARE_MENU ->
+                container.sample.manifestOf(DemoMode.sampleEntry.value)?.let { sample ->
+                    navController.navigate(Route.recording(sample.id))
+                }
         }
     }
 }

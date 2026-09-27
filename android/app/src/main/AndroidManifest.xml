@@ -46,5 +46,12 @@
             android:name=".meeting.MeetingService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- Hears that "Share to AI" reached a share target (the getting-started
+             checklist's last item). Only the chooser's own PendingIntent reaches
+             it, so it is not exported. -->
+        <receiver
+            android:name=".ui.HandoffShareReceiver"
+            android:exported="false" />
     </application>
 </manifest>

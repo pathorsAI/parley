@@ -51,7 +51,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
@@ -107,7 +109,12 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
+fun AccountSheet(
+    viewModel: HomeViewModel,
+    onDismiss: () -> Unit,
+    /** "Show the getting-started list again". The library resets it, closes this, and shows it. */
+    onShowGettingStarted: () -> Unit,
+) {
     val account by viewModel.account.collectAsState()
     val library by viewModel.state.collectAsState()
     val destination by viewModel.saveDestination.collectAsState()
@@ -159,7 +166,7 @@ fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
 
             LanguageSection()
 
-            AboutSection()
+            AboutSection(onShowGettingStarted)
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
@@ -624,8 +631,9 @@ private fun openLanguageSettings(context: Context) {
  * because that is what identifies an artifact on Play.
  */
 @Composable
-private fun AboutSection() {
+private fun AboutSection(onShowGettingStarted: () -> Unit) {
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
 
     SectionHeader(R.string.account_about_title)
 
@@ -643,6 +651,15 @@ private fun AboutSection() {
         CustomTabsLauncher.launch(context, ParleyLinks.PRIVACY)
     }
     LinkButton(R.string.link_support) { CustomTabsLauncher.launch(context, ParleyLinks.SUPPORT) }
+    // Brings the library's checklist back, unticked — for someone who closed it
+    // with "Not now" and wants the lap after all. Resetting alone was the iOS
+    // bug: the list lives behind this sheet, so the tap changed nothing anyone
+    // could see. It ends where its result is — the library, scrolled to the
+    // list — with the confirming buzz iOS gives it.
+    LinkButton(R.string.getting_started_show_again) {
+        haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+        onShowGettingStarted()
+    }
 
     Text(
         text = stringResource(R.string.account_about_detail),

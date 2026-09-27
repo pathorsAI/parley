@@ -72,6 +72,11 @@ object ParleyPalette {
     val DarkPrimary = Color(0xFF2DB6F3) // --v2-sky
     val DarkRecording = Color(0xFFFF453A)
 
+    // The platform green, iOS `Theme.success`: a done item on the
+    // getting-started checklist, "this is fine" in the system's own words.
+    val LightSuccess = Color(0xFF248A3D)
+    val DarkSuccess = Color(0xFF30D158)
+
     /** 12, not Material's 8 or 16: the same softer corner the iOS app rounds to. */
     const val RADIUS_DP = 12
 }
@@ -83,14 +88,23 @@ object ParleyPalette {
  * @property recording a recording is running — the waveform playhead, the LIVE
  *   badge, the stop control. The one colour allowed to outrank the blue, and
  *   nothing else may use it.
+ * @property success something is done — the check on a finished
+ *   getting-started item, and nothing louder than that.
  */
 @androidx.compose.runtime.Immutable
 data class ParleyExtendedColors(
     val recording: Color,
+    val success: Color,
 )
 
-private val LightExtendedColors = ParleyExtendedColors(recording = ParleyPalette.LightRecording)
-private val DarkExtendedColors = ParleyExtendedColors(recording = ParleyPalette.DarkRecording)
+private val LightExtendedColors = ParleyExtendedColors(
+    recording = ParleyPalette.LightRecording,
+    success = ParleyPalette.LightSuccess,
+)
+private val DarkExtendedColors = ParleyExtendedColors(
+    recording = ParleyPalette.DarkRecording,
+    success = ParleyPalette.DarkSuccess,
+)
 
 /**
  * Provided by `ParleyTheme`. Defaults to the light set so a stray `@Preview` that

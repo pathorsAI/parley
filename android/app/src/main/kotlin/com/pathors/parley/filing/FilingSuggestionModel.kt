@@ -172,6 +172,11 @@ class FilingSuggestionModel(
     private val cloud: CloudClient,
     /** The label a segment's speaker is shown under, so the model reads what the user reads. */
     private val speakerLabel: (TranscriptSegment) -> String,
+    /**
+     * Told when a write put the recording in a folder — the getting-started
+     * checklist's "filed", which iOS ticks from the same card.
+     */
+    private val onFiled: () -> Unit = {},
 ) {
     private val _state = MutableStateFlow(FilingUiState())
     val state: StateFlow<FilingUiState> = _state.asStateFlow()
@@ -313,6 +318,7 @@ class FilingSuggestionModel(
                 folderAnswered = state.folderAnswered || target != null,
             )
         }
+        if (folderId != null) onFiled()
     }
 
     /** The folder id a target files into, creating a new folder when asked to. */

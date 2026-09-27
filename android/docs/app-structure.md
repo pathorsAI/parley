@@ -16,6 +16,9 @@ com.pathors.parley
     LibraryFolders.kt    folder pages, the orphan→Unfiled rule, scope fallback (pure)
     SaveDestination.kt   personal / personal folder / org / org folder, and its tag form
     SaveLocationStore.kt "Default save location" (Preferences DataStore `parley_library`)
+  onboarding/
+    GettingStartedStore.kt the library checklist's state (DataStore `parley_onboarding`)
+    SampleRecordingStore.kt the bundled sample's local-only library entry and audio
   ui/
     ParleyRoot.kt        sign-in wall, NavHost, the SAF picker
     SignInScreen.kt      Custom Tab hand-off
@@ -24,6 +27,9 @@ com.pathors.parley
     HomeViewModel.kt     library state (scope, folders, moves, shares), account
                          state, save targets, sign-out
     FolderPickerSheet.kt searchable "Move to folder" sheet with create-as-you-type
+    GettingStartedList.kt "Do one lap, five minutes" — the checklist rows; OpenFor
+    HandoffText.kt       the analysis prompt for "Share to AI" / "Copy with analysis
+                         prompt", and the chooser callback that ticks the checklist
     LibraryIcons.kt      folder / new folder / tray / group glyphs (not in core icons)
     AccountSheet.kt      identity, usage, default save location, sync, storage,
                          appearance, language, about, sign out, delete account
@@ -197,6 +203,31 @@ The library mirrors iOS `LibraryView` (and the desktop History window):
   `POST /recordings/{id}/share` into the org (and folder) chosen. See
   `api-cloud.md`.
 
+## Getting started: the checklist, the sample, the hand-off
+
+A port of iOS #435 (the Library checklist as it shipped there; iOS has since
+moved on to a guided lap, #450):
+
+- **Checklist.** Above the personal library, not while searching: record, put
+  it in a folder, replay, share with your AI. Each item ticks only from the real
+  event — a recording saved in the upload queue, a successful filing, a user
+  seek in the player, a share target picked (`HandoffShareReceiver`) or "Copy
+  with analysis prompt". Rows 2–4 open the newest recording with `OpenFor.FILE`
+  (folder picker) or `OpenFor.SHARE` (share sheet). The rules are parleykit's
+  `GettingStartedState`; existing users start dismissed (a stored session at the
+  first launch of this build, or a full library on the first load). Account
+  sheet › About › "Show the getting-started list again" resets it.
+- **Sample recording.** `public/sample/` is copied into the APK's assets as
+  `sample/` at build time (`copySampleAssets` in `app/build.gradle.kts`). Loaded,
+  it is a local-only row (`SAMPLE` badge) merged into the personal list: the
+  detail screen reads the manifest, plays the bundled audio (unpacked to the
+  cache), and files it locally. It is never uploaded, and it offers no download,
+  re-transcription or organization share; Delete only takes it out of the list.
+- **Hand-off.** The recording screen's `⋯` menu leads with "Share to AI (with
+  analysis prompt)" and "Copy with analysis prompt": parleykit's `HandoffPrompt`,
+  line for line the iOS text (`HandoffStringsParityTest` checks the copy against
+  the iOS catalogue). The sample asks the three questions written for its script.
+
 ## Strings
 
 Every user-visible string is in `res/values/strings.xml` **and**
@@ -233,6 +264,10 @@ adb shell am start -a android.intent.action.VIEW -d "'parley://demo/library'"
 | `parley://demo/import-quota` | Import stopped: out of transcription quota |
 | `parley://demo/import-signed-out` | Import stopped: session expired, with "Sign in again" |
 | `parley://demo/movetofolder` | The featured recording with the folder picker open over fifteen folders (a review frame, as on iOS) |
+| `parley://demo/checklist` | A new account: the getting-started checklist over an empty library |
+| `parley://demo/checklist-partial` | The checklist two of four done, the sample loaded above the fixtures |
+| `parley://demo/sample` | The sample recording's detail screen — real bundled audio, it plays |
+| `parley://demo/share-menu` | The same with the `⋯` menu open (Share to AI, Copy with analysis prompt) |
 | `parley://demo/off` | Leave demo mode |
 
 The fixtures include two personal folders, one organization ("Sales team",

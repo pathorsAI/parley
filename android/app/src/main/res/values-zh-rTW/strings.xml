@@ -273,6 +273,37 @@
     <string name="notification_title">正在錄製會議</string>
     <string name="notification_text">點一下回到 Parley。</string>
 
+    <!-- 交給使用者自己的 AI。與 iOS 字串表逐字相同。 -->
+    <string name="handoff_preamble">你是我的會議分析助理。以下是一場會議的完整逐字稿，請先讀完，再回答：</string>
+    <string name="handoff_question_summary">這場會議談了什麼、結論是什麼？五句以內。</string>
+    <string name="handoff_question_commitments">雙方各自答應了哪些事？附負責人與時間。</string>
+    <string name="handoff_question_missed">我漏問、或下次應該追問的是什麼？</string>
+    <string name="handoff_closing">回答時引用逐字稿原句並標時間。</string>
+    <string name="handoff_meeting">會議：%1$s（%2$s）</string>
+    <string name="handoff_context">背景：%1$s</string>
+    <string name="handoff_context_missing">未填</string>
+    <string name="handoff_speakers">說話者：%1$s</string>
+    <string name="handoff_transcript_header">--- 逐字稿 ---</string>
+    <string name="handoff_line">%1$s：%2$s</string>
+    <string name="transcript_share_to_ai">分享給 AI（附分析提示）</string>
+    <string name="transcript_copy_with_prompt">複製（附分析提示）</string>
+
+    <!-- 起步清單 -->
+    <string name="getting_started_title">先跑一輪，5 分鐘</string>
+    <string name="getting_started_progress_spoken">已完成 %1$d／%2$d 項</string>
+    <string name="getting_started_not_now">不用了</string>
+    <string name="getting_started_load_sample">載入範例</string>
+    <string name="getting_started_done">完成</string>
+    <string name="getting_started_recorded">錄第一段</string>
+    <string name="getting_started_recorded_detail">或載入範例錄音</string>
+    <string name="getting_started_filed">放進一個資料夾</string>
+    <string name="getting_started_filed_detail">一個客戶一個資料夾</string>
+    <string name="getting_started_replayed">回放：點一句跳過去</string>
+    <string name="getting_started_shared">分享給你的 AI</string>
+    <string name="getting_started_shared_detail">ChatGPT、Claude 都在分享面板裡</string>
+    <string name="getting_started_show_again">再顯示起步清單</string>
+    <string name="recording_source_sample">範例</string>
+    <string name="sample_missing">範例錄音已不在錄音庫裡。</string>
     <!-- Library scope and folders (see HomeScreen, LibraryFolders) -->
     <string name="library_scope_personal">個人</string>
     <string name="library_scope_choose">切換個人與團隊的錄音</string>

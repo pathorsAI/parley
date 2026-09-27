@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
@@ -60,6 +61,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -102,7 +104,12 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RecordingDetailScreen(recordingId: String, orgId: String? = null, onBack: () -> Unit) {
+fun RecordingDetailScreen(
+    recordingId: String,
+    orgId: String? = null,
+    openFor: OpenFor = OpenFor.READ,
+    onBack: () -> Unit,
+) {
     val container = rememberContainer()
     val context = LocalContext.current
     val viewModel: RecordingDetailViewModel = viewModel(
@@ -128,23 +135,30 @@ fun RecordingDetailScreen(recordingId: String, orgId: String? = null, onBack: ()
     // here: the tentative tail a live session leaves behind never reaches this
     // screen, so it must not reach the clipboard either.
     val readable = state.meta?.segments?.filter { it.isFinal }.orEmpty()
-    val plainTranscript = { plainTranscriptOf(context, state.meta, readable) }
+    val menu = rememberDetailMenu(viewModel, state.meta, readable) { choosingFolder = true }
+    DemoShareMenuRequest(metaLoaded = state.meta != null, onOpen = { menu.open = true })
 
-    val onRetranscribe: (() -> Unit)? =
-        if (viewModel.canRetranscribe) viewModel::askToRetranscribe else null
-    val onMoveToFolder: (() -> Unit)? =
-        if (viewModel.canMoveToFolder && state.meta != null) ({ choosingFolder = true }) else null
+    // What the checklist opened this screen for, acted on once the transcript
+    // is up (iOS `handleIntent`). Saveable, so a rotation does not do it twice.
+    var intentHandled by rememberSaveable { mutableStateOf(openFor == OpenFor.READ) }
+    LaunchedEffect(state.meta != null) {
+        if (intentHandled || state.meta == null) return@LaunchedEffect
+        intentHandled = true
+        // A beat for the push to settle, as iOS waits: a sheet thrown up
+        // mid-transition reads as the screen glitching rather than as an answer.
+        delay(INTENT_DELAY_MS)
+        when {
+            openFor == OpenFor.SHARE && readable.isNotEmpty() -> menu.shareToAI()
+            openFor == OpenFor.FILE && menu.onMoveToFolder != null -> choosingFolder = true
+        }
+    }
 
     Scaffold(
         topBar = {
             DetailTopBar(title = state.meta?.title, onBack = onBack) {
                 DetailToolbarActions(
-                    transcriptEmpty = readable.isEmpty(),
+                    menu = menu,
                     onToggleSearch = { searching = !searching },
-                    transcript = plainTranscript,
-                    retranscribe = retranscribe,
-                    onRetranscribe = onRetranscribe,
-                    onMoveToFolder = onMoveToFolder,
                 )
             }
         },
@@ -227,21 +241,108 @@ private fun DetailTopBar(
     )
 }
 
-@Composable
-private fun DetailToolbarActions(
-    transcriptEmpty: Boolean,
-    onToggleSearch: () -> Unit,
-    transcript: () -> String,
-    retranscribe: RetranscribeState,
-    onRetranscribe: (() -> Unit)?,
-    onMoveToFolder: (() -> Unit)?,
+/**
+ * Everything the toolbar's copy button and `⋯` menu act on, gathered so the
+ * three composables that draw them take one value instead of eight.
+ */
+@Stable
+private class DetailMenu(
+    private val context: Context,
+    /** The transcript alone. Evaluated on tap. */
+    val transcript: () -> String,
+    /** The analysis prompt plus the transcript — [HandoffText]. Evaluated on tap. */
+    val handoff: () -> String,
+    val transcriptEmpty: Boolean,
+    val retranscribe: RetranscribeState,
+    /** Null for an org recording or the sample: re-transcribing writes through the personal endpoints. */
+    val onRetranscribe: (() -> Unit)?,
+    /** Null for an org recording, as on iOS; see [RecordingDetailViewModel.canMoveToFolder]. */
+    val onMoveToFolder: (() -> Unit)?,
+    private val onCopiedWithPrompt: () -> Unit,
 ) {
+    /** Whether the `⋯` menu is down. Here so a demo route can open it. */
+    var open by mutableStateOf(false)
+
+    /** Bumped by "Copy with analysis prompt", so the copy button says "Copied" for it too. */
+    var promptCopies by mutableIntStateOf(0)
+        private set
+
+    /** The share sheet with the analysis prompt; the checklist ticks once a target is picked. */
+    fun shareToAI() {
+        TranscriptClipboard.shareToAI(
+            context,
+            handoff(),
+            context.getString(R.string.transcript_share_title),
+        )
+    }
+
+    fun copyWithPrompt() {
+        val payload = handoff()
+        if (payload.isEmpty()) return
+        TranscriptClipboard.write(context, payload, context.getString(R.string.transcript_clip_label))
+        promptCopies++
+        onCopiedWithPrompt()
+    }
+
+    fun sharePlain() {
+        val payload = transcript()
+        if (payload.isNotEmpty()) {
+            TranscriptClipboard.share(context, payload, context.getString(R.string.transcript_share_title))
+        }
+    }
+}
+
+@Composable
+private fun rememberDetailMenu(
+    viewModel: RecordingDetailViewModel,
+    meta: RecordingMeta?,
+    readable: List<TranscriptSegmentDto>,
+    onMoveToFolder: () -> Unit,
+): DetailMenu {
+    val context = LocalContext.current
+    val retranscribe by viewModel.retranscribe.collectAsState()
+    val menu = remember(meta, retranscribe) {
+        DetailMenu(
+            context = context,
+            transcript = { plainTranscriptOf(context, meta, readable) },
+            handoff = { viewModel.handoffText(context) },
+            transcriptEmpty = readable.isEmpty(),
+            retranscribe = retranscribe,
+            onRetranscribe = if (viewModel.canRetranscribe) viewModel::askToRetranscribe else null,
+            onMoveToFolder = if (viewModel.canMoveToFolder && meta != null) onMoveToFolder else null,
+            onCopiedWithPrompt = viewModel::noteCopiedWithPrompt,
+        )
+    }
+    return menu
+}
+
+/**
+ * `parley://demo/share-menu` over a loaded recording opens the `⋯` menu, once
+ * per request — the review frame for the hand-off entries.
+ */
+@Composable
+private fun DemoShareMenuRequest(metaLoaded: Boolean, onOpen: () -> Unit) {
+    val demoNavigation by DemoMode.navigation.collectAsState()
+    var handledDemoRequest by remember { mutableLongStateOf(-1L) }
+    LaunchedEffect(demoNavigation, metaLoaded) {
+        val request = demoNavigation ?: return@LaunchedEffect
+        if (request.screen == DemoMode.Screen.SHARE_MENU && metaLoaded &&
+            request.serial != handledDemoRequest
+        ) {
+            handledDemoRequest = request.serial
+            onOpen()
+        }
+    }
+}
+
+@Composable
+private fun DetailToolbarActions(menu: DetailMenu, onToggleSearch: () -> Unit) {
     // Its own button rather than a row in an overflow menu, and
     // absent rather than inert when there is no transcript: the
     // same rule the copy button follows. Finding a phrase is
     // something you do *while reading*, over and over, which is
     // not a thing to put two taps away.
-    if (!transcriptEmpty) {
+    if (!menu.transcriptEmpty) {
         IconButton(onClick = onToggleSearch) {
             Icon(
                 Icons.Default.Search,
@@ -250,16 +351,11 @@ private fun DetailToolbarActions(
         }
     }
     CopyTranscriptButton(
-        text = transcript,
-        isEmpty = transcriptEmpty,
+        text = menu.transcript,
+        isEmpty = menu.transcriptEmpty,
+        externalCopies = menu.promptCopies,
     )
-    DetailOverflowMenu(
-        transcript = transcript,
-        transcriptEmpty = transcriptEmpty,
-        state = retranscribe,
-        onRetranscribe = onRetranscribe,
-        onMoveToFolder = onMoveToFolder,
-    )
+    DetailOverflowMenu(menu)
 }
 
 /** Loading, failed, or the player over the recording's body. */
@@ -282,7 +378,9 @@ private fun DetailContent(
 
         state.failed || meta == null -> Box(modifier, Alignment.Center) {
             Text(
-                text = stringResource(R.string.detail_load_failed),
+                text = stringResource(
+                    if (state.sampleMissing) R.string.sample_missing else R.string.detail_load_failed,
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.error,
             )
@@ -386,81 +484,104 @@ private fun DetailDialogs(
  * chose to walk towards.
  */
 @Composable
-private fun DetailOverflowMenu(
-    transcript: () -> String,
-    transcriptEmpty: Boolean,
-    state: RetranscribeState,
-    /** Null for an org recording: re-transcribing writes through the personal endpoints. */
-    onRetranscribe: (() -> Unit)?,
-    /** Null for an org recording, as on iOS; see [RecordingDetailViewModel.canMoveToFolder]. */
-    onMoveToFolder: (() -> Unit)?,
-) {
-    val context = LocalContext.current
-    val shareTitle = stringResource(R.string.transcript_share_title)
-    var open by remember { mutableStateOf(false) }
-
+private fun DetailOverflowMenu(menu: DetailMenu) {
     Box {
-        IconButton(onClick = { open = true }) {
+        IconButton(onClick = { menu.open = true }) {
             Icon(Icons.Default.MoreVert, stringResource(R.string.detail_more_actions))
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.transcript_share)) },
-                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                enabled = !transcriptEmpty,
-                onClick = {
-                    open = false
-                    val payload = transcript()
-                    if (payload.isNotEmpty()) {
-                        TranscriptClipboard.share(context, payload, shareTitle)
-                    }
-                },
-            )
+        DropdownMenu(expanded = menu.open, onDismissRequest = { menu.open = false }) {
+            HandoffMenuItems(menu)
+            val onMoveToFolder = menu.onMoveToFolder
             if (onMoveToFolder != null) {
+                HorizontalDivider()
                 // Above the paid action, and a plain row: filing is free,
                 // reversible and frequent.
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.library_move_to_folder)) },
                     leadingIcon = { Icon(LibraryIcons.Folder, contentDescription = null) },
                     onClick = {
-                        open = false
+                        menu.open = false
                         onMoveToFolder()
                     },
                 )
             }
+            val onRetranscribe = menu.onRetranscribe
             if (onRetranscribe != null) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.retranscribe_action)) },
-                    leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
-                    enabled = state.canRequest,
-                    onClick = {
-                        open = false
-                        onRetranscribe()
-                    },
-                )
-                // Under the row it is about rather than above the menu, which is
-                // where iOS puts it: a Material menu is read top-down, so a sentence
-                // explaining the item above it needs no rule about which way to look.
-                // Always present, never only-when-disabled — "2 re-transcriptions
-                // left" is exactly what somebody deciding whether to spend one wants
-                // to know, and a note that appeared only on refusal would tell them
-                // after the fact.
-                Text(
-                    text = state.block
-                        ?.let { stringResource(retranscribeNoteRes(it)) }
-                        ?: stringResource(
-                            R.string.retranscribe_remaining,
-                            state.retriesRemaining,
-                        ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .width(RETRANSCRIBE_NOTE_WIDTH)
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                )
+                RetranscribeMenuItem(menu.retranscribe) {
+                    menu.open = false
+                    onRetranscribe()
+                }
             }
         }
     }
+}
+
+/**
+ * The hand-off to the user's own AI first, the plain share under it — iOS
+ * `TranscriptShareMenu`'s order. "Copy with analysis prompt" is here rather
+ * than beside the copy button because the button's whole feedback is its own
+ * label; it borrows that label instead (see [DetailMenu.promptCopies]).
+ */
+@Composable
+private fun HandoffMenuItems(menu: DetailMenu) {
+    DropdownMenuItem(
+        text = { Text(stringResource(R.string.transcript_share_to_ai)) },
+        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+        enabled = !menu.transcriptEmpty,
+        onClick = {
+            menu.open = false
+            menu.shareToAI()
+        },
+    )
+    DropdownMenuItem(
+        text = { Text(stringResource(R.string.transcript_copy_with_prompt)) },
+        leadingIcon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
+        enabled = !menu.transcriptEmpty,
+        onClick = {
+            menu.open = false
+            menu.copyWithPrompt()
+        },
+    )
+    DropdownMenuItem(
+        text = { Text(stringResource(R.string.transcript_share)) },
+        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+        enabled = !menu.transcriptEmpty,
+        onClick = {
+            menu.open = false
+            menu.sharePlain()
+        },
+    )
+}
+
+/**
+ * "Transcribe again", with the note under the row it is about rather than above
+ * the menu, which is where iOS puts it: a Material menu is read top-down, so a
+ * sentence explaining the item above it needs no rule about which way to look.
+ * Always present, never only-when-disabled — "2 re-transcriptions left" is
+ * exactly what somebody deciding whether to spend one wants to know, and a note
+ * that appeared only on refusal would tell them after the fact.
+ */
+@Composable
+private fun RetranscribeMenuItem(state: RetranscribeState, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(stringResource(R.string.retranscribe_action)) },
+        leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
+        enabled = state.canRequest,
+        onClick = onClick,
+    )
+    Text(
+        text = state.block
+            ?.let { stringResource(retranscribeNoteRes(it)) }
+            ?: stringResource(
+                R.string.retranscribe_remaining,
+                state.retriesRemaining,
+            ),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .width(RETRANSCRIBE_NOTE_WIDTH)
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+    )
 }
 
 /** The copy for each reason the action is unavailable. See [RetranscribeBlock]. */
@@ -578,6 +699,9 @@ private fun RetranscribeError(text: String) {
  * instead.
  */
 private val RETRANSCRIBE_NOTE_WIDTH = 240.dp
+
+/** How long the screen waits after arriving before acting on [OpenFor] — iOS waits the same 600 ms. */
+private const val INTENT_DELAY_MS = 600L
 
 /**
  * The scrolling half of the screen, and the two places it answers to the
