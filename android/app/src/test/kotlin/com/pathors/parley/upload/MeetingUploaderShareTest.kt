@@ -73,7 +73,7 @@ class MeetingUploaderShareTest {
         val queue = PendingUploadQueue(temporary.newFolder("q1"))
         val uploader = uploader(queue, SaveDestination(orgId = "o1", folderId = "of1"))
         ok()
-        ok("""{"updatedAt":1}""")
+        ok(PUSH_ACCEPTED)
         ok()
 
         uploader.enqueue(request("rec-org"))
@@ -103,7 +103,7 @@ class MeetingUploaderShareTest {
         val queue = PendingUploadQueue(temporary.newFolder("q2"))
         val uploader = uploader(queue, SaveDestination(folderId = "f1"))
         ok()
-        ok("""{"updatedAt":1}""")
+        ok(PUSH_ACCEPTED)
 
         uploader.enqueue(request("rec-personal"))
         uploader.drain()
@@ -159,7 +159,7 @@ class MeetingUploaderShareTest {
         val queue = PendingUploadQueue(temporary.newFolder("q5"))
         val uploader = uploader(queue, SaveDestination(orgId = "gone"))
         ok()
-        ok("""{"updatedAt":1}""")
+        ok(PUSH_ACCEPTED)
         server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"forbidden"}"""))
 
         uploader.enqueue(request("rec-refused"))
@@ -176,7 +176,7 @@ class MeetingUploaderShareTest {
         val queue = PendingUploadQueue(temporary.newFolder("q6"))
         val uploader = uploader(queue, SaveDestination(orgId = "o1"))
         ok()
-        ok("""{"updatedAt":1}""")
+        ok(PUSH_ACCEPTED)
         server.enqueue(MockResponse().setResponseCode(503).setBody("""{"error":"unavailable"}"""))
 
         uploader.enqueue(request("rec-transient"))
@@ -187,3 +187,6 @@ class MeetingUploaderShareTest {
         assertTrue(queue.audioFile("rec-transient").exists())
     }
 }
+
+/** The server's reply to a meta push that landed. */
+private const val PUSH_ACCEPTED = """{"updatedAt":1}"""

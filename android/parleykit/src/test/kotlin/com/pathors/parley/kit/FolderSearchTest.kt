@@ -15,7 +15,7 @@ class FolderSearchTest {
 
     private data class Folder(val id: String, val name: String)
 
-    private val folders = listOf("Acme Corp", "Café Luna", "北風工業", "Northwind", "晴光實驗室")
+    private val folders = listOf(ACME, CAFE_LUNA, "北風工業", "Northwind", "晴光實驗室")
         .map { Folder(id = it, name = it) }
 
     private fun names(query: String) = FolderSearch.filter(folders, query) { it.name }.map { it.name }
@@ -28,24 +28,24 @@ class FolderSearchTest {
 
     @Test
     fun `matches a substring anywhere in the name`() {
-        assertEquals(listOf("Acme Corp"), names("corp"))
+        assertEquals(listOf(ACME), names("corp"))
         assertEquals(listOf("Northwind"), names("wind"))
     }
 
     @Test
     fun `ignores case`() {
-        assertEquals(listOf("Acme Corp"), names("ACME"))
+        assertEquals(listOf(ACME), names("ACME"))
     }
 
     @Test
     fun `ignores diacritics`() {
-        assertEquals(listOf("Café Luna"), names("cafe"))
+        assertEquals(listOf(CAFE_LUNA), names("cafe"))
     }
 
     /** A zh-Hant keyboard can type full-width Latin; it must still find the folder. */
     @Test
     fun `ignores full-width Latin`() {
-        assertEquals(listOf("Acme Corp"), names("ＡＣＭＥ"))
+        assertEquals(listOf(ACME), names("ＡＣＭＥ"))
     }
 
     @Test
@@ -56,7 +56,7 @@ class FolderSearchTest {
 
     @Test
     fun `trims the query`() {
-        assertEquals(listOf("Café Luna"), names("  luna "))
+        assertEquals(listOf(CAFE_LUNA), names("  luna "))
     }
 
     /** Ideographic space is what a zh-Hant keyboard's space bar types. */
@@ -72,7 +72,7 @@ class FolderSearchTest {
 
     @Test
     fun `keeps the server's order`() {
-        assertEquals(listOf("Acme Corp", "Café Luna"), names("a"))
+        assertEquals(listOf(ACME, CAFE_LUNA), names("a"))
     }
 
     @Test
@@ -98,3 +98,6 @@ class FolderSearchTest {
         assertFalse(FolderSearch.matches("Unfiled", "Acme"))
     }
 }
+
+private const val ACME = "Acme Corp"
+private const val CAFE_LUNA = "Café Luna"

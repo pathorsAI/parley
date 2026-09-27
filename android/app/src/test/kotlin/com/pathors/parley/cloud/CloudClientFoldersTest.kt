@@ -54,17 +54,17 @@ class CloudClientFoldersTest {
     fun `creating a folder sends the client-minted id`() = runBlocking {
         ok("""{"ok":true}""")
 
-        val folder = client().createFolder("Northwind", id = "fixed-id", createdAtMs = 1_700_000_000_000)
+        val folder = client().createFolder("Northwind", id = FIXED_ID, createdAtMs = 1_700_000_000_000)
 
         val request = server.takeRequest()
         assertEquals("POST", request.method)
         assertEquals("/folders", request.path)
         val body = bodyOf(request)
-        assertEquals("fixed-id", body["id"]!!.jsonPrimitive.content)
+        assertEquals(FIXED_ID, body["id"]!!.jsonPrimitive.content)
         assertEquals("Northwind", body["name"]!!.jsonPrimitive.content)
         assertEquals("1700000000000", body["createdAt"]!!.jsonPrimitive.content)
         // No envelope came back, so the folder is the one that was asked for.
-        assertEquals("fixed-id", folder.id)
+        assertEquals(FIXED_ID, folder.id)
         assertEquals("Northwind", folder.name)
     }
 
@@ -72,7 +72,7 @@ class CloudClientFoldersTest {
     fun `a folder envelope in the response wins`() = runBlocking {
         ok("""{"folder":{"id":"fixed-id","name":"Northwind Ltd"}}""")
 
-        val folder = client().createFolder("Northwind", id = "fixed-id")
+        val folder = client().createFolder("Northwind", id = FIXED_ID)
 
         assertEquals("Northwind Ltd", folder.name)
     }
@@ -204,3 +204,6 @@ class CloudClientFoldersTest {
         assertEquals(JsonNull, body["summary"]!!.jsonObject["folderId"])
     }
 }
+
+/** The client-minted folder id the create tests pin. */
+private const val FIXED_ID = "fixed-id"
