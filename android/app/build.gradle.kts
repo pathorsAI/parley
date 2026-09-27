@@ -180,6 +180,8 @@ abstract class CopySampleAssets : DefaultTask() {
 }
 
 val copySampleAssets = tasks.register<CopySampleAssets>("copySampleAssets") {
+    group = "build"
+    description = "Copies public/sample (the bundled sample recording) into the APK's assets."
     source.set(rootProject.layout.projectDirectory.dir("../public/sample"))
 }
 

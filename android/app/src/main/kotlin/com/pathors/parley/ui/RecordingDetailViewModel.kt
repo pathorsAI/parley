@@ -412,28 +412,30 @@ class RecordingDetailViewModel(
         // Filed on this phone and nowhere else — see `SampleRecordingStore`.
         if (DemoMode.isActive || isSample) {
             if (isSample) viewModelScope.launch { container.sample.setFolder(folderId) }
-            _state.update { it.copy(meta = meta.withFolderId(folderId)) }
-            if (folderId != null) container.gettingStarted.mark(GettingStartedStep.FILED)
+            showFiled(meta.withFolderId(folderId), folderId)
             return
         }
-        viewModelScope.launch {
-            _filing.update { it.copy(moving = true, moveFailed = false) }
-            val result = try {
-                container.cloud.refileRecording(recordingId, folderId)
-                true
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                false
-            }
-            if (result) {
-                _state.update { current ->
-                    current.copy(meta = current.meta?.withFolderId(folderId))
-                }
-                if (folderId != null) container.gettingStarted.mark(GettingStartedStep.FILED)
-            }
-            _filing.update { it.copy(moving = false, moveFailed = !result) }
+        viewModelScope.launch { refile(folderId) }
+    }
+
+    private suspend fun refile(folderId: String?) {
+        _filing.update { it.copy(moving = true, moveFailed = false) }
+        val landed = try {
+            container.cloud.refileRecording(recordingId, folderId)
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            false
         }
+        if (landed) _state.value.meta?.let { showFiled(it.withFolderId(folderId), folderId) }
+        _filing.update { it.copy(moving = false, moveFailed = !landed) }
+    }
+
+    /** The move landed: the meta on screen follows, and filing into a folder ticks the checklist. */
+    private fun showFiled(meta: RecordingMeta, folderId: String?) {
+        _state.update { it.copy(meta = meta) }
+        if (folderId != null) container.gettingStarted.mark(GettingStartedStep.FILED)
     }
 
     /**

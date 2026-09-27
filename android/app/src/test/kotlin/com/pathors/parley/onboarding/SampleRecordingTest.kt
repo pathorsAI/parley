@@ -79,14 +79,14 @@ class SampleRecordingTest {
     fun `the sample slots into the personal list by date`() {
         val newer = row("b", 9_000.0)
         val older = row("a", 1_000.0)
-        val sample = row("sample-x", 5_000.0)
+        val sample = row(SAMPLE_ID, 5_000.0)
 
         assertEquals(
-            listOf("b", "sample-x", "a"),
+            listOf("b", SAMPLE_ID, "a"),
             HomeViewModel.withSample(listOf(newer, older), sample, isPersonal = true).map { it.id },
         )
         assertEquals(
-            listOf("sample-x"),
+            listOf(SAMPLE_ID),
             HomeViewModel.withSample(emptyList(), sample, isPersonal = true).map { it.id },
         )
     }
@@ -94,13 +94,13 @@ class SampleRecordingTest {
     @Test
     fun `an organization's library never shows the sample`() {
         val list = listOf(row("a", 1.0))
-        assertSame(list, HomeViewModel.withSample(list, row("sample-x", 5.0), isPersonal = false))
+        assertSame(list, HomeViewModel.withSample(list, row(SAMPLE_ID, 5.0), isPersonal = false))
     }
 
     @Test
     fun `the checklist opens the newest recording, the sample included`() {
-        val library = listOf(row("a", 1.0), row("sample-x", 5.0), row("b", 3.0))
-        assertEquals("sample-x", HomeViewModel.latestRecording(library)?.id)
+        val library = listOf(row("a", 1.0), row(SAMPLE_ID, 5.0), row("b", 3.0))
+        assertEquals(SAMPLE_ID, HomeViewModel.latestRecording(library)?.id)
         assertNull(HomeViewModel.latestRecording(emptyList()))
     }
 
@@ -108,7 +108,7 @@ class SampleRecordingTest {
     fun `the sample is never offered for sharing to an organization`() {
         val state = HomeViewModel.UiState(orgs = listOf(CloudOrg(id = "o", name = "Team", role = "member")))
 
-        assertTrue(LibraryRules.recordingRow(state, row("sample-x", 1.0)).shareTargets.isEmpty())
+        assertTrue(LibraryRules.recordingRow(state, row(SAMPLE_ID, 1.0)).shareTargets.isEmpty())
         assertEquals(1, LibraryRules.recordingRow(state, row("a", 1.0)).shareTargets.size)
     }
 
@@ -122,5 +122,9 @@ class SampleRecordingTest {
         assertEquals(OpenFor.SHARE, OpenFor.parse("SHARE"))
         assertEquals(OpenFor.READ, OpenFor.parse(null))
         assertEquals(OpenFor.READ, OpenFor.parse("something-newer"))
+    }
+
+    private companion object {
+        const val SAMPLE_ID = "sample-x"
     }
 }
