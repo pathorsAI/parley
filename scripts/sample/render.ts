@@ -180,7 +180,7 @@ function renderScript(file: string): void {
       const total = Math.floor(ms / 1000);
       return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
     };
-    const brief = script.analysis.brief.replace(/\{L(\d+)\}/g, (_, n) => `[${clock(lineStart(Number(n)))}]`);
+    const brief = script.analysis.brief.replaceAll(/\{L(\d+)\}/g, (_, n) => `[${clock(lineStart(Number(n)))}]`);
     const findings = script.analysis.findings.map(({ line, ...f }) => ({
       atMs: lineStart(line),
       ...f,
