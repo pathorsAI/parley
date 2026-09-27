@@ -95,6 +95,8 @@ Keyboard: hold a key to see it magnified above your finger; the English pane pre
 
 The first time you open the app after an update, a short card tells you what changed.
 
+Library: swipe sideways on the blank space in the list to move between folders. While recording, drag the controls down to give the live transcript more room.
+
 ## What's New — 1.22
 
 Your first lap through Parley now shows you what it does, instead of listing it.
