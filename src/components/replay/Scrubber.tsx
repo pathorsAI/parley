@@ -26,6 +26,53 @@ interface ScrubberProps {
   countsAsReplay?: boolean;
 }
 
+type Ripple = { id: number; x: number };
+
+/** A state updater that drops the ripple `id` once it has played out. */
+function withoutRipple(id: number) {
+  return (ripples: Ripple[]) => ripples.filter((p) => p.id !== id);
+}
+
+/**
+ * A transcript-line click moves the playhead here from somewhere else on the
+ * page: let it glide there (drags and keys stay instant) and mark where it
+ * landed with a ripple, so the eye follows the jump.
+ */
+function useSeekRipples(
+  enabled: boolean,
+  durationMs: number,
+  trackRef: React.RefObject<HTMLDivElement | null>,
+  draggingRef: React.RefObject<boolean>
+): { easing: boolean; ripples: Ripple[] } {
+  const [easing, setEasing] = useState(false);
+  const [ripples, setRipples] = useState<Ripple[]>([]);
+  useEffect(() => {
+    if (!enabled) return;
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    const later = (fn: () => void, ms: number) => {
+      const id = setTimeout(() => {
+        timers.delete(id);
+        fn();
+      }, ms);
+      timers.add(id);
+    };
+    const off = onTranscriptSeek((ms) => {
+      if (draggingRef.current || durationMs <= 0) return;
+      const width = trackRef.current?.getBoundingClientRect().width ?? 0;
+      const ripple = { id: performance.now(), x: Math.max(0, Math.min(1, ms / durationMs)) * width };
+      setEasing(true);
+      setRipples((r) => [...r, ripple]);
+      later(() => setEasing(false), SEEK_EASE_MS);
+      later(() => setRipples(withoutRipple(ripple.id)), RIPPLE_MS);
+    });
+    return () => {
+      off();
+      for (const t of timers) clearTimeout(t);
+    };
+  }, [enabled, durationMs, trackRef, draggingRef]);
+  return { easing, ripples };
+}
+
 /**
  * A custom pointer-driven timeline scrubber. Uses pointer capture so dragging
  * stays responsive even when the cursor leaves the bar. Reports a live value
@@ -45,36 +92,7 @@ export function Scrubber({
   const draftRef = useRef(valueMs);
   const trackRef = useRef<HTMLDivElement | null>(null);
 
-  // A transcript-line click moves the playhead here from somewhere else on
-  // the page: let it glide there (drags and keys stay instant) and mark where
-  // it landed with a ripple, so the eye follows the jump.
-  const [easing, setEasing] = useState(false);
-  const [ripples, setRipples] = useState<{ id: number; x: number }[]>([]);
-  useEffect(() => {
-    if (!countsAsReplay) return;
-    const timers = new Set<ReturnType<typeof setTimeout>>();
-    const later = (fn: () => void, ms: number) => {
-      const id = setTimeout(() => {
-        timers.delete(id);
-        fn();
-      }, ms);
-      timers.add(id);
-    };
-    const off = onTranscriptSeek((ms) => {
-      if (draggingRef.current || durationMs <= 0) return;
-      const width = trackRef.current?.getBoundingClientRect().width ?? 0;
-      const x = Math.max(0, Math.min(1, ms / durationMs)) * width;
-      const id = performance.now();
-      setEasing(true);
-      setRipples((r) => [...r, { id, x }]);
-      later(() => setEasing(false), SEEK_EASE_MS);
-      later(() => setRipples((r) => r.filter((p) => p.id !== id)), RIPPLE_MS);
-    });
-    return () => {
-      off();
-      for (const t of timers) clearTimeout(t);
-    };
-  }, [countsAsReplay, durationMs]);
+  const { easing, ripples } = useSeekRipples(countsAsReplay, durationMs, trackRef, draggingRef);
 
   const pct = durationMs > 0 ? Math.max(0, Math.min(1, valueMs / durationMs)) : 0;
 

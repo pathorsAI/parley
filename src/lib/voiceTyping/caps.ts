@@ -29,10 +29,16 @@ import type { TranslationKey } from "../../i18n/messages";
  * thing that is genuinely ours.
  */
 
-/** The hold-friendly single modifier keys watched by the HID tap (need Input
- *  Monitoring). Everything else is an OS global shortcut (no permission). */
+/** The hold-friendly single modifier keys. On macOS the HID tap watches all
+ *  four (needs Input Monitoring); everything else is an OS global shortcut (no
+ *  permission). */
 export const MODIFIER_IDS = ["fn", "right-option", "right-command", "right-control"] as const;
 export type ModifierId = (typeof MODIFIER_IDS)[number];
+
+/** The subset a Windows keyboard has, watched by a low-level keyboard hook (no
+ *  permission). The ids are shared with macOS on purpose: `right-option` is
+ *  the key in the same place, right Alt. There is no fn key and no ⌘. */
+const WINDOWS_MODIFIER_IDS: readonly ModifierId[] = ["right-control", "right-option"];
 
 export const MODIFIER_LABEL_KEYS: Record<ModifierId, TranslationKey> = {
   fn: "settings.voiceTyping.shortcut.fn",
@@ -41,8 +47,30 @@ export const MODIFIER_LABEL_KEYS: Record<ModifierId, TranslationKey> = {
   "right-control": "settings.voiceTyping.shortcut.right-control",
 };
 
+/** The same two keys, named the way a PC keyboard prints them. */
+const WINDOWS_MODIFIER_LABEL_KEYS: Partial<Record<ModifierId, TranslationKey>> = {
+  "right-option": "settings.voiceTyping.shortcut.rightAltWindows",
+  "right-control": "settings.voiceTyping.shortcut.rightCtrlWindows",
+};
+
 export const isModifierId = (s: string): s is ModifierId =>
   (MODIFIER_IDS as readonly string[]).includes(s);
+
+/** The hold-a-modifier triggers this platform can deliver, in chip order. */
+export function modifierIdsFor(mac: boolean = isMac()): readonly ModifierId[] {
+  return mac ? MODIFIER_IDS : WINDOWS_MODIFIER_IDS;
+}
+
+/** Whether `id` is a hold-a-modifier trigger this platform can deliver. */
+export function isModifierAvailable(id: string, mac: boolean = isMac()): id is ModifierId {
+  return isModifierId(id) && modifierIdsFor(mac).includes(id);
+}
+
+/** The chip / caps label for a modifier trigger, or null when this platform
+ *  has no such key. */
+export function modifierLabelKey(id: ModifierId, mac: boolean = isMac()): TranslationKey | null {
+  return mac ? MODIFIER_LABEL_KEYS[id] : (WINDOWS_MODIFIER_LABEL_KEYS[id] ?? null);
+}
 
 /** Modifier caps, spelled the way each OS spells them. ⌘/⌥/⌃/⇧ are glyphs a
  *  Windows user has never seen on a keyboard, so a combo shown that way reads
@@ -117,10 +145,13 @@ export function shortcutCaps(
   const symbols = mac ? MOD_SYMBOL_MAC : MOD_SYMBOL_WIN;
   const sep = mac ? " " : " + ";
   if (shortcut === "alt-space") return mac ? "⌥ Space" : "Alt + Space";
-  // The HID-tap modifier triggers only exist on macOS, so their labels are only
-  // ever reachable there — a Windows store that still holds one (nothing can
-  // set it now) falls through to the raw id rather than promising a glyph.
-  if (isModifierId(shortcut)) return mac ? t(MODIFIER_LABEL_KEYS[shortcut]) : shortcut;
+  // A modifier trigger the platform has no key for (fn or ⌘ on Windows —
+  // nothing can select one there) falls through to the raw id rather than
+  // promising a key that isn't on the keyboard.
+  if (isModifierId(shortcut)) {
+    const label = modifierLabelKey(shortcut, mac);
+    return label ? t(label) : shortcut;
+  }
   if (shortcut.startsWith("combo:")) {
     return shortcut
       .slice("combo:".length)
