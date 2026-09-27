@@ -16,10 +16,16 @@ on:
     branches: [main]
     paths:
       - "ios/**"
+      # ParleyKit's tests read this folder (AnnouncementCatalogTests), and the
+      # app bundles it.
+      - "announcements/**"
       - ".github/workflows/ios-ci.yml"
   pull_request:
     paths:
       - "ios/**"
+      # ParleyKit's tests read this folder (AnnouncementCatalogTests), and the
+      # app bundles it.
+      - "announcements/**"
       - ".github/workflows/ios-ci.yml"
 
 # macOS runners are the expensive ones. A force-push mid-review should not leave
