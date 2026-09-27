@@ -150,6 +150,12 @@ fun CopyTranscriptButton(
     text: () -> String,
     isEmpty: Boolean,
     modifier: Modifier = Modifier,
+    /**
+     * Copies made somewhere else on the same screen — "Copy with analysis
+     * prompt" in the menu, which closes on tap and so has no feedback of its
+     * own. Each bump shows "Copied" here, the one place the screen can say it.
+     */
+    externalCopies: Int = 0,
 ) {
     val context = LocalContext.current
     val clipLabel = stringResource(R.string.transcript_clip_label)
@@ -159,8 +165,8 @@ fun CopyTranscriptButton(
     // re-setting `true` would not re-launch the effect.
     var copies by remember { mutableIntStateOf(0) }
     var copied by remember { mutableStateOf(false) }
-    LaunchedEffect(copies) {
-        if (copies == 0) return@LaunchedEffect
+    LaunchedEffect(copies, externalCopies) {
+        if (copies == 0 && externalCopies == 0) return@LaunchedEffect
         copied = true
         delay(COPIED_FEEDBACK_MS)
         copied = false
