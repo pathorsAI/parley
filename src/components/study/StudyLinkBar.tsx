@@ -24,8 +24,15 @@ import { MeetingKindPicker } from "../MeetingKindPicker";
  * the report is where you find out the kind was wrong, so it is where you fix
  * it. Read-only org recordings can't be written back, so they get no filing
  * affordances (the kind still shows — it explains the report you're reading).
+ *
+ * The destination picker's open state can be owned by the caller
+ * (`pickerOpen` / `onPickerOpenChange`) so other doors on the page — the filing
+ * card's "Choose another…", the guide bar — open this same sheet.
  */
-export function StudyLinkBar() {
+export function StudyLinkBar({
+  pickerOpen: pickerOpenProp,
+  onPickerOpenChange,
+}: Readonly<{ pickerOpen?: boolean; onPickerOpenChange?: (open: boolean) => void }> = {}) {
   const { t } = useI18n();
   const loadedHistoryId = useStore((s) => s.loadedHistoryId);
   // Nothing to re-file: a read-only org recording can't be written back, and a
@@ -36,7 +43,9 @@ export function StudyLinkBar() {
   const refile = useRefile();
   const folder = folderId ? (listLocalFolders().find((f) => f.id === folderId) ?? null) : null;
 
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOpenOwn, setPickerOpenOwn] = useState(false);
+  const pickerOpen = pickerOpenProp ?? pickerOpenOwn;
+  const setPickerOpen = onPickerOpenChange ?? setPickerOpenOwn;
   const [contextOpen, setContextOpen] = useState(false);
 
   return (

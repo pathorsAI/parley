@@ -41,7 +41,9 @@ export function ActionItemsPanel({
 
   const body = (
     <div className={`flex flex-col ${embedded ? "" : "px-3 py-3"}`}>
-          {gate && (
+          {/* A missing key only matters while there is nothing to show — a
+              saved (or prewritten) checklist reads fine without one. */}
+          {gate && items.length === 0 && (
             <p className="px-1 pt-4 text-center text-xs text-muted-foreground">{t(gate)}</p>
           )}
           {/* Centered spinner only until the first item streams in; after that the

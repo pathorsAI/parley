@@ -966,7 +966,13 @@ class MicCapture @JvmOverloads constructor(
         // A chain already owns the microphone; a route change arriving mid-climb
         // must neither start a second chain nor reset the first one's attempts.
         if (recovery.isRecovering || recovery.hasGivenUp) return
-        if (!AudioRouteChoice.needsRebuild(activeInput, inputDevices())) return
+        // Registering the callback delivers the current device list at once,
+        // before the first open has published an input. There is nothing to
+        // move yet — that open picks the preferred device itself — and
+        // answering with a rebuild here tore down the first record the moment
+        // it came up.
+        val current = activeInput ?: return
+        if (!AudioRouteChoice.needsRebuild(current, inputDevices())) return
         Log.i(TAG, "input route moved; rebuilding onto the preferred device")
         post(CaptureRecovery.Event.CaptureStopped)
         runCatching { liveRecord?.stop() }

@@ -35,14 +35,17 @@
     /// argument never leaves the process.
     ///
     /// Routes: `record`, `settled`, `adjust`, `library`, `transcript`,
-    /// `keyboard`, `settings`, `dictation`.
+    /// `keyboard`, `settings`, `dictation`, and some that are not store frames
+    /// but review frames: `movetofolder` (the transcript with the folder
+    /// picker open over fifteen folders), `resetchecklist` (Settings'
+    /// "Show the getting-started list again", pressed, landing on the Library),
+    /// `summary` / `jump` / `nosummary` (the recording page's two faces — see
+    /// `docs/design/ios-recording-page.md`).
     @MainActor
     final class ScreenshotDemo: ObservableObject {
         static let shared = ScreenshotDemo()
 
-        enum Tab: Hashable { case record, library, settings }
-
-        @Published var tab: Tab = .record
+        @Published var tab: AppTab = .record
         /// Library pushes the demo transcript when this flips.
         @Published var showTranscript = false
         /// Settings scrolls the voice-keyboard section into view.
@@ -55,6 +58,27 @@
         /// know which of the two `task`s SwiftUI ran first — set from the route
         /// it can open onto a model that has not been seeded yet.
         @Published var openFilingAdjust = false
+        /// The transcript opens the folder picker over `pickerFolders`.
+        @Published var openFolderPicker = false
+        /// Settings runs its "Show the getting-started list again" action, the
+        /// same function the button calls.
+        @Published var pressResetChecklist = false
+        /// The Library draws the checklist even though it is serving fixtures.
+        /// Off for every store frame, which must not carry it.
+        @Published var allowsChecklist = false
+        /// Library pushes the sample recording, as the lap opens it.
+        @Published var showSample = false
+        /// Which fixture `showTranscript` pushes. The featured one unless a
+        /// route asks for the unanalysed one.
+        @Published var recordingID = "demo-renewal"
+        /// The face the pushed recording opens on, overriding the "summary when
+        /// analysed" rule — the store's transcript frame has to stay a
+        /// transcript, and the empty summary is only reachable by force.
+        var forcedFace: RecordingDetailView.Face?
+        /// A summary timestamp the pushed recording "taps" once it is up, and
+        /// whether the lit turn stays lit so the frame can be taken.
+        var jumpOnOpen: UInt64?
+        var holdsLitTurn = false
         /// `adjust` asks for the sheet; `seedSettled` is what grants it.
         private var wantsFilingAdjust = false
 
@@ -99,6 +123,14 @@
             showSettledFiling = false
             openFilingAdjust = false
             wantsFilingAdjust = false
+            openFolderPicker = false
+            pressResetChecklist = false
+            allowsChecklist = false
+            showSample = false
+            recordingID = Self.featured.id
+            forcedFace = nil
+            jumpOnOpen = nil
+            holdsLitTurn = false
             switch route {
             case "record": tab = .record
             case "settled":
@@ -111,11 +143,65 @@
             case "library": tab = .library
             case "transcript":
                 tab = .library
+                forcedFace = .transcript
+                showTranscript = true
+            case "summary":
+                tab = .library
+                forcedFace = .summary
+                showTranscript = true
+            case "jump":
+                // The summary's first highlight, tapped: the transcript with
+                // that turn lit and the 💡 notes beside it.
+                tab = .library
+                forcedFace = .summary
+                jumpOnOpen = 44_000
+                holdsLitTurn = true
+                showTranscript = true
+            case "lap1", "lap3", "lapdone":
+                // The guided lap on the sample, at step 1 (suggestion card and
+                // bar), step 3 (hand it to your AI), or finishing — the last
+                // one ticks the share a beat after the screen is up, so the
+                // finish is reached the way a user reaches it.
+                tab = .library
+                let step = route
+                Task { @MainActor in
+                    let sample = SampleRecordingStore.shared
+                    sample.remove()
+                    sample.load()
+                    if let id = sample.summary?.id { LapMotion.forgetCelebration(id) }
+                    var state = GettingStartedState(recorded: true)
+                    if step != "lap1" {
+                        state.filed = true
+                        state.replayed = true
+                        sample.setTitle(sample.manifest?.suggestion?.title ?? "")
+                        sample.setFolder(Self.folders.first?.id)
+                        sample.answerSuggestion()
+                    }
+                    GettingStartedStore.shared.seedDemo(state)
+                    showSample = true
+                    if step == "lapdone" {
+                        try? await Task.sleep(for: .seconds(2.5))
+                        GettingStartedStore.shared.mark(.sharedToAI)
+                    }
+                }
+            case "nosummary":
+                tab = .library
+                recordingID = "demo-review"
+                forcedFace = .summary
                 showTranscript = true
             case "keyboard":
                 tab = .settings
                 focusKeyboardSection = true
             case "settings": tab = .settings
+            case "movetofolder":
+                tab = .library
+                forcedFace = .transcript
+                showTranscript = true
+                openFolderPicker = true
+            case "resetchecklist":
+                tab = .settings
+                allowsChecklist = true
+                pressResetChecklist = true
             case "dictation":
                 // The keyboard hand-off screen in its stranded-listening state
                 // (manual swipe-back, the iOS 26.4+ regime). Deferred a turn
@@ -191,6 +277,27 @@
                 orgId: nil, createdAt: nil, updatedAt: nil),
         ]
 
+        /// Enough folders that the picker has to scroll and the search earns its
+        /// place — the account the action sheet failed. The first two are the
+        /// library's own, so the featured recording's folder is ticked.
+        static var pickerFolders: [CloudFolder] {
+            let more: [(String, String)] = [
+                ("Halcyon Labs", "晴光實驗室"), ("Meridian", "子午線"),
+                ("Acme Logistics", "頂峰物流"), ("Blue Harbor Hotels", "藍港酒店"),
+                ("Café Luna", "月光咖啡"), ("Evergreen Clinics", "長青診所"),
+                ("Foxglove Retail", "毛地黃零售"), ("Granite Insurance", "磐石保險"),
+                ("Harbourline Freight", "港線貨運"), ("Ironwood Motors", "鐵木汽車"),
+                ("Juniper Schools", "杜松教育"), ("Kestrel Energy", "紅隼能源"),
+                ("Lumen Dental", "流明牙醫"),
+            ]
+            return folders
+                + more.enumerated().map { i, names in
+                    CloudFolder(
+                        id: "f-picker-\(i)", name: t(names.0, names.1),
+                        orgId: nil, createdAt: nil, updatedAt: nil)
+                }
+        }
+
         // MARK: library fixtures
 
         /// Fixed clock so a re-capture months later produces the same frames.
@@ -228,6 +335,11 @@
         ]
 
         static var featured: CloudRecordingSummary { recordings[0] }
+
+        /// The fixture `showTranscript` pushes.
+        static var pushed: CloudRecordingSummary {
+            recordings.first { $0.id == shared.recordingID } ?? featured
+        }
 
         /// Which fixtures count as "audio is on this phone".
         ///
@@ -330,6 +442,42 @@
             ]
         }
 
+        /// The meta the detail screen reads for a fixture: the featured
+        /// recording's, analysed, or a bare transcript for any other — which is
+        /// what the "no summary yet" frame needs.
+        static func meta(for id: String) -> RecordingMeta {
+            guard id != featured.id else { return meta }
+            var bare = meta
+            bare.raw["id"] = id
+            bare.raw["findings"] = [Any]()
+            bare.raw["actionItems"] = [Any]()
+            bare.raw["brief"] = nil
+            return bare
+        }
+
+        /// The analysis's short read, with the moments it cites as links.
+        private static var brief: String {
+            t(
+                "**Renewal held at forty seats, the enterprise floor.** The client budgeted forty against an eighty-seat quote [0:12]; forty is the minimum, so the lever became a price hold through the next renewal [0:27].\n\n**Next:** onboarding is two weeks because SSO is already on Okta [0:58]. The revised quote goes out tomorrow with the security questionnaire [1:32].",
+                "**續約鎖在四十席，企業版的底線。** 客戶編了四十席、報價是八十席 [0:12]；四十席已是最低門檻，可談的變成把價格鎖到下一次續約 [0:27]。\n\n**接下來：** SSO 已在 Okta 上，導入兩週 [0:58]。修訂報價明天寄出，附資安問卷 [1:32]。")
+        }
+
+        private static var actionItems: [[String: Any]] {
+            [
+                [
+                    "id": "a-quote", "done": false, "atMs": 92_000.0,
+                    "text": t(
+                        "Send the revised quote with the price hold in writing",
+                        "寄出含鎖價條款的修訂報價"),
+                ],
+                [
+                    "id": "a-security", "done": false, "atMs": 92_000.0,
+                    "text": t(
+                        "Attach the security questionnaire", "附上資安問卷"),
+                ],
+            ]
+        }
+
         static var meta: RecordingMeta {
             RecordingMeta(raw: [
                 "id": featured.id,
@@ -348,7 +496,7 @@
                     "mix-1": t("Client lead", "客戶窗口"),
                     "mix-2": t("You", "我"),
                 ],
-                "findings": findings, "actionItems": [Any](),
+                "findings": findings, "actionItems": actionItems, "brief": brief,
                 "audio": "audio.ogg", "analyzed": true,
             ])
         }

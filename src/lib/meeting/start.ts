@@ -8,6 +8,7 @@ import { isTauri } from "../tauriEvents";
 import { translate, type TranslationKey } from "../../i18n/messages";
 import type { Settings } from "../types";
 import { log } from "../log";
+import { openSettings } from "../nav/settings";
 
 /** In-flight latch: a double-click (or two start buttons hit in quick
  *  succession) would otherwise race two transcription sessions open. */
@@ -47,9 +48,21 @@ async function start(): Promise<void> {
     log.info("meeting: start blocked (parley, no session)");
     useStore.getState().stopMeeting();
     toast.error(t("meeting.error.signin"));
-  } else {
+  } else if (import.meta.env.DEV) {
+    // Dev-only: a scripted transcript so the UI can be exercised without a key.
     log.info("meeting: start (mock stream)");
     startMockStream();
+  } else {
+    // Production with no transcription configured. This used to fall through to
+    // the mock stream, which played a fake English transcript and saved
+    // nothing — a recorder that looked like it worked but didn't. Refuse and
+    // point at the fix instead.
+    log.info("meeting: start blocked (no STT key)", { provider: settings.transcriptionProvider });
+    useStore.getState().stopMeeting();
+    toast.error(t("meeting.error.noSttKey"), {
+      duration: 8000,
+      action: { label: t("ai.fail.openSettings"), onClick: () => openSettings("transcription") },
+    });
   }
 }
 

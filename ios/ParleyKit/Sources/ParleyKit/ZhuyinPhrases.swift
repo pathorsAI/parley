@@ -18,19 +18,29 @@ import Foundation
 /// contains) and writes them in that order, so this class carries no scores and
 /// does no sorting.
 ///
-/// **Loaded lazily and once**, like `ZhuyinDictionary` and for the same reason:
-/// this runs inside a keyboard extension, which iOS jetsams far sooner than an
-/// app, so nothing is read until the user has two syllables pending in the 注音
-/// pane. A keyboard opened on the voice or QWERTY pane never pays for it. The
-/// table is ~61,000 rows over ~1,400 index keys — a few megabytes resident, the
-/// largest thing this process holds — and the file's own string is dropped as
-/// soon as it is parsed. A missing resource answers no matches; a keyboard that
-/// crashed because a file moved would be far worse than one that stops
-/// predicting.
+/// **Loaded lazily, never twice at once, and dropped under pressure**, like
+/// `ZhuyinDictionary` and for the same reason: this runs inside a keyboard
+/// extension, which iOS jetsams far sooner than an app, so nothing is read until
+/// the 注音 pane asks for it. A keyboard opened on the voice or QWERTY pane never
+/// pays for it. The table is ~61,000 rows over ~1,400 index keys — a few
+/// megabytes resident, the largest thing this process holds, and several times
+/// that while it is being parsed — and the file's own string is dropped as soon
+/// as it is parsed. See `warm` for why only one parse may ever be in flight and
+/// `unload` for giving it back. A missing resource answers no matches; a
+/// keyboard that crashed because a file moved would be far worse than one that
+/// stops predicting.
 ///
-/// Readings are parsed at match time rather than up front, because only the
-/// bucket under one key is ever looked at and pre-parsing all 61,000 would cost
-/// memory for rows the user will never type.
+/// Readings are parsed **once, at load**, into `ZhuyinSyllable.packed` values —
+/// four syllables to a `UInt64` — rather than kept as text and re-parsed on every
+/// keystroke. A reading as text was a heap-allocated string per row, split and
+/// parsed for every row of the bucket each time a key landed; packed, it costs
+/// less memory than the string did and a slot comparison is a mask.
+///
+/// **One wrong symbol per syllable is forgiven** (`ZhuyinFuzzy`): a typed slot
+/// may hold a 模糊音 partner or an adjacent key of the entry's symbol instead of
+/// the symbol itself. Every exact match still comes first — a correctly typed
+/// buffer reads exactly as it did before — and the forgiving ones follow, fewest
+/// errors first. A typed tone is never forgiven.
 ///
 /// Not thread-safe, and it doesn't need to be: keys arrive on the main thread.
 public final class ZhuyinPhrases {
@@ -41,10 +51,14 @@ public final class ZhuyinPhrases {
         /// Chinese character is one syllable, and the generator enforces it. May
         /// be **more** than the number of syllables typed: that is a prediction.
         public let span: Int
+        /// How many typed syllables had to be forgiven a wrong symbol for this to
+        /// match — 0 for an exact match, at most one per syllable compared.
+        public let errors: Int
 
-        public init(phrase: String, span: Int) {
+        public init(phrase: String, span: Int, errors: Int = 0) {
             self.phrase = phrase
             self.span = span
+            self.errors = errors
         }
     }
 
@@ -64,26 +78,74 @@ public final class ZhuyinPhrases {
         Bundle.module.url(forResource: "zhuyin-phrases", withExtension: "txt")
     }
 
-    private struct Entry {
+    /// One row. 24 bytes of fields in a 32-byte stride, and no heap of its own
+    /// for any phrase of four BMP characters or fewer — Swift keeps a string of
+    /// up to 15 UTF-8 bytes inline, and a CJK character is three. The reading it
+    /// replaced was 20-odd bytes of 注音, always past that, so every row used to
+    /// own a heap allocation it no longer does.
+    struct Entry {
         let phrase: String
-        /// Toned syllables separated by single spaces, exactly as the resource
-        /// spells them.
-        let reading: String
+        /// Syllable `i` packed (`ZhuyinSyllable.packed`) in bits `16i..<16i+16`.
+        /// A stored syllable always carries a tone, so it never packs to 0, and 0
+        /// marks the end of a phrase shorter than four.
+        let reading: UInt64
+        /// The row's position in the file, which *is* its rank. Needed once a
+        /// lookup reads more than one bucket: each bucket is in file order, but
+        /// forgiven matches drawn from several must be merged back into it.
+        let rank: UInt32
+
+        /// Parse one row. `nil` for anything a lookup could never answer with —
+        /// fewer than two syllables or more than four, one that does not parse,
+        /// or a phrase whose character count is not its syllable count (one
+        /// character is one syllable, which is what `pick` relies on).
+        init?(phrase: String, reading: Substring, rank: UInt32) {
+            var packed: UInt64 = 0
+            var count = 0
+            for part in reading.split(separator: " ", omittingEmptySubsequences: true) {
+                guard count < 4, let syllable = ZhuyinSyllable.pack(part.unicodeScalars)
+                else { return nil }
+                packed |= UInt64(syllable) << (16 * count)
+                count += 1
+            }
+            guard count >= 2, phrase.unicodeScalars.count == count else { return nil }
+            self.phrase = phrase
+            self.reading = packed
+            self.rank = rank
+        }
+
+        /// The syllable count, which is also the character count.
+        var span: Int {
+            reading >> 48 != 0 ? 4 : reading >> 32 != 0 ? 3 : 2
+        }
+
+        func syllable(_ i: Int) -> UInt16 {
+            UInt16(truncatingIfNeeded: reading >> (16 * i))
+        }
     }
 
     private var url: URL?
     private var index: [String: [Entry]]?
     /// A background build is on its way back to the main queue.
     private var warming = false
+    /// Everyone who asked `warm` to be told when the table lands, oldest first.
+    private var onReady: [() -> Void] = []
 
     /// Whether the table is in memory. Internal for the tests, which is where
     /// "did the warm arrive" is a question worth asking.
     var isWarm: Bool { index != nil }
 
+    /// How many times the resource has been parsed. Internal for the tests,
+    /// which is where "was a second table ever built" is a question worth
+    /// asking.
+    private(set) var parseCount = 0
+
     /// Build from rows given directly. This is how tests get a fixture whose
     /// order they control, rather than one the corpus decides.
     public init(entries: [(phrase: String, reading: String)]) {
-        index = Self.indexed(entries.map { Entry(phrase: $0.phrase, reading: $0.reading) })
+        index = Self.indexed(
+            entries.enumerated().compactMap { rank, row in
+                Entry(phrase: row.phrase, reading: row.reading[...], rank: UInt32(rank))
+            })
     }
 
     /// A `nil` url is a table that answers nothing.
@@ -91,22 +153,38 @@ public final class ZhuyinPhrases {
         self.url = url
     }
 
-    /// Build the table off the main thread, if it isn't built already.
+    /// Build the table off the main thread, if it isn't built already, and call
+    /// `onReady` on the main queue once it is — straight away when it already
+    /// is, or when there is no resource to wait for.
     ///
     /// The first lookup parses 61,000 rows and indexes them — about 100 ms — and
     /// that must not land on the keystroke that finishes the user's second
     /// syllable, which is the first one to ask this class anything. The keyboard
     /// calls this when the 注音 pane becomes current, a beat earlier and idle.
     ///
-    /// A lookup that arrives first still loads synchronously. At worst the file
-    /// is parsed twice and the later table is dropped, which costs some work in
-    /// a background thread and can never hand out a half-built one.
+    /// **A lookup that beats the warm answers nothing** rather than parsing a
+    /// table of its own. It used to parse synchronously, and for the length of
+    /// that parse two whole tables and their source strings coexisted — the
+    /// highest this process's memory ever went, in a process that iOS kills
+    /// without warning at its limit. No crash has been matched to it; this is
+    /// preventive. The keystroke that loses the race gets an empty bar for the
+    /// ~100 ms the warm has left, and `onReady` is how the caller puts the bar
+    /// right when it lands.
     ///
-    /// Main thread, like everything else here: the guard and the store both run
-    /// there, so two warms cannot race and a warm cannot overwrite a load.
-    public func warm() {
-        guard index == nil, !warming, let url else { return }
+    /// Main thread, like everything else here: the guard, the store and the
+    /// completions all run there, so two warms cannot race, and a lookup on the
+    /// same frame as the landing sees either no table or the whole one — never
+    /// half of one, and never a lookup that slips between the store and the
+    /// completion.
+    public func warm(onReady: (() -> Void)? = nil) {
+        guard index == nil, let url else {
+            onReady?()
+            return
+        }
+        if let onReady { self.onReady.append(onReady) }
+        guard !warming else { return }
         warming = true
+        parseCount += 1
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             // Nothing on `self` is touched off the main queue — the parse is a
             // function of the URL alone.
@@ -114,11 +192,31 @@ public final class ZhuyinPhrases {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.warming = false
-                // A synchronous load may have beaten this here. That table is
-                // the same table; replacing it would only churn memory.
+                // `load` never parses while a warm is in flight and `unload`
+                // never drops one, so nothing can have filled this meanwhile;
+                // the guard only keeps a future path from churning memory.
                 if self.index == nil { self.index = built }
+                let waiting = self.onReady
+                self.onReady = []
+                waiting.forEach { $0() }
             }
         }
+    }
+
+    /// Give the table back, so the next lookup reads the resource again.
+    ///
+    /// For memory pressure: the keyboard calls this from
+    /// `didReceiveMemoryWarning`, because the table is the largest thing the
+    /// process holds and a keyboard that re-reads a file is far better than one
+    /// iOS kills. The next lookup reloads it synchronously, which is a hitch on
+    /// one keystroke and nothing worse.
+    ///
+    /// A no-op while a warm is in flight — it would land a moment later anyway,
+    /// and dropping it here would only mean parsing again — and for a table
+    /// built from entries, which has nothing to reload from.
+    public func unload() {
+        guard !warming, url != nil else { return }
+        index = nil
     }
 
     /// The phrases the pending syllables could still become, best first.
@@ -129,11 +227,22 @@ public final class ZhuyinPhrases {
     /// ones that cover a prefix of the buffer, which is how a user who typed
     /// ahead still gets offered the word they started with.
     ///
+    /// That is the exact half. Behind it, when it has room left and `fuzzy` is
+    /// on, come the matches that needed a wrong symbol forgiven: fewest errors
+    /// first, then the same three groups, then file order. A phrase is offered
+    /// once, at its best position — never again further down.
+    ///
     /// Empty for fewer than two syllables: one syllable is the dictionary's
     /// question, not this table's.
-    public func matches(_ typed: [ZhuyinSyllable]) -> [Match] {
-        guard typed.count >= 2, let key = Self.key(of: typed) else { return [] }
-        guard let bucket = load()[key] else { return [] }
+    public func matches(_ typed: [ZhuyinSyllable], fuzzy: Bool = true) -> [Match] {
+        guard typed.count >= 2, let first = Self.leading(typed[0]),
+            let second = Self.leading(typed[1])
+        else { return [] }
+        let index = load()
+        // Only the first four typed syllables can ever be compared: no phrase is
+        // longer than that.
+        let patterns = typed.prefix(4).map { Pattern($0, fuzzy: fuzzy) }
+        let primary = String([first, second])
 
         var exact: [Match] = []
         var longer: [Match] = []
@@ -142,102 +251,267 @@ public final class ZhuyinPhrases {
         // show it twice.
         var seen = Set<String>()
 
-        for entry in bucket {
-            guard let span = Self.span(of: entry, matching: typed) else { continue }
+        // Every exact match is in the primary bucket — its first two symbols are
+        // the typed ones — so that bucket alone fills the three exact groups, in
+        // file order, exactly as before.
+        for entry in index[primary] ?? [] {
+            guard Self.errors(of: entry, against: patterns) == 0 else { continue }
             guard seen.insert(entry.phrase).inserted else { continue }
+            let span = entry.span
             let match = Match(phrase: entry.phrase, span: span)
             if span == typed.count {
                 exact.append(match)
                 // Nothing below the first group can reach the bar any more.
-                if exact.count >= Self.matchLimit { break }
+                if exact.count >= Self.matchLimit { return exact }
             } else if span > typed.count {
                 longer.append(match)
             } else {
                 shorter.append(match)
             }
         }
-        return Array((exact + longer + shorter).prefix(Self.matchLimit))
+        var out = exact + longer + shorter
+        guard fuzzy, out.count < Self.matchLimit else {
+            return Array(out.prefix(Self.matchLimit))
+        }
+
+        // A wrong *first* symbol puts the phrase under a different key, so the
+        // forgiving half reads every bucket a first-symbol substitution could
+        // reach: the typed symbol or one of its alternatives, for each of the
+        // two. Grouped by how many of the two were substituted, because every
+        // row under such a key already carries that many errors.
+        let firsts = [first] + ZhuyinFuzzy.alternatives(for: first)
+        let seconds = [second] + ZhuyinFuzzy.alternatives(for: second)
+        var tiers: [[[Entry]]] = [[], [], []]
+        for (i, a) in firsts.enumerated() {
+            for (j, b) in seconds.enumerated() {
+                guard let bucket = index[String([a, b])] else { continue }
+                tiers[(i == 0 ? 0 : 1) + (j == 0 ? 0 : 1)].append(bucket)
+            }
+        }
+        let buckets = tiers.flatMap { $0 }
+        let bounds = [tiers[0].count, tiers[0].count + tiers[1].count]
+
+        // A bucket can hold hundreds of rows that all match forgivingly — two
+        // lone 聲母 match anything under forty-odd keys, five thousand rows — and
+        // only the best few can reach the bar. So rather than collect and sort
+        // them all, keep a short sorted list of the best, and stop reading a tier
+        // of buckets once the list is full of rows it could not beat. Duplicates
+        // are why the list is longer than what is missing; in the rare case they
+        // still leave it short, read everything.
+        let missing = Self.matchLimit - out.count
+        var shortlist = Shortlist(capacity: missing + 16)
+        Self.collect(into: &shortlist, from: buckets, tierBounds: bounds, patterns, typed.count)
+        var picked = shortlist.picks(from: buckets, excluding: seen, limit: missing)
+        if picked.count < missing, shortlist.overflowed {
+            var everything = Shortlist(capacity: .max)
+            Self.collect(into: &everything, from: buckets, tierBounds: [], patterns, typed.count)
+            picked = everything.picks(from: buckets, excluding: seen, limit: missing)
+        }
+        out += picked
+        return out
     }
 
     // MARK: matching
 
-    /// The entry's syllable count when every typed syllable matches, `nil`
-    /// otherwise. An entry longer than the buffer must match all of it; one
-    /// shorter must match its own length, which is the prefix case.
-    private static func span(of entry: Entry, matching typed: [ZhuyinSyllable]) -> Int? {
-        let parts = entry.reading.split(separator: " ", omittingEmptySubsequences: true)
-        let span = parts.count
-        guard span >= 2, entry.phrase.unicodeScalars.count == span else { return nil }
-        for i in 0..<min(span, typed.count) {
-            guard let syllable = ZhuyinSyllable.parse(String(parts[i])),
-                matches(typed: typed[i], entry: syllable)
-            else { return nil }
+    /// Offer every forgivingly matching row of `buckets` to the shortlist. A
+    /// bucket at index `tierBounds[k]` or past it carries at least `k + 1`
+    /// errors in every row, so once the shortlist is full of better ones the rest
+    /// cannot get in and are not read.
+    private static func collect(
+        into shortlist: inout Shortlist, from buckets: [[Entry]], tierBounds: [Int],
+        _ patterns: [Pattern], _ typed: Int
+    ) {
+        for (b, bucket) in buckets.enumerated() {
+            if let tier = tierBounds.lastIndex(where: { b >= $0 }),
+                shortlist.closes(toErrorsAtLeast: tier + 1)
+            {
+                return
+            }
+            // Rows are located by a 16-bit position; no bucket comes near that.
+            for (position, entry) in bucket.prefix(0x10000).enumerated() {
+                guard let errors = Self.errors(of: entry, against: patterns), errors > 0 else {
+                    continue
+                }
+                shortlist.offer(
+                    Shortlist.order(
+                        errors: errors, span: entry.span, typed: typed, rank: entry.rank,
+                        bucket: b, position: position))
+            }
         }
-        return span
     }
 
-    /// Whether a part-typed syllable could still become an entry's syllable.
-    ///
-    /// Everything up to and including the last slot the user filled must be
-    /// equal — **`nil` included**, so `ㄧㄡ`, which has no 聲母, does not match
-    /// `ㄌㄧㄡˊ`, which has one. Everything after it is a wildcard, which is
-    /// what makes a lone `ㄋ` match 你. A tone that was typed must match; one
-    /// that wasn't is a wildcard too, and entry syllables always carry a tone
-    /// because an unmarked reading is the first tone.
-    private static func matches(typed: ZhuyinSyllable, entry: ZhuyinSyllable) -> Bool {
-        if let tone = typed.tone, tone != entry.tone { return false }
-        guard typed.initial == entry.initial else { return false }
-        if typed.final != nil {
-            return typed.medial == entry.medial && typed.final == entry.final
+    /// The best forgiving matches seen so far, as sort keys: errors, then group
+    /// (exact length, longer, shorter), then file rank, then where the row is —
+    /// all in one `UInt64` so keeping the list sorted is integer comparison.
+    private struct Shortlist {
+        let capacity: Int
+        private(set) var orders: [UInt64] = []
+        /// Something was turned away or pushed out, so the list is not all
+        /// there is.
+        private(set) var overflowed = false
+
+        init(capacity: Int) {
+            self.capacity = capacity
         }
-        if typed.medial != nil { return typed.medial == entry.medial }
-        return true
+
+        static func order(
+            errors: Int, span: Int, typed: Int, rank: UInt32, bucket: Int, position: Int
+        ) -> UInt64 {
+            let group: UInt64 = span == typed ? 0 : span > typed ? 1 : 2
+            return UInt64(errors) << 60 | group << 58 | UInt64(rank & 0x3FF_FFFF) << 32
+                | UInt64(bucket & 0xFFFF) << 16 | UInt64(position & 0xFFFF)
+        }
+
+        /// Whether no row with at least this many errors could still get in —
+        /// and if so, the rows about to go unread count as turned away.
+        mutating func closes(toErrorsAtLeast errors: Int) -> Bool {
+            guard orders.count >= capacity, orders[orders.count - 1] < UInt64(errors) << 60
+            else { return false }
+            overflowed = true
+            return true
+        }
+
+        mutating func offer(_ order: UInt64) {
+            // Unbounded is the fallback that takes everything: append, and sort
+            // once when the picks are read.
+            guard capacity < .max else { return orders.append(order) }
+            if orders.count >= capacity {
+                overflowed = true
+                guard order < orders[orders.count - 1] else { return }
+                orders.removeLast()
+            }
+            var low = 0
+            var high = orders.count
+            while low < high {
+                let mid = (low + high) / 2
+                if orders[mid] < order { low = mid + 1 } else { high = mid }
+            }
+            orders.insert(order, at: low)
+        }
+
+        /// The list as matches, best first, each phrase once and none already
+        /// offered.
+        func picks(from buckets: [[Entry]], excluding seen: Set<String>, limit: Int) -> [Match] {
+            var seen = seen
+            var out: [Match] = []
+            for order in capacity < .max ? orders : orders.sorted() where out.count < limit {
+                let entry = buckets[Int(order >> 16 & 0xFFFF)][Int(order & 0xFFFF)]
+                guard seen.insert(entry.phrase).inserted else { continue }
+                out.append(Match(phrase: entry.phrase, span: entry.span, errors: Int(order >> 60)))
+            }
+            return out
+        }
+    }
+
+    /// The total number of forgiven symbols when every typed syllable matches
+    /// the entry's, `nil` otherwise. An entry longer than the buffer must match
+    /// all of it; one shorter must match its own length, which is the prefix
+    /// case.
+    private static func errors(of entry: Entry, against patterns: [Pattern]) -> Int? {
+        var total = 0
+        for i in 0..<min(entry.span, patterns.count) {
+            guard let errors = patterns[i].errors(entry.syllable(i)) else { return nil }
+            total += errors
+        }
+        return total
+    }
+
+    /// A typed syllable, ready to be compared against packed ones with masks.
+    ///
+    /// The rule it encodes: everything up to and including the last slot the
+    /// user filled must be equal — **`nil` included**, so `ㄧㄡ`, which has no
+    /// 聲母, does not match `ㄌㄧㄡˊ`, which has one. Everything after it is a
+    /// wildcard, which is what makes a lone `ㄋ` match 你. A tone that was typed
+    /// must match; one that wasn't is a wildcard too, and entry syllables always
+    /// carry a tone because an unmarked reading is the first tone.
+    ///
+    /// And the one exception: a slot the user **filled** may instead hold one of
+    /// that symbol's `ZhuyinFuzzy.alternatives`, once per syllable. An empty slot
+    /// is never forgiven — a missing symbol is not a wrong one — and neither is
+    /// a tone.
+    private struct Pattern {
+        /// The required tone bits, or 0 for "any".
+        let tone: UInt16
+        /// Which slots are compared, as a mask over `packed`: always the 聲母,
+        /// then the 介音 once a 介音 or 韻母 is typed, then the 韻母 once it is.
+        let compared: UInt16
+        /// The typed symbols, in place.
+        let symbols: UInt16
+        /// Per slot, a bit for every code that may stand in for the typed one.
+        let initials: UInt32
+        let medials: UInt32
+        let finals: UInt32
+
+        init(_ typed: ZhuyinSyllable, fuzzy: Bool) {
+            tone = typed.tone.map { ZhuyinSyllable.toneCode($0) << 11 } ?? 0
+            var compared = ZhuyinSyllable.initialMask
+            if typed.medial != nil || typed.final != nil { compared |= ZhuyinSyllable.medialMask }
+            if typed.final != nil { compared |= ZhuyinSyllable.finalMask }
+            self.compared = compared
+            symbols = typed.packed & ~ZhuyinSyllable.toneMask
+            func alternatives(_ symbol: Character?) -> UInt32 {
+                guard fuzzy, let symbol else { return 0 }
+                return ZhuyinFuzzy.alternatives(for: symbol).reduce(0) { mask, alternative in
+                    ZhuyinSyllable.code(of: alternative).map { mask | 1 << $0.code } ?? mask
+                }
+            }
+            initials = alternatives(typed.initial)
+            medials = alternatives(typed.medial)
+            finals = alternatives(typed.final)
+        }
+
+        /// 0 when the stored syllable matches exactly, 1 when it matches with one
+        /// symbol forgiven, `nil` when it does not match.
+        func errors(_ stored: UInt16) -> Int? {
+            if tone != 0, stored & ZhuyinSyllable.toneMask != tone { return nil }
+            let differing = (stored ^ symbols) & compared
+            if differing == 0 { return 0 }
+            // Exactly one slot may differ, and only to an allowed alternative.
+            if differing & ZhuyinSyllable.initialMask != 0 {
+                guard differing & ~ZhuyinSyllable.initialMask == 0,
+                    initials & 1 << (stored & ZhuyinSyllable.initialMask) != 0
+                else { return nil }
+            } else if differing & ZhuyinSyllable.medialMask != 0 {
+                guard differing & ~ZhuyinSyllable.medialMask == 0,
+                    medials & 1 << ((stored & ZhuyinSyllable.medialMask) >> 5) != 0
+                else { return nil }
+            } else {
+                guard finals & 1 << ((stored & ZhuyinSyllable.finalMask) >> 7) != 0
+                else { return nil }
+            }
+            return 1
+        }
     }
 
     // MARK: the index
 
-    /// The first symbol of each of the first two syllables — the key both a
-    /// stored reading and a typed buffer are found under.
-    private static func key(of typed: [ZhuyinSyllable]) -> String? {
-        guard typed.count >= 2,
-            let first = typed[0].initial ?? typed[0].medial ?? typed[0].final,
-            let second = typed[1].initial ?? typed[1].medial ?? typed[1].final
-        else { return nil }
-        return String([first, second])
+    /// The first symbol of a syllable — half of the key both a stored reading
+    /// and a typed buffer are found under.
+    private static func leading(_ syllable: ZhuyinSyllable) -> Character? {
+        syllable.initial ?? syllable.medial ?? syllable.final
     }
 
-    /// The same key read off a stored reading: the symbol after each space.
-    /// Readings never begin with a tone mark, so the first symbol of a syllable
-    /// is always one of the 37.
-    private static func key(ofReading reading: String) -> String? {
-        var key = ""
-        var atSyllableStart = true
-        for symbol in reading {
-            if symbol == " " {
-                atSyllableStart = true
-                continue
-            }
-            guard atSyllableStart else { continue }
-            key.append(symbol)
-            atSyllableStart = false
-            if key.count == 2 { return key }
-        }
-        return nil
-    }
-
+    /// Bucket every row under the first symbol of each of its first two
+    /// syllables, keeping file order within a bucket.
     private static func indexed(_ entries: [Entry]) -> [String: [Entry]] {
         var index: [String: [Entry]] = [:]
         for entry in entries {
-            guard !entry.phrase.isEmpty, let key = key(ofReading: entry.reading) else { continue }
-            index[key, default: []].append(entry)
+            guard !entry.phrase.isEmpty,
+                let first = ZhuyinSyllable(packed: entry.syllable(0)).flatMap(leading),
+                let second = ZhuyinSyllable(packed: entry.syllable(1)).flatMap(leading)
+            else { continue }
+            index[String([first, second]), default: []].append(entry)
         }
         return index
     }
 
     private func load() -> [String: [Entry]] {
         if let index { return index }
+        // Never a second parse beside the one in flight — see `warm`.
+        if warming { return [:] }
         // A failed read caches the empty index too, so a missing resource costs
         // one attempt rather than one per keystroke.
+        if url != nil { parseCount += 1 }
         let built = url.map(Self.parse) ?? [:]
         index = built
         return built
@@ -253,9 +527,13 @@ public final class ZhuyinPhrases {
             guard !line.hasPrefix("#") else { continue }
             guard let tab = line.firstIndex(of: "\t") else { continue }
             let phrase = String(line[line.startIndex..<tab])
-            let reading = String(line[line.index(after: tab)...])
-            guard !phrase.isEmpty, !reading.isEmpty else { continue }
-            entries.append(Entry(phrase: phrase, reading: reading))
+            let reading = line[line.index(after: tab)...]
+            // The rank is the row's position among the rows kept, which orders
+            // them exactly as the file does.
+            guard !phrase.isEmpty,
+                let entry = Entry(phrase: phrase, reading: reading, rank: UInt32(entries.count))
+            else { continue }
+            entries.append(entry)
         }
         // The file's string goes out of scope here.
         return indexed(entries)

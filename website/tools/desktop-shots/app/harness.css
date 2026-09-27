@@ -1,0 +1,13 @@
+/* Screenshot-only overrides. Kept to the one thing a browser cannot do. */
+
+/* The macOS rail sits on NSVisualEffectView's sidebar material in the real app
+   (windowEffects in tauri.macos.conf.json) and paints a 55%-alpha --sidebar
+   over it. A browser has no vibrancy, so instead of faking one we paint the
+   rail with the SOLID --sidebar token — the same value the opaque Windows
+   window uses (index.css :root / .dark). Honest fallback, not a gradient. */
+html[data-platform="macos"][data-app-window="main"] {
+  --sidebar: oklch(0.975 0.005 257) !important;
+}
+html[data-platform="macos"][data-app-window="main"].dark {
+  --sidebar: oklch(0.2 0.028 250) !important;
+}

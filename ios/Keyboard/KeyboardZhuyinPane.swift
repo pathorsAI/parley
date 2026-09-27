@@ -22,17 +22,42 @@ import SwiftUI
 /// from its neighbours on the track. Everything about how a keystroke turns into
 /// a character lives in `ZhuyinComposer` (ParleyKit), which is why this file has
 /// no state beyond which plane is showing.
-struct ZhuyinPane: View {
-    @ObservedObject var bridge: KeyboardBridge
+///
+/// **It does not observe the bridge.** The bridge is one `ObservableObject`, and
+/// every keystroke publishes on it — the composition and the candidates, and
+/// while dictating the microphone level twelve times a second. A pane that held
+/// it as `@ObservedObject` was invalidated by every one of those, and so was
+/// every pane beside it on the track: each 注音 key re-evaluated some seventy
+/// key bodies across this pane and the off-screen QWERTY one, to draw keys
+/// none of which had changed. So the bridge is held for its actions only, the
+/// three things the keys actually draw from it arrive as plain values, and the
+/// pane is `Equatable` on them — `KeyboardRootView` wraps it in `.equatable()`
+/// and SwiftUI skips its body whenever they are unchanged, which on a keystroke
+/// is always.
+struct ZhuyinPane: View, Equatable {
+    /// Actions only. Holding it as `@ObservedObject` is what this type exists
+    /// not to do; see above.
+    let bridge: KeyboardBridge
     var dark: Bool
+    var showsGlobe: Bool
+    var returnKey: ReturnKeyStyle
 
     @State private var symbols = false
+
+    /// What the pane draws. The bridge is the same object for the process's
+    /// life, and every key's action is a function of that key alone, so
+    /// neither needs comparing.
+    static func == (a: Self, b: Self) -> Bool {
+        a.dark == b.dark && a.showsGlobe == b.showsGlobe && a.returnKey == b.returnKey
+    }
 
     var body: some View {
         if symbols {
             SymbolPlanes(
-                bridge: bridge, dark: dark, homeLabel: "注音",
-                onHome: { symbols = false })
+                bridge: bridge, dark: dark, showsGlobe: showsGlobe, returnKey: returnKey,
+                homeLabel: "注音", fullWidth: true, onHome: { symbols = false }
+            )
+            .equatable()
         } else {
             zhuyinPlane
         }
@@ -57,6 +82,7 @@ struct ZhuyinPane: View {
                     ) {
                         bridge.backspace()
                     }
+                    .equatable()
                 }
                 functionRow(m)
             }
@@ -83,12 +109,20 @@ struct ZhuyinPane: View {
         .padding(.leading, leading)
     }
 
-    /// `123`, the globe where the system asks for one, space, return.
+    /// `123`, the globe where the system asks for one, `，`, space, `。`,
+    /// return.
     ///
     /// No delete: it sits in the symbol block's eleventh column, under `ㄦ`,
     /// where the system 注音 keyboard has it. `123` and return are two and a
     /// half keys each rather than the one and a half QWERTY gives them, which
     /// is what the system keyboard leaves for a row with no shift in it.
+    ///
+    /// The comma and the full stop are **not** where the system keyboard puts
+    /// them, because it puts them nowhere on this plane: on iOS 26.5 they are on
+    /// the `123` plane only, and every sentence costs two trips there. They
+    /// flank space instead, so the two marks a sentence cannot do without are
+    /// one tap away from where the thumbs already are, and the row still fits:
+    /// on a 320pt SE with the globe, space keeps about 81pt.
     private func functionRow(_ m: KeyRowMetrics) -> some View {
         row {
             KeyButton(
@@ -98,11 +132,13 @@ struct ZhuyinPane: View {
             ) {
                 Text(verbatim: "123").font(.system(size: 16, weight: .regular))
             }
+            .equatable()
             .accessibilityLabel(Text(verbatim: "123"))
-            if bridge.showsGlobe {
+            if showsGlobe {
                 GlobeKey(controller: bridge.controller, dark: dark)
                     .frame(width: m.unit, height: KBMetrics.zhuyinKeyHeight)
             }
+            punctuationKey(",", width: m.unit, label: Text("Chinese comma"))
             // Space is the first tone while a syllable is being typed and
             // "yes, that one" while candidates are showing — see
             // `ZhuyinComposer.space()`. The label stays put: a key whose
@@ -114,11 +150,29 @@ struct ZhuyinPane: View {
             ) {
                 Text("Space").font(.system(size: 15))
             }
+            .equatable()
             .accessibilityLabel(Text("Space"))
+            punctuationKey(".", width: m.unit, label: Text("Chinese period"))
             ReturnKey(
-                bridge: bridge, dark: dark, width: m.extraWide,
-                height: KBMetrics.zhuyinKeyHeight)
+                bridge: bridge, style: returnKey, dark: dark, width: m.extraWide,
+                height: KBMetrics.zhuyinKeyHeight
+            )
+            .equatable()
         }
+    }
+
+    /// A full-width mark on the function row. It goes through `bridge.type`
+    /// like any symbol-plane key, so a pending reading is committed first and
+    /// the mark lands after it rather than in front of it.
+    private func punctuationKey(_ ascii: Character, width: CGFloat, label: Text) -> some View {
+        let mark = FullWidthPunctuation.fullWidth(ascii)
+        return KeyButton(
+            dark: dark, width: width, height: KBMetrics.zhuyinKeyHeight,
+            action: { bridge.type(mark) }
+        ) {
+            Text(verbatim: mark).font(.system(size: 22))
+        }
+        .accessibilityLabel(label)
     }
 
     private func row<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -143,8 +197,11 @@ struct ZhuyinPane: View {
                 }
             }
         ) {
-            Text(verbatim: String(symbol)).font(.system(size: 19))
+            // 22pt, the system 注音 keyboard's size: the glyphs are dense, and
+            // at the 19pt this started at ㄅ and ㄉ were hard to tell apart.
+            Text(verbatim: String(symbol)).font(.system(size: 22))
         }
+        .equatable()
         .accessibilityLabel(Self.label(symbol: symbol, tone: tone))
     }
 

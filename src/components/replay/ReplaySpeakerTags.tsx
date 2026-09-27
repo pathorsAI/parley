@@ -4,6 +4,8 @@ import { useStore, speakerKey, defaultSpeakerLabel } from "../../lib/store";
 import { speakerDotClass } from "../../lib/speakerColors";
 import { useI18n } from "../../i18n";
 import { Input } from "@/components/ui/input";
+import { OnboardingHint } from "@/components/OnboardingHint";
+import { rememberOwnName, useWhoAmIHint } from "@/lib/onboarding/whoAmI";
 import { Button } from "@/components/ui/button";
 import { VoiceDiarizeDialog } from "./VoiceDiarizeDialog";
 import type { Source, TranscriptSegment } from "../../lib/types";
@@ -33,6 +35,7 @@ interface ReplaySpeakerTagsProps {
 export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpeakerTagsProps>) {
   const { t } = useI18n();
   const setSpeakerName = useStore((s) => s.setSpeakerName);
+  const whoAmI = useWhoAmIHint();
   const [voiceOpen, setVoiceOpen] = useState(false);
 
   // Distinct speakers in first-appearance order.
@@ -59,7 +62,11 @@ export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpe
           <span className={`size-2 shrink-0 rounded-full ${speakerDotClass(sp)}`} />
           <Input
             value={names[sp.key] ?? ""}
-            onChange={(e) => setSpeakerName(sp.key, e.target.value)}
+            onChange={(e) => {
+              setSpeakerName(sp.key, e.target.value);
+              whoAmI.onRename(e.target.value);
+            }}
+            onBlur={(e) => rememberOwnName(sp, e.target.value)}
             placeholder={defaultSpeakerLabel(sp)}
             className="h-7 w-28 text-xs"
           />
@@ -77,6 +84,9 @@ export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpe
         {t("speakers.voiceButton")}
       </Button>
       {voiceOpen && <VoiceDiarizeDialog onClose={() => setVoiceOpen(false)} />}
+      {whoAmI.visible && (
+        <OnboardingHint text={t("speakers.hintWhoAmI")} onDismiss={whoAmI.dismiss} className="basis-full" />
+      )}
     </div>
   );
 }

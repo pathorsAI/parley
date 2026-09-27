@@ -88,7 +88,10 @@ export function FindingsPanel({
         )}
       </div>
 
-      {gate && (
+      {/* A replay that already has findings (the sample, or an entry analysed
+          elsewhere) has nothing to gate: the banner would nag about a key the
+          page is not going to use. */}
+      {gate && !(mode === "replay" && findings.length > 0) && (
         <div className="mx-3 mb-2 rounded-md border border-warning-border bg-warning px-2.5 py-1.5 text-[11px] text-warning-foreground">
           {t(gate, { provider: PROVIDER_BY_ID[provider]?.label ?? provider })}
         </div>

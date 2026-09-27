@@ -44,3 +44,9 @@ ios/ParleyKit/.build/
 
 # Python bytecode, e.g. from py_compile checks on .github/scripts
 __pycache__/
+
+# Website build output (bun scripts/build-website.ts) and screenshot-harness scratch
+_site/
+website/tools/desktop-shots/out/
+website/tools/desktop-shots/text/
+website/tools/desktop-shots/ref/

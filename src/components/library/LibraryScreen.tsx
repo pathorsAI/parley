@@ -24,13 +24,15 @@ import {
   shareRecordingToOrg,
   type HistoryCardItem,
 } from "../../lib/cloud/sync";
-import { buildOwnershipIndex, inFolderNode, inNode } from "../../lib/library/scope";
+import { buildOwnershipIndex, inFolderNode, inNode, nodeKey } from "../../lib/library/scope";
 import { log } from "../../lib/log";
+import { markGettingStarted } from "../../lib/onboarding/gettingStarted";
 import { isTauri } from "../../lib/tauriEvents";
 import { VoiceTypingHistory } from "../../history/VoiceTypingHistory";
 import { LibraryCard, MoveDialog } from "./LibraryCards";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { RecordingTimeline } from "./RecordingTimeline";
+import { useRenderWindow } from "./useRenderWindow";
 import type { LibraryTree } from "../shell/useLibraryTree";
 import { filingChoices, type Folder as LocalFolder } from "../../lib/history/folders";
 import type { CloudOrg, CloudRecordingSummary } from "../../lib/cloud/types";
@@ -129,6 +131,15 @@ function moveTargetFolders(
   if (selection.kind !== "personal") return scopeFolders;
   const open = selection.node.kind === "folder" ? selection.node.folderId : null;
   return filingChoices(scopeFolders, open);
+}
+
+/** What the open list is a list OF — the scope, the node within it, the search.
+ *  A change starts the render window (useRenderWindow) back on its first page. */
+function listKey(selection: LibrarySelection, searchQuery: string): string {
+  let where = "";
+  if (selection.kind === "org") where = `org:${selection.id}:${selection.folderId ?? ""}`;
+  else if (selection.kind === "personal") where = `personal:${nodeKey(selection.node)}`;
+  return `${where}|${searchQuery}`;
 }
 
 /**
@@ -255,6 +266,10 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     return !!node && inNode(e, node, index);
   });
 
+  // Mount the list a page at a time — see useRenderWindow. The count in the
+  // header still reads off `visible`: it is what's in the node, not what's mounted.
+  const { shown, sentinel } = useRenderWindow(visible, listKey(selection, searchQuery));
+
   // ── Card actions ──────────────────────────────────────────────────────────
   const openItem = useCallback(
     async (item: HistoryCardItem) => {
@@ -331,6 +346,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           return;
         }
         await setEntryFolder(item.id, folderId);
+        if (folderId) markGettingStarted("filed");
         await emitHistoryUpdated(item.id);
         // A folder node shows one node's worth, so a re-filed recording leaves
         // it. The all node shows every node's worth, so the same recording
@@ -356,6 +372,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       if (selection.kind !== "org" || (item.folderId ?? null) === target) return;
       try {
         await setOrgRecordingFolder(selection.id, item.id, target);
+        if (target) markGettingStarted("filed");
         setEntries((prev) =>
           prev?.map((e) => (e.id === item.id ? { ...e, folderId: target } : e)) ?? null
         );
@@ -382,6 +399,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           setEntries((prev) => prev?.filter((e) => e.id !== p.item.id) ?? null);
           toast.success(t("history.move.moved", { org: p.org.name }));
         }
+        markGettingStarted("filed");
         tree.reloadSummaries();
       } catch (e) {
         log.error("library: org handoff failed", { id: p.item.id, error: String(e) });
@@ -433,64 +451,70 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   } else if (isAll) {
     // A different question deserves a different shape — see RecordingTimeline.
     body = (
-      <RecordingTimeline
-        entries={visible}
-        locale={locale}
-        signedIn={tree.signedIn}
-        orgs={tree.orgs}
-        orgFolders={tree.orgFolders}
-        busyId={busyId}
-        downloadingId={downloadingId}
-        sharingId={sharingId}
-        folders={moveFolders}
-        onOpen={(entry) => {
-          openItem(entry).catch((error) =>
-            log.error("library: open failed", { id: entry.id, error: String(error) })
-          );
-        }}
-        onDelete={(entry) => setPendingDelete(entry)}
-        onRename={(id, title) => {
-          rename(id, title).catch(() => {});
-        }}
-        onShare={(entry, org, folderId) => setMovePrompt({ item: entry, org, folderId })}
-        onMove={(entry, folderId) => {
-          move(entry, folderId).catch(() => {});
-        }}
-      />
+      <>
+        <RecordingTimeline
+          entries={shown}
+          locale={locale}
+          signedIn={tree.signedIn}
+          orgs={tree.orgs}
+          orgFolders={tree.orgFolders}
+          busyId={busyId}
+          downloadingId={downloadingId}
+          sharingId={sharingId}
+          folders={moveFolders}
+          onOpen={(entry) => {
+            openItem(entry).catch((error) =>
+              log.error("library: open failed", { id: entry.id, error: String(error) })
+            );
+          }}
+          onDelete={(entry) => setPendingDelete(entry)}
+          onRename={(id, title) => {
+            rename(id, title).catch(() => {});
+          }}
+          onShare={(entry, org, folderId) => setMovePrompt({ item: entry, org, folderId })}
+          onMove={(entry, folderId) => {
+            move(entry, folderId).catch(() => {});
+          }}
+        />
+        {sentinel}
+      </>
     );
   } else {
     body = (
-      <div className="flex flex-col divide-y divide-border">
-        {visible.map((entry) => (
-          <LibraryCard
-            key={entry.id}
-            entry={entry}
-            locale={locale}
-            signedIn={tree.signedIn}
-            isOrgContext={isOrg}
-            orgs={tree.orgs}
-            orgFolders={tree.orgFolders}
-            busy={busyId === entry.id}
-            downloading={downloadingId === entry.id}
-            sharing={sharingId === entry.id}
-            folders={moveFolders}
-            onOpen={() => {
-              openItem(entry).catch((error) =>
-                log.error("library: open failed", { id: entry.id, error: String(error) })
-              );
-            }}
-            onDelete={() => setPendingDelete(entry)}
-            onRename={(title) => {
-              rename(entry.id, title).catch(() => {});
-            }}
-            onShare={(org, folderId) => setMovePrompt({ item: entry, org, folderId })}
-            onMove={(folderId) => {
-              const run = isOrg ? moveInOrg(entry, folderId) : move(entry, folderId);
-              run.catch(() => {});
-            }}
-          />
-        ))}
-      </div>
+      <>
+        <div className="flex flex-col divide-y divide-border">
+          {shown.map((entry) => (
+            <LibraryCard
+              key={entry.id}
+              entry={entry}
+              locale={locale}
+              signedIn={tree.signedIn}
+              isOrgContext={isOrg}
+              orgs={tree.orgs}
+              orgFolders={tree.orgFolders}
+              busy={busyId === entry.id}
+              downloading={downloadingId === entry.id}
+              sharing={sharingId === entry.id}
+              folders={moveFolders}
+              onOpen={() => {
+                openItem(entry).catch((error) =>
+                  log.error("library: open failed", { id: entry.id, error: String(error) })
+                );
+              }}
+              onDelete={() => setPendingDelete(entry)}
+              onRename={(title) => {
+                rename(entry.id, title).catch(() => {});
+              }}
+              onShare={(org, folderId) => setMovePrompt({ item: entry, org, folderId })}
+              onMove={(folderId) => {
+                const run = isOrg ? moveInOrg(entry, folderId) : move(entry, folderId);
+                run.catch(() => {});
+              }}
+            />
+          ))}
+        </div>
+        {sentinel}
+      </>
     );
   }
 
