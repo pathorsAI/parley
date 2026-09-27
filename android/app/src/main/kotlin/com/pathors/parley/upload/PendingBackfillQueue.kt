@@ -46,8 +46,10 @@ data class BackfillRequest(
      * top of somebody's speaker names and analysis. See
      * [RecordingMeta.replacingTranscript].
      *
-     * Null for the automatic path, which has nothing to preserve: the recording
-     * was created seconds ago by the upload that queued this.
+     * Null for the automatic path, which re-reads the meta from the cloud
+     * right before it pushes instead: the recording was created seconds before
+     * it was queued, but the run happens minutes or a launch later, and by then
+     * it may have been renamed, moved or filed.
      */
     val existingMeta: JsonObject? = null,
     /**

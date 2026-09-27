@@ -315,4 +315,21 @@
     <string name="account_save_location_org">組織</string>
     <string name="account_save_location_change">變更</string>
     <string name="account_save_location_footer">選擇組織時，錄音仍會保存在個人空間，並自動分享一份到該組織——與桌面版行為一致。</string>
+
+    <!-- Filing suggestion (iOS FilingSuggestionCard / FilingAdjustSheet) -->
+    <string name="filing_heading">建議</string>
+    <string name="filing_thinking">正在想名稱和資料夾…</string>
+    <string name="filing_was">原本：%1$s</string>
+    <string name="filing_folder">資料夾</string>
+    <string name="filing_new_folder">新資料夾</string>
+    <string name="filing_save_suggested">就這樣存</string>
+    <string name="filing_adjust">改一下</string>
+    <string name="filing_skip">不用建議</string>
+    <string name="filing_write_failed">沒有存成功，請再試一次。</string>
+    <string name="filing_done">完成</string>
+    <string name="filing_save">儲存</string>
+    <string name="filing_title">標題</string>
+    <string name="filing_move_to_folder">移到資料夾</string>
+    <string name="filing_new_tag">新增</string>
+    <string name="filing_other_folder">選其他資料夾…</string>
 </resources>

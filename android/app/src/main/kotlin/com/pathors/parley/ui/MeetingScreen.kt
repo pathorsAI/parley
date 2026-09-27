@@ -39,6 +39,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -60,9 +61,13 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.pathors.parley.R
+import com.pathors.parley.filing.FilingSuggestionViewModel
+import com.pathors.parley.filing.FilingUiState
+import com.pathors.parley.parleyContainer
 import com.pathors.parley.audio.MicRecoveryState
 import com.pathors.parley.kit.CaptureRecovery
 import com.pathors.parley.kit.TranscriptSegment
@@ -240,7 +245,13 @@ private fun DemoMeetingScreen(onDone: () -> Unit) {
     }
     // Discard leaves the demo screen exactly as Stop does — there is no session
     // to throw away, and the affordance belongs in the screenshot.
-    MeetingContent(session = demo, onStop = onDone, onDiscard = onDone, onDone = onDone)
+    MeetingContent(
+        session = demo,
+        onStop = onDone,
+        onDiscard = onDone,
+        onDone = onDone,
+        demoFiling = navigation?.scenario?.takeIf { it.isSettled },
+    )
 }
 
 /** Waiting for the service to publish the session the consent dialog asked for. */
@@ -354,6 +365,7 @@ private fun MeetingContent(
     onStop: () -> Unit,
     onDiscard: () -> Unit,
     onDone: () -> Unit,
+    demoFiling: DemoMode.MeetingScenario? = null,
 ) {
     val state by session.state.collectAsState()
     val segments by session.segments.collectAsState()
@@ -365,7 +377,9 @@ private fun MeetingContent(
     val storageLow by session.storageLow.collectAsState()
     val live = isLive(state)
 
-    CloseWhenFinishedByUser(state, onDone)
+    val filing = rememberFiling(state, segments, demoFiling)
+    val filingState by filing.state.collectAsState()
+    CloseWhenFinishedByUser(state, holding = filingState.holdsScreen, onDone = onDone)
     RecordingStartedHaptic(state)
     val micBack = rememberMicBackNotice(micRecovery)
     val close = {
@@ -397,6 +411,14 @@ private fun MeetingContent(
             LiveTranscript(segments)
         }
 
+        FilingFooter(
+            filing = filing,
+            state = filingState,
+            showsDone = state is MeetingState.Finished && interruptedFinish(state) == null,
+            onDone = close,
+            openAdjust = demoFiling == DemoMode.MeetingScenario.ADJUST,
+        )
+
         if (live) {
             StopButton(onStop)
             DiscardControl(
@@ -417,15 +439,93 @@ private fun MeetingContent(
  * read it — it used to flash "Uploaded" and vanish, which read as though the
  * user had tapped Stop. That outcome stays on screen until they close it,
  * the way iOS leaves its status line up after the recorder goes idle.
+ *
+ * Nor while the filing suggestion [holding]s the screen — see [FilingFooter].
  */
 @Composable
-private fun CloseWhenFinishedByUser(state: MeetingState, onDone: () -> Unit) {
-    LaunchedEffect(state) {
+private fun CloseWhenFinishedByUser(state: MeetingState, holding: Boolean, onDone: () -> Unit) {
+    LaunchedEffect(state, holding) {
         val finished = state as? MeetingState.Finished ?: return@LaunchedEffect
         if (finished.interruptedBy != null) return@LaunchedEffect
+        // The filing suggestion is thinking, or on offer and unanswered: the
+        // screen is still the place the user is looking. Once it settles —
+        // nothing to offer, answered, skipped — this runs again and leaves.
+        if (holding) return@LaunchedEffect
         delay(1_200)
         MeetingService.clear()
         onDone()
+    }
+}
+
+/**
+ * The filing suggestion for this meeting's recording: bound to the meeting
+ * destination (so a rotation keeps the offer), told about the recording once
+ * the upload has settled, and — in the screenshot demo — seeded instead of
+ * asked, because the demo never touches the network.
+ */
+@Composable
+private fun rememberFiling(
+    state: MeetingState,
+    segments: List<TranscriptSegment>,
+    demoFiling: DemoMode.MeetingScenario?,
+): FilingSuggestionViewModel {
+    val context = LocalContext.current
+    val filing: FilingSuggestionViewModel = viewModel(
+        factory = FilingSuggestionViewModel.factory(context.parleyContainer, context),
+    )
+    LaunchedEffect(demoFiling) {
+        if (demoFiling != null) {
+            filing.seedDemo(
+                recordingId = DemoMode.SETTLED_ID,
+                suggestion = DemoMode.filingSuggestion(),
+                currentTitle = DemoMode.settledTitle(),
+                folders = DemoMode.pickerFolders(),
+            )
+        }
+    }
+    LaunchedEffect(state) {
+        (state as? MeetingState.Finished)?.let { filing.consider(it, segments) }
+    }
+    return filing
+}
+
+/**
+ * Under the transcript once the meeting is over: the filing suggestion, its
+ * Adjust sheet, and — while the suggestion keeps the screen up — a way to
+ * leave without answering it. Leaving writes nothing; the offer simply goes
+ * with the screen, and the desktop may ask about it later.
+ */
+@Composable
+private fun FilingFooter(
+    filing: FilingSuggestionViewModel,
+    state: FilingUiState,
+    showsDone: Boolean,
+    onDone: () -> Unit,
+    openAdjust: Boolean,
+) {
+    var adjusting by rememberSaveable(openAdjust) { mutableStateOf(openAdjust) }
+    FilingSuggestionBlock(
+        state = state,
+        onAccept = filing::acceptSuggested,
+        onAdjust = { adjusting = true },
+        onSkip = filing::skip,
+    )
+    if (showsDone && state.holdsScreen) {
+        OutlinedButton(
+            onClick = onDone,
+            modifier = Modifier
+                .fillMaxWidth()
+                .defaultMinSize(minHeight = 48.dp),
+        ) {
+            Text(stringResource(R.string.filing_done))
+        }
+    }
+    if (adjusting && state.hasSomethingToOffer) {
+        FilingAdjustSheet(
+            state = state,
+            onSave = { title, folder -> filing.save(title, folder) { adjusting = false } },
+            onDismiss = { adjusting = false },
+        )
     }
 }
 

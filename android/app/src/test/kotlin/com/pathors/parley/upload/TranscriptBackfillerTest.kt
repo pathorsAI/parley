@@ -1,6 +1,7 @@
 package com.pathors.parley.upload
 
 import com.pathors.parley.cloud.CloudClient
+import com.pathors.parley.cloud.CloudException
 import com.pathors.parley.cloud.CloudJson
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.RecordingSummary
@@ -20,13 +21,16 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -46,6 +50,34 @@ class TranscriptBackfillerTest {
     val temporary = TemporaryFolder()
 
     private val server = MockWebServer()
+
+    /**
+     * What the cloud holds for each recording right now — what the automatic
+     * path re-reads before it pushes. A recording with no entry here is served
+     * as the upload that queued the run would have left it.
+     */
+    private val cloudMeta = mutableMapOf<String, JsonObject>()
+
+    /** Recordings whose re-read fails, as it would on a flat network or a 5xx. */
+    private val unreadable = mutableSetOf<String>()
+
+    @Before
+    fun serveCloud() {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val parts = request.path.orEmpty().trim('/').split('/')
+                val id = parts.getOrNull(1).orEmpty()
+                return when {
+                    request.method == "GET" && id in unreadable -> MockResponse().setResponseCode(503)
+                    request.method == "GET" && parts.lastOrNull() == "meta" -> MockResponse()
+                        .setResponseCode(200)
+                        .setBody(cloudMeta.getOrPut(id) { MeetingUploader.buildMeta(pending(id)).raw }.toString())
+                    request.method == "POST" -> MockResponse().setResponseCode(200).setBody("""{"updatedAt":2}""")
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
+    }
 
     @After
     fun tearDown() {
@@ -92,29 +124,25 @@ class TranscriptBackfillerTest {
     /** The full transcript the job comes back with. */
     private fun fullTranscript() = BatchTranscriptResponse(
         listOf(
-            BatchToken("Every word of it.", 0, 1_400_000, 1),
-            BatchToken("All of it.", 1_400_000, 2_953_000, 2),
+            BatchToken(FIRST_LINE, 0, 1_400_000, 1),
+            BatchToken(SECOND_LINE, 1_400_000, 2_953_000, 2),
         )
     )
 
-    private fun pushAccepted() {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"updatedAt":2}"""))
+    /** The `{ summary, meta }` body of the push the run made, past any re-read before it. */
+    private fun pushedBody(): JsonObject {
+        var request = server.takeRequest()
+        while (request.method != "POST") request = server.takeRequest()
+        return CloudJson.parseToJsonElement(request.body.readUtf8()) as JsonObject
     }
-
-    /** The `{ summary, meta }` body of the push the run made. */
-    private fun pushedBody(): JsonObject =
-        CloudJson.parseToJsonElement(server.takeRequest().body.readUtf8()) as JsonObject
 
     // ── the automatic path ───────────────────────────────────────────────────
 
     @Test
-    fun `an automatic run rebuilds the entry from the new transcript`() = runBlocking {
-        // Nothing to preserve: the recording was created seconds ago by the
-        // upload that queued this.
+    fun `an automatic run puts the new transcript into the entry`() = runBlocking {
         val queue = queue("auto")
         val ledger = ledger("auto-ledger")
         queue.enqueueMoving(BackfillRequest(pending = pending("rec-1")), audio("a.ogg"))
-        pushAccepted()
 
         val result = backfiller(queue, ledger, FakeBatch(fullTranscript())).drain()
 
@@ -124,17 +152,65 @@ class TranscriptBackfillerTest {
 
         val body = pushedBody()
         val meta = RecordingMeta(body["meta"] as JsonObject)
-        assertEquals(listOf("Every word of it.", "All of it."), meta.segments.map { it.text })
+        assertEquals(listOf(FIRST_LINE, SECOND_LINE), meta.segments.map { it.text })
         assertEquals(2_953_000.0, meta.durationMs, 0.0)
         assertEquals("Renewal terms", meta.title)
     }
+
+    /**
+     * The run happens minutes or a launch after the upload queued it, and in
+     * between the recording may have been renamed from the filing card, moved,
+     * and marked as filed. Rebuilding the entry from the queued request put the
+     * clock name back over the one the user typed.
+     */
+    @Test
+    fun `an automatic run keeps a rename, a move and the filing flag made since it was queued`() =
+        runBlocking {
+            val queue = queue("renamed")
+            queue.enqueueMoving(BackfillRequest(pending = pending(RECORDING)), audio("a.ogg"))
+            cloudMeta[RECORDING] = MeetingUploader.buildMeta(pending(RECORDING))
+                .withTitle(RENAMED)
+                .withFolderId(MOVED_TO)
+                .withFilingSuggested()
+                .raw
+
+            val result = backfiller(queue, ledger("renamed-l"), FakeBatch(fullTranscript())).drain()
+
+            assertEquals(1, result.repaired)
+            val body = pushedBody()
+            val meta = RecordingMeta(body["meta"] as JsonObject)
+            val summary = CloudJson.decodeFromJsonElement(RecordingSummary.serializer(), body["summary"]!!)
+            assertEquals(listOf(FIRST_LINE, SECOND_LINE), meta.segments.map { it.text })
+            assertEquals(RENAMED, meta.title)
+            assertEquals(MOVED_TO, meta.folderId)
+            assertTrue(meta.filingSuggested)
+            assertEquals("the library row says the same", RENAMED, summary.title)
+            assertEquals(MOVED_TO, summary.folderId)
+            assertEquals(2, summary.speakerCount)
+            assertTrue(summary.hasAudio)
+        }
+
+    /** Pushing the stale copy is the thing the re-read exists to stop. */
+    @Test
+    fun `an automatic run that cannot re-read the recording stays queued and pushes nothing`() =
+        runBlocking {
+            val queue = queue("unread")
+            queue.enqueueMoving(BackfillRequest(pending = pending(RECORDING)), audio("a.ogg"))
+            unreadable += RECORDING
+
+            val result = backfiller(queue, ledger("unread-l"), FakeBatch(fullTranscript())).drain()
+
+            assertEquals(0, result.repaired)
+            assertTrue("${result.failure}", result.failure is CloudException)
+            assertEquals(1, queue.count())
+            assertEquals("the re-read, and no push", 1, server.requestCount)
+        }
 
     @Test
     fun `a finished run retires the audio on the same terms as an upload`() = runBlocking {
         val queue = queue("retire")
         val store = LocalAudioStore(temporary.newFolder("Audio-retire"))
         queue.enqueueMoving(BackfillRequest(pending = pending("rec-1")), audio("a.ogg"))
-        pushAccepted()
 
         backfiller(queue, ledger("retire-l"), FakeBatch(fullTranscript()), store, keep = true)
             .drain()
@@ -147,7 +223,6 @@ class TranscriptBackfillerTest {
     fun `a phone that does not keep audio deletes it once the run is over`() = runBlocking {
         val queue = queue("drop")
         queue.enqueueMoving(BackfillRequest(pending = pending("rec-1")), audio("a.ogg"))
-        pushAccepted()
 
         backfiller(queue, ledger("drop-l"), FakeBatch(fullTranscript())).drain()
 
@@ -212,7 +287,6 @@ class TranscriptBackfillerTest {
             ),
             audio("a.ogg"),
         )
-        pushAccepted()
 
         backfiller(queue, ledger, FakeBatch(fullTranscript())).drain()
 
@@ -223,7 +297,7 @@ class TranscriptBackfillerTest {
             body["summary"]!!,
         )
 
-        assertEquals(listOf("Every word of it.", "All of it."), meta.segments.map { it.text })
+        assertEquals(listOf(FIRST_LINE, SECOND_LINE), meta.segments.map { it.text })
         assertEquals(mapOf("mix-0" to "Jack"), meta.speakerNames)
         assertEquals(1, meta.findingsCount)
         assertTrue(meta.analyzed)
@@ -245,7 +319,6 @@ class TranscriptBackfillerTest {
             BackfillRequest(pending = pending("rec-1"), manualRetries = 1),
             audio("a.ogg"),
         )
-        pushAccepted()
 
         backfiller(queue, ledger, FakeBatch(fullTranscript())).drain()
 
@@ -279,7 +352,6 @@ class TranscriptBackfillerTest {
         val queue = queue("free")
         val ledger = ledger("free-l")
         queue.enqueueMoving(BackfillRequest(pending = pending("rec-1")), audio("a.ogg"))
-        pushAccepted()
 
         backfiller(queue, ledger, FakeBatch(fullTranscript())).drain()
 
@@ -401,7 +473,6 @@ class TranscriptBackfillerTest {
         queue.enqueueMoving(BackfillRequest(pending = pending("rec-gone")), audio("a.ogg"))
         queue.audioFile("rec-gone").delete()
         queue.enqueueMoving(BackfillRequest(pending = pending("rec-ok")), audio("b.ogg"))
-        pushAccepted()
 
         val result = backfiller(queue, ledger("orphan-l"), FakeBatch(fullTranscript())).drain()
 
@@ -453,6 +524,16 @@ class TranscriptBackfillerTest {
         )
 
         assertTrue(TranscriptBackfiller.coverage(tailed).needsBackfill())
+    }
+
+    private companion object {
+        const val RECORDING = "rec-renamed"
+        const val RENAMED = "Acme renewal terms"
+        const val MOVED_TO = "folder-3"
+
+        /** The two runs the batch job comes back with. */
+        const val FIRST_LINE = "Every word of it."
+        const val SECOND_LINE = "All of it."
     }
 }
 
